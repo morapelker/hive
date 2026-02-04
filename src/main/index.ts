@@ -2,6 +2,8 @@ import { app, shell, BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { getDatabase, closeDatabase } from './db'
+import { registerDatabaseHandlers } from './ipc'
 
 interface WindowBounds {
   x: number
@@ -115,6 +117,12 @@ app.whenReady().then(() => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.hive')
 
+  // Initialize database
+  getDatabase()
+
+  // Register IPC handlers
+  registerDatabaseHandlers()
+
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
   // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
@@ -138,4 +146,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+// Close database when app is about to quit
+app.on('will-quit', () => {
+  closeDatabase()
 })

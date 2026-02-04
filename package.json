@@ -5,6 +5,9 @@
   "main": "./out/main/index.js",
   "author": "",
   "license": "MIT",
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3"]
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -25,6 +28,7 @@
   "dependencies": {
     "@electron-toolkit/utils": "^3.0.0",
     "@radix-ui/react-slot": "^1.1.1",
+    "better-sqlite3": "^12.6.2",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -34,27 +38,27 @@
   "devDependencies": {
     "@electron-toolkit/eslint-config-ts": "^3.0.0",
     "@electron-toolkit/tsconfig": "^1.0.1",
+    "@eslint/js": "^9.17.0",
     "@playwright/test": "^1.49.1",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
-    "clsx": "^2.1.1",
     "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
-    "@eslint/js": "^9.17.0",
     "eslint": "^9.17.0",
     "eslint-plugin-react": "^7.37.2",
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.16",
     "globals": "^15.14.0",
-    "typescript-eslint": "^8.18.2",
     "jsdom": "^25.0.1",
     "prettier": "^3.4.2",
     "shadcn": "^3.8.2",
@@ -62,6 +66,7 @@
     "tailwindcss": "^4.0.0",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2",
     "vite": "^6.0.5",
     "vitest": "^2.1.8"
   }
