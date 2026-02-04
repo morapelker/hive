@@ -143,8 +143,8 @@ describe('Session 7: Session Tabs', () => {
       expect(state.isLoading).toBe(false)
     })
 
-    test('loadSessions loads sessions for a worktree', async () => {
-      mockDbSession.getByWorktree.mockResolvedValue([mockSession1, mockSession2])
+    test('loadSessions loads active sessions for a worktree', async () => {
+      mockDbSession.getActiveByWorktree.mockResolvedValue([mockSession1, mockSession2])
 
       await act(async () => {
         await useSessionStore.getState().loadSessions('worktree-1', 'project-1')
@@ -153,7 +153,7 @@ describe('Session 7: Session Tabs', () => {
       const state = useSessionStore.getState()
       const sessions = state.sessionsByWorktree.get('worktree-1')
       expect(sessions).toHaveLength(2)
-      expect(mockDbSession.getByWorktree).toHaveBeenCalledWith('worktree-1')
+      expect(mockDbSession.getActiveByWorktree).toHaveBeenCalledWith('worktree-1')
     })
 
     test('createSession creates a new session', async () => {
@@ -180,7 +180,7 @@ describe('Session 7: Session Tabs', () => {
       expect(state.activeSessionId).toBe('new-session')
     })
 
-    test('closeSession deletes a session', async () => {
+    test('closeSession marks session as completed and removes from tabs', async () => {
       // Setup initial state with sessions
       useSessionStore.setState({
         sessionsByWorktree: new Map([['worktree-1', [mockSession1, mockSession2]]]),
@@ -189,14 +189,18 @@ describe('Session 7: Session Tabs', () => {
         activeWorktreeId: 'worktree-1'
       })
 
-      mockDbSession.delete.mockResolvedValue(true)
+      mockDbSession.update.mockResolvedValue({ ...mockSession1, status: 'completed' })
 
       const result = await act(async () => {
         return await useSessionStore.getState().closeSession('session-1')
       })
 
       expect(result.success).toBe(true)
-      expect(mockDbSession.delete).toHaveBeenCalledWith('session-1')
+      // Should update with completed status, not delete
+      expect(mockDbSession.update).toHaveBeenCalledWith('session-1', {
+        status: 'completed',
+        completed_at: expect.any(String)
+      })
 
       const state = useSessionStore.getState()
       const sessions = state.sessionsByWorktree.get('worktree-1')
@@ -214,7 +218,7 @@ describe('Session 7: Session Tabs', () => {
         activeWorktreeId: 'worktree-1'
       })
 
-      mockDbSession.delete.mockResolvedValue(true)
+      mockDbSession.update.mockResolvedValue({ ...mockSession2, status: 'completed' })
 
       await act(async () => {
         await useSessionStore.getState().closeSession('session-2')
@@ -233,7 +237,7 @@ describe('Session 7: Session Tabs', () => {
         activeWorktreeId: 'worktree-1'
       })
 
-      mockDbSession.delete.mockResolvedValue(true)
+      mockDbSession.update.mockResolvedValue({ ...mockSession1, status: 'completed' })
 
       await act(async () => {
         await useSessionStore.getState().closeSession('session-1')
@@ -353,7 +357,7 @@ describe('Session 7: Session Tabs', () => {
     })
 
     test('Empty state when no sessions for worktree', async () => {
-      mockDbSession.getByWorktree.mockResolvedValue([])
+      mockDbSession.getActiveByWorktree.mockResolvedValue([])
 
       await act(async () => {
         await useSessionStore.getState().loadSessions('worktree-1', 'project-1')
@@ -405,7 +409,7 @@ describe('Session 7: Session Tabs', () => {
 
   describe('Error Handling', () => {
     test('loadSessions handles errors gracefully', async () => {
-      mockDbSession.getByWorktree.mockRejectedValue(new Error('Database error'))
+      mockDbSession.getActiveByWorktree.mockRejectedValue(new Error('Database error'))
 
       await act(async () => {
         await useSessionStore.getState().loadSessions('worktree-1', 'project-1')
@@ -427,27 +431,6 @@ describe('Session 7: Session Tabs', () => {
       expect(result.error).toBe('Failed to create')
     })
 
-    test('closeSession handles database delete failure', async () => {
-      useSessionStore.setState({
-        sessionsByWorktree: new Map([['worktree-1', [mockSession1]]]),
-        tabOrderByWorktree: new Map([['worktree-1', ['session-1']]]),
-        activeSessionId: 'session-1'
-      })
-
-      mockDbSession.delete.mockResolvedValue(false)
-
-      const result = await act(async () => {
-        return await useSessionStore.getState().closeSession('session-1')
-      })
-
-      expect(result.success).toBe(false)
-      expect(result.error).toBe('Failed to delete session')
-
-      // Session should still be in state
-      const sessions = useSessionStore.getState().getSessionsForWorktree('worktree-1')
-      expect(sessions).toHaveLength(1)
-    })
-
     test('closeSession handles database errors', async () => {
       useSessionStore.setState({
         sessionsByWorktree: new Map([['worktree-1', [mockSession1]]]),
@@ -455,7 +438,7 @@ describe('Session 7: Session Tabs', () => {
         activeSessionId: 'session-1'
       })
 
-      mockDbSession.delete.mockRejectedValue(new Error('Database error'))
+      mockDbSession.update.mockRejectedValue(new Error('Database error'))
 
       const result = await act(async () => {
         return await useSessionStore.getState().closeSession('session-1')

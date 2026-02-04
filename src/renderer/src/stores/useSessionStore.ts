@@ -29,6 +29,7 @@ interface SessionState {
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
   createSession: (worktreeId: string, projectId: string) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
+  reopenSession: (sessionId: string, worktreeId: string) => Promise<{ success: boolean; error?: string }>
   setActiveSession: (sessionId: string | null) => void
   setActiveWorktree: (worktreeId: string | null) => void
   updateSessionName: (sessionId: string, name: string) => Promise<boolean>
@@ -54,11 +55,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   activeSessionId: null,
   activeWorktreeId: null,
 
-  // Load sessions for a worktree from database
+  // Load sessions for a worktree from database (only active sessions for tabs)
   loadSessions: async (worktreeId: string, _projectId: string) => {
     set({ isLoading: true, error: null })
     try {
-      const sessions = await window.db.session.getByWorktree(worktreeId)
+      // Only load active sessions - completed sessions appear in history only
+      const sessions = await window.db.session.getActiveByWorktree(worktreeId)
       // Sort by updated_at descending (most recent first)
       const sortedSessions = sessions.sort(
         (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
@@ -138,13 +140,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  // Close a session
+  // Close a session tab (removes from tab view, keeps in database for history)
   closeSession: async (sessionId: string) => {
     try {
-      const success = await window.db.session.delete(sessionId)
-      if (!success) {
-        return { success: false, error: 'Failed to delete session' }
-      }
+      // Mark session as completed instead of deleting
+      // This preserves it in session history
+      await window.db.session.update(sessionId, {
+        status: 'completed',
+        completed_at: new Date().toISOString()
+      })
 
       set((state) => {
         const newSessionsMap = new Map(state.sessionsByWorktree)
@@ -187,6 +191,52 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to close session'
+      }
+    }
+  },
+
+  // Reopen a closed session (from history) - marks as active and adds to tabs
+  reopenSession: async (sessionId: string, worktreeId: string) => {
+    try {
+      // Mark session as active again
+      const updatedSession = await window.db.session.update(sessionId, {
+        status: 'active',
+        completed_at: null
+      })
+
+      if (!updatedSession) {
+        return { success: false, error: 'Session not found' }
+      }
+
+      set((state) => {
+        const newSessionsMap = new Map(state.sessionsByWorktree)
+        const existingSessions = newSessionsMap.get(worktreeId) || []
+
+        // Only add if not already in the list
+        if (!existingSessions.some((s) => s.id === sessionId)) {
+          newSessionsMap.set(worktreeId, [updatedSession, ...existingSessions])
+        }
+
+        // Add to tab order
+        const newTabOrderMap = new Map(state.tabOrderByWorktree)
+        const existingOrder = newTabOrderMap.get(worktreeId) || []
+        if (!existingOrder.includes(sessionId)) {
+          newTabOrderMap.set(worktreeId, [...existingOrder, sessionId])
+        }
+
+        return {
+          sessionsByWorktree: newSessionsMap,
+          tabOrderByWorktree: newTabOrderMap,
+          activeSessionId: sessionId,
+          activeWorktreeId: worktreeId
+        }
+      })
+
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to reopen session'
       }
     }
   },

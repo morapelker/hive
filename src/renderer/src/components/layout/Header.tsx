@@ -1,4 +1,4 @@
-import { Moon, Sun, Monitor, PanelRightClose, PanelRightOpen, Check } from 'lucide-react'
+import { Moon, Sun, Monitor, PanelRightClose, PanelRightOpen, Check, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useThemeStore, type Theme } from '@/stores/useThemeStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
+import { useSessionHistoryStore } from '@/stores/useSessionHistoryStore'
 import { toast } from 'sonner'
 
 const themeOptions: { value: Theme; label: string; icon: typeof Moon }[] = [
@@ -19,6 +20,7 @@ const themeOptions: { value: Theme; label: string; icon: typeof Moon }[] = [
 export function Header(): React.JSX.Element {
   const { theme, setTheme } = useThemeStore()
   const { rightSidebarCollapsed, toggleRightSidebar } = useLayoutStore()
+  const { openPanel: openSessionHistory } = useSessionHistoryStore()
 
   const getThemeIcon = (): React.JSX.Element => {
     switch (theme) {
@@ -51,6 +53,15 @@ export function Header(): React.JSX.Element {
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={openSessionHistory}
+          title="Session History (⌘K)"
+          data-testid="session-history-toggle"
+        >
+          <History className="h-4 w-4" />
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

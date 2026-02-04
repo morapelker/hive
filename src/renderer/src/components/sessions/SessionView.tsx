@@ -30,76 +30,24 @@ interface CodeBlockProps {
   language?: string
 }
 
-// Placeholder demo messages to demonstrate the layout
-const DEMO_MESSAGES: OpenCodeMessage[] = [
-  {
-    id: 'demo-1',
-    role: 'user',
-    content: 'Can you help me create a function that calculates the factorial of a number?',
-    timestamp: new Date(Date.now() - 60000).toISOString()
-  },
-  {
-    id: 'demo-2',
-    role: 'assistant',
-    content: `I'll help you create a factorial function. Here's an implementation in TypeScript:
-
-\`\`\`typescript
-function factorial(n: number): number {
-  if (n < 0) {
-    throw new Error('Factorial is not defined for negative numbers')
-  }
-  if (n === 0 || n === 1) {
-    return 1
-  }
-  return n * factorial(n - 1)
+// Database message type from window.db.message
+interface DbMessage {
+  id: string
+  session_id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  created_at: string
 }
 
-// Example usage:
-console.log(factorial(5)) // Output: 120
-console.log(factorial(0)) // Output: 1
-\`\`\`
-
-This function uses recursion to calculate the factorial. It handles edge cases like:
-- Negative numbers (throws an error)
-- Zero and one (returns 1)
-
-Would you like me to also create an iterative version?`,
-    timestamp: new Date(Date.now() - 30000).toISOString()
-  },
-  {
-    id: 'demo-3',
-    role: 'user',
-    content: 'Yes, please show me the iterative version too.',
-    timestamp: new Date(Date.now() - 15000).toISOString()
-  },
-  {
-    id: 'demo-4',
-    role: 'assistant',
-    content: `Here's the iterative version:
-
-\`\`\`typescript
-function factorialIterative(n: number): number {
-  if (n < 0) {
-    throw new Error('Factorial is not defined for negative numbers')
+// Convert database message to OpenCodeMessage
+function dbMessageToOpenCode(msg: DbMessage): OpenCodeMessage {
+  return {
+    id: msg.id,
+    role: msg.role,
+    content: msg.content,
+    timestamp: msg.created_at
   }
-
-  let result = 1
-  for (let i = 2; i <= n; i++) {
-    result *= i
-  }
-  return result
 }
-\`\`\`
-
-The iterative version is often preferred because:
-1. It avoids the risk of stack overflow for large numbers
-2. It's slightly more memory-efficient
-3. It's easier to understand for some developers
-
-Both versions have the same time complexity of O(n).`,
-    timestamp: new Date().toISOString()
-  }
-]
 
 // Code block component with copy functionality and syntax highlighting placeholder
 function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): React.JSX.Element {
@@ -278,9 +226,9 @@ function ErrorState({ message, onRetry }: ErrorStateProps): React.JSX.Element {
 // Main SessionView component
 export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   // State
-  const [messages, setMessages] = useState<OpenCodeMessage[]>(DEMO_MESSAGES)
+  const [messages, setMessages] = useState<OpenCodeMessage[]>([])
   const [inputValue, setInputValue] = useState('')
-  const [viewState, setViewState] = useState<SessionViewState>({ status: 'connected' })
+  const [viewState, setViewState] = useState<SessionViewState>({ status: 'connecting' })
   const [isSending, setIsSending] = useState(false)
 
   // Refs
@@ -305,55 +253,87 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [inputValue])
 
-  // Load messages when session changes (placeholder - will be implemented in Session 11)
+  // Load messages from database when session changes
   useEffect(() => {
-    // Reset to demo messages for now
-    // In Session 11, this will load actual messages from OpenCode
-    setMessages(DEMO_MESSAGES)
-    setViewState({ status: 'connected' })
+    const loadMessages = async (): Promise<void> => {
+      setViewState({ status: 'connecting' })
+      try {
+        const dbMessages = await window.db.message.getBySession(sessionId) as DbMessage[]
+        const loadedMessages = dbMessages.map(dbMessageToOpenCode)
+        setMessages(loadedMessages)
+        setViewState({ status: 'connected' })
+      } catch (error) {
+        console.error('Failed to load messages:', error)
+        setViewState({
+          status: 'error',
+          errorMessage: error instanceof Error ? error.message : 'Failed to load messages'
+        })
+      }
+    }
+    loadMessages()
   }, [sessionId])
 
   // Handle retry connection
-  const handleRetry = useCallback(() => {
+  const handleRetry = useCallback(async () => {
     setViewState({ status: 'connecting' })
-    // Simulate connection attempt (will be real in Session 11)
-    setTimeout(() => {
+    try {
+      const dbMessages = await window.db.message.getBySession(sessionId) as DbMessage[]
+      const loadedMessages = dbMessages.map(dbMessageToOpenCode)
+      setMessages(loadedMessages)
       setViewState({ status: 'connected' })
-      setMessages(DEMO_MESSAGES)
-    }, 1500)
-  }, [])
+    } catch (error) {
+      console.error('Failed to load messages:', error)
+      setViewState({
+        status: 'error',
+        errorMessage: error instanceof Error ? error.message : 'Failed to load messages'
+      })
+    }
+  }, [sessionId])
 
-  // Handle send message (placeholder for Session 11)
+  // Handle send message (placeholder for Session 11 - OpenCode integration)
   const handleSend = useCallback(async () => {
     const trimmedValue = inputValue.trim()
     if (!trimmedValue || isSending) return
 
     setIsSending(true)
-
-    // Create a new user message
-    const newMessage: OpenCodeMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: trimmedValue,
-      timestamp: new Date().toISOString()
-    }
-
-    setMessages((prev) => [...prev, newMessage])
     setInputValue('')
 
-    // Simulate assistant response (placeholder for Session 11)
-    setTimeout(() => {
-      const assistantMessage: OpenCodeMessage = {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content:
-          'This is a placeholder response. In Session 11, this will be replaced with real OpenCode integration.',
-        timestamp: new Date().toISOString()
-      }
-      setMessages((prev) => [...prev, assistantMessage])
+    try {
+      // Save user message to database
+      const savedUserMessage = await window.db.message.create({
+        session_id: sessionId,
+        role: 'user' as const,
+        content: trimmedValue
+      }) as DbMessage
+
+      const userMessage = dbMessageToOpenCode(savedUserMessage)
+      setMessages((prev) => [...prev, userMessage])
+
+      // Simulate assistant response (placeholder for Session 11 - OpenCode integration)
+      // In production, this will be replaced with actual AI response
+      setTimeout(async () => {
+        try {
+          const assistantContent = 'This is a placeholder response. In Session 11, this will be replaced with real OpenCode integration.'
+          const savedAssistantMessage = await window.db.message.create({
+            session_id: sessionId,
+            role: 'assistant' as const,
+            content: assistantContent
+          }) as DbMessage
+
+          const assistantMessage = dbMessageToOpenCode(savedAssistantMessage)
+          setMessages((prev) => [...prev, assistantMessage])
+        } catch (error) {
+          console.error('Failed to save assistant message:', error)
+          toast.error('Failed to save response')
+        }
+        setIsSending(false)
+      }, 1000)
+    } catch (error) {
+      console.error('Failed to save message:', error)
+      toast.error('Failed to send message')
       setIsSending(false)
-    }, 1000)
-  }, [inputValue, isSending])
+    }
+  }, [inputValue, isSending, sessionId])
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(

@@ -15,9 +15,77 @@ vi.mock('sonner', () => ({
   }
 }))
 
+// Mock database messages (demo messages to test with)
+const mockDemoMessages = [
+  {
+    id: 'demo-1',
+    session_id: 'test-session-1',
+    role: 'user' as const,
+    content: 'Can you help me create a function that calculates the factorial of a number?',
+    created_at: new Date(Date.now() - 60000).toISOString()
+  },
+  {
+    id: 'demo-2',
+    session_id: 'test-session-1',
+    role: 'assistant' as const,
+    content: `I'll help you create a factorial function. Here's an implementation in TypeScript:
+
+\`\`\`typescript
+function factorial(n: number): number {
+  if (n < 0) {
+    throw new Error('Factorial is not defined for negative numbers')
+  }
+  if (n === 0 || n === 1) {
+    return 1
+  }
+  return n * factorial(n - 1)
+}
+
+// Example usage:
+console.log(factorial(5)) // Output: 120
+console.log(factorial(0)) // Output: 1
+\`\`\`
+
+This function uses recursion to calculate the factorial.`,
+    created_at: new Date(Date.now() - 30000).toISOString()
+  }
+]
+
+// Mock window.db.message
+const mockDbMessage = {
+  create: vi.fn().mockImplementation((data) => Promise.resolve({
+    id: `msg-${Date.now()}`,
+    session_id: data.session_id,
+    role: data.role,
+    content: data.content,
+    created_at: new Date().toISOString()
+  })),
+  getBySession: vi.fn().mockResolvedValue(mockDemoMessages),
+  delete: vi.fn().mockResolvedValue(true)
+}
+
 // Setup and teardown
 beforeEach(() => {
   vi.clearAllMocks()
+
+  // Reset mock implementations
+  mockDbMessage.getBySession.mockResolvedValue(mockDemoMessages)
+  mockDbMessage.create.mockImplementation((data) => Promise.resolve({
+    id: `msg-${Date.now()}`,
+    session_id: data.session_id,
+    role: data.role,
+    content: data.content,
+    created_at: new Date().toISOString()
+  }))
+
+  // Mock window.db
+  Object.defineProperty(window, 'db', {
+    value: {
+      message: mockDbMessage
+    },
+    writable: true,
+    configurable: true
+  })
 
   // Mock navigator.clipboard - use a fresh mock for each test
   const clipboardMock = {
@@ -41,30 +109,40 @@ afterEach(() => {
 
 describe('Session 8: Session View', () => {
   describe('Component Rendering', () => {
-    test('Session view renders for active tab', () => {
+    test('Session view renders for active tab', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
       const sessionView = screen.getByTestId('session-view')
       expect(sessionView).toBeInTheDocument()
       expect(sessionView).toHaveAttribute('data-session-id', 'test-session-1')
+
+      // Wait for messages to load
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
     })
 
-    test('Session view contains message list and input area', () => {
+    test('Session view contains message list and input area', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      expect(screen.getByTestId('message-list')).toBeInTheDocument()
-      expect(screen.getByTestId('input-area')).toBeInTheDocument()
+      // Wait for messages to load
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+        expect(screen.getByTestId('input-area')).toBeInTheDocument()
+      })
     })
 
-    test('Demo messages are displayed', () => {
+    test('Demo messages are displayed', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      // Check for demo messages
-      const userMessages = screen.getAllByTestId('message-user')
-      const assistantMessages = screen.getAllByTestId('message-assistant')
+      // Wait for messages to load from mock database
+      await waitFor(() => {
+        const userMessages = screen.getAllByTestId('message-user')
+        const assistantMessages = screen.getAllByTestId('message-assistant')
 
-      expect(userMessages.length).toBeGreaterThan(0)
-      expect(assistantMessages.length).toBeGreaterThan(0)
+        expect(userMessages.length).toBeGreaterThan(0)
+        expect(assistantMessages.length).toBeGreaterThan(0)
+      })
     })
 
     test('Session view updates when sessionId changes', async () => {
@@ -79,35 +157,43 @@ describe('Session 8: Session View', () => {
   })
 
   describe('Message List', () => {
-    test('Message list is scrollable', () => {
+    test('Message list is scrollable', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      const messageList = screen.getByTestId('message-list')
-      expect(messageList).toHaveClass('overflow-y-auto')
+      await waitFor(() => {
+        const messageList = screen.getByTestId('message-list')
+        expect(messageList).toHaveClass('overflow-y-auto')
+      })
     })
 
-    test('User messages have correct styling', () => {
+    test('User messages have correct styling', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      const userMessage = screen.getAllByTestId('message-user')[0]
-      expect(userMessage).toHaveClass('bg-muted/30')
+      await waitFor(() => {
+        const userMessage = screen.getAllByTestId('message-user')[0]
+        expect(userMessage).toHaveClass('bg-muted/30')
+      })
     })
 
-    test('Assistant messages render correctly', () => {
+    test('Assistant messages render correctly', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      const assistantMessages = screen.getAllByTestId('message-assistant')
-      expect(assistantMessages[0]).toBeInTheDocument()
-      // Assistant messages should not have user background
-      expect(assistantMessages[0]).not.toHaveClass('bg-muted/30')
+      await waitFor(() => {
+        const assistantMessages = screen.getAllByTestId('message-assistant')
+        expect(assistantMessages[0]).toBeInTheDocument()
+        // Assistant messages should not have user background
+        expect(assistantMessages[0]).not.toHaveClass('bg-muted/30')
+      })
     })
 
-    test('Messages display timestamps', () => {
+    test('Messages display timestamps', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      // Look for time formats in the messages
-      const messageList = screen.getByTestId('message-list')
-      expect(messageList.textContent).toMatch(/\d{1,2}:\d{2}/)
+      await waitFor(() => {
+        // Look for time formats in the messages
+        const messageList = screen.getByTestId('message-list')
+        expect(messageList.textContent).toMatch(/\d{1,2}:\d{2}/)
+      })
     })
   })
 
@@ -116,29 +202,42 @@ describe('Session 8: Session View', () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
 
+      // Wait for messages to load first
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
       const input = screen.getByTestId('message-input')
       await user.type(input, 'Hello, world!')
 
       expect(input).toHaveValue('Hello, world!')
     })
 
-    test('Send button is present', () => {
+    test('Send button is present', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      const sendButton = screen.getByTestId('send-button')
-      expect(sendButton).toBeInTheDocument()
+      await waitFor(() => {
+        const sendButton = screen.getByTestId('send-button')
+        expect(sendButton).toBeInTheDocument()
+      })
     })
 
-    test('Send button is disabled when input is empty', () => {
+    test('Send button is disabled when input is empty', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      const sendButton = screen.getByTestId('send-button')
-      expect(sendButton).toBeDisabled()
+      await waitFor(() => {
+        const sendButton = screen.getByTestId('send-button')
+        expect(sendButton).toBeDisabled()
+      })
     })
 
     test('Send button is enabled when input has content', async () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
 
       const input = screen.getByTestId('message-input')
       const sendButton = screen.getByTestId('send-button')
@@ -151,6 +250,10 @@ describe('Session 8: Session View', () => {
     test('Clicking send button adds user message', async () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
 
       const input = screen.getByTestId('message-input')
       const sendButton = screen.getByTestId('send-button')
@@ -170,6 +273,10 @@ describe('Session 8: Session View', () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
 
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
       const input = screen.getByTestId('message-input')
       const sendButton = screen.getByTestId('send-button')
 
@@ -182,6 +289,10 @@ describe('Session 8: Session View', () => {
     test('Enter key sends message (without Shift)', async () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
 
       const input = screen.getByTestId('message-input')
       const initialUserMessages = screen.getAllByTestId('message-user').length
@@ -197,6 +308,10 @@ describe('Session 8: Session View', () => {
     test('Shift+Enter does not send message', async () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
 
       const input = screen.getByTestId('message-input') as HTMLTextAreaElement
       const initialUserMessages = screen.getAllByTestId('message-user').length
@@ -217,6 +332,10 @@ describe('Session 8: Session View', () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
 
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
       const input = screen.getByTestId('message-input')
       const sendButton = screen.getByTestId('send-button')
 
@@ -230,6 +349,10 @@ describe('Session 8: Session View', () => {
     test('Typing indicator disappears after response', async () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
 
       const input = screen.getByTestId('message-input')
       const sendButton = screen.getByTestId('send-button')
@@ -245,34 +368,43 @@ describe('Session 8: Session View', () => {
   })
 
   describe('Code Blocks', () => {
-    test('Code block structure renders', () => {
+    test('Code block structure renders', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      // The demo messages contain code blocks
-      const codeBlocks = screen.getAllByTestId('code-block')
-      expect(codeBlocks.length).toBeGreaterThan(0)
+      await waitFor(() => {
+        // The demo messages contain code blocks
+        const codeBlocks = screen.getAllByTestId('code-block')
+        expect(codeBlocks.length).toBeGreaterThan(0)
+      })
     })
 
-    test('Code blocks have language labels', () => {
+    test('Code blocks have language labels', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      // Look for typescript label
-      expect(screen.getAllByText('typescript').length).toBeGreaterThan(0)
+      await waitFor(() => {
+        // Look for typescript label
+        expect(screen.getAllByText('typescript').length).toBeGreaterThan(0)
+      })
     })
 
-    test('Code blocks have copy button', () => {
+    test('Code blocks have copy button', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      const copyButtons = screen.getAllByTestId('copy-code-button')
-      expect(copyButtons.length).toBeGreaterThan(0)
+      await waitFor(() => {
+        const copyButtons = screen.getAllByTestId('copy-code-button')
+        expect(copyButtons.length).toBeGreaterThan(0)
+      })
     })
 
     test('Copy button is clickable and triggers copy action', async () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
 
+      await waitFor(() => {
+        expect(screen.getAllByTestId('copy-code-button').length).toBeGreaterThan(0)
+      })
+
       const copyButtons = screen.getAllByTestId('copy-code-button')
-      expect(copyButtons.length).toBeGreaterThan(0)
 
       // Verify the button is clickable (not disabled)
       const copyButton = copyButtons[0]
@@ -288,25 +420,61 @@ describe('Session 8: Session View', () => {
   })
 
   describe('Loading State', () => {
-    test('Loading state shows spinner', async () => {
-      // We need to trigger loading state - modify component to expose state
-      // For now, test the LoadingState component existence indirectly
+    test('Loading state shows spinner initially', () => {
+      // Component starts in connecting state while loading
       render(<SessionView sessionId="test-session-1" />)
 
-      // Component starts in connected state with demo data
+      // Component should show loading state initially
       expect(screen.getByTestId('session-view')).toBeInTheDocument()
-      expect(screen.queryByTestId('loading-state')).not.toBeInTheDocument()
+      expect(screen.getByTestId('loading-state')).toBeInTheDocument()
+    })
+
+    test('Loading state disappears after messages load', async () => {
+      render(<SessionView sessionId="test-session-1" />)
+
+      // Wait for messages to load
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-state')).not.toBeInTheDocument()
+      })
     })
   })
 
   describe('Error State', () => {
-    test('Error state shows retry button', async () => {
-      // Error state needs to be triggered
-      // The component uses internal state, so we test that retry works via UI
+    test('Error state shows retry button when loading fails', async () => {
+      // Mock getBySession to reject
+      mockDbMessage.getBySession.mockRejectedValueOnce(new Error('Database error'))
+
       render(<SessionView sessionId="test-session-1" />)
 
-      // In connected state, error state should not be visible
-      expect(screen.queryByTestId('error-state')).not.toBeInTheDocument()
+      await waitFor(() => {
+        expect(screen.getByTestId('error-state')).toBeInTheDocument()
+        expect(screen.getByTestId('retry-button')).toBeInTheDocument()
+      })
+    })
+
+    test('Retry button reloads messages', async () => {
+      const user = userEvent.setup()
+
+      // First load fails
+      mockDbMessage.getBySession.mockRejectedValueOnce(new Error('Database error'))
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('error-state')).toBeInTheDocument()
+      })
+
+      // Now mock successful reload
+      mockDbMessage.getBySession.mockResolvedValueOnce(mockDemoMessages)
+
+      // Click retry
+      await user.click(screen.getByTestId('retry-button'))
+
+      // Should show loading then messages
+      await waitFor(() => {
+        expect(screen.queryByTestId('error-state')).not.toBeInTheDocument()
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
     })
   })
 
@@ -321,6 +489,11 @@ describe('Session 8: Session View', () => {
     test('Multiple messages can be sent in sequence', async () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
+
+      // Wait for messages to load
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
 
       const input = screen.getByTestId('message-input')
       const sendButton = screen.getByTestId('send-button')
@@ -348,26 +521,32 @@ describe('Session 8: Session View', () => {
   })
 
   describe('Accessibility', () => {
-    test('Input has placeholder text', () => {
+    test('Input has placeholder text', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      const input = screen.getByTestId('message-input')
-      expect(input).toHaveAttribute('placeholder')
+      await waitFor(() => {
+        const input = screen.getByTestId('message-input')
+        expect(input).toHaveAttribute('placeholder')
+      })
     })
 
-    test('Input area has helper text', () => {
+    test('Input area has helper text', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      expect(screen.getByText(/Enter to send/i)).toBeInTheDocument()
+      await waitFor(() => {
+        expect(screen.getByText(/Enter to send/i)).toBeInTheDocument()
+      })
     })
 
-    test('Send button has visual indicator', () => {
+    test('Send button has visual indicator', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
-      const sendButton = screen.getByTestId('send-button')
-      expect(sendButton).toBeInTheDocument()
-      // Button contains Send icon
-      expect(sendButton.querySelector('svg')).toBeInTheDocument()
+      await waitFor(() => {
+        const sendButton = screen.getByTestId('send-button')
+        expect(sendButton).toBeInTheDocument()
+        // Button contains Send icon
+        expect(sendButton.querySelector('svg')).toBeInTheDocument()
+      })
     })
   })
 
