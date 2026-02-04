@@ -57,6 +57,7 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
 
   const handleClick = (): void => {
     selectProject(project.id)
+    toggleProjectExpanded(project.id)
   }
 
   const handleToggleExpand = (e: React.MouseEvent): void => {

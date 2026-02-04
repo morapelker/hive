@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 // Project type matching the database schema
 interface Project {
@@ -33,14 +34,16 @@ interface ProjectState {
   touchProject: (id: string) => Promise<void>
 }
 
-export const useProjectStore = create<ProjectState>((set, get) => ({
-  // Initial state
-  projects: [],
-  isLoading: false,
-  error: null,
-  selectedProjectId: null,
-  expandedProjectIds: new Set(),
-  editingProjectId: null,
+export const useProjectStore = create<ProjectState>()(
+  persist(
+    (set, get) => ({
+      // Initial state
+      projects: [],
+      isLoading: false,
+      error: null,
+      selectedProjectId: null,
+      expandedProjectIds: new Set(),
+      editingProjectId: null,
 
   // Load all projects from database
   loadProjects: async () => {
@@ -177,4 +180,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       // Ignore touch errors
     }
   }
-}))
+    }),
+    {
+      name: 'hive-projects',
+      storage: createJSONStorage(() => localStorage),
+      // Only persist expandedProjectIds
+      partialize: (state) => ({
+        expandedProjectIds: Array.from(state.expandedProjectIds)
+      }),
+      // Merge persisted state, converting array back to Set
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        expandedProjectIds: new Set(
+          (persistedState as { expandedProjectIds?: string[] })?.expandedProjectIds ?? []
+        )
+      })
+    }
+  )
+)
