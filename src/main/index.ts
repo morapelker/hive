@@ -3,7 +3,7 @@ import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
-import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers } from './ipc'
+import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers, registerGitFileHandlers } from './ipc'
 import { createLogger, getLogDir } from './services/logger'
 
 const log = createLogger({ component: 'Main' })
@@ -172,6 +172,8 @@ app.whenReady().then(() => {
     registerOpenCodeHandlers(mainWindow)
     log.info('Registering FileTree handlers')
     registerFileTreeHandlers(mainWindow)
+    log.info('Registering GitFile handlers')
+    registerGitFileHandlers(mainWindow)
   }
 
   app.on('activate', function () {

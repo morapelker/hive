@@ -26,6 +26,27 @@ export interface DeleteWorktreeResult {
   error?: string
 }
 
+// Git file status codes
+export type GitStatusCode = 'M' | 'A' | 'D' | '?' | 'C' | ''
+
+export interface GitFileStatus {
+  path: string
+  relativePath: string
+  status: GitStatusCode
+  staged: boolean
+}
+
+export interface GitStatusResult {
+  success: boolean
+  files?: GitFileStatus[]
+  error?: string
+}
+
+export interface GitOperationResult {
+  success: boolean
+  error?: string
+}
+
 /**
  * GitService - Handles all git operations for worktrees
  */
@@ -276,6 +297,181 @@ export class GitService {
       await this.git.raw(['worktree', 'prune'])
     } catch (error) {
       log.error('Failed to prune worktrees', error instanceof Error ? error : new Error(String(error)), { repoPath: this.repoPath })
+    }
+  }
+
+  /**
+   * Get git status for all files in the repository
+   * Returns file statuses with M (modified), A (staged/added), D (deleted), ? (untracked), C (conflicted)
+   */
+  async getFileStatuses(): Promise<GitStatusResult> {
+    try {
+      const status = await this.git.status()
+      const files: GitFileStatus[] = []
+
+      // Process modified files (not staged)
+      for (const file of status.modified) {
+        files.push({
+          path: join(this.repoPath, file),
+          relativePath: file,
+          status: 'M',
+          staged: false
+        })
+      }
+
+      // Process staged files
+      for (const file of status.staged) {
+        // Check if it's already in files (modified but staged some changes)
+        const existing = files.find(f => f.relativePath === file)
+        if (existing) {
+          // File has both staged and unstaged changes
+          existing.staged = true
+        } else {
+          files.push({
+            path: join(this.repoPath, file),
+            relativePath: file,
+            status: 'A',
+            staged: true
+          })
+        }
+      }
+
+      // Process created/added files (not yet tracked, staged)
+      for (const file of status.created) {
+        files.push({
+          path: join(this.repoPath, file),
+          relativePath: file,
+          status: 'A',
+          staged: true
+        })
+      }
+
+      // Process deleted files
+      for (const file of status.deleted) {
+        files.push({
+          path: join(this.repoPath, file),
+          relativePath: file,
+          status: 'D',
+          staged: false
+        })
+      }
+
+      // Process untracked files
+      for (const file of status.not_added) {
+        files.push({
+          path: join(this.repoPath, file),
+          relativePath: file,
+          status: '?',
+          staged: false
+        })
+      }
+
+      // Process conflicted files
+      for (const file of status.conflicted) {
+        files.push({
+          path: join(this.repoPath, file),
+          relativePath: file,
+          status: 'C',
+          staged: false
+        })
+      }
+
+      return { success: true, files }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to get file statuses', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Stage a file for commit
+   */
+  async stageFile(filePath: string): Promise<GitOperationResult> {
+    try {
+      await this.git.add(filePath)
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to stage file', error instanceof Error ? error : new Error(message), { filePath, repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Unstage a file
+   */
+  async unstageFile(filePath: string): Promise<GitOperationResult> {
+    try {
+      await this.git.reset(['HEAD', '--', filePath])
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to unstage file', error instanceof Error ? error : new Error(message), { filePath, repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Discard changes in a file (restore to HEAD)
+   */
+  async discardChanges(filePath: string): Promise<GitOperationResult> {
+    try {
+      // First check if file is untracked
+      const status = await this.git.status()
+      const isUntracked = status.not_added.includes(filePath)
+
+      if (isUntracked) {
+        // For untracked files, we need to use fs to remove
+        const fullPath = join(this.repoPath, filePath)
+        const { existsSync, unlinkSync } = await import('fs')
+        if (existsSync(fullPath)) {
+          unlinkSync(fullPath)
+        }
+      } else {
+        // For tracked files, restore from HEAD
+        await this.git.checkout(['--', filePath])
+      }
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to discard changes', error instanceof Error ? error : new Error(message), { filePath, repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Add a file path to .gitignore
+   */
+  async addToGitignore(pattern: string): Promise<GitOperationResult> {
+    try {
+      const gitignorePath = join(this.repoPath, '.gitignore')
+      const { existsSync, readFileSync, appendFileSync, writeFileSync } = await import('fs')
+
+      let content = ''
+      if (existsSync(gitignorePath)) {
+        content = readFileSync(gitignorePath, 'utf-8')
+      }
+
+      // Check if pattern already exists
+      const lines = content.split('\n').map(l => l.trim())
+      if (lines.includes(pattern)) {
+        return { success: true } // Already ignored
+      }
+
+      // Add pattern to .gitignore
+      const newLine = content.endsWith('\n') || content === '' ? pattern : '\n' + pattern
+      if (content === '') {
+        writeFileSync(gitignorePath, pattern + '\n')
+      } else {
+        appendFileSync(gitignorePath, newLine + '\n')
+      }
+
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to add to .gitignore', error instanceof Error ? error : new Error(message), { pattern, repoPath: this.repoPath })
+      return { success: false, error: message }
     }
   }
 }

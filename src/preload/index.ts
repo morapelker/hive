@@ -224,6 +224,20 @@ export interface FileTreeChangeEvent {
   relativePath: string
 }
 
+// Git status types
+export type GitStatusCode = 'M' | 'A' | 'D' | '?' | 'C' | ''
+
+export interface GitFileStatus {
+  path: string
+  relativePath: string
+  status: GitStatusCode
+  staged: boolean
+}
+
+export interface GitStatusChangedEvent {
+  worktreePath: string
+}
+
 // File tree operations API
 const fileTreeOps = {
   // Scan a directory and return the file tree
@@ -269,6 +283,81 @@ const fileTreeOps = {
     ipcRenderer.on('file-tree:change', handler)
     return () => {
       ipcRenderer.removeListener('file-tree:change', handler)
+    }
+  }
+}
+
+// Git file operations API
+const gitOps = {
+  // Get file statuses for a worktree
+  getFileStatuses: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    files?: GitFileStatus[]
+    error?: string
+  }> => ipcRenderer.invoke('git:fileStatuses', worktreePath),
+
+  // Stage a file
+  stageFile: (
+    worktreePath: string,
+    filePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:stageFile', worktreePath, filePath),
+
+  // Unstage a file
+  unstageFile: (
+    worktreePath: string,
+    filePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:unstageFile', worktreePath, filePath),
+
+  // Discard changes in a file
+  discardChanges: (
+    worktreePath: string,
+    filePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:discardChanges', worktreePath, filePath),
+
+  // Add to .gitignore
+  addToGitignore: (
+    worktreePath: string,
+    pattern: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:addToGitignore', worktreePath, pattern),
+
+  // Open file in default editor
+  openInEditor: (
+    filePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:openInEditor', filePath),
+
+  // Show file in Finder
+  showInFinder: (
+    filePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:showInFinder', filePath),
+
+  // Subscribe to git status change events
+  onStatusChanged: (callback: (event: GitStatusChangedEvent) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, event: GitStatusChangedEvent): void => {
+      callback(event)
+    }
+    ipcRenderer.on('git:statusChanged', handler)
+    return () => {
+      ipcRenderer.removeListener('git:statusChanged', handler)
     }
   }
 }
@@ -335,6 +424,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('systemOps', systemOps)
     contextBridge.exposeInMainWorld('opencodeOps', opencodeOps)
     contextBridge.exposeInMainWorld('fileTreeOps', fileTreeOps)
+    contextBridge.exposeInMainWorld('gitOps', gitOps)
   } catch (error) {
     console.error(error)
   }
@@ -353,4 +443,6 @@ if (process.contextIsolated) {
   window.opencodeOps = opencodeOps
   // @ts-expect-error (define in dts)
   window.fileTreeOps = fileTreeOps
+  // @ts-expect-error (define in dts)
+  window.gitOps = gitOps
 }

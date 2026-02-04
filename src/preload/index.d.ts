@@ -278,6 +278,46 @@ declare global {
       // Subscribe to file tree change events
       onChange: (callback: (event: FileTreeChangeEvent) => void) => () => void
     }
+    gitOps: {
+      // Get file statuses for a worktree
+      getFileStatuses: (worktreePath: string) => Promise<{
+        success: boolean
+        files?: GitFileStatus[]
+        error?: string
+      }>
+      // Stage a file
+      stageFile: (worktreePath: string, filePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Unstage a file
+      unstageFile: (worktreePath: string, filePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Discard changes in a file
+      discardChanges: (worktreePath: string, filePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Add to .gitignore
+      addToGitignore: (worktreePath: string, pattern: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Open file in default editor
+      openInEditor: (filePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Show file in Finder
+      showInFinder: (filePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Subscribe to git status change events
+      onStatusChanged: (callback: (event: GitStatusChangedEvent) => void) => () => void
+    }
   }
 }
 
@@ -305,6 +345,20 @@ interface FileTreeChangeEvent {
   eventType: 'add' | 'addDir' | 'unlink' | 'unlinkDir' | 'change'
   changedPath: string
   relativePath: string
+}
+
+// Git status types
+type GitStatusCode = 'M' | 'A' | 'D' | '?' | 'C' | ''
+
+interface GitFileStatus {
+  path: string
+  relativePath: string
+  status: GitStatusCode
+  staged: boolean
+}
+
+interface GitStatusChangedEvent {
+  worktreePath: string
 }
 
 export {}

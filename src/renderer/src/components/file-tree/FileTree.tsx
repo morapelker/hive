@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react'
 import { FolderOpen } from 'lucide-react'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
+import { useGitStore } from '@/stores/useGitStore'
 import { FileTreeHeader } from './FileTreeHeader'
 import { FileTreeNodeComponent } from './FileTreeNode'
 import { cn } from '@/lib/utils'
@@ -43,10 +44,17 @@ export function FileTree({
     handleFileChange
   } = useFileTreeStore()
 
+  const {
+    getFileStatuses,
+    loadFileStatuses,
+    refreshStatuses
+  } = useGitStore()
+
   const unsubscribeRef = useRef<(() => void) | null>(null)
+  const gitUnsubscribeRef = useRef<(() => void) | null>(null)
   const currentWorktreeRef = useRef<string | null>(null)
 
-  // Load file tree and start watching when worktree changes
+  // Load file tree, git statuses, and start watching when worktree changes
   useEffect(() => {
     if (!worktreePath) return
 
@@ -57,12 +65,19 @@ export function FileTree({
         unsubscribeRef.current()
         unsubscribeRef.current = null
       }
+      if (gitUnsubscribeRef.current) {
+        gitUnsubscribeRef.current()
+        gitUnsubscribeRef.current = null
+      }
     }
 
     currentWorktreeRef.current = worktreePath
 
     // Load file tree
     loadFileTree(worktreePath)
+
+    // Load git statuses
+    loadFileStatuses(worktreePath)
 
     // Start watching
     startWatching(worktreePath)
@@ -71,6 +86,15 @@ export function FileTree({
     unsubscribeRef.current = window.fileTreeOps.onChange((event) => {
       if (event.worktreePath === worktreePath) {
         handleFileChange(worktreePath, event.eventType, event.changedPath, event.relativePath)
+        // Also refresh git statuses on file changes
+        refreshStatuses(worktreePath)
+      }
+    })
+
+    // Subscribe to git status change events
+    gitUnsubscribeRef.current = window.gitOps.onStatusChanged((event) => {
+      if (event.worktreePath === worktreePath) {
+        refreshStatuses(worktreePath)
       }
     })
 
@@ -80,8 +104,12 @@ export function FileTree({
         unsubscribeRef.current()
         unsubscribeRef.current = null
       }
+      if (gitUnsubscribeRef.current) {
+        gitUnsubscribeRef.current()
+        gitUnsubscribeRef.current = null
+      }
     }
-  }, [worktreePath, loadFileTree, startWatching, stopWatching, handleFileChange])
+  }, [worktreePath, loadFileTree, loadFileStatuses, refreshStatuses, startWatching, stopWatching, handleFileChange])
 
   // Cleanup watching on unmount
   useEffect(() => {
@@ -95,6 +123,7 @@ export function FileTree({
   const tree = worktreePath ? getFileTree(worktreePath) : []
   const expandedPaths = worktreePath ? getExpandedPaths(worktreePath) : new Set<string>()
   const filter = worktreePath ? getFilter(worktreePath) : ''
+  const gitStatuses = worktreePath ? getFileStatuses(worktreePath) : []
 
   const handleToggle = useCallback(
     (path: string) => {
@@ -123,8 +152,9 @@ export function FileTree({
   const handleRefresh = useCallback(() => {
     if (worktreePath) {
       loadFileTree(worktreePath)
+      loadFileStatuses(worktreePath)
     }
-  }, [worktreePath, loadFileTree])
+  }, [worktreePath, loadFileTree, loadFileStatuses])
 
   // No worktree selected
   if (!worktreePath) {
@@ -244,6 +274,8 @@ export function FileTree({
             onFileClick={onFileClick}
             expandedPaths={expandedPaths}
             filter={filter}
+            worktreePath={worktreePath}
+            gitStatuses={gitStatuses}
           />
         ))}
       </div>
