@@ -1,5 +1,13 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
-import { createGitService, GitFileStatus, GitStatusCode, GitBranchInfo } from '../services/git-service'
+import {
+  createGitService,
+  GitFileStatus,
+  GitStatusCode,
+  GitBranchInfo,
+  GitCommitResult,
+  GitPushResult,
+  GitPullResult
+} from '../services/git-service'
 import { createLogger } from '../services/logger'
 
 const log = createLogger({ component: 'GitFileHandlers' })
@@ -269,7 +277,92 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       }
     }
   )
+
+  // Commit staged changes
+  ipcMain.handle(
+    'git:commit',
+    async (
+      _event,
+      worktreePath: string,
+      message: string
+    ): Promise<GitCommitResult> => {
+      log.info('Committing changes', { worktreePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        const result = await gitService.commit(message)
+
+        // Emit status change event
+        if (result.success && mainWindow) {
+          mainWindow.webContents.send('git:statusChanged', { worktreePath })
+        }
+
+        return result
+      } catch (error) {
+        const errMessage = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to commit', error instanceof Error ? error : new Error(errMessage), { worktreePath })
+        return { success: false, error: errMessage }
+      }
+    }
+  )
+
+  // Push to remote
+  ipcMain.handle(
+    'git:push',
+    async (
+      _event,
+      worktreePath: string,
+      remote?: string,
+      branch?: string,
+      force?: boolean
+    ): Promise<GitPushResult> => {
+      log.info('Pushing to remote', { worktreePath, remote, branch, force })
+      try {
+        const gitService = createGitService(worktreePath)
+        const result = await gitService.push(remote, branch, force)
+
+        // Emit status change event to update ahead/behind counts
+        if (result.success && mainWindow) {
+          mainWindow.webContents.send('git:statusChanged', { worktreePath })
+        }
+
+        return result
+      } catch (error) {
+        const errMessage = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to push', error instanceof Error ? error : new Error(errMessage), { worktreePath })
+        return { success: false, error: errMessage }
+      }
+    }
+  )
+
+  // Pull from remote
+  ipcMain.handle(
+    'git:pull',
+    async (
+      _event,
+      worktreePath: string,
+      remote?: string,
+      branch?: string,
+      rebase?: boolean
+    ): Promise<GitPullResult> => {
+      log.info('Pulling from remote', { worktreePath, remote, branch, rebase })
+      try {
+        const gitService = createGitService(worktreePath)
+        const result = await gitService.pull(remote, branch, rebase)
+
+        // Emit status change event
+        if (result.success && mainWindow) {
+          mainWindow.webContents.send('git:statusChanged', { worktreePath })
+        }
+
+        return result
+      } catch (error) {
+        const errMessage = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to pull', error instanceof Error ? error : new Error(errMessage), { worktreePath })
+        return { success: false, error: errMessage }
+      }
+    }
+  )
 }
 
 // Export types for use in preload
-export type { GitFileStatus, GitStatusCode, GitBranchInfo }
+export type { GitFileStatus, GitStatusCode, GitBranchInfo, GitCommitResult, GitPushResult, GitPullResult }

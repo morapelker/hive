@@ -24,6 +24,11 @@ interface GitStoreState {
   isLoading: boolean
   error: string | null
 
+  // Operation states
+  isCommitting: boolean
+  isPushing: boolean
+  isPulling: boolean
+
   // Actions
   loadFileStatuses: (worktreePath: string) => Promise<void>
   loadBranchInfo: (worktreePath: string) => Promise<void>
@@ -38,6 +43,11 @@ interface GitStoreState {
   addToGitignore: (worktreePath: string, pattern: string) => Promise<boolean>
   refreshStatuses: (worktreePath: string) => Promise<void>
   clearStatuses: (worktreePath: string) => void
+
+  // Commit, Push, Pull actions
+  commit: (worktreePath: string, message: string) => Promise<{ success: boolean; commitHash?: string; error?: string }>
+  push: (worktreePath: string, remote?: string, branch?: string, force?: boolean) => Promise<{ success: boolean; error?: string }>
+  pull: (worktreePath: string, remote?: string, branch?: string, rebase?: boolean) => Promise<{ success: boolean; error?: string }>
 }
 
 export const useGitStore = create<GitStoreState>()((set, get) => ({
@@ -46,6 +56,11 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   branchInfoByWorktree: new Map(),
   isLoading: false,
   error: null,
+
+  // Operation states
+  isCommitting: false,
+  isPushing: false,
+  isPulling: false,
 
   // Load file statuses for a worktree
   loadFileStatuses: async (worktreePath: string) => {
@@ -214,6 +229,60 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       newBranchMap.delete(worktreePath)
       return { fileStatusesByWorktree: newFileMap, branchInfoByWorktree: newBranchMap }
     })
+  },
+
+  // Commit staged changes
+  commit: async (worktreePath: string, message: string) => {
+    set({ isCommitting: true, error: null })
+    try {
+      const result = await window.gitOps.commit(worktreePath, message)
+      if (result.success) {
+        // Refresh statuses after commit
+        await get().refreshStatuses(worktreePath)
+      }
+      set({ isCommitting: false })
+      return result
+    } catch (error) {
+      const errMessage = error instanceof Error ? error.message : 'Failed to commit'
+      set({ isCommitting: false, error: errMessage })
+      return { success: false, error: errMessage }
+    }
+  },
+
+  // Push to remote
+  push: async (worktreePath: string, remote?: string, branch?: string, force?: boolean) => {
+    set({ isPushing: true, error: null })
+    try {
+      const result = await window.gitOps.push(worktreePath, remote, branch, force)
+      if (result.success) {
+        // Refresh branch info to update ahead/behind counts
+        await get().loadBranchInfo(worktreePath)
+      }
+      set({ isPushing: false })
+      return result
+    } catch (error) {
+      const errMessage = error instanceof Error ? error.message : 'Failed to push'
+      set({ isPushing: false, error: errMessage })
+      return { success: false, error: errMessage }
+    }
+  },
+
+  // Pull from remote
+  pull: async (worktreePath: string, remote?: string, branch?: string, rebase?: boolean) => {
+    set({ isPulling: true, error: null })
+    try {
+      const result = await window.gitOps.pull(worktreePath, remote, branch, rebase)
+      if (result.success) {
+        // Refresh statuses after pull
+        await get().refreshStatuses(worktreePath)
+      }
+      set({ isPulling: false })
+      return result
+    } catch (error) {
+      const errMessage = error instanceof Error ? error.message : 'Failed to pull'
+      set({ isPulling: false, error: errMessage })
+      return { success: false, error: errMessage }
+    }
   }
 }))
 

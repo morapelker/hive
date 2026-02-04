@@ -60,6 +60,24 @@ export interface GitBranchInfoResult {
   error?: string
 }
 
+export interface GitCommitResult {
+  success: boolean
+  commitHash?: string
+  error?: string
+}
+
+export interface GitPushResult {
+  success: boolean
+  pushed?: boolean
+  error?: string
+}
+
+export interface GitPullResult {
+  success: boolean
+  updated?: boolean
+  error?: string
+}
+
 /**
  * GitService - Handles all git operations for worktrees
  */
@@ -548,6 +566,129 @@ export class GitService {
       const message = error instanceof Error ? error.message : 'Unknown error'
       log.error('Failed to add to .gitignore', error instanceof Error ? error : new Error(message), { pattern, repoPath: this.repoPath })
       return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Commit staged changes with a message
+   * @param message - Commit message (summary or summary + description separated by newline)
+   */
+  async commit(message: string): Promise<GitCommitResult> {
+    try {
+      if (!message || message.trim() === '') {
+        return { success: false, error: 'Commit message is required' }
+      }
+
+      // Check if there are staged files
+      const status = await this.git.status()
+      const hasStagedChanges = status.staged.length > 0 || status.created.length > 0
+
+      if (!hasStagedChanges) {
+        return { success: false, error: 'No staged changes to commit' }
+      }
+
+      const result = await this.git.commit(message)
+      log.info('Committed changes', { commit: result.commit, summary: result.summary, repoPath: this.repoPath })
+
+      return {
+        success: true,
+        commitHash: result.commit
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to commit', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Push commits to remote
+   * @param remote - Remote name (default: origin)
+   * @param branch - Branch name (default: current branch)
+   * @param force - Force push (default: false)
+   */
+  async push(remote?: string, branch?: string, force?: boolean): Promise<GitPushResult> {
+    try {
+      const remoteName = remote || 'origin'
+      const branchName = branch || await this.getCurrentBranch()
+
+      const options: string[] = []
+      if (force) {
+        options.push('--force')
+      }
+
+      // Set upstream if not tracking
+      const status = await this.git.status()
+      if (!status.tracking) {
+        options.push('--set-upstream')
+      }
+
+      await this.git.push(remoteName, branchName, options)
+      log.info('Pushed to remote', { remote: remoteName, branch: branchName, force, repoPath: this.repoPath })
+
+      return { success: true, pushed: true }
+    } catch (error) {
+      const errMessage = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to push', error instanceof Error ? error : new Error(errMessage), { repoPath: this.repoPath })
+
+      // Provide helpful error messages
+      let userMessage = errMessage
+      if (errMessage.includes('rejected')) {
+        userMessage = 'Push rejected. The remote contains commits not present locally. Pull first or use force push.'
+      } else if (errMessage.includes('Could not read from remote repository')) {
+        userMessage = 'Could not connect to remote repository. Check your network connection and authentication.'
+      } else if (errMessage.includes('Authentication failed') || errMessage.includes('Permission denied')) {
+        userMessage = 'Authentication failed. Check your credentials.'
+      }
+
+      return { success: false, error: userMessage }
+    }
+  }
+
+  /**
+   * Pull commits from remote
+   * @param remote - Remote name (default: origin)
+   * @param branch - Branch name (default: current branch)
+   * @param rebase - Use rebase instead of merge (default: false)
+   */
+  async pull(remote?: string, branch?: string, rebase?: boolean): Promise<GitPullResult> {
+    try {
+      const remoteName = remote || 'origin'
+      const branchName = branch || await this.getCurrentBranch()
+
+      const options: Record<string, null | string | number> = {}
+      if (rebase) {
+        options['--rebase'] = null
+      }
+
+      const result = await this.git.pull(remoteName, branchName, options)
+      log.info('Pulled from remote', {
+        remote: remoteName,
+        branch: branchName,
+        rebase,
+        files: result.files?.length || 0,
+        repoPath: this.repoPath
+      })
+
+      return {
+        success: true,
+        updated: (result.files?.length || 0) > 0 || result.summary.changes > 0
+      }
+    } catch (error) {
+      const errMessage = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to pull', error instanceof Error ? error : new Error(errMessage), { repoPath: this.repoPath })
+
+      // Provide helpful error messages
+      let userMessage = errMessage
+      if (errMessage.includes('conflict')) {
+        userMessage = 'Pull resulted in merge conflicts. Resolve conflicts before continuing.'
+      } else if (errMessage.includes('Could not read from remote repository')) {
+        userMessage = 'Could not connect to remote repository. Check your network connection and authentication.'
+      } else if (errMessage.includes('uncommitted changes')) {
+        userMessage = 'You have uncommitted changes. Commit or stash them before pulling.'
+      }
+
+      return { success: false, error: userMessage }
     }
   }
 }

@@ -391,7 +391,41 @@ const gitOps = {
   ): Promise<{
     success: boolean
     error?: string
-  }> => ipcRenderer.invoke('git:unstageAll', worktreePath)
+  }> => ipcRenderer.invoke('git:unstageAll', worktreePath),
+
+  // Commit staged changes
+  commit: (
+    worktreePath: string,
+    message: string
+  ): Promise<{
+    success: boolean
+    commitHash?: string
+    error?: string
+  }> => ipcRenderer.invoke('git:commit', worktreePath, message),
+
+  // Push to remote
+  push: (
+    worktreePath: string,
+    remote?: string,
+    branch?: string,
+    force?: boolean
+  ): Promise<{
+    success: boolean
+    pushed?: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:push', worktreePath, remote, branch, force),
+
+  // Pull from remote
+  pull: (
+    worktreePath: string,
+    remote?: string,
+    branch?: string,
+    rebase?: boolean
+  ): Promise<{
+    success: boolean
+    updated?: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:pull', worktreePath, remote, branch, rebase)
 }
 
 const opencodeOps = {

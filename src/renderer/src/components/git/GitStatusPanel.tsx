@@ -3,6 +3,8 @@ import { ChevronDown, ChevronRight, RefreshCw, GitBranch, ArrowUp, ArrowDown, Pl
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
+import { GitCommitForm } from './GitCommitForm'
+import { GitPushPull } from './GitPushPull'
 import { cn } from '@/lib/utils'
 
 interface GitStatusPanelProps {
@@ -337,6 +339,14 @@ export function GitStatusPanel({
           </CollapsibleSection>
         </div>
       )}
+
+      {/* Commit Form - show when there are staged changes */}
+      {hasStaged && (
+        <GitCommitForm worktreePath={worktreePath} />
+      )}
+
+      {/* Push/Pull Controls */}
+      <GitPushPull worktreePath={worktreePath} />
     </div>
   )
 }

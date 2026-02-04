@@ -333,6 +333,24 @@ declare global {
         success: boolean
         error?: string
       }>
+      // Commit staged changes
+      commit: (worktreePath: string, message: string) => Promise<{
+        success: boolean
+        commitHash?: string
+        error?: string
+      }>
+      // Push to remote
+      push: (worktreePath: string, remote?: string, branch?: string, force?: boolean) => Promise<{
+        success: boolean
+        pushed?: boolean
+        error?: string
+      }>
+      // Pull from remote
+      pull: (worktreePath: string, remote?: string, branch?: string, rebase?: boolean) => Promise<{
+        success: boolean
+        updated?: boolean
+        error?: string
+      }>
     }
   }
 }
