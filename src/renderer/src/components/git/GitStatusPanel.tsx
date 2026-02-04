@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { ChevronDown, ChevronRight, RefreshCw, GitBranch, ArrowUp, ArrowDown, Plus, Minus } from 'lucide-react'
+import { ChevronDown, ChevronRight, RefreshCw, GitBranch, ArrowUp, ArrowDown, Plus, Minus, FileDiff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
 import { GitCommitForm } from './GitCommitForm'
 import { GitPushPull } from './GitPushPull'
+import { DiffModal } from '@/components/diff'
 import { cn } from '@/lib/utils'
 
 interface GitStatusPanelProps {
@@ -67,10 +68,11 @@ function CollapsibleSection({
 interface FileItemProps {
   file: GitFileStatus
   onToggle: (file: GitFileStatus) => void
+  onViewDiff: (file: GitFileStatus) => void
   isStaged: boolean
 }
 
-function FileItem({ file, onToggle, isStaged }: FileItemProps): React.JSX.Element {
+function FileItem({ file, onToggle, onViewDiff, isStaged }: FileItemProps): React.JSX.Element {
   const statusColors: Record<string, string> = {
     M: 'text-yellow-500',
     A: 'text-green-500',
@@ -93,12 +95,24 @@ function FileItem({ file, onToggle, isStaged }: FileItemProps): React.JSX.Elemen
       <span className={cn('text-[10px] font-mono w-3', statusColors[file.status])}>
         {file.status}
       </span>
-      <span
-        className="text-xs truncate flex-1"
-        title={file.relativePath}
+      <button
+        type="button"
+        className="text-xs truncate flex-1 text-left hover:underline cursor-pointer"
+        onClick={() => onViewDiff(file)}
+        title={`View changes: ${file.relativePath}`}
       >
         {file.relativePath}
-      </span>
+      </button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+        onClick={() => onViewDiff(file)}
+        title="View changes"
+        data-testid={`view-diff-${file.relativePath}`}
+      >
+        <FileDiff className="h-3 w-3 text-muted-foreground" />
+      </Button>
     </div>
   )
 }
@@ -122,6 +136,7 @@ export function GitStatusPanel({
   const branchInfoByWorktree = useGitStore((state) => state.branchInfoByWorktree)
 
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [diffModalFile, setDiffModalFile] = useState<GitFileStatus | null>(null)
 
   // Load initial data
   useEffect(() => {
@@ -207,6 +222,14 @@ export function GitStatusPanel({
     }
   }, [worktreePath, stageFile, unstageFile])
 
+  const handleViewDiff = useCallback((file: GitFileStatus) => {
+    setDiffModalFile(file)
+  }, [])
+
+  const handleCloseDiffModal = useCallback(() => {
+    setDiffModalFile(null)
+  }, [])
+
   if (!worktreePath) {
     return null
   }
@@ -286,6 +309,7 @@ export function GitStatusPanel({
                 key={file.relativePath}
                 file={file}
                 onToggle={handleToggleFile}
+                onViewDiff={handleViewDiff}
                 isStaged={true}
               />
             ))}
@@ -317,6 +341,7 @@ export function GitStatusPanel({
                 key={file.relativePath}
                 file={file}
                 onToggle={handleToggleFile}
+                onViewDiff={handleViewDiff}
                 isStaged={false}
               />
             ))}
@@ -333,6 +358,7 @@ export function GitStatusPanel({
                 key={file.relativePath}
                 file={file}
                 onToggle={handleToggleFile}
+                onViewDiff={handleViewDiff}
                 isStaged={false}
               />
             ))}
@@ -347,6 +373,19 @@ export function GitStatusPanel({
 
       {/* Push/Pull Controls */}
       <GitPushPull worktreePath={worktreePath} />
+
+      {/* Diff Modal */}
+      {diffModalFile && worktreePath && (
+        <DiffModal
+          isOpen={!!diffModalFile}
+          onClose={handleCloseDiffModal}
+          worktreePath={worktreePath}
+          filePath={diffModalFile.relativePath}
+          fileName={diffModalFile.relativePath.split('/').pop() || diffModalFile.relativePath}
+          staged={diffModalFile.staged}
+          isUntracked={diffModalFile.status === '?'}
+        />
+      )}
     </div>
   )
 }

@@ -363,9 +363,8 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       }
     }
   )
-}
 
-// Get diff for a file
+  // Get diff for a file
   ipcMain.handle(
     'git:diff',
     async (

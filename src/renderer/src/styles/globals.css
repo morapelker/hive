@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "diff2html/bundles/css/diff2html.min.css";
 
 @theme inline {
   --color-background: var(--background);
@@ -127,4 +128,92 @@
 /* Prevent text selection during resize operations */
 .resize-active {
   user-select: none;
+}
+
+/* diff2html styles */
+.diff-viewer {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+}
+
+.diff-viewer .d2h-empty,
+.diff-viewer .d2h-error {
+  padding: 2rem;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+
+.diff-viewer .d2h-error {
+  color: var(--destructive);
+}
+
+/* Dark mode overrides for diff2html */
+.dark .diff-viewer .d2h-wrapper {
+  background-color: transparent;
+}
+
+.dark .diff-viewer .d2h-file-header {
+  background-color: oklch(20% 0.005 286);
+  border-color: oklch(27.39% 0.005 286.03);
+}
+
+.dark .diff-viewer .d2h-file-header,
+.dark .diff-viewer .d2h-file-name {
+  color: oklch(98.48% 0.001 285.98);
+}
+
+.dark .diff-viewer .d2h-code-line,
+.dark .diff-viewer .d2h-code-side-line {
+  background-color: oklch(14.08% 0.004 285.82);
+}
+
+.dark .diff-viewer .d2h-code-linenumber {
+  background-color: oklch(18% 0.004 286);
+  color: oklch(55% 0.014 286);
+  border-color: oklch(27.39% 0.005 286.03);
+}
+
+.dark .diff-viewer .d2h-ins {
+  background-color: rgba(46, 160, 67, 0.15);
+}
+
+.dark .diff-viewer .d2h-ins .d2h-code-line-ctn {
+  background-color: rgba(46, 160, 67, 0.25);
+}
+
+.dark .diff-viewer .d2h-del {
+  background-color: rgba(248, 81, 73, 0.15);
+}
+
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn {
+  background-color: rgba(248, 81, 73, 0.25);
+}
+
+.dark .diff-viewer .d2h-info {
+  background-color: oklch(22% 0.005 286);
+  color: oklch(70% 0.015 286);
+  border-color: oklch(27.39% 0.005 286.03);
+}
+
+.dark .diff-viewer .d2h-file-diff {
+  border-color: oklch(27.39% 0.005 286.03);
+}
+
+.dark .diff-viewer .d2h-diff-table {
+  border-color: oklch(27.39% 0.005 286.03);
+}
+
+.dark .diff-viewer .d2h-diff-tbody tr {
+  border-color: oklch(27.39% 0.005 286.03);
+}
+
+/* Ensure line numbers and content align properly */
+.diff-viewer .d2h-code-line-ctn {
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+/* Split view specific adjustments */
+.diff-viewer .d2h-file-side-diff {
+  width: 50%;
 }

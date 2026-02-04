@@ -13,9 +13,11 @@ import {
   Copy,
   Trash2,
   AlertCircle,
-  EyeOff
+  EyeOff,
+  FileDiff
 } from 'lucide-react'
 import { useGitStore, type GitStatusCode } from '@/stores/useGitStore'
+import { DiffModal } from '@/components/diff'
 
 interface FileTreeNode {
   name: string
@@ -43,6 +45,7 @@ export function FileContextMenu({
   onClose
 }: FileContextMenuProps): React.JSX.Element {
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false)
+  const [showDiffModal, setShowDiffModal] = useState(false)
   const { stageFile, unstageFile, discardChanges, addToGitignore } = useGitStore()
 
   // Handle stage file
@@ -98,52 +101,66 @@ export function FileContextMenu({
     onClose?.()
   }, [node.relativePath, onClose])
 
+  // Handle view changes (diff)
+  const handleViewChanges = useCallback(() => {
+    setShowDiffModal(true)
+    onClose?.()
+  }, [onClose])
+
   // Determine which git actions to show
   const showStage = gitStatus && !staged && gitStatus !== 'C'
   const showUnstage = staged
   const showDiscard = gitStatus && gitStatus !== '?' && gitStatus !== 'C'
   const showGitignore = gitStatus === '?'
+  const showViewChanges = gitStatus && gitStatus !== 'C' && !node.isDirectory
 
   return (
-    <ContextMenu onOpenChange={(open) => !open && setShowDiscardConfirm(false)}>
-      {children}
-      <ContextMenuContent className="w-56">
-        {/* Git actions */}
-        {(showStage || showUnstage || showDiscard || showGitignore) && (
-          <>
-            {showStage && (
-              <ContextMenuItem onClick={handleStage}>
-                <GitBranch className="mr-2 h-4 w-4 text-green-500" />
-                Stage File
-              </ContextMenuItem>
-            )}
-            {showUnstage && (
-              <ContextMenuItem onClick={handleUnstage}>
-                <GitBranch className="mr-2 h-4 w-4 text-yellow-500" />
-                Unstage File
-              </ContextMenuItem>
-            )}
-            {showDiscard && (
-              <ContextMenuItem
-                onClick={handleDiscard}
-                className={showDiscardConfirm ? 'text-red-500' : ''}
-              >
-                <Trash2 className="mr-2 h-4 w-4 text-red-500" />
-                {showDiscardConfirm ? 'Click again to confirm' : 'Discard Changes'}
-                {showDiscardConfirm && (
-                  <AlertCircle className="ml-auto h-4 w-4 text-red-500" />
-                )}
-              </ContextMenuItem>
-            )}
-            {showGitignore && (
-              <ContextMenuItem onClick={handleAddToGitignore}>
-                <EyeOff className="mr-2 h-4 w-4 text-gray-500" />
-                Add to .gitignore
-              </ContextMenuItem>
-            )}
-            <ContextMenuSeparator />
-          </>
-        )}
+    <>
+      <ContextMenu onOpenChange={(open) => !open && setShowDiscardConfirm(false)}>
+        {children}
+        <ContextMenuContent className="w-56">
+          {/* Git actions */}
+          {(showStage || showUnstage || showDiscard || showGitignore || showViewChanges) && (
+            <>
+              {showViewChanges && (
+                <ContextMenuItem onClick={handleViewChanges}>
+                  <FileDiff className="mr-2 h-4 w-4 text-blue-500" />
+                  View Changes
+                </ContextMenuItem>
+              )}
+              {showStage && (
+                <ContextMenuItem onClick={handleStage}>
+                  <GitBranch className="mr-2 h-4 w-4 text-green-500" />
+                  Stage File
+                </ContextMenuItem>
+              )}
+              {showUnstage && (
+                <ContextMenuItem onClick={handleUnstage}>
+                  <GitBranch className="mr-2 h-4 w-4 text-yellow-500" />
+                  Unstage File
+                </ContextMenuItem>
+              )}
+              {showDiscard && (
+                <ContextMenuItem
+                  onClick={handleDiscard}
+                  className={showDiscardConfirm ? 'text-red-500' : ''}
+                >
+                  <Trash2 className="mr-2 h-4 w-4 text-red-500" />
+                  {showDiscardConfirm ? 'Click again to confirm' : 'Discard Changes'}
+                  {showDiscardConfirm && (
+                    <AlertCircle className="ml-auto h-4 w-4 text-red-500" />
+                  )}
+                </ContextMenuItem>
+              )}
+              {showGitignore && (
+                <ContextMenuItem onClick={handleAddToGitignore}>
+                  <EyeOff className="mr-2 h-4 w-4 text-gray-500" />
+                  Add to .gitignore
+                </ContextMenuItem>
+              )}
+              <ContextMenuSeparator />
+            </>
+          )}
 
         {/* File actions */}
         <ContextMenuItem onClick={handleOpenInEditor}>
@@ -170,5 +187,19 @@ export function FileContextMenu({
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
+
+      {/* Diff Modal */}
+      {showViewChanges && (
+        <DiffModal
+          isOpen={showDiffModal}
+          onClose={() => setShowDiffModal(false)}
+          worktreePath={worktreePath}
+          filePath={node.relativePath}
+          fileName={node.name}
+          staged={staged || false}
+          isUntracked={gitStatus === '?'}
+        />
+      )}
+    </>
   )
 }
