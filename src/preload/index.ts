@@ -82,6 +82,35 @@ const db = {
   getIndexes: () => ipcRenderer.invoke('db:getIndexes')
 }
 
+// Project operations API (dialog, shell, clipboard)
+const projectOps = {
+  // Open native folder picker dialog
+  openDirectoryDialog: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory'),
+
+  // Check if a path is a git repository
+  isGitRepository: (path: string): Promise<boolean> => ipcRenderer.invoke('git:isRepository', path),
+
+  // Validate a project path (checks if directory and git repo)
+  validateProject: (
+    path: string
+  ): Promise<{
+    success: boolean
+    path?: string
+    name?: string
+    error?: string
+  }> => ipcRenderer.invoke('project:validate', path),
+
+  // Open path in Finder/Explorer
+  showInFolder: (path: string): Promise<void> => ipcRenderer.invoke('shell:showItemInFolder', path),
+
+  // Open path with default application
+  openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path),
+
+  // Clipboard operations
+  copyToClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:writeText', text),
+  readFromClipboard: (): Promise<string> => ipcRenderer.invoke('clipboard:readText')
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -89,6 +118,7 @@ if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('api', api)
     contextBridge.exposeInMainWorld('db', db)
+    contextBridge.exposeInMainWorld('projectOps', projectOps)
   } catch (error) {
     console.error(error)
   }
@@ -97,4 +127,6 @@ if (process.contextIsolated) {
   window.api = api
   // @ts-expect-error (define in dts)
   window.db = db
+  // @ts-expect-error (define in dts)
+  window.projectOps = projectOps
 }

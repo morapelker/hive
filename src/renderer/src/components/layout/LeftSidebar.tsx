@@ -1,13 +1,21 @@
 import { useLayoutStore, LAYOUT_CONSTRAINTS } from '@/stores/useLayoutStore'
 import { ResizeHandle } from './ResizeHandle'
-import { FolderGit2, Plus } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { FolderGit2 } from 'lucide-react'
+import { ProjectList, AddProjectButton } from '@/components/projects'
 
 export function LeftSidebar(): React.JSX.Element {
   const { leftSidebarWidth, setLeftSidebarWidth } = useLayoutStore()
 
   const handleResize = (delta: number): void => {
     setLeftSidebarWidth(leftSidebarWidth + delta)
+  }
+
+  const handleAddProject = async (): Promise<void> => {
+    // Trigger the add project flow
+    const addButton = document.querySelector('[data-testid="add-project-button"]') as HTMLButtonElement
+    if (addButton) {
+      addButton.click()
+    }
   }
 
   return (
@@ -23,16 +31,10 @@ export function LeftSidebar(): React.JSX.Element {
             <FolderGit2 className="h-4 w-4" />
             <span>Projects</span>
           </div>
-          <Button variant="ghost" size="icon" className="h-6 w-6" title="Add Project">
-            <Plus className="h-4 w-4" />
-          </Button>
+          <AddProjectButton />
         </div>
         <div className="flex-1 overflow-auto p-2">
-          <div className="text-sm text-muted-foreground text-center py-8">
-            No projects added yet.
-            <br />
-            <span className="text-xs">Click + to add a project.</span>
-          </div>
+          <ProjectList onAddProject={handleAddProject} />
         </div>
         <div className="p-2 border-t text-xs text-muted-foreground">
           Width: {leftSidebarWidth}px

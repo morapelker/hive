@@ -154,6 +154,20 @@ declare global {
       tableExists: (tableName: string) => Promise<boolean>
       getIndexes: () => Promise<{ name: string; tbl_name: string }[]>
     }
+    projectOps: {
+      openDirectoryDialog: () => Promise<string | null>
+      isGitRepository: (path: string) => Promise<boolean>
+      validateProject: (path: string) => Promise<{
+        success: boolean
+        path?: string
+        name?: string
+        error?: string
+      }>
+      showInFolder: (path: string) => Promise<void>
+      openPath: (path: string) => Promise<string>
+      copyToClipboard: (text: string) => Promise<void>
+      readFromClipboard: () => Promise<string>
+    }
   }
 }
 

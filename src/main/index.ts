@@ -3,7 +3,7 @@ import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
-import { registerDatabaseHandlers } from './ipc'
+import { registerDatabaseHandlers, registerProjectHandlers } from './ipc'
 
 interface WindowBounds {
   x: number
@@ -122,6 +122,7 @@ app.whenReady().then(() => {
 
   // Register IPC handlers
   registerDatabaseHandlers()
+  registerProjectHandlers()
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
