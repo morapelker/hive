@@ -1,4 +1,4 @@
-import { SessionTabs } from '@/components/sessions'
+import { SessionTabs, SessionView } from '@/components/sessions'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 
@@ -40,15 +40,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       )
     }
 
-    // Session is active - show placeholder for now (Session 8 will add SessionView)
-    return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        <div className="text-center">
-          <p className="text-lg font-medium">Session Active</p>
-          <p className="text-sm mt-2">Session view coming in Session 8.</p>
-        </div>
-      </div>
-    )
+    // Session is active - render SessionView
+    return <SessionView sessionId={activeSessionId} />
   }
 
   return (
