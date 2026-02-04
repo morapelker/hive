@@ -317,6 +317,22 @@ declare global {
       }>
       // Subscribe to git status change events
       onStatusChanged: (callback: (event: GitStatusChangedEvent) => void) => () => void
+      // Get branch info (name, tracking, ahead/behind)
+      getBranchInfo: (worktreePath: string) => Promise<{
+        success: boolean
+        branch?: GitBranchInfo
+        error?: string
+      }>
+      // Stage all modified and untracked files
+      stageAll: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Unstage all staged files
+      unstageAll: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
     }
   }
 }
@@ -359,6 +375,13 @@ interface GitFileStatus {
 
 interface GitStatusChangedEvent {
   worktreePath: string
+}
+
+interface GitBranchInfo {
+  name: string
+  tracking: string | null
+  ahead: number
+  behind: number
 }
 
 export {}

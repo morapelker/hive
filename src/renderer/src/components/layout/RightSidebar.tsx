@@ -3,6 +3,7 @@ import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FileTree } from '@/components/file-tree'
+import { GitStatusPanel } from '@/components/git'
 
 export function RightSidebar(): React.JSX.Element {
   const { rightSidebarWidth, rightSidebarCollapsed, setRightSidebarWidth, toggleRightSidebar } =
@@ -48,11 +49,12 @@ export function RightSidebar(): React.JSX.Element {
         data-testid="right-sidebar"
         data-width={rightSidebarWidth}
       >
+        <GitStatusPanel worktreePath={selectedWorktreePath} />
         <FileTree
           worktreePath={selectedWorktreePath}
           onClose={toggleRightSidebar}
           onFileClick={handleFileClick}
-          className="h-full"
+          className="flex-1 min-h-0"
         />
       </aside>
     </div>

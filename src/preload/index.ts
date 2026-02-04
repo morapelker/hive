@@ -238,6 +238,13 @@ export interface GitStatusChangedEvent {
   worktreePath: string
 }
 
+export interface GitBranchInfo {
+  name: string
+  tracking: string | null
+  ahead: number
+  behind: number
+}
+
 // File tree operations API
 const fileTreeOps = {
   // Scan a directory and return the file tree
@@ -359,7 +366,32 @@ const gitOps = {
     return () => {
       ipcRenderer.removeListener('git:statusChanged', handler)
     }
-  }
+  },
+
+  // Get branch info (name, tracking, ahead/behind)
+  getBranchInfo: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    branch?: GitBranchInfo
+    error?: string
+  }> => ipcRenderer.invoke('git:branchInfo', worktreePath),
+
+  // Stage all modified and untracked files
+  stageAll: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:stageAll', worktreePath),
+
+  // Unstage all staged files
+  unstageAll: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:unstageAll', worktreePath)
 }
 
 const opencodeOps = {

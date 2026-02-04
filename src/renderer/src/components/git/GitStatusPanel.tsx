@@ -1,0 +1,342 @@
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { ChevronDown, ChevronRight, RefreshCw, GitBranch, ArrowUp, ArrowDown, Plus, Minus } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
+import { cn } from '@/lib/utils'
+
+interface GitStatusPanelProps {
+  worktreePath: string | null
+  className?: string
+}
+
+interface CollapsibleSectionProps {
+  title: string
+  count: number
+  defaultOpen?: boolean
+  children: React.ReactNode
+  action?: React.ReactNode
+  testId?: string
+}
+
+function CollapsibleSection({
+  title,
+  count,
+  defaultOpen = true,
+  children,
+  action,
+  testId
+}: CollapsibleSectionProps): React.JSX.Element {
+  const [isOpen, setIsOpen] = useState(defaultOpen)
+
+  if (count === 0) return <></>
+
+  return (
+    <div className="border-b last:border-b-0" data-testid={testId}>
+      <button
+        type="button"
+        className="flex items-center justify-between w-full px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent/50"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span className="flex items-center gap-1">
+          {isOpen ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
+          {title}
+          <span className="text-[10px] px-1 py-0.5 rounded bg-muted">{count}</span>
+        </span>
+        {action && (
+          <span onClick={(e) => e.stopPropagation()}>
+            {action}
+          </span>
+        )}
+      </button>
+      {isOpen && (
+        <div className="pb-1">
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface FileItemProps {
+  file: GitFileStatus
+  onToggle: (file: GitFileStatus) => void
+  isStaged: boolean
+}
+
+function FileItem({ file, onToggle, isStaged }: FileItemProps): React.JSX.Element {
+  const statusColors: Record<string, string> = {
+    M: 'text-yellow-500',
+    A: 'text-green-500',
+    D: 'text-red-500',
+    '?': 'text-gray-400',
+    C: 'text-red-600 font-bold'
+  }
+
+  return (
+    <div
+      className="flex items-center gap-2 px-2 py-0.5 hover:bg-accent/30 group"
+      data-testid={`git-file-item-${file.relativePath}`}
+    >
+      <Checkbox
+        checked={isStaged}
+        onCheckedChange={() => onToggle(file)}
+        className="h-3.5 w-3.5"
+        aria-label={isStaged ? `Unstage ${file.relativePath}` : `Stage ${file.relativePath}`}
+      />
+      <span className={cn('text-[10px] font-mono w-3', statusColors[file.status])}>
+        {file.status}
+      </span>
+      <span
+        className="text-xs truncate flex-1"
+        title={file.relativePath}
+      >
+        {file.relativePath}
+      </span>
+    </div>
+  )
+}
+
+export function GitStatusPanel({
+  worktreePath,
+  className
+}: GitStatusPanelProps): React.JSX.Element | null {
+  const {
+    loadFileStatuses,
+    loadBranchInfo,
+    stageFile,
+    unstageFile,
+    stageAll,
+    unstageAll,
+    isLoading
+  } = useGitStore()
+
+  // Subscribe directly to store state so we re-render when data changes
+  const fileStatusesByWorktree = useGitStore((state) => state.fileStatusesByWorktree)
+  const branchInfoByWorktree = useGitStore((state) => state.branchInfoByWorktree)
+
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  // Load initial data
+  useEffect(() => {
+    if (worktreePath) {
+      loadFileStatuses(worktreePath)
+      loadBranchInfo(worktreePath)
+    }
+  }, [worktreePath, loadFileStatuses, loadBranchInfo])
+
+  // Subscribe to git status changes
+  useEffect(() => {
+    if (!worktreePath) return
+
+    const unsubscribe = window.gitOps.onStatusChanged((event) => {
+      if (event.worktreePath === worktreePath) {
+        loadFileStatuses(worktreePath)
+        loadBranchInfo(worktreePath)
+      }
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [worktreePath, loadFileStatuses, loadBranchInfo])
+
+  // Get branch info directly from store state
+  const branchInfo = worktreePath ? branchInfoByWorktree.get(worktreePath) : undefined
+
+  // Get and categorize files - memoized based on the Map and worktreePath
+  const { fileStatuses, stagedFiles, modifiedFiles, untrackedFiles } = useMemo(() => {
+    const files = worktreePath ? fileStatusesByWorktree.get(worktreePath) || [] : []
+    const staged: GitFileStatus[] = []
+    const modified: GitFileStatus[] = []
+    const untracked: GitFileStatus[] = []
+
+    for (const file of files) {
+      if (file.staged) {
+        staged.push(file)
+      } else if (file.status === '?') {
+        untracked.push(file)
+      } else if (file.status === 'M' || file.status === 'D') {
+        modified.push(file)
+      }
+    }
+
+    return {
+      fileStatuses: files,
+      stagedFiles: staged,
+      modifiedFiles: modified,
+      untrackedFiles: untracked
+    }
+  }, [worktreePath, fileStatusesByWorktree])
+
+  const handleRefresh = useCallback(async () => {
+    if (!worktreePath) return
+    setIsRefreshing(true)
+    try {
+      await Promise.all([
+        loadFileStatuses(worktreePath),
+        loadBranchInfo(worktreePath)
+      ])
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [worktreePath, loadFileStatuses, loadBranchInfo])
+
+  const handleStageAll = useCallback(async () => {
+    if (!worktreePath) return
+    await stageAll(worktreePath)
+  }, [worktreePath, stageAll])
+
+  const handleUnstageAll = useCallback(async () => {
+    if (!worktreePath) return
+    await unstageAll(worktreePath)
+  }, [worktreePath, unstageAll])
+
+  const handleToggleFile = useCallback(async (file: GitFileStatus) => {
+    if (!worktreePath) return
+    if (file.staged) {
+      await unstageFile(worktreePath, file.relativePath)
+    } else {
+      await stageFile(worktreePath, file.relativePath)
+    }
+  }, [worktreePath, stageFile, unstageFile])
+
+  if (!worktreePath) {
+    return null
+  }
+
+  const hasChanges = fileStatuses.length > 0
+  const hasUnstaged = modifiedFiles.length > 0 || untrackedFiles.length > 0
+  const hasStaged = stagedFiles.length > 0
+
+  return (
+    <div className={cn('flex flex-col border-b', className)} data-testid="git-status-panel">
+      {/* Header with branch info */}
+      <div className="flex items-center justify-between px-2 py-1.5 bg-muted/30">
+        <div className="flex items-center gap-1.5 text-xs">
+          <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="font-medium" data-testid="git-branch-name">
+            {branchInfo?.name || 'Loading...'}
+          </span>
+          {branchInfo && branchInfo.tracking && (
+            <span className="flex items-center gap-1 text-muted-foreground" data-testid="git-ahead-behind">
+              {branchInfo.ahead > 0 && (
+                <span className="flex items-center gap-0.5" title={`${branchInfo.ahead} commit(s) ahead`}>
+                  <ArrowUp className="h-3 w-3" />
+                  {branchInfo.ahead}
+                </span>
+              )}
+              {branchInfo.behind > 0 && (
+                <span className="flex items-center gap-0.5" title={`${branchInfo.behind} commit(s) behind`}>
+                  <ArrowDown className="h-3 w-3" />
+                  {branchInfo.behind}
+                </span>
+              )}
+            </span>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn('h-5 w-5', (isLoading || isRefreshing) && 'animate-spin')}
+          onClick={handleRefresh}
+          disabled={isLoading || isRefreshing}
+          title="Refresh git status"
+          data-testid="git-refresh-button"
+        >
+          <RefreshCw className="h-3 w-3" />
+        </Button>
+      </div>
+
+      {!hasChanges ? (
+        <div className="px-2 py-3 text-xs text-muted-foreground text-center">
+          No changes
+        </div>
+      ) : (
+        <div className="max-h-[200px] overflow-y-auto">
+          {/* Staged Changes */}
+          <CollapsibleSection
+            title="Staged Changes"
+            count={stagedFiles.length}
+            testId="git-staged-section"
+            action={
+              hasStaged && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1.5 text-[10px]"
+                  onClick={handleUnstageAll}
+                  title="Unstage all files"
+                  data-testid="git-unstage-all"
+                >
+                  <Minus className="h-3 w-3 mr-0.5" />
+                  Unstage All
+                </Button>
+              )
+            }
+          >
+            {stagedFiles.map((file) => (
+              <FileItem
+                key={file.relativePath}
+                file={file}
+                onToggle={handleToggleFile}
+                isStaged={true}
+              />
+            ))}
+          </CollapsibleSection>
+
+          {/* Modified (Unstaged) */}
+          <CollapsibleSection
+            title="Changes"
+            count={modifiedFiles.length}
+            testId="git-modified-section"
+            action={
+              hasUnstaged && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1.5 text-[10px]"
+                  onClick={handleStageAll}
+                  title="Stage all files"
+                  data-testid="git-stage-all"
+                >
+                  <Plus className="h-3 w-3 mr-0.5" />
+                  Stage All
+                </Button>
+              )
+            }
+          >
+            {modifiedFiles.map((file) => (
+              <FileItem
+                key={file.relativePath}
+                file={file}
+                onToggle={handleToggleFile}
+                isStaged={false}
+              />
+            ))}
+          </CollapsibleSection>
+
+          {/* Untracked */}
+          <CollapsibleSection
+            title="Untracked"
+            count={untrackedFiles.length}
+            testId="git-untracked-section"
+          >
+            {untrackedFiles.map((file) => (
+              <FileItem
+                key={file.relativePath}
+                file={file}
+                onToggle={handleToggleFile}
+                isStaged={false}
+              />
+            ))}
+          </CollapsibleSection>
+        </div>
+      )}
+    </div>
+  )
+}

@@ -47,6 +47,19 @@ export interface GitOperationResult {
   error?: string
 }
 
+export interface GitBranchInfo {
+  name: string
+  tracking: string | null
+  ahead: number
+  behind: number
+}
+
+export interface GitBranchInfoResult {
+  success: boolean
+  branch?: GitBranchInfo
+  error?: string
+}
+
 /**
  * GitService - Handles all git operations for worktrees
  */
@@ -436,6 +449,69 @@ export class GitService {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       log.error('Failed to discard changes', error instanceof Error ? error : new Error(message), { filePath, repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Get branch info including ahead/behind counts
+   */
+  async getBranchInfo(): Promise<GitBranchInfoResult> {
+    try {
+      const status = await this.git.status()
+      const branchName = status.current || 'HEAD'
+
+      // Get tracking branch info
+      let tracking: string | null = null
+      let ahead = 0
+      let behind = 0
+
+      if (status.tracking) {
+        tracking = status.tracking
+        ahead = status.ahead
+        behind = status.behind
+      }
+
+      return {
+        success: true,
+        branch: {
+          name: branchName,
+          tracking,
+          ahead,
+          behind
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to get branch info', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Stage all modified and untracked files
+   */
+  async stageAll(): Promise<GitOperationResult> {
+    try {
+      await this.git.add(['-A'])
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to stage all files', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Unstage all staged files
+   */
+  async unstageAll(): Promise<GitOperationResult> {
+    try {
+      await this.git.reset(['HEAD'])
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to unstage all files', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
       return { success: false, error: message }
     }
   }

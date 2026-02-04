@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
-import { createGitService, GitFileStatus, GitStatusCode } from '../services/git-service'
+import { createGitService, GitFileStatus, GitStatusCode, GitBranchInfo } from '../services/git-service'
 import { createLogger } from '../services/logger'
 
 const log = createLogger({ component: 'GitFileHandlers' })
@@ -15,6 +15,12 @@ export interface GitFileStatusResult {
 
 export interface GitOperationResult {
   success: boolean
+  error?: string
+}
+
+export interface GitBranchInfoResult {
+  success: boolean
+  branch?: GitBranchInfo
   error?: string
 }
 
@@ -191,7 +197,79 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       }
     }
   )
+
+  // Get branch info (name, tracking, ahead/behind)
+  ipcMain.handle(
+    'git:branchInfo',
+    async (
+      _event,
+      worktreePath: string
+    ): Promise<GitBranchInfoResult> => {
+      log.info('Getting branch info', { worktreePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        const result = await gitService.getBranchInfo()
+        return result
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to get branch info', error instanceof Error ? error : new Error(message), { worktreePath })
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Stage all modified and untracked files
+  ipcMain.handle(
+    'git:stageAll',
+    async (
+      _event,
+      worktreePath: string
+    ): Promise<GitOperationResult> => {
+      log.info('Staging all files', { worktreePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        const result = await gitService.stageAll()
+
+        // Emit status change event
+        if (result.success && mainWindow) {
+          mainWindow.webContents.send('git:statusChanged', { worktreePath })
+        }
+
+        return result
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to stage all files', error instanceof Error ? error : new Error(message), { worktreePath })
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Unstage all staged files
+  ipcMain.handle(
+    'git:unstageAll',
+    async (
+      _event,
+      worktreePath: string
+    ): Promise<GitOperationResult> => {
+      log.info('Unstaging all files', { worktreePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        const result = await gitService.unstageAll()
+
+        // Emit status change event
+        if (result.success && mainWindow) {
+          mainWindow.webContents.send('git:statusChanged', { worktreePath })
+        }
+
+        return result
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to unstage all files', error instanceof Error ? error : new Error(message), { worktreePath })
+        return { success: false, error: message }
+      }
+    }
+  )
 }
 
 // Export types for use in preload
-export type { GitFileStatus, GitStatusCode }
+export type { GitFileStatus, GitStatusCode, GitBranchInfo }
