@@ -3,7 +3,7 @@ import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
-import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode } from './ipc'
+import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers } from './ipc'
 import { createLogger, getLogDir } from './services/logger'
 
 const log = createLogger({ component: 'Main' })
@@ -170,6 +170,8 @@ app.whenReady().then(() => {
   if (mainWindow) {
     log.info('Registering OpenCode handlers')
     registerOpenCodeHandlers(mainWindow)
+    log.info('Registering FileTree handlers')
+    registerFileTreeHandlers(mainWindow)
   }
 
   app.on('activate', function () {
@@ -190,6 +192,8 @@ app.on('window-all-closed', () => {
 
 // Cleanup when app is about to quit
 app.on('will-quit', async () => {
+  // Cleanup file tree watchers
+  await cleanupFileTreeWatchers()
   // Cleanup OpenCode connections
   await cleanupOpenCode()
   // Close database

@@ -74,13 +74,12 @@ describe('Session 2: Application Layout', () => {
     })
   })
 
-  test('Right sidebar shows placeholder content', () => {
+  test('Right sidebar shows file tree component', () => {
     render(<AppLayout />)
 
-    // There are multiple "File Tree" elements (header and placeholder), so use getAllByText
-    const fileTreeElements = screen.getAllByText('File Tree')
-    expect(fileTreeElements.length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Coming Soon')).toBeInTheDocument()
+    // File tree component should be rendered (with "Files" header and "Select a worktree" message)
+    expect(screen.getByText('Files')).toBeInTheDocument()
+    expect(screen.getByText('Select a worktree')).toBeInTheDocument()
   })
 
   test('Panel sizes persist to localStorage', () => {

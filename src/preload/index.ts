@@ -206,6 +206,73 @@ export interface OpenCodeStreamEvent {
   data: any
 }
 
+// File tree node type
+export interface FileTreeNode {
+  name: string
+  path: string
+  relativePath: string
+  isDirectory: boolean
+  extension: string | null
+  children?: FileTreeNode[]
+}
+
+// File tree change event type
+export interface FileTreeChangeEvent {
+  worktreePath: string
+  eventType: 'add' | 'addDir' | 'unlink' | 'unlinkDir' | 'change'
+  changedPath: string
+  relativePath: string
+}
+
+// File tree operations API
+const fileTreeOps = {
+  // Scan a directory and return the file tree
+  scan: (
+    dirPath: string
+  ): Promise<{
+    success: boolean
+    tree?: FileTreeNode[]
+    error?: string
+  }> => ipcRenderer.invoke('file-tree:scan', dirPath),
+
+  // Lazy load children for a directory
+  loadChildren: (
+    dirPath: string,
+    rootPath: string
+  ): Promise<{
+    success: boolean
+    children?: FileTreeNode[]
+    error?: string
+  }> => ipcRenderer.invoke('file-tree:loadChildren', dirPath, rootPath),
+
+  // Start watching a directory for changes
+  watch: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('file-tree:watch', worktreePath),
+
+  // Stop watching a directory
+  unwatch: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('file-tree:unwatch', worktreePath),
+
+  // Subscribe to file tree change events
+  onChange: (callback: (event: FileTreeChangeEvent) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, event: FileTreeChangeEvent): void => {
+      callback(event)
+    }
+    ipcRenderer.on('file-tree:change', handler)
+    return () => {
+      ipcRenderer.removeListener('file-tree:change', handler)
+    }
+  }
+}
+
 const opencodeOps = {
   // Connect to OpenCode for a worktree (lazy starts server if needed)
   connect: (
@@ -267,6 +334,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('worktreeOps', worktreeOps)
     contextBridge.exposeInMainWorld('systemOps', systemOps)
     contextBridge.exposeInMainWorld('opencodeOps', opencodeOps)
+    contextBridge.exposeInMainWorld('fileTreeOps', fileTreeOps)
   } catch (error) {
     console.error(error)
   }
@@ -283,4 +351,6 @@ if (process.contextIsolated) {
   window.systemOps = systemOps
   // @ts-expect-error (define in dts)
   window.opencodeOps = opencodeOps
+  // @ts-expect-error (define in dts)
+  window.fileTreeOps = fileTreeOps
 }

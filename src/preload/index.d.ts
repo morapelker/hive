@@ -252,6 +252,32 @@ declare global {
       // Subscribe to streaming events
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
     }
+    fileTreeOps: {
+      // Scan a directory and return the file tree
+      scan: (dirPath: string) => Promise<{
+        success: boolean
+        tree?: FileTreeNode[]
+        error?: string
+      }>
+      // Lazy load children for a directory
+      loadChildren: (dirPath: string, rootPath: string) => Promise<{
+        success: boolean
+        children?: FileTreeNode[]
+        error?: string
+      }>
+      // Start watching a directory for changes
+      watch: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Stop watching a directory
+      unwatch: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Subscribe to file tree change events
+      onChange: (callback: (event: FileTreeChangeEvent) => void) => () => void
+    }
   }
 }
 
@@ -261,6 +287,24 @@ interface OpenCodeStreamEvent {
   sessionId: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any
+}
+
+// File tree node type
+interface FileTreeNode {
+  name: string
+  path: string
+  relativePath: string
+  isDirectory: boolean
+  extension: string | null
+  children?: FileTreeNode[]
+}
+
+// File tree change event type
+interface FileTreeChangeEvent {
+  worktreePath: string
+  eventType: 'add' | 'addDir' | 'unlink' | 'unlinkDir' | 'change'
+  changedPath: string
+  relativePath: string
 }
 
 export {}

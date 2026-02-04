@@ -1,0 +1,5 @@
+export { FileTree } from './FileTree'
+export { FileTreeHeader } from './FileTreeHeader'
+export { FileTreeFilter } from './FileTreeFilter'
+export { FileTreeNodeComponent } from './FileTreeNode'
+export { FileIcon } from './FileIcon'
