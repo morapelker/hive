@@ -1,11 +1,23 @@
-import { Moon, Sun, Monitor, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Moon, Sun, Monitor, PanelRightClose, PanelRightOpen, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { useThemeStore } from '@/stores/useThemeStore'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+import { useThemeStore, type Theme } from '@/stores/useThemeStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { toast } from 'sonner'
 
+const themeOptions: { value: Theme; label: string; icon: typeof Moon }[] = [
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'system', label: 'System', icon: Monitor }
+]
+
 export function Header(): React.JSX.Element {
-  const { theme, cycleTheme } = useThemeStore()
+  const { theme, setTheme } = useThemeStore()
   const { rightSidebarCollapsed, toggleRightSidebar } = useLayoutStore()
 
   const getThemeIcon = (): React.JSX.Element => {
@@ -19,12 +31,9 @@ export function Header(): React.JSX.Element {
     }
   }
 
-  const handleThemeToggle = (): void => {
-    cycleTheme()
-    const themes = ['dark', 'light', 'system']
-    const currentIndex = themes.indexOf(theme)
-    const nextTheme = themes[(currentIndex + 1) % themes.length]
-    toast.success(`Theme changed to ${nextTheme}`)
+  const handleThemeChange = (newTheme: Theme): void => {
+    setTheme(newTheme)
+    toast.success(`Theme changed to ${newTheme}`)
   }
 
   return (
@@ -42,15 +51,32 @@ export function Header(): React.JSX.Element {
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        <Button
-          onClick={handleThemeToggle}
-          variant="ghost"
-          size="icon"
-          title={`Current theme: ${theme}`}
-          data-testid="theme-toggle"
-        >
-          {getThemeIcon()}
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              title={`Current theme: ${theme}`}
+              data-testid="theme-toggle"
+            >
+              {getThemeIcon()}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" data-testid="theme-dropdown">
+            {themeOptions.map((option) => (
+              <DropdownMenuItem
+                key={option.value}
+                onClick={() => handleThemeChange(option.value)}
+                className="flex items-center gap-2"
+                data-testid={`theme-option-${option.value}`}
+              >
+                <option.icon className="h-4 w-4" />
+                <span>{option.label}</span>
+                {theme === option.value && <Check className="h-4 w-4 ml-auto" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           onClick={toggleRightSidebar}
           variant="ghost"

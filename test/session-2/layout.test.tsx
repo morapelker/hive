@@ -98,28 +98,32 @@ describe('Session 2: Application Layout', () => {
   test('Theme toggle switches modes', async () => {
     render(<AppLayout />)
 
+    // Theme toggle button exists in header
     const themeToggle = screen.getByTestId('theme-toggle')
+    expect(themeToggle).toBeInTheDocument()
 
     // Initially dark
     expect(useThemeStore.getState().theme).toBe('dark')
 
-    // Click to switch to light
-    fireEvent.click(themeToggle)
-    await waitFor(() => {
-      expect(useThemeStore.getState().theme).toBe('light')
-    })
+    // Theme toggle is a dropdown menu trigger (has aria-haspopup)
+    expect(themeToggle).toHaveAttribute('aria-haspopup', 'menu')
 
-    // Click to switch to system
-    fireEvent.click(themeToggle)
-    await waitFor(() => {
-      expect(useThemeStore.getState().theme).toBe('system')
-    })
+    // Test theme changes via store (dropdown UI testing is in session-6)
+    const { setTheme } = useThemeStore.getState()
 
-    // Click to switch back to dark
-    fireEvent.click(themeToggle)
-    await waitFor(() => {
-      expect(useThemeStore.getState().theme).toBe('dark')
-    })
+    // Switch to light
+    setTheme('light')
+    expect(useThemeStore.getState().theme).toBe('light')
+    expect(document.documentElement.classList.contains('light')).toBe(true)
+
+    // Switch to system
+    setTheme('system')
+    expect(useThemeStore.getState().theme).toBe('system')
+
+    // Switch back to dark
+    setTheme('dark')
+    expect(useThemeStore.getState().theme).toBe('dark')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
   })
 
   test('Main pane fills remaining space', () => {
