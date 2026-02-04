@@ -12,6 +12,7 @@ import {
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
 import { useProjectStore } from '@/stores'
+import { WorktreeList } from '@/components/worktrees'
 
 interface Project {
   id: string
@@ -113,97 +114,102 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
   }
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          className={cn(
-            'group flex items-center gap-1 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
-            isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
-          )}
-          onClick={handleClick}
-          data-testid={`project-item-${project.id}`}
-        >
-          {/* Expand/Collapse Chevron */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 p-0 hover:bg-transparent"
-            onClick={handleToggleExpand}
+    <div>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            className={cn(
+              'group flex items-center gap-1 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
+              isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+            )}
+            onClick={handleClick}
+            data-testid={`project-item-${project.id}`}
           >
-            <ChevronRight
-              className={cn(
-                'h-3.5 w-3.5 text-muted-foreground transition-transform',
-                isExpanded && 'rotate-90'
-              )}
-            />
-          </Button>
-
-          {/* Folder Icon */}
-          {isExpanded ? (
-            <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-          ) : (
-            <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
-          )}
-
-          {/* Project Name */}
-          {isEditing ? (
-            <Input
-              ref={inputRef}
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              onBlur={handleSaveEdit}
-              onKeyDown={handleKeyDown}
-              className="h-6 py-0 px-1 text-sm"
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <span className="flex-1 text-sm truncate" title={project.path}>
-              {project.name}
-            </span>
-          )}
-
-          {/* More Options Button (visible on hover) */}
-          {!isEditing && (
+            {/* Expand/Collapse Chevron */}
             <Button
               variant="ghost"
               size="icon"
-              className={cn(
-                'h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity',
-                'hover:bg-accent'
-              )}
-              onClick={(e) => {
-                e.stopPropagation()
-                // Context menu will handle this
-              }}
+              className="h-5 w-5 p-0 hover:bg-transparent"
+              onClick={handleToggleExpand}
             >
-              <MoreHorizontal className="h-3.5 w-3.5" />
+              <ChevronRight
+                className={cn(
+                  'h-3.5 w-3.5 text-muted-foreground transition-transform',
+                  isExpanded && 'rotate-90'
+                )}
+              />
             </Button>
-          )}
-        </div>
-      </ContextMenuTrigger>
 
-      <ContextMenuContent className="w-48">
-        <ContextMenuItem onClick={handleStartEdit}>
-          <Pencil className="h-4 w-4 mr-2" />
-          Edit Name
-        </ContextMenuItem>
-        <ContextMenuItem onClick={handleOpenInFinder}>
-          <ExternalLink className="h-4 w-4 mr-2" />
-          Open in Finder
-        </ContextMenuItem>
-        <ContextMenuItem onClick={handleCopyPath}>
-          <Copy className="h-4 w-4 mr-2" />
-          Copy Path
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onClick={handleRemove}
-          className="text-destructive focus:text-destructive focus:bg-destructive/10"
-        >
-          <Trash2 className="h-4 w-4 mr-2" />
-          Remove from Hive
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+            {/* Folder Icon */}
+            {isExpanded ? (
+              <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+            ) : (
+              <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
+            )}
+
+            {/* Project Name */}
+            {isEditing ? (
+              <Input
+                ref={inputRef}
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onBlur={handleSaveEdit}
+                onKeyDown={handleKeyDown}
+                className="h-6 py-0 px-1 text-sm"
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span className="flex-1 text-sm truncate" title={project.path}>
+                {project.name}
+              </span>
+            )}
+
+            {/* More Options Button (visible on hover) */}
+            {!isEditing && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  'h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity',
+                  'hover:bg-accent'
+                )}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // Context menu will handle this
+                }}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </ContextMenuTrigger>
+
+        <ContextMenuContent className="w-48">
+          <ContextMenuItem onClick={handleStartEdit}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Edit Name
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleOpenInFinder}>
+            <ExternalLink className="h-4 w-4 mr-2" />
+            Open in Finder
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleCopyPath}>
+            <Copy className="h-4 w-4 mr-2" />
+            Copy Path
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            onClick={handleRemove}
+            className="text-destructive focus:text-destructive focus:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Remove from Hive
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+
+      {/* Worktree List - shown when project is expanded */}
+      {isExpanded && <WorktreeList project={project} />}
+    </div>
   )
 }

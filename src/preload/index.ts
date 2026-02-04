@@ -111,6 +111,77 @@ const projectOps = {
   readFromClipboard: (): Promise<string> => ipcRenderer.invoke('clipboard:readText')
 }
 
+// Worktree operations API
+const worktreeOps = {
+  // Create a new worktree
+  create: (params: {
+    projectId: string
+    projectPath: string
+    projectName: string
+  }): Promise<{
+    success: boolean
+    worktree?: {
+      id: string
+      project_id: string
+      name: string
+      branch_name: string
+      path: string
+      status: string
+      created_at: string
+      last_accessed_at: string
+    }
+    error?: string
+  }> => ipcRenderer.invoke('worktree:create', params),
+
+  // Delete/Archive a worktree
+  delete: (params: {
+    worktreeId: string
+    worktreePath: string
+    branchName: string
+    projectPath: string
+    archive: boolean
+  }): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('worktree:delete', params),
+
+  // Sync worktrees with actual git state
+  sync: (params: {
+    projectId: string
+    projectPath: string
+  }): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('worktree:sync', params),
+
+  // Check if worktree path exists on disk
+  exists: (worktreePath: string): Promise<boolean> => ipcRenderer.invoke('worktree:exists', worktreePath),
+
+  // Open worktree in terminal
+  openInTerminal: (worktreePath: string): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('worktree:openInTerminal', worktreePath),
+
+  // Open worktree in editor (VS Code)
+  openInEditor: (worktreePath: string): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('worktree:openInEditor', worktreePath),
+
+  // Get git branches for a project
+  getBranches: (projectPath: string): Promise<{
+    success: boolean
+    branches?: string[]
+    currentBranch?: string
+    error?: string
+  }> => ipcRenderer.invoke('git:branches', projectPath),
+
+  // Check if a branch exists
+  branchExists: (projectPath: string, branchName: string): Promise<boolean> =>
+    ipcRenderer.invoke('git:branchExists', projectPath, branchName)
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -119,6 +190,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('api', api)
     contextBridge.exposeInMainWorld('db', db)
     contextBridge.exposeInMainWorld('projectOps', projectOps)
+    contextBridge.exposeInMainWorld('worktreeOps', worktreeOps)
   } catch (error) {
     console.error(error)
   }
@@ -129,4 +201,6 @@ if (process.contextIsolated) {
   window.db = db
   // @ts-expect-error (define in dts)
   window.projectOps = projectOps
+  // @ts-expect-error (define in dts)
+  window.worktreeOps = worktreeOps
 }

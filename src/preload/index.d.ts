@@ -168,6 +168,50 @@ declare global {
       copyToClipboard: (text: string) => Promise<void>
       readFromClipboard: () => Promise<string>
     }
+    worktreeOps: {
+      create: (params: {
+        projectId: string
+        projectPath: string
+        projectName: string
+      }) => Promise<{
+        success: boolean
+        worktree?: Worktree
+        error?: string
+      }>
+      delete: (params: {
+        worktreeId: string
+        worktreePath: string
+        branchName: string
+        projectPath: string
+        archive: boolean
+      }) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      sync: (params: {
+        projectId: string
+        projectPath: string
+      }) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      exists: (worktreePath: string) => Promise<boolean>
+      openInTerminal: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      openInEditor: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      getBranches: (projectPath: string) => Promise<{
+        success: boolean
+        branches?: string[]
+        currentBranch?: string
+        error?: string
+      }>
+      branchExists: (projectPath: string, branchName: string) => Promise<boolean>
+    }
   }
 }
 
