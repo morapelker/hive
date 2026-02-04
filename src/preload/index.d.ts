@@ -351,6 +351,13 @@ declare global {
         updated?: boolean
         error?: string
       }>
+      // Get diff for a file
+      getDiff: (worktreePath: string, filePath: string, staged: boolean, isUntracked: boolean) => Promise<{
+        success: boolean
+        diff?: string
+        fileName?: string
+        error?: string
+      }>
     }
   }
 }

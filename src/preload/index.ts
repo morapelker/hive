@@ -425,7 +425,20 @@ const gitOps = {
     success: boolean
     updated?: boolean
     error?: string
-  }> => ipcRenderer.invoke('git:pull', worktreePath, remote, branch, rebase)
+  }> => ipcRenderer.invoke('git:pull', worktreePath, remote, branch, rebase),
+
+  // Get diff for a file
+  getDiff: (
+    worktreePath: string,
+    filePath: string,
+    staged: boolean,
+    isUntracked: boolean
+  ): Promise<{
+    success: boolean
+    diff?: string
+    fileName?: string
+    error?: string
+  }> => ipcRenderer.invoke('git:diff', worktreePath, filePath, staged, isUntracked)
 }
 
 const opencodeOps = {

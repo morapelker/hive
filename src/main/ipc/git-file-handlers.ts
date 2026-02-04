@@ -6,7 +6,8 @@ import {
   GitBranchInfo,
   GitCommitResult,
   GitPushResult,
-  GitPullResult
+  GitPullResult,
+  GitDiffResult
 } from '../services/git-service'
 import { createLogger } from '../services/logger'
 
@@ -364,5 +365,34 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
   )
 }
 
+// Get diff for a file
+  ipcMain.handle(
+    'git:diff',
+    async (
+      _event,
+      worktreePath: string,
+      filePath: string,
+      staged: boolean,
+      isUntracked: boolean
+    ): Promise<GitDiffResult> => {
+      log.info('Getting diff', { worktreePath, filePath, staged, isUntracked })
+      try {
+        const gitService = createGitService(worktreePath)
+
+        // For untracked files, use special method
+        if (isUntracked) {
+          return await gitService.getUntrackedFileDiff(filePath)
+        }
+
+        return await gitService.getDiff(filePath, staged)
+      } catch (error) {
+        const errMessage = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to get diff', error instanceof Error ? error : new Error(errMessage), { worktreePath, filePath })
+        return { success: false, error: errMessage }
+      }
+    }
+  )
+}
+
 // Export types for use in preload
-export type { GitFileStatus, GitStatusCode, GitBranchInfo, GitCommitResult, GitPushResult, GitPullResult }
+export type { GitFileStatus, GitStatusCode, GitBranchInfo, GitCommitResult, GitPushResult, GitPullResult, GitDiffResult }

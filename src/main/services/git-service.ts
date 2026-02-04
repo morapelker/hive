@@ -78,6 +78,13 @@ export interface GitPullResult {
   error?: string
 }
 
+export interface GitDiffResult {
+  success: boolean
+  diff?: string
+  fileName?: string
+  error?: string
+}
+
 /**
  * GitService - Handles all git operations for worktrees
  */
@@ -689,6 +696,72 @@ export class GitService {
       }
 
       return { success: false, error: userMessage }
+    }
+  }
+
+  /**
+   * Get diff for a specific file
+   * @param filePath - Relative path to the file
+   * @param staged - Whether to get staged diff (default: false for unstaged)
+   */
+  async getDiff(filePath: string, staged: boolean = false): Promise<GitDiffResult> {
+    try {
+      const args = ['diff']
+
+      // For staged changes, add --cached flag
+      if (staged) {
+        args.push('--cached')
+      }
+
+      // Add the file path
+      args.push('--', filePath)
+
+      const result = await this.git.raw(args)
+      const fileName = filePath.split('/').pop() || filePath
+
+      return {
+        success: true,
+        diff: result || '',
+        fileName
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to get diff', error instanceof Error ? error : new Error(message), { filePath, staged, repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Get diff for a new untracked file (shows entire file as additions)
+   * @param filePath - Relative path to the file
+   */
+  async getUntrackedFileDiff(filePath: string): Promise<GitDiffResult> {
+    try {
+      const { readFileSync } = await import('fs')
+      const fullPath = join(this.repoPath, filePath)
+      const content = readFileSync(fullPath, 'utf-8')
+      const lines = content.split('\n')
+      const fileName = filePath.split('/').pop() || filePath
+
+      // Create a unified diff format for new file
+      const diffLines = [
+        `diff --git a/${filePath} b/${filePath}`,
+        'new file mode 100644',
+        '--- /dev/null',
+        `+++ b/${filePath}`,
+        `@@ -0,0 +1,${lines.length} @@`,
+        ...lines.map((line) => `+${line}`)
+      ]
+
+      return {
+        success: true,
+        diff: diffLines.join('\n'),
+        fileName
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to get untracked file diff', error instanceof Error ? error : new Error(message), { filePath, repoPath: this.repoPath })
+      return { success: false, error: message }
     }
   }
 }
