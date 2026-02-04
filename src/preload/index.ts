@@ -198,6 +198,64 @@ const systemOps = {
   }> => ipcRenderer.invoke('system:getAppPaths')
 }
 
+// OpenCode SDK operations API
+export interface OpenCodeStreamEvent {
+  type: string
+  sessionId: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any
+}
+
+const opencodeOps = {
+  // Connect to OpenCode for a worktree (lazy starts server if needed)
+  connect: (
+    worktreePath: string,
+    hiveSessionId: string
+  ): Promise<{ success: boolean; sessionId?: string; error?: string }> =>
+    ipcRenderer.invoke('opencode:connect', worktreePath, hiveSessionId),
+
+  // Reconnect to existing OpenCode session
+  reconnect: (
+    worktreePath: string,
+    opencodeSessionId: string,
+    hiveSessionId: string
+  ): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('opencode:reconnect', worktreePath, opencodeSessionId, hiveSessionId),
+
+  // Send a prompt (response streams via onStream)
+  prompt: (
+    worktreePath: string,
+    opencodeSessionId: string,
+    message: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:prompt', worktreePath, opencodeSessionId, message),
+
+  // Disconnect session (may kill server if last session for worktree)
+  disconnect: (
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:disconnect', worktreePath, opencodeSessionId),
+
+  // Get messages from an OpenCode session
+  getMessages: (
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<{ success: boolean; messages: unknown[]; error?: string }> =>
+    ipcRenderer.invoke('opencode:messages', worktreePath, opencodeSessionId),
+
+  // Subscribe to streaming events
+  onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, event: OpenCodeStreamEvent): void => {
+      callback(event)
+    }
+    ipcRenderer.on('opencode:stream', handler)
+    return () => {
+      ipcRenderer.removeListener('opencode:stream', handler)
+    }
+  }
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -208,6 +266,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('projectOps', projectOps)
     contextBridge.exposeInMainWorld('worktreeOps', worktreeOps)
     contextBridge.exposeInMainWorld('systemOps', systemOps)
+    contextBridge.exposeInMainWorld('opencodeOps', opencodeOps)
   } catch (error) {
     console.error(error)
   }
@@ -222,4 +281,6 @@ if (process.contextIsolated) {
   window.worktreeOps = worktreeOps
   // @ts-expect-error (define in dts)
   window.systemOps = systemOps
+  // @ts-expect-error (define in dts)
+  window.opencodeOps = opencodeOps
 }

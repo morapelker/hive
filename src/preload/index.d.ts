@@ -221,7 +221,46 @@ declare global {
         logs: string
       }>
     }
+    opencodeOps: {
+      // Connect to OpenCode for a worktree (lazy starts server if needed)
+      connect: (
+        worktreePath: string,
+        hiveSessionId: string
+      ) => Promise<{ success: boolean; sessionId?: string; error?: string }>
+      // Reconnect to existing OpenCode session
+      reconnect: (
+        worktreePath: string,
+        opencodeSessionId: string,
+        hiveSessionId: string
+      ) => Promise<{ success: boolean }>
+      // Send a prompt (response streams via onStream)
+      prompt: (
+        worktreePath: string,
+        opencodeSessionId: string,
+        message: string
+      ) => Promise<{ success: boolean; error?: string }>
+      // Disconnect session (may kill server if last session for worktree)
+      disconnect: (
+        worktreePath: string,
+        opencodeSessionId: string
+      ) => Promise<{ success: boolean; error?: string }>
+      // Get messages from an OpenCode session
+      getMessages: (
+        worktreePath: string,
+        opencodeSessionId: string
+      ) => Promise<{ success: boolean; messages: unknown[]; error?: string }>
+      // Subscribe to streaming events
+      onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
+    }
   }
+}
+
+// OpenCode stream event type
+interface OpenCodeStreamEvent {
+  type: string
+  sessionId: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any
 }
 
 export {}

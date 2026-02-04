@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
-// Types for OpenCode SDK integration (Session 11)
+// Types for OpenCode SDK integration
 export interface OpenCodeMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -23,6 +23,7 @@ interface SessionViewProps {
 
 interface MessageItemProps {
   message: OpenCodeMessage
+  isStreaming?: boolean
 }
 
 interface CodeBlockProps {
@@ -39,6 +40,31 @@ interface DbMessage {
   created_at: string
 }
 
+// Session type from database
+interface DbSession {
+  id: string
+  worktree_id: string | null
+  project_id: string
+  name: string | null
+  status: 'active' | 'completed' | 'error'
+  opencode_session_id: string | null
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+}
+
+// Worktree type from database
+interface DbWorktree {
+  id: string
+  project_id: string
+  name: string
+  branch_name: string
+  path: string
+  status: 'active' | 'archived'
+  created_at: string
+  last_accessed_at: string
+}
+
 // Convert database message to OpenCodeMessage
 function dbMessageToOpenCode(msg: DbMessage): OpenCodeMessage {
   return {
@@ -49,7 +75,7 @@ function dbMessageToOpenCode(msg: DbMessage): OpenCodeMessage {
   }
 }
 
-// Code block component with copy functionality and syntax highlighting placeholder
+// Code block component with copy functionality
 function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): React.JSX.Element {
   const [copied, setCopied] = useState(false)
 
@@ -69,7 +95,6 @@ function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): React.JSX
       className="relative group my-3 rounded-lg overflow-hidden border border-border bg-zinc-900 dark:bg-zinc-950"
       data-testid="code-block"
     >
-      {/* Header with language label and copy button */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-zinc-800 dark:bg-zinc-900">
         <span className="text-xs font-medium text-muted-foreground uppercase">{language}</span>
         <Button
@@ -86,7 +111,6 @@ function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): React.JSX
           )}
         </Button>
       </div>
-      {/* Code content - placeholder for syntax highlighting (Session 11) */}
       <pre className="p-4 overflow-x-auto text-sm font-mono text-zinc-100">
         <code>{code}</code>
       </pre>
@@ -103,7 +127,6 @@ function parseContent(content: string): React.JSX.Element {
 
   let keyIndex = 0
   while ((match = codeBlockRegex.exec(content)) !== null) {
-    // Add text before code block
     if (match.index > lastIndex) {
       const textBefore = content.slice(lastIndex, match.index)
       parts.push(
@@ -113,7 +136,6 @@ function parseContent(content: string): React.JSX.Element {
       )
     }
 
-    // Add code block
     const language = match[1] || 'text'
     const code = match[2].trim()
     parts.push(<CodeBlock key={`code-${keyIndex++}`} code={code} language={language} />)
@@ -121,7 +143,6 @@ function parseContent(content: string): React.JSX.Element {
     lastIndex = match.index + match[0].length
   }
 
-  // Add remaining text
   if (lastIndex < content.length) {
     parts.push(
       <span key={`text-${keyIndex++}`} className="whitespace-pre-wrap">
@@ -134,7 +155,7 @@ function parseContent(content: string): React.JSX.Element {
 }
 
 // Individual message component
-function MessageItem({ message }: MessageItemProps): React.JSX.Element {
+function MessageItem({ message, isStreaming = false }: MessageItemProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
 
@@ -148,21 +169,15 @@ function MessageItem({ message }: MessageItemProps): React.JSX.Element {
       data-testid={`message-${message.role}`}
       data-message-id={message.id}
     >
-      {/* Avatar */}
       <div
         className={cn(
           'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center',
           isUser ? 'bg-primary text-primary-foreground' : 'bg-muted'
         )}
       >
-        {isUser ? (
-          <User className="h-4 w-4" />
-        ) : (
-          <Bot className="h-4 w-4" />
-        )}
+        {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
       </div>
 
-      {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
           <span className="text-sm font-medium">
@@ -171,9 +186,13 @@ function MessageItem({ message }: MessageItemProps): React.JSX.Element {
           <span className="text-xs text-muted-foreground">
             {new Date(message.timestamp).toLocaleTimeString()}
           </span>
+          {isStreaming && (
+            <span className="text-xs text-blue-500 animate-pulse">Streaming...</span>
+          )}
         </div>
         <div className="text-sm text-foreground leading-relaxed">
           {parseContent(message.content)}
+          {isStreaming && <span className="inline-block w-2 h-4 bg-foreground animate-pulse ml-0.5" />}
         </div>
       </div>
     </div>
@@ -183,10 +202,7 @@ function MessageItem({ message }: MessageItemProps): React.JSX.Element {
 // Loading state component
 function LoadingState(): React.JSX.Element {
   return (
-    <div
-      className="flex-1 flex flex-col items-center justify-center gap-4"
-      data-testid="loading-state"
-    >
+    <div className="flex-1 flex flex-col items-center justify-center gap-4" data-testid="loading-state">
       <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       <div className="text-center">
         <p className="text-sm font-medium">Connecting to session...</p>
@@ -204,10 +220,7 @@ interface ErrorStateProps {
 
 function ErrorState({ message, onRetry }: ErrorStateProps): React.JSX.Element {
   return (
-    <div
-      className="flex-1 flex flex-col items-center justify-center gap-4"
-      data-testid="error-state"
-    >
+    <div className="flex-1 flex flex-col items-center justify-center gap-4" data-testid="error-state">
       <div className="h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center">
         <AlertCircle className="h-6 w-6 text-destructive" />
       </div>
@@ -231,18 +244,25 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [viewState, setViewState] = useState<SessionViewState>({ status: 'connecting' })
   const [isSending, setIsSending] = useState(false)
 
+  // OpenCode state
+  const [worktreePath, setWorktreePath] = useState<string | null>(null)
+  const [opencodeSessionId, setOpencodeSessionId] = useState<string | null>(null)
+  const [streamingContent, setStreamingContent] = useState<string>('')
+  const [isStreaming, setIsStreaming] = useState(false)
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const streamingContentRef = useRef<string>('')
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive or streaming updates
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, scrollToBottom])
+  }, [messages, streamingContent, scrollToBottom])
 
   // Auto-resize textarea
   useEffect(() => {
@@ -253,44 +273,210 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [inputValue])
 
-  // Load messages from database when session changes
+  // Load session info and connect to OpenCode
   useEffect(() => {
-    const loadMessages = async (): Promise<void> => {
+    let unsubscribe: (() => void) | null = null
+
+    const initializeSession = async (): Promise<void> => {
       setViewState({ status: 'connecting' })
+
       try {
-        const dbMessages = await window.db.message.getBySession(sessionId) as DbMessage[]
+        // 1. Load messages from database
+        const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
         const loadedMessages = dbMessages.map(dbMessageToOpenCode)
         setMessages(loadedMessages)
-        setViewState({ status: 'connected' })
+
+        // 2. Get session info to find worktree
+        const session = (await window.db.session.get(sessionId)) as DbSession | null
+        if (!session) {
+          throw new Error('Session not found')
+        }
+
+        // 3. Get worktree path
+        let wtPath: string | null = null
+        if (session.worktree_id) {
+          const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
+          if (worktree) {
+            wtPath = worktree.path
+            setWorktreePath(wtPath)
+          }
+        }
+
+        if (!wtPath) {
+          // No worktree - just show messages without OpenCode
+          console.warn('No worktree path for session, OpenCode disabled')
+          setViewState({ status: 'connected' })
+          return
+        }
+
+        // 4. Subscribe to OpenCode stream events
+        unsubscribe = window.opencodeOps.onStream((event) => {
+          // Only handle events for this session
+          if (event.sessionId !== sessionId) return
+
+          console.log('OpenCode stream event:', event.type, event.data)
+
+          // Handle different event types
+          if (event.type === 'message.part.updated') {
+            const part = event.data?.part
+            if (part?.type === 'text') {
+              // Update streaming content with delta or full text
+              const delta = event.data?.delta
+              if (delta) {
+                streamingContentRef.current += delta
+                setStreamingContent(streamingContentRef.current)
+              } else if (part.text) {
+                streamingContentRef.current = part.text
+                setStreamingContent(part.text)
+              }
+              setIsStreaming(true)
+            }
+          } else if (event.type === 'message.updated') {
+            const info = event.data?.info
+            if (info?.role === 'assistant' && info.time?.completed) {
+              // Message complete - save to database and update UI
+              const finalContent = streamingContentRef.current || ''
+              if (finalContent) {
+                saveAssistantMessage(finalContent)
+              }
+              // Reset streaming state
+              streamingContentRef.current = ''
+              setStreamingContent('')
+              setIsStreaming(false)
+              setIsSending(false)
+            }
+          } else if (event.type === 'session.idle') {
+            // Session finished processing
+            setIsSending(false)
+            // If there's remaining streaming content, save it
+            if (streamingContentRef.current) {
+              saveAssistantMessage(streamingContentRef.current)
+              streamingContentRef.current = ''
+              setStreamingContent('')
+              setIsStreaming(false)
+            }
+          }
+        })
+
+        // 5. Connect to OpenCode
+        const existingOpcSessionId = session.opencode_session_id
+
+        if (existingOpcSessionId) {
+          // Try to reconnect to existing session
+          const reconnectResult = await window.opencodeOps.reconnect(
+            wtPath,
+            existingOpcSessionId,
+            sessionId
+          )
+          if (reconnectResult.success) {
+            setOpencodeSessionId(existingOpcSessionId)
+            setViewState({ status: 'connected' })
+            return
+          }
+        }
+
+        // Create new OpenCode session
+        const connectResult = await window.opencodeOps.connect(wtPath, sessionId)
+        if (connectResult.success && connectResult.sessionId) {
+          setOpencodeSessionId(connectResult.sessionId)
+          // Store the OpenCode session ID in database for future reconnection
+          await window.db.session.update(sessionId, {
+            opencode_session_id: connectResult.sessionId
+          })
+          setViewState({ status: 'connected' })
+        } else {
+          throw new Error(connectResult.error || 'Failed to connect to OpenCode')
+        }
       } catch (error) {
-        console.error('Failed to load messages:', error)
+        console.error('Failed to initialize session:', error)
         setViewState({
           status: 'error',
-          errorMessage: error instanceof Error ? error.message : 'Failed to load messages'
+          errorMessage: error instanceof Error ? error.message : 'Failed to connect to session'
         })
       }
     }
-    loadMessages()
+
+    // Helper to save assistant message to database
+    const saveAssistantMessage = async (content: string): Promise<void> => {
+      try {
+        const savedMessage = (await window.db.message.create({
+          session_id: sessionId,
+          role: 'assistant' as const,
+          content
+        })) as DbMessage
+
+        const message = dbMessageToOpenCode(savedMessage)
+        setMessages((prev) => [...prev, message])
+      } catch (error) {
+        console.error('Failed to save assistant message:', error)
+        toast.error('Failed to save response')
+      }
+    }
+
+    initializeSession()
+
+    // Cleanup on unmount or session change
+    return () => {
+      if (unsubscribe) {
+        unsubscribe()
+      }
+      // Disconnect from OpenCode if connected
+      if (worktreePath && opencodeSessionId) {
+        window.opencodeOps.disconnect(worktreePath, opencodeSessionId).catch(console.error)
+      }
+    }
+    // Note: We intentionally don't include worktreePath and opencodeSessionId
+    // in deps to avoid reconnection loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   // Handle retry connection
   const handleRetry = useCallback(async () => {
     setViewState({ status: 'connecting' })
+    // Re-trigger the initialization by updating a dummy state
+    // The useEffect will handle the actual reconnection
+    setOpencodeSessionId(null)
+    setWorktreePath(null)
+
     try {
-      const dbMessages = await window.db.message.getBySession(sessionId) as DbMessage[]
+      const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
       const loadedMessages = dbMessages.map(dbMessageToOpenCode)
       setMessages(loadedMessages)
-      setViewState({ status: 'connected' })
+
+      const session = (await window.db.session.get(sessionId)) as DbSession | null
+      if (!session?.worktree_id) {
+        setViewState({ status: 'connected' })
+        return
+      }
+
+      const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
+      if (!worktree) {
+        setViewState({ status: 'connected' })
+        return
+      }
+
+      setWorktreePath(worktree.path)
+
+      const connectResult = await window.opencodeOps.connect(worktree.path, sessionId)
+      if (connectResult.success && connectResult.sessionId) {
+        setOpencodeSessionId(connectResult.sessionId)
+        await window.db.session.update(sessionId, {
+          opencode_session_id: connectResult.sessionId
+        })
+        setViewState({ status: 'connected' })
+      } else {
+        throw new Error(connectResult.error || 'Failed to connect')
+      }
     } catch (error) {
-      console.error('Failed to load messages:', error)
+      console.error('Retry failed:', error)
       setViewState({
         status: 'error',
-        errorMessage: error instanceof Error ? error.message : 'Failed to load messages'
+        errorMessage: error instanceof Error ? error.message : 'Failed to connect'
       })
     }
   }, [sessionId])
 
-  // Handle send message (placeholder for Session 11 - OpenCode integration)
+  // Handle send message
   const handleSend = useCallback(async () => {
     const trimmedValue = inputValue.trim()
     if (!trimmedValue || isSending) return
@@ -300,45 +486,55 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     try {
       // Save user message to database
-      const savedUserMessage = await window.db.message.create({
+      const savedUserMessage = (await window.db.message.create({
         session_id: sessionId,
         role: 'user' as const,
         content: trimmedValue
-      }) as DbMessage
+      })) as DbMessage
 
       const userMessage = dbMessageToOpenCode(savedUserMessage)
       setMessages((prev) => [...prev, userMessage])
 
-      // Simulate assistant response (placeholder for Session 11 - OpenCode integration)
-      // In production, this will be replaced with actual AI response
-      setTimeout(async () => {
-        try {
-          const assistantContent = 'This is a placeholder response. In Session 11, this will be replaced with real OpenCode integration.'
-          const savedAssistantMessage = await window.db.message.create({
-            session_id: sessionId,
-            role: 'assistant' as const,
-            content: assistantContent
-          }) as DbMessage
-
-          const assistantMessage = dbMessageToOpenCode(savedAssistantMessage)
-          setMessages((prev) => [...prev, assistantMessage])
-        } catch (error) {
-          console.error('Failed to save assistant message:', error)
-          toast.error('Failed to save response')
+      // Send to OpenCode if connected
+      if (worktreePath && opencodeSessionId) {
+        const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, trimmedValue)
+        if (!result.success) {
+          console.error('Failed to send prompt to OpenCode:', result.error)
+          toast.error('Failed to send message to AI')
+          setIsSending(false)
         }
-        setIsSending(false)
-      }, 1000)
+        // Don't set isSending to false here - wait for streaming to complete
+      } else {
+        // No OpenCode connection - show placeholder
+        console.warn('No OpenCode connection, showing placeholder response')
+        setTimeout(async () => {
+          try {
+            const placeholderContent =
+              'OpenCode is not connected. Please ensure a worktree is selected and the connection is established.'
+            const savedAssistantMessage = (await window.db.message.create({
+              session_id: sessionId,
+              role: 'assistant' as const,
+              content: placeholderContent
+            })) as DbMessage
+
+            const assistantMessage = dbMessageToOpenCode(savedAssistantMessage)
+            setMessages((prev) => [...prev, assistantMessage])
+          } catch (error) {
+            console.error('Failed to save placeholder message:', error)
+          }
+          setIsSending(false)
+        }, 500)
+      }
     } catch (error) {
-      console.error('Failed to save message:', error)
+      console.error('Failed to send message:', error)
       toast.error('Failed to send message')
       setIsSending(false)
     }
-  }, [inputValue, isSending, sessionId])
+  }, [inputValue, isSending, sessionId, worktreePath, opencodeSessionId])
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // Send on Enter (without Shift)
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         handleSend()
@@ -373,14 +569,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       data-testid="session-view"
       data-session-id={sessionId}
     >
-      {/* Message list - scrollable */}
+      {/* Message list */}
       <div className="flex-1 overflow-y-auto" data-testid="message-list">
-        {messages.length === 0 ? (
+        {messages.length === 0 && !streamingContent ? (
           <div className="flex-1 flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
               <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p className="text-sm font-medium">Start a conversation</p>
               <p className="text-xs mt-1">Type a message below to begin</p>
+              {!opencodeSessionId && worktreePath && (
+                <p className="text-xs mt-2 text-yellow-500">Connecting to OpenCode...</p>
+              )}
+              {!worktreePath && (
+                <p className="text-xs mt-2 text-yellow-500">No worktree selected</p>
+              )}
             </div>
           </div>
         ) : (
@@ -388,7 +590,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             {messages.map((message) => (
               <MessageItem key={message.id} message={message} />
             ))}
-            {isSending && (
+            {/* Streaming message */}
+            {streamingContent && (
+              <MessageItem
+                message={{
+                  id: 'streaming',
+                  role: 'assistant',
+                  content: streamingContent,
+                  timestamp: new Date().toISOString()
+                }}
+                isStreaming={isStreaming}
+              />
+            )}
+            {/* Typing indicator when waiting for response */}
+            {isSending && !streamingContent && (
               <div className="flex gap-3 px-4 py-4" data-testid="typing-indicator">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
                   <Bot className="h-4 w-4" />
@@ -437,15 +652,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             className="h-10"
             data-testid="send-button"
           >
-            {isSending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
+            {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground mt-2">
           Press Enter to send, Shift+Enter for new line
+          {opencodeSessionId && (
+            <span className="ml-2 text-green-500">Connected to OpenCode</span>
+          )}
         </p>
       </div>
     </div>

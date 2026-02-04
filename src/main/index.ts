@@ -3,7 +3,7 @@ import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
-import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers } from './ipc'
+import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode } from './ipc'
 import { createLogger, getLogDir } from './services/logger'
 
 const log = createLogger({ component: 'Main' })
@@ -63,10 +63,12 @@ function saveWindowBounds(window: BrowserWindow): void {
   }
 }
 
+let mainWindow: BrowserWindow | null = null
+
 function createWindow(): void {
   const savedBounds = loadWindowBounds()
 
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: savedBounds?.width ?? 1200,
     height: savedBounds?.height ?? 800,
     x: savedBounds?.x,
@@ -164,6 +166,12 @@ app.whenReady().then(() => {
 
   createWindow()
 
+  // Register OpenCode handlers after window is created
+  if (mainWindow) {
+    log.info('Registering OpenCode handlers')
+    registerOpenCodeHandlers(mainWindow)
+  }
+
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
@@ -180,7 +188,10 @@ app.on('window-all-closed', () => {
   }
 })
 
-// Close database when app is about to quit
-app.on('will-quit', () => {
+// Cleanup when app is about to quit
+app.on('will-quit', async () => {
+  // Cleanup OpenCode connections
+  await cleanupOpenCode()
+  // Close database
   closeDatabase()
 })
