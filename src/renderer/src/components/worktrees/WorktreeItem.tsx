@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import {
   GitBranch,
   MoreHorizontal,
@@ -8,7 +9,6 @@ import {
   Copy,
   ExternalLink
 } from 'lucide-react'
-import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { useWorktreeStore } from '@/stores'
+import { toast, gitToast, clipboardToast } from '@/lib/toast'
 
 interface Worktree {
   id: string
@@ -53,23 +54,29 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
     selectWorktree(worktree.id)
   }
 
-  const handleOpenInTerminal = async (): Promise<void> => {
+  const handleOpenInTerminal = useCallback(async (): Promise<void> => {
     const result = await window.worktreeOps.openInTerminal(worktree.path)
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
-      toast.error(result.error || 'Failed to open in terminal')
+      toast.error(result.error || 'Failed to open in terminal', {
+        retry: handleOpenInTerminal,
+        description: 'Make sure the worktree directory exists'
+      })
     }
-  }
+  }, [worktree.path])
 
-  const handleOpenInEditor = async (): Promise<void> => {
+  const handleOpenInEditor = useCallback(async (): Promise<void> => {
     const result = await window.worktreeOps.openInEditor(worktree.path)
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
-      toast.error(result.error || 'Failed to open in editor')
+      toast.error(result.error || 'Failed to open in editor', {
+        retry: handleOpenInEditor,
+        description: 'Make sure VS Code is installed'
+      })
     }
-  }
+  }, [worktree.path])
 
   const handleOpenInFinder = async (): Promise<void> => {
     await window.projectOps.showInFolder(worktree.path)
@@ -77,10 +84,10 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
 
   const handleCopyPath = async (): Promise<void> => {
     await window.projectOps.copyToClipboard(worktree.path)
-    toast.success('Path copied to clipboard')
+    clipboardToast.copied('Path')
   }
 
-  const handleArchive = async (): Promise<void> => {
+  const handleArchive = useCallback(async (): Promise<void> => {
     const result = await archiveWorktree(
       worktree.id,
       worktree.path,
@@ -88,13 +95,13 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
       projectPath
     )
     if (result.success) {
-      toast.success('Worktree archived and branch deleted')
+      gitToast.worktreeArchived(worktree.name)
     } else {
-      toast.error(result.error || 'Failed to archive worktree')
+      gitToast.operationFailed('archive worktree', result.error, handleArchive)
     }
-  }
+  }, [archiveWorktree, worktree, projectPath])
 
-  const handleUnbranch = async (): Promise<void> => {
+  const handleUnbranch = useCallback(async (): Promise<void> => {
     const result = await unbranchWorktree(
       worktree.id,
       worktree.path,
@@ -102,11 +109,11 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
       projectPath
     )
     if (result.success) {
-      toast.success('Worktree removed (branch preserved)')
+      gitToast.worktreeUnbranched(worktree.name)
     } else {
-      toast.error(result.error || 'Failed to unbranch worktree')
+      gitToast.operationFailed('unbranch worktree', result.error, handleUnbranch)
     }
-  }
+  }, [unbranchWorktree, worktree, projectPath])
 
   return (
     <ContextMenu>

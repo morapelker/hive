@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db'
+import { createLogger } from '../services/logger'
 import type {
   ProjectCreate,
   ProjectUpdate,
@@ -11,7 +12,24 @@ import type {
   SessionSearchOptions
 } from '../db'
 
+const log = createLogger({ component: 'DatabaseHandlers' })
+
+// Helper to wrap handlers with error logging
+function withErrorHandler<T>(
+  operation: string,
+  handler: () => T,
+  context?: Record<string, unknown>
+): T {
+  try {
+    return handler()
+  } catch (error) {
+    log.error(`Failed to ${operation}`, error instanceof Error ? error : new Error(String(error)), context)
+    throw error
+  }
+}
+
 export function registerDatabaseHandlers(): void {
+  log.info('Registering database handlers')
   // Settings
   ipcMain.handle('db:setting:get', (_event, key: string) => {
     return getDatabase().getSetting(key)

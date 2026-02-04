@@ -182,6 +182,22 @@ const worktreeOps = {
     ipcRenderer.invoke('git:branchExists', projectPath, branchName)
 }
 
+// System operations API
+const systemOps = {
+  // Get log directory path
+  getLogDir: (): Promise<string> => ipcRenderer.invoke('system:getLogDir'),
+
+  // Get app version
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('system:getAppVersion'),
+
+  // Get app paths
+  getAppPaths: (): Promise<{
+    userData: string
+    home: string
+    logs: string
+  }> => ipcRenderer.invoke('system:getAppPaths')
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -191,6 +207,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('db', db)
     contextBridge.exposeInMainWorld('projectOps', projectOps)
     contextBridge.exposeInMainWorld('worktreeOps', worktreeOps)
+    contextBridge.exposeInMainWorld('systemOps', systemOps)
   } catch (error) {
     console.error(error)
   }
@@ -203,4 +220,6 @@ if (process.contextIsolated) {
   window.projectOps = projectOps
   // @ts-expect-error (define in dts)
   window.worktreeOps = worktreeOps
+  // @ts-expect-error (define in dts)
+  window.systemOps = systemOps
 }

@@ -212,6 +212,15 @@ declare global {
       }>
       branchExists: (projectPath: string, branchName: string) => Promise<boolean>
     }
+    systemOps: {
+      getLogDir: () => Promise<string>
+      getAppVersion: () => Promise<string>
+      getAppPaths: () => Promise<{
+        userData: string
+        home: string
+        logs: string
+      }>
+    }
   }
 }
 

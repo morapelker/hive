@@ -2,8 +2,10 @@ import { ipcMain, shell } from 'electron'
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
-import { createGitService } from '../services'
+import { createGitService, createLogger } from '../services'
 import { getDatabase } from '../db'
+
+const log = createLogger({ component: 'WorktreeHandlers' })
 
 export interface CreateWorktreeParams {
   projectId: string
@@ -25,6 +27,8 @@ export interface SyncWorktreesParams {
 }
 
 export function registerWorktreeHandlers(): void {
+  log.info('Registering worktree handlers')
+
   // Create a new worktree
   ipcMain.handle(
     'worktree:create',
@@ -45,11 +49,13 @@ export function registerWorktreeHandlers(): void {
       }
       error?: string
     }> => {
+      log.info('Creating worktree', { projectName: params.projectName, projectId: params.projectId })
       try {
         const gitService = createGitService(params.projectPath)
         const result = await gitService.createWorktree(params.projectName)
 
         if (!result.success || !result.name || !result.path || !result.branchName) {
+          log.warn('Worktree creation failed', { error: result.error, projectName: params.projectName })
           return {
             success: false,
             error: result.error || 'Failed to create worktree'
@@ -64,12 +70,14 @@ export function registerWorktreeHandlers(): void {
           path: result.path
         })
 
+        log.info('Worktree created successfully', { name: result.name, path: result.path })
         return {
           success: true,
           worktree
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Worktree creation error', error instanceof Error ? error : new Error(message), { params })
         return {
           success: false,
           error: message

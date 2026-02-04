@@ -1,6 +1,9 @@
 import { ipcMain, dialog, shell, clipboard, BrowserWindow } from 'electron'
 import { existsSync, statSync } from 'fs'
 import { join, basename } from 'path'
+import { createLogger } from '../services/logger'
+
+const log = createLogger({ component: 'ProjectHandlers' })
 
 /**
  * Check if a directory is a git repository by looking for .git folder
@@ -33,8 +36,11 @@ export interface AddProjectResult {
 }
 
 export function registerProjectHandlers(): void {
+  log.info('Registering project handlers')
+
   // Open folder picker dialog
   ipcMain.handle('dialog:openDirectory', async (): Promise<string | null> => {
+    log.debug('Opening directory picker dialog')
     const window = BrowserWindow.getFocusedWindow()
     const result = await dialog.showOpenDialog(window!, {
       properties: ['openDirectory', 'createDirectory'],
@@ -43,9 +49,11 @@ export function registerProjectHandlers(): void {
     })
 
     if (result.canceled || result.filePaths.length === 0) {
+      log.debug('Directory picker canceled')
       return null
     }
 
+    log.info('Directory selected', { path: result.filePaths[0] })
     return result.filePaths[0]
   })
 

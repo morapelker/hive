@@ -3,6 +3,9 @@ import { app } from 'electron'
 import { join, basename } from 'path'
 import { existsSync, mkdirSync, rmSync } from 'fs'
 import { selectUniqueCityName } from './city-names'
+import { createLogger } from './logger'
+
+const log = createLogger({ component: 'GitService' })
 
 export interface WorktreeInfo {
   path: string
@@ -74,7 +77,7 @@ export class GitService {
         return b
       })
     } catch (error) {
-      console.error('Failed to get branches:', error)
+      log.error('Failed to get branches', error instanceof Error ? error : new Error(String(error)), { repoPath: this.repoPath })
       return []
     }
   }
@@ -87,7 +90,7 @@ export class GitService {
       const result = await this.git.branch()
       return result.current
     } catch (error) {
-      console.error('Failed to get current branch:', error)
+      log.error('Failed to get current branch', error instanceof Error ? error : new Error(String(error)), { repoPath: this.repoPath })
       return 'main'
     }
   }
@@ -138,7 +141,7 @@ export class GitService {
 
       return worktrees
     } catch (error) {
-      console.error('Failed to list worktrees:', error)
+      log.error('Failed to list worktrees', error instanceof Error ? error : new Error(String(error)), { repoPath: this.repoPath })
       return []
     }
   }
@@ -177,7 +180,7 @@ export class GitService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      console.error('Failed to create worktree:', error)
+      log.error('Failed to create worktree', error instanceof Error ? error : new Error(String(error)), { projectName, repoPath: this.repoPath })
       return {
         success: false,
         error: message
@@ -206,7 +209,7 @@ export class GitService {
         return { success: true }
       } catch (cleanupError) {
         const message = cleanupError instanceof Error ? cleanupError.message : 'Unknown error'
-        console.error('Failed to remove worktree:', cleanupError)
+        log.error('Failed to remove worktree', cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), { worktreePath })
         return {
           success: false,
           error: message
@@ -232,13 +235,13 @@ export class GitService {
         await this.git.branch(['-D', branchName])
       } catch (branchError) {
         // Branch might already be deleted or not exist
-        console.warn('Failed to delete branch (may not exist):', branchError)
+        log.warn('Failed to delete branch (may not exist)', { branchName, error: branchError instanceof Error ? branchError.message : String(branchError) })
       }
 
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      console.error('Failed to archive worktree:', error)
+      log.error('Failed to archive worktree', error instanceof Error ? error : new Error(String(error)), { worktreePath, branchName })
       return {
         success: false,
         error: message
@@ -272,7 +275,7 @@ export class GitService {
     try {
       await this.git.raw(['worktree', 'prune'])
     } catch (error) {
-      console.error('Failed to prune worktrees:', error)
+      log.error('Failed to prune worktrees', error instanceof Error ? error : new Error(String(error)), { repoPath: this.repoPath })
     }
   }
 }

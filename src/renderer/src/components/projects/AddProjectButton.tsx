@@ -1,14 +1,14 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { Plus, Loader2 } from 'lucide-react'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useProjectStore } from '@/stores'
+import { projectToast, toast } from '@/lib/toast'
 
 export function AddProjectButton(): React.JSX.Element {
   const [isAdding, setIsAdding] = useState(false)
   const { addProject } = useProjectStore()
 
-  const handleAddProject = async (): Promise<void> => {
+  const handleAddProject = useCallback(async (): Promise<void> => {
     if (isAdding) return
 
     setIsAdding(true)
@@ -24,17 +24,21 @@ export function AddProjectButton(): React.JSX.Element {
       // Add the project
       const result = await addProject(selectedPath)
 
-      if (result.success) {
-        toast.success('Project added successfully')
+      if (result.success && result.project) {
+        projectToast.added(result.project.name)
       } else {
-        toast.error(result.error || 'Failed to add project')
+        toast.error(result.error || 'Failed to add project', {
+          retry: () => handleAddProject()
+        })
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to add project')
+      toast.error(error instanceof Error ? error.message : 'Failed to add project', {
+        retry: () => handleAddProject()
+      })
     } finally {
       setIsAdding(false)
     }
-  }
+  }, [isAdding, addProject])
 
   return (
     <Button

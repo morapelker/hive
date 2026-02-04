@@ -1,9 +1,12 @@
-import { app, shell, BrowserWindow, screen } from 'electron'
+import { app, shell, BrowserWindow, screen, ipcMain } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
 import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers } from './ipc'
+import { createLogger, getLogDir } from './services/logger'
+
+const log = createLogger({ component: 'Main' })
 
 interface WindowBounds {
   x: number
@@ -110,20 +113,47 @@ function createWindow(): void {
   }
 }
 
+// Register system IPC handlers
+function registerSystemHandlers(): void {
+  // Get log directory path
+  ipcMain.handle('system:getLogDir', () => {
+    return getLogDir()
+  })
+
+  // Get app version
+  ipcMain.handle('system:getAppVersion', () => {
+    return app.getVersion()
+  })
+
+  // Get app paths
+  ipcMain.handle('system:getAppPaths', () => {
+    return {
+      userData: app.getPath('userData'),
+      home: app.getPath('home'),
+      logs: getLogDir()
+    }
+  })
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
+  log.info('App starting', { version: app.getVersion(), platform: process.platform })
+
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.hive')
 
   // Initialize database
+  log.info('Initializing database')
   getDatabase()
 
   // Register IPC handlers
+  log.info('Registering IPC handlers')
   registerDatabaseHandlers()
   registerProjectHandlers()
   registerWorktreeHandlers()
+  registerSystemHandlers()
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

@@ -1,9 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useCallback } from 'react'
 import { Plus, Loader2 } from 'lucide-react'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useWorktreeStore } from '@/stores'
 import { WorktreeItem } from './WorktreeItem'
+import { gitToast } from '@/lib/toast'
 
 interface Project {
   id: string
@@ -34,19 +34,24 @@ export function WorktreeList({ project }: WorktreeListProps): React.JSX.Element 
     syncWorktrees(project.id, project.path)
   }, [project.id, project.path, loadWorktrees, syncWorktrees])
 
-  const handleCreateWorktree = async (e: React.MouseEvent): Promise<void> => {
-    e.stopPropagation()
+  const handleCreateWorktree = useCallback(
+    async (e: React.MouseEvent): Promise<void> => {
+      e.stopPropagation()
 
-    if (isCreating) return
+      if (isCreating) return
 
-    const result = await createWorktree(project.id, project.path, project.name)
+      const result = await createWorktree(project.id, project.path, project.name)
 
-    if (result.success) {
-      toast.success('Worktree created successfully')
-    } else {
-      toast.error(result.error || 'Failed to create worktree')
-    }
-  }
+      if (result.success) {
+        gitToast.worktreeCreated(project.name)
+      } else {
+        gitToast.operationFailed('create worktree', result.error, () =>
+          handleCreateWorktree({ stopPropagation: () => {} } as React.MouseEvent)
+        )
+      }
+    },
+    [isCreating, createWorktree, project]
+  )
 
   return (
     <div className="pl-4" data-testid={`worktree-list-${project.id}`}>
