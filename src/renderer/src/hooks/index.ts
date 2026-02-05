@@ -1,1 +1,2 @@
-export { useKeyboardShortcut, useCommandK } from './useKeyboardShortcut'
+export { useKeyboardShortcut, useCommandK, useCommandP } from './useKeyboardShortcut'
+export { useCommands } from './useCommands'

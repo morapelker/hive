@@ -59,12 +59,24 @@ export function useKeyboardShortcut({
 }
 
 /**
- * Common keyboard shortcut: Cmd/Ctrl + K for command palette / search
+ * Common keyboard shortcut: Cmd/Ctrl + K for session history / search
  */
 export function useCommandK(callback: () => void, enabled = true): void {
   useKeyboardShortcut({
     key: 'k',
     modifiers: ['meta'], // Will also match Ctrl+K
+    callback,
+    enabled
+  })
+}
+
+/**
+ * Common keyboard shortcut: Cmd/Ctrl + P for command palette
+ */
+export function useCommandP(callback: () => void, enabled = true): void {
+  useKeyboardShortcut({
+    key: 'p',
+    modifiers: ['meta'], // Will also match Ctrl+P
     callback,
     enabled
   })

@@ -4,6 +4,7 @@ import { MainPane } from './MainPane'
 import { RightSidebar } from './RightSidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { SessionHistory } from '@/components/sessions/SessionHistory'
+import { CommandPalette } from '@/components/command-palette'
 import { useSessionHistoryStore } from '@/stores/useSessionHistoryStore'
 import { useCommandK } from '@/hooks'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
@@ -47,6 +48,9 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
       <Toaster />
       <ErrorBoundary componentName="SessionHistory" fallback={null}>
         <SessionHistory />
+      </ErrorBoundary>
+      <ErrorBoundary componentName="CommandPalette" fallback={null}>
+        <CommandPalette />
       </ErrorBoundary>
     </div>
   )
