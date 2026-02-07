@@ -46,6 +46,8 @@ export interface WorktreeUpdate {
   last_accessed_at?: string
 }
 
+export type SessionMode = 'build' | 'plan'
+
 export interface Session {
   id: string
   worktree_id: string | null
@@ -53,6 +55,7 @@ export interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
+  mode: SessionMode
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -69,6 +72,7 @@ export interface SessionUpdate {
   name?: string | null
   status?: 'active' | 'completed' | 'error'
   opencode_session_id?: string | null
+  mode?: SessionMode
   updated_at?: string
   completed_at?: string | null
 }

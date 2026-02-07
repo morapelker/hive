@@ -115,9 +115,9 @@ function getShortcutHandlers(
       binding: getEffectiveBinding('session:mode-toggle'),
       allowInInput: true, // Shift+Tab should work even in inputs
       handler: () => {
-        // Mode toggle will be implemented in Session 11 (Build/Plan mode)
-        // For now, dispatch a custom event that other components can listen to
-        window.dispatchEvent(new CustomEvent('hive:mode-toggle'))
+        const { activeSessionId } = useSessionStore.getState()
+        if (!activeSessionId) return
+        useSessionStore.getState().toggleSessionMode(activeSessionId)
       }
     },
 

@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 1
+export const CURRENT_SCHEMA_VERSION = 2
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -86,5 +86,11 @@ export const MIGRATIONS: Migration[] = [
       DROP TABLE IF EXISTS worktrees;
       DROP TABLE IF EXISTS projects;
     `
+  },
+  {
+    version: 2,
+    name: 'add_session_mode',
+    up: `ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'build';`,
+    down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
   }
 ]

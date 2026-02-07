@@ -3,6 +3,7 @@ import { Plus, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -127,6 +128,31 @@ export function SessionTabs(): React.JSX.Element | null {
       loadSessions(selectedWorktreeId, project.id)
     }
   }, [selectedWorktreeId, project, loadSessions])
+
+  // Auto-start session when worktree has none and setting is enabled
+  const { isLoading } = useSessionStore()
+  const autoStartSession = useSettingsStore((state) => state.autoStartSession)
+  const autoStartedRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (
+      !selectedWorktreeId ||
+      !project ||
+      isLoading ||
+      !autoStartSession
+    ) return
+
+    const sessions = sessionsByWorktree.get(selectedWorktreeId) || []
+    // Only auto-start if no active sessions exist and we haven't already auto-started for this worktree
+    if (sessions.length === 0 && autoStartedRef.current !== selectedWorktreeId) {
+      autoStartedRef.current = selectedWorktreeId
+      createSession(selectedWorktreeId, project.id).then((result) => {
+        if (!result.success) {
+          toast.error(result.error || 'Failed to auto-create session')
+        }
+      })
+    }
+  }, [selectedWorktreeId, project, isLoading, autoStartSession, sessionsByWorktree, createSession])
 
   // Check for tab overflow and update arrow visibility
   const checkOverflow = useCallback(() => {

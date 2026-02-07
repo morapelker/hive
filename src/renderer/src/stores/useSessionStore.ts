@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 
+// Session mode type
+export type SessionMode = 'build' | 'plan'
+
 // Session type matching the database schema
 interface Session {
   id: string
@@ -8,6 +11,7 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
+  mode: SessionMode
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -18,6 +22,8 @@ interface SessionState {
   sessionsByWorktree: Map<string, Session[]>
   // Tab order - keyed by worktree ID, array of session IDs
   tabOrderByWorktree: Map<string, string[]>
+  // Mode per session - keyed by session ID
+  modeBySession: Map<string, SessionMode>
   isLoading: boolean
   error: string | null
 
@@ -36,6 +42,9 @@ interface SessionState {
   reorderTabs: (worktreeId: string, fromIndex: number, toIndex: number) => void
   getSessionsForWorktree: (worktreeId: string) => Session[]
   getTabOrderForWorktree: (worktreeId: string) => string[]
+  getSessionMode: (sessionId: string) => SessionMode
+  toggleSessionMode: (sessionId: string) => Promise<void>
+  setSessionMode: (sessionId: string, mode: SessionMode) => Promise<void>
 }
 
 // Helper to generate session name based on timestamp
@@ -50,6 +59,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
   sessionsByWorktree: new Map(),
   tabOrderByWorktree: new Map(),
+  modeBySession: new Map(),
   isLoading: false,
   error: null,
   activeSessionId: null,
@@ -83,6 +93,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           newTabOrderMap.set(worktreeId, [...validOrder, ...newIds])
         }
 
+        // Populate mode map from loaded sessions
+        const newModeMap = new Map(state.modeBySession)
+        for (const session of sortedSessions) {
+          if (!newModeMap.has(session.id)) {
+            newModeMap.set(session.id, session.mode || 'build')
+          }
+        }
+
         // Set active session if none selected and sessions exist
         let activeSessionId = state.activeSessionId
         if (state.activeWorktreeId === worktreeId && !activeSessionId && sortedSessions.length > 0) {
@@ -93,6 +111,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return {
           sessionsByWorktree: newSessionsMap,
           tabOrderByWorktree: newTabOrderMap,
+          modeBySession: newModeMap,
           isLoading: false,
           activeSessionId
         }
@@ -124,9 +143,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const existingOrder = newTabOrderMap.get(worktreeId) || []
         newTabOrderMap.set(worktreeId, [...existingOrder, session.id])
 
+        // Initialize mode for new session
+        const newModeMap = new Map(state.modeBySession)
+        newModeMap.set(session.id, session.mode || 'build')
+
         return {
           sessionsByWorktree: newSessionsMap,
           tabOrderByWorktree: newTabOrderMap,
+          modeBySession: newModeMap,
           activeSessionId: session.id
         }
       })
@@ -321,5 +345,45 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Get tab order for a worktree
   getTabOrderForWorktree: (worktreeId: string) => {
     return get().tabOrderByWorktree.get(worktreeId) || []
+  },
+
+  // Get session mode (defaults to 'build')
+  getSessionMode: (sessionId: string): SessionMode => {
+    return get().modeBySession.get(sessionId) || 'build'
+  },
+
+  // Toggle session mode between build and plan
+  toggleSessionMode: async (sessionId: string) => {
+    const currentMode = get().modeBySession.get(sessionId) || 'build'
+    const newMode: SessionMode = currentMode === 'build' ? 'plan' : 'build'
+
+    // Update local state immediately
+    set((state) => {
+      const newModeMap = new Map(state.modeBySession)
+      newModeMap.set(sessionId, newMode)
+      return { modeBySession: newModeMap }
+    })
+
+    // Persist to database
+    try {
+      await window.db.session.update(sessionId, { mode: newMode })
+    } catch (error) {
+      console.error('Failed to persist session mode:', error)
+    }
+  },
+
+  // Set session mode explicitly
+  setSessionMode: async (sessionId: string, mode: SessionMode) => {
+    set((state) => {
+      const newModeMap = new Map(state.modeBySession)
+      newModeMap.set(sessionId, mode)
+      return { modeBySession: newModeMap }
+    })
+
+    try {
+      await window.db.session.update(sessionId, { mode })
+    } catch (error) {
+      console.error('Failed to persist session mode:', error)
+    }
   }
 }))

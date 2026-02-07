@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { MessageRenderer } from './MessageRenderer'
+import { useSessionStore } from '@/stores/useSessionStore'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 
 // Types for OpenCode SDK integration
@@ -489,7 +490,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       // Send to OpenCode if connected
       if (worktreePath && opencodeSessionId) {
-        const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, trimmedValue)
+        // Prepend mode context to the prompt
+        const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+        const modePrefix = currentMode === 'plan'
+          ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
+          : ''
+        const promptMessage = modePrefix + trimmedValue
+        const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, promptMessage)
         if (!result.success) {
           console.error('Failed to send prompt to OpenCode:', result.error)
           toast.error('Failed to send message to AI')

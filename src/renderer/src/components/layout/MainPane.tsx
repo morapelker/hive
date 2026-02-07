@@ -1,4 +1,6 @@
+import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
+import { ModeToggle } from '@/components/sessions/ModeToggle'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 
@@ -9,6 +11,7 @@ interface MainPaneProps {
 export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const selectedWorktreeId = useWorktreeStore((state) => state.selectedWorktreeId)
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
+  const isLoading = useSessionStore((state) => state.isLoading)
 
   // Determine what to show in the main content area
   const renderContent = () => {
@@ -23,6 +26,18 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
           <div className="text-center">
             <p className="text-lg font-medium">Welcome to Hive</p>
             <p className="text-sm mt-2">Select a project or worktree to get started.</p>
+          </div>
+        </div>
+      )
+    }
+
+    // Loading sessions (including auto-start)
+    if (isLoading) {
+      return (
+        <div className="flex-1 flex items-center justify-center" data-testid="session-loading">
+          <div className="text-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto" />
+            <p className="text-sm text-muted-foreground mt-2">Loading sessions...</p>
           </div>
         </div>
       )
@@ -50,6 +65,17 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       data-testid="main-pane"
     >
       {selectedWorktreeId && <SessionTabs />}
+      {activeSessionId && (
+        <div
+          className="flex items-center justify-between px-4 py-1.5 border-b border-border bg-muted/20"
+          data-testid="session-header"
+        >
+          <ModeToggle sessionId={activeSessionId} />
+          <span className="text-xs text-muted-foreground">
+            Shift+Tab to toggle mode
+          </span>
+        </div>
+      )}
       {renderContent()}
     </main>
   )

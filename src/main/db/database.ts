@@ -315,14 +315,15 @@ export class DatabaseService {
       name: data.name ?? null,
       status: 'active',
       opencode_session_id: data.opencode_session_id ?? null,
+      mode: 'build',
       created_at: now,
       updated_at: now,
       completed_at: null
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, name, status, opencode_session_id, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, name, status, opencode_session_id, mode, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -330,6 +331,7 @@ export class DatabaseService {
       session.name,
       session.status,
       session.opencode_session_id,
+      session.mode,
       session.created_at,
       session.updated_at,
       session.completed_at
@@ -386,6 +388,10 @@ export class DatabaseService {
     if (data.opencode_session_id !== undefined) {
       updates.push('opencode_session_id = ?')
       values.push(data.opencode_session_id)
+    }
+    if (data.mode !== undefined) {
+      updates.push('mode = ?')
+      values.push(data.mode)
     }
     if (data.completed_at !== undefined) {
       updates.push('completed_at = ?')

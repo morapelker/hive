@@ -61,7 +61,7 @@ const db = {
     getByWorktree: (worktreeId: string) => ipcRenderer.invoke('db:session:getByWorktree', worktreeId),
     getByProject: (projectId: string) => ipcRenderer.invoke('db:session:getByProject', projectId),
     getActiveByWorktree: (worktreeId: string) => ipcRenderer.invoke('db:session:getActiveByWorktree', worktreeId),
-    update: (id: string, data: { name?: string | null; status?: 'active' | 'completed' | 'error'; opencode_session_id?: string | null; updated_at?: string; completed_at?: string | null }) =>
+    update: (id: string, data: { name?: string | null; status?: 'active' | 'completed' | 'error'; opencode_session_id?: string | null; mode?: 'build' | 'plan'; updated_at?: string; completed_at?: string | null }) =>
       ipcRenderer.invoke('db:session:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('db:session:delete', id),
     search: (options: { keyword?: string; project_id?: string; worktree_id?: string; dateFrom?: string; dateTo?: string; includeArchived?: boolean }) =>
