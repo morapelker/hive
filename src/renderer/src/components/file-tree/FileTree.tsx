@@ -1,9 +1,10 @@
-import { useEffect, useCallback, useRef } from 'react'
+import { useEffect, useCallback, useRef, useMemo } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { FolderOpen } from 'lucide-react'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { FileTreeHeader } from './FileTreeHeader'
-import { FileTreeNodeComponent } from './FileTreeNode'
+import { VirtualFileTreeNode } from './FileTreeNode'
 import { cn } from '@/lib/utils'
 
 // File tree node structure
@@ -16,12 +17,80 @@ interface FileTreeNode {
   children?: FileTreeNode[]
 }
 
+// Git file status
+interface GitFileStatus {
+  path: string
+  relativePath: string
+  status: 'M' | 'A' | 'D' | '?' | 'C' | ''
+  staged: boolean
+}
+
+interface FlatNode {
+  node: FileTreeNode
+  depth: number
+  isExpanded: boolean
+}
+
 interface FileTreeProps {
   worktreePath: string | null
   onClose?: () => void
   onFileClick?: (node: FileTreeNode) => void
   className?: string
 }
+
+// Helper to check if a node matches the filter
+function matchesFilter(node: FileTreeNode, filter: string): boolean {
+  return node.name.toLowerCase().includes(filter.toLowerCase())
+}
+
+// Helper to check if any descendant matches the filter
+function hasMatchingDescendant(node: FileTreeNode, filter: string): boolean {
+  if (!node.children) return false
+  for (const child of node.children) {
+    if (matchesFilter(child, filter)) return true
+    if (child.isDirectory && hasMatchingDescendant(child, filter)) return true
+  }
+  return false
+}
+
+// Flatten tree into a list for virtual scrolling
+function flattenTree(
+  nodes: FileTreeNode[],
+  expandedPaths: Set<string>,
+  filter: string,
+  depth: number = 0
+): FlatNode[] {
+  const result: FlatNode[] = []
+  const isFiltered = filter.length > 0
+
+  for (const node of nodes) {
+    // Filter check
+    if (
+      isFiltered &&
+      !matchesFilter(node, filter) &&
+      !(node.isDirectory && hasMatchingDescendant(node, filter))
+    ) {
+      continue
+    }
+
+    const isExpanded = expandedPaths.has(node.path)
+    result.push({ node, depth, isExpanded })
+
+    // Include children if expanded or filtered with matching descendants
+    const showChildren =
+      node.isDirectory &&
+      node.children &&
+      (isExpanded || (isFiltered && hasMatchingDescendant(node, filter)))
+
+    if (showChildren && node.children) {
+      result.push(...flattenTree(node.children, expandedPaths, filter, depth + 1))
+    }
+  }
+
+  return result
+}
+
+const ROW_HEIGHT = 24
 
 export function FileTree({
   worktreePath,
@@ -53,6 +122,7 @@ export function FileTree({
   const unsubscribeRef = useRef<(() => void) | null>(null)
   const gitUnsubscribeRef = useRef<(() => void) | null>(null)
   const currentWorktreeRef = useRef<string | null>(null)
+  const parentRef = useRef<HTMLDivElement>(null)
 
   // Load file tree, git statuses, and start watching when worktree changes
   useEffect(() => {
@@ -124,6 +194,29 @@ export function FileTree({
   const expandedPaths = worktreePath ? getExpandedPaths(worktreePath) : new Set<string>()
   const filter = worktreePath ? getFilter(worktreePath) : ''
   const gitStatuses = worktreePath ? getFileStatuses(worktreePath) : []
+
+  // Build a Map for fast git status lookup
+  const gitStatusMap = useMemo(() => {
+    const map = new Map<string, GitFileStatus>()
+    for (const status of gitStatuses) {
+      map.set(status.relativePath, status)
+    }
+    return map
+  }, [gitStatuses])
+
+  // Flatten tree for virtual scrolling
+  const flatNodes = useMemo(
+    () => flattenTree(tree, expandedPaths, filter),
+    [tree, expandedPaths, filter]
+  )
+
+  // Virtual scrolling
+  const virtualizer = useVirtualizer({
+    count: flatNodes.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10
+  })
 
   const handleToggle = useCallback(
     (path: string) => {
@@ -215,7 +308,7 @@ export function FileTree({
         />
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="text-center text-muted-foreground">
-            <div className="h-6 w-6 mx-auto mb-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            <div className="h-6 w-6 mx-auto mb-3 border-2 border-current border-t-transparent rounded-full animate-spin" aria-label="Loading files" />
             <p className="text-sm">Loading files...</p>
           </div>
         </div>
@@ -258,26 +351,48 @@ export function FileTree({
         onClose={onClose}
       />
       <div
+        ref={parentRef}
         className="flex-1 overflow-auto py-1"
         role="tree"
         aria-label="File tree"
         data-testid="file-tree-content"
       >
-        {tree.map((node) => (
-          <FileTreeNodeComponent
-            key={node.path}
-            node={node}
-            depth={0}
-            isExpanded={expandedPaths.has(node.path)}
-            isFiltered={isFiltered}
-            onToggle={handleToggle}
-            onFileClick={onFileClick}
-            expandedPaths={expandedPaths}
-            filter={filter}
-            worktreePath={worktreePath}
-            gitStatuses={gitStatuses}
-          />
-        ))}
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative'
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const { node, depth, isExpanded } = flatNodes[virtualRow.index]
+            return (
+              <div
+                key={node.path}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`
+                }}
+              >
+                <VirtualFileTreeNode
+                  node={node}
+                  depth={depth}
+                  isExpanded={isExpanded}
+                  isFiltered={isFiltered}
+                  filter={filter}
+                  onToggle={handleToggle}
+                  onFileClick={onFileClick}
+                  worktreePath={worktreePath}
+                  gitStatusMap={gitStatusMap}
+                />
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )

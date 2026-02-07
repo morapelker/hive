@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, memo, useMemo } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from './FileIcon'
@@ -24,62 +24,46 @@ interface GitFileStatus {
   staged: boolean
 }
 
-interface FileTreeNodeProps {
-  node: FileTreeNode
-  depth: number
-  isExpanded: boolean
-  isFiltered: boolean
-  onToggle: (path: string) => void
-  onFileClick?: (node: FileTreeNode) => void
-  expandedPaths: Set<string>
-  filter: string
-  worktreePath: string
-  gitStatuses: GitFileStatus[]
-}
-
 // Helper to check if a node matches the filter
 function matchesFilter(node: FileTreeNode, filter: string): boolean {
-  const lowerFilter = filter.toLowerCase()
-  if (node.name.toLowerCase().includes(lowerFilter)) {
-    return true
-  }
-  return false
+  return node.name.toLowerCase().includes(filter.toLowerCase())
 }
 
-// Helper to check if any descendant matches the filter
-function hasMatchingDescendant(node: FileTreeNode, filter: string): boolean {
-  if (!node.children) return false
-  for (const child of node.children) {
-    if (matchesFilter(child, filter)) return true
-    if (child.isDirectory && hasMatchingDescendant(child, filter)) return true
-  }
-  return false
-}
-
-// Helper to get git status for a node (including directory status from children)
-function getNodeGitStatus(node: FileTreeNode, gitStatuses: GitFileStatus[]): GitFileStatus | undefined {
+// Helper to get git status for a node using the Map for O(1) lookup
+function getNodeGitStatus(
+  node: FileTreeNode,
+  gitStatusMap: Map<string, GitFileStatus>
+): GitFileStatus | undefined {
   // For files, return direct status
   if (!node.isDirectory) {
-    return gitStatuses.find((s) => s.relativePath === node.relativePath)
+    return gitStatusMap.get(node.relativePath)
   }
 
   // For directories, check if any child has changes
-  const childStatuses = gitStatuses.filter(
-    (s) => s.relativePath.startsWith(node.relativePath + '/')
-  )
-
-  if (childStatuses.length === 0) return undefined
-
-  // Return the most "severe" status (C > D > M > A > ?)
+  const prefix = node.relativePath + '/'
   const priorities: GitStatusCode[] = ['C', 'D', 'M', 'A', '?']
-  for (const status of priorities) {
-    const hasStatus = childStatuses.some((s) => s.status === status)
-    if (hasStatus) {
-      return {
-        path: node.path,
-        relativePath: node.relativePath,
-        status,
-        staged: childStatuses.some((s) => s.staged)
+  let hasAnyChild = false
+  let hasStaged = false
+
+  for (const [relPath, status] of gitStatusMap) {
+    if (relPath.startsWith(prefix)) {
+      hasAnyChild = true
+      if (status.staged) hasStaged = true
+    }
+  }
+
+  if (!hasAnyChild) return undefined
+
+  // Return the most "severe" status
+  for (const statusCode of priorities) {
+    for (const [relPath, status] of gitStatusMap) {
+      if (relPath.startsWith(prefix) && status.status === statusCode) {
+        return {
+          path: node.path,
+          relativePath: node.relativePath,
+          status: statusCode,
+          staged: hasStaged
+        }
       }
     }
   }
@@ -87,18 +71,29 @@ function getNodeGitStatus(node: FileTreeNode, gitStatuses: GitFileStatus[]): Git
   return undefined
 }
 
-export function FileTreeNodeComponent({
+interface VirtualFileTreeNodeProps {
+  node: FileTreeNode
+  depth: number
+  isExpanded: boolean
+  isFiltered: boolean
+  filter: string
+  onToggle: (path: string) => void
+  onFileClick?: (node: FileTreeNode) => void
+  worktreePath: string
+  gitStatusMap: Map<string, GitFileStatus>
+}
+
+export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
   node,
   depth,
   isExpanded,
   isFiltered,
+  filter,
   onToggle,
   onFileClick,
-  expandedPaths,
-  filter,
   worktreePath,
-  gitStatuses
-}: FileTreeNodeProps): React.JSX.Element | null {
+  gitStatusMap
+}: VirtualFileTreeNodeProps) {
   const handleClick = useCallback(() => {
     if (node.isDirectory) {
       onToggle(node.path)
@@ -117,23 +112,11 @@ export function FileTreeNodeComponent({
     [handleClick]
   )
 
-  // If filtering and this node doesn't match and has no matching descendants, hide it
-  if (
-    isFiltered &&
-    !matchesFilter(node, filter) &&
-    !(node.isDirectory && hasMatchingDescendant(node, filter))
-  ) {
-    return null
-  }
-
-  // Should show children if expanded or if filtering and has matching descendants
-  const showChildren =
-    node.isDirectory &&
-    node.children &&
-    (isExpanded || (isFiltered && hasMatchingDescendant(node, filter)))
-
   // Get git status for this node
-  const gitStatus = getNodeGitStatus(node, gitStatuses)
+  const gitStatus = useMemo(
+    () => getNodeGitStatus(node, gitStatusMap),
+    [node, gitStatusMap]
+  )
 
   const nodeContent = (
     <div
@@ -149,17 +132,19 @@ export function FileTreeNodeComponent({
       role="treeitem"
       aria-expanded={node.isDirectory ? isExpanded : undefined}
       aria-selected={false}
+      aria-label={`${node.isDirectory ? 'Folder' : 'File'}: ${node.name}${gitStatus ? `, ${gitStatus.staged ? 'staged' : 'modified'}` : ''}`}
     >
       {/* Expand/collapse chevron for directories */}
       {node.isDirectory ? (
         <ChevronRight
           className={cn(
-            'h-3.5 w-3.5 flex-shrink-0 mr-1 text-muted-foreground transition-transform',
+            'h-3.5 w-3.5 flex-shrink-0 mr-1 text-muted-foreground transition-transform duration-150',
             isExpanded && 'rotate-90'
           )}
+          aria-hidden="true"
         />
       ) : (
-        <span className="w-3.5 mr-1 flex-shrink-0" />
+        <span className="w-3.5 mr-1 flex-shrink-0" aria-hidden="true" />
       )}
 
       {/* File/folder icon */}
@@ -194,37 +179,16 @@ export function FileTreeNodeComponent({
   )
 
   return (
-    <div data-testid={`file-tree-node-${node.relativePath}`}>
-      {/* Wrap in context menu for files with git status, or always for non-directories */}
-      <FileContextMenu
-        node={node}
-        worktreePath={worktreePath}
-        gitStatus={gitStatus?.status}
-        staged={gitStatus?.staged}
-      >
-        <ContextMenuTrigger asChild>{nodeContent}</ContextMenuTrigger>
-      </FileContextMenu>
-
-      {/* Children */}
-      {showChildren && (
-        <div role="group">
-          {node.children!.map((child) => (
-            <FileTreeNodeComponent
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              isExpanded={expandedPaths.has(child.path)}
-              isFiltered={isFiltered}
-              onToggle={onToggle}
-              onFileClick={onFileClick}
-              expandedPaths={expandedPaths}
-              filter={filter}
-              worktreePath={worktreePath}
-              gitStatuses={gitStatuses}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+    <FileContextMenu
+      node={node}
+      worktreePath={worktreePath}
+      gitStatus={gitStatus?.status}
+      staged={gitStatus?.staged}
+    >
+      <ContextMenuTrigger asChild>{nodeContent}</ContextMenuTrigger>
+    </FileContextMenu>
   )
-}
+})
+
+// Keep the old export name for backward compatibility (used in tests)
+export { VirtualFileTreeNode as FileTreeNodeComponent }

@@ -37,10 +37,11 @@ export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
           : 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
       )}
       title={`${config.description} (Shift+Tab to toggle)`}
+      aria-label={`Current mode: ${config.label}. Click to switch to ${mode === 'build' ? 'Plan' : 'Build'} mode`}
       data-testid="mode-toggle"
       data-mode={mode}
     >
-      <Icon className="h-3.5 w-3.5" />
+      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
       <span>{config.label}</span>
     </button>
   )

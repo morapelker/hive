@@ -1,5 +1,9 @@
 import { create } from 'zustand'
 
+// Debounce timers for git status refresh per worktree
+const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const REFRESH_DEBOUNCE_MS = 150
+
 // Git status types matching main process
 type GitStatusCode = 'M' | 'A' | 'D' | '?' | 'C' | ''
 
@@ -212,12 +216,28 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
     }
   },
 
-  // Refresh statuses and branch info
+  // Refresh statuses and branch info (debounced to batch rapid file changes)
   refreshStatuses: async (worktreePath: string) => {
-    await Promise.all([
-      get().loadFileStatuses(worktreePath),
-      get().loadBranchInfo(worktreePath)
-    ])
+    // Clear existing timer for this worktree
+    const existing = refreshTimers.get(worktreePath)
+    if (existing) {
+      clearTimeout(existing)
+    }
+
+    // Set debounced refresh
+    return new Promise<void>((resolve) => {
+      refreshTimers.set(
+        worktreePath,
+        setTimeout(async () => {
+          refreshTimers.delete(worktreePath)
+          await Promise.all([
+            get().loadFileStatuses(worktreePath),
+            get().loadBranchInfo(worktreePath)
+          ])
+          resolve()
+        }, REFRESH_DEBOUNCE_MS)
+      )
+    })
   },
 
   // Clear statuses for a worktree

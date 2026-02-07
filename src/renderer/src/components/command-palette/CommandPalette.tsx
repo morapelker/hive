@@ -148,10 +148,14 @@ export function CommandPalette() {
       <div
         className="fixed left-1/2 top-[20%] -translate-x-1/2 w-full max-w-xl z-50"
         data-testid="command-palette"
+        role="dialog"
+        aria-label="Command palette"
+        aria-modal="true"
       >
         <Command
           className="rounded-lg border border-border bg-popover shadow-xl overflow-hidden"
           shouldFilter={false}
+          label="Command palette"
         >
           {/* Search input */}
           <div className="flex items-center border-b border-border px-3">

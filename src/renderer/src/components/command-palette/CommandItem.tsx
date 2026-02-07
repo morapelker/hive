@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { type Command as CommandType } from '@/stores/useCommandPaletteStore'
 import { Command } from 'cmdk'
 import {
@@ -55,7 +56,7 @@ interface CommandItemProps {
   onMouseEnter: () => void
 }
 
-export function CommandItem({ command, isSelected, onSelect, onMouseEnter }: CommandItemProps) {
+export const CommandItem = memo(function CommandItem({ command, isSelected, onSelect, onMouseEnter }: CommandItemProps) {
   const Icon = command.icon ? iconMap[command.icon] : null
   const isEnabled = !command.isEnabled || command.isEnabled()
 
@@ -129,4 +130,4 @@ export function CommandItem({ command, isSelected, onSelect, onMouseEnter }: Com
       </div>
     </Command.Item>
   )
-}
+})

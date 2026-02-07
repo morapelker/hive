@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ChevronDown, ChevronRight, RefreshCw, GitBranch, ArrowUp, ArrowDown, Plus, Minus, FileDiff } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
@@ -205,20 +206,36 @@ export function GitStatusPanel({
 
   const handleStageAll = useCallback(async () => {
     if (!worktreePath) return
-    await stageAll(worktreePath)
+    const success = await stageAll(worktreePath)
+    if (success) {
+      toast.success('All changes staged')
+    } else {
+      toast.error('Failed to stage changes')
+    }
   }, [worktreePath, stageAll])
 
   const handleUnstageAll = useCallback(async () => {
     if (!worktreePath) return
-    await unstageAll(worktreePath)
+    const success = await unstageAll(worktreePath)
+    if (success) {
+      toast.success('All changes unstaged')
+    } else {
+      toast.error('Failed to unstage changes')
+    }
   }, [worktreePath, unstageAll])
 
   const handleToggleFile = useCallback(async (file: GitFileStatus) => {
     if (!worktreePath) return
     if (file.staged) {
-      await unstageFile(worktreePath, file.relativePath)
+      const success = await unstageFile(worktreePath, file.relativePath)
+      if (!success) {
+        toast.error(`Failed to unstage ${file.relativePath}`)
+      }
     } else {
-      await stageFile(worktreePath, file.relativePath)
+      const success = await stageFile(worktreePath, file.relativePath)
+      if (!success) {
+        toast.error(`Failed to stage ${file.relativePath}`)
+      }
     }
   }, [worktreePath, stageFile, unstageFile])
 
@@ -239,7 +256,7 @@ export function GitStatusPanel({
   const hasStaged = stagedFiles.length > 0
 
   return (
-    <div className={cn('flex flex-col border-b', className)} data-testid="git-status-panel">
+    <div className={cn('flex flex-col border-b', className)} data-testid="git-status-panel" role="region" aria-label="Git status">
       {/* Header with branch info */}
       <div className="flex items-center justify-between px-2 py-1.5 bg-muted/30">
         <div className="flex items-center gap-1.5 text-xs">

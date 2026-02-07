@@ -629,7 +629,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       </div>
 
       {/* Input area */}
-      <div className="border-t border-border p-4 bg-background" data-testid="input-area">
+      <div className="border-t border-border p-4 bg-background" data-testid="input-area" role="form" aria-label="Message input">
         <div className="flex gap-2 items-end max-w-3xl mx-auto">
           <textarea
             ref={textareaRef}
@@ -637,6 +637,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
+            aria-label="Message input"
             className={cn(
               'flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2',
               'text-sm placeholder:text-muted-foreground',
@@ -652,6 +653,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             onClick={handleSend}
             disabled={!inputValue.trim() || isSending}
             className="h-10"
+            aria-label={isSending ? 'Sending message' : 'Send message'}
             data-testid="send-button"
           >
             {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}

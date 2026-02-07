@@ -29,6 +29,8 @@ export function LeftSidebar(): React.JSX.Element {
         style={{ width: leftSidebarWidth }}
         data-testid="left-sidebar"
         data-width={leftSidebarWidth}
+        role="navigation"
+        aria-label="Projects and worktrees"
       >
         <div className="p-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm font-medium">

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, memo } from 'react'
 import {
   FileText,
   Pencil,
@@ -134,7 +134,7 @@ interface ToolCardProps {
   toolUse: ToolUseInfo
 }
 
-export function ToolCard({ toolUse }: ToolCardProps): React.JSX.Element {
+export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): React.JSX.Element {
   const [isExpanded, setIsExpanded] = useState(false)
 
   const label = useMemo(
@@ -238,4 +238,4 @@ export function ToolCard({ toolUse }: ToolCardProps): React.JSX.Element {
       )}
     </div>
   )
-}
+})

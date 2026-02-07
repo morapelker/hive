@@ -39,6 +39,8 @@ export function DiffViewer({
     <div
       className={cn('diff-viewer overflow-auto', className)}
       data-testid="diff-viewer"
+      role="region"
+      aria-label="File diff viewer"
       dangerouslySetInnerHTML={{ __html: diffHtml }}
     />
   )

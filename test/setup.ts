@@ -29,6 +29,9 @@ const mockGitOps = {
   unstageAll: vi.fn().mockResolvedValue({ success: true }),
   discardChanges: vi.fn().mockResolvedValue({ success: true }),
   addToGitignore: vi.fn().mockResolvedValue({ success: true }),
+  commit: vi.fn().mockResolvedValue({ success: true, commitHash: 'abc1234' }),
+  push: vi.fn().mockResolvedValue({ success: true }),
+  pull: vi.fn().mockResolvedValue({ success: true }),
   openInEditor: vi.fn().mockResolvedValue({ success: true }),
   showInFinder: vi.fn().mockResolvedValue({ success: true }),
   onStatusChanged: vi.fn().mockReturnValue(() => {})
