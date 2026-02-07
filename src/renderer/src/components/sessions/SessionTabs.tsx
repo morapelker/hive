@@ -242,6 +242,16 @@ export function SessionTabs(): React.JSX.Element | null {
       className="flex items-center border-b border-border bg-muted/30"
       data-testid="session-tabs"
     >
+      {/* New session button - on the left */}
+      <button
+        onClick={handleCreateSession}
+        className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
+        data-testid="create-session"
+        title="Create new session"
+      >
+        <Plus className="h-4 w-4" />
+      </button>
+
       {/* Left scroll arrow */}
       {showLeftArrow && (
         <button
@@ -297,16 +307,6 @@ export function SessionTabs(): React.JSX.Element | null {
           <ChevronRight className="h-4 w-4" />
         </button>
       )}
-
-      {/* New session button */}
-      <button
-        onClick={handleCreateSession}
-        className="p-1.5 hover:bg-accent transition-colors shrink-0 border-l border-border"
-        data-testid="create-session"
-        title="Create new session"
-      >
-        <Plus className="h-4 w-4" />
-      </button>
     </div>
   )
 }

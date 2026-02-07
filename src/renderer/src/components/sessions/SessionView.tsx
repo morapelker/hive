@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, AlertCircle, RefreshCw, Copy, Check, Bot, User } from 'lucide-react'
+import { Send, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { MessageRenderer } from './MessageRenderer'
 
 // Types for OpenCode SDK integration
 export interface OpenCodeMessage {
@@ -19,16 +20,6 @@ export interface SessionViewState {
 
 interface SessionViewProps {
   sessionId: string
-}
-
-interface MessageItemProps {
-  message: OpenCodeMessage
-  isStreaming?: boolean
-}
-
-interface CodeBlockProps {
-  code: string
-  language?: string
 }
 
 // Database message type from window.db.message
@@ -73,130 +64,6 @@ function dbMessageToOpenCode(msg: DbMessage): OpenCodeMessage {
     content: msg.content,
     timestamp: msg.created_at
   }
-}
-
-// Code block component with copy functionality
-function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): React.JSX.Element {
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(code)
-      setCopied(true)
-      toast.success('Code copied to clipboard')
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error('Failed to copy code')
-    }
-  }
-
-  return (
-    <div
-      className="relative group my-3 rounded-lg overflow-hidden border border-border bg-zinc-900 dark:bg-zinc-950"
-      data-testid="code-block"
-    >
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-zinc-800 dark:bg-zinc-900">
-        <span className="text-xs font-medium text-muted-foreground uppercase">{language}</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleCopy}
-          className="h-7 px-2 opacity-0 group-hover:opacity-100 transition-opacity"
-          data-testid="copy-code-button"
-        >
-          {copied ? (
-            <Check className="h-3.5 w-3.5 text-green-500" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
-          )}
-        </Button>
-      </div>
-      <pre className="p-4 overflow-x-auto text-sm font-mono text-zinc-100">
-        <code>{code}</code>
-      </pre>
-    </div>
-  )
-}
-
-// Parse message content for code blocks
-function parseContent(content: string): React.JSX.Element {
-  const parts: React.JSX.Element[] = []
-  const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g
-  let lastIndex = 0
-  let match: RegExpExecArray | null
-
-  let keyIndex = 0
-  while ((match = codeBlockRegex.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      const textBefore = content.slice(lastIndex, match.index)
-      parts.push(
-        <span key={`text-${keyIndex++}`} className="whitespace-pre-wrap">
-          {textBefore}
-        </span>
-      )
-    }
-
-    const language = match[1] || 'text'
-    const code = match[2].trim()
-    parts.push(<CodeBlock key={`code-${keyIndex++}`} code={code} language={language} />)
-
-    lastIndex = match.index + match[0].length
-  }
-
-  if (lastIndex < content.length) {
-    parts.push(
-      <span key={`text-${keyIndex++}`} className="whitespace-pre-wrap">
-        {content.slice(lastIndex)}
-      </span>
-    )
-  }
-
-  return <>{parts}</>
-}
-
-// Individual message component
-function MessageItem({ message, isStreaming = false }: MessageItemProps): React.JSX.Element {
-  const isUser = message.role === 'user'
-  const isSystem = message.role === 'system'
-
-  return (
-    <div
-      className={cn(
-        'flex gap-3 px-4 py-4',
-        isUser && 'bg-muted/30',
-        isSystem && 'bg-yellow-500/10'
-      )}
-      data-testid={`message-${message.role}`}
-      data-message-id={message.id}
-    >
-      <div
-        className={cn(
-          'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center',
-          isUser ? 'bg-primary text-primary-foreground' : 'bg-muted'
-        )}
-      >
-        {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-sm font-medium">
-            {isUser ? 'You' : isSystem ? 'System' : 'Assistant'}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {new Date(message.timestamp).toLocaleTimeString()}
-          </span>
-          {isStreaming && (
-            <span className="text-xs text-blue-500 animate-pulse">Streaming...</span>
-          )}
-        </div>
-        <div className="text-sm text-foreground leading-relaxed">
-          {parseContent(message.content)}
-          {isStreaming && <span className="inline-block w-2 h-4 bg-foreground animate-pulse ml-0.5" />}
-        </div>
-      </div>
-    </div>
-  )
 }
 
 // Loading state component
@@ -433,8 +300,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Handle retry connection
   const handleRetry = useCallback(async () => {
     setViewState({ status: 'connecting' })
-    // Re-trigger the initialization by updating a dummy state
-    // The useEffect will handle the actual reconnection
     setOpencodeSessionId(null)
     setWorktreePath(null)
 
@@ -574,9 +439,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         {messages.length === 0 && !streamingContent ? (
           <div className="flex-1 flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
-              <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-sm font-medium">Start a conversation</p>
-              <p className="text-xs mt-1">Type a message below to begin</p>
+              <p className="text-lg font-medium">Start a conversation</p>
+              <p className="text-sm mt-1">Type a message below to begin</p>
               {!opencodeSessionId && worktreePath && (
                 <p className="text-xs mt-2 text-yellow-500">Connecting to OpenCode...</p>
               )}
@@ -586,13 +450,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             </div>
           </div>
         ) : (
-          <>
+          <div className="py-4">
             {messages.map((message) => (
-              <MessageItem key={message.id} message={message} />
+              <MessageRenderer key={message.id} message={message} />
             ))}
             {/* Streaming message */}
             {streamingContent && (
-              <MessageItem
+              <MessageRenderer
                 message={{
                   id: 'streaming',
                   role: 'assistant',
@@ -604,31 +468,28 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             )}
             {/* Typing indicator when waiting for response */}
             {isSending && !streamingContent && (
-              <div className="flex gap-3 px-4 py-4" data-testid="typing-indicator">
-                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-                  <Bot className="h-4 w-4" />
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" />
+              <div className="px-6 py-5" data-testid="typing-indicator">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" />
                   <span
-                    className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
+                    className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
                     style={{ animationDelay: '0.1s' }}
                   />
                   <span
-                    className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
+                    className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
                     style={{ animationDelay: '0.2s' }}
                   />
                 </div>
               </div>
             )}
             <div ref={messagesEndRef} />
-          </>
+          </div>
         )}
       </div>
 
       {/* Input area */}
       <div className="border-t border-border p-4 bg-background" data-testid="input-area">
-        <div className="flex gap-2 items-end">
+        <div className="flex gap-2 items-end max-w-3xl mx-auto">
           <textarea
             ref={textareaRef}
             value={inputValue}
@@ -655,7 +516,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground mt-2">
+        <p className="text-xs text-muted-foreground mt-2 max-w-3xl mx-auto">
           Press Enter to send, Shift+Enter for new line
           {opencodeSessionId && (
             <span className="ml-2 text-green-500">Connected to OpenCode</span>

@@ -1,4 +1,7 @@
 export { SessionTabs } from './SessionTabs'
 export { SessionView } from './SessionView'
 export { SessionHistory } from './SessionHistory'
+export { UserBubble } from './UserBubble'
+export { AssistantCanvas } from './AssistantCanvas'
+export { MessageRenderer } from './MessageRenderer'
 export type { OpenCodeMessage, SessionViewState } from './SessionView'

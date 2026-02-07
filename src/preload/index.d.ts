@@ -278,6 +278,18 @@ declare global {
       // Subscribe to file tree change events
       onChange: (callback: (event: FileTreeChangeEvent) => void) => () => void
     }
+    settingsOps: {
+      detectEditors: () => Promise<DetectedApp[]>
+      detectTerminals: () => Promise<DetectedApp[]>
+      openWithEditor: (worktreePath: string, editorId: string, customCommand?: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      openWithTerminal: (worktreePath: string, terminalId: string, customCommand?: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+    }
     gitOps: {
       // Get file statuses for a worktree
       getFileStatuses: (worktreePath: string) => Promise<{
@@ -407,6 +419,13 @@ interface GitBranchInfo {
   tracking: string | null
   ahead: number
   behind: number
+}
+
+interface DetectedApp {
+  id: string
+  name: string
+  command: string
+  available: boolean
 }
 
 export {}

@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useMemo } from 'react'
 import { Command } from 'cmdk'
 import { useCommandPaletteStore, type Command as CommandType } from '@/stores/useCommandPaletteStore'
-import { useCommands, useCommandP } from '@/hooks'
+import { useCommands } from '@/hooks'
 import { categoryLabels } from '@/lib/command-registry'
 import { CommandItem } from './CommandItem'
 import {
@@ -17,7 +17,6 @@ export function CommandPalette() {
     commandStack,
     currentParent,
     close,
-    toggle,
     setSearchQuery,
     setSelectedIndex,
     moveSelection,
@@ -26,8 +25,7 @@ export function CommandPalette() {
 
   const { filteredCommands, recentCommands, executeCommand } = useCommands()
 
-  // Register Cmd/Ctrl+P keyboard shortcut
-  useCommandP(toggle)
+  // Cmd/Ctrl+P is handled centrally by useKeyboardShortcuts
 
   // Handle escape key
   useEffect(() => {

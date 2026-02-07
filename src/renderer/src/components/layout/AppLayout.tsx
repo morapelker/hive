@@ -5,8 +5,8 @@ import { RightSidebar } from './RightSidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { SessionHistory } from '@/components/sessions/SessionHistory'
 import { CommandPalette } from '@/components/command-palette'
-import { useSessionHistoryStore } from '@/stores/useSessionHistoryStore'
-import { useCommandK } from '@/hooks'
+import { SettingsModal } from '@/components/settings'
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 
 interface AppLayoutProps {
@@ -14,10 +14,8 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
-  const { togglePanel } = useSessionHistoryStore()
-
-  // Register Cmd/Ctrl+K keyboard shortcut for session history
-  useCommandK(togglePanel)
+  // Register all keyboard shortcuts centrally
+  useKeyboardShortcuts()
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground" data-testid="app-layout">
@@ -51,6 +49,9 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
       </ErrorBoundary>
       <ErrorBoundary componentName="CommandPalette" fallback={null}>
         <CommandPalette />
+      </ErrorBoundary>
+      <ErrorBoundary componentName="SettingsModal" fallback={null}>
+        <SettingsModal />
       </ErrorBoundary>
     </div>
   )

@@ -491,6 +491,40 @@ const opencodeOps = {
   }
 }
 
+// Settings operations API
+export interface DetectedApp {
+  id: string
+  name: string
+  command: string
+  available: boolean
+}
+
+const settingsOps = {
+  // Detect installed editors
+  detectEditors: (): Promise<DetectedApp[]> =>
+    ipcRenderer.invoke('settings:detectEditors'),
+
+  // Detect installed terminals
+  detectTerminals: (): Promise<DetectedApp[]> =>
+    ipcRenderer.invoke('settings:detectTerminals'),
+
+  // Open a path with a specific editor
+  openWithEditor: (
+    worktreePath: string,
+    editorId: string,
+    customCommand?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:openWithEditor', worktreePath, editorId, customCommand),
+
+  // Open a path with a specific terminal
+  openWithTerminal: (
+    worktreePath: string,
+    terminalId: string,
+    customCommand?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:openWithTerminal', worktreePath, terminalId, customCommand)
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -504,6 +538,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('opencodeOps', opencodeOps)
     contextBridge.exposeInMainWorld('fileTreeOps', fileTreeOps)
     contextBridge.exposeInMainWorld('gitOps', gitOps)
+    contextBridge.exposeInMainWorld('settingsOps', settingsOps)
   } catch (error) {
     console.error(error)
   }
@@ -524,4 +559,6 @@ if (process.contextIsolated) {
   window.fileTreeOps = fileTreeOps
   // @ts-expect-error (define in dts)
   window.gitOps = gitOps
+  // @ts-expect-error (define in dts)
+  window.settingsOps = settingsOps
 }

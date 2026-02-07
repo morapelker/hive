@@ -3,9 +3,12 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 
 interface LayoutState {
   leftSidebarWidth: number
+  leftSidebarCollapsed: boolean
   rightSidebarWidth: number
   rightSidebarCollapsed: boolean
   setLeftSidebarWidth: (width: number) => void
+  toggleLeftSidebar: () => void
+  setLeftSidebarCollapsed: (collapsed: boolean) => void
   setRightSidebarWidth: (width: number) => void
   toggleRightSidebar: () => void
   setRightSidebarCollapsed: (collapsed: boolean) => void
@@ -20,12 +23,21 @@ export const useLayoutStore = create<LayoutState>()(
   persist(
     (set) => ({
       leftSidebarWidth: LEFT_SIDEBAR_DEFAULT,
+      leftSidebarCollapsed: false,
       rightSidebarWidth: RIGHT_SIDEBAR_DEFAULT,
       rightSidebarCollapsed: false,
 
       setLeftSidebarWidth: (width: number) => {
         const clampedWidth = Math.min(Math.max(width, LEFT_SIDEBAR_MIN), LEFT_SIDEBAR_MAX)
         set({ leftSidebarWidth: clampedWidth })
+      },
+
+      toggleLeftSidebar: () => {
+        set((state) => ({ leftSidebarCollapsed: !state.leftSidebarCollapsed }))
+      },
+
+      setLeftSidebarCollapsed: (collapsed: boolean) => {
+        set({ leftSidebarCollapsed: collapsed })
       },
 
       setRightSidebarWidth: (width: number) => {
@@ -45,6 +57,7 @@ export const useLayoutStore = create<LayoutState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         leftSidebarWidth: state.leftSidebarWidth,
+        leftSidebarCollapsed: state.leftSidebarCollapsed,
         rightSidebarWidth: state.rightSidebarWidth,
         rightSidebarCollapsed: state.rightSidebarCollapsed,
       }),

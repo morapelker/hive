@@ -4,7 +4,7 @@ import { FolderGit2 } from 'lucide-react'
 import { ProjectList, AddProjectButton } from '@/components/projects'
 
 export function LeftSidebar(): React.JSX.Element {
-  const { leftSidebarWidth, setLeftSidebarWidth } = useLayoutStore()
+  const { leftSidebarWidth, leftSidebarCollapsed, setLeftSidebarWidth } = useLayoutStore()
 
   const handleResize = (delta: number): void => {
     setLeftSidebarWidth(leftSidebarWidth + delta)
@@ -16,6 +16,10 @@ export function LeftSidebar(): React.JSX.Element {
     if (addButton) {
       addButton.click()
     }
+  }
+
+  if (leftSidebarCollapsed) {
+    return <div data-testid="left-sidebar-collapsed" />
   }
 
   return (

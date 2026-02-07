@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useCallback } from 'react'
-import { useProjectStore, useWorktreeStore, useSessionStore, useThemeStore, useSessionHistoryStore } from '@/stores'
+import { useProjectStore, useWorktreeStore, useSessionStore, useThemeStore, useSessionHistoryStore, useLayoutStore } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
+import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
-import { commandRegistry, formatShortcut, fuzzySearch } from '@/lib/command-registry'
+import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { toast } from 'sonner'
 
 /**
@@ -24,6 +25,8 @@ export function useCommands() {
   const { theme, setTheme, cycleTheme } = useThemeStore()
   const { togglePanel: toggleSessionHistory } = useSessionHistoryStore()
   const { stageAll, unstageAll, refreshStatuses, push, pull, isPushing, isPulling } = useGitStore()
+  const { toggleLeftSidebar, toggleRightSidebar } = useLayoutStore()
+  const { getDisplayString } = useShortcutStore()
   const {
     searchQuery,
     recentCommandIds,
@@ -54,7 +57,7 @@ export function useCommands() {
         description: 'Search and browse past sessions',
         category: 'navigation',
         icon: 'History',
-        shortcut: formatShortcut('K', ['meta']),
+        shortcut: getDisplayString('nav:session-history'),
         keywords: ['history', 'search', 'past', 'sessions'],
         action: () => {
           closeCommandPalette()
@@ -186,7 +189,7 @@ export function useCommands() {
         description: 'Create a new chat session',
         category: 'action',
         icon: 'Plus',
-        shortcut: formatShortcut('N', ['meta']),
+        shortcut: getDisplayString('session:new'),
         keywords: ['new', 'create', 'session', 'chat'],
         action: async () => {
           if (!activeWorktreeId || !selectedProjectId) {
@@ -209,7 +212,7 @@ export function useCommands() {
         description: 'Close the current session tab',
         category: 'action',
         icon: 'X',
-        shortcut: formatShortcut('W', ['meta']),
+        shortcut: getDisplayString('session:close'),
         keywords: ['close', 'session', 'tab'],
         action: async () => {
           if (!activeSessionId) return
@@ -229,7 +232,7 @@ export function useCommands() {
         description: 'Create a new worktree for the current project',
         category: 'action',
         icon: 'GitBranch',
-        shortcut: formatShortcut('N', ['meta', 'shift']),
+        shortcut: getDisplayString('nav:new-worktree'),
         keywords: ['new', 'create', 'worktree', 'branch'],
         action: () => {
           // This will trigger the worktree creation dialog
@@ -384,7 +387,7 @@ export function useCommands() {
         description: 'Focus the commit form',
         category: 'git',
         icon: 'Check',
-        shortcut: formatShortcut('C', ['meta', 'shift']),
+        shortcut: getDisplayString('git:commit'),
         keywords: ['commit', 'save', 'git'],
         action: () => {
           // Focus commit form - emit event or trigger UI state
@@ -399,7 +402,7 @@ export function useCommands() {
         description: 'Push commits to the remote repository',
         category: 'git',
         icon: 'Upload',
-        shortcut: formatShortcut('P', ['meta', 'shift']),
+        shortcut: getDisplayString('git:push'),
         keywords: ['push', 'upload', 'remote', 'git'],
         action: async () => {
           const worktreePath = getActiveWorktreePath()
@@ -423,7 +426,7 @@ export function useCommands() {
         description: 'Pull commits from the remote repository',
         category: 'git',
         icon: 'Download',
-        shortcut: formatShortcut('L', ['meta', 'shift']),
+        shortcut: getDisplayString('git:pull'),
         keywords: ['pull', 'download', 'fetch', 'remote', 'git'],
         action: async () => {
           const worktreePath = getActiveWorktreePath()
@@ -462,6 +465,36 @@ export function useCommands() {
       },
 
       // =====================
+      // SIDEBAR COMMANDS
+      // =====================
+      {
+        id: 'sidebar:toggle-left',
+        label: 'Toggle Left Sidebar',
+        description: 'Show or hide the left sidebar',
+        category: 'action',
+        icon: 'PanelLeft',
+        shortcut: getDisplayString('sidebar:toggle-left'),
+        keywords: ['sidebar', 'left', 'toggle', 'hide', 'show'],
+        action: () => {
+          toggleLeftSidebar()
+          closeCommandPalette()
+        }
+      },
+      {
+        id: 'sidebar:toggle-right',
+        label: 'Toggle Right Sidebar',
+        description: 'Show or hide the right sidebar',
+        category: 'action',
+        icon: 'PanelRight',
+        shortcut: getDisplayString('sidebar:toggle-right'),
+        keywords: ['sidebar', 'right', 'toggle', 'hide', 'show', 'git', 'files'],
+        action: () => {
+          toggleRightSidebar()
+          closeCommandPalette()
+        }
+      },
+
+      // =====================
       // SETTINGS COMMANDS
       // =====================
       {
@@ -470,11 +503,11 @@ export function useCommands() {
         description: 'Open the settings panel',
         category: 'settings',
         icon: 'Settings',
-        shortcut: formatShortcut(',', ['meta']),
+        shortcut: getDisplayString('settings:open'),
         keywords: ['settings', 'preferences', 'config'],
         action: () => {
-          toast.info('Settings panel coming soon')
           closeCommandPalette()
+          window.dispatchEvent(new CustomEvent('hive:open-settings'))
         }
       },
       {
@@ -563,6 +596,9 @@ export function useCommands() {
     pull,
     isPushing,
     isPulling,
+    toggleLeftSidebar,
+    toggleRightSidebar,
+    getDisplayString,
     getActiveWorktreePath,
     closeCommandPalette,
     pushCommandLevel
