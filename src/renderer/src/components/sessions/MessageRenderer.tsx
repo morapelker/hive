@@ -21,6 +21,7 @@ export function MessageRenderer({
       content={message.content}
       timestamp={message.timestamp}
       isStreaming={isStreaming}
+      parts={message.parts}
     />
   )
 }

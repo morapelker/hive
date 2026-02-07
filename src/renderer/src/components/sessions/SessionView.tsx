@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { MessageRenderer } from './MessageRenderer'
+import type { ToolStatus, ToolUseInfo } from './ToolCard'
 
 // Types for OpenCode SDK integration
 export interface OpenCodeMessage {
@@ -11,11 +12,22 @@ export interface OpenCodeMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: string
+  /** Interleaved parts for assistant messages with tool calls */
+  parts?: StreamingPart[]
 }
 
 export interface SessionViewState {
   status: 'idle' | 'connecting' | 'connected' | 'error'
   errorMessage?: string
+}
+
+/** A single part of a streaming assistant message */
+export interface StreamingPart {
+  type: 'text' | 'tool_use'
+  /** Accumulated text for text parts */
+  text?: string
+  /** Tool info for tool_use parts */
+  toolUse?: ToolUseInfo
 }
 
 interface SessionViewProps {
@@ -114,13 +126,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // OpenCode state
   const [worktreePath, setWorktreePath] = useState<string | null>(null)
   const [opencodeSessionId, setOpencodeSessionId] = useState<string | null>(null)
-  const [streamingContent, setStreamingContent] = useState<string>('')
   const [isStreaming, setIsStreaming] = useState(false)
+
+  // Streaming parts - tracks interleaved text and tool use during streaming
+  const [streamingParts, setStreamingParts] = useState<StreamingPart[]>([])
+  const streamingPartsRef = useRef<StreamingPart[]>([])
+
+  // Legacy streaming content for backward compatibility
+  const [streamingContent, setStreamingContent] = useState<string>('')
+  const streamingContentRef = useRef<string>('')
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const streamingContentRef = useRef<string>('')
 
   // Auto-scroll to bottom when new messages arrive or streaming updates
   const scrollToBottom = useCallback(() => {
@@ -129,7 +147,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, streamingContent, scrollToBottom])
+  }, [messages, streamingContent, streamingParts, scrollToBottom])
 
   // Auto-resize textarea
   useEffect(() => {
@@ -139,6 +157,87 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
     }
   }, [inputValue])
+
+  // Helper to update streaming parts immutably
+  const updateStreamingParts = useCallback((updater: (parts: StreamingPart[]) => StreamingPart[]) => {
+    streamingPartsRef.current = updater(streamingPartsRef.current)
+    setStreamingParts([...streamingPartsRef.current])
+  }, [])
+
+  // Helper: ensure the last part is a text part, or add one
+  const appendTextDelta = useCallback((delta: string) => {
+    updateStreamingParts((parts) => {
+      const lastPart = parts[parts.length - 1]
+      if (lastPart && lastPart.type === 'text') {
+        // Append to existing text part
+        return [
+          ...parts.slice(0, -1),
+          { ...lastPart, text: (lastPart.text || '') + delta }
+        ]
+      }
+      // Create new text part
+      return [...parts, { type: 'text' as const, text: delta }]
+    })
+    // Also update legacy streamingContent for backward compat
+    streamingContentRef.current += delta
+    setStreamingContent(streamingContentRef.current)
+  }, [updateStreamingParts])
+
+  // Helper: set full text on the last text part
+  const setTextContent = useCallback((text: string) => {
+    updateStreamingParts((parts) => {
+      const lastPart = parts[parts.length - 1]
+      if (lastPart && lastPart.type === 'text') {
+        return [
+          ...parts.slice(0, -1),
+          { ...lastPart, text }
+        ]
+      }
+      return [...parts, { type: 'text' as const, text }]
+    })
+    streamingContentRef.current = text
+    setStreamingContent(text)
+  }, [updateStreamingParts])
+
+  // Helper: add or update a tool use part
+  const upsertToolUse = useCallback((toolId: string, update: Partial<ToolUseInfo> & { name?: string; input?: Record<string, unknown> }) => {
+    updateStreamingParts((parts) => {
+      const existingIndex = parts.findIndex(
+        (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
+      )
+
+      if (existingIndex >= 0) {
+        // Update existing
+        const existing = parts[existingIndex]
+        const updatedParts = [...parts]
+        updatedParts[existingIndex] = {
+          ...existing,
+          toolUse: { ...existing.toolUse!, ...update }
+        }
+        return updatedParts
+      }
+
+      // Add new tool use part
+      const newToolUse: ToolUseInfo = {
+        id: toolId,
+        name: update.name || 'Unknown',
+        input: update.input || {},
+        status: update.status || ('pending' as ToolStatus),
+        startTime: update.startTime || Date.now(),
+        ...update
+      }
+      return [...parts, { type: 'tool_use' as const, toolUse: newToolUse }]
+    })
+  }, [updateStreamingParts])
+
+  // Reset streaming state
+  const resetStreamingState = useCallback(() => {
+    streamingPartsRef.current = []
+    setStreamingParts([])
+    streamingContentRef.current = ''
+    setStreamingContent('')
+    setIsStreaming(false)
+  }, [])
 
   // Load session info and connect to OpenCode
   useEffect(() => {
@@ -186,41 +285,63 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Handle different event types
           if (event.type === 'message.part.updated') {
             const part = event.data?.part
-            if (part?.type === 'text') {
-              // Update streaming content with delta or full text
+            if (!part) return
+
+            if (part.type === 'text') {
+              // Update streaming text content with delta or full text
               const delta = event.data?.delta
               if (delta) {
-                streamingContentRef.current += delta
-                setStreamingContent(streamingContentRef.current)
+                appendTextDelta(delta)
               } else if (part.text) {
-                streamingContentRef.current = part.text
-                setStreamingContent(part.text)
+                setTextContent(part.text)
               }
+              setIsStreaming(true)
+            } else if (part.type === 'tool') {
+              // Tool part from OpenCode SDK - has callID, tool (name), state
+              const toolId = part.callID || part.id || `tool-${Date.now()}`
+              const toolName = part.tool || 'Unknown'
+              const state = part.state || {}
+
+              const statusMap: Record<string, ToolStatus> = {
+                pending: 'pending',
+                running: 'running',
+                completed: 'success',
+                error: 'error'
+              }
+
+              upsertToolUse(toolId, {
+                name: toolName,
+                input: state.input || {},
+                status: statusMap[state.status] || 'running',
+                startTime: state.time?.start || Date.now(),
+                endTime: state.time?.end,
+                output: state.status === 'completed' ? state.output : undefined,
+                error: state.status === 'error' ? state.error : undefined
+              })
               setIsStreaming(true)
             }
           } else if (event.type === 'message.updated') {
             const info = event.data?.info
             if (info?.role === 'assistant' && info.time?.completed) {
               // Message complete - save to database and update UI
+              // saveAssistantMessage will reset streaming state after the message is persisted
               const finalContent = streamingContentRef.current || ''
-              if (finalContent) {
-                saveAssistantMessage(finalContent)
+              const finalParts = [...streamingPartsRef.current]
+              if (finalContent || finalParts.length > 0) {
+                saveAssistantMessage(finalContent, finalParts)
               }
-              // Reset streaming state
-              streamingContentRef.current = ''
-              setStreamingContent('')
-              setIsStreaming(false)
               setIsSending(false)
             }
           } else if (event.type === 'session.idle') {
             // Session finished processing
             setIsSending(false)
             // If there's remaining streaming content, save it
-            if (streamingContentRef.current) {
-              saveAssistantMessage(streamingContentRef.current)
-              streamingContentRef.current = ''
-              setStreamingContent('')
-              setIsStreaming(false)
+            // saveAssistantMessage will reset streaming state after the message is persisted
+            if (streamingContentRef.current || streamingPartsRef.current.length > 0) {
+              saveAssistantMessage(
+                streamingContentRef.current,
+                [...streamingPartsRef.current]
+              )
             }
           }
         })
@@ -264,7 +385,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
 
     // Helper to save assistant message to database
-    const saveAssistantMessage = async (content: string): Promise<void> => {
+    // Resets streaming state AFTER the message is saved and added to messages[],
+    // ensuring the streaming content stays visible until the saved message replaces it.
+    const saveAssistantMessage = async (content: string, parts?: StreamingPart[]): Promise<void> => {
       try {
         const savedMessage = (await window.db.message.create({
           session_id: sessionId,
@@ -272,8 +395,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           content
         })) as DbMessage
 
-        const message = dbMessageToOpenCode(savedMessage)
+        const message: OpenCodeMessage = {
+          ...dbMessageToOpenCode(savedMessage),
+          parts
+        }
         setMessages((prev) => [...prev, message])
+        resetStreamingState()
       } catch (error) {
         console.error('Failed to save assistant message:', error)
         toast.error('Failed to save response')
@@ -408,6 +535,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     [handleSend]
   )
 
+  // Determine if there's streaming content to show
+  const hasStreamingContent = streamingParts.length > 0 || streamingContent.length > 0
+
   // Render based on view state
   if (viewState.status === 'connecting') {
     return (
@@ -436,7 +566,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     >
       {/* Message list */}
       <div className="flex-1 overflow-y-auto" data-testid="message-list">
-        {messages.length === 0 && !streamingContent ? (
+        {messages.length === 0 && !hasStreamingContent ? (
           <div className="flex-1 flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
               <p className="text-lg font-medium">Start a conversation</p>
@@ -452,22 +582,26 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         ) : (
           <div className="py-4">
             {messages.map((message) => (
-              <MessageRenderer key={message.id} message={message} />
+              <MessageRenderer
+                key={message.id}
+                message={message}
+              />
             ))}
             {/* Streaming message */}
-            {streamingContent && (
+            {hasStreamingContent && (
               <MessageRenderer
                 message={{
                   id: 'streaming',
                   role: 'assistant',
                   content: streamingContent,
-                  timestamp: new Date().toISOString()
+                  timestamp: new Date().toISOString(),
+                  parts: streamingParts
                 }}
                 isStreaming={isStreaming}
               />
             )}
             {/* Typing indicator when waiting for response */}
-            {isSending && !streamingContent && (
+            {isSending && !hasStreamingContent && (
               <div className="px-6 py-5" data-testid="typing-indicator">
                 <div className="flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" />
