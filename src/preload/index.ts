@@ -501,6 +501,10 @@ const opencodeOps = {
   setModel: (model: { providerID: string; modelID: string }): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:setModel', model),
 
+  // Generate a descriptive session name using Claude Haiku via OpenCode
+  generateSessionName: (message: string, worktreePath: string): Promise<{ success: boolean; name: string; error?: string }> =>
+    ipcRenderer.invoke('opencode:generateSessionName', message, worktreePath),
+
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, event: OpenCodeStreamEvent): void => {

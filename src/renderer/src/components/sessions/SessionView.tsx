@@ -149,6 +149,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Streaming throttle ref (~100ms batching for text updates)
   const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Session auto-naming ref: tracks whether naming has been triggered
+  const hasTriggeredNamingRef = useRef(false)
+
   // Response logging refs
   const isLogModeRef = useRef<boolean>(false)
   const logFilePathRef = useRef<string | null>(null)
@@ -305,6 +308,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Load session info and connect to OpenCode
   useEffect(() => {
     let unsubscribe: (() => void) | null = null
+    hasTriggeredNamingRef.current = false
 
     const initializeSession = async (): Promise<void> => {
       setViewState({ status: 'connecting' })
@@ -314,6 +318,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
         const loadedMessages = dbMessages.map(dbMessageToOpenCode)
         setMessages(loadedMessages)
+
+        // If session already has messages, skip auto-naming
+        if (loadedMessages.length > 0) {
+          hasTriggeredNamingRef.current = true
+        }
 
         // 2. Get session info to find worktree
         const session = (await window.db.session.get(sessionId)) as DbSession | null
@@ -343,7 +352,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Only handle events for this session
           if (event.sessionId !== sessionId) return
 
-          console.log('OpenCode stream event:', event.type, event.data)
 
           // Log event if response logging is active
           if (isLogModeRef.current && logFilePathRef.current) {
@@ -590,6 +598,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       const userMessage = dbMessageToOpenCode(savedUserMessage)
       setMessages((prev) => [...prev, userMessage])
+
+      // Fire-and-forget: generate a descriptive session name on the first message
+      if (!hasTriggeredNamingRef.current && worktreePath) {
+        hasTriggeredNamingRef.current = true
+        console.log('[Session naming] Triggering name generation for session', sessionId)
+        window.opencodeOps.generateSessionName(trimmedValue, worktreePath).then((result) => {
+          console.log('[Session naming] Result:', { success: result.success, name: result.name, error: result.error })
+          if (result.success && result.name) {
+            useSessionStore.getState().updateSessionName(sessionId, result.name).then((updated) => {
+              console.log('[Session naming] Store update:', { sessionId, name: result.name, updated })
+            })
+          }
+        }).catch((err) => {
+          console.warn('[Session naming] Failed:', err)
+        })
+      }
 
       // Log user prompt if response logging is active
       if (isLogModeRef.current && logFilePathRef.current) {

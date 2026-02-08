@@ -52,11 +52,21 @@ async function loadOpenCodeSDK(): Promise<{ createOpencode: any }> {
   return sdk
 }
 
+// Callback for collecting session naming responses via the existing event stream
+interface NamingCallback {
+  collected: string
+  hasReceivedText: boolean
+  resolve: (name: string) => void
+  timeoutId: ReturnType<typeof setTimeout>
+}
+
 class OpenCodeService {
   // Single server instance (OpenCode handles multiple directories via query params)
   private instance: OpenCodeInstance | null = null
   private mainWindow: BrowserWindow | null = null
   private pendingConnection: Promise<OpenCodeInstance> | null = null
+  // Callbacks for temporary naming sessions (keyed by OpenCode session ID)
+  private namingCallbacks: Map<string, NamingCallback> = new Map()
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
@@ -436,12 +446,7 @@ class OpenCodeService {
       return
     }
 
-    log.info('Received event from OpenCode', {
-      eventType,
-      hasProperties: !!event.properties
-    })
-
-    // Special handling for session.error - log the full error
+    // Log errors, skip logging for routine events
     if (eventType === 'session.error') {
       log.error('OpenCode session error', {
         sessionId: event.properties?.sessionID,
@@ -471,6 +476,38 @@ class OpenCodeService {
       return
     }
 
+    // Check if this is a naming callback (temporary session for auto-naming)
+    const namingCb = this.namingCallbacks.get(sessionId)
+    if (namingCb) {
+      if (eventType === 'message.part.updated') {
+        const part = event.properties?.part
+        if (part?.type === 'text') {
+          namingCb.hasReceivedText = true
+          const delta = event.properties?.delta
+          if (delta) {
+            namingCb.collected += delta
+            log.info('Session naming: received text delta', { deltaLength: delta.length, collectedLength: namingCb.collected.length })
+          } else if (part.text) {
+            namingCb.collected = part.text
+            log.info('Session naming: received full text', { textLength: part.text.length })
+          }
+        }
+      } else if (eventType === 'session.idle') {
+        if (!namingCb.hasReceivedText) {
+          // Ignore early session.idle events that arrive before any text
+          // (the temp session starts idle before the prompt is processed)
+          log.info('Session naming: ignoring early session.idle (no text received yet)')
+          return
+        }
+        clearTimeout(namingCb.timeoutId)
+        const name = namingCb.collected.trim()
+        this.namingCallbacks.delete(sessionId)
+        log.info('Session naming: resolved', { name })
+        namingCb.resolve(name)
+      }
+      return
+    }
+
     // Get the Hive session ID for routing
     const hiveSessionId = instance.sessionMap.get(sessionId)
     if (!hiveSessionId) {
@@ -485,7 +522,6 @@ class OpenCodeService {
       data: event.properties || event
     }
 
-    log.info('Sending stream event to renderer', { eventType, hiveSessionId })
     this.sendToRenderer('opencode:stream', streamEvent)
   }
 
@@ -498,6 +534,79 @@ class OpenCodeService {
       this.mainWindow.webContents.send(channel, data)
     } else {
       log.warn('Cannot send to renderer: window not available')
+    }
+  }
+
+  /**
+   * Generate a short descriptive name for a session using Claude Haiku via OpenCode
+   */
+  async generateSessionName(userMessage: string, worktreePath: string): Promise<string> {
+    log.info('Session naming: starting', { messageLength: userMessage.length, worktreePath })
+
+    const instance = await this.getOrCreateInstance()
+    let tempSessionId: string | null = null
+
+    try {
+      // Create a temporary OpenCode session for the naming call
+      const sessionResult = await instance.client.session.create({
+        query: { directory: worktreePath }
+      })
+      tempSessionId = sessionResult.data?.id
+      if (!tempSessionId) {
+        log.warn('Session naming: failed to create temp session')
+        return ''
+      }
+      log.info('Session naming: created temp session', { tempSessionId })
+
+      // Ensure event subscription is active for this directory (increment count)
+      this.subscribeToDirectory(instance, worktreePath)
+
+      const namingPrompt =
+        'Generate a short (3-5 word) descriptive name for a coding session based on this message. Return ONLY the name, no quotes or explanation.\n\nMessage: ' +
+        userMessage
+
+      // Set up a promise that resolves when events deliver the response
+      const name = await new Promise<string>((resolve) => {
+        const timeoutId = setTimeout(() => {
+          const cb = this.namingCallbacks.get(tempSessionId!)
+          log.warn('Session naming: timed out', { hasReceivedText: cb?.hasReceivedText, collectedLength: cb?.collected.length })
+          this.namingCallbacks.delete(tempSessionId!)
+          resolve('')
+        }, 10000)
+
+        this.namingCallbacks.set(tempSessionId!, {
+          collected: '',
+          hasReceivedText: false,
+          resolve,
+          timeoutId
+        })
+
+        // Send the naming prompt via OpenCode using Haiku
+        instance.client.session.promptAsync({
+          path: { id: tempSessionId },
+          query: { directory: worktreePath },
+          body: {
+            model: { providerID: 'anthropic', modelID: 'claude-haiku-4-5-20251001' },
+            parts: [{ type: 'text', text: namingPrompt }]
+          }
+        }).catch(() => {
+          clearTimeout(timeoutId)
+          this.namingCallbacks.delete(tempSessionId!)
+          resolve('')
+        })
+      })
+
+      log.info('Session naming: complete', { name, nameLength: name.length })
+      return name
+    } catch (error) {
+      log.warn('Session naming: failed', { error })
+      return ''
+    } finally {
+      // Clean up: remove callback and decrement subscription count
+      if (tempSessionId) {
+        this.namingCallbacks.delete(tempSessionId)
+      }
+      this.unsubscribeFromDirectory(instance, worktreePath)
     }
   }
 

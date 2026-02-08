@@ -111,6 +111,26 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Generate a descriptive session name using Claude Haiku via OpenCode
+  ipcMain.handle(
+    'opencode:generateSessionName',
+    async (_event, message: string, worktreePath: string) => {
+      log.info('Session naming: IPC request received', { messageLength: message?.length, worktreePath })
+      try {
+        const name = await openCodeService.generateSessionName(message, worktreePath)
+        log.info('Session naming: IPC returning result', { name, success: !!name })
+        return { success: true, name }
+      } catch (error) {
+        log.error('Session naming: IPC handler failed', { error })
+        return {
+          success: false,
+          name: '',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Get messages from an OpenCode session
   ipcMain.handle(
     'opencode:messages',

@@ -260,6 +260,8 @@ declare global {
       listModels: () => Promise<{ success: boolean; providers: Record<string, unknown>; error?: string }>
       // Set the selected model for prompts
       setModel: (model: { providerID: string; modelID: string }) => Promise<{ success: boolean; error?: string }>
+      // Generate a descriptive session name using Claude Haiku via OpenCode
+      generateSessionName: (message: string, worktreePath: string) => Promise<{ success: boolean; name: string; error?: string }>
       // Subscribe to streaming events
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
     }
