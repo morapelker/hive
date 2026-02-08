@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
+import { getDatabase } from '../db'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -8,6 +9,8 @@ const DEFAULT_MODEL = {
   providerID: 'anthropic',
   modelID: 'claude-opus-4-5-20251101'
 }
+
+const SELECTED_MODEL_DB_KEY = 'selected_model'
 
 // Event types we care about for streaming
 export interface StreamEvent {
@@ -252,6 +255,59 @@ class OpenCodeService {
   }
 
   /**
+   * Get available models from all configured providers
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async getAvailableModels(): Promise<any> {
+    log.info('Getting available models')
+
+    const instance = await this.getOrCreateInstance()
+
+    try {
+      const result = await instance.client.config.providers()
+      const providers = result.data?.providers || []
+      log.info('Got available models', { providerCount: providers.length })
+      return providers
+    } catch (error) {
+      log.error('Failed to get available models', { error })
+      throw error
+    }
+  }
+
+  /**
+   * Get the selected model from settings DB, or fallback to DEFAULT_MODEL
+   */
+  private getSelectedModel(): { providerID: string; modelID: string } {
+    try {
+      const db = getDatabase()
+      const value = db.getSetting(SELECTED_MODEL_DB_KEY)
+      if (value) {
+        const parsed = JSON.parse(value)
+        if (parsed.providerID && parsed.modelID) {
+          return parsed
+        }
+      }
+    } catch (error) {
+      log.warn('Failed to load selected model from DB, using default', { error })
+    }
+    return DEFAULT_MODEL
+  }
+
+  /**
+   * Set the selected model in settings DB
+   */
+  setSelectedModel(model: { providerID: string; modelID: string }): void {
+    try {
+      const db = getDatabase()
+      db.setSetting(SELECTED_MODEL_DB_KEY, JSON.stringify(model))
+      log.info('Selected model saved', { model })
+    } catch (error) {
+      log.error('Failed to save selected model', { error })
+      throw error
+    }
+  }
+
+  /**
    * Send a prompt to an OpenCode session
    */
   async prompt(worktreePath: string, opencodeSessionId: string, message: string): Promise<void> {
@@ -261,13 +317,16 @@ class OpenCodeService {
       throw new Error('No OpenCode instance available')
     }
 
+    const model = this.getSelectedModel()
+    log.info('Using model for prompt', { model })
+
     try {
       // Use promptAsync for non-blocking behavior - events will stream the response
       await this.instance.client.session.promptAsync({
         path: { id: opencodeSessionId },
         query: { directory: worktreePath },
         body: {
-          model: DEFAULT_MODEL,
+          model,
           parts: [{ type: 'text', text: message }]
         }
       })

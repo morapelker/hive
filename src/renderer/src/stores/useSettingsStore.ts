@@ -8,6 +8,11 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 export type EditorOption = 'vscode' | 'cursor' | 'sublime' | 'webstorm' | 'zed' | 'custom'
 export type TerminalOption = 'terminal' | 'iterm' | 'warp' | 'alacritty' | 'kitty' | 'custom'
 
+export interface SelectedModel {
+  providerID: string
+  modelID: string
+}
+
 export interface AppSettings {
   // General
   autoStartSession: boolean
@@ -23,6 +28,9 @@ export interface AppSettings {
   // Git
   commitTemplate: string
   autoFetchInterval: number // 0 = disabled, otherwise minutes
+
+  // Model
+  selectedModel: SelectedModel | null
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -32,7 +40,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultTerminal: 'terminal',
   customTerminalCommand: '',
   commitTemplate: '',
-  autoFetchInterval: 0
+  autoFetchInterval: 0,
+  selectedModel: null
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -47,6 +56,7 @@ interface SettingsState extends AppSettings {
   closeSettings: () => void
   setActiveSection: (section: string) => void
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
+  setSelectedModel: (model: SelectedModel) => Promise<void>
   resetToDefaults: () => void
   loadFromDatabase: () => Promise<void>
 }
@@ -83,7 +93,8 @@ function extractSettings(state: SettingsState): AppSettings {
     defaultTerminal: state.defaultTerminal,
     customTerminalCommand: state.customTerminalCommand,
     commitTemplate: state.commitTemplate,
-    autoFetchInterval: state.autoFetchInterval
+    autoFetchInterval: state.autoFetchInterval,
+    selectedModel: state.selectedModel
   }
 }
 
@@ -115,6 +126,19 @@ export const useSettingsStore = create<SettingsState>()(
         saveToDatabase(settings)
       },
 
+      setSelectedModel: async (model: SelectedModel) => {
+        set({ selectedModel: model })
+        // Persist to backend (settings DB + opencode service)
+        try {
+          await window.opencodeOps.setModel(model)
+        } catch (error) {
+          console.error('Failed to persist model selection:', error)
+        }
+        // Also save in app settings
+        const settings = extractSettings({ ...get(), selectedModel: model } as SettingsState)
+        saveToDatabase(settings)
+      },
+
       resetToDefaults: () => {
         set({ ...DEFAULT_SETTINGS })
         saveToDatabase(DEFAULT_SETTINGS)
@@ -141,6 +165,7 @@ export const useSettingsStore = create<SettingsState>()(
         customTerminalCommand: state.customTerminalCommand,
         commitTemplate: state.commitTemplate,
         autoFetchInterval: state.autoFetchInterval,
+        selectedModel: state.selectedModel,
         activeSection: state.activeSection
       })
     }

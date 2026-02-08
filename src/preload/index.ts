@@ -493,6 +493,14 @@ const opencodeOps = {
   ): Promise<{ success: boolean; messages: unknown[]; error?: string }> =>
     ipcRenderer.invoke('opencode:messages', worktreePath, opencodeSessionId),
 
+  // List available models from all configured providers
+  listModels: (): Promise<{ success: boolean; providers: Record<string, unknown>; error?: string }> =>
+    ipcRenderer.invoke('opencode:models'),
+
+  // Set the selected model for prompts
+  setModel: (model: { providerID: string; modelID: string }): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:setModel', model),
+
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, event: OpenCodeStreamEvent): void => {

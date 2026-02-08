@@ -77,6 +77,40 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Get available models from all configured providers
+  ipcMain.handle('opencode:models', async () => {
+    log.info('IPC: opencode:models')
+    try {
+      const providers = await openCodeService.getAvailableModels()
+      return { success: true, providers }
+    } catch (error) {
+      log.error('IPC: opencode:models failed', { error })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        providers: {}
+      }
+    }
+  })
+
+  // Set the selected model
+  ipcMain.handle(
+    'opencode:setModel',
+    async (_event, model: { providerID: string; modelID: string }) => {
+      log.info('IPC: opencode:setModel', { model })
+      try {
+        openCodeService.setSelectedModel(model)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:setModel failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Get messages from an OpenCode session
   ipcMain.handle(
     'opencode:messages',

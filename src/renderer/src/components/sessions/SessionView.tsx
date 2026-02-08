@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { MessageRenderer } from './MessageRenderer'
 import { ModeToggle } from './ModeToggle'
+import { ModelSelector } from './ModelSelector'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 
@@ -735,11 +736,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             data-testid="message-input"
           />
 
-          {/* Bottom row: hint text + send button */}
+          {/* Bottom row: model selector + hint text + send button */}
           <div className="flex items-center justify-between px-3 pb-2.5">
-            <span className="text-xs text-muted-foreground">
-              Enter to send, Shift+Enter for new line
-            </span>
+            <div className="flex items-center gap-2">
+              <ModelSelector />
+              <span className="text-xs text-muted-foreground">
+                Enter to send, Shift+Enter for new line
+              </span>
+            </div>
             <Button
               onClick={handleSend}
               disabled={!inputValue.trim() || isSending}
