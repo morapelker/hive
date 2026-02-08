@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 3
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -91,6 +91,12 @@ export const MIGRATIONS: Migration[] = [
     version: 2,
     name: 'add_session_mode',
     up: `ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'build';`,
+    down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
+  },
+  {
+    version: 3,
+    name: 'add_project_language',
+    up: `ALTER TABLE projects ADD COLUMN language TEXT;`,
     down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
   }
 ]

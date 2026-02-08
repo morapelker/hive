@@ -33,7 +33,7 @@ const db = {
     get: (id: string) => ipcRenderer.invoke('db:project:get', id),
     getByPath: (path: string) => ipcRenderer.invoke('db:project:getByPath', path),
     getAll: () => ipcRenderer.invoke('db:project:getAll'),
-    update: (id: string, data: { name?: string; description?: string | null; tags?: string[] | null; last_accessed_at?: string }) =>
+    update: (id: string, data: { name?: string; description?: string | null; tags?: string[] | null; language?: string | null; last_accessed_at?: string }) =>
       ipcRenderer.invoke('db:project:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('db:project:delete', id),
     touch: (id: string) => ipcRenderer.invoke('db:project:touch', id)
@@ -108,7 +108,15 @@ const projectOps = {
 
   // Clipboard operations
   copyToClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:writeText', text),
-  readFromClipboard: (): Promise<string> => ipcRenderer.invoke('clipboard:readText')
+  readFromClipboard: (): Promise<string> => ipcRenderer.invoke('clipboard:readText'),
+
+  // Detect the primary programming language of a project
+  detectLanguage: (projectPath: string): Promise<string | null> =>
+    ipcRenderer.invoke('project:detectLanguage', projectPath),
+
+  // Load custom language icons as data URLs
+  loadLanguageIcons: (): Promise<Record<string, string>> =>
+    ipcRenderer.invoke('project:loadLanguageIcons')
 }
 
 // Worktree operations API

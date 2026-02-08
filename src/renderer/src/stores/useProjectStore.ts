@@ -8,6 +8,7 @@ interface Project {
   path: string
   description: string | null
   tags: string | null
+  language: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -32,6 +33,7 @@ interface ProjectState {
   toggleProjectExpanded: (id: string) => void
   setEditingProject: (id: string | null) => void
   touchProject: (id: string) => Promise<void>
+  refreshLanguage: (projectId: string) => Promise<void>
 }
 
 export const useProjectStore = create<ProjectState>()(
@@ -82,6 +84,20 @@ export const useProjectStore = create<ProjectState>()(
       const project = await window.db.project.create({
         name: validation.name!,
         path: validation.path!
+      })
+
+      // Auto-detect language (fire and forget for speed)
+      window.projectOps.detectLanguage(validation.path!).then(async (language) => {
+        if (language) {
+          await window.db.project.update(project.id, { language })
+          set((state) => ({
+            projects: state.projects.map((p) =>
+              p.id === project.id ? { ...p, language } : p
+            )
+          }))
+        }
+      }).catch(() => {
+        // Ignore detection errors
       })
 
       // Add to state
@@ -178,6 +194,23 @@ export const useProjectStore = create<ProjectState>()(
       }))
     } catch {
       // Ignore touch errors
+    }
+  },
+
+  // Re-detect and update project language
+  refreshLanguage: async (projectId: string) => {
+    const project = get().projects.find((p) => p.id === projectId)
+    if (!project) return
+    try {
+      const language = await window.projectOps.detectLanguage(project.path)
+      await window.db.project.update(projectId, { language })
+      set((state) => ({
+        projects: state.projects.map((p) =>
+          p.id === projectId ? { ...p, language } : p
+        )
+      }))
+    } catch {
+      // Ignore refresh errors
     }
   }
     }),

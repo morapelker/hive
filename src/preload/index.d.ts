@@ -5,6 +5,7 @@ interface Project {
   path: string
   description: string | null
   tags: string | null
+  language: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -90,6 +91,7 @@ declare global {
             name?: string
             description?: string | null
             tags?: string[] | null
+            language?: string | null
             last_accessed_at?: string
           }
         ) => Promise<Project | null>
@@ -169,6 +171,8 @@ declare global {
       openPath: (path: string) => Promise<string>
       copyToClipboard: (text: string) => Promise<void>
       readFromClipboard: () => Promise<string>
+      detectLanguage: (projectPath: string) => Promise<string | null>
+      loadLanguageIcons: () => Promise<Record<string, string>>
     }
     worktreeOps: {
       create: (params: {

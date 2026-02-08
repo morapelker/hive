@@ -4,6 +4,7 @@ export interface Project {
   path: string
   description: string | null
   tags: string | null // JSON array
+  language: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -19,6 +20,7 @@ export interface ProjectUpdate {
   name?: string
   description?: string | null
   tags?: string[] | null
+  language?: string | null
   last_accessed_at?: string
 }
 

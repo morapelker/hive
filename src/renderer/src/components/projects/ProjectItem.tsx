@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { ChevronRight, Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Copy, ExternalLink } from 'lucide-react'
+import { ChevronRight, MoreHorizontal, Pencil, Trash2, Copy, ExternalLink, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/context-menu'
 import { useProjectStore } from '@/stores'
 import { WorktreeList } from '@/components/worktrees'
+import { LanguageIcon } from './LanguageIcon'
 
 interface Project {
   id: string
@@ -20,6 +21,7 @@ interface Project {
   path: string
   description: string | null
   tags: string | null
+  language: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -37,7 +39,8 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
     toggleProjectExpanded,
     setEditingProject,
     updateProjectName,
-    removeProject
+    removeProject,
+    refreshLanguage
   } = useProjectStore()
 
   const [editName, setEditName] = useState(project.name)
@@ -141,12 +144,8 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
               />
             </Button>
 
-            {/* Folder Icon */}
-            {isExpanded ? (
-              <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-            ) : (
-              <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
-            )}
+            {/* Language Icon */}
+            <LanguageIcon language={project.language} />
 
             {/* Project Name */}
             {isEditing ? (
@@ -197,6 +196,10 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
           <ContextMenuItem onClick={handleCopyPath}>
             <Copy className="h-4 w-4 mr-2" />
             Copy Path
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => refreshLanguage(project.id)}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh Language
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem

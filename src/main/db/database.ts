@@ -121,19 +121,21 @@ export class DatabaseService {
       path: data.path,
       description: data.description ?? null,
       tags: data.tags ? JSON.stringify(data.tags) : null,
+      language: null,
       created_at: now,
       last_accessed_at: now
     }
 
     db.prepare(
-      `INSERT INTO projects (id, name, path, description, tags, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, path, description, tags, language, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       project.id,
       project.name,
       project.path,
       project.description,
       project.tags,
+      project.language,
       project.created_at,
       project.last_accessed_at
     )
@@ -177,6 +179,10 @@ export class DatabaseService {
     if (data.tags !== undefined) {
       updates.push('tags = ?')
       values.push(data.tags ? JSON.stringify(data.tags) : null)
+    }
+    if (data.language !== undefined) {
+      updates.push('language = ?')
+      values.push(data.language)
     }
     if (data.last_accessed_at !== undefined) {
       updates.push('last_accessed_at = ?')

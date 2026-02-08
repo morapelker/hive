@@ -1,7 +1,9 @@
 import { ipcMain, dialog, shell, clipboard, BrowserWindow } from 'electron'
-import { existsSync, statSync } from 'fs'
-import { join, basename } from 'path'
+import { existsSync, statSync, readFileSync } from 'fs'
+import { join, basename, extname } from 'path'
 import { createLogger } from '../services/logger'
+import { detectProjectLanguage } from '../services/language-detector'
+import { getDatabase } from '../db'
 
 const log = createLogger({ component: 'ProjectHandlers' })
 
@@ -104,4 +106,78 @@ export function registerProjectHandlers(): void {
   ipcMain.handle('clipboard:readText', (): string => {
     return clipboard.readText()
   })
+
+  // Detect project language from characteristic files
+  ipcMain.handle(
+    'project:detectLanguage',
+    async (_event, projectPath: string): Promise<string | null> => {
+      log.debug('Detecting project language', { projectPath })
+      return detectProjectLanguage(projectPath)
+    }
+  )
+
+  // Load custom language icons as data URLs
+  ipcMain.handle(
+    'project:loadLanguageIcons',
+    (): Record<string, string> => {
+      const db = getDatabase()
+      const raw = db.getSetting('language_icons')
+      if (!raw) return {}
+
+      try {
+        const iconPaths: Record<string, string> = JSON.parse(raw)
+        const result: Record<string, string> = {}
+
+        const mimeTypes: Record<string, string> = {
+          '.svg': 'image/svg+xml',
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp'
+        }
+
+        for (const [language, filePath] of Object.entries(iconPaths)) {
+          try {
+            if (!existsSync(filePath)) {
+              log.warn('Language icon file not found', { language, filePath })
+              continue
+            }
+            const ext = extname(filePath).toLowerCase()
+            const mime = mimeTypes[ext]
+            if (!mime) {
+              log.warn('Unsupported icon file type', { language, filePath, ext })
+              continue
+            }
+            const data = readFileSync(filePath)
+            result[language] = `data:${mime};base64,${data.toString('base64')}`
+          } catch (err) {
+            log.warn(
+              'Failed to read language icon',
+              { language, filePath, error: err instanceof Error ? err.message : String(err) }
+            )
+          }
+        }
+
+        return result
+      } catch {
+        log.warn('Failed to parse language_icons setting')
+        return {}
+      }
+    }
+  )
+
+  // Seed default custom language icons if not already set
+  const db = getDatabase()
+  if (!db.getSetting('language_icons')) {
+    db.setSetting(
+      'language_icons',
+      JSON.stringify({
+        python: '/Users/mor/Desktop/python.svg',
+        rust: '/Users/mor/Desktop/rustacean-orig-noshadow.svg',
+        go: '/Users/mor/Desktop/golang.png',
+        typescript: '/Users/mor/Desktop/typescript.svg'
+      })
+    )
+  }
 }

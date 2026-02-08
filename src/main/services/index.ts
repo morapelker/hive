@@ -1,4 +1,5 @@
 export * from './city-names'
 export * from './git-service'
+export * from './language-detector'
 export * from './logger'
 export * from './response-logger'
