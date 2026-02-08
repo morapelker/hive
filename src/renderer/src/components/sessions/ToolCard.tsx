@@ -7,7 +7,6 @@ import {
   FolderSearch,
   FilePlus,
   ChevronDown,
-  ChevronRight,
   Check,
   X,
   Loader2,
@@ -97,6 +96,8 @@ function getToolLabel(name: string, input: Record<string, unknown>): string {
   return ''
 }
 
+const MAX_LINES = 10
+
 function StatusIndicator({ status }: { status: ToolStatus }): React.JSX.Element {
   switch (status) {
     case 'pending':
@@ -130,12 +131,26 @@ function formatDuration(ms: number): string {
   return `${(ms / 60000).toFixed(1)}m`
 }
 
+function getLeftBorderClass(status: ToolStatus): string {
+  switch (status) {
+    case 'pending':
+      return 'border-l-2 border-l-muted-foreground'
+    case 'running':
+      return 'border-l-2 border-l-blue-500 animate-pulse'
+    case 'success':
+      return 'border-l-2 border-l-green-500'
+    case 'error':
+      return 'border-l-2 border-l-red-500'
+  }
+}
+
 interface ToolCardProps {
   toolUse: ToolUseInfo
 }
 
 export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): React.JSX.Element {
   const [isExpanded, setIsExpanded] = useState(false)
+  const [showFullOutput, setShowFullOutput] = useState(false)
 
   const label = useMemo(
     () => getToolLabel(toolUse.name, toolUse.input),
@@ -151,10 +166,27 @@ export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): Reac
 
   const hasOutput = !!(toolUse.output || toolUse.error)
 
+  const outputLines = useMemo(() => {
+    if (!toolUse.output) return { lines: [], totalCount: 0, needsTruncation: false }
+    const lines = toolUse.output.split('\n')
+    return {
+      lines,
+      totalCount: lines.length,
+      needsTruncation: lines.length > MAX_LINES
+    }
+  }, [toolUse.output])
+
+  const displayedOutput = useMemo(() => {
+    if (!toolUse.output) return ''
+    if (!outputLines.needsTruncation || showFullOutput) return toolUse.output
+    return outputLines.lines.slice(0, MAX_LINES).join('\n')
+  }, [toolUse.output, outputLines, showFullOutput])
+
   return (
     <div
       className={cn(
-        'my-2 rounded-lg border text-xs',
+        'my-3 rounded-lg border text-xs',
+        getLeftBorderClass(toolUse.status),
         toolUse.status === 'error'
           ? 'border-red-500/30 bg-red-500/5'
           : 'border-border bg-muted/30'
@@ -167,19 +199,20 @@ export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): Reac
       <button
         onClick={() => hasOutput && setIsExpanded(!isExpanded)}
         className={cn(
-          'flex items-center gap-2 w-full px-3 py-2 text-left',
+          'flex items-center gap-2 w-full px-3.5 py-2.5 text-left',
           hasOutput && 'cursor-pointer hover:bg-muted/50 transition-colors'
         )}
         disabled={!hasOutput}
         data-testid="tool-card-header"
       >
-        {/* Expand/Collapse chevron */}
+        {/* Expand/Collapse chevron with smooth rotation */}
         {hasOutput ? (
-          isExpanded ? (
-            <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
-          ) : (
-            <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
-          )
+          <ChevronDown
+            className={cn(
+              'h-3 w-3 text-muted-foreground shrink-0 transition-transform duration-150',
+              !isExpanded && '-rotate-90'
+            )}
+          />
         ) : (
           <span className="w-3 shrink-0" />
         )}
@@ -216,26 +249,43 @@ export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): Reac
         <StatusIndicator status={toolUse.status} />
       </button>
 
-      {/* Expandable output */}
-      {isExpanded && hasOutput && (
-        <div
-          className="border-t border-border px-3 py-2"
-          data-testid="tool-output"
-        >
+      {/* Expandable output with smooth transition */}
+      <div
+        className={cn(
+          'transition-all duration-150 overflow-hidden',
+          isExpanded && hasOutput ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+        )}
+        data-testid="tool-output"
+      >
+        <div className="border-t border-border px-3.5 py-2.5">
           {toolUse.error && (
             <div className="text-red-400 font-mono whitespace-pre-wrap break-all">
               {toolUse.error}
             </div>
           )}
           {toolUse.output && (
-            <pre className="text-muted-foreground font-mono whitespace-pre-wrap break-all max-h-60 overflow-y-auto">
-              {toolUse.output.length > 2000
-                ? toolUse.output.slice(0, 2000) + '\n... (truncated)'
-                : toolUse.output}
-            </pre>
+            <div>
+              <pre className="text-muted-foreground font-mono whitespace-pre-wrap break-all max-h-60 overflow-y-auto">
+                {displayedOutput}
+              </pre>
+              {outputLines.needsTruncation && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShowFullOutput(!showFullOutput)
+                  }}
+                  className="mt-1.5 text-blue-500 hover:text-blue-400 text-xs font-medium transition-colors"
+                  data-testid="show-more-button"
+                >
+                  {showFullOutput
+                    ? 'Show less'
+                    : `Show more (${outputLines.totalCount - MAX_LINES} more lines)`}
+                </button>
+              )}
+            </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   )
 })
