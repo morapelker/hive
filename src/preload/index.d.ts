@@ -295,6 +295,13 @@ declare global {
       // Subscribe to file tree change events
       onChange: (callback: (event: FileTreeChangeEvent) => void) => () => void
     }
+    fileOps: {
+      readFile: (filePath: string) => Promise<{
+        success: boolean
+        content?: string
+        error?: string
+      }>
+    }
     settingsOps: {
       detectEditors: () => Promise<DetectedApp[]>
       detectTerminals: () => Promise<DetectedApp[]>

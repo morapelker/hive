@@ -525,6 +525,12 @@ const opencodeOps = {
   }
 }
 
+// File operations API (read-only file viewer)
+const fileOps = {
+  readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
+    ipcRenderer.invoke('file:read', filePath)
+}
+
 // Settings operations API
 export interface DetectedApp {
   id: string
@@ -573,6 +579,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('fileTreeOps', fileTreeOps)
     contextBridge.exposeInMainWorld('gitOps', gitOps)
     contextBridge.exposeInMainWorld('settingsOps', settingsOps)
+    contextBridge.exposeInMainWorld('fileOps', fileOps)
     contextBridge.exposeInMainWorld('loggingOps', loggingOps)
   } catch (error) {
     console.error(error)
@@ -596,6 +603,8 @@ if (process.contextIsolated) {
   window.gitOps = gitOps
   // @ts-expect-error (define in dts)
   window.settingsOps = settingsOps
+  // @ts-expect-error (define in dts)
+  window.fileOps = fileOps
   // @ts-expect-error (define in dts)
   window.loggingOps = loggingOps
 }

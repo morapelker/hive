@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FileTree } from '@/components/file-tree'
 import { GitStatusPanel } from '@/components/git'
@@ -31,10 +32,10 @@ export function RightSidebar(): React.JSX.Element {
     setRightSidebarWidth(rightSidebarWidth + delta)
   }
 
-  const handleFileClick = (node: { path: string; isDirectory: boolean }): void => {
-    // Open file in default editor
-    if (!node.isDirectory) {
-      window.worktreeOps.openInEditor(node.path)
+  const handleFileClick = (node: { path: string; name: string; isDirectory: boolean }): void => {
+    // Open file in the file viewer tab
+    if (!node.isDirectory && selectedWorktreeId) {
+      useFileViewerStore.getState().openFile(node.path, node.name, selectedWorktreeId)
     }
   }
 

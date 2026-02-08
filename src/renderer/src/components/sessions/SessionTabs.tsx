@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Plus, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, X, ChevronLeft, ChevronRight, FileCode } from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -79,6 +80,53 @@ function SessionTab({
   )
 }
 
+interface FileTabProps {
+  filePath: string
+  name: string
+  isActive: boolean
+  onClick: () => void
+  onClose: (e: React.MouseEvent) => void
+}
+
+function FileTab({ filePath, name, isActive, onClick, onClose }: FileTabProps): React.JSX.Element {
+  return (
+    <div
+      data-testid={`file-tab-${name}`}
+      onClick={onClick}
+      onMouseDown={(e) => {
+        if (e.button === 1) {
+          e.preventDefault()
+          onClose(e)
+        }
+      }}
+      className={cn(
+        'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
+        'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
+        isActive
+          ? 'bg-background text-foreground'
+          : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+      )}
+      title={filePath}
+    >
+      <FileCode className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
+      <span className="truncate flex-1">{name}</span>
+      <button
+        onClick={onClose}
+        className={cn(
+          'p-0.5 rounded hover:bg-accent transition-opacity',
+          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        )}
+        data-testid={`close-file-tab-${name}`}
+      >
+        <X className="h-3 w-3" />
+      </button>
+      {isActive && (
+        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+      )}
+    </div>
+  )
+}
+
 export function SessionTabs(): React.JSX.Element | null {
   const tabsContainerRef = useRef<HTMLDivElement>(null)
   const [showLeftArrow, setShowLeftArrow] = useState(false)
@@ -97,6 +145,8 @@ export function SessionTabs(): React.JSX.Element | null {
     setActiveSession,
     reorderTabs
   } = useSessionStore()
+
+  const { openFiles, activeFilePath, setActiveFile, closeFile } = useFileViewerStore()
 
   const { selectedWorktreeId } = useWorktreeStore()
   const { projects } = useProjectStore()
@@ -176,7 +226,7 @@ export function SessionTabs(): React.JSX.Element | null {
         window.removeEventListener('resize', checkOverflow)
       }
     }
-  }, [checkOverflow, sessionsByWorktree, tabOrderByWorktree])
+  }, [checkOverflow, sessionsByWorktree, tabOrderByWorktree, openFiles])
 
   // Scroll functions
   const scrollLeft = () => {
@@ -210,6 +260,23 @@ export function SessionTabs(): React.JSX.Element | null {
     if (!result.success) {
       toast.error(result.error || 'Failed to close session')
     }
+  }
+
+  // Handle clicking a session tab - deactivate file tab
+  const handleSessionTabClick = (sessionId: string) => {
+    setActiveFile(null)
+    setActiveSession(sessionId)
+  }
+
+  // Handle clicking a file tab - keep session but activate file view
+  const handleFileTabClick = (filePath: string) => {
+    setActiveFile(filePath)
+  }
+
+  // Handle closing a file tab
+  const handleCloseFileTab = (e: React.MouseEvent, filePath: string) => {
+    e.stopPropagation()
+    closeFile(filePath)
   }
 
   // Drag and drop handlers
@@ -263,6 +330,14 @@ export function SessionTabs(): React.JSX.Element | null {
     .map(id => sessions.find(s => s.id === id))
     .filter((s): s is NonNullable<typeof s> => s !== undefined)
 
+  // Get file tabs for the current worktree
+  const fileTabs = Array.from(openFiles.values()).filter(
+    (f) => f.worktreeId === selectedWorktreeId
+  )
+
+  // Determine if a file tab is the active one
+  const isFileTabActive = activeFilePath !== null
+
   return (
     <div
       className="flex items-center border-b border-border bg-muted/30"
@@ -295,7 +370,7 @@ export function SessionTabs(): React.JSX.Element | null {
         className="flex-1 flex overflow-x-auto scrollbar-hide"
         style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
       >
-        {orderedSessions.length === 0 ? (
+        {orderedSessions.length === 0 && fileTabs.length === 0 ? (
           <div
             className="flex items-center px-3 py-1.5 text-sm text-muted-foreground"
             data-testid="no-sessions"
@@ -303,23 +378,37 @@ export function SessionTabs(): React.JSX.Element | null {
             No sessions yet. Click + to create one.
           </div>
         ) : (
-          orderedSessions.map((session) => (
-            <SessionTab
-              key={session.id}
-              sessionId={session.id}
-              name={session.name || 'Untitled'}
-              isActive={session.id === activeSessionId}
-              onClick={() => setActiveSession(session.id)}
-              onClose={(e) => handleCloseSession(e, session.id)}
-              onMiddleClick={(e) => handleCloseSession(e, session.id)}
-              onDragStart={(e) => handleDragStart(e, session.id)}
-              onDragOver={(e) => handleDragOver(e, session.id)}
-              onDrop={(e) => handleDrop(e, session.id)}
-              onDragEnd={handleDragEnd}
-              isDragging={draggedTabId === session.id}
-              isDragOver={dragOverTabId === session.id}
-            />
-          ))
+          <>
+            {/* Session tabs */}
+            {orderedSessions.map((session) => (
+              <SessionTab
+                key={session.id}
+                sessionId={session.id}
+                name={session.name || 'Untitled'}
+                isActive={session.id === activeSessionId && !isFileTabActive}
+                onClick={() => handleSessionTabClick(session.id)}
+                onClose={(e) => handleCloseSession(e, session.id)}
+                onMiddleClick={(e) => handleCloseSession(e, session.id)}
+                onDragStart={(e) => handleDragStart(e, session.id)}
+                onDragOver={(e) => handleDragOver(e, session.id)}
+                onDrop={(e) => handleDrop(e, session.id)}
+                onDragEnd={handleDragEnd}
+                isDragging={draggedTabId === session.id}
+                isDragOver={dragOverTabId === session.id}
+              />
+            ))}
+            {/* File viewer tabs */}
+            {fileTabs.map((file) => (
+              <FileTab
+                key={file.path}
+                filePath={file.path}
+                name={file.name}
+                isActive={isFileTabActive && activeFilePath === file.path}
+                onClick={() => handleFileTabClick(file.path)}
+                onClose={(e) => handleCloseFileTab(e, file.path)}
+              />
+            ))}
+          </>
         )}
       </div>
 

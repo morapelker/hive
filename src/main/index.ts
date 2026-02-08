@@ -3,7 +3,7 @@ import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
-import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers, registerGitFileHandlers, registerSettingsHandlers } from './ipc'
+import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers, registerGitFileHandlers, registerSettingsHandlers, registerFileHandlers } from './ipc'
 import { createLogger, getLogDir } from './services/logger'
 import { createResponseLog, appendResponseLog } from './services/response-logger'
 
@@ -180,6 +180,7 @@ app.whenReady().then(() => {
   registerWorktreeHandlers()
   registerSystemHandlers()
   registerSettingsHandlers()
+  registerFileHandlers()
 
   // Register response logging handlers only when --log is active
   if (isLogMode) {

@@ -1,7 +1,9 @@
 import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
+import { FileViewer } from '@/components/file-viewer'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 
 interface MainPaneProps {
   children?: React.ReactNode
@@ -11,6 +13,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const selectedWorktreeId = useWorktreeStore((state) => state.selectedWorktreeId)
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
   const isLoading = useSessionStore((state) => state.isLoading)
+  const activeFilePath = useFileViewerStore((state) => state.activeFilePath)
 
   // Determine what to show in the main content area
   const renderContent = () => {
@@ -40,6 +43,11 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
           </div>
         </div>
       )
+    }
+
+    // File viewer tab is active - render FileViewer
+    if (activeFilePath) {
+      return <FileViewer filePath={activeFilePath} />
     }
 
     // Worktree selected but no session - show create session prompt
