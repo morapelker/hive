@@ -227,6 +227,7 @@ declare global {
         logs: string
       }>
       isLogMode: () => Promise<boolean>
+      openInApp: (appName: string, path: string) => Promise<{ success: boolean; error?: string }>
     }
     loggingOps: {
       createResponseLog: (sessionId: string) => Promise<string>

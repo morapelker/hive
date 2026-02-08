@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useSessionHistoryStore } from '@/stores/useSessionHistoryStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { QuickActions } from './QuickActions'
 
 export function Header(): React.JSX.Element {
   const { rightSidebarCollapsed, toggleRightSidebar } = useLayoutStore()
@@ -20,6 +21,11 @@ export function Header(): React.JSX.Element {
       <div className="flex items-center gap-2 flex-1">
         <h1 className="text-lg font-semibold">Hive</h1>
       </div>
+      {/* Center: Quick Actions */}
+      <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <QuickActions />
+      </div>
+      <div className="flex-1" />
       <div
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}

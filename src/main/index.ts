@@ -1,5 +1,6 @@
-import { app, shell, BrowserWindow, screen, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
+import { spawn } from 'child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
@@ -143,6 +144,28 @@ function registerSystemHandlers(): void {
 
   // Check if response logging is enabled
   ipcMain.handle('system:isLogMode', () => isLogMode)
+
+  // Open a path in an external app (Cursor, Ghostty) or copy to clipboard
+  ipcMain.handle('system:openInApp', async (_, appName: string, path: string) => {
+    try {
+      switch (appName) {
+        case 'cursor':
+          spawn('open', ['-a', 'Cursor', path], { detached: true, stdio: 'ignore' })
+          break
+        case 'ghostty':
+          spawn('open', ['-a', 'Ghostty', path], { detached: true, stdio: 'ignore' })
+          break
+        case 'copy-path':
+          clipboard.writeText(path)
+          break
+        default:
+          return { success: false, error: `Unknown app: ${appName}` }
+      }
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to open in app' }
+    }
+  })
 }
 
 // Register response logging IPC handlers (only when --log is active)

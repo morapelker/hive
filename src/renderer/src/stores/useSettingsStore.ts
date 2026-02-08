@@ -13,6 +13,8 @@ export interface SelectedModel {
   modelID: string
 }
 
+export type QuickActionType = 'cursor' | 'ghostty' | 'copy-path'
+
 export interface AppSettings {
   // General
   autoStartSession: boolean
@@ -31,6 +33,9 @@ export interface AppSettings {
 
   // Model
   selectedModel: SelectedModel | null
+
+  // Quick Actions
+  lastOpenAction: QuickActionType | null
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -41,7 +46,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   customTerminalCommand: '',
   commitTemplate: '',
   autoFetchInterval: 0,
-  selectedModel: null
+  selectedModel: null,
+  lastOpenAction: null
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -94,7 +100,8 @@ function extractSettings(state: SettingsState): AppSettings {
     customTerminalCommand: state.customTerminalCommand,
     commitTemplate: state.commitTemplate,
     autoFetchInterval: state.autoFetchInterval,
-    selectedModel: state.selectedModel
+    selectedModel: state.selectedModel,
+    lastOpenAction: state.lastOpenAction
   }
 }
 
@@ -166,6 +173,7 @@ export const useSettingsStore = create<SettingsState>()(
         commitTemplate: state.commitTemplate,
         autoFetchInterval: state.autoFetchInterval,
         selectedModel: state.selectedModel,
+        lastOpenAction: state.lastOpenAction,
         activeSection: state.activeSection
       })
     }

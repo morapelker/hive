@@ -206,7 +206,11 @@ const systemOps = {
   }> => ipcRenderer.invoke('system:getAppPaths'),
 
   // Check if response logging is enabled (--log flag)
-  isLogMode: (): Promise<boolean> => ipcRenderer.invoke('system:isLogMode')
+  isLogMode: (): Promise<boolean> => ipcRenderer.invoke('system:isLogMode'),
+
+  // Open a path in an external app (Cursor, Ghostty) or copy to clipboard
+  openInApp: (appName: string, path: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('system:openInApp', appName, path)
 }
 
 // Response logging operations API (only functional when --log is active)
