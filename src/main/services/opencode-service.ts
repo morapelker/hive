@@ -36,13 +36,13 @@ interface OpenCodeInstance {
     url: string
     close(): void
   }
-  // Map of OpenCode session IDs to Hive session IDs for routing events
+  // Map of directory-scoped OpenCode session keys to Hive session IDs for routing events
   sessionMap: Map<string, string>
-  // Map of OpenCode session IDs to worktree paths
+  // Map of directory-scoped OpenCode session keys to worktree paths
   sessionDirectories: Map<string, string>
   // Map of directory paths to their event subscriptions
   directorySubscriptions: Map<string, DirectorySubscription>
-  // Map of child/subagent OpenCode session IDs to their parent OpenCode session IDs
+  // Map of directory-scoped child/subagent OpenCode session keys to parent OpenCode session IDs
   childToParentMap: Map<string, string>
 }
 
@@ -72,6 +72,69 @@ class OpenCodeService {
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
+  }
+
+  private getSessionMapKey(directory: string, opencodeSessionId: string): string {
+    return `${directory}::${opencodeSessionId}`
+  }
+
+  private getChildParentKey(directory: string, childSessionId: string): string {
+    return `${directory}::${childSessionId}`
+  }
+
+  private setSessionMapping(
+    instance: OpenCodeInstance,
+    directory: string,
+    opencodeSessionId: string,
+    hiveSessionId: string
+  ): void {
+    const key = this.getSessionMapKey(directory, opencodeSessionId)
+    instance.sessionMap.set(key, hiveSessionId)
+    instance.sessionDirectories.set(key, directory)
+  }
+
+  private migrateLegacySessionMapping(
+    instance: OpenCodeInstance,
+    directory: string,
+    opencodeSessionId: string
+  ): void {
+    // Legacy mapping keyed only by opencodeSessionId (pre-directory scoping).
+    const legacyMapped = instance.sessionMap.get(opencodeSessionId)
+    if (legacyMapped !== undefined) {
+      this.setSessionMapping(instance, directory, opencodeSessionId, legacyMapped)
+      instance.sessionMap.delete(opencodeSessionId)
+    }
+
+    const legacyDirectory = instance.sessionDirectories.get(opencodeSessionId)
+    if (legacyDirectory !== undefined) {
+      instance.sessionDirectories.delete(opencodeSessionId)
+    }
+  }
+
+  private getMappedHiveSessionId(
+    instance: OpenCodeInstance,
+    opencodeSessionId: string,
+    directory?: string
+  ): string | undefined {
+    if (directory) {
+      const scoped = instance.sessionMap.get(this.getSessionMapKey(directory, opencodeSessionId))
+      if (scoped) return scoped
+    }
+
+    const legacy = instance.sessionMap.get(opencodeSessionId)
+    if (legacy) return legacy
+
+    if (!directory) return undefined
+
+    // Compatibility fallback for mixed-state maps.
+    const scopedSuffix = `::${opencodeSessionId}`
+    for (const [key, hiveSessionId] of instance.sessionMap.entries()) {
+      if (key.endsWith(scopedSuffix)) {
+        return hiveSessionId
+      }
+    }
+
+    return undefined
   }
 
   private toIsoTimestamp(value: unknown): string | undefined {
@@ -384,8 +447,7 @@ class OpenCodeService {
         throw new Error('Failed to create OpenCode session: no session ID returned')
       }
 
-      instance.sessionMap.set(sessionId, hiveSessionId)
-      instance.sessionDirectories.set(sessionId, worktreePath)
+      this.setSessionMapping(instance, worktreePath, sessionId, hiveSessionId)
 
       // Subscribe to events for this directory
       this.subscribeToDirectory(instance, worktreePath)
@@ -416,11 +478,13 @@ class OpenCodeService {
 
     try {
       const instance = await this.getOrCreateInstance()
+      const scopedKey = this.getSessionMapKey(worktreePath, opencodeSessionId)
+      this.migrateLegacySessionMapping(instance, worktreePath, opencodeSessionId)
 
       // If session is already registered (e.g., user switched projects and back),
       // just update the Hive session mapping. Skip subscription to avoid count leak.
-      if (instance.sessionMap.has(opencodeSessionId)) {
-        instance.sessionMap.set(opencodeSessionId, hiveSessionId)
+      if (instance.sessionMap.has(scopedKey)) {
+        instance.sessionMap.set(scopedKey, hiveSessionId)
         log.info('Session already registered, updated mapping', { opencodeSessionId, hiveSessionId })
         return { success: true }
       }
@@ -432,8 +496,7 @@ class OpenCodeService {
       })
 
       if (result.data) {
-        instance.sessionMap.set(opencodeSessionId, hiveSessionId)
-        instance.sessionDirectories.set(opencodeSessionId, worktreePath)
+        this.setSessionMapping(instance, worktreePath, opencodeSessionId, hiveSessionId)
 
         // Subscribe to events for this directory
         this.subscribeToDirectory(instance, worktreePath)
@@ -567,6 +630,10 @@ class OpenCodeService {
     // Unsubscribe from directory events
     this.unsubscribeFromDirectory(this.instance, worktreePath)
 
+    const scopedKey = this.getSessionMapKey(worktreePath, opencodeSessionId)
+    this.instance.sessionMap.delete(scopedKey)
+    this.instance.sessionDirectories.delete(scopedKey)
+    // Legacy cleanup
     this.instance.sessionMap.delete(opencodeSessionId)
     this.instance.sessionDirectories.delete(opencodeSessionId)
 
@@ -706,12 +773,12 @@ class OpenCodeService {
     }
 
     // Get the Hive session ID for routing — check parent session if this is a child/subagent
-    let hiveSessionId = instance.sessionMap.get(sessionId)
+    let hiveSessionId = this.getMappedHiveSessionId(instance, sessionId, eventDirectory)
 
     if (!hiveSessionId) {
       const parentId = await this.resolveParentSession(instance, sessionId, eventDirectory)
       if (parentId) {
-        hiveSessionId = instance.sessionMap.get(parentId)
+        hiveSessionId = this.getMappedHiveSessionId(instance, parentId, eventDirectory)
       }
     }
 
@@ -747,13 +814,14 @@ class OpenCodeService {
     childSessionId: string,
     directory?: string
   ): Promise<string | undefined> {
+    if (!directory) return undefined
+
+    const key = this.getChildParentKey(directory, childSessionId)
     // Check cache first (empty string = known non-child, skip lookup)
-    const cached = instance.childToParentMap.get(childSessionId)
+    const cached = instance.childToParentMap.get(key)
     if (cached !== undefined) {
       return cached || undefined
     }
-
-    if (!directory) return undefined
 
     try {
       const result = await instance.client.session.get({
@@ -763,13 +831,13 @@ class OpenCodeService {
 
       const parentID = result.data?.parentID
       if (parentID) {
-        instance.childToParentMap.set(childSessionId, parentID)
+        instance.childToParentMap.set(key, parentID)
         log.info('Resolved child session to parent', { childSessionId, parentSessionId: parentID })
         return parentID
       }
 
       // Not a child session — cache to avoid repeated lookups
-      instance.childToParentMap.set(childSessionId, '')
+      instance.childToParentMap.set(key, '')
       return undefined
     } catch (error) {
       log.warn('Failed to resolve parent session', { childSessionId, error })

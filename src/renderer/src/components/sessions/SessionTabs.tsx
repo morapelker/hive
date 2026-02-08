@@ -180,7 +180,7 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }, [selectedWorktreeId, project, loadSessions])
 
-  // Auto-start session when worktree has none and setting is enabled
+  // Auto-start session only when the whole project has no active sessions.
   const { isLoading } = useSessionStore()
   const autoStartSession = useSettingsStore((state) => state.autoStartSession)
   const autoStartedRef = useRef<string | null>(null)
@@ -194,14 +194,35 @@ export function SessionTabs(): React.JSX.Element | null {
     ) return
 
     const sessions = sessionsByWorktree.get(selectedWorktreeId) || []
-    // Only auto-start if no active sessions exist and we haven't already auto-started for this worktree
-    if (sessions.length === 0 && autoStartedRef.current !== selectedWorktreeId) {
-      autoStartedRef.current = selectedWorktreeId
-      createSession(selectedWorktreeId, project.id).then((result) => {
+    // Only consider auto-start when selected worktree has no loaded active sessions
+    // and we haven't already auto-started for this worktree.
+    if (sessions.length > 0 || autoStartedRef.current === selectedWorktreeId) return
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const projectSessions = await window.db.session.getByProject(project.id)
+        if (cancelled) return
+
+        const hasActiveSession = projectSessions.some((session) => session.status === 'active')
+        if (hasActiveSession) return
+
+        // Re-check local state to avoid duplicate creation if sessions loaded while awaiting DB.
+        const latestSessions = useSessionStore.getState().sessionsByWorktree.get(selectedWorktreeId) || []
+        if (latestSessions.length > 0) return
+
+        autoStartedRef.current = selectedWorktreeId
+        const result = await createSession(selectedWorktreeId, project.id)
         if (!result.success) {
           toast.error(result.error || 'Failed to auto-create session')
         }
-      })
+      } catch {
+        // Silently skip auto-start on transient read failures; manual creation remains available.
+      }
+    })()
+
+    return () => {
+      cancelled = true
     }
   }, [selectedWorktreeId, project, isLoading, autoStartSession, sessionsByWorktree, createSession])
 
