@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { useProjectStore } from './useProjectStore'
+import { useScriptStore } from './useScriptStore'
 
 // Worktree type matching the database schema
 interface Worktree {
@@ -105,6 +107,24 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           creatingForProjectId: null
         }
       })
+
+      // Fire-and-forget: run setup script if configured
+      const project = useProjectStore.getState().projects.find((p) => p.id === projectId)
+      if (project?.setup_script) {
+        const commands = project.setup_script
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith('#'))
+
+        if (commands.length > 0) {
+          const worktreeId = result.worktree!.id
+          const cwd = result.worktree!.path
+          useScriptStore.getState().setSetupRunning(worktreeId, true)
+          window.scriptOps.runSetup(commands, cwd, worktreeId).catch(() => {
+            useScriptStore.getState().setSetupRunning(worktreeId, false)
+          })
+        }
+      }
 
       return { success: true }
     } catch (error) {
