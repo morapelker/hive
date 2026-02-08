@@ -54,7 +54,7 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     label: 'Toggle Build/Plan Mode',
     description: 'Switch between build and plan mode',
     category: 'session',
-    defaultBinding: { key: 'Tab', modifiers: ['shift'] }
+    defaultBinding: { key: 'Tab', modifiers: [] }
   },
 
   // Navigation shortcuts

@@ -41,6 +41,7 @@ export function useKeyboardShortcuts(): void {
 
         if (eventMatchesBinding(event, binding)) {
           event.preventDefault()
+          event.stopPropagation()
           handler()
           return
         }
@@ -50,8 +51,9 @@ export function useKeyboardShortcuts(): void {
   )
 
   useEffect(() => {
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    // Use capture phase to intercept Tab key before browser handles focus/tab insertion
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
   }, [handleKeyDown])
 }
 
@@ -113,7 +115,7 @@ function getShortcutHandlers(
     {
       id: 'session:mode-toggle',
       binding: getEffectiveBinding('session:mode-toggle'),
-      allowInInput: true, // Shift+Tab should work even in inputs
+      allowInInput: true, // Tab should work even in inputs
       handler: () => {
         const { activeSessionId } = useSessionStore.getState()
         if (!activeSessionId) return

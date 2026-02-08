@@ -146,6 +146,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Streaming throttle ref (~100ms batching for text updates)
+  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Response logging refs
   const isLogModeRef = useRef<boolean>(false)
   const logFilePathRef = useRef<string | null>(null)
@@ -168,6 +171,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [inputValue])
 
+  // Clean up throttle timer on unmount
+  useEffect(() => {
+    return () => {
+      if (throttleRef.current !== null) {
+        clearTimeout(throttleRef.current)
+      }
+    }
+  }, [])
+
   // Check if response logging is enabled on mount
   useEffect(() => {
     window.systemOps.isLogMode().then((enabled) => {
@@ -177,15 +189,39 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     })
   }, [])
 
-  // Helper to update streaming parts immutably
-  const updateStreamingParts = useCallback((updater: (parts: StreamingPart[]) => StreamingPart[]) => {
-    streamingPartsRef.current = updater(streamingPartsRef.current)
+  // Flush streaming refs to state (used by throttle and immediate flush)
+  const flushStreamingState = useCallback(() => {
     setStreamingParts([...streamingPartsRef.current])
+    setStreamingContent(streamingContentRef.current)
   }, [])
 
-  // Helper: ensure the last part is a text part, or add one
+  // Schedule a throttled flush (~100ms batching for text updates)
+  const scheduleFlush = useCallback(() => {
+    if (throttleRef.current === null) {
+      throttleRef.current = setTimeout(() => {
+        throttleRef.current = null
+        flushStreamingState()
+      }, 100)
+    }
+  }, [flushStreamingState])
+
+  // Immediate flush — cancels pending throttle and flushes now (for tool updates and stream end)
+  const immediateFlush = useCallback(() => {
+    if (throttleRef.current !== null) {
+      clearTimeout(throttleRef.current)
+      throttleRef.current = null
+    }
+    flushStreamingState()
+  }, [flushStreamingState])
+
+  // Helper to update streaming parts ref only (no state update — caller decides flush strategy)
+  const updateStreamingPartsRef = useCallback((updater: (parts: StreamingPart[]) => StreamingPart[]) => {
+    streamingPartsRef.current = updater(streamingPartsRef.current)
+  }, [])
+
+  // Helper: ensure the last part is a text part, or add one (throttled)
   const appendTextDelta = useCallback((delta: string) => {
-    updateStreamingParts((parts) => {
+    updateStreamingPartsRef((parts) => {
       const lastPart = parts[parts.length - 1]
       if (lastPart && lastPart.type === 'text') {
         // Append to existing text part
@@ -199,12 +235,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     })
     // Also update legacy streamingContent for backward compat
     streamingContentRef.current += delta
-    setStreamingContent(streamingContentRef.current)
-  }, [updateStreamingParts])
+    // Throttled: batch text updates at ~100ms intervals
+    scheduleFlush()
+  }, [updateStreamingPartsRef, scheduleFlush])
 
-  // Helper: set full text on the last text part
+  // Helper: set full text on the last text part (throttled)
   const setTextContent = useCallback((text: string) => {
-    updateStreamingParts((parts) => {
+    updateStreamingPartsRef((parts) => {
       const lastPart = parts[parts.length - 1]
       if (lastPart && lastPart.type === 'text') {
         return [
@@ -215,12 +252,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       return [...parts, { type: 'text' as const, text }]
     })
     streamingContentRef.current = text
-    setStreamingContent(text)
-  }, [updateStreamingParts])
+    // Throttled: batch text updates at ~100ms intervals
+    scheduleFlush()
+  }, [updateStreamingPartsRef, scheduleFlush])
 
-  // Helper: add or update a tool use part
+  // Helper: add or update a tool use part (immediate flush — tools should appear instantly)
   const upsertToolUse = useCallback((toolId: string, update: Partial<ToolUseInfo> & { name?: string; input?: Record<string, unknown> }) => {
-    updateStreamingParts((parts) => {
+    updateStreamingPartsRef((parts) => {
       const existingIndex = parts.findIndex(
         (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
       )
@@ -247,10 +285,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
       return [...parts, { type: 'tool_use' as const, toolUse: newToolUse }]
     })
-  }, [updateStreamingParts])
+    // Immediate flush for tool updates — tool cards should appear instantly
+    immediateFlush()
+  }, [updateStreamingPartsRef, immediateFlush])
 
   // Reset streaming state
   const resetStreamingState = useCallback(() => {
+    if (throttleRef.current !== null) {
+      clearTimeout(throttleRef.current)
+      throttleRef.current = null
+    }
     streamingPartsRef.current = []
     setStreamingParts([])
     streamingContentRef.current = ''
@@ -365,8 +409,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           } else if (event.type === 'message.updated') {
             const info = event.data?.info
             if (info?.role === 'assistant' && info.time?.completed) {
-              // Message complete - save to database and update UI
-              // saveAssistantMessage will reset streaming state after the message is persisted
+              // Message complete — flush any pending throttled updates, then save
+              immediateFlush()
               const finalContent = streamingContentRef.current || ''
               const finalParts = [...streamingPartsRef.current]
               if (finalContent || finalParts.length > 0) {
@@ -375,10 +419,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setIsSending(false)
             }
           } else if (event.type === 'session.idle') {
-            // Session finished processing
+            // Session finished processing — flush any pending throttled updates
+            immediateFlush()
             setIsSending(false)
             // If there's remaining streaming content, save it
-            // saveAssistantMessage will reset streaming state after the message is persisted
             if (streamingContentRef.current || streamingPartsRef.current.length > 0) {
               saveAssistantMessage(
                 streamingContentRef.current,
