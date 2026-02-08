@@ -30,10 +30,10 @@ export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
     <button
       onClick={() => toggleSessionMode(sessionId)}
       className={cn(
-        'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+        'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
         'border select-none',
         mode === 'build'
-          ? 'bg-primary/10 border-primary/30 text-primary hover:bg-primary/20'
+          ? 'bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20'
           : 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
       )}
       title={`${config.description} (Shift+Tab to toggle)`}
@@ -41,7 +41,7 @@ export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
       data-testid="mode-toggle"
       data-mode={mode}
     >
-      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+      <Icon className="h-3 w-3" aria-hidden="true" />
       <span>{config.label}</span>
     </button>
   )

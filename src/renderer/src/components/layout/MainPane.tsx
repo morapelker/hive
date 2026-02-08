@@ -1,6 +1,5 @@
 import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
-import { ModeToggle } from '@/components/sessions/ModeToggle'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 
@@ -65,17 +64,6 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       data-testid="main-pane"
     >
       {selectedWorktreeId && <SessionTabs />}
-      {activeSessionId && (
-        <div
-          className="flex items-center justify-between px-4 py-1.5 border-b border-border bg-muted/20"
-          data-testid="session-header"
-        >
-          <ModeToggle sessionId={activeSessionId} />
-          <span className="text-xs text-muted-foreground">
-            Shift+Tab to toggle mode
-          </span>
-        </div>
-      )}
       {renderContent()}
     </main>
   )

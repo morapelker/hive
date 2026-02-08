@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { MessageRenderer } from './MessageRenderer'
+import { ModeToggle } from './ModeToggle'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 
@@ -123,6 +124,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [inputValue, setInputValue] = useState('')
   const [viewState, setViewState] = useState<SessionViewState>({ status: 'connecting' })
   const [isSending, setIsSending] = useState(false)
+
+  // Mode state for input border color
+  const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
 
   // OpenCode state
   const [worktreePath, setWorktreePath] = useState<string | null>(null)
@@ -629,19 +633,32 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       </div>
 
       {/* Input area */}
-      <div className="border-t border-border p-4 bg-background" data-testid="input-area" role="form" aria-label="Message input">
-        <div className="flex gap-2 items-end max-w-3xl mx-auto">
+      <div className="p-4 bg-background" data-testid="input-area" role="form" aria-label="Message input">
+        <div
+          className={cn(
+            'max-w-3xl mx-auto rounded-xl border-2 transition-colors duration-200 overflow-hidden',
+            mode === 'build'
+              ? 'border-blue-500/50 bg-blue-500/5'
+              : 'border-violet-500/50 bg-violet-500/5'
+          )}
+        >
+          {/* Top row: mode toggle */}
+          <div className="px-3 pt-2.5 pb-1">
+            <ModeToggle sessionId={sessionId} />
+          </div>
+
+          {/* Middle: textarea */}
           <textarea
             ref={textareaRef}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
+            placeholder="Type your message..."
             aria-label="Message input"
             className={cn(
-              'flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2',
+              'w-full resize-none bg-transparent px-3 py-2',
               'text-sm placeholder:text-muted-foreground',
-              'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+              'focus:outline-none border-none',
               'disabled:cursor-not-allowed disabled:opacity-50',
               'min-h-[40px] max-h-[200px]'
             )}
@@ -649,22 +666,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             disabled={isSending}
             data-testid="message-input"
           />
-          <Button
-            onClick={handleSend}
-            disabled={!inputValue.trim() || isSending}
-            className="h-10"
-            aria-label={isSending ? 'Sending message' : 'Send message'}
-            data-testid="send-button"
-          >
-            {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
+
+          {/* Bottom row: hint text + send button */}
+          <div className="flex items-center justify-between px-3 pb-2.5">
+            <span className="text-xs text-muted-foreground">
+              Enter to send, Shift+Enter for new line
+            </span>
+            <Button
+              onClick={handleSend}
+              disabled={!inputValue.trim() || isSending}
+              size="sm"
+              className="h-7 w-7 p-0"
+              aria-label={isSending ? 'Sending message' : 'Send message'}
+              data-testid="send-button"
+            >
+              {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground mt-2 max-w-3xl mx-auto">
-          Press Enter to send, Shift+Enter for new line
-          {opencodeSessionId && (
-            <span className="ml-2 text-green-500">Connected to OpenCode</span>
-          )}
-        </p>
       </div>
     </div>
   )
