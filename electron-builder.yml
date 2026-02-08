@@ -1,0 +1,16 @@
+appId: com.hive.app
+productName: Hive
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - out/**/*
+  - resources/**/*
+mac:
+  icon: resources/icon.icns
+  category: public.app-category.developer-tools
+win:
+  icon: resources/icon.ico
+linux:
+  icon: resources/icon.png
+  category: Development
