@@ -65,6 +65,11 @@ export class DatabaseService {
     return this.db
   }
 
+  // Maps SQLite INTEGER 0/1 to boolean for worktree rows
+  private mapWorktreeRow(row: Record<string, unknown>): Worktree {
+    return { ...row, is_default: !!row.is_default } as Worktree
+  }
+
   private runMigrations(): void {
     const db = this.getDb()
 
@@ -122,13 +127,16 @@ export class DatabaseService {
       description: data.description ?? null,
       tags: data.tags ? JSON.stringify(data.tags) : null,
       language: null,
+      setup_script: data.setup_script ?? null,
+      run_script: data.run_script ?? null,
+      archive_script: data.archive_script ?? null,
       created_at: now,
       last_accessed_at: now
     }
 
     db.prepare(
-      `INSERT INTO projects (id, name, path, description, tags, language, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, path, description, tags, language, setup_script, run_script, archive_script, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       project.id,
       project.name,
@@ -136,6 +144,9 @@ export class DatabaseService {
       project.description,
       project.tags,
       project.language,
+      project.setup_script,
+      project.run_script,
+      project.archive_script,
       project.created_at,
       project.last_accessed_at
     )
@@ -184,6 +195,18 @@ export class DatabaseService {
       updates.push('language = ?')
       values.push(data.language)
     }
+    if (data.setup_script !== undefined) {
+      updates.push('setup_script = ?')
+      values.push(data.setup_script)
+    }
+    if (data.run_script !== undefined) {
+      updates.push('run_script = ?')
+      values.push(data.run_script)
+    }
+    if (data.archive_script !== undefined) {
+      updates.push('archive_script = ?')
+      values.push(data.archive_script)
+    }
     if (data.last_accessed_at !== undefined) {
       updates.push('last_accessed_at = ?')
       values.push(data.last_accessed_at)
@@ -213,6 +236,7 @@ export class DatabaseService {
   createWorktree(data: WorktreeCreate): Worktree {
     const db = this.getDb()
     const now = new Date().toISOString()
+    const isDefault = data.is_default ?? false
     const worktree: Worktree = {
       id: randomUUID(),
       project_id: data.project_id,
@@ -220,13 +244,14 @@ export class DatabaseService {
       branch_name: data.branch_name,
       path: data.path,
       status: 'active',
+      is_default: isDefault,
       created_at: now,
       last_accessed_at: now
     }
 
     db.prepare(
-      `INSERT INTO worktrees (id, project_id, name, branch_name, path, status, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO worktrees (id, project_id, name, branch_name, path, status, is_default, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       worktree.id,
       worktree.project_id,
@@ -234,6 +259,7 @@ export class DatabaseService {
       worktree.branch_name,
       worktree.path,
       worktree.status,
+      isDefault ? 1 : 0,
       worktree.created_at,
       worktree.last_accessed_at
     )
@@ -243,26 +269,30 @@ export class DatabaseService {
 
   getWorktree(id: string): Worktree | null {
     const db = this.getDb()
-    const row = db.prepare('SELECT * FROM worktrees WHERE id = ?').get(id) as Worktree | undefined
-    return row ?? null
+    const row = db.prepare('SELECT * FROM worktrees WHERE id = ?').get(id) as
+      | Record<string, unknown>
+      | undefined
+    return row ? this.mapWorktreeRow(row) : null
   }
 
   getWorktreesByProject(projectId: string): Worktree[] {
     const db = this.getDb()
-    return db
+    const rows = db
       .prepare(
-        'SELECT * FROM worktrees WHERE project_id = ? ORDER BY last_accessed_at DESC'
+        'SELECT * FROM worktrees WHERE project_id = ? ORDER BY is_default DESC, last_accessed_at DESC'
       )
-      .all(projectId) as Worktree[]
+      .all(projectId) as Record<string, unknown>[]
+    return rows.map((row) => this.mapWorktreeRow(row))
   }
 
   getActiveWorktreesByProject(projectId: string): Worktree[] {
     const db = this.getDb()
-    return db
+    const rows = db
       .prepare(
-        "SELECT * FROM worktrees WHERE project_id = ? AND status = 'active' ORDER BY last_accessed_at DESC"
+        "SELECT * FROM worktrees WHERE project_id = ? AND status = 'active' ORDER BY is_default DESC, last_accessed_at DESC"
       )
-      .all(projectId) as Worktree[]
+      .all(projectId) as Record<string, unknown>[]
+    return rows.map((row) => this.mapWorktreeRow(row))
   }
 
   updateWorktree(id: string, data: WorktreeUpdate): Worktree | null {

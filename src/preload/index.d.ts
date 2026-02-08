@@ -6,6 +6,9 @@ interface Project {
   description: string | null
   tags: string | null
   language: string | null
+  setup_script: string | null
+  run_script: string | null
+  archive_script: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -17,6 +20,7 @@ interface Worktree {
   branch_name: string
   path: string
   status: 'active' | 'archived'
+  is_default: boolean
   created_at: string
   last_accessed_at: string
 }
@@ -92,6 +96,9 @@ declare global {
             description?: string | null
             tags?: string[] | null
             language?: string | null
+            setup_script?: string | null
+            run_script?: string | null
+            archive_script?: string | null
             last_accessed_at?: string
           }
         ) => Promise<Project | null>

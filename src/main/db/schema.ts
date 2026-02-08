@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 3
+export const CURRENT_SCHEMA_VERSION = 4
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -97,6 +97,23 @@ export const MIGRATIONS: Migration[] = [
     version: 3,
     name: 'add_project_language',
     up: `ALTER TABLE projects ADD COLUMN language TEXT;`,
+    down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
+  },
+  {
+    version: 4,
+    name: 'add_project_scripts_and_default_worktree',
+    up: `
+      ALTER TABLE projects ADD COLUMN setup_script TEXT DEFAULT NULL;
+      ALTER TABLE projects ADD COLUMN run_script TEXT DEFAULT NULL;
+      ALTER TABLE projects ADD COLUMN archive_script TEXT DEFAULT NULL;
+      ALTER TABLE worktrees ADD COLUMN is_default INTEGER DEFAULT 0;
+
+      -- Create default worktrees for existing projects that don't have one
+      INSERT INTO worktrees (id, project_id, name, branch_name, path, status, is_default, created_at, last_accessed_at)
+      SELECT lower(hex(randomblob(4))), p.id, '(no-worktree)', '', p.path, 'active', 1, datetime('now'), datetime('now')
+      FROM projects p
+      WHERE p.id NOT IN (SELECT project_id FROM worktrees WHERE is_default = 1);
+    `,
     down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
   }
 ]

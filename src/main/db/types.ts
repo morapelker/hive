@@ -5,6 +5,9 @@ export interface Project {
   description: string | null
   tags: string | null // JSON array
   language: string | null
+  setup_script: string | null
+  run_script: string | null
+  archive_script: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -14,6 +17,9 @@ export interface ProjectCreate {
   path: string
   description?: string | null
   tags?: string[] | null
+  setup_script?: string | null
+  run_script?: string | null
+  archive_script?: string | null
 }
 
 export interface ProjectUpdate {
@@ -21,6 +27,9 @@ export interface ProjectUpdate {
   description?: string | null
   tags?: string[] | null
   language?: string | null
+  setup_script?: string | null
+  run_script?: string | null
+  archive_script?: string | null
   last_accessed_at?: string
 }
 
@@ -31,6 +40,7 @@ export interface Worktree {
   branch_name: string
   path: string
   status: 'active' | 'archived'
+  is_default: boolean
   created_at: string
   last_accessed_at: string
 }
@@ -40,6 +50,7 @@ export interface WorktreeCreate {
   name: string
   branch_name: string
   path: string
+  is_default?: boolean
 }
 
 export interface WorktreeUpdate {

@@ -67,6 +67,7 @@ interface DbWorktree {
   branch_name: string
   path: string
   status: 'active' | 'archived'
+  is_default: boolean
   created_at: string
   last_accessed_at: string
 }

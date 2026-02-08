@@ -9,6 +9,9 @@ interface Project {
   description: string | null
   tags: string | null
   language: string | null
+  setup_script: string | null
+  run_script: string | null
+  archive_script: string | null
   created_at: string
   last_accessed_at: string
 }
