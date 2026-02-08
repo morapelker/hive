@@ -683,6 +683,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     [handleSend]
   )
 
+  // Global Tab key handler — toggles Build/Plan mode, blocks tab character insertion
+  const toggleSessionMode = useSessionStore((state) => state.toggleSessionMode)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        e.stopPropagation()
+        toggleSessionMode(sessionId)
+      }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => {
+      window.removeEventListener('keydown', handler, true)
+    }
+  }, [sessionId, toggleSessionMode])
+
   // Determine if there's streaming content to show
   const hasStreamingContent = streamingParts.length > 0 || streamingContent.length > 0
 

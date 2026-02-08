@@ -424,7 +424,6 @@ class OpenCodeService {
   /**
    * Handle a single event from OpenCode
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private handleEvent(instance: OpenCodeInstance, rawEvent: { data: unknown; event?: string }): void {
     // The event data might be a GlobalEvent (with directory/payload) or a direct event
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

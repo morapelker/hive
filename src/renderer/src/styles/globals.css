@@ -149,30 +149,30 @@
   color: var(--destructive);
 }
 
-/* Dark mode overrides for diff2html */
+/* Dark mode overrides for diff2html — uses theme-aware CSS custom properties */
 .dark .diff-viewer .d2h-wrapper {
   background-color: transparent;
 }
 
 .dark .diff-viewer .d2h-file-header {
-  background-color: oklch(20% 0.005 286);
-  border-color: oklch(27.39% 0.005 286.03);
+  background-color: hsl(var(--muted));
+  border-color: hsl(var(--border));
 }
 
 .dark .diff-viewer .d2h-file-header,
 .dark .diff-viewer .d2h-file-name {
-  color: oklch(98.48% 0.001 285.98);
+  color: hsl(var(--foreground));
 }
 
 .dark .diff-viewer .d2h-code-line,
 .dark .diff-viewer .d2h-code-side-line {
-  background-color: oklch(14.08% 0.004 285.82);
+  background-color: hsl(var(--background));
 }
 
 .dark .diff-viewer .d2h-code-linenumber {
-  background-color: oklch(18% 0.004 286);
-  color: oklch(55% 0.014 286);
-  border-color: oklch(27.39% 0.005 286.03);
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  border-color: hsl(var(--border));
 }
 
 .dark .diff-viewer .d2h-ins {
@@ -192,21 +192,21 @@
 }
 
 .dark .diff-viewer .d2h-info {
-  background-color: oklch(22% 0.005 286);
-  color: oklch(70% 0.015 286);
-  border-color: oklch(27.39% 0.005 286.03);
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  border-color: hsl(var(--border));
 }
 
 .dark .diff-viewer .d2h-file-diff {
-  border-color: oklch(27.39% 0.005 286.03);
+  border-color: hsl(var(--border));
 }
 
 .dark .diff-viewer .d2h-diff-table {
-  border-color: oklch(27.39% 0.005 286.03);
+  border-color: hsl(var(--border));
 }
 
 .dark .diff-viewer .d2h-diff-tbody tr {
-  border-color: oklch(27.39% 0.005 286.03);
+  border-color: hsl(var(--border));
 }
 
 /* Ensure line numbers and content align properly */
