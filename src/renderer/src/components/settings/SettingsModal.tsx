@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
-import { Settings, Monitor, Code, Terminal, GitBranch, Keyboard } from 'lucide-react'
+import { Settings, Palette, Monitor, Code, Terminal, GitBranch, Keyboard } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { SettingsAppearance } from './SettingsAppearance'
 import { SettingsGeneral } from './SettingsGeneral'
 import { SettingsEditor } from './SettingsEditor'
 import { SettingsTerminal } from './SettingsTerminal'
@@ -10,6 +11,7 @@ import { SettingsShortcuts } from './SettingsShortcuts'
 import { cn } from '@/lib/utils'
 
 const SECTIONS = [
+  { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'general', label: 'General', icon: Monitor },
   { id: 'editor', label: 'Editor', icon: Code },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
@@ -65,6 +67,7 @@ export function SettingsModal(): React.JSX.Element {
 
           {/* Content area */}
           <div className="flex-1 overflow-y-auto p-6">
+            {activeSection === 'appearance' && <SettingsAppearance />}
             {activeSection === 'general' && <SettingsGeneral />}
             {activeSection === 'editor' && <SettingsEditor />}
             {activeSection === 'terminal' && <SettingsTerminal />}

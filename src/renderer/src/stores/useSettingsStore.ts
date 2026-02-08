@@ -93,7 +93,7 @@ export const useSettingsStore = create<SettingsState>()(
       // Default values
       ...DEFAULT_SETTINGS,
       isOpen: false,
-      activeSection: 'general',
+      activeSection: 'appearance',
       isLoading: true,
 
       openSettings: (section?: string) => {

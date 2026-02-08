@@ -1,11 +1,13 @@
-import { PanelRightClose, PanelRightOpen, History } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, History, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useSessionHistoryStore } from '@/stores/useSessionHistoryStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 
 export function Header(): React.JSX.Element {
   const { rightSidebarCollapsed, toggleRightSidebar } = useLayoutStore()
   const { openPanel: openSessionHistory } = useSessionHistoryStore()
+  const openSettings = useSettingsStore((s) => s.openSettings)
 
   return (
     <header
@@ -30,6 +32,15 @@ export function Header(): React.JSX.Element {
           data-testid="session-history-toggle"
         >
           <History className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => openSettings()}
+          title="Settings (⌘,)"
+          data-testid="settings-toggle"
+        >
+          <Settings className="h-4 w-4" />
         </Button>
         <Button
           onClick={toggleRightSidebar}
