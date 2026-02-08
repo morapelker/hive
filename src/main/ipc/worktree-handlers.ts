@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
 import { createGitService, createLogger } from '../services'
+import { scriptRunner } from '../services/script-runner'
 import { getDatabase } from '../db'
 
 const log = createLogger({ component: 'WorktreeHandlers' })
@@ -97,6 +98,36 @@ export function registerWorktreeHandlers(): void {
       error?: string
     }> => {
       try {
+        const db = getDatabase()
+
+        // Guard: block delete/archive of default worktrees
+        const worktree = db.getWorktree(params.worktreeId)
+        if (worktree?.is_default) {
+          return {
+            success: false,
+            error: 'Cannot archive or delete the default worktree'
+          }
+        }
+
+        // Run archive script if configured (before git operations)
+        const project = worktree?.project_id ? db.getProject(worktree.project_id) : null
+        if (project?.archive_script) {
+          // Pass raw script lines — scriptRunner.parseCommands handles splitting/filtering
+          const commands = [project.archive_script]
+          log.info('Running archive script before worktree deletion', {
+            worktreeId: params.worktreeId
+          })
+          const scriptResult = await scriptRunner.runAndWait(commands, params.worktreePath, 30000)
+          if (scriptResult.success) {
+            log.info('Archive script completed successfully', { output: scriptResult.output })
+          } else {
+            log.warn('Archive script failed, proceeding with archival anyway', {
+              error: scriptResult.error,
+              output: scriptResult.output
+            })
+          }
+        }
+
         const gitService = createGitService(params.projectPath)
 
         let result
@@ -113,7 +144,7 @@ export function registerWorktreeHandlers(): void {
         }
 
         // Update database - archive the worktree record
-        getDatabase().archiveWorktree(params.worktreeId)
+        db.archiveWorktree(params.worktreeId)
 
         return { success: true }
       } catch (error) {

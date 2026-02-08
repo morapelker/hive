@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import {
   GitBranch,
+  Folder,
   MoreHorizontal,
   Terminal,
   Code,
@@ -127,8 +128,12 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
           onClick={handleClick}
           data-testid={`worktree-item-${worktree.id}`}
         >
-          {/* Branch Icon */}
-          <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          {/* Branch Icon (Folder for default worktree) */}
+          {worktree.is_default ? (
+            <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          ) : (
+            <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          )}
 
           {/* Worktree Name */}
           <span className="flex-1 text-sm truncate" title={worktree.path}>
@@ -167,20 +172,24 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
                 <Copy className="h-4 w-4 mr-2" />
                 Copy Path
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleUnbranch}>
-                <GitBranchPlus className="h-4 w-4 mr-2" />
-                Unbranch
-                <span className="ml-auto text-xs text-muted-foreground">Keep branch</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={handleArchive}
-                className="text-destructive focus:text-destructive focus:bg-destructive/10"
-              >
-                <Archive className="h-4 w-4 mr-2" />
-                Archive
-                <span className="ml-auto text-xs text-muted-foreground">Delete branch</span>
-              </DropdownMenuItem>
+              {!worktree.is_default && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleUnbranch}>
+                    <GitBranchPlus className="h-4 w-4 mr-2" />
+                    Unbranch
+                    <span className="ml-auto text-xs text-muted-foreground">Keep branch</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleArchive}
+                    className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                  >
+                    <Archive className="h-4 w-4 mr-2" />
+                    Archive
+                    <span className="ml-auto text-xs text-muted-foreground">Delete branch</span>
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -204,20 +213,24 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
           <Copy className="h-4 w-4 mr-2" />
           Copy Path
         </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onClick={handleUnbranch}>
-          <GitBranchPlus className="h-4 w-4 mr-2" />
-          Unbranch
-          <span className="ml-auto text-xs text-muted-foreground">Keep branch</span>
-        </ContextMenuItem>
-        <ContextMenuItem
-          onClick={handleArchive}
-          className="text-destructive focus:text-destructive focus:bg-destructive/10"
-        >
-          <Archive className="h-4 w-4 mr-2" />
-          Archive
-          <span className="ml-auto text-xs text-muted-foreground">Delete branch</span>
-        </ContextMenuItem>
+        {!worktree.is_default && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={handleUnbranch}>
+              <GitBranchPlus className="h-4 w-4 mr-2" />
+              Unbranch
+              <span className="ml-auto text-xs text-muted-foreground">Keep branch</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={handleArchive}
+              className="text-destructive focus:text-destructive focus:bg-destructive/10"
+            >
+              <Archive className="h-4 w-4 mr-2" />
+              Archive
+              <span className="ml-auto text-xs text-muted-foreground">Delete branch</span>
+            </ContextMenuItem>
+          </>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   )

@@ -51,7 +51,19 @@ export function registerDatabaseHandlers(): void {
 
   // Projects
   ipcMain.handle('db:project:create', (_event, data: ProjectCreate) => {
-    return getDatabase().createProject(data)
+    const db = getDatabase()
+    const project = db.createProject(data)
+
+    // Create default worktree for the new project
+    db.createWorktree({
+      project_id: project.id,
+      name: '(no-worktree)',
+      branch_name: '',
+      path: project.path,
+      is_default: true
+    })
+
+    return project
   })
 
   ipcMain.handle('db:project:get', (_event, id: string) => {

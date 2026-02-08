@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { useProjectStore } from './useProjectStore'
 import { useScriptStore } from './useScriptStore'
+import { toast } from '@/lib/toast'
 
 // Worktree type matching the database schema
 interface Worktree {
@@ -48,6 +49,7 @@ interface WorktreeState {
   touchWorktree: (id: string) => Promise<void>
   syncWorktrees: (projectId: string, projectPath: string) => Promise<void>
   getWorktreesForProject: (projectId: string) => Worktree[]
+  getDefaultWorktree: (projectId: string) => Worktree | null
   setCreatingForProject: (projectId: string | null) => void
 }
 
@@ -64,10 +66,12 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const worktrees = await window.db.worktree.getActiveByProject(projectId)
-      // Sort by last_accessed_at descending (most recent first)
-      const sortedWorktrees = worktrees.sort(
-        (a, b) => new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
-      )
+      // Sort: default worktrees first, then by last_accessed_at descending
+      const sortedWorktrees = worktrees.sort((a, b) => {
+        if (a.is_default && !b.is_default) return -1
+        if (!a.is_default && b.is_default) return 1
+        return new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
+      })
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
         newMap.set(projectId, sortedWorktrees)
@@ -143,6 +147,14 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     branchName: string,
     projectPath: string
   ) => {
+    // Guard: block archive of default worktrees
+    const worktrees = Array.from(get().worktreesByProject.values()).flat()
+    const worktree = worktrees.find((w) => w.id === worktreeId)
+    if (worktree?.is_default) {
+      toast.error('Cannot archive the default worktree')
+      return { success: false, error: 'Cannot archive the default worktree' }
+    }
+
     try {
       const result = await window.worktreeOps.delete({
         worktreeId,
@@ -188,6 +200,14 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     branchName: string,
     projectPath: string
   ) => {
+    // Guard: block unbranch of default worktrees
+    const worktrees = Array.from(get().worktreesByProject.values()).flat()
+    const worktree = worktrees.find((w) => w.id === worktreeId)
+    if (worktree?.is_default) {
+      toast.error('Cannot unbranch the default worktree')
+      return { success: false, error: 'Cannot unbranch the default worktree' }
+    }
+
     try {
       const result = await window.worktreeOps.delete({
         worktreeId,
@@ -271,6 +291,12 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Get worktrees for a specific project
   getWorktreesForProject: (projectId: string) => {
     return get().worktreesByProject.get(projectId) || []
+  },
+
+  // Get the default worktree for a project
+  getDefaultWorktree: (projectId: string) => {
+    const worktrees = get().worktreesByProject.get(projectId) || []
+    return worktrees.find((w) => w.is_default) ?? null
   },
 
   // Set the project ID that is currently creating a worktree
