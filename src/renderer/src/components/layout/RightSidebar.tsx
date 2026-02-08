@@ -4,6 +4,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FileTree } from '@/components/file-tree'
 import { GitStatusPanel } from '@/components/git'
+import { BottomPanel } from './BottomPanel'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 
 export function RightSidebar(): React.JSX.Element {
@@ -52,31 +53,42 @@ export function RightSidebar(): React.JSX.Element {
         role="complementary"
         aria-label="Git status and file tree"
       >
-        <ErrorBoundary
-          componentName="GitStatusPanel"
-          fallback={
-            <div className="border-b p-2">
-              <ErrorFallback compact title="Git panel error" />
-            </div>
-          }
-        >
-          <GitStatusPanel worktreePath={selectedWorktreePath} />
-        </ErrorBoundary>
-        <ErrorBoundary
-          componentName="FileTree"
-          fallback={
-            <div className="flex-1 p-2">
-              <ErrorFallback compact title="File tree error" />
-            </div>
-          }
-        >
-          <FileTree
-            worktreePath={selectedWorktreePath}
-            onClose={toggleRightSidebar}
-            onFileClick={handleFileClick}
-            className="flex-1 min-h-0"
-          />
-        </ErrorBoundary>
+        {/* Top half: Git status + File tree */}
+        <div className="flex flex-col flex-1 min-h-0" data-testid="right-sidebar-top">
+          <ErrorBoundary
+            componentName="GitStatusPanel"
+            fallback={
+              <div className="border-b p-2">
+                <ErrorFallback compact title="Git panel error" />
+              </div>
+            }
+          >
+            <GitStatusPanel worktreePath={selectedWorktreePath} />
+          </ErrorBoundary>
+          <ErrorBoundary
+            componentName="FileTree"
+            fallback={
+              <div className="flex-1 p-2">
+                <ErrorFallback compact title="File tree error" />
+              </div>
+            }
+          >
+            <FileTree
+              worktreePath={selectedWorktreePath}
+              onClose={toggleRightSidebar}
+              onFileClick={handleFileClick}
+              className="flex-1 min-h-0"
+            />
+          </ErrorBoundary>
+        </div>
+
+        {/* Divider */}
+        <div className="border-t border-border" data-testid="right-sidebar-divider" />
+
+        {/* Bottom half: Tab panel */}
+        <div className="flex flex-col flex-1 min-h-0" data-testid="right-sidebar-bottom">
+          <BottomPanel />
+        </div>
       </aside>
     </div>
   )
