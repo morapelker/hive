@@ -170,7 +170,7 @@ describe('Session 12: Polish & Performance', () => {
       // The component itself should be callable
       expect(ToolCard).toBeDefined()
       // memo components have a 'type' property
-      expect((ToolCard as any).$$typeof).toBeDefined()
+      expect((ToolCard as { $$typeof?: symbol }).$$typeof).toBeDefined()
     })
 
     test('CommandItem is memoized', async () => {
@@ -178,7 +178,7 @@ describe('Session 12: Polish & Performance', () => {
         '../../../src/renderer/src/components/command-palette/CommandItem'
       )
       expect(CommandItem).toBeDefined()
-      expect((CommandItem as any).$$typeof).toBeDefined()
+      expect((CommandItem as { $$typeof?: symbol }).$$typeof).toBeDefined()
     })
   })
 

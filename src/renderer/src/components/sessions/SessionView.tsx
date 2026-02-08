@@ -145,6 +145,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Response logging refs
+  const isLogModeRef = useRef<boolean>(false)
+  const logFilePathRef = useRef<string | null>(null)
+
   // Auto-scroll to bottom when new messages arrive or streaming updates
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -162,6 +166,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
     }
   }, [inputValue])
+
+  // Check if response logging is enabled on mount
+  useEffect(() => {
+    window.systemOps.isLogMode().then((enabled) => {
+      isLogModeRef.current = enabled
+    }).catch(() => {
+      // Ignore — logging not available
+    })
+  }, [])
 
   // Helper to update streaming parts immutably
   const updateStreamingParts = useCallback((updater: (parts: StreamingPart[]) => StreamingPart[]) => {
@@ -287,6 +300,29 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
           console.log('OpenCode stream event:', event.type, event.data)
 
+          // Log event if response logging is active
+          if (isLogModeRef.current && logFilePathRef.current) {
+            try {
+              if (event.type === 'message.part.updated') {
+                window.loggingOps.appendResponseLog(logFilePathRef.current, {
+                  type: 'part_updated',
+                  event: event.data
+                })
+              } else if (event.type === 'message.updated') {
+                window.loggingOps.appendResponseLog(logFilePathRef.current, {
+                  type: 'message_updated',
+                  event: event.data
+                })
+              } else if (event.type === 'session.idle') {
+                window.loggingOps.appendResponseLog(logFilePathRef.current, {
+                  type: 'session_idle'
+                })
+              }
+            } catch {
+              // Never let logging failures break the UI
+            }
+          }
+
           // Handle different event types
           if (event.type === 'message.part.updated') {
             const part = event.data?.part
@@ -363,6 +399,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           )
           if (reconnectResult.success) {
             setOpencodeSessionId(existingOpcSessionId)
+            // Create response log file if logging is enabled
+            if (isLogModeRef.current) {
+              try {
+                const logPath = await window.loggingOps.createResponseLog(sessionId)
+                logFilePathRef.current = logPath
+              } catch (e) {
+                console.warn('Failed to create response log:', e)
+              }
+            }
             setViewState({ status: 'connected' })
             return
           }
@@ -376,6 +421,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           await window.db.session.update(sessionId, {
             opencode_session_id: connectResult.sessionId
           })
+          // Create response log file if logging is enabled
+          if (isLogModeRef.current) {
+            try {
+              const logPath = await window.loggingOps.createResponseLog(sessionId)
+              logFilePathRef.current = logPath
+            } catch (e) {
+              console.warn('Failed to create response log:', e)
+            }
+          }
           setViewState({ status: 'connected' })
         } else {
           throw new Error(connectResult.error || 'Failed to connect to OpenCode')
@@ -491,6 +545,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       const userMessage = dbMessageToOpenCode(savedUserMessage)
       setMessages((prev) => [...prev, userMessage])
+
+      // Log user prompt if response logging is active
+      if (isLogModeRef.current && logFilePathRef.current) {
+        try {
+          const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+          window.loggingOps.appendResponseLog(logFilePathRef.current, {
+            type: 'user_prompt',
+            content: trimmedValue,
+            mode: currentMode
+          })
+        } catch {
+          // Never let logging failures break the UI
+        }
+      }
 
       // Send to OpenCode if connected
       if (worktreePath && opencodeSessionId) {

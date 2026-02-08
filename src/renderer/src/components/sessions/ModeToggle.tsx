@@ -29,6 +29,7 @@ export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
   return (
     <button
       onClick={() => toggleSessionMode(sessionId)}
+      onMouseDown={(e) => e.preventDefault()}
       className={cn(
         'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
         'border select-none',

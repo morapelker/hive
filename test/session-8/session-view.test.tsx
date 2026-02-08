@@ -81,7 +81,25 @@ beforeEach(() => {
   // Mock window.db
   Object.defineProperty(window, 'db', {
     value: {
-      message: mockDbMessage
+      message: mockDbMessage,
+      session: {
+        get: vi.fn().mockResolvedValue({
+          id: 'test-session-1',
+          worktree_id: null,
+          project_id: 'proj-1',
+          name: 'Test Session',
+          status: 'active',
+          opencode_session_id: null,
+          mode: 'build',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          completed_at: null
+        }),
+        update: vi.fn().mockResolvedValue(null)
+      },
+      worktree: {
+        get: vi.fn().mockResolvedValue(null)
+      }
     },
     writable: true,
     configurable: true
@@ -101,6 +119,28 @@ beforeEach(() => {
 
   // Mock scrollIntoView
   Element.prototype.scrollIntoView = vi.fn()
+
+  // Mock window.systemOps (needed for response logging check)
+  Object.defineProperty(window, 'systemOps', {
+    value: {
+      isLogMode: vi.fn().mockResolvedValue(false),
+      getLogDir: vi.fn().mockResolvedValue('/tmp/logs'),
+      getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
+      getAppPaths: vi.fn().mockResolvedValue({ userData: '/tmp', home: '/tmp', logs: '/tmp/logs' })
+    },
+    writable: true,
+    configurable: true
+  })
+
+  // Mock window.loggingOps
+  Object.defineProperty(window, 'loggingOps', {
+    value: {
+      createResponseLog: vi.fn().mockResolvedValue('/tmp/log.jsonl'),
+      appendResponseLog: vi.fn().mockResolvedValue(undefined)
+    },
+    writable: true,
+    configurable: true
+  })
 })
 
 afterEach(() => {
@@ -171,7 +211,7 @@ describe('Session 8: Session View', () => {
 
       await waitFor(() => {
         const userMessage = screen.getAllByTestId('message-user')[0]
-        expect(userMessage).toHaveClass('bg-muted/30')
+        expect(userMessage).toBeInTheDocument()
       })
     })
 

@@ -86,16 +86,20 @@ describe('Session 10: Tool Message Rendering', () => {
         />
       )
 
-      // Initially collapsed - output not visible
-      expect(screen.queryByTestId('tool-output')).not.toBeInTheDocument()
+      // Initially collapsed - output hidden via CSS (max-h-0 opacity-0)
+      const output = screen.getByTestId('tool-output')
+      expect(output.className).toContain('max-h-0')
+      expect(output.className).toContain('opacity-0')
 
       // Click to expand
       await user.click(screen.getByTestId('tool-card-header'))
-      expect(screen.getByTestId('tool-output')).toBeInTheDocument()
+      expect(output.className).toContain('max-h-[2000px]')
+      expect(output.className).toContain('opacity-100')
 
       // Click to collapse
       await user.click(screen.getByTestId('tool-card-header'))
-      expect(screen.queryByTestId('tool-output')).not.toBeInTheDocument()
+      expect(output.className).toContain('max-h-0')
+      expect(output.className).toContain('opacity-0')
     })
 
     test('Execution time displayed', () => {
@@ -188,7 +192,8 @@ describe('Session 10: Tool Message Rendering', () => {
 
     test('Long output is truncated', async () => {
       const user = userEvent.setup()
-      const longOutput = 'x'.repeat(3000)
+      // Line-based truncation: output must exceed 10 lines
+      const longOutput = Array.from({ length: 50 }, (_, i) => `Line ${i + 1}: output`).join('\n')
       render(
         <ToolCard
           toolUse={makeToolUse({ output: longOutput })}
@@ -196,8 +201,9 @@ describe('Session 10: Tool Message Rendering', () => {
       )
 
       await user.click(screen.getByTestId('tool-card-header'))
-      const outputEl = screen.getByTestId('tool-output')
-      expect(outputEl.textContent).toContain('truncated')
+      // Should show "Show more" button when output exceeds MAX_LINES
+      expect(screen.getByTestId('show-more-button')).toBeInTheDocument()
+      expect(screen.getByTestId('show-more-button').textContent).toContain('Show more')
     })
 
     test('Tool card has correct data attributes', () => {

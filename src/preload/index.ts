@@ -195,7 +195,21 @@ const systemOps = {
     userData: string
     home: string
     logs: string
-  }> => ipcRenderer.invoke('system:getAppPaths')
+  }> => ipcRenderer.invoke('system:getAppPaths'),
+
+  // Check if response logging is enabled (--log flag)
+  isLogMode: (): Promise<boolean> => ipcRenderer.invoke('system:isLogMode')
+}
+
+// Response logging operations API (only functional when --log is active)
+const loggingOps = {
+  // Create a new response log file for a session
+  createResponseLog: (sessionId: string): Promise<string> =>
+    ipcRenderer.invoke('logging:createResponseLog', sessionId),
+
+  // Append a JSON line to the response log
+  appendResponseLog: (filePath: string, data: unknown): Promise<void> =>
+    ipcRenderer.invoke('logging:appendResponseLog', filePath, data)
 }
 
 // OpenCode SDK operations API
@@ -539,6 +553,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('fileTreeOps', fileTreeOps)
     contextBridge.exposeInMainWorld('gitOps', gitOps)
     contextBridge.exposeInMainWorld('settingsOps', settingsOps)
+    contextBridge.exposeInMainWorld('loggingOps', loggingOps)
   } catch (error) {
     console.error(error)
   }
@@ -561,4 +576,6 @@ if (process.contextIsolated) {
   window.gitOps = gitOps
   // @ts-expect-error (define in dts)
   window.settingsOps = settingsOps
+  // @ts-expect-error (define in dts)
+  window.loggingOps = loggingOps
 }

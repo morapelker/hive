@@ -27,6 +27,7 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
+  mode: 'build' | 'plan'
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -134,6 +135,7 @@ declare global {
             name?: string | null
             status?: 'active' | 'completed' | 'error'
             opencode_session_id?: string | null
+            mode?: 'build' | 'plan'
             updated_at?: string
             completed_at?: string | null
           }
@@ -220,6 +222,11 @@ declare global {
         home: string
         logs: string
       }>
+      isLogMode: () => Promise<boolean>
+    }
+    loggingOps: {
+      createResponseLog: (sessionId: string) => Promise<string>
+      appendResponseLog: (filePath: string, data: unknown) => Promise<void>
     }
     opencodeOps: {
       // Connect to OpenCode for a worktree (lazy starts server if needed)

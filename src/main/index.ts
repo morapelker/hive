@@ -5,8 +5,13 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
 import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers, registerGitFileHandlers, registerSettingsHandlers } from './ipc'
 import { createLogger, getLogDir } from './services/logger'
+import { createResponseLog, appendResponseLog } from './services/response-logger'
 
 const log = createLogger({ component: 'Main' })
+
+// Parse CLI flags
+const cliArgs = process.argv.slice(2)
+const isLogMode = cliArgs.includes('--log')
 
 interface WindowBounds {
   x: number
@@ -135,6 +140,20 @@ function registerSystemHandlers(): void {
       logs: getLogDir()
     }
   })
+
+  // Check if response logging is enabled
+  ipcMain.handle('system:isLogMode', () => isLogMode)
+}
+
+// Register response logging IPC handlers (only when --log is active)
+function registerLoggingHandlers(): void {
+  ipcMain.handle('logging:createResponseLog', (_, sessionId: string) => {
+    return createResponseLog(sessionId)
+  })
+
+  ipcMain.handle('logging:appendResponseLog', (_, filePath: string, data: unknown) => {
+    appendResponseLog(filePath, data)
+  })
 }
 
 // This method will be called when Electron has finished
@@ -142,6 +161,10 @@ function registerSystemHandlers(): void {
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
   log.info('App starting', { version: app.getVersion(), platform: process.platform })
+
+  if (isLogMode) {
+    log.info('Response logging enabled via --log flag')
+  }
 
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.hive')
@@ -157,6 +180,12 @@ app.whenReady().then(() => {
   registerWorktreeHandlers()
   registerSystemHandlers()
   registerSettingsHandlers()
+
+  // Register response logging handlers only when --log is active
+  if (isLogMode) {
+    log.info('Registering response logging handlers')
+    registerLoggingHandlers()
+  }
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

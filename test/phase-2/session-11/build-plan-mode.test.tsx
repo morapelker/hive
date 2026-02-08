@@ -247,14 +247,14 @@ describe('Session 11: Build/Plan Mode & Auto-Start', () => {
   })
 
   describe('Build vs Plan Mode Visual Distinction', () => {
-    test('Build mode has primary color styling', () => {
+    test('Build mode has blue color styling', () => {
       useSessionStore.setState({
         modeBySession: new Map([['s1', 'build']])
       })
 
       render(<ModeToggle sessionId="s1" />)
       const toggle = screen.getByTestId('mode-toggle')
-      expect(toggle.className).toContain('text-primary')
+      expect(toggle.className).toContain('text-blue-500')
     })
 
     test('Plan mode has violet color styling', () => {
@@ -264,7 +264,7 @@ describe('Session 11: Build/Plan Mode & Auto-Start', () => {
 
       render(<ModeToggle sessionId="s1" />)
       const toggle = screen.getByTestId('mode-toggle')
-      expect(toggle.className).toContain('text-violet')
+      expect(toggle.className).toContain('text-violet-500')
     })
   })
 })

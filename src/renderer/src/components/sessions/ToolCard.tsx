@@ -131,16 +131,16 @@ function formatDuration(ms: number): string {
   return `${(ms / 60000).toFixed(1)}m`
 }
 
-function getLeftBorderClass(status: ToolStatus): string {
+function getLeftBorderColor(status: ToolStatus): string {
   switch (status) {
     case 'pending':
-      return 'border-l-2 border-l-muted-foreground'
+      return 'hsl(var(--muted-foreground))'
     case 'running':
-      return 'border-l-2 border-l-blue-500 animate-pulse'
+      return '#3b82f6' // blue-500
     case 'success':
-      return 'border-l-2 border-l-green-500'
+      return '#22c55e' // green-500
     case 'error':
-      return 'border-l-2 border-l-red-500'
+      return '#ef4444' // red-500
   }
 }
 
@@ -185,12 +185,13 @@ export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): Reac
   return (
     <div
       className={cn(
-        'my-3 rounded-lg border text-xs',
-        getLeftBorderClass(toolUse.status),
+        'my-3 rounded-lg border border-l-2 text-xs',
+        toolUse.status === 'running' && 'animate-pulse',
         toolUse.status === 'error'
           ? 'border-red-500/30 bg-red-500/5'
           : 'border-border bg-muted/30'
       )}
+      style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
       data-testid="tool-card"
       data-tool-name={toolUse.name}
       data-tool-status={toolUse.status}
