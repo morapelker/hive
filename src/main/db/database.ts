@@ -16,6 +16,8 @@ import type {
   SessionUpdate,
   SessionMessage,
   SessionMessageCreate,
+  SessionMessageUpdate,
+  SessionMessageUpsertByOpenCode,
   Setting,
   SessionSearchOptions,
   SessionWithWorktree
@@ -507,24 +509,127 @@ export class DatabaseService {
   // Session message operations
   createSessionMessage(data: SessionMessageCreate): SessionMessage {
     const db = this.getDb()
-    const now = new Date().toISOString()
+    const now = data.created_at ?? new Date().toISOString()
     const message: SessionMessage = {
       id: randomUUID(),
       session_id: data.session_id,
       role: data.role,
       content: data.content,
+      opencode_message_id: data.opencode_message_id ?? null,
+      opencode_message_json: data.opencode_message_json ?? null,
+      opencode_parts_json: data.opencode_parts_json ?? null,
+      opencode_timeline_json: data.opencode_timeline_json ?? null,
       created_at: now
     }
 
     db.prepare(
-      `INSERT INTO session_messages (id, session_id, role, content, created_at)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(message.id, message.session_id, message.role, message.content, message.created_at)
+      `INSERT INTO session_messages (
+        id,
+        session_id,
+        role,
+        content,
+        opencode_message_id,
+        opencode_message_json,
+        opencode_parts_json,
+        opencode_timeline_json,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      message.id,
+      message.session_id,
+      message.role,
+      message.content,
+      message.opencode_message_id,
+      message.opencode_message_json,
+      message.opencode_parts_json,
+      message.opencode_timeline_json,
+      message.created_at
+    )
 
     // Update session updated_at
     db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, data.session_id)
 
     return message
+  }
+
+  updateSessionMessage(id: string, data: SessionMessageUpdate): SessionMessage | null {
+    const db = this.getDb()
+    const existing = db.prepare('SELECT * FROM session_messages WHERE id = ?').get(id) as
+      | SessionMessage
+      | undefined
+    if (!existing) return null
+
+    const updates: string[] = []
+    const values: (string | null)[] = []
+
+    if (data.content !== undefined) {
+      updates.push('content = ?')
+      values.push(data.content)
+    }
+    if (data.opencode_message_json !== undefined) {
+      updates.push('opencode_message_json = ?')
+      values.push(data.opencode_message_json)
+    }
+    if (data.opencode_parts_json !== undefined) {
+      updates.push('opencode_parts_json = ?')
+      values.push(data.opencode_parts_json)
+    }
+    if (data.opencode_timeline_json !== undefined) {
+      updates.push('opencode_timeline_json = ?')
+      values.push(data.opencode_timeline_json)
+    }
+
+    if (updates.length === 0) return existing
+
+    values.push(id)
+    db.prepare(`UPDATE session_messages SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+
+    const updated = db.prepare('SELECT * FROM session_messages WHERE id = ?').get(id) as
+      | SessionMessage
+      | undefined
+    if (!updated) return null
+
+    db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), updated.session_id)
+
+    return updated
+  }
+
+  getSessionMessageByOpenCodeId(sessionId: string, opencodeMessageId: string): SessionMessage | null {
+    const db = this.getDb()
+    const row = db
+      .prepare(
+        `SELECT * FROM session_messages
+         WHERE session_id = ? AND opencode_message_id = ?
+         ORDER BY created_at ASC
+         LIMIT 1`
+      )
+      .get(sessionId, opencodeMessageId) as SessionMessage | undefined
+    return row ?? null
+  }
+
+  upsertSessionMessageByOpenCodeId(data: SessionMessageUpsertByOpenCode): SessionMessage {
+    const existing = this.getSessionMessageByOpenCodeId(data.session_id, data.opencode_message_id)
+    if (existing) {
+      const updated = this.updateSessionMessage(existing.id, {
+        content: data.content,
+        opencode_message_json: data.opencode_message_json ?? existing.opencode_message_json,
+        opencode_parts_json: data.opencode_parts_json ?? existing.opencode_parts_json,
+        opencode_timeline_json: data.opencode_timeline_json ?? existing.opencode_timeline_json
+      })
+      if (!updated) return existing
+      return updated
+    }
+
+    return this.createSessionMessage({
+      session_id: data.session_id,
+      role: data.role,
+      content: data.content,
+      opencode_message_id: data.opencode_message_id,
+      opencode_message_json: data.opencode_message_json ?? null,
+      opencode_parts_json: data.opencode_parts_json ?? null,
+      opencode_timeline_json: data.opencode_timeline_json ?? null,
+      created_at: data.created_at
+    })
   }
 
   getSessionMessages(sessionId: string): SessionMessage[] {

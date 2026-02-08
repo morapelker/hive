@@ -43,6 +43,10 @@ interface SessionMessage {
   session_id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  opencode_message_id?: string | null
+  opencode_message_json?: string | null
+  opencode_parts_json?: string | null
+  opencode_timeline_json?: string | null
   created_at: string
 }
 
@@ -157,6 +161,11 @@ declare global {
           session_id: string
           role: 'user' | 'assistant' | 'system'
           content: string
+          opencode_message_id?: string | null
+          opencode_message_json?: string | null
+          opencode_parts_json?: string | null
+          opencode_timeline_json?: string | null
+          created_at?: string
         }) => Promise<SessionMessage>
         getBySession: (sessionId: string) => Promise<SessionMessage[]>
         delete: (id: string) => Promise<boolean>

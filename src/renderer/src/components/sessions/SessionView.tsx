@@ -44,6 +44,10 @@ interface DbMessage {
   session_id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  opencode_message_id?: string | null
+  opencode_message_json?: string | null
+  opencode_parts_json?: string | null
+  opencode_timeline_json?: string | null
   created_at: string
 }
 
@@ -73,13 +77,130 @@ interface DbWorktree {
   last_accessed_at: string
 }
 
-// Convert database message to OpenCodeMessage
+function parseJsonArray(value: string | null | undefined): unknown[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function toTimestampMs(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return undefined
+  const asNumber = Number(value)
+  if (Number.isFinite(asNumber)) return asNumber
+  const asDate = Date.parse(value)
+  return Number.isNaN(asDate) ? undefined : asDate
+}
+
+function mapToolStatus(value: unknown): ToolStatus {
+  switch (value) {
+    case 'pending':
+      return 'pending'
+    case 'running':
+      return 'running'
+    case 'completed':
+    case 'success':
+      return 'success'
+    case 'error':
+      return 'error'
+    default:
+      return 'running'
+  }
+}
+
+function stringifyValue(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function mapStoredPartsToStreamingParts(rawParts: unknown[]): StreamingPart[] {
+  return rawParts.flatMap((rawPart, index) => {
+    const part = asRecord(rawPart)
+    if (!part) return []
+
+    const partType = asString(part.type)
+    if (partType === 'text') {
+      const text = asString(part.text)
+      if (!text) return []
+      return [{ type: 'text', text }]
+    }
+
+    // Support historical data that may already be in renderer-friendly shape.
+    if (partType === 'tool_use') {
+      const rawToolUse = asRecord(part.toolUse)
+      if (!rawToolUse) return []
+
+      const toolUse: ToolUseInfo = {
+        id: asString(rawToolUse.id) ?? `tool-${index}`,
+        name: asString(rawToolUse.name) ?? 'Unknown',
+        input: asRecord(rawToolUse.input) ?? {},
+        status: mapToolStatus(rawToolUse.status),
+        startTime: toTimestampMs(rawToolUse.startTime) ?? Date.now(),
+        endTime: toTimestampMs(rawToolUse.endTime),
+        output: stringifyValue(rawToolUse.output),
+        error: asString(rawToolUse.error)
+      }
+      return [{ type: 'tool_use', toolUse }]
+    }
+
+    if (partType === 'tool') {
+      const state = asRecord(part.state) ?? {}
+      const stateTime = asRecord(state.time) ?? {}
+
+      const toolUse: ToolUseInfo = {
+        id: asString(part.callID) ?? asString(part.id) ?? `tool-${index}`,
+        name: asString(part.tool) ?? asString(part.name) ?? 'Unknown',
+        input: asRecord(state.input) ?? {},
+        status: mapToolStatus(state.status),
+        startTime: toTimestampMs(stateTime.start) ?? Date.now(),
+        endTime: toTimestampMs(stateTime.end),
+        output: stringifyValue(state.output),
+        error: stringifyValue(state.error)
+      }
+      return [{ type: 'tool_use', toolUse }]
+    }
+
+    return []
+  })
+}
+
+function loadStoredParts(message: DbMessage): StreamingPart[] | undefined {
+  const rawParts = parseJsonArray(message.opencode_parts_json)
+  if (rawParts.length === 0) return undefined
+
+  const parts = mapStoredPartsToStreamingParts(rawParts)
+  return parts.length > 0 ? parts : undefined
+}
+
+// Convert database message to renderer message
 function dbMessageToOpenCode(msg: DbMessage): OpenCodeMessage {
+  const parts = loadStoredParts(msg)
+
   return {
     id: msg.id,
     role: msg.role,
     content: msg.content,
-    timestamp: msg.created_at
+    timestamp: msg.created_at,
+    parts
   }
 }
 
@@ -157,6 +278,42 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Response logging refs
   const isLogModeRef = useRef<boolean>(false)
   const logFilePathRef = useRef<string | null>(null)
+
+  // Streaming dedup refs
+  const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
+  const hasFinalizedCurrentResponseRef = useRef(false)
+
+  // Extract message role from OpenCode stream payloads across known shapes
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const getEventMessageRole = useCallback((data: any): string | undefined => {
+    return data?.message?.role ??
+      data?.info?.role ??
+      data?.part?.role ??
+      data?.role ??
+      data?.properties?.message?.role ??
+      data?.properties?.info?.role ??
+      data?.properties?.part?.role ??
+      data?.properties?.role
+  }, [])
+
+  // Extract message ID from OpenCode stream payloads across known shapes
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const getEventMessageId = useCallback((data: any): string | null => {
+    const messageId =
+      data?.message?.id ??
+      data?.info?.messageID ??
+      data?.info?.messageId ??
+      data?.info?.id ??
+      data?.part?.messageID ??
+      data?.part?.messageId ??
+      data?.properties?.message?.id ??
+      data?.properties?.info?.messageID ??
+      data?.properties?.info?.messageId ??
+      data?.properties?.part?.messageID ??
+      data?.properties?.part?.messageId
+
+    return typeof messageId === 'string' && messageId.length > 0 ? messageId : null
+  }, [])
 
   // Auto-scroll to bottom when new messages arrive or streaming updates
   const scrollToBottom = useCallback(() => {
@@ -310,28 +467,35 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Load session info and connect to OpenCode
   useEffect(() => {
     hasTriggeredNamingRef.current = false
+    finalizedMessageIdsRef.current.clear()
+    hasFinalizedCurrentResponseRef.current = false
 
-    // Helper to save assistant message to database
-    // Resets streaming state AFTER the message is saved and added to messages[],
-    // ensuring the streaming content stays visible until the saved message replaces it.
-    // (Defined early so the synchronous stream handler can reference it.)
-    const saveAssistantMessage = async (content: string, parts?: StreamingPart[]): Promise<void> => {
+    const loadMessagesFromDatabase = async (): Promise<OpenCodeMessage[]> => {
+      const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
+      const loadedMessages = dbMessages.map(dbMessageToOpenCode)
+      setMessages(loadedMessages)
+
+      if (loadedMessages.length > 0) {
+        hasTriggeredNamingRef.current = true
+      }
+
+      const lastMessage = loadedMessages[loadedMessages.length - 1]
+      if (lastMessage?.role === 'assistant') {
+        useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+      }
+
+      return loadedMessages
+    }
+
+    const finalizeResponseFromDatabase = async (): Promise<void> => {
       try {
-        const savedMessage = (await window.db.message.create({
-          session_id: sessionId,
-          role: 'assistant' as const,
-          content
-        })) as DbMessage
-
-        const message: OpenCodeMessage = {
-          ...dbMessageToOpenCode(savedMessage),
-          parts
-        }
-        setMessages((prev) => [...prev, message])
-        resetStreamingState()
+        await loadMessagesFromDatabase()
       } catch (error) {
-        console.error('Failed to save assistant message:', error)
-        toast.error('Failed to save response')
+        console.error('Failed to refresh messages after stream completion:', error)
+        toast.error('Failed to refresh response')
+      } finally {
+        resetStreamingState()
+        setIsSending(false)
       }
     }
 
@@ -339,7 +503,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // This prevents a race condition where session.idle arrives during async
     // initialization (DB loads, reconnect) and is missed by both this handler
     // (not yet set up) and the global listener (which skips the active session).
-    const unsubscribe = window.opencodeOps.onStream((event) => {
+    const unsubscribe = window.opencodeOps?.onStream ? window.opencodeOps.onStream((event) => {
       // Only handle events for this session
       if (event.sessionId !== sessionId) return
 
@@ -367,9 +531,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
 
       // Handle different event types
+      const eventRole = getEventMessageRole(event.data)
+
       if (event.type === 'message.part.updated') {
+        // Skip user-message echoes; user messages are already rendered locally.
+        if (eventRole === 'user') return
+
         const part = event.data?.part
         if (!part) return
+
+        // New stream content means we're processing a new assistant response.
+        if (streamingPartsRef.current.length === 0 && streamingContentRef.current.length === 0) {
+          hasFinalizedCurrentResponseRef.current = false
+        }
 
         if (part.type === 'text') {
           // Update streaming text content with delta or full text
@@ -405,27 +579,35 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           setIsStreaming(true)
         }
       } else if (event.type === 'message.updated') {
+        // Skip user-message echoes; user messages are already rendered locally.
+        if (eventRole === 'user') return
+
         const info = event.data?.info
-        if (info?.role === 'assistant' && info.time?.completed) {
-          // Message complete — flush any pending throttled updates, then save
-          immediateFlush()
-          const finalContent = streamingContentRef.current || ''
-          const finalParts = [...streamingPartsRef.current]
-          if (finalContent || finalParts.length > 0) {
-            saveAssistantMessage(finalContent, finalParts)
+        if (eventRole === 'assistant' && info?.time?.completed) {
+          const messageId = getEventMessageId(event.data)
+
+          // Skip duplicate finalization events for the same message.
+          if (messageId && finalizedMessageIdsRef.current.has(messageId)) return
+          if (hasFinalizedCurrentResponseRef.current) return
+
+          if (messageId) {
+            finalizedMessageIdsRef.current.add(messageId)
           }
-          setIsSending(false)
+          hasFinalizedCurrentResponseRef.current = true
+
+          // Message complete — flush now and reload from DB (main process already persisted it).
+          immediateFlush()
+          void finalizeResponseFromDatabase()
         }
       } else if (event.type === 'session.idle') {
         // Session finished processing — flush any pending throttled updates
         immediateFlush()
         setIsSending(false)
-        // If there's remaining streaming content, save it
-        if (streamingContentRef.current || streamingPartsRef.current.length > 0) {
-          saveAssistantMessage(
-            streamingContentRef.current,
-            [...streamingPartsRef.current]
-          )
+
+        // If message.updated already finalized this response, don't process again.
+        if (!hasFinalizedCurrentResponseRef.current) {
+          hasFinalizedCurrentResponseRef.current = true
+          void finalizeResponseFromDatabase()
         }
         // Update worktree status: 'unread' if not viewing, clear if viewing
         const activeId = useSessionStore.getState().activeSessionId
@@ -436,28 +618,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           statusStore.setSessionStatus(sessionId, 'unread')
         }
       }
-    })
+    }) : () => {}
 
     const initializeSession = async (): Promise<void> => {
       setViewState({ status: 'connecting' })
 
       try {
         // 1. Load messages from database
-        const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
-        const loadedMessages = dbMessages.map(dbMessageToOpenCode)
-        setMessages(loadedMessages)
-
-        // If session already has messages, skip auto-naming
-        if (loadedMessages.length > 0) {
-          hasTriggeredNamingRef.current = true
-        }
-
-        // Clear stale 'working' status if the session already has an assistant response
-        // (e.g., the response completed while viewing another project)
-        const lastLoaded = loadedMessages[loadedMessages.length - 1]
-        if (lastLoaded?.role === 'assistant') {
-          useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-        }
+        await loadMessagesFromDatabase()
 
         // 2. Get session info to find worktree
         const session = (await window.db.session.get(sessionId)) as DbSession | null
@@ -478,6 +646,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         if (!wtPath) {
           // No worktree - just show messages without OpenCode
           console.warn('No worktree path for session, OpenCode disabled')
+          setViewState({ status: 'connected' })
+          return
+        }
+
+        if (!window.opencodeOps) {
+          console.warn('OpenCode API unavailable, session view running in local-only mode')
           setViewState({ status: 'connected' })
           return
         }
@@ -504,93 +678,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
             }
             setViewState({ status: 'connected' })
-
-            // Recover missed messages (e.g., AI response completed while viewing another project)
-            // The global listener in AppLayout may have already saved it to DB, but loadedMessages
-            // was fetched at the start of this function. Re-check DB for any messages saved since then.
-            try {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const freshMessages = (await window.db.message.getBySession(sessionId)) as any[]
-              const freshLast = freshMessages[freshMessages.length - 1]
-              console.log('[SessionView recovery] DB messages:', freshMessages.length, 'last role:', freshLast?.role)
-
-              if (freshLast?.role === 'user' && !streamingContentRef.current && streamingPartsRef.current.length === 0) {
-                // Still missing assistant response - try to fetch from OpenCode
-                console.log('[SessionView recovery] Last message is user, attempting OpenCode fetch')
-                const opcResult = await window.opencodeOps.getMessages(wtPath, existingOpcSessionId)
-                console.log('[SessionView recovery] getMessages:', {
-                  success: opcResult.success,
-                  isArray: Array.isArray(opcResult.messages),
-                  raw: JSON.stringify(opcResult.messages)?.slice(0, 500)
-                })
-
-                if (opcResult.success) {
-                  // Normalize: handle array or object-with-messages
-                  let opcMessages = opcResult.messages
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  if (!Array.isArray(opcMessages) && (opcMessages as any)?.messages) {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    opcMessages = (opcMessages as any).messages
-                  }
-
-                  if (Array.isArray(opcMessages) && opcMessages.length > 0) {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const lastAssistant = [...opcMessages].reverse().find((m: any) => m.role === 'assistant')
-                    if (lastAssistant) {
-                      console.log('[SessionView recovery] Found assistant msg, keys:', Object.keys(lastAssistant))
-                      // Extract text content from various possible formats
-                      let content = ''
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      if (Array.isArray((lastAssistant as any).parts)) {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        content = (lastAssistant as any).parts
-                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                          .filter((p: any) => p.type === 'text')
-                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                          .map((p: any) => p.text || p.content || '')
-                          .join('')
-                      }
-                      if (!content && typeof (lastAssistant as Record<string, unknown>).content === 'string') {
-                        content = (lastAssistant as Record<string, unknown>).content as string
-                      }
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      if (!content && Array.isArray((lastAssistant as any).content)) {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        content = (lastAssistant as any).content
-                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                          .filter((c: any) => c.type === 'text')
-                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                          .map((c: any) => c.text || '')
-                          .join('')
-                      }
-
-                      console.log('[SessionView recovery] Extracted content length:', content.length)
-                      if (content?.trim()) {
-                        const savedMessage = (await window.db.message.create({
-                          session_id: sessionId,
-                          role: 'assistant' as const,
-                          content
-                        })) as DbMessage
-                        setMessages((prev) => [...prev, dbMessageToOpenCode(savedMessage)])
-                        setIsSending(false)
-                        useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-                        console.log('[SessionView recovery] Saved and displayed recovered message')
-                      }
-                    }
-                  }
-                }
-              } else if (freshMessages.length > loadedMessages.length) {
-                // Global listener already saved messages - reload from DB
-                console.log('[SessionView recovery] New messages found in DB, reloading')
-                const reloadedMessages = freshMessages.map(dbMessageToOpenCode)
-                setMessages(reloadedMessages)
-                setIsSending(false)
-                useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-              }
-            } catch (err) {
-              console.warn('[SessionView recovery] Failed:', err)
-            }
-
             return
           }
         }
@@ -662,6 +749,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       setWorktreePath(worktree.path)
 
+      if (!window.opencodeOps) {
+        console.warn('OpenCode API unavailable, retry falling back to local-only mode')
+        setViewState({ status: 'connected' })
+        return
+      }
+
       const connectResult = await window.opencodeOps.connect(worktree.path, sessionId)
       if (connectResult.success && connectResult.sessionId) {
         setOpencodeSessionId(connectResult.sessionId)
@@ -686,6 +779,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const trimmedValue = inputValue.trim()
     if (!trimmedValue || isSending) return
 
+    hasFinalizedCurrentResponseRef.current = false
     setIsSending(true)
     setInputValue('')
 

@@ -63,6 +63,8 @@ describeIf('Session 3: Database', () => {
     expect(indexNames).toContain('idx_sessions_worktree')
     expect(indexNames).toContain('idx_sessions_project')
     expect(indexNames).toContain('idx_messages_session')
+    expect(indexNames).toContain('idx_messages_session_opencode')
+    expect(indexNames).toContain('idx_messages_session_opencode_unique')
     expect(indexNames).toContain('idx_sessions_updated')
     expect(indexNames).toContain('idx_projects_accessed')
   })
@@ -394,6 +396,43 @@ describeIf('Session 3: Database', () => {
 
       const updated = db.getSession(sessionId)
       expect(updated?.updated_at).not.toBe(originalUpdated)
+    })
+
+    test('Upsert by OpenCode message ID updates existing row', () => {
+      const created = db.upsertSessionMessageByOpenCodeId({
+        session_id: sessionId,
+        role: 'assistant',
+        opencode_message_id: 'opc-msg-1',
+        content: 'Initial',
+        opencode_parts_json: JSON.stringify([{ id: 'p1', type: 'text', text: 'Initial' }])
+      })
+
+      const updated = db.upsertSessionMessageByOpenCodeId({
+        session_id: sessionId,
+        role: 'assistant',
+        opencode_message_id: 'opc-msg-1',
+        content: 'Updated',
+        opencode_parts_json: JSON.stringify([{ id: 'p1', type: 'text', text: 'Updated' }])
+      })
+
+      const messages = db.getSessionMessages(sessionId)
+      expect(messages).toHaveLength(1)
+      expect(updated.id).toBe(created.id)
+      expect(updated.content).toBe('Updated')
+    })
+
+    test('Get message by OpenCode ID', () => {
+      db.upsertSessionMessageByOpenCodeId({
+        session_id: sessionId,
+        role: 'assistant',
+        opencode_message_id: 'opc-msg-2',
+        content: 'Lookup content'
+      })
+
+      const found = db.getSessionMessageByOpenCodeId(sessionId, 'opc-msg-2')
+      expect(found).not.toBeNull()
+      expect(found?.content).toBe('Lookup content')
+      expect(found?.opencode_message_id).toBe('opc-msg-2')
     })
   })
 

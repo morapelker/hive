@@ -74,6 +74,179 @@ class OpenCodeService {
     this.mainWindow = window
   }
 
+  private toIsoTimestamp(value: unknown): string | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return new Date(value).toISOString()
+    }
+    if (typeof value !== 'string') return undefined
+
+    const asNumber = Number(value)
+    if (Number.isFinite(asNumber)) {
+      return new Date(asNumber).toISOString()
+    }
+
+    const asDate = Date.parse(value)
+    if (Number.isNaN(asDate)) return undefined
+    return new Date(asDate).toISOString()
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private parseJsonArray(value: string | null): any[] {
+    if (!value) return []
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildTextContentFromParts(parts: any[]): string {
+    return parts
+      .filter((part) => part?.type === 'text')
+      .map((part) => (typeof part.text === 'string' ? part.text : ''))
+      .join('')
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private extractEventMessageRole(eventData: any): string | undefined {
+    return eventData?.message?.role ??
+      eventData?.info?.role ??
+      eventData?.part?.role ??
+      eventData?.role ??
+      eventData?.properties?.message?.role ??
+      eventData?.properties?.info?.role ??
+      eventData?.properties?.part?.role ??
+      eventData?.properties?.role
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private extractEventMessageId(eventData: any): string | null {
+    const messageId = eventData?.message?.id ??
+      eventData?.info?.messageID ??
+      eventData?.info?.messageId ??
+      eventData?.info?.id ??
+      eventData?.part?.messageID ??
+      eventData?.part?.messageId ??
+      eventData?.part?.message_id ??
+      eventData?.properties?.message?.id ??
+      eventData?.properties?.info?.messageID ??
+      eventData?.properties?.info?.messageId ??
+      eventData?.properties?.info?.id ??
+      eventData?.properties?.part?.messageID ??
+      eventData?.properties?.part?.messageId ??
+      eventData?.properties?.part?.message_id
+
+    return typeof messageId === 'string' && messageId.length > 0 ? messageId : null
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private mergeUpdatedPart(existingParts: any[], part: any, delta?: string): any[] {
+    const nextParts = [...existingParts]
+    const identity = part?.id ?? part?.callID
+    const existingIndex = nextParts.findIndex((p) => {
+      if (identity === undefined || identity === null) return false
+      return (p?.id ?? p?.callID) === identity
+    })
+
+    if (existingIndex >= 0) {
+      // Preserve text accumulation when SDK sends delta updates for the same part.
+      if (part?.type === 'text' && typeof delta === 'string' && delta.length > 0) {
+        const previousText = typeof nextParts[existingIndex]?.text === 'string'
+          ? nextParts[existingIndex].text
+          : ''
+        nextParts[existingIndex] = {
+          ...part,
+          text: previousText + delta
+        }
+      } else {
+        nextParts[existingIndex] = part
+      }
+      return nextParts
+    }
+
+    // New part in timeline.
+    if (part?.type === 'text' && typeof delta === 'string' && delta.length > 0 && typeof part?.text !== 'string') {
+      nextParts.push({ ...part, text: delta })
+    } else {
+      nextParts.push(part)
+    }
+
+    return nextParts
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private persistStreamEvent(hiveSessionId: string, eventType: string, eventData: any): void {
+    try {
+      const db = getDatabase()
+      const role = this.extractEventMessageRole(eventData)
+      const messageId = this.extractEventMessageId(eventData)
+
+      if (eventType === 'message.part.updated') {
+        const part = eventData?.part
+        if (role === 'user') return
+        if (!part || !messageId) return
+
+        const existing = db.getSessionMessageByOpenCodeId(hiveSessionId, messageId)
+        const existingParts = this.parseJsonArray(existing?.opencode_parts_json ?? null)
+        const existingTimeline = this.parseJsonArray(existing?.opencode_timeline_json ?? null)
+        const nextParts = this.mergeUpdatedPart(existingParts, part, eventData?.delta)
+        const nextTimeline = [
+          ...existingTimeline,
+          {
+            type: 'message.part.updated',
+            delta: eventData?.delta,
+            part
+          }
+        ]
+
+        db.upsertSessionMessageByOpenCodeId({
+          session_id: hiveSessionId,
+          role: 'assistant',
+          opencode_message_id: messageId,
+          content: this.buildTextContentFromParts(nextParts),
+          opencode_message_json: existing?.opencode_message_json ?? null,
+          opencode_parts_json: JSON.stringify(nextParts),
+          opencode_timeline_json: JSON.stringify(nextTimeline)
+        })
+        return
+      }
+
+      if (eventType === 'message.updated') {
+        const info = eventData?.info
+        if (role === 'user') return
+        if (!messageId) return
+        if (role && role !== 'assistant') return
+
+        const existing = db.getSessionMessageByOpenCodeId(hiveSessionId, messageId)
+        const existingParts = this.parseJsonArray(existing?.opencode_parts_json ?? null)
+        const existingTimeline = this.parseJsonArray(existing?.opencode_timeline_json ?? null)
+        const messageParts = Array.isArray(eventData?.parts) ? eventData.parts : existingParts
+        const nextTimeline = [
+          ...existingTimeline,
+          {
+            type: 'message.updated',
+            info
+          }
+        ]
+
+        db.upsertSessionMessageByOpenCodeId({
+          session_id: hiveSessionId,
+          role: 'assistant',
+          opencode_message_id: messageId,
+          content: this.buildTextContentFromParts(messageParts),
+          opencode_message_json: JSON.stringify(info),
+          opencode_parts_json: JSON.stringify(messageParts),
+          opencode_timeline_json: JSON.stringify(nextTimeline),
+          created_at: this.toIsoTimestamp(info?.time?.created)
+        })
+      }
+    } catch (error) {
+      log.warn('Failed to persist stream event', { hiveSessionId, eventType, error })
+    }
+  }
+
   /**
    * Get or create the OpenCode instance
    */
@@ -551,6 +724,9 @@ class OpenCodeService {
     if (eventType === 'session.idle') {
       log.info('Forwarding session.idle to renderer', { opencodeSessionId: sessionId, hiveSessionId })
     }
+
+    // Persist stream events in the main process so message history survives renderer unmount/switching.
+    this.persistStreamEvent(hiveSessionId, eventType, event.properties || event)
 
     // Send event to renderer
     const streamEvent: StreamEvent = {

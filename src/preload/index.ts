@@ -70,7 +70,16 @@ const db = {
 
   // Session Messages
   message: {
-    create: (data: { session_id: string; role: 'user' | 'assistant' | 'system'; content: string }) =>
+    create: (data: {
+      session_id: string
+      role: 'user' | 'assistant' | 'system'
+      content: string
+      opencode_message_id?: string | null
+      opencode_message_json?: string | null
+      opencode_parts_json?: string | null
+      opencode_timeline_json?: string | null
+      created_at?: string
+    }) =>
       ipcRenderer.invoke('db:message:create', data),
     getBySession: (sessionId: string) => ipcRenderer.invoke('db:message:getBySession', sessionId),
     delete: (id: string) => ipcRenderer.invoke('db:message:delete', id)

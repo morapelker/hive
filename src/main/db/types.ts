@@ -95,6 +95,10 @@ export interface SessionMessage {
   session_id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  opencode_message_id: string | null
+  opencode_message_json: string | null
+  opencode_parts_json: string | null
+  opencode_timeline_json: string | null
   created_at: string
 }
 
@@ -102,6 +106,29 @@ export interface SessionMessageCreate {
   session_id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  opencode_message_id?: string | null
+  opencode_message_json?: string | null
+  opencode_parts_json?: string | null
+  opencode_timeline_json?: string | null
+  created_at?: string
+}
+
+export interface SessionMessageUpdate {
+  content?: string
+  opencode_message_json?: string | null
+  opencode_parts_json?: string | null
+  opencode_timeline_json?: string | null
+}
+
+export interface SessionMessageUpsertByOpenCode {
+  session_id: string
+  role: 'assistant' | 'user' | 'system'
+  opencode_message_id: string
+  content: string
+  opencode_message_json?: string | null
+  opencode_parts_json?: string | null
+  opencode_timeline_json?: string | null
+  created_at?: string
 }
 
 export interface Setting {

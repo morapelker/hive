@@ -105,6 +105,23 @@ beforeEach(() => {
     configurable: true
   })
 
+  // Mock OpenCode ops used by SessionView subscription/effects
+  Object.defineProperty(window, 'opencodeOps', {
+    value: {
+      connect: vi.fn().mockResolvedValue({ success: false }),
+      reconnect: vi.fn().mockResolvedValue({ success: false }),
+      prompt: vi.fn().mockResolvedValue({ success: true }),
+      disconnect: vi.fn().mockResolvedValue({ success: true }),
+      getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
+      listModels: vi.fn().mockResolvedValue({ success: true, providers: [] }),
+      setModel: vi.fn().mockResolvedValue({ success: true }),
+      generateSessionName: vi.fn().mockResolvedValue({ success: true, name: '' }),
+      onStream: vi.fn().mockImplementation(() => () => {})
+    },
+    writable: true,
+    configurable: true
+  })
+
   // Mock navigator.clipboard - use a fresh mock for each test
   const clipboardMock = {
     writeText: mockWriteText,

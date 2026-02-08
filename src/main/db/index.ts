@@ -12,6 +12,8 @@ export type {
   SessionUpdate,
   SessionMessage,
   SessionMessageCreate,
+  SessionMessageUpdate,
+  SessionMessageUpsertByOpenCode,
   Setting,
   SessionSearchOptions,
   SessionWithWorktree
