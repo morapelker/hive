@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useCallback } from 'react'
 import { useProjectStore, useWorktreeStore, useSessionStore, useThemeStore, useSessionHistoryStore, useLayoutStore } from '@/stores'
+import { THEME_PRESETS } from '@/lib/themes'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
@@ -22,7 +23,7 @@ export function useCommands() {
     setActiveSession,
     getSessionsForWorktree
   } = useSessionStore()
-  const { theme, setTheme, cycleTheme } = useThemeStore()
+  const { themeId, setTheme, previewTheme, cancelPreview } = useThemeStore()
   const { togglePanel: toggleSessionHistory } = useSessionHistoryStore()
   const { stageAll, unstageAll, refreshStatuses, push, pull, isPushing, isPulling } = useGitStore()
   const { toggleLeftSidebar, toggleRightSidebar } = useLayoutStore()
@@ -512,55 +513,36 @@ export function useCommands() {
       },
       {
         id: 'settings:theme',
-        label: 'Toggle Theme',
-        description: `Current: ${theme}. Cycle through dark, light, system`,
+        label: 'Switch Theme',
+        description: `Current: ${themeId}. Choose a theme preset`,
         category: 'settings',
-        icon: 'Moon',
-        keywords: ['theme', 'dark', 'light', 'mode', 'appearance'],
+        icon: 'Palette',
+        keywords: ['theme', 'dark', 'light', 'mode', 'appearance', 'color'],
+        hasChildren: true,
         action: () => {
-          cycleTheme()
-          const newTheme = useThemeStore.getState().theme
-          toast.success(`Theme set to ${newTheme}`)
-          closeCommandPalette()
-        }
-      },
-      {
-        id: 'settings:theme-dark',
-        label: 'Set Dark Theme',
-        description: 'Switch to dark theme',
-        category: 'settings',
-        icon: 'Moon',
-        keywords: ['dark', 'theme', 'mode'],
-        action: () => {
-          setTheme('dark')
-          toast.success('Theme set to dark')
-          closeCommandPalette()
-        }
-      },
-      {
-        id: 'settings:theme-light',
-        label: 'Set Light Theme',
-        description: 'Switch to light theme',
-        category: 'settings',
-        icon: 'Sun',
-        keywords: ['light', 'theme', 'mode'],
-        action: () => {
-          setTheme('light')
-          toast.success('Theme set to light')
-          closeCommandPalette()
-        }
-      },
-      {
-        id: 'settings:theme-system',
-        label: 'Set System Theme',
-        description: 'Follow system theme preference',
-        category: 'settings',
-        icon: 'Monitor',
-        keywords: ['system', 'auto', 'theme', 'mode'],
-        action: () => {
-          setTheme('system')
-          toast.success('Theme set to system')
-          closeCommandPalette()
+          const children = THEME_PRESETS.map((preset) => ({
+            id: `settings:theme:${preset.id}`,
+            label: preset.name,
+            description: `${preset.type} theme`,
+            category: 'settings' as const,
+            icon: preset.type === 'dark' ? 'Moon' : 'Sun',
+            onHighlight: () => previewTheme(preset.id),
+            action: () => {
+              setTheme(preset.id)
+              toast.success(`Theme set to ${preset.name}`)
+              closeCommandPalette()
+            }
+          }))
+          pushCommandLevel(
+            children,
+            {
+              id: 'settings:theme',
+              label: 'Switch Theme',
+              category: 'settings',
+              action: () => {}
+            },
+            () => cancelPreview()
+          )
         }
       }
     ]
@@ -585,9 +567,10 @@ export function useCommands() {
     closeSession,
     setActiveSession,
     getSessionsForWorktree,
-    theme,
+    themeId,
     setTheme,
-    cycleTheme,
+    previewTheme,
+    cancelPreview,
     toggleSessionHistory,
     stageAll,
     unstageAll,

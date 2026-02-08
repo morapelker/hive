@@ -1,44 +1,37 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import { THEME_PRESETS, DEFAULT_THEME_ID, getThemeById, type ThemePreset } from '@/lib/themes'
 
-export type Theme = 'dark' | 'light' | 'system'
-
-const THEME_SETTING_KEY = 'user_theme'
+const THEME_SETTING_KEY = 'selected_theme'
 
 interface ThemeState {
-  theme: Theme
+  themeId: string
   isLoading: boolean
-  setTheme: (theme: Theme) => void
-  cycleTheme: () => void
-  getEffectiveTheme: () => 'dark' | 'light'
+  setTheme: (id: string) => void
+  getCurrentTheme: () => ThemePreset
   loadFromDatabase: () => Promise<void>
+  previewTheme: (id: string) => void
+  cancelPreview: () => void
 }
 
-const getSystemTheme = (): 'dark' | 'light' => {
-  if (typeof window !== 'undefined') {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  }
-  return 'dark'
-}
-
-// Save theme to SQLite database
-async function saveThemeToDatabase(theme: Theme): Promise<void> {
+// Save theme ID to SQLite database
+async function saveThemeToDatabase(themeId: string): Promise<void> {
   try {
     if (typeof window !== 'undefined' && window.db?.setting) {
-      await window.db.setting.set(THEME_SETTING_KEY, theme)
+      await window.db.setting.set(THEME_SETTING_KEY, themeId)
     }
   } catch (error) {
     console.error('Failed to save theme to database:', error)
   }
 }
 
-// Load theme from SQLite database
-async function loadThemeFromDatabase(): Promise<Theme | null> {
+// Load theme ID from SQLite database
+async function loadThemeFromDatabase(): Promise<string | null> {
   try {
     if (typeof window !== 'undefined' && window.db?.setting) {
       const value = await window.db.setting.get(THEME_SETTING_KEY)
-      if (value && ['dark', 'light', 'system'].includes(value)) {
-        return value as Theme
+      if (value && getThemeById(value)) {
+        return value
       }
     }
   } catch (error) {
@@ -47,101 +40,107 @@ async function loadThemeFromDatabase(): Promise<Theme | null> {
   return null
 }
 
+function applyThemePreset(preset: ThemePreset): void {
+  const root = window.document.documentElement
+
+  // Set dark/light class
+  root.classList.remove('light', 'dark')
+  root.classList.add(preset.type)
+
+  // Apply all CSS custom properties
+  for (const [key, value] of Object.entries(preset.colors)) {
+    root.style.setProperty(`--${key}`, value)
+  }
+}
+
+function applyThemeById(themeId: string): void {
+  const preset = getThemeById(themeId)
+  if (preset) {
+    applyThemePreset(preset)
+  }
+}
+
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
-      theme: 'dark',
+      themeId: DEFAULT_THEME_ID,
       isLoading: true,
 
-      setTheme: (theme: Theme) => {
-        set({ theme })
-        applyTheme(theme)
-        // Persist to SQLite database (async, don't await)
-        saveThemeToDatabase(theme)
+      setTheme: (id: string) => {
+        const preset = getThemeById(id)
+        if (!preset) return
+        set({ themeId: id })
+        applyThemePreset(preset)
+        saveThemeToDatabase(id)
       },
 
-      cycleTheme: () => {
-        const themes: Theme[] = ['dark', 'light', 'system']
-        const currentIndex = themes.indexOf(get().theme)
-        const nextTheme = themes[(currentIndex + 1) % themes.length]
-        get().setTheme(nextTheme)
+      getCurrentTheme: () => {
+        const preset = getThemeById(get().themeId)
+        return preset || THEME_PRESETS[0]
       },
 
-      getEffectiveTheme: () => {
-        const { theme } = get()
-        if (theme === 'system') {
-          return getSystemTheme()
+      previewTheme: (id: string) => {
+        const preset = getThemeById(id)
+        if (preset) {
+          applyThemePreset(preset)
         }
-        return theme
+      },
+
+      cancelPreview: () => {
+        applyThemeById(get().themeId)
       },
 
       loadFromDatabase: async () => {
-        const dbTheme = await loadThemeFromDatabase()
-        if (dbTheme) {
-          set({ theme: dbTheme, isLoading: false })
-          applyTheme(dbTheme)
+        const dbThemeId = await loadThemeFromDatabase()
+        if (dbThemeId) {
+          set({ themeId: dbThemeId, isLoading: false })
+          applyThemeById(dbThemeId)
         } else {
-          // No theme in database, use current (from localStorage) and save it
-          const currentTheme = get().theme
+          const currentId = get().themeId
           set({ isLoading: false })
-          await saveThemeToDatabase(currentTheme)
+          applyThemeById(currentId)
+          await saveThemeToDatabase(currentId)
         }
-      },
+      }
     }),
     {
       name: 'hive-theme',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ theme: state.theme }),
+      partialize: (state) => ({ themeId: state.themeId }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          // Apply theme from localStorage first for fast loading (no flicker)
-          applyTheme(state.theme)
+          applyThemeById(state.themeId)
         }
-      },
+      }
     }
   )
 )
 
-function applyTheme(theme: Theme): void {
-  const root = window.document.documentElement
-  root.classList.remove('light', 'dark')
-
-  if (theme === 'system') {
-    const systemTheme = getSystemTheme()
-    root.classList.add(systemTheme)
-  } else {
-    root.classList.add(theme)
-  }
-}
-
-// Initialize theme and listen for system changes
+// Initialize theme immediately to prevent flicker
 if (typeof window !== 'undefined') {
-  // Apply theme from localStorage immediately (fast, prevents flicker)
   const storedTheme = localStorage.getItem('hive-theme')
   if (storedTheme) {
     try {
       const parsed = JSON.parse(storedTheme)
-      if (parsed.state?.theme) {
-        applyTheme(parsed.state.theme)
+      if (parsed.state?.themeId) {
+        applyThemeById(parsed.state.themeId)
+      } else if (parsed.state?.theme) {
+        // Migration from old format: map dark/light/system to preset IDs
+        const oldTheme = parsed.state.theme
+        const newId = oldTheme === 'light' ? 'daylight' : DEFAULT_THEME_ID
+        applyThemeById(newId)
+      } else {
+        applyThemeById(DEFAULT_THEME_ID)
       }
     } catch {
-      applyTheme('dark')
+      applyThemeById(DEFAULT_THEME_ID)
     }
   } else {
-    applyTheme('dark')
+    applyThemeById(DEFAULT_THEME_ID)
   }
 
-  // Then load from database (source of truth) once IPC is ready
-  // This is called from App.tsx on mount to ensure proper timing
+  // Load from database (source of truth) once IPC is ready
   setTimeout(() => {
     useThemeStore.getState().loadFromDatabase()
   }, 100)
-
-  // Listen for system theme changes
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    const state = useThemeStore.getState()
-    if (state.theme === 'system') {
-      applyTheme('system')
-    }
-  })
 }

@@ -1,26 +1,21 @@
-import { useThemeStore, type Theme } from '@/stores/useThemeStore'
+import { useThemeStore } from '@/stores/useThemeStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { Moon, Sun, Monitor, RotateCcw } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useShortcutStore } from '@/stores/useShortcutStore'
+import { DEFAULT_THEME_ID } from '@/lib/themes'
 import { toast } from 'sonner'
 
-const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Moon }[] = [
-  { value: 'dark', label: 'Dark', icon: Moon },
-  { value: 'light', label: 'Light', icon: Sun },
-  { value: 'system', label: 'System', icon: Monitor }
-]
-
 export function SettingsGeneral(): React.JSX.Element {
-  const { theme, setTheme } = useThemeStore()
+  const { setTheme } = useThemeStore()
   const { autoStartSession, updateSetting, resetToDefaults } = useSettingsStore()
   const { resetToDefaults: resetShortcuts } = useShortcutStore()
 
   const handleResetAll = (): void => {
     resetToDefaults()
     resetShortcuts()
-    setTheme('dark')
+    setTheme(DEFAULT_THEME_ID)
     toast.success('All settings reset to defaults')
   }
 
@@ -29,32 +24,6 @@ export function SettingsGeneral(): React.JSX.Element {
       <div>
         <h3 className="text-base font-medium mb-1">General</h3>
         <p className="text-sm text-muted-foreground">Basic application settings</p>
-      </div>
-
-      {/* Theme */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium">Theme</label>
-        <div className="flex gap-2">
-          {THEME_OPTIONS.map((opt) => {
-            const Icon = opt.icon
-            return (
-              <button
-                key={opt.value}
-                onClick={() => setTheme(opt.value)}
-                className={cn(
-                  'flex items-center gap-2 px-3 py-2 rounded-md border text-sm transition-colors',
-                  theme === opt.value
-                    ? 'border-primary bg-primary/10 text-foreground'
-                    : 'border-border text-muted-foreground hover:border-primary/50'
-                )}
-                data-testid={`theme-${opt.value}`}
-              >
-                <Icon className="h-4 w-4" />
-                {opt.label}
-              </button>
-            )
-          })}
-        </div>
       </div>
 
       {/* Auto-start session */}

@@ -23,6 +23,8 @@ export interface Command {
   // For nested commands (e.g., "Switch to worktree" → list of worktrees)
   hasChildren?: boolean
   getChildren?: () => Command[]
+  // Callback when this command is highlighted (hovered/arrowed to)
+  onHighlight?: () => void
   // Visibility conditions
   isEnabled?: () => boolean
   isVisible?: () => boolean
@@ -39,6 +41,9 @@ interface CommandPaletteState {
   commandStack: Command[][]
   currentParent: Command | null
 
+  // Dismiss callback for nested command levels
+  onDismissLevel: (() => void) | null
+
   // Recent commands (persisted)
   recentCommandIds: string[]
   maxRecentCommands: number
@@ -54,7 +59,7 @@ interface CommandPaletteState {
   clearRecentCommands: () => void
 
   // Nested command navigation
-  pushCommandLevel: (commands: Command[], parent: Command) => void
+  pushCommandLevel: (commands: Command[], parent: Command, onDismiss?: () => void) => void
   popCommandLevel: () => void
   resetCommandStack: () => void
 }
@@ -68,6 +73,7 @@ export const useCommandPaletteStore = create<CommandPaletteState>()(
       selectedIndex: 0,
       commandStack: [],
       currentParent: null,
+      onDismissLevel: null,
       recentCommandIds: [],
       maxRecentCommands: 5,
 
@@ -84,12 +90,14 @@ export const useCommandPaletteStore = create<CommandPaletteState>()(
 
       // Close the command palette
       close: () => {
+        get().onDismissLevel?.()
         set({
           isOpen: false,
           searchQuery: '',
           selectedIndex: 0,
           commandStack: [],
-          currentParent: null
+          currentParent: null,
+          onDismissLevel: null
         })
       },
 
@@ -142,17 +150,19 @@ export const useCommandPaletteStore = create<CommandPaletteState>()(
       },
 
       // Push a new level of commands (for nested navigation)
-      pushCommandLevel: (commands: Command[], parent: Command) => {
+      pushCommandLevel: (commands: Command[], parent: Command, onDismiss?: () => void) => {
         set((state) => ({
           commandStack: [...state.commandStack, commands],
           currentParent: parent,
           searchQuery: '',
-          selectedIndex: 0
+          selectedIndex: 0,
+          onDismissLevel: onDismiss ?? state.onDismissLevel
         }))
       },
 
       // Pop back to previous level
       popCommandLevel: () => {
+        get().onDismissLevel?.()
         set((state) => {
           if (state.commandStack.length === 0) return state
           const newStack = state.commandStack.slice(0, -1)
@@ -160,18 +170,21 @@ export const useCommandPaletteStore = create<CommandPaletteState>()(
             commandStack: newStack,
             currentParent: null,
             searchQuery: '',
-            selectedIndex: 0
+            selectedIndex: 0,
+            onDismissLevel: null
           }
         })
       },
 
       // Reset command stack to root level
       resetCommandStack: () => {
+        get().onDismissLevel?.()
         set({
           commandStack: [],
           currentParent: null,
           searchQuery: '',
-          selectedIndex: 0
+          selectedIndex: 0,
+          onDismissLevel: null
         })
       }
     }),

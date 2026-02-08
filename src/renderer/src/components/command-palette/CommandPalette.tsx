@@ -92,6 +92,22 @@ export function CommandPalette() {
     return count
   }, [groupedCommands])
 
+  // Fire onHighlight when selected command changes
+  useEffect(() => {
+    if (!isOpen || displayCommands.length === 0) return
+    // Flatten grouped commands to find the command at selectedIndex
+    let idx = 0
+    for (const commands of groupedCommands.values()) {
+      for (const cmd of commands) {
+        if (idx === selectedIndex) {
+          cmd.onHighlight?.()
+          return
+        }
+        idx++
+      }
+    }
+  }, [isOpen, selectedIndex, groupedCommands, displayCommands])
+
   // Handle command selection
   const handleSelect = useCallback(
     async (command: CommandType) => {

@@ -1,4 +1,4 @@
-import { useLayoutStore, LAYOUT_CONSTRAINTS } from '@/stores/useLayoutStore'
+import { useLayoutStore } from '@/stores/useLayoutStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FolderGit2 } from 'lucide-react'
 import { ProjectList, AddProjectButton } from '@/components/projects'
@@ -41,11 +41,6 @@ export function LeftSidebar(): React.JSX.Element {
         </div>
         <div className="flex-1 overflow-auto p-2">
           <ProjectList onAddProject={handleAddProject} />
-        </div>
-        <div className="p-2 border-t text-xs text-muted-foreground">
-          Width: {leftSidebarWidth}px
-          <br />
-          Min: {LAYOUT_CONSTRAINTS.leftSidebar.min}px | Max: {LAYOUT_CONSTRAINTS.leftSidebar.max}px
         </div>
       </aside>
       <ResizeHandle onResize={handleResize} direction="left" />
