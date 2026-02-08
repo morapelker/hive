@@ -6,3 +6,4 @@ export { registerFileTreeHandlers, cleanupFileTreeWatchers } from './file-tree-h
 export { registerGitFileHandlers } from './git-file-handlers'
 export { registerSettingsHandlers } from './settings-handlers'
 export { registerFileHandlers } from './file-handlers'
+export { registerScriptHandlers, cleanupScripts } from './script-handlers'

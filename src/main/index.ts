@@ -4,7 +4,7 @@ import { spawn } from 'child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
-import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers, registerGitFileHandlers, registerSettingsHandlers, registerFileHandlers } from './ipc'
+import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers, registerGitFileHandlers, registerSettingsHandlers, registerFileHandlers, registerScriptHandlers, cleanupScripts } from './ipc'
 import { createLogger, getLogDir } from './services/logger'
 import { createResponseLog, appendResponseLog } from './services/response-logger'
 
@@ -228,6 +228,8 @@ app.whenReady().then(() => {
     registerFileTreeHandlers(mainWindow)
     log.info('Registering GitFile handlers')
     registerGitFileHandlers(mainWindow)
+    log.info('Registering Script handlers')
+    registerScriptHandlers(mainWindow)
   }
 
   app.on('activate', function () {
@@ -248,6 +250,8 @@ app.on('window-all-closed', () => {
 
 // Cleanup when app is about to quit
 app.on('will-quit', async () => {
+  // Cleanup running scripts
+  cleanupScripts()
   // Cleanup file tree watchers
   await cleanupFileTreeWatchers()
   // Cleanup OpenCode connections

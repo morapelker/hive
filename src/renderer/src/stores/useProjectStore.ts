@@ -32,6 +32,7 @@ interface ProjectState {
   addProject: (path: string) => Promise<{ success: boolean; error?: string }>
   removeProject: (id: string) => Promise<boolean>
   updateProjectName: (id: string, name: string) => Promise<boolean>
+  updateProject: (id: string, data: { name?: string; description?: string | null; tags?: string[] | null; language?: string | null; setup_script?: string | null; run_script?: string | null; archive_script?: string | null }) => Promise<boolean>
   selectProject: (id: string | null) => void
   toggleProjectExpanded: (id: string) => void
   setEditingProject: (id: string | null) => void
@@ -149,6 +150,22 @@ export const useProjectStore = create<ProjectState>()(
         set((state) => ({
           projects: state.projects.map((p) => (p.id === id ? { ...p, name } : p)),
           editingProjectId: null
+        }))
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  },
+
+  // Update project fields (generic)
+  updateProject: async (id: string, data: { name?: string; description?: string | null; tags?: string[] | null; language?: string | null; setup_script?: string | null; run_script?: string | null; archive_script?: string | null }) => {
+    try {
+      const updatedProject = await window.db.project.update(id, data)
+      if (updatedProject) {
+        set((state) => ({
+          projects: state.projects.map((p) => (p.id === id ? { ...p, ...data } : p))
         }))
         return true
       }

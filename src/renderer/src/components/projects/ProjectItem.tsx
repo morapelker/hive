@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { ChevronRight, MoreHorizontal, Pencil, Trash2, Copy, ExternalLink, RefreshCw } from 'lucide-react'
+import { ChevronRight, MoreHorizontal, Pencil, Trash2, Copy, ExternalLink, RefreshCw, Settings } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import {
 import { useProjectStore } from '@/stores'
 import { WorktreeList } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
+import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 
 interface Project {
   id: string
@@ -47,6 +48,7 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
   } = useProjectStore()
 
   const [editName, setEditName] = useState(project.name)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const isSelected = selectedProjectId === project.id
@@ -204,6 +206,10 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh Language
           </ContextMenuItem>
+          <ContextMenuItem onClick={() => setSettingsOpen(true)}>
+            <Settings className="h-4 w-4 mr-2" />
+            Project Settings
+          </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem
             onClick={handleRemove}
@@ -217,6 +223,13 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
 
       {/* Worktree List - shown when project is expanded */}
       {isExpanded && <WorktreeList project={project} />}
+
+      {/* Project Settings Dialog */}
+      <ProjectSettingsDialog
+        project={project}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+      />
     </div>
   )
 }

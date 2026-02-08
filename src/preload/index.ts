@@ -33,7 +33,7 @@ const db = {
     get: (id: string) => ipcRenderer.invoke('db:project:get', id),
     getByPath: (path: string) => ipcRenderer.invoke('db:project:getByPath', path),
     getAll: () => ipcRenderer.invoke('db:project:getAll'),
-    update: (id: string, data: { name?: string; description?: string | null; tags?: string[] | null; language?: string | null; last_accessed_at?: string }) =>
+    update: (id: string, data: { name?: string; description?: string | null; tags?: string[] | null; language?: string | null; setup_script?: string | null; run_script?: string | null; archive_script?: string | null; last_accessed_at?: string }) =>
       ipcRenderer.invoke('db:project:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('db:project:delete', id),
     touch: (id: string) => ipcRenderer.invoke('db:project:touch', id)
@@ -529,6 +529,59 @@ const opencodeOps = {
   }
 }
 
+// Script operations API
+interface ScriptOutputEvent {
+  type: 'command-start' | 'output' | 'error' | 'done'
+  command?: string
+  data?: string
+  exitCode?: number
+}
+
+const scriptOps = {
+  // Run setup script (sequential commands, streamed output)
+  runSetup: (
+    commands: string[],
+    cwd: string,
+    worktreeId: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('script:runSetup', { commands, cwd, worktreeId }),
+
+  // Run project script (persistent long-running process)
+  runProject: (
+    commands: string[],
+    cwd: string,
+    worktreeId: string
+  ): Promise<{ success: boolean; pid?: number; error?: string }> =>
+    ipcRenderer.invoke('script:runProject', { commands, cwd, worktreeId }),
+
+  // Kill a running project script
+  kill: (worktreeId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('script:kill', { worktreeId }),
+
+  // Run archive script (non-interactive, captures output)
+  runArchive: (
+    commands: string[],
+    cwd: string
+  ): Promise<{ success: boolean; output: string; error?: string }> =>
+    ipcRenderer.invoke('script:runArchive', { commands, cwd }),
+
+  // Subscribe to script output events for a channel
+  onOutput: (channel: string, callback: (event: ScriptOutputEvent) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, event: ScriptOutputEvent): void => {
+      callback(event)
+    }
+    ipcRenderer.on(channel, handler)
+    return () => {
+      ipcRenderer.removeListener(channel, handler)
+    }
+  },
+
+  // Remove all listeners for a channel
+  offOutput: (channel: string): void => {
+    ipcRenderer.removeAllListeners(channel)
+  }
+}
+
 // File operations API (read-only file viewer)
 const fileOps = {
   readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
@@ -585,6 +638,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('settingsOps', settingsOps)
     contextBridge.exposeInMainWorld('fileOps', fileOps)
     contextBridge.exposeInMainWorld('loggingOps', loggingOps)
+    contextBridge.exposeInMainWorld('scriptOps', scriptOps)
   } catch (error) {
     console.error(error)
   }
@@ -611,4 +665,6 @@ if (process.contextIsolated) {
   window.fileOps = fileOps
   // @ts-expect-error (define in dts)
   window.loggingOps = loggingOps
+  // @ts-expect-error (define in dts)
+  window.scriptOps = scriptOps
 }

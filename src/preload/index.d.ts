@@ -322,6 +322,28 @@ declare global {
         error?: string
       }>
     }
+    scriptOps: {
+      runSetup: (commands: string[], cwd: string, worktreeId: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      runProject: (commands: string[], cwd: string, worktreeId: string) => Promise<{
+        success: boolean
+        pid?: number
+        error?: string
+      }>
+      kill: (worktreeId: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      runArchive: (commands: string[], cwd: string) => Promise<{
+        success: boolean
+        output: string
+        error?: string
+      }>
+      onOutput: (channel: string, callback: (event: ScriptOutputEvent) => void) => () => void
+      offOutput: (channel: string) => void
+    }
     gitOps: {
       // Get file statuses for a worktree
       getFileStatuses: (worktreePath: string) => Promise<{
@@ -404,6 +426,14 @@ declare global {
       }>
     }
   }
+}
+
+// Script output event type
+interface ScriptOutputEvent {
+  type: 'command-start' | 'output' | 'error' | 'done'
+  command?: string
+  data?: string
+  exitCode?: number
 }
 
 // OpenCode stream event type
