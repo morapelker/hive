@@ -5,6 +5,7 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -262,10 +263,11 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }
 
-  // Handle clicking a session tab - deactivate file tab
+  // Handle clicking a session tab - deactivate file tab and clear unread status
   const handleSessionTabClick = (sessionId: string) => {
     setActiveFile(null)
     setActiveSession(sessionId)
+    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
   }
 
   // Handle clicking a file tab - keep session but activate file view

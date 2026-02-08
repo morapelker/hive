@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import {
   GitBranch,
   Folder,
+  Loader2,
   MoreHorizontal,
   Terminal,
   Code,
@@ -27,6 +28,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { useWorktreeStore } from '@/stores'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
 
 interface Worktree {
@@ -50,10 +52,12 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
   const { selectedWorktreeId, selectWorktree, archiveWorktree, unbranchWorktree } =
     useWorktreeStore()
 
+  const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
   const isSelected = selectedWorktreeId === worktree.id
 
   const handleClick = (): void => {
     selectWorktree(worktree.id)
+    useWorktreeStatusStore.getState().clearWorktreeUnread(worktree.id)
   }
 
   const handleOpenInTerminal = useCallback(async (): Promise<void> => {
@@ -128,8 +132,10 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
           onClick={handleClick}
           data-testid={`worktree-item-${worktree.id}`}
         >
-          {/* Branch Icon (Folder for default worktree) */}
-          {worktree.is_default ? (
+          {/* Branch Icon / Status Badge */}
+          {worktreeStatus === 'working' ? (
+            <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
+          ) : worktree.is_default ? (
             <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           ) : (
             <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -139,6 +145,11 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
           <span className="flex-1 text-sm truncate" title={worktree.path}>
             {worktree.name}
           </span>
+
+          {/* Unread dot badge */}
+          {worktreeStatus === 'unread' && (
+            <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
+          )}
 
           {/* More Options Dropdown (visible on hover) */}
           <DropdownMenu>

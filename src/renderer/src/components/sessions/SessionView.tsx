@@ -7,6 +7,7 @@ import { MessageRenderer } from './MessageRenderer'
 import { ModeToggle } from './ModeToggle'
 import { ModelSelector } from './ModelSelector'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 
 // Types for OpenCode SDK integration
@@ -308,8 +309,134 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Load session info and connect to OpenCode
   useEffect(() => {
-    let unsubscribe: (() => void) | null = null
     hasTriggeredNamingRef.current = false
+
+    // Helper to save assistant message to database
+    // Resets streaming state AFTER the message is saved and added to messages[],
+    // ensuring the streaming content stays visible until the saved message replaces it.
+    // (Defined early so the synchronous stream handler can reference it.)
+    const saveAssistantMessage = async (content: string, parts?: StreamingPart[]): Promise<void> => {
+      try {
+        const savedMessage = (await window.db.message.create({
+          session_id: sessionId,
+          role: 'assistant' as const,
+          content
+        })) as DbMessage
+
+        const message: OpenCodeMessage = {
+          ...dbMessageToOpenCode(savedMessage),
+          parts
+        }
+        setMessages((prev) => [...prev, message])
+        resetStreamingState()
+      } catch (error) {
+        console.error('Failed to save assistant message:', error)
+        toast.error('Failed to save response')
+      }
+    }
+
+    // Subscribe to OpenCode stream events SYNCHRONOUSLY before any async work.
+    // This prevents a race condition where session.idle arrives during async
+    // initialization (DB loads, reconnect) and is missed by both this handler
+    // (not yet set up) and the global listener (which skips the active session).
+    const unsubscribe = window.opencodeOps.onStream((event) => {
+      // Only handle events for this session
+      if (event.sessionId !== sessionId) return
+
+      // Log event if response logging is active
+      if (isLogModeRef.current && logFilePathRef.current) {
+        try {
+          if (event.type === 'message.part.updated') {
+            window.loggingOps.appendResponseLog(logFilePathRef.current, {
+              type: 'part_updated',
+              event: event.data
+            })
+          } else if (event.type === 'message.updated') {
+            window.loggingOps.appendResponseLog(logFilePathRef.current, {
+              type: 'message_updated',
+              event: event.data
+            })
+          } else if (event.type === 'session.idle') {
+            window.loggingOps.appendResponseLog(logFilePathRef.current, {
+              type: 'session_idle'
+            })
+          }
+        } catch {
+          // Never let logging failures break the UI
+        }
+      }
+
+      // Handle different event types
+      if (event.type === 'message.part.updated') {
+        const part = event.data?.part
+        if (!part) return
+
+        if (part.type === 'text') {
+          // Update streaming text content with delta or full text
+          const delta = event.data?.delta
+          if (delta) {
+            appendTextDelta(delta)
+          } else if (part.text) {
+            setTextContent(part.text)
+          }
+          setIsStreaming(true)
+        } else if (part.type === 'tool') {
+          // Tool part from OpenCode SDK - has callID, tool (name), state
+          const toolId = part.callID || part.id || `tool-${Date.now()}`
+          const toolName = part.tool || 'Unknown'
+          const state = part.state || {}
+
+          const statusMap: Record<string, ToolStatus> = {
+            pending: 'pending',
+            running: 'running',
+            completed: 'success',
+            error: 'error'
+          }
+
+          upsertToolUse(toolId, {
+            name: toolName,
+            input: state.input || {},
+            status: statusMap[state.status] || 'running',
+            startTime: state.time?.start || Date.now(),
+            endTime: state.time?.end,
+            output: state.status === 'completed' ? state.output : undefined,
+            error: state.status === 'error' ? state.error : undefined
+          })
+          setIsStreaming(true)
+        }
+      } else if (event.type === 'message.updated') {
+        const info = event.data?.info
+        if (info?.role === 'assistant' && info.time?.completed) {
+          // Message complete — flush any pending throttled updates, then save
+          immediateFlush()
+          const finalContent = streamingContentRef.current || ''
+          const finalParts = [...streamingPartsRef.current]
+          if (finalContent || finalParts.length > 0) {
+            saveAssistantMessage(finalContent, finalParts)
+          }
+          setIsSending(false)
+        }
+      } else if (event.type === 'session.idle') {
+        // Session finished processing — flush any pending throttled updates
+        immediateFlush()
+        setIsSending(false)
+        // If there's remaining streaming content, save it
+        if (streamingContentRef.current || streamingPartsRef.current.length > 0) {
+          saveAssistantMessage(
+            streamingContentRef.current,
+            [...streamingPartsRef.current]
+          )
+        }
+        // Update worktree status: 'unread' if not viewing, clear if viewing
+        const activeId = useSessionStore.getState().activeSessionId
+        const statusStore = useWorktreeStatusStore.getState()
+        if (activeId === sessionId) {
+          statusStore.clearSessionStatus(sessionId)
+        } else {
+          statusStore.setSessionStatus(sessionId, 'unread')
+        }
+      }
+    })
 
     const initializeSession = async (): Promise<void> => {
       setViewState({ status: 'connecting' })
@@ -323,6 +450,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // If session already has messages, skip auto-naming
         if (loadedMessages.length > 0) {
           hasTriggeredNamingRef.current = true
+        }
+
+        // Clear stale 'working' status if the session already has an assistant response
+        // (e.g., the response completed while viewing another project)
+        const lastLoaded = loadedMessages[loadedMessages.length - 1]
+        if (lastLoaded?.role === 'assistant') {
+          useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
         }
 
         // 2. Get session info to find worktree
@@ -348,100 +482,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           return
         }
 
-        // 4. Subscribe to OpenCode stream events
-        unsubscribe = window.opencodeOps.onStream((event) => {
-          // Only handle events for this session
-          if (event.sessionId !== sessionId) return
-
-
-          // Log event if response logging is active
-          if (isLogModeRef.current && logFilePathRef.current) {
-            try {
-              if (event.type === 'message.part.updated') {
-                window.loggingOps.appendResponseLog(logFilePathRef.current, {
-                  type: 'part_updated',
-                  event: event.data
-                })
-              } else if (event.type === 'message.updated') {
-                window.loggingOps.appendResponseLog(logFilePathRef.current, {
-                  type: 'message_updated',
-                  event: event.data
-                })
-              } else if (event.type === 'session.idle') {
-                window.loggingOps.appendResponseLog(logFilePathRef.current, {
-                  type: 'session_idle'
-                })
-              }
-            } catch {
-              // Never let logging failures break the UI
-            }
-          }
-
-          // Handle different event types
-          if (event.type === 'message.part.updated') {
-            const part = event.data?.part
-            if (!part) return
-
-            if (part.type === 'text') {
-              // Update streaming text content with delta or full text
-              const delta = event.data?.delta
-              if (delta) {
-                appendTextDelta(delta)
-              } else if (part.text) {
-                setTextContent(part.text)
-              }
-              setIsStreaming(true)
-            } else if (part.type === 'tool') {
-              // Tool part from OpenCode SDK - has callID, tool (name), state
-              const toolId = part.callID || part.id || `tool-${Date.now()}`
-              const toolName = part.tool || 'Unknown'
-              const state = part.state || {}
-
-              const statusMap: Record<string, ToolStatus> = {
-                pending: 'pending',
-                running: 'running',
-                completed: 'success',
-                error: 'error'
-              }
-
-              upsertToolUse(toolId, {
-                name: toolName,
-                input: state.input || {},
-                status: statusMap[state.status] || 'running',
-                startTime: state.time?.start || Date.now(),
-                endTime: state.time?.end,
-                output: state.status === 'completed' ? state.output : undefined,
-                error: state.status === 'error' ? state.error : undefined
-              })
-              setIsStreaming(true)
-            }
-          } else if (event.type === 'message.updated') {
-            const info = event.data?.info
-            if (info?.role === 'assistant' && info.time?.completed) {
-              // Message complete — flush any pending throttled updates, then save
-              immediateFlush()
-              const finalContent = streamingContentRef.current || ''
-              const finalParts = [...streamingPartsRef.current]
-              if (finalContent || finalParts.length > 0) {
-                saveAssistantMessage(finalContent, finalParts)
-              }
-              setIsSending(false)
-            }
-          } else if (event.type === 'session.idle') {
-            // Session finished processing — flush any pending throttled updates
-            immediateFlush()
-            setIsSending(false)
-            // If there's remaining streaming content, save it
-            if (streamingContentRef.current || streamingPartsRef.current.length > 0) {
-              saveAssistantMessage(
-                streamingContentRef.current,
-                [...streamingPartsRef.current]
-              )
-            }
-          }
-        })
-
-        // 5. Connect to OpenCode
+        // 4. Connect to OpenCode
         const existingOpcSessionId = session.opencode_session_id
 
         if (existingOpcSessionId) {
@@ -463,6 +504,93 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
             }
             setViewState({ status: 'connected' })
+
+            // Recover missed messages (e.g., AI response completed while viewing another project)
+            // The global listener in AppLayout may have already saved it to DB, but loadedMessages
+            // was fetched at the start of this function. Re-check DB for any messages saved since then.
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const freshMessages = (await window.db.message.getBySession(sessionId)) as any[]
+              const freshLast = freshMessages[freshMessages.length - 1]
+              console.log('[SessionView recovery] DB messages:', freshMessages.length, 'last role:', freshLast?.role)
+
+              if (freshLast?.role === 'user' && !streamingContentRef.current && streamingPartsRef.current.length === 0) {
+                // Still missing assistant response - try to fetch from OpenCode
+                console.log('[SessionView recovery] Last message is user, attempting OpenCode fetch')
+                const opcResult = await window.opencodeOps.getMessages(wtPath, existingOpcSessionId)
+                console.log('[SessionView recovery] getMessages:', {
+                  success: opcResult.success,
+                  isArray: Array.isArray(opcResult.messages),
+                  raw: JSON.stringify(opcResult.messages)?.slice(0, 500)
+                })
+
+                if (opcResult.success) {
+                  // Normalize: handle array or object-with-messages
+                  let opcMessages = opcResult.messages
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  if (!Array.isArray(opcMessages) && (opcMessages as any)?.messages) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    opcMessages = (opcMessages as any).messages
+                  }
+
+                  if (Array.isArray(opcMessages) && opcMessages.length > 0) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const lastAssistant = [...opcMessages].reverse().find((m: any) => m.role === 'assistant')
+                    if (lastAssistant) {
+                      console.log('[SessionView recovery] Found assistant msg, keys:', Object.keys(lastAssistant))
+                      // Extract text content from various possible formats
+                      let content = ''
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      if (Array.isArray((lastAssistant as any).parts)) {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        content = (lastAssistant as any).parts
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          .filter((p: any) => p.type === 'text')
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          .map((p: any) => p.text || p.content || '')
+                          .join('')
+                      }
+                      if (!content && typeof (lastAssistant as Record<string, unknown>).content === 'string') {
+                        content = (lastAssistant as Record<string, unknown>).content as string
+                      }
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      if (!content && Array.isArray((lastAssistant as any).content)) {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        content = (lastAssistant as any).content
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          .filter((c: any) => c.type === 'text')
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          .map((c: any) => c.text || '')
+                          .join('')
+                      }
+
+                      console.log('[SessionView recovery] Extracted content length:', content.length)
+                      if (content?.trim()) {
+                        const savedMessage = (await window.db.message.create({
+                          session_id: sessionId,
+                          role: 'assistant' as const,
+                          content
+                        })) as DbMessage
+                        setMessages((prev) => [...prev, dbMessageToOpenCode(savedMessage)])
+                        setIsSending(false)
+                        useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+                        console.log('[SessionView recovery] Saved and displayed recovered message')
+                      }
+                    }
+                  }
+                }
+              } else if (freshMessages.length > loadedMessages.length) {
+                // Global listener already saved messages - reload from DB
+                console.log('[SessionView recovery] New messages found in DB, reloading')
+                const reloadedMessages = freshMessages.map(dbMessageToOpenCode)
+                setMessages(reloadedMessages)
+                setIsSending(false)
+                useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+              }
+            } catch (err) {
+              console.warn('[SessionView recovery] Failed:', err)
+            }
+
             return
           }
         }
@@ -497,43 +625,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
     }
 
-    // Helper to save assistant message to database
-    // Resets streaming state AFTER the message is saved and added to messages[],
-    // ensuring the streaming content stays visible until the saved message replaces it.
-    const saveAssistantMessage = async (content: string, parts?: StreamingPart[]): Promise<void> => {
-      try {
-        const savedMessage = (await window.db.message.create({
-          session_id: sessionId,
-          role: 'assistant' as const,
-          content
-        })) as DbMessage
-
-        const message: OpenCodeMessage = {
-          ...dbMessageToOpenCode(savedMessage),
-          parts
-        }
-        setMessages((prev) => [...prev, message])
-        resetStreamingState()
-      } catch (error) {
-        console.error('Failed to save assistant message:', error)
-        toast.error('Failed to save response')
-      }
-    }
-
     initializeSession()
 
     // Cleanup on unmount or session change
     return () => {
-      if (unsubscribe) {
-        unsubscribe()
-      }
-      // Disconnect from OpenCode if connected
-      if (worktreePath && opencodeSessionId) {
-        window.opencodeOps.disconnect(worktreePath, opencodeSessionId).catch(console.error)
-      }
+      unsubscribe()
+      // Note: We intentionally do NOT disconnect from OpenCode on unmount.
+      // Sessions persist across project switches. The main process keeps
+      // event subscriptions alive so responses are not lost.
     }
-    // Note: We intentionally don't include worktreePath and opencodeSessionId
-    // in deps to avoid reconnection loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
@@ -588,6 +688,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     setIsSending(true)
     setInputValue('')
+
+    // Set worktree status to 'working'
+    useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
 
     try {
       // Save user message to database

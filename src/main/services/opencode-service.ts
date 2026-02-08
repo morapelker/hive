@@ -42,6 +42,8 @@ interface OpenCodeInstance {
   sessionDirectories: Map<string, string>
   // Map of directory paths to their event subscriptions
   directorySubscriptions: Map<string, DirectorySubscription>
+  // Map of child/subagent OpenCode session IDs to their parent OpenCode session IDs
+  childToParentMap: Map<string, string>
 }
 
 // Dynamic import helper for ESM SDK
@@ -103,7 +105,8 @@ class OpenCodeService {
           server,
           sessionMap: new Map(),
           sessionDirectories: new Map(),
-          directorySubscriptions: new Map()
+          directorySubscriptions: new Map(),
+          childToParentMap: new Map()
         }
 
         this.instance = instance
@@ -176,7 +179,7 @@ class OpenCodeService {
 
       // Iterate over the stream - this is REQUIRED for events to flow
       for await (const event of result.stream) {
-        this.handleEvent(instance, { data: event })
+        await this.handleEvent(instance, { data: event }, directory)
       }
 
       log.info('Event stream ended normally for directory', { directory })
@@ -240,6 +243,14 @@ class OpenCodeService {
 
     try {
       const instance = await this.getOrCreateInstance()
+
+      // If session is already registered (e.g., user switched projects and back),
+      // just update the Hive session mapping. Skip subscription to avoid count leak.
+      if (instance.sessionMap.has(opencodeSessionId)) {
+        instance.sessionMap.set(opencodeSessionId, hiveSessionId)
+        log.info('Session already registered, updated mapping', { opencodeSessionId, hiveSessionId })
+        return { success: true }
+      }
 
       // Try to get the session
       const result = await instance.client.session.get({
@@ -386,6 +397,13 @@ class OpenCodeService {
     this.instance.sessionMap.delete(opencodeSessionId)
     this.instance.sessionDirectories.delete(opencodeSessionId)
 
+    // Clean up child-to-parent mappings that reference this parent
+    for (const [childId, parentId] of this.instance.childToParentMap) {
+      if (parentId === opencodeSessionId) {
+        this.instance.childToParentMap.delete(childId)
+      }
+    }
+
     log.info('Session disconnected', {
       opencodeSessionId,
       remainingSessions: this.instance.sessionMap.size
@@ -410,6 +428,7 @@ class OpenCodeService {
       sub.controller.abort()
     }
     this.instance.directorySubscriptions.clear()
+    this.instance.childToParentMap.clear()
 
     // Close the server
     try {
@@ -424,7 +443,11 @@ class OpenCodeService {
   /**
    * Handle a single event from OpenCode
    */
-  private handleEvent(instance: OpenCodeInstance, rawEvent: { data: unknown; event?: string }): void {
+  private async handleEvent(
+    instance: OpenCodeInstance,
+    rawEvent: { data: unknown; event?: string },
+    directory?: string
+  ): Promise<void> {
     // The event data might be a GlobalEvent (with directory/payload) or a direct event
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let event = rawEvent.data as any
@@ -433,8 +456,10 @@ class OpenCodeService {
       return
     }
 
-    // Check if this is a GlobalEvent wrapper (has directory and payload)
+    // Capture directory from GlobalEvent wrapper before unwrapping
+    let eventDirectory = directory
     if (event.directory && event.payload) {
+      eventDirectory = event.directory
       event = event.payload
     }
 
@@ -507,11 +532,24 @@ class OpenCodeService {
       return
     }
 
-    // Get the Hive session ID for routing
-    const hiveSessionId = instance.sessionMap.get(sessionId)
+    // Get the Hive session ID for routing — check parent session if this is a child/subagent
+    let hiveSessionId = instance.sessionMap.get(sessionId)
+
+    if (!hiveSessionId) {
+      const parentId = await this.resolveParentSession(instance, sessionId, eventDirectory)
+      if (parentId) {
+        hiveSessionId = instance.sessionMap.get(parentId)
+      }
+    }
+
     if (!hiveSessionId) {
       log.warn('No Hive session found for OpenCode session', { sessionId })
       return
+    }
+
+    // Log session lifecycle events
+    if (eventType === 'session.idle') {
+      log.info('Forwarding session.idle to renderer', { opencodeSessionId: sessionId, hiveSessionId })
     }
 
     // Send event to renderer
@@ -522,6 +560,45 @@ class OpenCodeService {
     }
 
     this.sendToRenderer('opencode:stream', streamEvent)
+  }
+
+  /**
+   * Resolve a child/subagent session ID to its parent session ID.
+   * Checks the cache first, then queries the SDK.
+   */
+  private async resolveParentSession(
+    instance: OpenCodeInstance,
+    childSessionId: string,
+    directory?: string
+  ): Promise<string | undefined> {
+    // Check cache first (empty string = known non-child, skip lookup)
+    const cached = instance.childToParentMap.get(childSessionId)
+    if (cached !== undefined) {
+      return cached || undefined
+    }
+
+    if (!directory) return undefined
+
+    try {
+      const result = await instance.client.session.get({
+        path: { id: childSessionId },
+        query: { directory }
+      })
+
+      const parentID = result.data?.parentID
+      if (parentID) {
+        instance.childToParentMap.set(childSessionId, parentID)
+        log.info('Resolved child session to parent', { childSessionId, parentSessionId: parentID })
+        return parentID
+      }
+
+      // Not a child session — cache to avoid repeated lookups
+      instance.childToParentMap.set(childSessionId, '')
+      return undefined
+    } catch (error) {
+      log.warn('Failed to resolve parent session', { childSessionId, error })
+      return undefined
+    }
   }
 
   /**

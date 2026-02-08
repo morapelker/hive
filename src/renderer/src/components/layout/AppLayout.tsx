@@ -7,6 +7,7 @@ import { SessionHistory } from '@/components/sessions/SessionHistory'
 import { CommandPalette } from '@/components/command-palette'
 import { SettingsModal } from '@/components/settings'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
+import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 
 interface AppLayoutProps {
@@ -16,6 +17,8 @@ interface AppLayoutProps {
 export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   // Register all keyboard shortcuts centrally
   useKeyboardShortcuts()
+  // Global listener for background session events (AI finishes while viewing another project)
+  useOpenCodeGlobalListener()
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground" data-testid="app-layout">
