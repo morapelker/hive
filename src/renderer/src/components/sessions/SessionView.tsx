@@ -857,6 +857,37 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           })
         }
 
+        // Send any pending initial message (e.g., from code review)
+        const sendPendingMessage = async (path: string, opcId: string): Promise<void> => {
+          const pendingMsg = useSessionStore.getState().consumePendingMessage(sessionId)
+          if (!pendingMsg) return
+          try {
+            // Save user message to database
+            const savedMsg = await window.db.message.create({
+              session_id: sessionId,
+              role: 'user' as const,
+              content: pendingMsg
+            })
+            // Add to messages display
+            const userMessage = dbMessageToOpenCode(savedMsg as DbMessage)
+            setMessages((prev) => [...prev, userMessage])
+            // Set worktree status to 'working'
+            useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+            // Prevent auto-naming from overwriting the explicit session name
+            hasTriggeredNamingRef.current = true
+            // Apply mode prefix (e.g., plan mode for code reviews)
+            const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+            const modePrefix = currentMode === 'plan'
+              ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
+              : ''
+            // Send to OpenCode
+            await window.opencodeOps.prompt(path, opcId, modePrefix + pendingMsg)
+          } catch (err) {
+            console.error('Failed to send pending message:', err)
+            toast.error('Failed to send review prompt')
+          }
+        }
+
         if (existingOpcSessionId) {
           // Try to reconnect to existing session
           const reconnectResult = await window.opencodeOps.reconnect(
@@ -878,6 +909,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
             }
             setViewState({ status: 'connected' })
+            await sendPendingMessage(wtPath, existingOpcSessionId)
             return
           }
         }
@@ -902,6 +934,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             }
           }
           setViewState({ status: 'connected' })
+          await sendPendingMessage(wtPath, connectResult.sessionId)
         } else {
           throw new Error(connectResult.error || 'Failed to connect to OpenCode')
         }

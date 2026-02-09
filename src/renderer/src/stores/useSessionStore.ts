@@ -25,6 +25,8 @@ interface SessionState {
   tabOrderByWorktree: Map<string, string[]>
   // Mode per session - keyed by session ID
   modeBySession: Map<string, SessionMode>
+  // Pending initial messages - keyed by session ID (e.g., code review prompts)
+  pendingMessages: Map<string, string>
   isLoading: boolean
   error: string | null
 
@@ -48,6 +50,8 @@ interface SessionState {
   getSessionMode: (sessionId: string) => SessionMode
   toggleSessionMode: (sessionId: string) => Promise<void>
   setSessionMode: (sessionId: string, mode: SessionMode) => Promise<void>
+  setPendingMessage: (sessionId: string, message: string) => void
+  consumePendingMessage: (sessionId: string) => string | null
 }
 
 // Helper to generate session name based on timestamp
@@ -65,6 +69,7 @@ export const useSessionStore = create<SessionState>()(
   sessionsByWorktree: new Map(),
   tabOrderByWorktree: new Map(),
   modeBySession: new Map(),
+  pendingMessages: new Map(),
   isLoading: false,
   error: null,
   activeSessionId: null,
@@ -435,6 +440,28 @@ export const useSessionStore = create<SessionState>()(
     } catch (error) {
       console.error('Failed to persist session mode:', error)
     }
+  },
+
+  // Set a pending initial message for a session (e.g., code review prompt)
+  setPendingMessage: (sessionId: string, message: string) => {
+    set((state) => {
+      const newMap = new Map(state.pendingMessages)
+      newMap.set(sessionId, message)
+      return { pendingMessages: newMap }
+    })
+  },
+
+  // Consume (get and remove) a pending message for a session
+  consumePendingMessage: (sessionId: string): string | null => {
+    const message = get().pendingMessages.get(sessionId) || null
+    if (message) {
+      set((state) => {
+        const newMap = new Map(state.pendingMessages)
+        newMap.delete(sessionId)
+        return { pendingMessages: newMap }
+      })
+    }
+    return message
   }
     }),
     {

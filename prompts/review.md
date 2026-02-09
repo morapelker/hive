@@ -41,11 +41,7 @@
 
 6. Filter out any issues that were not validated in step 5. This step will give us our list of high signal issues for our review.
 
-7. Post inline comments for each issue using mcp__conductor__DiffComment:
-
-    **IMPORTANT: Only post ONE comment per unique issue.**
-
-8. Write out a list of issues found, along with the location of the comment. For example:
+7. Write out a list of issues found, along with the location of the comment. For example:
 
     <example>
     ### **#1 Empty input causes crash**

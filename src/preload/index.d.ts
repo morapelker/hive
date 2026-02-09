@@ -342,6 +342,11 @@ declare global {
         content?: string
         error?: string
       }>
+      readPrompt: (promptName: string) => Promise<{
+        success: boolean
+        content?: string
+        error?: string
+      }>
     }
     settingsOps: {
       detectEditors: () => Promise<DetectedApp[]>

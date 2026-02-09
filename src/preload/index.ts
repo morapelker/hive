@@ -650,7 +650,9 @@ const scriptOps = {
 // File operations API (read-only file viewer)
 const fileOps = {
   readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
-    ipcRenderer.invoke('file:read', filePath)
+    ipcRenderer.invoke('file:read', filePath),
+  readPrompt: (promptName: string): Promise<{ success: boolean; content?: string; error?: string }> =>
+    ipcRenderer.invoke('file:readPrompt', promptName)
 }
 
 // Settings operations API
