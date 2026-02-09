@@ -578,10 +578,10 @@ describe('Session 4: Smart Auto-Scroll', () => {
       )
       const source = fs.readFileSync(sourcePath, 'utf-8')
 
-      expect(source).toContain('scroll-to-bottom-fab')
-      expect(source).toContain('Scroll to bottom')
-      expect(source).toContain('ArrowDown')
-      expect(source).toContain('pointer-events-none')
+      // FAB is now extracted to ScrollToBottomFab component
+      expect(source).toContain('ScrollToBottomFab')
+      expect(source).toContain('handleScrollToBottomClick')
+      expect(source).toContain('showScrollFab')
     })
 
     test('SessionView.tsx cancels cooldown in handleSend', async () => {
