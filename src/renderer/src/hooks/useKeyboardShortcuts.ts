@@ -14,6 +14,39 @@ import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { toast } from 'sonner'
 
 /**
+ * Creates a new session for the currently selected worktree.
+ * Shared between the keyboard shortcut handler and the main-process IPC listener.
+ */
+function createNewSession(): void {
+  const { selectedWorktreeId, worktreesByProject } = useWorktreeStore.getState()
+  if (!selectedWorktreeId) {
+    toast.error('Please select a worktree first')
+    return
+  }
+  let projectId: string | null = null
+  for (const [pid, worktrees] of worktreesByProject) {
+    if (worktrees.find((w) => w.id === selectedWorktreeId)) {
+      projectId = pid
+      break
+    }
+  }
+  if (!projectId) {
+    toast.error('Please select a worktree first')
+    return
+  }
+  useSessionStore
+    .getState()
+    .createSession(selectedWorktreeId, projectId)
+    .then((result) => {
+      if (result.success) {
+        toast.success('New session created')
+      } else {
+        toast.error(result.error || 'Failed to create session')
+      }
+    })
+}
+
+/**
  * Centralized keyboard shortcuts hook.
  * Registers a single global keydown listener that dispatches to the
  * correct action based on the shortcut registry and user overrides.
@@ -28,9 +61,7 @@ export function useKeyboardShortcuts(): void {
       // Skip if the user is typing in an input/textarea (except for specific shortcuts)
       const target = event.target as HTMLElement
       const isInputFocused =
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
+        target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
 
       // Build a list of shortcut handlers
       // Each entry: [shortcutId, binding, handler, allowInInput]
@@ -56,6 +87,17 @@ export function useKeyboardShortcuts(): void {
     document.addEventListener('keydown', handleKeyDown, true)
     return () => document.removeEventListener('keydown', handleKeyDown, true)
   }, [handleKeyDown])
+
+  // Listen for Cmd+T / Ctrl+T forwarded from the main process via IPC
+  useEffect(() => {
+    if (!window.systemOps?.onNewSessionShortcut) return
+
+    const cleanup = window.systemOps.onNewSessionShortcut(() => {
+      createNewSession()
+    })
+
+    return cleanup
+  }, [])
 }
 
 interface ShortcutHandler {
@@ -80,32 +122,9 @@ function getShortcutHandlers(
     {
       id: 'session:new',
       binding: getEffectiveBinding('session:new'),
-      allowInInput: false,
+      allowInInput: true,
       handler: () => {
-        const { selectedWorktreeId, worktreesByProject } = useWorktreeStore.getState()
-        if (!selectedWorktreeId) {
-          toast.error('Please select a worktree first')
-          return
-        }
-        // Derive project ID from the worktree, same as the "+" button does
-        let projectId: string | null = null
-        for (const [pid, worktrees] of worktreesByProject) {
-          if (worktrees.find((w) => w.id === selectedWorktreeId)) {
-            projectId = pid
-            break
-          }
-        }
-        if (!projectId) {
-          toast.error('Please select a worktree first')
-          return
-        }
-        useSessionStore.getState().createSession(selectedWorktreeId, projectId).then((result) => {
-          if (result.success) {
-            toast.success('New session created')
-          } else {
-            toast.error(result.error || 'Failed to create session')
-          }
-        })
+        createNewSession()
       }
     },
     {
@@ -115,13 +134,16 @@ function getShortcutHandlers(
       handler: () => {
         const { activeSessionId } = useSessionStore.getState()
         if (!activeSessionId) return // noop if no session
-        useSessionStore.getState().closeSession(activeSessionId).then((result) => {
-          if (result.success) {
-            toast.success('Session closed')
-          } else {
-            toast.error(result.error || 'Failed to close session')
-          }
-        })
+        useSessionStore
+          .getState()
+          .closeSession(activeSessionId)
+          .then((result) => {
+            if (result.success) {
+              toast.success('Session closed')
+            } else {
+              toast.error(result.error || 'Failed to close session')
+            }
+          })
       }
     },
     {
@@ -167,7 +189,10 @@ function getShortcutHandlers(
         if (!worktreePath) return
 
         const parseCommands = (script: string): string[] =>
-          script.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
+          script
+            .split('\n')
+            .map((l) => l.trim())
+            .filter((l) => l && !l.startsWith('#'))
 
         // Switch to Run tab
         useLayoutStore.getState().setBottomPanelTab('run')
@@ -264,13 +289,16 @@ function getShortcutHandlers(
         }
         const { isPushing } = useGitStore.getState()
         if (isPushing) return
-        useGitStore.getState().push(worktreePath).then((result) => {
-          if (result.success) {
-            toast.success('Pushed successfully')
-          } else {
-            toast.error(result.error || 'Failed to push')
-          }
-        })
+        useGitStore
+          .getState()
+          .push(worktreePath)
+          .then((result) => {
+            if (result.success) {
+              toast.success('Pushed successfully')
+            } else {
+              toast.error(result.error || 'Failed to push')
+            }
+          })
       }
     },
     {
@@ -285,13 +313,16 @@ function getShortcutHandlers(
         }
         const { isPulling } = useGitStore.getState()
         if (isPulling) return
-        useGitStore.getState().pull(worktreePath).then((result) => {
-          if (result.success) {
-            toast.success('Pulled successfully')
-          } else {
-            toast.error(result.error || 'Failed to pull')
-          }
-        })
+        useGitStore
+          .getState()
+          .pull(worktreePath)
+          .then((result) => {
+            if (result.success) {
+              toast.success('Pulled successfully')
+            } else {
+              toast.error(result.error || 'Failed to pull')
+            }
+          })
       }
     },
 

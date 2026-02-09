@@ -191,11 +191,7 @@ declare global {
       loadLanguageIcons: () => Promise<Record<string, string>>
     }
     worktreeOps: {
-      create: (params: {
-        projectId: string
-        projectPath: string
-        projectName: string
-      }) => Promise<{
+      create: (params: { projectId: string; projectPath: string; projectName: string }) => Promise<{
         success: boolean
         worktree?: Worktree
         error?: string
@@ -210,10 +206,7 @@ declare global {
         success: boolean
         error?: string
       }>
-      sync: (params: {
-        projectId: string
-        projectPath: string
-      }) => Promise<{
+      sync: (params: { projectId: string; projectPath: string }) => Promise<{
         success: boolean
         error?: string
       }>
@@ -255,6 +248,7 @@ declare global {
       }>
       isLogMode: () => Promise<boolean>
       openInApp: (appName: string, path: string) => Promise<{ success: boolean; error?: string }>
+      onNewSessionShortcut: (callback: () => void) => () => void
       onNotificationNavigate: (
         callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
       ) => () => void
@@ -293,16 +287,30 @@ declare global {
         opencodeSessionId: string
       ) => Promise<{ success: boolean; messages: unknown[]; error?: string }>
       // List available models from all configured providers
-      listModels: () => Promise<{ success: boolean; providers: Record<string, unknown>; error?: string }>
+      listModels: () => Promise<{
+        success: boolean
+        providers: Record<string, unknown>
+        error?: string
+      }>
       // Set the selected model for prompts
-      setModel: (model: { providerID: string; modelID: string }) => Promise<{ success: boolean; error?: string }>
+      setModel: (model: {
+        providerID: string
+        modelID: string
+      }) => Promise<{ success: boolean; error?: string }>
       // Generate a descriptive session name using Claude Haiku via OpenCode
-      generateSessionName: (message: string, worktreePath: string) => Promise<{ success: boolean; name: string; error?: string }>
+      generateSessionName: (
+        message: string,
+        worktreePath: string
+      ) => Promise<{ success: boolean; name: string; error?: string }>
       // Get model info (name, context limit)
       modelInfo: (
         worktreePath: string,
         modelId: string
-      ) => Promise<{ success: boolean; model?: { id: string; name: string; limit: { context: number } }; error?: string }>
+      ) => Promise<{
+        success: boolean
+        model?: { id: string; name: string; limit: { context: number } }
+        error?: string
+      }>
       // List available slash commands from the SDK
       commands: (
         worktreePath: string
@@ -318,7 +326,10 @@ declare global {
         error?: string
       }>
       // Lazy load children for a directory
-      loadChildren: (dirPath: string, rootPath: string) => Promise<{
+      loadChildren: (
+        dirPath: string,
+        rootPath: string
+      ) => Promise<{
         success: boolean
         children?: FileTreeNode[]
         error?: string
@@ -351,21 +362,37 @@ declare global {
     settingsOps: {
       detectEditors: () => Promise<DetectedApp[]>
       detectTerminals: () => Promise<DetectedApp[]>
-      openWithEditor: (worktreePath: string, editorId: string, customCommand?: string) => Promise<{
+      openWithEditor: (
+        worktreePath: string,
+        editorId: string,
+        customCommand?: string
+      ) => Promise<{
         success: boolean
         error?: string
       }>
-      openWithTerminal: (worktreePath: string, terminalId: string, customCommand?: string) => Promise<{
+      openWithTerminal: (
+        worktreePath: string,
+        terminalId: string,
+        customCommand?: string
+      ) => Promise<{
         success: boolean
         error?: string
       }>
     }
     scriptOps: {
-      runSetup: (commands: string[], cwd: string, worktreeId: string) => Promise<{
+      runSetup: (
+        commands: string[],
+        cwd: string,
+        worktreeId: string
+      ) => Promise<{
         success: boolean
         error?: string
       }>
-      runProject: (commands: string[], cwd: string, worktreeId: string) => Promise<{
+      runProject: (
+        commands: string[],
+        cwd: string,
+        worktreeId: string
+      ) => Promise<{
         success: boolean
         pid?: number
         error?: string
@@ -374,7 +401,10 @@ declare global {
         success: boolean
         error?: string
       }>
-      runArchive: (commands: string[], cwd: string) => Promise<{
+      runArchive: (
+        commands: string[],
+        cwd: string
+      ) => Promise<{
         success: boolean
         output: string
         error?: string
@@ -390,22 +420,34 @@ declare global {
         error?: string
       }>
       // Stage a file
-      stageFile: (worktreePath: string, filePath: string) => Promise<{
+      stageFile: (
+        worktreePath: string,
+        filePath: string
+      ) => Promise<{
         success: boolean
         error?: string
       }>
       // Unstage a file
-      unstageFile: (worktreePath: string, filePath: string) => Promise<{
+      unstageFile: (
+        worktreePath: string,
+        filePath: string
+      ) => Promise<{
         success: boolean
         error?: string
       }>
       // Discard changes in a file
-      discardChanges: (worktreePath: string, filePath: string) => Promise<{
+      discardChanges: (
+        worktreePath: string,
+        filePath: string
+      ) => Promise<{
         success: boolean
         error?: string
       }>
       // Add to .gitignore
-      addToGitignore: (worktreePath: string, pattern: string) => Promise<{
+      addToGitignore: (
+        worktreePath: string,
+        pattern: string
+      ) => Promise<{
         success: boolean
         error?: string
       }>
@@ -438,25 +480,44 @@ declare global {
         error?: string
       }>
       // Commit staged changes
-      commit: (worktreePath: string, message: string) => Promise<{
+      commit: (
+        worktreePath: string,
+        message: string
+      ) => Promise<{
         success: boolean
         commitHash?: string
         error?: string
       }>
       // Push to remote
-      push: (worktreePath: string, remote?: string, branch?: string, force?: boolean) => Promise<{
+      push: (
+        worktreePath: string,
+        remote?: string,
+        branch?: string,
+        force?: boolean
+      ) => Promise<{
         success: boolean
         pushed?: boolean
         error?: string
       }>
       // Pull from remote
-      pull: (worktreePath: string, remote?: string, branch?: string, rebase?: boolean) => Promise<{
+      pull: (
+        worktreePath: string,
+        remote?: string,
+        branch?: string,
+        rebase?: boolean
+      ) => Promise<{
         success: boolean
         updated?: boolean
         error?: string
       }>
       // Get diff for a file
-      getDiff: (worktreePath: string, filePath: string, staged: boolean, isUntracked: boolean, contextLines?: number) => Promise<{
+      getDiff: (
+        worktreePath: string,
+        filePath: string,
+        staged: boolean,
+        isUntracked: boolean,
+        contextLines?: number
+      ) => Promise<{
         success: boolean
         diff?: string
         fileName?: string

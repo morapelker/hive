@@ -382,6 +382,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
   const hasFinalizedCurrentResponseRef = useRef(false)
 
+  // Echo detection: stores the full prompt text (including mode prefix) so we
+  // can recognise SDK echoes of the user message even when the event lacks a
+  // role field.
+  const lastSentPromptRef = useRef<string | null>(null)
+
   // Extract message role from OpenCode stream payloads across known shapes
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getEventMessageRole = useCallback((data: any): string | undefined => {
@@ -584,6 +589,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     streamingContentRef.current = ''
     setStreamingContent('')
     setIsStreaming(false)
+    lastSentPromptRef.current = null
   }, [])
 
   // Load session info and connect to OpenCode
@@ -698,6 +704,21 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
             const part = event.data?.part
             if (!part) return
+
+            // Detect echoed user prompts by content.  The SDK often re-emits
+            // the user message as a text part without any role field, so we
+            // compare against the prompt we just sent.  Once we see non-matching
+            // content (i.e. the real assistant response) we clear the ref so it
+            // doesn't interfere with later messages.
+            if (lastSentPromptRef.current && part.type === 'text') {
+              const incoming = (event.data?.delta || part.text || '').trimEnd()
+              if (incoming.length > 0 && lastSentPromptRef.current.startsWith(incoming)) {
+                // Looks like an echo — skip it
+                return
+              }
+              // First non-matching text means assistant response has started
+              lastSentPromptRef.current = null
+            }
 
             // New stream content means we're processing a new assistant response.
             if (
@@ -815,6 +836,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           } else if (event.type === 'message.updated') {
             // Skip user-message echoes; user messages are already rendered locally.
             if (eventRole === 'user') return
+
+            // Content-based echo detection for message.updated (same logic as
+            // message.part.updated above).  The SDK may send a message.updated
+            // for the user message without a role field.
+            if (lastSentPromptRef.current) {
+              const parts = event.data?.parts
+              if (Array.isArray(parts) && parts.length > 0) {
+                const textContent = parts
+                  .filter((p: { type?: string }) => p?.type === 'text')
+                  .map((p: { text?: string }) => p?.text || '')
+                  .join('')
+                  .trimEnd()
+                if (textContent.length > 0 && lastSentPromptRef.current.startsWith(textContent)) {
+                  return // echo — skip
+                }
+              }
+            }
 
             const info = event.data?.info
             // Finalize when message is complete.  The role may be explicitly
@@ -1191,6 +1229,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
             : ''
         const promptMessage = modePrefix + trimmedValue
+        // Store the full prompt so the stream handler can detect SDK echoes
+        // of the user message (the SDK often re-emits the prompt without a
+        // role field, making it indistinguishable from assistant text).
+        lastSentPromptRef.current = promptMessage
         const parts: MessagePart[] = [
           ...attachments.map((a) => ({
             type: 'file' as const,

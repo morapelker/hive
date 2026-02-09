@@ -28,13 +28,28 @@ const db = {
 
   // Projects
   project: {
-    create: (data: { name: string; path: string; description?: string | null; tags?: string[] | null }) =>
-      ipcRenderer.invoke('db:project:create', data),
+    create: (data: {
+      name: string
+      path: string
+      description?: string | null
+      tags?: string[] | null
+    }) => ipcRenderer.invoke('db:project:create', data),
     get: (id: string) => ipcRenderer.invoke('db:project:get', id),
     getByPath: (path: string) => ipcRenderer.invoke('db:project:getByPath', path),
     getAll: () => ipcRenderer.invoke('db:project:getAll'),
-    update: (id: string, data: { name?: string; description?: string | null; tags?: string[] | null; language?: string | null; setup_script?: string | null; run_script?: string | null; archive_script?: string | null; last_accessed_at?: string }) =>
-      ipcRenderer.invoke('db:project:update', id, data),
+    update: (
+      id: string,
+      data: {
+        name?: string
+        description?: string | null
+        tags?: string[] | null
+        language?: string | null
+        setup_script?: string | null
+        run_script?: string | null
+        archive_script?: string | null
+        last_accessed_at?: string
+      }
+    ) => ipcRenderer.invoke('db:project:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('db:project:delete', id),
     touch: (id: string) => ipcRenderer.invoke('db:project:touch', id)
   },
@@ -45,9 +60,12 @@ const db = {
       ipcRenderer.invoke('db:worktree:create', data),
     get: (id: string) => ipcRenderer.invoke('db:worktree:get', id),
     getByProject: (projectId: string) => ipcRenderer.invoke('db:worktree:getByProject', projectId),
-    getActiveByProject: (projectId: string) => ipcRenderer.invoke('db:worktree:getActiveByProject', projectId),
-    update: (id: string, data: { name?: string; status?: 'active' | 'archived'; last_accessed_at?: string }) =>
-      ipcRenderer.invoke('db:worktree:update', id, data),
+    getActiveByProject: (projectId: string) =>
+      ipcRenderer.invoke('db:worktree:getActiveByProject', projectId),
+    update: (
+      id: string,
+      data: { name?: string; status?: 'active' | 'archived'; last_accessed_at?: string }
+    ) => ipcRenderer.invoke('db:worktree:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('db:worktree:delete', id),
     archive: (id: string) => ipcRenderer.invoke('db:worktree:archive', id),
     touch: (id: string) => ipcRenderer.invoke('db:worktree:touch', id)
@@ -55,17 +73,38 @@ const db = {
 
   // Sessions
   session: {
-    create: (data: { worktree_id: string | null; project_id: string; name?: string | null; opencode_session_id?: string | null }) =>
-      ipcRenderer.invoke('db:session:create', data),
+    create: (data: {
+      worktree_id: string | null
+      project_id: string
+      name?: string | null
+      opencode_session_id?: string | null
+    }) => ipcRenderer.invoke('db:session:create', data),
     get: (id: string) => ipcRenderer.invoke('db:session:get', id),
-    getByWorktree: (worktreeId: string) => ipcRenderer.invoke('db:session:getByWorktree', worktreeId),
+    getByWorktree: (worktreeId: string) =>
+      ipcRenderer.invoke('db:session:getByWorktree', worktreeId),
     getByProject: (projectId: string) => ipcRenderer.invoke('db:session:getByProject', projectId),
-    getActiveByWorktree: (worktreeId: string) => ipcRenderer.invoke('db:session:getActiveByWorktree', worktreeId),
-    update: (id: string, data: { name?: string | null; status?: 'active' | 'completed' | 'error'; opencode_session_id?: string | null; mode?: 'build' | 'plan'; updated_at?: string; completed_at?: string | null }) =>
-      ipcRenderer.invoke('db:session:update', id, data),
+    getActiveByWorktree: (worktreeId: string) =>
+      ipcRenderer.invoke('db:session:getActiveByWorktree', worktreeId),
+    update: (
+      id: string,
+      data: {
+        name?: string | null
+        status?: 'active' | 'completed' | 'error'
+        opencode_session_id?: string | null
+        mode?: 'build' | 'plan'
+        updated_at?: string
+        completed_at?: string | null
+      }
+    ) => ipcRenderer.invoke('db:session:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('db:session:delete', id),
-    search: (options: { keyword?: string; project_id?: string; worktree_id?: string; dateFrom?: string; dateTo?: string; includeArchived?: boolean }) =>
-      ipcRenderer.invoke('db:session:search', options)
+    search: (options: {
+      keyword?: string
+      project_id?: string
+      worktree_id?: string
+      dateFrom?: string
+      dateTo?: string
+      includeArchived?: boolean
+    }) => ipcRenderer.invoke('db:session:search', options)
   },
 
   // Session Messages
@@ -79,8 +118,7 @@ const db = {
       opencode_parts_json?: string | null
       opencode_timeline_json?: string | null
       created_at?: string
-    }) =>
-      ipcRenderer.invoke('db:message:create', data),
+    }) => ipcRenderer.invoke('db:message:create', data),
     getBySession: (sessionId: string) => ipcRenderer.invoke('db:message:getBySession', sessionId),
     delete: (id: string) => ipcRenderer.invoke('db:message:delete', id)
   },
@@ -172,22 +210,29 @@ const worktreeOps = {
   }> => ipcRenderer.invoke('worktree:sync', params),
 
   // Check if worktree path exists on disk
-  exists: (worktreePath: string): Promise<boolean> => ipcRenderer.invoke('worktree:exists', worktreePath),
+  exists: (worktreePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('worktree:exists', worktreePath),
 
   // Open worktree in terminal
-  openInTerminal: (worktreePath: string): Promise<{
+  openInTerminal: (
+    worktreePath: string
+  ): Promise<{
     success: boolean
     error?: string
   }> => ipcRenderer.invoke('worktree:openInTerminal', worktreePath),
 
   // Open worktree in editor (VS Code)
-  openInEditor: (worktreePath: string): Promise<{
+  openInEditor: (
+    worktreePath: string
+  ): Promise<{
     success: boolean
     error?: string
   }> => ipcRenderer.invoke('worktree:openInEditor', worktreePath),
 
   // Get git branches for a project
-  getBranches: (projectPath: string): Promise<{
+  getBranches: (
+    projectPath: string
+  ): Promise<{
     success: boolean
     branches?: string[]
     currentBranch?: string
@@ -242,6 +287,17 @@ const systemOps = {
   // Open a path in an external app (Cursor, Ghostty) or copy to clipboard
   openInApp: (appName: string, path: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('system:openInApp', appName, path),
+
+  // Subscribe to Cmd+T / Ctrl+T new session shortcut from main process
+  onNewSessionShortcut: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on('shortcut:new-session', handler)
+    return () => {
+      ipcRenderer.removeListener('shortcut:new-session', handler)
+    }
+  },
 
   // Subscribe to notification navigation events (from native notifications)
   onNotificationNavigate: (
@@ -536,12 +592,22 @@ const opencodeOps = {
   prompt: (
     worktreePath: string,
     opencodeSessionId: string,
-    messageOrParts: string | Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>
+    messageOrParts:
+      | string
+      | Array<
+          | { type: 'text'; text: string }
+          | { type: 'file'; mime: string; url: string; filename?: string }
+        >
   ): Promise<{ success: boolean; error?: string }> => {
-    const parts = typeof messageOrParts === 'string'
-      ? [{ type: 'text' as const, text: messageOrParts }]
-      : messageOrParts
-    return ipcRenderer.invoke('opencode:prompt', { worktreePath, sessionId: opencodeSessionId, parts })
+    const parts =
+      typeof messageOrParts === 'string'
+        ? [{ type: 'text' as const, text: messageOrParts }]
+        : messageOrParts
+    return ipcRenderer.invoke('opencode:prompt', {
+      worktreePath,
+      sessionId: opencodeSessionId,
+      parts
+    })
   },
 
   // Disconnect session (may kill server if last session for worktree)
@@ -559,29 +625,45 @@ const opencodeOps = {
     ipcRenderer.invoke('opencode:messages', worktreePath, opencodeSessionId),
 
   // List available models from all configured providers
-  listModels: (): Promise<{ success: boolean; providers: Record<string, unknown>; error?: string }> =>
-    ipcRenderer.invoke('opencode:models'),
+  listModels: (): Promise<{
+    success: boolean
+    providers: Record<string, unknown>
+    error?: string
+  }> => ipcRenderer.invoke('opencode:models'),
 
   // Set the selected model for prompts
-  setModel: (model: { providerID: string; modelID: string; variant?: string }): Promise<{ success: boolean; error?: string }> =>
+  setModel: (model: {
+    providerID: string
+    modelID: string
+    variant?: string
+  }): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:setModel', model),
 
   // Generate a descriptive session name using Claude Haiku via OpenCode
-  generateSessionName: (message: string, worktreePath: string): Promise<{ success: boolean; name: string; error?: string }> =>
+  generateSessionName: (
+    message: string,
+    worktreePath: string
+  ): Promise<{ success: boolean; name: string; error?: string }> =>
     ipcRenderer.invoke('opencode:generateSessionName', message, worktreePath),
 
   // Get model info (name, context limit)
   modelInfo: (
     worktreePath: string,
     modelId: string
-  ): Promise<{ success: boolean; model?: { id: string; name: string; limit: { context: number } }; error?: string }> =>
-    ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId }),
+  ): Promise<{
+    success: boolean
+    model?: { id: string; name: string; limit: { context: number } }
+    error?: string
+  }> => ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId }),
 
   // List available slash commands from the SDK
   commands: (
     worktreePath: string
-  ): Promise<{ success: boolean; commands: Array<{ name: string; description?: string; template: string }>; error?: string }> =>
-    ipcRenderer.invoke('opencode:commands', { worktreePath }),
+  ): Promise<{
+    success: boolean
+    commands: Array<{ name: string; description?: string; template: string }>
+    error?: string
+  }> => ipcRenderer.invoke('opencode:commands', { worktreePath }),
 
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
@@ -652,7 +734,9 @@ const scriptOps = {
 const fileOps = {
   readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
     ipcRenderer.invoke('file:read', filePath),
-  readPrompt: (promptName: string): Promise<{ success: boolean; content?: string; error?: string }> =>
+  readPrompt: (
+    promptName: string
+  ): Promise<{ success: boolean; content?: string; error?: string }> =>
     ipcRenderer.invoke('file:readPrompt', promptName)
 }
 
@@ -666,12 +750,10 @@ export interface DetectedApp {
 
 const settingsOps = {
   // Detect installed editors
-  detectEditors: (): Promise<DetectedApp[]> =>
-    ipcRenderer.invoke('settings:detectEditors'),
+  detectEditors: (): Promise<DetectedApp[]> => ipcRenderer.invoke('settings:detectEditors'),
 
   // Detect installed terminals
-  detectTerminals: (): Promise<DetectedApp[]> =>
-    ipcRenderer.invoke('settings:detectTerminals'),
+  detectTerminals: (): Promise<DetectedApp[]> => ipcRenderer.invoke('settings:detectTerminals'),
 
   // Open a path with a specific editor
   openWithEditor: (

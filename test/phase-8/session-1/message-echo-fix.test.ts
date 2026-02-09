@@ -232,4 +232,76 @@ describe('Session 1: Message Echo Fix', () => {
       expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
     })
   })
+
+  describe('content-based echo detection', () => {
+    const hiveSessionId = 'hive-session-456'
+    const messageId = 'msg-echo-001'
+
+    test('message.part.updated matching lastPrompt is NOT persisted', () => {
+      // Simulate storing a prompt (as prompt() would do)
+      service.lastPromptBySession.set(hiveSessionId, '[Mode: Plan] Focus on designing.\n\nhello')
+
+      const eventData = {
+        message: { id: messageId },
+        part: { type: 'text', text: '[Mode: Plan] Focus on designing.\n\nhello', id: 'part-1' },
+        delta: '[Mode: Plan] Focus on designing.\n\nhello'
+      }
+
+      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
+      expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
+    })
+
+    test('message.part.updated with partial echo prefix is NOT persisted', () => {
+      service.lastPromptBySession.set(hiveSessionId, '[Mode: Plan] Focus on designing.\n\nhello')
+
+      const eventData = {
+        message: { id: messageId },
+        part: { type: 'text', id: 'part-1' },
+        delta: '[Mode: Plan]'
+      }
+
+      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
+      expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
+    })
+
+    test('message.part.updated with non-matching text IS persisted and clears prompt', () => {
+      service.lastPromptBySession.set(hiveSessionId, 'hello')
+
+      const eventData = {
+        message: { id: messageId },
+        part: { type: 'text', text: 'I can help you with that.', id: 'part-1' },
+        delta: 'I can help you with that.'
+      }
+
+      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
+      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledTimes(1)
+      // Prompt ref should be cleared after first non-matching text
+      expect(service.lastPromptBySession.has(hiveSessionId)).toBe(false)
+    })
+
+    test('message.updated matching lastPrompt is NOT persisted', () => {
+      service.lastPromptBySession.set(hiveSessionId, 'hello world')
+
+      const eventData = {
+        message: { id: messageId },
+        info: { sessionID: 'oc-123' },
+        parts: [{ type: 'text', text: 'hello world' }]
+      }
+
+      service.persistStreamEvent(hiveSessionId, 'message.updated', eventData)
+      expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
+    })
+
+    test('tool part events are not affected by echo detection', () => {
+      service.lastPromptBySession.set(hiveSessionId, 'hello')
+
+      const eventData = {
+        message: { id: messageId },
+        part: { type: 'tool', callID: 'call-1', tool: 'Bash', state: { status: 'running' } }
+      }
+
+      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
+      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledTimes(1)
+    })
+  })
 })

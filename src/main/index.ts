@@ -4,7 +4,20 @@ import { spawn } from 'child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
-import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers, registerGitFileHandlers, registerSettingsHandlers, registerFileHandlers, registerScriptHandlers, cleanupScripts } from './ipc'
+import {
+  registerDatabaseHandlers,
+  registerProjectHandlers,
+  registerWorktreeHandlers,
+  registerOpenCodeHandlers,
+  cleanupOpenCode,
+  registerFileTreeHandlers,
+  cleanupFileTreeWatchers,
+  registerGitFileHandlers,
+  registerSettingsHandlers,
+  registerFileHandlers,
+  registerScriptHandlers,
+  cleanupScripts
+} from './ipc'
 import { createLogger, getLogDir } from './services/logger'
 import { createResponseLog, appendResponseLog } from './services/response-logger'
 import { notificationService } from './services/notification-service'
@@ -108,6 +121,20 @@ function createWindow(): void {
   mainWindow.on('move', () => saveWindowBounds(mainWindow))
   mainWindow.on('close', () => saveWindowBounds(mainWindow))
 
+  // Intercept Cmd+T (macOS) / Ctrl+T (Windows/Linux) before Chromium consumes it
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (
+      input.key.toLowerCase() === 't' &&
+      (input.meta || input.control) &&
+      !input.alt &&
+      !input.shift &&
+      input.type === 'keyDown'
+    ) {
+      event.preventDefault()
+      mainWindow!.webContents.send('shortcut:new-session')
+    }
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -164,7 +191,10 @@ function registerSystemHandlers(): void {
       }
       return { success: true }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to open in app' }
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to open in app'
+      }
     }
   })
 }

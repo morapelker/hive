@@ -145,6 +145,9 @@ class OpenCodeService {
   private pendingConnection: Promise<OpenCodeInstance> | null = null
   // Callbacks for temporary naming sessions (keyed by OpenCode session ID)
   private namingCallbacks: Map<string, NamingCallback> = new Map()
+  // Last prompt text per Hive session — used to detect SDK echoes of user
+  // messages when the event payload lacks a role field.
+  private lastPromptBySession: Map<string, string> = new Map()
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
@@ -338,6 +341,18 @@ class OpenCodeService {
         if (role === 'user') return
         if (!part || !messageId) return
 
+        // Content-based echo detection: if the incoming text matches the
+        // prompt we just sent, it's an SDK echo of the user message.
+        const lastPrompt = this.lastPromptBySession.get(hiveSessionId)
+        if (lastPrompt && part.type === 'text') {
+          const incoming = (eventData?.delta || part.text || '').trimEnd()
+          if (incoming.length > 0 && lastPrompt.startsWith(incoming)) {
+            return // echo — skip persistence
+          }
+          // First non-matching text means the real assistant response started
+          this.lastPromptBySession.delete(hiveSessionId)
+        }
+
         const existing = db.getSessionMessageByOpenCodeId(hiveSessionId, messageId)
         const existingParts = this.parseJsonArray(existing?.opencode_parts_json ?? null)
         const existingTimeline = this.parseJsonArray(existing?.opencode_timeline_json ?? null)
@@ -368,6 +383,20 @@ class OpenCodeService {
         // Skip only explicit user echoes (see message.part.updated above).
         if (role === 'user') return
         if (!messageId) return
+
+        // Content-based echo detection for message.updated
+        const lastPromptForUpdate = this.lastPromptBySession.get(hiveSessionId)
+        if (lastPromptForUpdate) {
+          const msgParts = Array.isArray(eventData?.parts) ? eventData.parts : []
+          const textContent = msgParts
+            .filter((p: { type?: string }) => p?.type === 'text')
+            .map((p: { text?: string }) => p?.text || '')
+            .join('')
+            .trimEnd()
+          if (textContent.length > 0 && lastPromptForUpdate.startsWith(textContent)) {
+            return // echo — skip persistence
+          }
+        }
 
         const existing = db.getSessionMessageByOpenCodeId(hiveSessionId, messageId)
         const existingParts = this.parseJsonArray(existing?.opencode_parts_json ?? null)
@@ -739,6 +768,18 @@ class OpenCodeService {
 
     if (!this.instance) {
       throw new Error('No OpenCode instance available')
+    }
+
+    // Store prompt text so persistStreamEvent can detect echoed user messages.
+    const hiveId = this.getMappedHiveSessionId(this.instance, opencodeSessionId, worktreePath)
+    if (hiveId) {
+      const textContent = parts
+        .filter((p) => p.type === 'text')
+        .map((p) => ('text' in p ? p.text : ''))
+        .join('')
+      if (textContent.length > 0) {
+        this.lastPromptBySession.set(hiveId, textContent)
+      }
     }
 
     const { variant, ...model } = this.getSelectedModel()
