@@ -533,11 +533,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [inputValue])
 
-  // Clean up rAF on unmount
+  // Clean up rAF and scroll cooldown on unmount
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current)
+      }
+      if (scrollCooldownRef.current !== null) {
+        clearTimeout(scrollCooldownRef.current)
       }
     }
   }, [])
