@@ -1,6 +1,8 @@
+import { useCallback } from 'react'
 import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
 import { FileViewer } from '@/components/file-viewer'
+import { InlineDiffViewer } from '@/components/diff'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
@@ -14,6 +16,11 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
   const isLoading = useSessionStore((state) => state.isLoading)
   const activeFilePath = useFileViewerStore((state) => state.activeFilePath)
+  const activeDiff = useFileViewerStore((state) => state.activeDiff)
+
+  const handleCloseDiff = useCallback(() => {
+    useFileViewerStore.getState().clearActiveDiff()
+  }, [])
 
   // Determine what to show in the main content area
   const renderContent = () => {
@@ -42,6 +49,20 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
             <p className="text-sm text-muted-foreground mt-2">Loading sessions...</p>
           </div>
         </div>
+      )
+    }
+
+    // Inline diff viewer is active
+    if (activeDiff) {
+      return (
+        <InlineDiffViewer
+          worktreePath={activeDiff.worktreePath}
+          filePath={activeDiff.filePath}
+          fileName={activeDiff.fileName}
+          staged={activeDiff.staged}
+          isUntracked={activeDiff.isUntracked}
+          onClose={handleCloseDiff}
+        />
       )
     }
 

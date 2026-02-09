@@ -6,9 +6,9 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { GitCommitForm } from './GitCommitForm'
 import { GitPushPull } from './GitPushPull'
-import { DiffModal } from '@/components/diff'
 import { cn } from '@/lib/utils'
 
 interface GitStatusPanelProps {
@@ -140,7 +140,6 @@ export function GitStatusPanel({
 
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isReviewing, setIsReviewing] = useState(false)
-  const [diffModalFile, setDiffModalFile] = useState<GitFileStatus | null>(null)
 
   // Load initial data
   useEffect(() => {
@@ -243,12 +242,15 @@ export function GitStatusPanel({
   }, [worktreePath, stageFile, unstageFile])
 
   const handleViewDiff = useCallback((file: GitFileStatus) => {
-    setDiffModalFile(file)
-  }, [])
-
-  const handleCloseDiffModal = useCallback(() => {
-    setDiffModalFile(null)
-  }, [])
+    if (!worktreePath) return
+    useFileViewerStore.getState().setActiveDiff({
+      worktreePath,
+      filePath: file.relativePath,
+      fileName: file.relativePath.split('/').pop() || file.relativePath,
+      staged: file.staged,
+      isUntracked: file.status === '?'
+    })
+  }, [worktreePath])
 
   const handleReview = useCallback(async () => {
     if (!worktreePath) return
@@ -483,19 +485,6 @@ export function GitStatusPanel({
 
       {/* Push/Pull Controls */}
       <GitPushPull worktreePath={worktreePath} />
-
-      {/* Diff Modal */}
-      {diffModalFile && worktreePath && (
-        <DiffModal
-          isOpen={!!diffModalFile}
-          onClose={handleCloseDiffModal}
-          worktreePath={worktreePath}
-          filePath={diffModalFile.relativePath}
-          fileName={diffModalFile.relativePath.split('/').pop() || diffModalFile.relativePath}
-          staged={diffModalFile.staged}
-          isUntracked={diffModalFile.status === '?'}
-        />
-      )}
     </div>
   )
 }

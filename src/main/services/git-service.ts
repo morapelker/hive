@@ -707,9 +707,14 @@ export class GitService {
    * @param filePath - Relative path to the file
    * @param staged - Whether to get staged diff (default: false for unstaged)
    */
-  async getDiff(filePath: string, staged: boolean = false): Promise<GitDiffResult> {
+  async getDiff(filePath: string, staged: boolean = false, contextLines?: number): Promise<GitDiffResult> {
     try {
       const args = ['diff']
+
+      // Add context lines arg if specified
+      if (contextLines !== undefined) {
+        args.push(`-U${contextLines}`)
+      }
 
       // For staged changes, add --cached flag
       if (staged) {

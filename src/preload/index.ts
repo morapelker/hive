@@ -505,13 +505,14 @@ const gitOps = {
     worktreePath: string,
     filePath: string,
     staged: boolean,
-    isUntracked: boolean
+    isUntracked: boolean,
+    contextLines?: number
   ): Promise<{
     success: boolean
     diff?: string
     fileName?: string
     error?: string
-  }> => ipcRenderer.invoke('git:diff', worktreePath, filePath, staged, isUntracked)
+  }> => ipcRenderer.invoke('git:diff', worktreePath, filePath, staged, isUntracked, contextLines)
 }
 
 const opencodeOps = {

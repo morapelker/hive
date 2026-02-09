@@ -372,9 +372,10 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       worktreePath: string,
       filePath: string,
       staged: boolean,
-      isUntracked: boolean
+      isUntracked: boolean,
+      contextLines?: number
     ): Promise<GitDiffResult> => {
-      log.info('Getting diff', { worktreePath, filePath, staged, isUntracked })
+      log.info('Getting diff', { worktreePath, filePath, staged, isUntracked, contextLines })
       try {
         const gitService = createGitService(worktreePath)
 
@@ -383,7 +384,7 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
           return await gitService.getUntrackedFileDiff(filePath)
         }
 
-        return await gitService.getDiff(filePath, staged)
+        return await gitService.getDiff(filePath, staged, contextLines)
       } catch (error) {
         const errMessage = error instanceof Error ? error.message : 'Unknown error'
         log.error('Failed to get diff', error instanceof Error ? error : new Error(errMessage), { worktreePath, filePath })

@@ -456,7 +456,7 @@ declare global {
         error?: string
       }>
       // Get diff for a file
-      getDiff: (worktreePath: string, filePath: string, staged: boolean, isUntracked: boolean) => Promise<{
+      getDiff: (worktreePath: string, filePath: string, staged: boolean, isUntracked: boolean, contextLines?: number) => Promise<{
         success: boolean
         diff?: string
         fileName?: string
