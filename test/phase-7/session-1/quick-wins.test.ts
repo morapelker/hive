@@ -37,13 +37,15 @@ describe('Session 1: Quick Wins', () => {
       expect(svg?.className.baseVal).toContain('overflow-hidden')
     })
 
-    test('PulseAnimation path has animate-ecg-travel class', async () => {
+    test('PulseAnimation has animateTransform for traveling effect', async () => {
       const { PulseAnimation } = await import(
         '../../../src/renderer/src/components/worktrees/PulseAnimation'
       )
       const { container } = render(React.createElement(PulseAnimation))
-      const path = container.querySelector('path')
-      expect(path?.getAttribute('class')).toBe('animate-ecg-travel')
+      const animateTransform = container.querySelector('animateTransform')
+      expect(animateTransform).toBeTruthy()
+      expect(animateTransform?.getAttribute('type')).toBe('translate')
+      expect(animateTransform?.getAttribute('repeatCount')).toBe('indefinite')
     })
   })
 
