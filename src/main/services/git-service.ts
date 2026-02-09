@@ -1,7 +1,7 @@
 import simpleGit, { SimpleGit, BranchSummary } from 'simple-git'
 import { app } from 'electron'
-import { join, basename } from 'path'
-import { existsSync, mkdirSync, rmSync } from 'fs'
+import { join, basename, dirname } from 'path'
+import { existsSync, mkdirSync, rmSync, cpSync } from 'fs'
 import { selectUniqueCityName } from './city-names'
 import { createLogger } from './logger'
 
@@ -730,6 +730,76 @@ export class GitService {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       log.error('Failed to get diff', error instanceof Error ? error : new Error(message), { filePath, staged, repoPath: this.repoPath })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Duplicate a worktree by creating a new branch from the source branch
+   * and copying uncommitted state (staged, unstaged, untracked files)
+   */
+  async duplicateWorktree(
+    sourceBranch: string,
+    sourceWorktreePath: string,
+    projectName: string
+  ): Promise<CreateWorktreeResult> {
+    try {
+      // 1. Extract base name (strip -vN suffix)
+      const baseName = sourceBranch.replace(/-v\d+$/, '')
+
+      // 2. Find next version number
+      const allBranches = await this.getAllBranches()
+      const versionPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`)
+      let maxVersion = 1 // means first dup will be v2
+      for (const branch of allBranches) {
+        const match = branch.match(versionPattern)
+        if (match) {
+          maxVersion = Math.max(maxVersion, parseInt(match[1], 10))
+        }
+      }
+      const newBranchName = `${baseName}-v${maxVersion + 1}`
+
+      // 3. Create worktree directory
+      const projectWorktreesDir = this.ensureWorktreesDir(projectName)
+      const worktreePath = join(projectWorktreesDir, newBranchName)
+
+      // 4. Create worktree from source branch
+      await this.git.raw(['worktree', 'add', '-b', newBranchName, worktreePath, sourceBranch])
+
+      // 5. Capture uncommitted state via stash create (non-destructive)
+      const sourceGit = simpleGit(sourceWorktreePath)
+      const stashRef = (await sourceGit.raw(['stash', 'create'])).trim()
+
+      if (stashRef) {
+        // 6. Apply stash in new worktree
+        const newGit = simpleGit(worktreePath)
+        try {
+          await newGit.raw(['stash', 'apply', stashRef])
+        } catch {
+          // stash apply may fail if changes conflict — log but continue
+          log.warn('Failed to apply stash in duplicated worktree', { newBranchName, stashRef })
+        }
+      }
+
+      // 7. Copy untracked files
+      const untrackedRaw = await sourceGit.raw(['ls-files', '--others', '--exclude-standard'])
+      const untrackedFiles = untrackedRaw.trim().split('\n').filter(Boolean)
+      for (const file of untrackedFiles) {
+        const srcPath = join(sourceWorktreePath, file)
+        const destPath = join(worktreePath, file)
+        mkdirSync(dirname(destPath), { recursive: true })
+        cpSync(srcPath, destPath)
+      }
+
+      return { success: true, name: newBranchName, branchName: newBranchName, path: worktreePath }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to duplicate worktree', error instanceof Error ? error : new Error(message), {
+        sourceBranch,
+        sourceWorktreePath,
+        projectName,
+        repoPath: this.repoPath
+      })
       return { success: false, error: message }
     }
   }

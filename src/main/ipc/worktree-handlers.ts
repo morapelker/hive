@@ -201,6 +201,73 @@ export function registerWorktreeHandlers(): void {
     }
   )
 
+  // Duplicate a worktree (clone branch with uncommitted state)
+  ipcMain.handle(
+    'worktree:duplicate',
+    async (
+      _event,
+      params: {
+        projectId: string
+        projectPath: string
+        projectName: string
+        sourceBranch: string
+        sourceWorktreePath: string
+      }
+    ): Promise<{
+      success: boolean
+      worktree?: {
+        id: string
+        project_id: string
+        name: string
+        branch_name: string
+        path: string
+        status: string
+        created_at: string
+        last_accessed_at: string
+      }
+      error?: string
+    }> => {
+      log.info('Duplicating worktree', { sourceBranch: params.sourceBranch, projectName: params.projectName })
+      try {
+        const gitService = createGitService(params.projectPath)
+        const result = await gitService.duplicateWorktree(
+          params.sourceBranch,
+          params.sourceWorktreePath,
+          params.projectName
+        )
+
+        if (!result.success || !result.name || !result.path || !result.branchName) {
+          log.warn('Worktree duplication failed', { error: result.error })
+          return {
+            success: false,
+            error: result.error || 'Failed to duplicate worktree'
+          }
+        }
+
+        // Create database entry
+        const worktree = getDatabase().createWorktree({
+          project_id: params.projectId,
+          name: result.name,
+          branch_name: result.branchName,
+          path: result.path
+        })
+
+        log.info('Worktree duplicated successfully', { name: result.name, path: result.path })
+        return {
+          success: true,
+          worktree
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Worktree duplication error', error instanceof Error ? error : new Error(message), { params })
+        return {
+          success: false,
+          error: message
+        }
+      }
+    }
+  )
+
   // Check if worktree path exists on disk
   ipcMain.handle('worktree:exists', (_event, worktreePath: string): boolean => {
     return existsSync(worktreePath)

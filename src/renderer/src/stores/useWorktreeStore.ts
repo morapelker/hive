@@ -51,6 +51,13 @@ interface WorktreeState {
   getWorktreesForProject: (projectId: string) => Worktree[]
   getDefaultWorktree: (projectId: string) => Worktree | null
   setCreatingForProject: (projectId: string | null) => void
+  duplicateWorktree: (
+    projectId: string,
+    projectPath: string,
+    projectName: string,
+    sourceBranch: string,
+    sourceWorktreePath: string
+  ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
 }
 
 export const useWorktreeStore = create<WorktreeState>((set, get) => ({
@@ -302,5 +309,34 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Set the project ID that is currently creating a worktree
   setCreatingForProject: (projectId: string | null) => {
     set({ creatingForProjectId: projectId })
+  },
+
+  // Duplicate a worktree (clone branch with uncommitted state)
+  duplicateWorktree: async (
+    projectId: string,
+    projectPath: string,
+    projectName: string,
+    sourceBranch: string,
+    sourceWorktreePath: string
+  ) => {
+    try {
+      const result = await window.worktreeOps.duplicate({
+        projectId,
+        projectPath,
+        projectName,
+        sourceBranch,
+        sourceWorktreePath
+      })
+      if (result.success && result.worktree) {
+        // Reload worktrees for the project
+        get().loadWorktrees(projectId)
+      }
+      return result
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to duplicate worktree'
+      }
+    }
   }
 }))

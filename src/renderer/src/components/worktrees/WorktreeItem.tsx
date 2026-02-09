@@ -27,7 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { useWorktreeStore } from '@/stores'
+import { useWorktreeStore, useProjectStore } from '@/stores'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
@@ -126,6 +126,23 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
     }
   }, [unbranchWorktree, worktree, projectPath])
 
+  const handleDuplicate = useCallback(async (): Promise<void> => {
+    const project = useProjectStore.getState().projects.find((p) => p.id === worktree.project_id)
+    if (!project) return
+    const result = await useWorktreeStore.getState().duplicateWorktree(
+      project.id,
+      project.path,
+      project.name,
+      worktree.branch_name,
+      worktree.path
+    )
+    if (result.success) {
+      toast.success(`Duplicated to ${result.worktree?.name || 'new branch'}`)
+    } else {
+      toast.error(result.error || 'Failed to duplicate worktree')
+    }
+  }, [worktree])
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -192,6 +209,10 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
               </DropdownMenuItem>
               {!worktree.is_default && (
                 <>
+                  <DropdownMenuItem onClick={handleDuplicate}>
+                    <GitBranchPlus className="h-4 w-4 mr-2" />
+                    Duplicate
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleUnbranch}>
                     <GitBranchPlus className="h-4 w-4 mr-2" />
@@ -233,6 +254,10 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
         </ContextMenuItem>
         {!worktree.is_default && (
           <>
+            <ContextMenuItem onClick={handleDuplicate}>
+              <GitBranchPlus className="h-4 w-4 mr-2" />
+              Duplicate
+            </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={handleUnbranch}>
               <GitBranchPlus className="h-4 w-4 mr-2" />

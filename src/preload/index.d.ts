@@ -233,6 +233,17 @@ declare global {
         error?: string
       }>
       branchExists: (projectPath: string, branchName: string) => Promise<boolean>
+      duplicate: (params: {
+        projectId: string
+        projectPath: string
+        projectName: string
+        sourceBranch: string
+        sourceWorktreePath: string
+      }) => Promise<{
+        success: boolean
+        worktree?: Worktree
+        error?: string
+      }>
     }
     systemOps: {
       getLogDir: () => Promise<string>

@@ -196,7 +196,29 @@ const worktreeOps = {
 
   // Check if a branch exists
   branchExists: (projectPath: string, branchName: string): Promise<boolean> =>
-    ipcRenderer.invoke('git:branchExists', projectPath, branchName)
+    ipcRenderer.invoke('git:branchExists', projectPath, branchName),
+
+  // Duplicate a worktree (clone branch with uncommitted state)
+  duplicate: (params: {
+    projectId: string
+    projectPath: string
+    projectName: string
+    sourceBranch: string
+    sourceWorktreePath: string
+  }): Promise<{
+    success: boolean
+    worktree?: {
+      id: string
+      project_id: string
+      name: string
+      branch_name: string
+      path: string
+      status: string
+      created_at: string
+      last_accessed_at: string
+    }
+    error?: string
+  }> => ipcRenderer.invoke('worktree:duplicate', params)
 }
 
 // System operations API
