@@ -42,12 +42,31 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
   )
 
   // Send a prompt (response streams via onStream)
+  // Accepts either { worktreePath, sessionId, parts } object or positional (worktreePath, sessionId, message) for backward compat
   ipcMain.handle(
     'opencode:prompt',
-    async (_event, worktreePath: string, opencodeSessionId: string, message: string) => {
-      log.info('IPC: opencode:prompt', { worktreePath, opencodeSessionId, messageLength: message.length })
+    async (_event, ...args: unknown[]) => {
+      let worktreePath: string
+      let opencodeSessionId: string
+      let messageOrParts: string | Array<{ type: string; text?: string; mime?: string; url?: string; filename?: string }>
+
+      // Support object-style call: { worktreePath, sessionId, parts }
+      if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
+        const obj = args[0] as Record<string, unknown>
+        worktreePath = obj.worktreePath as string
+        opencodeSessionId = obj.sessionId as string
+        // Backward compat: accept message string or parts array
+        messageOrParts = (obj.parts as typeof messageOrParts) || [{ type: 'text', text: obj.message as string }]
+      } else {
+        // Legacy positional args: (worktreePath, sessionId, message)
+        worktreePath = args[0] as string
+        opencodeSessionId = args[1] as string
+        messageOrParts = args[2] as string
+      }
+
+      log.info('IPC: opencode:prompt', { worktreePath, opencodeSessionId, partsCount: Array.isArray(messageOrParts) ? messageOrParts.length : 1 })
       try {
-        await openCodeService.prompt(worktreePath, opencodeSessionId, message)
+        await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts)
         return { success: true }
       } catch (error) {
         log.error('IPC: opencode:prompt failed', { error })

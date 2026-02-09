@@ -265,10 +265,11 @@ declare global {
         hiveSessionId: string
       ) => Promise<{ success: boolean }>
       // Send a prompt (response streams via onStream)
+      // Accepts either a string message or a MessagePart[] array for rich content (text + file attachments)
       prompt: (
         worktreePath: string,
         opencodeSessionId: string,
-        message: string
+        messageOrParts: string | MessagePart[]
       ) => Promise<{ success: boolean; error?: string }>
       // Disconnect session (may kill server if last session for worktree)
       disconnect: (
@@ -444,6 +445,11 @@ declare global {
     }
   }
 }
+
+// Message part type for prompt API (text + file attachments)
+type MessagePart =
+  | { type: 'text'; text: string }
+  | { type: 'file'; mime: string; url: string; filename?: string }
 
 // Script output event type
 interface ScriptOutputEvent {

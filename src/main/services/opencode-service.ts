@@ -603,10 +603,19 @@ class OpenCodeService {
   }
 
   /**
-   * Send a prompt to an OpenCode session
+   * Send a prompt to an OpenCode session.
+   * Accepts either a parts array (text + file parts) or a plain string for backward compatibility.
    */
-  async prompt(worktreePath: string, opencodeSessionId: string, message: string): Promise<void> {
-    log.info('Sending prompt to OpenCode', { worktreePath, opencodeSessionId, messageLength: message.length })
+  async prompt(
+    worktreePath: string,
+    opencodeSessionId: string,
+    messageOrParts: string | Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>
+  ): Promise<void> {
+    const parts = typeof messageOrParts === 'string'
+      ? [{ type: 'text' as const, text: messageOrParts }]
+      : messageOrParts
+
+    log.info('Sending prompt to OpenCode', { worktreePath, opencodeSessionId, partsCount: parts.length })
 
     if (!this.instance) {
       throw new Error('No OpenCode instance available')
@@ -622,7 +631,7 @@ class OpenCodeService {
         query: { directory: worktreePath },
         body: {
           model,
-          parts: [{ type: 'text', text: message }]
+          parts
         }
       })
 

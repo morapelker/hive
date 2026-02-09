@@ -509,12 +509,17 @@ const opencodeOps = {
     ipcRenderer.invoke('opencode:reconnect', worktreePath, opencodeSessionId, hiveSessionId),
 
   // Send a prompt (response streams via onStream)
+  // Accepts either a string message or a MessagePart[] array for rich content (text + file attachments)
   prompt: (
     worktreePath: string,
     opencodeSessionId: string,
-    message: string
-  ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('opencode:prompt', worktreePath, opencodeSessionId, message),
+    messageOrParts: string | Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>
+  ): Promise<{ success: boolean; error?: string }> => {
+    const parts = typeof messageOrParts === 'string'
+      ? [{ type: 'text' as const, text: messageOrParts }]
+      : messageOrParts
+    return ipcRenderer.invoke('opencode:prompt', { worktreePath, sessionId: opencodeSessionId, parts })
+  },
 
   // Disconnect session (may kill server if last session for worktree)
   disconnect: (

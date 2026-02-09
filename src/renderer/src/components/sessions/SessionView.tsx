@@ -900,7 +900,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
           : ''
         const promptMessage = modePrefix + trimmedValue
-        const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, promptMessage)
+        const parts: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: promptMessage }]
+        const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, parts)
         if (!result.success) {
           console.error('Failed to send prompt to OpenCode:', result.error)
           toast.error('Failed to send message to AI')
