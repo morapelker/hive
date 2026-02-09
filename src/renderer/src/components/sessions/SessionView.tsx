@@ -7,8 +7,11 @@ import { MessageRenderer } from './MessageRenderer'
 import { ModeToggle } from './ModeToggle'
 import { ModelSelector } from './ModelSelector'
 import { QueuedIndicator } from './QueuedIndicator'
+import { ContextIndicator } from './ContextIndicator'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useContextStore } from '@/stores/useContextStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 
 // Types for OpenCode SDK integration
@@ -259,6 +262,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [opencodeSessionId, setOpencodeSessionId] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
 
+  // Current model ID for context indicator
+  const selectedModel = useSettingsStore((state) => state.selectedModel)
+  const currentModelId = selectedModel?.modelID ?? 'claude-opus-4-5-20251101'
+
   // Streaming parts - tracks interleaved text and tool use during streaming
   const [streamingParts, setStreamingParts] = useState<StreamingPart[]>([])
   const streamingPartsRef = useRef<StreamingPart[]>([])
@@ -486,6 +493,28 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       }
 
+      // Reconstruct token usage from stored assistant messages
+      useContextStore.getState().resetSessionTokens(sessionId)
+      for (const msg of dbMessages) {
+        if (msg.role === 'assistant' && msg.opencode_message_json) {
+          try {
+            const msgJson = JSON.parse(msg.opencode_message_json)
+            const tokens = msgJson?.tokens || msgJson?.info?.tokens
+            if (tokens) {
+              useContextStore.getState().addMessageTokens(sessionId, {
+                input: typeof tokens.input === 'number' ? tokens.input : 0,
+                output: typeof tokens.output === 'number' ? tokens.output : 0,
+                reasoning: typeof tokens.reasoning === 'number' ? tokens.reasoning : 0,
+                cacheRead: typeof tokens.cacheRead === 'number' ? tokens.cacheRead : (typeof tokens.cache_read === 'number' ? tokens.cache_read : (typeof tokens.cache?.read === 'number' ? tokens.cache.read : 0)),
+                cacheWrite: typeof tokens.cacheWrite === 'number' ? tokens.cacheWrite : (typeof tokens.cache_write === 'number' ? tokens.cache_write : (typeof tokens.cache?.write === 'number' ? tokens.cache.write : 0))
+              })
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+
       return loadedMessages
     }
 
@@ -597,6 +626,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           }
           hasFinalizedCurrentResponseRef.current = true
 
+          // Extract token usage from the completed message
+          const tokens = info?.tokens
+          if (tokens) {
+            useContextStore.getState().addMessageTokens(sessionId, {
+              input: typeof tokens.input === 'number' ? tokens.input : 0,
+              output: typeof tokens.output === 'number' ? tokens.output : 0,
+              reasoning: typeof tokens.reasoning === 'number' ? tokens.reasoning : 0,
+              cacheRead: typeof tokens.cacheRead === 'number' ? tokens.cacheRead : (typeof tokens.cache_read === 'number' ? tokens.cache_read : (typeof tokens.cache?.read === 'number' ? tokens.cache.read : 0)),
+              cacheWrite: typeof tokens.cacheWrite === 'number' ? tokens.cacheWrite : (typeof tokens.cache_write === 'number' ? tokens.cache_write : (typeof tokens.cache?.write === 'number' ? tokens.cache.write : 0))
+            })
+          }
+
           // Message complete — flush now and reload from DB (main process already persisted it).
           immediateFlush()
           void finalizeResponseFromDatabase()
@@ -662,6 +703,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // 4. Connect to OpenCode
         const existingOpcSessionId = session.opencode_session_id
 
+        // Fetch model context limit (fire-and-forget)
+        const fetchModelLimit = (path: string): void => {
+          const modelId = useSettingsStore.getState().selectedModel?.modelID ?? 'claude-opus-4-5-20251101'
+          window.opencodeOps.modelInfo(path, modelId).then((result) => {
+            if (result.success && result.model?.limit?.context) {
+              useContextStore.getState().setModelLimit(modelId, result.model.limit.context)
+            }
+          }).catch((err) => {
+            console.warn('Failed to fetch model info:', err)
+          })
+        }
+
         if (existingOpcSessionId) {
           // Try to reconnect to existing session
           const reconnectResult = await window.opencodeOps.reconnect(
@@ -671,6 +724,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           )
           if (reconnectResult.success) {
             setOpencodeSessionId(existingOpcSessionId)
+            fetchModelLimit(wtPath)
             // Create response log file if logging is enabled
             if (isLogModeRef.current) {
               try {
@@ -689,6 +743,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const connectResult = await window.opencodeOps.connect(wtPath, sessionId)
         if (connectResult.success && connectResult.sessionId) {
           setOpencodeSessionId(connectResult.sessionId)
+          fetchModelLimit(wtPath)
           // Store the OpenCode session ID in database for future reconnection
           await window.db.session.update(sessionId, {
             opencode_session_id: connectResult.sessionId
@@ -1030,10 +1085,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           {/* Queued message indicator */}
           <QueuedIndicator count={queuedCount} />
 
-          {/* Bottom row: model selector + hint text + send button */}
+          {/* Bottom row: model selector + context indicator + hint text + send button */}
           <div className="flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-2">
               <ModelSelector />
+              <ContextIndicator sessionId={sessionId} modelId={currentModelId} />
               <span className="text-xs text-muted-foreground">
                 Enter to send, Shift+Enter for new line
               </span>

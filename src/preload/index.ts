@@ -526,6 +526,13 @@ const opencodeOps = {
   generateSessionName: (message: string, worktreePath: string): Promise<{ success: boolean; name: string; error?: string }> =>
     ipcRenderer.invoke('opencode:generateSessionName', message, worktreePath),
 
+  // Get model info (name, context limit)
+  modelInfo: (
+    worktreePath: string,
+    modelId: string
+  ): Promise<{ success: boolean; model?: { id: string; name: string; limit: { context: number } }; error?: string }> =>
+    ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId }),
+
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, event: OpenCodeStreamEvent): void => {

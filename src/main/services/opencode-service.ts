@@ -532,6 +532,43 @@ class OpenCodeService {
   }
 
   /**
+   * Get model info (name, context limit) for a specific model
+   */
+  async getModelInfo(_worktreePath: string, modelId: string): Promise<{ id: string; name: string; limit: { context: number; input?: number; output: number } } | null> {
+    log.info('Getting model info', { modelId })
+
+    const instance = await this.getOrCreateInstance()
+
+    try {
+      const result = await instance.client.config.providers()
+      const providers = result.data?.providers || []
+
+      for (const provider of providers) {
+        const models = provider.models || {}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const model = models[modelId] as any
+        if (model) {
+          return {
+            id: modelId,
+            name: model.name || modelId,
+            limit: {
+              context: model.limit?.context || 0,
+              input: model.limit?.input,
+              output: model.limit?.output || 0
+            }
+          }
+        }
+      }
+
+      log.warn('Model not found in any provider', { modelId })
+      return null
+    } catch (error) {
+      log.error('Failed to get model info', { modelId, error })
+      throw error
+    }
+  }
+
+  /**
    * Get the selected model from settings DB, or fallback to DEFAULT_MODEL
    */
   private getSelectedModel(): { providerID: string; modelID: string } {

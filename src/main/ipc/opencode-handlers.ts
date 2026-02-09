@@ -131,6 +131,27 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Get model info (name, context limit)
+  ipcMain.handle(
+    'opencode:modelInfo',
+    async (_event, { worktreePath, modelId }: { worktreePath: string; modelId: string }) => {
+      log.info('IPC: opencode:modelInfo', { worktreePath, modelId })
+      try {
+        const model = await openCodeService.getModelInfo(worktreePath, modelId)
+        if (!model) {
+          return { success: false, error: 'Model not found' }
+        }
+        return { success: true, model }
+      } catch (error) {
+        log.error('IPC: opencode:modelInfo failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Get messages from an OpenCode session
   ipcMain.handle(
     'opencode:messages',

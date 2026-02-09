@@ -9,3 +9,4 @@ export { useCommandPaletteStore, type Command, type CommandCategory, type Comman
 export { useShortcutStore } from './useShortcutStore'
 export { useSettingsStore, type EditorOption, type TerminalOption, type AppSettings } from './useSettingsStore'
 export { useWorktreeStatusStore } from './useWorktreeStatusStore'
+export { useContextStore } from './useContextStore'
