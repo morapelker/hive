@@ -40,7 +40,7 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     label: 'New Session',
     description: 'Create a new chat session',
     category: 'session',
-    defaultBinding: { key: 'n', modifiers: ['meta'] }
+    defaultBinding: { key: 't', modifiers: ['meta'] }
   },
   {
     id: 'session:close',

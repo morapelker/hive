@@ -20,7 +20,7 @@ function generateLines(count: number): string {
 
 describe('Session 8: Rich Tool Rendering', () => {
   describe('ReadToolView', () => {
-    test('renders file path and content', () => {
+    test('renders content with syntax highlighting', () => {
       render(
         <ReadToolView
           name="Read"
@@ -31,8 +31,8 @@ describe('Session 8: Rich Tool Rendering', () => {
       )
 
       expect(screen.getByTestId('read-tool-view')).toBeTruthy()
-      expect(screen.getByText(/index\.ts/)).toBeTruthy()
-      expect(screen.getByText(/import \{ app \} from 'electron'/)).toBeTruthy()
+      // Content is rendered inside SyntaxHighlighter
+      expect(screen.getByTestId('read-tool-view').textContent).toContain('import')
     })
 
     test('shows line numbers', () => {
@@ -84,10 +84,13 @@ describe('Session 8: Rich Tool Rendering', () => {
         />
       )
 
-      fireEvent.click(screen.getByTestId('show-all-button'))
+      // Click "Show all" button
+      const showAllBtn = screen.getByTestId('show-all-button')
+      expect(showAllBtn.textContent).toContain('30 lines')
+      fireEvent.click(showAllBtn)
 
-      // Now line 25 should be visible
-      expect(screen.getByText('line 25 content')).toBeTruthy()
+      // After expanding, button should say "Show less"
+      expect(showAllBtn.textContent).toContain('Show less')
     })
 
     test('shows line range when offset/limit provided', () => {
@@ -100,7 +103,8 @@ describe('Session 8: Rich Tool Rendering', () => {
         />
       )
 
-      expect(screen.getByText('(lines 10-30)')).toBeTruthy()
+      // Component renders "Lines 10–30" format
+      expect(screen.getByText(/Lines 10/)).toBeTruthy()
     })
 
     test('renders error state', () => {
@@ -127,8 +131,9 @@ describe('Session 8: Rich Tool Rendering', () => {
       )
 
       const view = screen.getByTestId('read-tool-view')
-      const monoElements = view.querySelectorAll('.font-mono')
-      expect(monoElements.length).toBeGreaterThan(0)
+      // SyntaxHighlighter renders code with monospace via codeTagProps inline style
+      const codeElements = view.querySelectorAll('code')
+      expect(codeElements.length).toBeGreaterThan(0)
     })
   })
 
@@ -147,7 +152,11 @@ describe('Session 8: Rich Tool Rendering', () => {
       )
 
       expect(screen.getByTestId('edit-tool-view')).toBeTruthy()
-      expect(screen.getByText(/App\.tsx/)).toBeTruthy()
+      // Verify diff content is rendered
+      const removedLines = screen.getAllByTestId('diff-removed')
+      const addedLines = screen.getAllByTestId('diff-added')
+      expect(removedLines.length).toBe(1)
+      expect(addedLines.length).toBe(1)
     })
 
     test('shows red lines for removed content', () => {

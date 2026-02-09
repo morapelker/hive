@@ -35,11 +35,29 @@ export interface SessionViewState {
 
 /** A single part of a streaming assistant message */
 export interface StreamingPart {
-  type: 'text' | 'tool_use'
+  type: 'text' | 'tool_use' | 'subtask' | 'step_start' | 'step_finish' | 'reasoning' | 'compaction'
   /** Accumulated text for text parts */
   text?: string
   /** Tool info for tool_use parts */
   toolUse?: ToolUseInfo
+  /** Subtask/subagent spawn info */
+  subtask?: {
+    id: string
+    sessionID: string
+    prompt: string
+    description: string
+    agent: string
+    parts: StreamingPart[]
+    status: 'running' | 'completed' | 'error'
+  }
+  /** Step start boundary */
+  stepStart?: { snapshot?: string }
+  /** Step finish boundary */
+  stepFinish?: { reason: string; cost: number; tokens: { input: number; output: number; reasoning: number } }
+  /** Reasoning/thinking content */
+  reasoning?: string
+  /** Whether compaction was automatic */
+  compactionAuto?: boolean
 }
 
 interface SessionViewProps {
@@ -185,6 +203,50 @@ function mapStoredPartsToStreamingParts(rawParts: unknown[]): StreamingPart[] {
         error: stringifyValue(state.error)
       }
       return [{ type: 'tool_use', toolUse }]
+    }
+
+    if (partType === 'subtask') {
+      const childParts = Array.isArray(part.parts) ? mapStoredPartsToStreamingParts(part.parts as unknown[]) : []
+      return [{
+        type: 'subtask',
+        subtask: {
+          id: asString(part.id) ?? `subtask-${index}`,
+          sessionID: asString(part.sessionID) ?? '',
+          prompt: asString(part.prompt) ?? '',
+          description: asString(part.description) ?? '',
+          agent: asString(part.agent) ?? 'unknown',
+          parts: childParts,
+          status: (part.status === 'completed' || part.status === 'error') ? part.status as 'completed' | 'error' : 'running'
+        }
+      }]
+    }
+
+    if (partType === 'step-start' || partType === 'step_start') {
+      return [{ type: 'step_start', stepStart: { snapshot: asString(part.snapshot) } }]
+    }
+
+    if (partType === 'step-finish' || partType === 'step_finish') {
+      const tokens = asRecord(part.tokens)
+      return [{
+        type: 'step_finish',
+        stepFinish: {
+          reason: asString(part.reason) ?? '',
+          cost: typeof part.cost === 'number' ? part.cost : 0,
+          tokens: {
+            input: typeof tokens?.input === 'number' ? tokens.input : 0,
+            output: typeof tokens?.output === 'number' ? tokens.output : 0,
+            reasoning: typeof tokens?.reasoning === 'number' ? tokens.reasoning : 0
+          }
+        }
+      }]
+    }
+
+    if (partType === 'reasoning') {
+      return [{ type: 'reasoning', reasoning: asString(part.text) ?? '' }]
+    }
+
+    if (partType === 'compaction') {
+      return [{ type: 'compaction', compactionAuto: part.auto === true }]
     }
 
     return []
@@ -616,6 +678,57 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             output: state.status === 'completed' ? state.output : undefined,
             error: state.status === 'error' ? state.error : undefined
           })
+          setIsStreaming(true)
+        } else if (part.type === 'subtask') {
+          updateStreamingPartsRef(parts => [
+            ...parts,
+            {
+              type: 'subtask',
+              subtask: {
+                id: part.id || `subtask-${Date.now()}`,
+                sessionID: part.sessionID || '',
+                prompt: part.prompt || '',
+                description: part.description || '',
+                agent: part.agent || 'unknown',
+                parts: [],
+                status: 'running'
+              }
+            }
+          ])
+          immediateFlush()
+          setIsStreaming(true)
+        } else if (part.type === 'reasoning') {
+          updateStreamingPartsRef(parts => {
+            const last = parts[parts.length - 1]
+            if (last?.type === 'reasoning') {
+              return [...parts.slice(0, -1), { ...last, reasoning: (last.reasoning || '') + (event.data?.delta || part.text || '') }]
+            }
+            return [...parts, { type: 'reasoning' as const, reasoning: event.data?.delta || part.text || '' }]
+          })
+          scheduleFlush()
+          setIsStreaming(true)
+        } else if (part.type === 'step-start') {
+          updateStreamingPartsRef(parts => [...parts, { type: 'step_start' as const, stepStart: { snapshot: part.snapshot } }])
+          immediateFlush()
+          setIsStreaming(true)
+        } else if (part.type === 'step-finish') {
+          updateStreamingPartsRef(parts => [...parts, {
+            type: 'step_finish' as const,
+            stepFinish: {
+              reason: part.reason || '',
+              cost: typeof part.cost === 'number' ? part.cost : 0,
+              tokens: {
+                input: typeof part.tokens?.input === 'number' ? part.tokens.input : 0,
+                output: typeof part.tokens?.output === 'number' ? part.tokens.output : 0,
+                reasoning: typeof part.tokens?.reasoning === 'number' ? part.tokens.reasoning : 0
+              }
+            }
+          }])
+          immediateFlush()
+          setIsStreaming(true)
+        } else if (part.type === 'compaction') {
+          updateStreamingPartsRef(parts => [...parts, { type: 'compaction' as const, compactionAuto: part.auto === true }])
+          immediateFlush()
           setIsStreaming(true)
         }
       } else if (event.type === 'message.updated') {

@@ -6,6 +6,7 @@ import {
   Search,
   FolderSearch,
   FilePlus,
+  Bot,
   ChevronDown,
   Check,
   X,
@@ -19,6 +20,7 @@ import { EditToolView } from './tools/EditToolView'
 import { GrepToolView } from './tools/GrepToolView'
 import { BashToolView } from './tools/BashToolView'
 import { TodoToolView } from './tools/TodoToolView'
+import { TaskToolView } from './tools/TaskToolView'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
 
@@ -55,6 +57,9 @@ function getToolIcon(name: string): React.JSX.Element {
   }
   if (lowerName.includes('grep') || lowerName.includes('search') || lowerName.includes('rg')) {
     return <Search className={iconClass} />
+  }
+  if (lowerName === 'task') {
+    return <Bot className={iconClass} />
   }
   // Default
   return <Terminal className={iconClass} />
@@ -94,6 +99,14 @@ function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string
     const pattern = (input.pattern || input.glob || '') as string
     if (pattern) {
       return pattern
+    }
+  }
+
+  // Show description for task
+  if (lowerName === 'task') {
+    const description = (input.description || '') as string
+    if (description) {
+      return description
     }
   }
 
@@ -160,6 +173,8 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   glob: GrepToolView,
   Bash: BashToolView,
   bash: BashToolView,
+  Task: TaskToolView,
+  task: TaskToolView,
 }
 
 /** Resolve a tool name to its rich renderer, falling back to TodoToolView */
@@ -174,6 +189,7 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (lower.includes('bash') || lower.includes('shell') || lower.includes('exec') || lower.includes('command')) return BashToolView
   if (lower.includes('grep') || lower.includes('search') || lower.includes('rg')) return GrepToolView
   if (lower.includes('glob') || lower.includes('find') || lower.includes('list')) return GrepToolView
+  if (lower === 'task') return TaskToolView
   // Fallback
   return TodoToolView
 }
@@ -294,6 +310,24 @@ function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string
             {fileCount} {fileCount === 1 ? 'file' : 'files'}
           </span>
         )}
+      </>
+    )
+  }
+
+  // Task
+  if (lowerName === 'task') {
+    const description = (input.description || '') as string
+    const subagentType = (input.subagent_type || input.subagentType || '') as string
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0"><Bot className="h-3.5 w-3.5" /></span>
+        <span className="font-medium text-foreground shrink-0">Task</span>
+        {subagentType && (
+          <span className="text-[10px] bg-blue-500/15 text-blue-500 dark:text-blue-400 rounded px-1 py-0.5 font-medium shrink-0">
+            {subagentType}
+          </span>
+        )}
+        <span className="text-muted-foreground truncate min-w-0">{description}</span>
       </>
     )
   }

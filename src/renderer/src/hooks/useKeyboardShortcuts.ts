@@ -82,13 +82,24 @@ function getShortcutHandlers(
       binding: getEffectiveBinding('session:new'),
       allowInInput: false,
       handler: () => {
-        const { activeWorktreeId } = useSessionStore.getState()
-        const { selectedProjectId } = useProjectStore.getState()
-        if (!activeWorktreeId || !selectedProjectId) {
+        const { selectedWorktreeId, worktreesByProject } = useWorktreeStore.getState()
+        if (!selectedWorktreeId) {
           toast.error('Please select a worktree first')
           return
         }
-        useSessionStore.getState().createSession(activeWorktreeId, selectedProjectId).then((result) => {
+        // Derive project ID from the worktree, same as the "+" button does
+        let projectId: string | null = null
+        for (const [pid, worktrees] of worktreesByProject) {
+          if (worktrees.find((w) => w.id === selectedWorktreeId)) {
+            projectId = pid
+            break
+          }
+        }
+        if (!projectId) {
+          toast.error('Please select a worktree first')
+          return
+        }
+        useSessionStore.getState().createSession(selectedWorktreeId, projectId).then((result) => {
           if (result.success) {
             toast.success('New session created')
           } else {

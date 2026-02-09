@@ -376,12 +376,15 @@ export class GitService {
 
       // Process created/added files (not yet tracked, staged)
       for (const file of status.created) {
-        files.push({
-          path: join(this.repoPath, file),
-          relativePath: file,
-          status: 'A',
-          staged: true
-        })
+        const existing = files.find(f => f.relativePath === file)
+        if (!existing) {
+          files.push({
+            path: join(this.repoPath, file),
+            relativePath: file,
+            status: 'A',
+            staged: true
+          })
+        }
       }
 
       // Process deleted files

@@ -3,6 +3,9 @@ import { ChevronDown } from 'lucide-react'
 import { ToolCard, type ToolUseInfo } from './ToolCard'
 import { StreamingCursor } from './StreamingCursor'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { SubtaskCard } from './SubtaskCard'
+import { ReasoningBlock } from './ReasoningBlock'
+import { CompactionPill } from './CompactionPill'
 import { cn } from '@/lib/utils'
 import type { StreamingPart } from './SessionView'
 
@@ -197,6 +200,30 @@ function renderParts(
           )
         })
       }
+      continue
+    }
+
+    if (part.type === 'subtask' && part.subtask) {
+      renderedParts.push(<SubtaskCard key={`subtask-${index}`} subtask={part.subtask} />)
+      index += 1
+      continue
+    }
+
+    if (part.type === 'reasoning' && part.reasoning) {
+      renderedParts.push(<ReasoningBlock key={`reasoning-${index}`} text={part.reasoning} />)
+      index += 1
+      continue
+    }
+
+    if (part.type === 'compaction') {
+      renderedParts.push(<CompactionPill key={`compaction-${index}`} auto={part.compactionAuto ?? false} />)
+      index += 1
+      continue
+    }
+
+    // step_start and step_finish are boundary markers — skip rendering
+    if (part.type === 'step_start' || part.type === 'step_finish') {
+      index += 1
       continue
     }
 

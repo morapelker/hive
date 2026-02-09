@@ -222,7 +222,7 @@ describe('Session 7: Slash Commands', () => {
       expect(items.length).toBe(8)
     })
 
-    test('No commands matching filter hides popover', () => {
+    test('No commands matching filter shows empty state', () => {
       render(
         <SlashCommandPopover
           commands={mockCommands}
@@ -233,8 +233,9 @@ describe('Session 7: Slash Commands', () => {
         />
       )
 
-      // No matches — popover should not render
-      expect(screen.queryByTestId('slash-command-popover')).toBeNull()
+      // No matches — popover shows "No matching commands" message
+      expect(screen.getByTestId('slash-command-popover')).toBeTruthy()
+      expect(screen.getByText('No matching commands')).toBeTruthy()
     })
 
     test('Selection resets when filter changes', () => {
