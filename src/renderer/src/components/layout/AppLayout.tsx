@@ -8,6 +8,7 @@ import { CommandPalette } from '@/components/command-palette'
 import { SettingsModal } from '@/components/settings'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
+import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 
 interface AppLayoutProps {
@@ -19,6 +20,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useKeyboardShortcuts()
   // Global listener for background session events (AI finishes while viewing another project)
   useOpenCodeGlobalListener()
+  // Navigate to session when native notification is clicked
+  useNotificationNavigation()
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground" data-testid="app-layout">

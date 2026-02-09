@@ -219,7 +219,23 @@ const systemOps = {
 
   // Open a path in an external app (Cursor, Ghostty) or copy to clipboard
   openInApp: (appName: string, path: string): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('system:openInApp', appName, path)
+    ipcRenderer.invoke('system:openInApp', appName, path),
+
+  // Subscribe to notification navigation events (from native notifications)
+  onNotificationNavigate: (
+    callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { projectId: string; worktreeId: string; sessionId: string }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('notification:navigate', handler)
+    return () => {
+      ipcRenderer.removeListener('notification:navigate', handler)
+    }
+  }
 }
 
 // Response logging operations API (only functional when --log is active)

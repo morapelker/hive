@@ -244,6 +244,9 @@ declare global {
       }>
       isLogMode: () => Promise<boolean>
       openInApp: (appName: string, path: string) => Promise<{ success: boolean; error?: string }>
+      onNotificationNavigate: (
+        callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
+      ) => () => void
     }
     loggingOps: {
       createResponseLog: (sessionId: string) => Promise<string>

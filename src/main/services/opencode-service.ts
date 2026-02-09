@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
+import { notificationService } from './notification-service'
 import { getDatabase } from '../db'
 
 const log = createLogger({ component: 'OpenCodeService' })
@@ -824,9 +825,10 @@ class OpenCodeService {
       return
     }
 
-    // Log session lifecycle events
+    // Log session lifecycle events and trigger notification when unfocused
     if (eventType === 'session.idle') {
       log.info('Forwarding session.idle to renderer', { opencodeSessionId: sessionId, hiveSessionId })
+      this.maybeNotifySessionComplete(hiveSessionId)
     }
 
     // Persist stream events in the main process so message history survives renderer unmount/switching.
@@ -964,6 +966,41 @@ class OpenCodeService {
         this.namingCallbacks.delete(tempSessionId)
       }
       this.unsubscribeFromDirectory(instance, worktreePath)
+    }
+  }
+
+  /**
+   * Show a native notification when a session completes while the app window is unfocused
+   */
+  private maybeNotifySessionComplete(hiveSessionId: string): void {
+    try {
+      // Only notify when the window is not focused
+      if (!this.mainWindow || this.mainWindow.isDestroyed() || this.mainWindow.isFocused()) {
+        return
+      }
+
+      const db = getDatabase()
+      const session = db.getSession(hiveSessionId)
+      if (!session) {
+        log.warn('Cannot notify: session not found', { hiveSessionId })
+        return
+      }
+
+      const project = db.getProject(session.project_id)
+      if (!project) {
+        log.warn('Cannot notify: project not found', { projectId: session.project_id })
+        return
+      }
+
+      notificationService.showSessionComplete({
+        projectName: project.name,
+        sessionName: session.name || 'Untitled',
+        projectId: session.project_id,
+        worktreeId: session.worktree_id || '',
+        sessionId: hiveSessionId
+      })
+    } catch (error) {
+      log.warn('Failed to show session completion notification', { hiveSessionId, error })
     }
   }
 

@@ -7,6 +7,7 @@ import { getDatabase, closeDatabase } from './db'
 import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers, registerGitFileHandlers, registerSettingsHandlers, registerFileHandlers, registerScriptHandlers, cleanupScripts } from './ipc'
 import { createLogger, getLogDir } from './services/logger'
 import { createResponseLog, appendResponseLog } from './services/response-logger'
+import { notificationService } from './services/notification-service'
 
 const log = createLogger({ component: 'Main' })
 
@@ -230,6 +231,9 @@ app.whenReady().then(() => {
     registerGitFileHandlers(mainWindow)
     log.info('Registering Script handlers')
     registerScriptHandlers(mainWindow)
+
+    // Set up notification service with main window reference
+    notificationService.setMainWindow(mainWindow)
   }
 
   app.on('activate', function () {
