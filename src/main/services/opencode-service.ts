@@ -1,4 +1,5 @@
 import type { BrowserWindow } from 'electron'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createLogger } from './logger'
 import { notificationService } from './notification-service'
 import { getDatabase } from '../db'
@@ -49,10 +50,84 @@ interface OpenCodeInstance {
 
 // Dynamic import helper for ESM SDK
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function loadOpenCodeSDK(): Promise<{ createOpencode: any }> {
+async function loadOpenCodeSDK(): Promise<{ createOpencode: any; createOpencodeClient: any }> {
   // Dynamic import for ESM module
   const sdk = await import('@opencode-ai/sdk')
   return sdk
+}
+
+/**
+ * Spawn `opencode serve` without forcing a port, letting it auto-assign one.
+ * Parses the listening URL from stdout.
+ */
+function spawnOpenCodeServer(
+  options: { hostname?: string; timeout?: number; signal?: AbortSignal } = {}
+): Promise<{ url: string; close(): void }> {
+  const hostname = options.hostname ?? '127.0.0.1'
+  const timeout = options.timeout ?? 10000
+
+  const args = ['serve', `--hostname=${hostname}`]
+  const proc: ChildProcess = spawn('opencode', args, {
+    signal: options.signal,
+    env: { ...process.env }
+  })
+
+  const url = new Promise<string>((resolve, reject) => {
+    const id = setTimeout(() => {
+      reject(new Error(`Timeout waiting for opencode server to start after ${timeout}ms`))
+    }, timeout)
+
+    let output = ''
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      output += chunk.toString()
+      const lines = output.split('\n')
+      for (const line of lines) {
+        if (line.startsWith('opencode server listening')) {
+          const match = line.match(/on\s+(https?:\/\/[^\s]+)/)
+          if (!match) {
+            clearTimeout(id)
+            reject(new Error(`Failed to parse server url from output: ${line}`))
+            return
+          }
+          clearTimeout(id)
+          resolve(match[1])
+          return
+        }
+      }
+    })
+
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      output += chunk.toString()
+    })
+
+    proc.on('exit', (code) => {
+      clearTimeout(id)
+      let msg = `opencode server exited with code ${code}`
+      if (output.trim()) {
+        msg += `\nServer output: ${output}`
+      }
+      reject(new Error(msg))
+    })
+
+    proc.on('error', (error) => {
+      clearTimeout(id)
+      reject(error)
+    })
+
+    if (options.signal) {
+      options.signal.addEventListener('abort', () => {
+        clearTimeout(id)
+        reject(new Error('Aborted'))
+      })
+    }
+  })
+
+  return url.then((resolvedUrl) => ({
+    url: resolvedUrl,
+    close() {
+      proc.kill()
+    }
+  }))
 }
 
 // Callback for collecting session naming responses via the existing event stream
@@ -175,19 +250,24 @@ class OpenCodeService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private extractEventMessageRole(eventData: any): string | undefined {
-    return eventData?.message?.role ??
+    return (
+      eventData?.message?.role ??
       eventData?.info?.role ??
       eventData?.part?.role ??
       eventData?.role ??
       eventData?.properties?.message?.role ??
       eventData?.properties?.info?.role ??
       eventData?.properties?.part?.role ??
-      eventData?.properties?.role
+      eventData?.properties?.role ??
+      eventData?.metadata?.role ??
+      eventData?.content?.role
+    )
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private extractEventMessageId(eventData: any): string | null {
-    const messageId = eventData?.message?.id ??
+    const messageId =
+      eventData?.message?.id ??
       eventData?.info?.messageID ??
       eventData?.info?.messageId ??
       eventData?.info?.id ??
@@ -217,9 +297,8 @@ class OpenCodeService {
     if (existingIndex >= 0) {
       // Preserve text accumulation when SDK sends delta updates for the same part.
       if (part?.type === 'text' && typeof delta === 'string' && delta.length > 0) {
-        const previousText = typeof nextParts[existingIndex]?.text === 'string'
-          ? nextParts[existingIndex].text
-          : ''
+        const previousText =
+          typeof nextParts[existingIndex]?.text === 'string' ? nextParts[existingIndex].text : ''
         nextParts[existingIndex] = {
           ...part,
           text: previousText + delta
@@ -231,7 +310,12 @@ class OpenCodeService {
     }
 
     // New part in timeline.
-    if (part?.type === 'text' && typeof delta === 'string' && delta.length > 0 && typeof part?.text !== 'string') {
+    if (
+      part?.type === 'text' &&
+      typeof delta === 'string' &&
+      delta.length > 0 &&
+      typeof part?.text !== 'string'
+    ) {
       nextParts.push({ ...part, text: delta })
     } else {
       nextParts.push(part)
@@ -249,6 +333,8 @@ class OpenCodeService {
 
       if (eventType === 'message.part.updated') {
         const part = eventData?.part
+        // Skip only explicit user echoes; the SDK often omits the role
+        // field on streaming payloads, so undefined role == assistant.
         if (role === 'user') return
         if (!part || !messageId) return
 
@@ -279,9 +365,9 @@ class OpenCodeService {
 
       if (eventType === 'message.updated') {
         const info = eventData?.info
+        // Skip only explicit user echoes (see message.part.updated above).
         if (role === 'user') return
         if (!messageId) return
-        if (role && role !== 'assistant') return
 
         const existing = db.getSessionMessageByOpenCodeId(hiveSessionId, messageId)
         const existingParts = this.parseJsonArray(existing?.opencode_parts_json ?? null)
@@ -331,11 +417,15 @@ class OpenCodeService {
 
     this.pendingConnection = (async (): Promise<OpenCodeInstance> => {
       try {
-        // Load SDK dynamically
-        const { createOpencode } = await loadOpenCodeSDK()
+        // Load SDK dynamically (we only need the client, we spawn the server ourselves)
+        const { createOpencodeClient } = await loadOpenCodeSDK()
 
-        // Start OpenCode server (it will use the opencode config from ~/opencode/)
-        const { client, server } = await createOpencode()
+        // Spawn opencode serve without --port so it auto-assigns an available port
+        const server = await spawnOpenCodeServer()
+        log.info('OpenCode server started', { url: server.url })
+
+        // Create the SDK client pointing at the auto-assigned URL
+        const client = createOpencodeClient({ baseUrl: server.url })
 
         const instance: OpenCodeInstance = {
           client,
@@ -365,7 +455,10 @@ class OpenCodeService {
     if (instance.directorySubscriptions.has(directory)) {
       const sub = instance.directorySubscriptions.get(directory)!
       sub.sessionCount++
-      log.info('Incremented subscription count for directory', { directory, count: sub.sessionCount })
+      log.info('Incremented subscription count for directory', {
+        directory,
+        count: sub.sessionCount
+      })
       return
     }
 
@@ -475,7 +568,11 @@ class OpenCodeService {
     opencodeSessionId: string,
     hiveSessionId: string
   ): Promise<{ success: boolean }> {
-    log.info('Attempting to reconnect to OpenCode session', { worktreePath, opencodeSessionId, hiveSessionId })
+    log.info('Attempting to reconnect to OpenCode session', {
+      worktreePath,
+      opencodeSessionId,
+      hiveSessionId
+    })
 
     try {
       const instance = await this.getOrCreateInstance()
@@ -486,7 +583,10 @@ class OpenCodeService {
       // just update the Hive session mapping. Skip subscription to avoid count leak.
       if (instance.sessionMap.has(scopedKey)) {
         instance.sessionMap.set(scopedKey, hiveSessionId)
-        log.info('Session already registered, updated mapping', { opencodeSessionId, hiveSessionId })
+        log.info('Session already registered, updated mapping', {
+          opencodeSessionId,
+          hiveSessionId
+        })
         return { success: true }
       }
 
@@ -502,7 +602,10 @@ class OpenCodeService {
         // Subscribe to events for this directory
         this.subscribeToDirectory(instance, worktreePath)
 
-        log.info('Successfully reconnected to OpenCode session', { opencodeSessionId, hiveSessionId })
+        log.info('Successfully reconnected to OpenCode session', {
+          opencodeSessionId,
+          hiveSessionId
+        })
         return { success: true }
       }
     } catch (error) {
@@ -535,7 +638,14 @@ class OpenCodeService {
   /**
    * Get model info (name, context limit) for a specific model
    */
-  async getModelInfo(_worktreePath: string, modelId: string): Promise<{ id: string; name: string; limit: { context: number; input?: number; output: number } } | null> {
+  async getModelInfo(
+    _worktreePath: string,
+    modelId: string
+  ): Promise<{
+    id: string
+    name: string
+    limit: { context: number; input?: number; output: number }
+  } | null> {
     log.info('Getting model info', { modelId })
 
     const instance = await this.getOrCreateInstance()
@@ -609,13 +719,23 @@ class OpenCodeService {
   async prompt(
     worktreePath: string,
     opencodeSessionId: string,
-    messageOrParts: string | Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>
+    messageOrParts:
+      | string
+      | Array<
+          | { type: 'text'; text: string }
+          | { type: 'file'; mime: string; url: string; filename?: string }
+        >
   ): Promise<void> {
-    const parts = typeof messageOrParts === 'string'
-      ? [{ type: 'text' as const, text: messageOrParts }]
-      : messageOrParts
+    const parts =
+      typeof messageOrParts === 'string'
+        ? [{ type: 'text' as const, text: messageOrParts }]
+        : messageOrParts
 
-    log.info('Sending prompt to OpenCode', { worktreePath, opencodeSessionId, partsCount: parts.length })
+    log.info('Sending prompt to OpenCode', {
+      worktreePath,
+      opencodeSessionId,
+      partsCount: parts.length
+    })
 
     if (!this.instance) {
       throw new Error('No OpenCode instance available')
@@ -798,7 +918,10 @@ class OpenCodeService {
           const delta = event.properties?.delta
           if (delta) {
             namingCb.collected += delta
-            log.info('Session naming: received text delta', { deltaLength: delta.length, collectedLength: namingCb.collected.length })
+            log.info('Session naming: received text delta', {
+              deltaLength: delta.length,
+              collectedLength: namingCb.collected.length
+            })
           } else if (part.text) {
             namingCb.collected = part.text
             log.info('Session naming: received full text', { textLength: part.text.length })
@@ -837,7 +960,10 @@ class OpenCodeService {
 
     // Log session lifecycle events and trigger notification when unfocused
     if (eventType === 'session.idle') {
-      log.info('Forwarding session.idle to renderer', { opencodeSessionId: sessionId, hiveSessionId })
+      log.info('Forwarding session.idle to renderer', {
+        opencodeSessionId: sessionId,
+        hiveSessionId
+      })
       this.maybeNotifySessionComplete(hiveSessionId)
     }
 
@@ -938,7 +1064,10 @@ class OpenCodeService {
       const name = await new Promise<string>((resolve) => {
         const timeoutId = setTimeout(() => {
           const cb = this.namingCallbacks.get(tempSessionId!)
-          log.warn('Session naming: timed out', { hasReceivedText: cb?.hasReceivedText, collectedLength: cb?.collected.length })
+          log.warn('Session naming: timed out', {
+            hasReceivedText: cb?.hasReceivedText,
+            collectedLength: cb?.collected.length
+          })
           this.namingCallbacks.delete(tempSessionId!)
           resolve('')
         }, 10000)
@@ -951,18 +1080,20 @@ class OpenCodeService {
         })
 
         // Send the naming prompt via OpenCode using Haiku
-        instance.client.session.promptAsync({
-          path: { id: tempSessionId },
-          query: { directory: worktreePath },
-          body: {
-            model: { providerID: 'anthropic', modelID: 'claude-haiku-4-5-20251001' },
-            parts: [{ type: 'text', text: namingPrompt }]
-          }
-        }).catch(() => {
-          clearTimeout(timeoutId)
-          this.namingCallbacks.delete(tempSessionId!)
-          resolve('')
-        })
+        instance.client.session
+          .promptAsync({
+            path: { id: tempSessionId },
+            query: { directory: worktreePath },
+            body: {
+              model: { providerID: 'anthropic', modelID: 'claude-haiku-4-5-20251001' },
+              parts: [{ type: 'text', text: namingPrompt }]
+            }
+          })
+          .catch(() => {
+            clearTimeout(timeoutId)
+            this.namingCallbacks.delete(tempSessionId!)
+            resolve('')
+          })
       })
 
       log.info('Session naming: complete', { name, nameLength: name.length })
@@ -1017,7 +1148,9 @@ class OpenCodeService {
   /**
    * List available slash commands from the OpenCode SDK
    */
-  async listCommands(worktreePath: string): Promise<Array<{ name: string; description?: string; template: string }>> {
+  async listCommands(
+    worktreePath: string
+  ): Promise<Array<{ name: string; description?: string; template: string }>> {
     const instance = await this.getOrCreateInstance()
 
     try {

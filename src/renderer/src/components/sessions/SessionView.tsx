@@ -53,7 +53,11 @@ export interface StreamingPart {
   /** Step start boundary */
   stepStart?: { snapshot?: string }
   /** Step finish boundary */
-  stepFinish?: { reason: string; cost: number; tokens: { input: number; output: number; reasoning: number } }
+  stepFinish?: {
+    reason: string
+    cost: number
+    tokens: { input: number; output: number; reasoning: number }
+  }
   /** Reasoning/thinking content */
   reasoning?: string
   /** Whether compaction was automatic */
@@ -206,19 +210,26 @@ function mapStoredPartsToStreamingParts(rawParts: unknown[]): StreamingPart[] {
     }
 
     if (partType === 'subtask') {
-      const childParts = Array.isArray(part.parts) ? mapStoredPartsToStreamingParts(part.parts as unknown[]) : []
-      return [{
-        type: 'subtask',
-        subtask: {
-          id: asString(part.id) ?? `subtask-${index}`,
-          sessionID: asString(part.sessionID) ?? '',
-          prompt: asString(part.prompt) ?? '',
-          description: asString(part.description) ?? '',
-          agent: asString(part.agent) ?? 'unknown',
-          parts: childParts,
-          status: (part.status === 'completed' || part.status === 'error') ? part.status as 'completed' | 'error' : 'running'
+      const childParts = Array.isArray(part.parts)
+        ? mapStoredPartsToStreamingParts(part.parts as unknown[])
+        : []
+      return [
+        {
+          type: 'subtask',
+          subtask: {
+            id: asString(part.id) ?? `subtask-${index}`,
+            sessionID: asString(part.sessionID) ?? '',
+            prompt: asString(part.prompt) ?? '',
+            description: asString(part.description) ?? '',
+            agent: asString(part.agent) ?? 'unknown',
+            parts: childParts,
+            status:
+              part.status === 'completed' || part.status === 'error'
+                ? (part.status as 'completed' | 'error')
+                : 'running'
+          }
         }
-      }]
+      ]
     }
 
     if (partType === 'step-start' || partType === 'step_start') {
@@ -227,18 +238,20 @@ function mapStoredPartsToStreamingParts(rawParts: unknown[]): StreamingPart[] {
 
     if (partType === 'step-finish' || partType === 'step_finish') {
       const tokens = asRecord(part.tokens)
-      return [{
-        type: 'step_finish',
-        stepFinish: {
-          reason: asString(part.reason) ?? '',
-          cost: typeof part.cost === 'number' ? part.cost : 0,
-          tokens: {
-            input: typeof tokens?.input === 'number' ? tokens.input : 0,
-            output: typeof tokens?.output === 'number' ? tokens.output : 0,
-            reasoning: typeof tokens?.reasoning === 'number' ? tokens.reasoning : 0
+      return [
+        {
+          type: 'step_finish',
+          stepFinish: {
+            reason: asString(part.reason) ?? '',
+            cost: typeof part.cost === 'number' ? part.cost : 0,
+            tokens: {
+              input: typeof tokens?.input === 'number' ? tokens.input : 0,
+              output: typeof tokens?.output === 'number' ? tokens.output : 0,
+              reasoning: typeof tokens?.reasoning === 'number' ? tokens.reasoning : 0
+            }
           }
         }
-      }]
+      ]
     }
 
     if (partType === 'reasoning') {
@@ -277,7 +290,10 @@ function dbMessageToOpenCode(msg: DbMessage): OpenCodeMessage {
 // Loading state component
 function LoadingState(): React.JSX.Element {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-4" data-testid="loading-state">
+    <div
+      className="flex-1 flex flex-col items-center justify-center gap-4"
+      data-testid="loading-state"
+    >
       <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       <div className="text-center">
         <p className="text-sm font-medium">Connecting to session...</p>
@@ -295,7 +311,10 @@ interface ErrorStateProps {
 
 function ErrorState({ message, onRetry }: ErrorStateProps): React.JSX.Element {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-4" data-testid="error-state">
+    <div
+      className="flex-1 flex flex-col items-center justify-center gap-4"
+      data-testid="error-state"
+    >
       <div className="h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center">
         <AlertCircle className="h-6 w-6 text-destructive" />
       </div>
@@ -320,7 +339,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [isSending, setIsSending] = useState(false)
   const [queuedCount, setQueuedCount] = useState(0)
   const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description?: string; template: string }>>([])
+  const [slashCommands, setSlashCommands] = useState<
+    Array<{ name: string; description?: string; template: string }>
+  >([])
   const [showSlashCommands, setShowSlashCommands] = useState(false)
 
   // Mode state for input border color
@@ -364,7 +385,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Extract message role from OpenCode stream payloads across known shapes
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getEventMessageRole = useCallback((data: any): string | undefined => {
-    return data?.message?.role ??
+    return (
+      data?.message?.role ??
       data?.info?.role ??
       data?.part?.role ??
       data?.role ??
@@ -372,6 +394,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       data?.properties?.info?.role ??
       data?.properties?.part?.role ??
       data?.properties?.role
+    )
   }, [])
 
   // Extract message ID from OpenCode stream payloads across known shapes
@@ -431,11 +454,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Check if response logging is enabled on mount
   useEffect(() => {
-    window.systemOps.isLogMode().then((enabled) => {
-      isLogModeRef.current = enabled
-    }).catch(() => {
-      // Ignore — logging not available
-    })
+    window.systemOps
+      .isLogMode()
+      .then((enabled) => {
+        isLogModeRef.current = enabled
+      })
+      .catch(() => {
+        // Ignore — logging not available
+      })
   }, [])
 
   // Flush streaming refs to state (used by throttle and immediate flush)
@@ -464,79 +490,88 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }, [flushStreamingState])
 
   // Helper to update streaming parts ref only (no state update — caller decides flush strategy)
-  const updateStreamingPartsRef = useCallback((updater: (parts: StreamingPart[]) => StreamingPart[]) => {
-    streamingPartsRef.current = updater(streamingPartsRef.current)
-  }, [])
+  const updateStreamingPartsRef = useCallback(
+    (updater: (parts: StreamingPart[]) => StreamingPart[]) => {
+      streamingPartsRef.current = updater(streamingPartsRef.current)
+    },
+    []
+  )
 
   // Helper: ensure the last part is a text part, or add one (throttled)
-  const appendTextDelta = useCallback((delta: string) => {
-    updateStreamingPartsRef((parts) => {
-      const lastPart = parts[parts.length - 1]
-      if (lastPart && lastPart.type === 'text') {
-        // Append to existing text part
-        return [
-          ...parts.slice(0, -1),
-          { ...lastPart, text: (lastPart.text || '') + delta }
-        ]
-      }
-      // Create new text part
-      return [...parts, { type: 'text' as const, text: delta }]
-    })
-    // Also update legacy streamingContent for backward compat
-    streamingContentRef.current += delta
-    // Throttled: batch text updates at ~100ms intervals
-    scheduleFlush()
-  }, [updateStreamingPartsRef, scheduleFlush])
+  const appendTextDelta = useCallback(
+    (delta: string) => {
+      updateStreamingPartsRef((parts) => {
+        const lastPart = parts[parts.length - 1]
+        if (lastPart && lastPart.type === 'text') {
+          // Append to existing text part
+          return [...parts.slice(0, -1), { ...lastPart, text: (lastPart.text || '') + delta }]
+        }
+        // Create new text part
+        return [...parts, { type: 'text' as const, text: delta }]
+      })
+      // Also update legacy streamingContent for backward compat
+      streamingContentRef.current += delta
+      // Throttled: batch text updates at ~100ms intervals
+      scheduleFlush()
+    },
+    [updateStreamingPartsRef, scheduleFlush]
+  )
 
   // Helper: set full text on the last text part (throttled)
-  const setTextContent = useCallback((text: string) => {
-    updateStreamingPartsRef((parts) => {
-      const lastPart = parts[parts.length - 1]
-      if (lastPart && lastPart.type === 'text') {
-        return [
-          ...parts.slice(0, -1),
-          { ...lastPart, text }
-        ]
-      }
-      return [...parts, { type: 'text' as const, text }]
-    })
-    streamingContentRef.current = text
-    // Throttled: batch text updates at ~100ms intervals
-    scheduleFlush()
-  }, [updateStreamingPartsRef, scheduleFlush])
+  const setTextContent = useCallback(
+    (text: string) => {
+      updateStreamingPartsRef((parts) => {
+        const lastPart = parts[parts.length - 1]
+        if (lastPart && lastPart.type === 'text') {
+          return [...parts.slice(0, -1), { ...lastPart, text }]
+        }
+        return [...parts, { type: 'text' as const, text }]
+      })
+      streamingContentRef.current = text
+      // Throttled: batch text updates at ~100ms intervals
+      scheduleFlush()
+    },
+    [updateStreamingPartsRef, scheduleFlush]
+  )
 
   // Helper: add or update a tool use part (immediate flush — tools should appear instantly)
-  const upsertToolUse = useCallback((toolId: string, update: Partial<ToolUseInfo> & { name?: string; input?: Record<string, unknown> }) => {
-    updateStreamingPartsRef((parts) => {
-      const existingIndex = parts.findIndex(
-        (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
-      )
+  const upsertToolUse = useCallback(
+    (
+      toolId: string,
+      update: Partial<ToolUseInfo> & { name?: string; input?: Record<string, unknown> }
+    ) => {
+      updateStreamingPartsRef((parts) => {
+        const existingIndex = parts.findIndex(
+          (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
+        )
 
-      if (existingIndex >= 0) {
-        // Update existing
-        const existing = parts[existingIndex]
-        const updatedParts = [...parts]
-        updatedParts[existingIndex] = {
-          ...existing,
-          toolUse: { ...existing.toolUse!, ...update }
+        if (existingIndex >= 0) {
+          // Update existing
+          const existing = parts[existingIndex]
+          const updatedParts = [...parts]
+          updatedParts[existingIndex] = {
+            ...existing,
+            toolUse: { ...existing.toolUse!, ...update }
+          }
+          return updatedParts
         }
-        return updatedParts
-      }
 
-      // Add new tool use part
-      const newToolUse: ToolUseInfo = {
-        id: toolId,
-        name: update.name || 'Unknown',
-        input: update.input || {},
-        status: update.status || ('pending' as ToolStatus),
-        startTime: update.startTime || Date.now(),
-        ...update
-      }
-      return [...parts, { type: 'tool_use' as const, toolUse: newToolUse }]
-    })
-    // Immediate flush for tool updates — tool cards should appear instantly
-    immediateFlush()
-  }, [updateStreamingPartsRef, immediateFlush])
+        // Add new tool use part
+        const newToolUse: ToolUseInfo = {
+          id: toolId,
+          name: update.name || 'Unknown',
+          input: update.input || {},
+          status: update.status || ('pending' as ToolStatus),
+          startTime: update.startTime || Date.now(),
+          ...update
+        }
+        return [...parts, { type: 'tool_use' as const, toolUse: newToolUse }]
+      })
+      // Immediate flush for tool updates — tool cards should appear instantly
+      immediateFlush()
+    },
+    [updateStreamingPartsRef, immediateFlush]
+  )
 
   // Reset streaming state
   const resetStreamingState = useCallback(() => {
@@ -583,8 +618,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 input: typeof tokens.input === 'number' ? tokens.input : 0,
                 output: typeof tokens.output === 'number' ? tokens.output : 0,
                 reasoning: typeof tokens.reasoning === 'number' ? tokens.reasoning : 0,
-                cacheRead: typeof tokens.cacheRead === 'number' ? tokens.cacheRead : (typeof tokens.cache_read === 'number' ? tokens.cache_read : (typeof tokens.cache?.read === 'number' ? tokens.cache.read : 0)),
-                cacheWrite: typeof tokens.cacheWrite === 'number' ? tokens.cacheWrite : (typeof tokens.cache_write === 'number' ? tokens.cache_write : (typeof tokens.cache?.write === 'number' ? tokens.cache.write : 0))
+                cacheRead:
+                  typeof tokens.cacheRead === 'number'
+                    ? tokens.cacheRead
+                    : typeof tokens.cache_read === 'number'
+                      ? tokens.cache_read
+                      : typeof tokens.cache?.read === 'number'
+                        ? tokens.cache.read
+                        : 0,
+                cacheWrite:
+                  typeof tokens.cacheWrite === 'number'
+                    ? tokens.cacheWrite
+                    : typeof tokens.cache_write === 'number'
+                      ? tokens.cache_write
+                      : typeof tokens.cache?.write === 'number'
+                        ? tokens.cache.write
+                        : 0
               })
             }
           } catch {
@@ -612,188 +661,230 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // This prevents a race condition where session.idle arrives during async
     // initialization (DB loads, reconnect) and is missed by both this handler
     // (not yet set up) and the global listener (which skips the active session).
-    const unsubscribe = window.opencodeOps?.onStream ? window.opencodeOps.onStream((event) => {
-      // Only handle events for this session
-      if (event.sessionId !== sessionId) return
+    const unsubscribe = window.opencodeOps?.onStream
+      ? window.opencodeOps.onStream((event) => {
+          // Only handle events for this session
+          if (event.sessionId !== sessionId) return
 
-      // Log event if response logging is active
-      if (isLogModeRef.current && logFilePathRef.current) {
-        try {
+          // Log event if response logging is active
+          if (isLogModeRef.current && logFilePathRef.current) {
+            try {
+              if (event.type === 'message.part.updated') {
+                window.loggingOps.appendResponseLog(logFilePathRef.current, {
+                  type: 'part_updated',
+                  event: event.data
+                })
+              } else if (event.type === 'message.updated') {
+                window.loggingOps.appendResponseLog(logFilePathRef.current, {
+                  type: 'message_updated',
+                  event: event.data
+                })
+              } else if (event.type === 'session.idle') {
+                window.loggingOps.appendResponseLog(logFilePathRef.current, {
+                  type: 'session_idle'
+                })
+              }
+            } catch {
+              // Never let logging failures break the UI
+            }
+          }
+
+          // Handle different event types
+          const eventRole = getEventMessageRole(event.data)
+
           if (event.type === 'message.part.updated') {
-            window.loggingOps.appendResponseLog(logFilePathRef.current, {
-              type: 'part_updated',
-              event: event.data
-            })
+            // Skip user-message echoes; user messages are already rendered locally.
+            if (eventRole === 'user') return
+
+            const part = event.data?.part
+            if (!part) return
+
+            // New stream content means we're processing a new assistant response.
+            if (
+              streamingPartsRef.current.length === 0 &&
+              streamingContentRef.current.length === 0
+            ) {
+              hasFinalizedCurrentResponseRef.current = false
+            }
+
+            if (part.type === 'text') {
+              // Update streaming text content with delta or full text
+              const delta = event.data?.delta
+              if (delta) {
+                appendTextDelta(delta)
+              } else if (part.text) {
+                setTextContent(part.text)
+              }
+              setIsStreaming(true)
+            } else if (part.type === 'tool') {
+              // Tool part from OpenCode SDK - has callID, tool (name), state
+              const toolId = part.callID || part.id || `tool-${Date.now()}`
+              const toolName = part.tool || 'Unknown'
+              const state = part.state || {}
+
+              const statusMap: Record<string, ToolStatus> = {
+                pending: 'pending',
+                running: 'running',
+                completed: 'success',
+                error: 'error'
+              }
+
+              upsertToolUse(toolId, {
+                name: toolName,
+                // Only include input when the SDK actually provides it, so we don't
+                // overwrite the initial input with {} on subsequent status updates.
+                ...(state.input ? { input: state.input } : {}),
+                status: statusMap[state.status] || 'running',
+                startTime: state.time?.start || Date.now(),
+                endTime: state.time?.end,
+                output: state.status === 'completed' ? state.output : undefined,
+                error: state.status === 'error' ? state.error : undefined
+              })
+              setIsStreaming(true)
+            } else if (part.type === 'subtask') {
+              updateStreamingPartsRef((parts) => [
+                ...parts,
+                {
+                  type: 'subtask',
+                  subtask: {
+                    id: part.id || `subtask-${Date.now()}`,
+                    sessionID: part.sessionID || '',
+                    prompt: part.prompt || '',
+                    description: part.description || '',
+                    agent: part.agent || 'unknown',
+                    parts: [],
+                    status: 'running'
+                  }
+                }
+              ])
+              immediateFlush()
+              setIsStreaming(true)
+            } else if (part.type === 'reasoning') {
+              updateStreamingPartsRef((parts) => {
+                const last = parts[parts.length - 1]
+                if (last?.type === 'reasoning') {
+                  return [
+                    ...parts.slice(0, -1),
+                    {
+                      ...last,
+                      reasoning: (last.reasoning || '') + (event.data?.delta || part.text || '')
+                    }
+                  ]
+                }
+                return [
+                  ...parts,
+                  { type: 'reasoning' as const, reasoning: event.data?.delta || part.text || '' }
+                ]
+              })
+              scheduleFlush()
+              setIsStreaming(true)
+            } else if (part.type === 'step-start') {
+              updateStreamingPartsRef((parts) => [
+                ...parts,
+                { type: 'step_start' as const, stepStart: { snapshot: part.snapshot } }
+              ])
+              immediateFlush()
+              setIsStreaming(true)
+            } else if (part.type === 'step-finish') {
+              updateStreamingPartsRef((parts) => [
+                ...parts,
+                {
+                  type: 'step_finish' as const,
+                  stepFinish: {
+                    reason: part.reason || '',
+                    cost: typeof part.cost === 'number' ? part.cost : 0,
+                    tokens: {
+                      input: typeof part.tokens?.input === 'number' ? part.tokens.input : 0,
+                      output: typeof part.tokens?.output === 'number' ? part.tokens.output : 0,
+                      reasoning:
+                        typeof part.tokens?.reasoning === 'number' ? part.tokens.reasoning : 0
+                    }
+                  }
+                }
+              ])
+              immediateFlush()
+              setIsStreaming(true)
+            } else if (part.type === 'compaction') {
+              updateStreamingPartsRef((parts) => [
+                ...parts,
+                { type: 'compaction' as const, compactionAuto: part.auto === true }
+              ])
+              immediateFlush()
+              setIsStreaming(true)
+            }
           } else if (event.type === 'message.updated') {
-            window.loggingOps.appendResponseLog(logFilePathRef.current, {
-              type: 'message_updated',
-              event: event.data
-            })
+            // Skip user-message echoes; user messages are already rendered locally.
+            if (eventRole === 'user') return
+
+            const info = event.data?.info
+            // Finalize when message is complete.  The role may be explicitly
+            // 'assistant' OR undefined (the SDK often omits role on
+            // message.updated payloads).  We already early-returned for
+            // user echoes above, so any remaining event is an assistant msg.
+            if (eventRole !== 'user' && info?.time?.completed) {
+              const messageId = getEventMessageId(event.data)
+
+              // Skip duplicate finalization events for the same message.
+              if (messageId && finalizedMessageIdsRef.current.has(messageId)) return
+              if (hasFinalizedCurrentResponseRef.current) return
+
+              if (messageId) {
+                finalizedMessageIdsRef.current.add(messageId)
+              }
+              hasFinalizedCurrentResponseRef.current = true
+
+              // Extract token usage from the completed message
+              const tokens = info?.tokens
+              if (tokens) {
+                useContextStore.getState().addMessageTokens(sessionId, {
+                  input: typeof tokens.input === 'number' ? tokens.input : 0,
+                  output: typeof tokens.output === 'number' ? tokens.output : 0,
+                  reasoning: typeof tokens.reasoning === 'number' ? tokens.reasoning : 0,
+                  cacheRead:
+                    typeof tokens.cacheRead === 'number'
+                      ? tokens.cacheRead
+                      : typeof tokens.cache_read === 'number'
+                        ? tokens.cache_read
+                        : typeof tokens.cache?.read === 'number'
+                          ? tokens.cache.read
+                          : 0,
+                  cacheWrite:
+                    typeof tokens.cacheWrite === 'number'
+                      ? tokens.cacheWrite
+                      : typeof tokens.cache_write === 'number'
+                        ? tokens.cache_write
+                        : typeof tokens.cache?.write === 'number'
+                          ? tokens.cache.write
+                          : 0
+                })
+              }
+
+              // Message complete — flush now and reload from DB (main process already persisted it).
+              immediateFlush()
+              void finalizeResponseFromDatabase()
+            }
           } else if (event.type === 'session.idle') {
-            window.loggingOps.appendResponseLog(logFilePathRef.current, {
-              type: 'session_idle'
-            })
-          }
-        } catch {
-          // Never let logging failures break the UI
-        }
-      }
+            // Session finished processing — flush any pending throttled updates
+            immediateFlush()
+            setIsSending(false)
+            setQueuedCount(0)
 
-      // Handle different event types
-      const eventRole = getEventMessageRole(event.data)
-
-      if (event.type === 'message.part.updated') {
-        // Skip user-message echoes; user messages are already rendered locally.
-        if (eventRole === 'user') return
-
-        const part = event.data?.part
-        if (!part) return
-
-        // New stream content means we're processing a new assistant response.
-        if (streamingPartsRef.current.length === 0 && streamingContentRef.current.length === 0) {
-          hasFinalizedCurrentResponseRef.current = false
-        }
-
-        if (part.type === 'text') {
-          // Update streaming text content with delta or full text
-          const delta = event.data?.delta
-          if (delta) {
-            appendTextDelta(delta)
-          } else if (part.text) {
-            setTextContent(part.text)
-          }
-          setIsStreaming(true)
-        } else if (part.type === 'tool') {
-          // Tool part from OpenCode SDK - has callID, tool (name), state
-          const toolId = part.callID || part.id || `tool-${Date.now()}`
-          const toolName = part.tool || 'Unknown'
-          const state = part.state || {}
-
-          const statusMap: Record<string, ToolStatus> = {
-            pending: 'pending',
-            running: 'running',
-            completed: 'success',
-            error: 'error'
-          }
-
-          upsertToolUse(toolId, {
-            name: toolName,
-            // Only include input when the SDK actually provides it, so we don't
-            // overwrite the initial input with {} on subsequent status updates.
-            ...(state.input ? { input: state.input } : {}),
-            status: statusMap[state.status] || 'running',
-            startTime: state.time?.start || Date.now(),
-            endTime: state.time?.end,
-            output: state.status === 'completed' ? state.output : undefined,
-            error: state.status === 'error' ? state.error : undefined
-          })
-          setIsStreaming(true)
-        } else if (part.type === 'subtask') {
-          updateStreamingPartsRef(parts => [
-            ...parts,
-            {
-              type: 'subtask',
-              subtask: {
-                id: part.id || `subtask-${Date.now()}`,
-                sessionID: part.sessionID || '',
-                prompt: part.prompt || '',
-                description: part.description || '',
-                agent: part.agent || 'unknown',
-                parts: [],
-                status: 'running'
-              }
+            // If message.updated already finalized this response, don't process again.
+            if (!hasFinalizedCurrentResponseRef.current) {
+              hasFinalizedCurrentResponseRef.current = true
+              void finalizeResponseFromDatabase()
             }
-          ])
-          immediateFlush()
-          setIsStreaming(true)
-        } else if (part.type === 'reasoning') {
-          updateStreamingPartsRef(parts => {
-            const last = parts[parts.length - 1]
-            if (last?.type === 'reasoning') {
-              return [...parts.slice(0, -1), { ...last, reasoning: (last.reasoning || '') + (event.data?.delta || part.text || '') }]
+            // Update worktree status: 'unread' if not viewing, clear if viewing
+            const activeId = useSessionStore.getState().activeSessionId
+            const statusStore = useWorktreeStatusStore.getState()
+            if (activeId === sessionId) {
+              statusStore.clearSessionStatus(sessionId)
+            } else {
+              statusStore.setSessionStatus(sessionId, 'unread')
             }
-            return [...parts, { type: 'reasoning' as const, reasoning: event.data?.delta || part.text || '' }]
-          })
-          scheduleFlush()
-          setIsStreaming(true)
-        } else if (part.type === 'step-start') {
-          updateStreamingPartsRef(parts => [...parts, { type: 'step_start' as const, stepStart: { snapshot: part.snapshot } }])
-          immediateFlush()
-          setIsStreaming(true)
-        } else if (part.type === 'step-finish') {
-          updateStreamingPartsRef(parts => [...parts, {
-            type: 'step_finish' as const,
-            stepFinish: {
-              reason: part.reason || '',
-              cost: typeof part.cost === 'number' ? part.cost : 0,
-              tokens: {
-                input: typeof part.tokens?.input === 'number' ? part.tokens.input : 0,
-                output: typeof part.tokens?.output === 'number' ? part.tokens.output : 0,
-                reasoning: typeof part.tokens?.reasoning === 'number' ? part.tokens.reasoning : 0
-              }
-            }
-          }])
-          immediateFlush()
-          setIsStreaming(true)
-        } else if (part.type === 'compaction') {
-          updateStreamingPartsRef(parts => [...parts, { type: 'compaction' as const, compactionAuto: part.auto === true }])
-          immediateFlush()
-          setIsStreaming(true)
-        }
-      } else if (event.type === 'message.updated') {
-        // Skip user-message echoes; user messages are already rendered locally.
-        if (eventRole === 'user') return
-
-        const info = event.data?.info
-        if (eventRole === 'assistant' && info?.time?.completed) {
-          const messageId = getEventMessageId(event.data)
-
-          // Skip duplicate finalization events for the same message.
-          if (messageId && finalizedMessageIdsRef.current.has(messageId)) return
-          if (hasFinalizedCurrentResponseRef.current) return
-
-          if (messageId) {
-            finalizedMessageIdsRef.current.add(messageId)
           }
-          hasFinalizedCurrentResponseRef.current = true
-
-          // Extract token usage from the completed message
-          const tokens = info?.tokens
-          if (tokens) {
-            useContextStore.getState().addMessageTokens(sessionId, {
-              input: typeof tokens.input === 'number' ? tokens.input : 0,
-              output: typeof tokens.output === 'number' ? tokens.output : 0,
-              reasoning: typeof tokens.reasoning === 'number' ? tokens.reasoning : 0,
-              cacheRead: typeof tokens.cacheRead === 'number' ? tokens.cacheRead : (typeof tokens.cache_read === 'number' ? tokens.cache_read : (typeof tokens.cache?.read === 'number' ? tokens.cache.read : 0)),
-              cacheWrite: typeof tokens.cacheWrite === 'number' ? tokens.cacheWrite : (typeof tokens.cache_write === 'number' ? tokens.cache_write : (typeof tokens.cache?.write === 'number' ? tokens.cache.write : 0))
-            })
-          }
-
-          // Message complete — flush now and reload from DB (main process already persisted it).
-          immediateFlush()
-          void finalizeResponseFromDatabase()
-        }
-      } else if (event.type === 'session.idle') {
-        // Session finished processing — flush any pending throttled updates
-        immediateFlush()
-        setIsSending(false)
-        setQueuedCount(0)
-
-        // If message.updated already finalized this response, don't process again.
-        if (!hasFinalizedCurrentResponseRef.current) {
-          hasFinalizedCurrentResponseRef.current = true
-          void finalizeResponseFromDatabase()
-        }
-        // Update worktree status: 'unread' if not viewing, clear if viewing
-        const activeId = useSessionStore.getState().activeSessionId
-        const statusStore = useWorktreeStatusStore.getState()
-        if (activeId === sessionId) {
-          statusStore.clearSessionStatus(sessionId)
-        } else {
-          statusStore.setSessionStatus(sessionId, 'unread')
-        }
-      }
-    }) : () => {}
+        })
+      : () => {}
 
     const initializeSession = async (): Promise<void> => {
       setViewState({ status: 'connecting' })
@@ -836,25 +927,32 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
         // Fetch model context limit (fire-and-forget)
         const fetchModelLimit = (path: string): void => {
-          const modelId = useSettingsStore.getState().selectedModel?.modelID ?? 'claude-opus-4-5-20251101'
-          window.opencodeOps.modelInfo(path, modelId).then((result) => {
-            if (result.success && result.model?.limit?.context) {
-              useContextStore.getState().setModelLimit(modelId, result.model.limit.context)
-            }
-          }).catch((err) => {
-            console.warn('Failed to fetch model info:', err)
-          })
+          const modelId =
+            useSettingsStore.getState().selectedModel?.modelID ?? 'claude-opus-4-5-20251101'
+          window.opencodeOps
+            .modelInfo(path, modelId)
+            .then((result) => {
+              if (result.success && result.model?.limit?.context) {
+                useContextStore.getState().setModelLimit(modelId, result.model.limit.context)
+              }
+            })
+            .catch((err) => {
+              console.warn('Failed to fetch model info:', err)
+            })
         }
 
         // Fetch slash commands (fire-and-forget)
         const fetchCommands = (path: string): void => {
-          window.opencodeOps.commands(path).then((result) => {
-            if (result.success && result.commands) {
-              setSlashCommands(result.commands)
-            }
-          }).catch((err) => {
-            console.warn('Failed to fetch slash commands:', err)
-          })
+          window.opencodeOps
+            .commands(path)
+            .then((result) => {
+              if (result.success && result.commands) {
+                setSlashCommands(result.commands)
+              }
+            })
+            .catch((err) => {
+              console.warn('Failed to fetch slash commands:', err)
+            })
         }
 
         // Send any pending initial message (e.g., from code review)
@@ -877,9 +975,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             hasTriggeredNamingRef.current = true
             // Apply mode prefix (e.g., plan mode for code reviews)
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-            const modePrefix = currentMode === 'plan'
-              ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
-              : ''
+            const modePrefix =
+              currentMode === 'plan'
+                ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
+                : ''
             // Send to OpenCode
             await window.opencodeOps.prompt(path, opcId, modePrefix + pendingMsg)
           } catch (err) {
@@ -1043,16 +1142,30 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       if (!hasTriggeredNamingRef.current && worktreePath) {
         hasTriggeredNamingRef.current = true
         console.log('[Session naming] Triggering name generation for session', sessionId)
-        window.opencodeOps.generateSessionName(trimmedValue, worktreePath).then((result) => {
-          console.log('[Session naming] Result:', { success: result.success, name: result.name, error: result.error })
-          if (result.success && result.name) {
-            useSessionStore.getState().updateSessionName(sessionId, result.name).then((updated) => {
-              console.log('[Session naming] Store update:', { sessionId, name: result.name, updated })
+        window.opencodeOps
+          .generateSessionName(trimmedValue, worktreePath)
+          .then((result) => {
+            console.log('[Session naming] Result:', {
+              success: result.success,
+              name: result.name,
+              error: result.error
             })
-          }
-        }).catch((err) => {
-          console.warn('[Session naming] Failed:', err)
-        })
+            if (result.success && result.name) {
+              useSessionStore
+                .getState()
+                .updateSessionName(sessionId, result.name)
+                .then((updated) => {
+                  console.log('[Session naming] Store update:', {
+                    sessionId,
+                    name: result.name,
+                    updated
+                  })
+                })
+            }
+          })
+          .catch((err) => {
+            console.warn('[Session naming] Failed:', err)
+          })
       }
 
       // Log user prompt if response logging is active
@@ -1073,12 +1186,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       if (worktreePath && opencodeSessionId) {
         // Prepend mode context to the prompt
         const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-        const modePrefix = currentMode === 'plan'
-          ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
-          : ''
+        const modePrefix =
+          currentMode === 'plan'
+            ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
+            : ''
         const promptMessage = modePrefix + trimmedValue
         const parts: MessagePart[] = [
-          ...attachments.map(a => ({ type: 'file' as const, mime: a.mime, url: a.dataUrl, filename: a.name })),
+          ...attachments.map((a) => ({
+            type: 'file' as const,
+            mime: a.mime,
+            url: a.dataUrl,
+            filename: a.name
+          })),
           { type: 'text' as const, text: promptMessage }
         ]
         setAttachments([])
@@ -1131,11 +1250,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Attachment handlers
   const handleAttach = useCallback((file: { name: string; mime: string; dataUrl: string }) => {
-    setAttachments(prev => [...prev, { id: crypto.randomUUID(), ...file }])
+    setAttachments((prev) => [...prev, { id: crypto.randomUUID(), ...file }])
   }, [])
 
   const handleRemoveAttachment = useCallback((id: string) => {
-    setAttachments(prev => prev.filter(a => a.id !== id))
+    setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
   // Slash command handlers
@@ -1158,26 +1277,29 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setShowSlashCommands(false)
   }, [])
 
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items
-    if (!items) return
-    for (const item of Array.from(items)) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault()
-        const file = item.getAsFile()
-        if (!file) continue
-        const reader = new FileReader()
-        reader.onload = () => {
-          handleAttach({
-            name: file.name || 'pasted-image.png',
-            mime: file.type,
-            dataUrl: reader.result as string
-          })
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault()
+          const file = item.getAsFile()
+          if (!file) continue
+          const reader = new FileReader()
+          reader.onload = () => {
+            handleAttach({
+              name: file.name || 'pasted-image.png',
+              mime: file.type,
+              dataUrl: reader.result as string
+            })
+          }
+          reader.readAsDataURL(file)
         }
-        reader.readAsDataURL(file)
       }
-    }
-  }, [handleAttach])
+    },
+    [handleAttach]
+  )
 
   // Global Tab key handler — toggles Build/Plan mode, blocks tab character insertion
   const toggleSessionMode = useSessionStore((state) => state.toggleSessionMode)
@@ -1242,11 +1364,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         ) : (
           <div className="py-4">
             {messages.map((message) => (
-              <MessageRenderer
-                key={message.id}
-                message={message}
-                cwd={worktreePath}
-              />
+              <MessageRenderer key={message.id} message={message} cwd={worktreePath} />
             ))}
             {/* Streaming message */}
             {hasStreamingContent && (
@@ -1284,7 +1402,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       </div>
 
       {/* Input area */}
-      <div className="p-4 bg-background" data-testid="input-area" role="form" aria-label="Message input">
+      <div
+        className="p-4 bg-background"
+        data-testid="input-area"
+        role="form"
+        aria-label="Message input"
+      >
         <div className="max-w-3xl mx-auto relative">
           {/* Slash command popover — outside overflow-hidden so it can render above */}
           <SlashCommandPopover
@@ -1294,68 +1417,72 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             onClose={handleSlashClose}
             visible={showSlashCommands}
           />
-        <div
-          className={cn(
-            'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
-            mode === 'build'
-              ? 'border-blue-500/50 bg-blue-500/5'
-              : 'border-violet-500/50 bg-violet-500/5'
-          )}
-        >
-          {/* Top row: mode toggle */}
-          <div className="px-3 pt-2.5 pb-1">
-            <ModeToggle sessionId={sessionId} />
-          </div>
-
-          {/* Attachment previews */}
-          <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
-
-          {/* Middle: textarea */}
-          <textarea
-            ref={textareaRef}
-            value={inputValue}
-            onChange={(e) => handleInputChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            placeholder="Type your message..."
-            aria-label="Message input"
+          <div
             className={cn(
-              'w-full resize-none bg-transparent px-3 py-2',
-              'text-sm placeholder:text-muted-foreground',
-              'focus:outline-none border-none',
-              'disabled:cursor-not-allowed disabled:opacity-50',
-              'min-h-[40px] max-h-[200px]'
+              'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
+              mode === 'build'
+                ? 'border-blue-500/50 bg-blue-500/5'
+                : 'border-violet-500/50 bg-violet-500/5'
             )}
-            rows={1}
-            data-testid="message-input"
-          />
-
-          {/* Queued message indicator */}
-          <QueuedIndicator count={queuedCount} />
-
-          {/* Bottom row: model selector + context indicator + hint text + send button */}
-          <div className="flex items-center justify-between px-3 pb-2.5">
-            <div className="flex items-center gap-2">
-              <ModelSelector />
-              <AttachmentButton onAttach={handleAttach} />
-              <ContextIndicator sessionId={sessionId} modelId={currentModelId} />
-              <span className="text-xs text-muted-foreground">
-                Enter to send, Shift+Enter for new line
-              </span>
+          >
+            {/* Top row: mode toggle */}
+            <div className="px-3 pt-2.5 pb-1">
+              <ModeToggle sessionId={sessionId} />
             </div>
-            <Button
-              onClick={handleSend}
-              disabled={!inputValue.trim()}
-              size="sm"
-              className="h-7 w-7 p-0"
-              aria-label={isStreaming ? 'Queue message' : 'Send message'}
-              title={isStreaming ? 'Queue message' : 'Send message'}
-              data-testid="send-button"
-            >
-              {isStreaming ? <ListPlus className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
-            </Button>
+
+            {/* Attachment previews */}
+            <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
+
+            {/* Middle: textarea */}
+            <textarea
+              ref={textareaRef}
+              value={inputValue}
+              onChange={(e) => handleInputChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder="Type your message..."
+              aria-label="Message input"
+              className={cn(
+                'w-full resize-none bg-transparent px-3 py-2',
+                'text-sm placeholder:text-muted-foreground',
+                'focus:outline-none border-none',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+                'min-h-[40px] max-h-[200px]'
+              )}
+              rows={1}
+              data-testid="message-input"
+            />
+
+            {/* Queued message indicator */}
+            <QueuedIndicator count={queuedCount} />
+
+            {/* Bottom row: model selector + context indicator + hint text + send button */}
+            <div className="flex items-center justify-between px-3 pb-2.5">
+              <div className="flex items-center gap-2">
+                <ModelSelector />
+                <AttachmentButton onAttach={handleAttach} />
+                <ContextIndicator sessionId={sessionId} modelId={currentModelId} />
+                <span className="text-xs text-muted-foreground">
+                  Enter to send, Shift+Enter for new line
+                </span>
+              </div>
+              <Button
+                onClick={handleSend}
+                disabled={!inputValue.trim()}
+                size="sm"
+                className="h-7 w-7 p-0"
+                aria-label={isStreaming ? 'Queue message' : 'Send message'}
+                title={isStreaming ? 'Queue message' : 'Send message'}
+                data-testid="send-button"
+              >
+                {isStreaming ? (
+                  <ListPlus className="h-3.5 w-3.5" />
+                ) : (
+                  <Send className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </div>
           </div>
-        </div>
         </div>
       </div>
     </div>
