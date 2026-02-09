@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
-import { ChevronRight, MoreHorizontal, Pencil, Trash2, Copy, ExternalLink, RefreshCw, Settings } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { ChevronRight, Plus, Loader2, Pencil, Trash2, Copy, ExternalLink, RefreshCw, Settings } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -11,10 +11,11 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
-import { useProjectStore } from '@/stores'
+import { useProjectStore, useWorktreeStore } from '@/stores'
 import { WorktreeList } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
+import { gitToast } from '@/lib/toast'
 
 interface Project {
   id: string
@@ -47,9 +48,12 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
     refreshLanguage
   } = useProjectStore()
 
+  const { createWorktree, creatingForProjectId } = useWorktreeStore()
+
   const [editName, setEditName] = useState(project.name)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const isCreatingWorktree = creatingForProjectId === project.id
 
   const isSelected = selectedProjectId === project.id
   const isExpanded = expandedProjectIds.has(project.id)
@@ -122,6 +126,21 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
     toast.success('Path copied to clipboard')
   }
 
+  const handleCreateWorktree = useCallback(
+    async (e: React.MouseEvent): Promise<void> => {
+      e.stopPropagation()
+      if (isCreatingWorktree) return
+
+      const result = await createWorktree(project.id, project.path, project.name)
+      if (result.success) {
+        gitToast.worktreeCreated(project.name)
+      } else {
+        gitToast.operationFailed('create worktree', result.error)
+      }
+    },
+    [isCreatingWorktree, createWorktree, project]
+  )
+
   return (
     <div>
       <ContextMenu>
@@ -169,21 +188,23 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
               </span>
             )}
 
-            {/* More Options Button (visible on hover) */}
+            {/* Create Worktree Button */}
             {!isEditing && (
               <Button
                 variant="ghost"
                 size="icon"
                 className={cn(
-                  'h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity',
+                  'h-5 w-5 p-0 cursor-pointer',
                   'hover:bg-accent'
                 )}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  // Context menu will handle this
-                }}
+                onClick={handleCreateWorktree}
+                disabled={isCreatingWorktree}
               >
-                <MoreHorizontal className="h-3.5 w-3.5" />
+                {isCreatingWorktree ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
               </Button>
             )}
           </div>

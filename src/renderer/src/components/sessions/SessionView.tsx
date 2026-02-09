@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Send, ListPlus, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { MessageRenderer } from './MessageRenderer'
 import { ModeToggle } from './ModeToggle'
 import { ModelSelector } from './ModelSelector'
+import { QueuedIndicator } from './QueuedIndicator'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
@@ -248,6 +249,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [inputValue, setInputValue] = useState('')
   const [viewState, setViewState] = useState<SessionViewState>({ status: 'connecting' })
   const [isSending, setIsSending] = useState(false)
+  const [queuedCount, setQueuedCount] = useState(0)
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
@@ -603,6 +605,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // Session finished processing — flush any pending throttled updates
         immediateFlush()
         setIsSending(false)
+        setQueuedCount(0)
 
         // If message.updated already finalized this response, don't process again.
         if (!hasFinalizedCurrentResponseRef.current) {
@@ -777,10 +780,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Handle send message
   const handleSend = useCallback(async () => {
     const trimmedValue = inputValue.trim()
-    if (!trimmedValue || isSending) return
+    if (!trimmedValue) return
 
-    hasFinalizedCurrentResponseRef.current = false
-    setIsSending(true)
+    // If already streaming, this is a queued follow-up
+    const isQueuedMessage = isStreaming
+
+    if (!isQueuedMessage) {
+      hasFinalizedCurrentResponseRef.current = false
+      setIsSending(true)
+    } else {
+      setQueuedCount((prev) => prev + 1)
+    }
     setInputValue('')
 
     // Set worktree status to 'working'
@@ -868,7 +878,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       toast.error('Failed to send message')
       setIsSending(false)
     }
-  }, [inputValue, isSending, sessionId, worktreePath, opencodeSessionId])
+  }, [inputValue, isStreaming, sessionId, worktreePath, opencodeSessionId])
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(
@@ -1014,9 +1024,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               'min-h-[40px] max-h-[200px]'
             )}
             rows={1}
-            disabled={isSending}
             data-testid="message-input"
           />
+
+          {/* Queued message indicator */}
+          <QueuedIndicator count={queuedCount} />
 
           {/* Bottom row: model selector + hint text + send button */}
           <div className="flex items-center justify-between px-3 pb-2.5">
@@ -1028,13 +1040,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             </div>
             <Button
               onClick={handleSend}
-              disabled={!inputValue.trim() || isSending}
+              disabled={!inputValue.trim()}
               size="sm"
               className="h-7 w-7 p-0"
-              aria-label={isSending ? 'Sending message' : 'Send message'}
+              aria-label={isStreaming ? 'Queue message' : 'Send message'}
+              title={isStreaming ? 'Queue message' : 'Send message'}
               data-testid="send-button"
             >
-              {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              {isStreaming ? <ListPlus className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
             </Button>
           </div>
         </div>
