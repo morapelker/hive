@@ -31,7 +31,7 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
     async (_event, { commands, cwd, worktreeId }: { commands: string[]; cwd: string; worktreeId: string }) => {
       log.info('IPC: script:runProject', { worktreeId, cwd, commandCount: commands.length })
       try {
-        const handle = scriptRunner.runPersistent(commands, cwd, `script:run:${worktreeId}`)
+        const handle = await scriptRunner.runPersistent(commands, cwd, `script:run:${worktreeId}`)
         return { success: true, pid: handle.pid }
       } catch (error) {
         log.error('IPC: script:runProject failed', { error })
@@ -49,7 +49,7 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
     async (_event, { worktreeId }: { worktreeId: string }) => {
       log.info('IPC: script:kill', { worktreeId })
       try {
-        scriptRunner.killProcess(`script:run:${worktreeId}`)
+        await scriptRunner.killProcess(`script:run:${worktreeId}`)
         return { success: true }
       } catch (error) {
         log.error('IPC: script:kill failed', { error })

@@ -1,17 +1,21 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
+export type BottomPanelTab = 'setup' | 'run' | 'terminal'
+
 interface LayoutState {
   leftSidebarWidth: number
   leftSidebarCollapsed: boolean
   rightSidebarWidth: number
   rightSidebarCollapsed: boolean
+  bottomPanelTab: BottomPanelTab
   setLeftSidebarWidth: (width: number) => void
   toggleLeftSidebar: () => void
   setLeftSidebarCollapsed: (collapsed: boolean) => void
   setRightSidebarWidth: (width: number) => void
   toggleRightSidebar: () => void
   setRightSidebarCollapsed: (collapsed: boolean) => void
+  setBottomPanelTab: (tab: BottomPanelTab) => void
 }
 
 const LEFT_SIDEBAR_DEFAULT = 240
@@ -26,6 +30,7 @@ export const useLayoutStore = create<LayoutState>()(
       leftSidebarCollapsed: false,
       rightSidebarWidth: RIGHT_SIDEBAR_DEFAULT,
       rightSidebarCollapsed: false,
+      bottomPanelTab: 'setup' as BottomPanelTab,
 
       setLeftSidebarWidth: (width: number) => {
         const clampedWidth = Math.min(Math.max(width, LEFT_SIDEBAR_MIN), LEFT_SIDEBAR_MAX)
@@ -50,6 +55,10 @@ export const useLayoutStore = create<LayoutState>()(
 
       setRightSidebarCollapsed: (collapsed: boolean) => {
         set({ rightSidebarCollapsed: collapsed })
+      },
+
+      setBottomPanelTab: (tab: BottomPanelTab) => {
+        set({ bottomPanelTab: tab })
       },
     }),
     {

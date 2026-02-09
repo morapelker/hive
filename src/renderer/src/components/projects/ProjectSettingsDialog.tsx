@@ -95,7 +95,7 @@ export function ProjectSettingsDialog({
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Run Script</label>
             <p className="text-xs text-muted-foreground">
-              Commands triggered by {'\u2318'}R. Press {'\u2318'}R again while running to kill and restart.
+              Commands triggered by {'\u2318'}R. Press {'\u2318'}R again while running to stop.
             </p>
             <Textarea
               value={runScript}

@@ -9,6 +9,7 @@ import {
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useScriptStore } from '@/stores/useScriptStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { toast } from 'sonner'
 
@@ -120,6 +121,69 @@ function getShortcutHandlers(
         const { activeSessionId } = useSessionStore.getState()
         if (!activeSessionId) return
         useSessionStore.getState().toggleSessionMode(activeSessionId)
+      }
+    },
+    {
+      id: 'project:run',
+      binding: getEffectiveBinding('project:run'),
+      allowInInput: false,
+      handler: () => {
+        const worktreeId = useWorktreeStore.getState().selectedWorktreeId
+        if (!worktreeId) {
+          toast.error('Please select a worktree first')
+          return
+        }
+
+        // Find project for this worktree
+        const { worktreesByProject } = useWorktreeStore.getState()
+        let runScript: string | null = null
+        let worktreePath: string | null = null
+
+        for (const [projectId, wts] of worktreesByProject) {
+          const wt = wts.find((w) => w.id === worktreeId)
+          if (wt) {
+            worktreePath = wt.path
+            const proj = useProjectStore.getState().projects.find((p) => p.id === projectId)
+            runScript = proj?.run_script ?? null
+            break
+          }
+        }
+
+        if (!runScript) {
+          toast.info('No run script configured. Add one in Project Settings.')
+          return
+        }
+        if (!worktreePath) return
+
+        const parseCommands = (script: string): string[] =>
+          script.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
+
+        // Switch to Run tab
+        useLayoutStore.getState().setBottomPanelTab('run')
+
+        const scriptState = useScriptStore.getState().getScriptState(worktreeId)
+
+        if (scriptState.runRunning) {
+          // Stop current run (Cmd/Ctrl+R acts as a start/stop toggle)
+          window.scriptOps.kill(worktreeId).then(() => {
+            useScriptStore.getState().setRunRunning(worktreeId, false)
+            useScriptStore.getState().setRunPid(worktreeId, null)
+          })
+        } else {
+          // Start fresh
+          useScriptStore.getState().clearRunOutput(worktreeId)
+          useScriptStore.getState().setRunRunning(worktreeId, true)
+
+          const commands = parseCommands(runScript)
+
+          window.scriptOps.runProject(commands, worktreePath, worktreeId).then((result) => {
+            if (result.success && result.pid) {
+              useScriptStore.getState().setRunPid(worktreeId, result.pid)
+            } else {
+              useScriptStore.getState().setRunRunning(worktreeId, false)
+            }
+          })
+        }
       }
     },
 

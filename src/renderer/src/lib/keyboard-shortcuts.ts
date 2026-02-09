@@ -56,6 +56,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     category: 'session',
     defaultBinding: { key: 'Tab', modifiers: [] }
   },
+  {
+    id: 'project:run',
+    label: 'Run Project',
+    description: 'Start or stop the project run script',
+    category: 'session',
+    defaultBinding: { key: 'r', modifiers: [isMac ? 'meta' : 'ctrl'] }
+  },
 
   // Navigation shortcuts
   {

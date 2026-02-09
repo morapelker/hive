@@ -11,7 +11,7 @@ interface SequentialResult {
 
 interface PersistentHandle {
   pid: number
-  kill: () => void
+  kill: () => Promise<void>
 }
 
 interface RunAndWaitResult {
@@ -30,6 +30,98 @@ interface ScriptEvent {
 export class ScriptRunner {
   private mainWindow: BrowserWindow | null = null
   private runningProcesses: Map<string, ChildProcess> = new Map()
+
+  private isCurrentProcess(eventKey: string, proc: ChildProcess): boolean {
+    return this.runningProcesses.get(eventKey) === proc
+  }
+
+  private clearCurrentProcess(eventKey: string, proc: ChildProcess): void {
+    if (this.isCurrentProcess(eventKey, proc)) {
+      this.runningProcesses.delete(eventKey)
+    }
+  }
+
+  private async waitForProcessExit(proc: ChildProcess, timeoutMs: number): Promise<boolean> {
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      return true
+    }
+
+    return new Promise((resolve) => {
+      let settled = false
+
+      const cleanup = (): void => {
+        proc.off('close', onExit)
+        proc.off('exit', onExit)
+      }
+
+      const onExit = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        cleanup()
+        resolve(true)
+      }
+
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(false)
+      }, timeoutMs)
+
+      proc.once('close', onExit)
+      proc.once('exit', onExit)
+    })
+  }
+
+  private signalProcessTree(
+    proc: ChildProcess,
+    signal: NodeJS.Signals,
+    eventKey: string
+  ): void {
+    const pid = proc.pid
+    if (!pid) {
+      try {
+        proc.kill(signal)
+      } catch {
+        // already dead
+      }
+      return
+    }
+
+    if (process.platform === 'win32') {
+      const args = ['/pid', String(pid), '/t']
+      if (signal === 'SIGKILL') {
+        args.push('/f')
+      }
+      const taskkill = spawn('taskkill', args, { stdio: 'ignore' })
+      taskkill.on('error', () => {
+        try {
+          proc.kill(signal)
+        } catch {
+          // already dead
+        }
+      })
+      return
+    }
+
+    try {
+      // Detached processes on Unix become a process group leader; negative PID
+      // targets the full tree so child dev servers are terminated too.
+      process.kill(-pid, signal)
+    } catch {
+      log.warn('Failed to signal process group; falling back to direct process kill', {
+        eventKey,
+        pid,
+        signal
+      })
+      try {
+        proc.kill(signal)
+      } catch {
+        // already dead
+      }
+    }
+  }
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
@@ -97,18 +189,23 @@ export class ScriptRunner {
 
       proc.on('error', (err) => {
         log.error('Process spawn error', { command, error: err.message })
-        this.runningProcesses.delete(eventKey)
+        this.clearCurrentProcess(eventKey, proc)
         resolve({ exitCode: 1 })
       })
 
       proc.on('close', (code) => {
-        this.runningProcesses.delete(eventKey)
+        this.clearCurrentProcess(eventKey, proc)
         resolve({ exitCode: code ?? 1 })
       })
     })
   }
 
-  runPersistent(commands: string[], cwd: string, eventKey: string): PersistentHandle {
+  async runPersistent(commands: string[], cwd: string, eventKey: string): Promise<PersistentHandle> {
+    if (this.runningProcesses.has(eventKey)) {
+      log.warn('runPersistent: process already running for key, killing it first', { eventKey })
+      await this.killProcess(eventKey)
+    }
+
     const parsed = this.parseCommands(commands)
     const combined = parsed.join(' && ')
     log.info('runPersistent starting', { commandCount: parsed.length, cwd, eventKey })
@@ -117,7 +214,7 @@ export class ScriptRunner {
       cwd,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false
+      detached: process.platform !== 'win32'
     })
 
     this.runningProcesses.set(eventKey, proc)
@@ -131,23 +228,25 @@ export class ScriptRunner {
     })
 
     proc.on('error', (err) => {
+      if (!this.isCurrentProcess(eventKey, proc)) return
       log.error('Persistent process error', { eventKey, error: err.message })
       this.sendEvent(eventKey, { type: 'error', exitCode: 1 })
-      this.runningProcesses.delete(eventKey)
+      this.clearCurrentProcess(eventKey, proc)
     })
 
     proc.on('close', (code) => {
+      if (!this.isCurrentProcess(eventKey, proc)) return
       log.info('Persistent process exited', { eventKey, code })
       if (code === 0) {
         this.sendEvent(eventKey, { type: 'done' })
       } else {
         this.sendEvent(eventKey, { type: 'error', exitCode: code ?? 1 })
       }
-      this.runningProcesses.delete(eventKey)
+      this.clearCurrentProcess(eventKey, proc)
     })
 
-    const kill = (): void => {
-      this.killProcess(eventKey)
+    const kill = async (): Promise<void> => {
+      await this.killProcess(eventKey)
     }
 
     return { pid: proc.pid ?? -1, kill }
@@ -233,43 +332,42 @@ export class ScriptRunner {
     })
   }
 
-  killProcess(eventKey: string): void {
+  async killProcess(eventKey: string): Promise<boolean> {
     const proc = this.runningProcesses.get(eventKey)
     if (!proc) {
       log.warn('killProcess: no process found', { eventKey })
-      return
+      return false
+    }
+
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      this.clearCurrentProcess(eventKey, proc)
+      return true
     }
 
     log.info('killProcess: sending SIGTERM', { eventKey, pid: proc.pid })
-    try {
-      proc.kill('SIGTERM')
-    } catch {
-      // already dead
+
+    this.signalProcessTree(proc, 'SIGTERM', eventKey)
+    const exitedGracefully = await this.waitForProcessExit(proc, 800)
+    if (exitedGracefully) {
+      this.clearCurrentProcess(eventKey, proc)
+      return true
     }
 
-    // If still alive after 500ms, force kill
-    setTimeout(() => {
-      if (this.runningProcesses.has(eventKey)) {
-        log.info('killProcess: sending SIGKILL', { eventKey })
-        try {
-          proc.kill('SIGKILL')
-        } catch {
-          // already dead
-        }
-        this.runningProcesses.delete(eventKey)
-      }
-    }, 500)
+    log.info('killProcess: sending SIGKILL', { eventKey, pid: proc.pid })
+    this.signalProcessTree(proc, 'SIGKILL', eventKey)
+    const exitedAfterForceKill = await this.waitForProcessExit(proc, 2500)
+    if (!exitedAfterForceKill && this.isCurrentProcess(eventKey, proc)) {
+      this.runningProcesses.delete(eventKey)
+    }
+
+    return true
   }
 
   killAll(): void {
     log.info('killAll: cleaning up all running processes', { count: this.runningProcesses.size })
     for (const [key, proc] of this.runningProcesses) {
       log.info('killAll: killing process', { key, pid: proc.pid })
-      try {
-        proc.kill('SIGTERM')
-      } catch {
-        // already dead
-      }
+      this.signalProcessTree(proc, 'SIGTERM', key)
     }
     this.runningProcesses.clear()
   }

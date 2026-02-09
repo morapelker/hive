@@ -1,4 +1,4 @@
-export { useLayoutStore, LAYOUT_CONSTRAINTS } from './useLayoutStore'
+export { useLayoutStore, LAYOUT_CONSTRAINTS, type BottomPanelTab } from './useLayoutStore'
 export { useThemeStore } from './useThemeStore'
 export { useProjectStore } from './useProjectStore'
 export { useWorktreeStore } from './useWorktreeStore'

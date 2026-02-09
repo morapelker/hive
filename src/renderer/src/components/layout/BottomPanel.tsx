@@ -1,17 +1,18 @@
-import { useState } from 'react'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useLayoutStore } from '@/stores/useLayoutStore'
+import type { BottomPanelTab } from '@/stores/useLayoutStore'
 import { SetupTab } from './SetupTab'
+import { RunTab } from './RunTab'
 
-type TabId = 'setup' | 'run' | 'terminal'
-
-const tabs: { id: TabId; label: string }[] = [
+const tabs: { id: BottomPanelTab; label: string }[] = [
   { id: 'setup', label: 'Setup' },
   { id: 'run', label: 'Run' },
   { id: 'terminal', label: 'Terminal' }
 ]
 
 export function BottomPanel(): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<TabId>('setup')
+  const activeTab = useLayoutStore((s) => s.bottomPanelTab)
+  const setActiveTab = useLayoutStore((s) => s.setBottomPanelTab)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
 
   return (
@@ -38,11 +39,7 @@ export function BottomPanel(): React.JSX.Element {
       </div>
       <div className="flex-1 min-h-0 overflow-hidden" data-testid="bottom-panel-content">
         {activeTab === 'setup' && <SetupTab worktreeId={selectedWorktreeId} />}
-        {activeTab === 'run' && (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            TODO: Run
-          </div>
-        )}
+        {activeTab === 'run' && <RunTab worktreeId={selectedWorktreeId} />}
         {activeTab === 'terminal' && (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             TODO: Terminal
