@@ -13,6 +13,12 @@ import {
   Clock
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type { ToolViewProps } from './tools/types'
+import { ReadToolView } from './tools/ReadToolView'
+import { EditToolView } from './tools/EditToolView'
+import { GrepToolView } from './tools/GrepToolView'
+import { BashToolView } from './tools/BashToolView'
+import { TodoToolView } from './tools/TodoToolView'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
 
@@ -55,16 +61,14 @@ function getToolIcon(name: string): React.JSX.Element {
 }
 
 // Get a display label for the tool
-function getToolLabel(name: string, input: Record<string, unknown>): string {
+function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string | null): string {
   const lowerName = name.toLowerCase()
 
   // Show file path for file operations
   if (lowerName.includes('read') || lowerName.includes('write') || lowerName.includes('edit')) {
-    const filePath = (input.file_path || input.path || input.file || '') as string
+    const filePath = (input.filePath || input.file_path || input.path || '') as string
     if (filePath) {
-      // Show just the filename or last 2 path segments
-      const parts = filePath.split('/')
-      return parts.length > 2 ? `.../${parts.slice(-2).join('/')}` : filePath
+      return shortenPath(filePath, cwd)
     }
   }
 
@@ -95,8 +99,6 @@ function getToolLabel(name: string, input: Record<string, unknown>): string {
 
   return ''
 }
-
-const MAX_LINES = 10
 
 function StatusIndicator({ status }: { status: ToolStatus }): React.JSX.Element {
   switch (status) {
@@ -144,18 +146,176 @@ function getLeftBorderColor(status: ToolStatus): string {
   }
 }
 
-interface ToolCardProps {
-  toolUse: ToolUseInfo
+// Map tool names to rich renderers
+const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
+  Read: ReadToolView,
+  read_file: ReadToolView,
+  Write: ReadToolView, // Similar rendering to Read
+  write_file: ReadToolView,
+  Edit: EditToolView,
+  edit_file: EditToolView,
+  Grep: GrepToolView,
+  grep: GrepToolView,
+  Glob: GrepToolView, // Similar rendering to Grep
+  glob: GrepToolView,
+  Bash: BashToolView,
+  bash: BashToolView,
 }
 
-export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): React.JSX.Element {
-  const [isExpanded, setIsExpanded] = useState(false)
-  const [showFullOutput, setShowFullOutput] = useState(false)
+/** Resolve a tool name to its rich renderer, falling back to TodoToolView */
+function getToolRenderer(name: string): React.FC<ToolViewProps> {
+  // Try exact match first
+  if (TOOL_RENDERERS[name]) return TOOL_RENDERERS[name]
+  // Try case-insensitive match via known patterns
+  const lower = name.toLowerCase()
+  if (lower.includes('read') || lower === 'cat' || lower === 'view') return ReadToolView
+  if (lower.includes('write') || lower === 'create') return ReadToolView
+  if (lower.includes('edit') || lower.includes('replace') || lower.includes('patch')) return EditToolView
+  if (lower.includes('bash') || lower.includes('shell') || lower.includes('exec') || lower.includes('command')) return BashToolView
+  if (lower.includes('grep') || lower.includes('search') || lower.includes('rg')) return GrepToolView
+  if (lower.includes('glob') || lower.includes('find') || lower.includes('list')) return GrepToolView
+  // Fallback
+  return TodoToolView
+}
 
-  const label = useMemo(
-    () => getToolLabel(toolUse.name, toolUse.input),
-    [toolUse.name, toolUse.input]
+function shortenPath(filePath: string, cwd?: string | null): string {
+  if (cwd && filePath.startsWith(cwd)) {
+    const relative = filePath.slice(cwd.length).replace(/^\//, '')
+    if (relative) return relative
+  }
+  const parts = filePath.split('/')
+  return parts.length > 2 ? `.../${parts.slice(-2).join('/')}` : filePath
+}
+
+/** Renders tool-specific collapsed header content (icon + name + contextual info) */
+function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string | null }): React.JSX.Element {
+  const { name, input, output } = toolUse
+  const lowerName = name.toLowerCase()
+
+  // Bash / Shell / Exec
+  if (lowerName.includes('bash') || lowerName.includes('shell') || lowerName.includes('exec') || lowerName.includes('command')) {
+    const command = (input.command || input.cmd || '') as string
+    const truncCmd = command.length > 60 ? command.slice(0, 60) + '...' : command
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0"><Terminal className="h-3.5 w-3.5" /></span>
+        <span className="font-medium text-foreground shrink-0">Bash</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">
+          <span className="text-green-500">$</span> {truncCmd}
+        </span>
+      </>
+    )
+  }
+
+  // Read / Cat / View
+  if (lowerName.includes('read') || lowerName === 'cat' || lowerName === 'view') {
+    const filePath = (input.filePath || input.file_path || input.path || '') as string
+    const lineCount = output ? output.trimEnd().split('\n').length : null
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0"><FileText className="h-3.5 w-3.5" /></span>
+        <span className="font-medium text-foreground shrink-0">Read</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">{shortenPath(filePath, cwd)}</span>
+        {lineCount !== null && (
+          <span className="text-muted-foreground/60 shrink-0 text-[10px]">{lineCount} lines</span>
+        )}
+      </>
+    )
+  }
+
+  // Write / Create
+  if (lowerName.includes('write') || lowerName === 'create') {
+    const filePath = (input.filePath || input.file_path || input.path || '') as string
+    const content = (input.content || '') as string
+    const lineCount = content ? content.trimEnd().split('\n').length : null
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0"><FilePlus className="h-3.5 w-3.5" /></span>
+        <span className="font-medium text-foreground shrink-0">Write</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">{shortenPath(filePath, cwd)}</span>
+        {lineCount !== null && (
+          <span className="text-muted-foreground/60 shrink-0 text-[10px]">{lineCount} lines</span>
+        )}
+      </>
+    )
+  }
+
+  // Edit / Replace / Patch
+  if (lowerName.includes('edit') || lowerName.includes('replace') || lowerName.includes('patch')) {
+    const filePath = (input.filePath || input.file_path || input.path || '') as string
+    const oldString = (input.oldString || input.old_string || '') as string
+    const newString = (input.newString || input.new_string || '') as string
+    const removedLines = oldString ? oldString.split('\n').length : 0
+    const addedLines = newString ? newString.split('\n').length : 0
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0"><Pencil className="h-3.5 w-3.5" /></span>
+        <span className="font-medium text-foreground shrink-0">Edit</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">{shortenPath(filePath, cwd)}</span>
+        {(removedLines > 0 || addedLines > 0) && (
+          <span className="shrink-0 text-[10px] flex items-center gap-1">
+            {removedLines > 0 && <span className="text-red-400">-{removedLines}</span>}
+            {addedLines > 0 && <span className="text-green-400">+{addedLines}</span>}
+          </span>
+        )}
+      </>
+    )
+  }
+
+  // Grep / Search / Rg
+  if (lowerName.includes('grep') || lowerName.includes('search') || lowerName.includes('rg')) {
+    const pattern = (input.pattern || input.query || input.regex || '') as string
+    const matchCount = output ? output.split('\n').filter(l => l.trim()).length : null
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0"><Search className="h-3.5 w-3.5" /></span>
+        <span className="font-medium text-foreground shrink-0">Grep</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">&quot;{pattern}&quot;</span>
+        {matchCount !== null && matchCount > 0 && (
+          <span className="text-muted-foreground/60 shrink-0 text-[10px]">
+            {matchCount} {matchCount === 1 ? 'match' : 'matches'}
+          </span>
+        )}
+      </>
+    )
+  }
+
+  // Glob / Find / List
+  if (lowerName.includes('glob') || lowerName.includes('find') || lowerName.includes('list')) {
+    const pattern = (input.pattern || input.glob || '') as string
+    const fileCount = output ? output.split('\n').filter(l => l.trim()).length : null
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0"><FolderSearch className="h-3.5 w-3.5" /></span>
+        <span className="font-medium text-foreground shrink-0">Glob</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">{pattern}</span>
+        {fileCount !== null && fileCount > 0 && (
+          <span className="text-muted-foreground/60 shrink-0 text-[10px]">
+            {fileCount} {fileCount === 1 ? 'file' : 'files'}
+          </span>
+        )}
+      </>
+    )
+  }
+
+  // Default fallback
+  const label = getToolLabel(name, input, cwd)
+  return (
+    <>
+      <span className="text-muted-foreground shrink-0">{getToolIcon(name)}</span>
+      <span className="font-medium text-foreground shrink-0">{name}</span>
+      {label && <span className="text-muted-foreground truncate font-mono min-w-0">{label}</span>}
+    </>
   )
+}
+
+interface ToolCardProps {
+  toolUse: ToolUseInfo
+  cwd?: string | null
+}
+
+export const ToolCard = memo(function ToolCard({ toolUse, cwd }: ToolCardProps): React.JSX.Element {
+  const [isExpanded, setIsExpanded] = useState(false)
 
   const duration = useMemo(() => {
     if (toolUse.endTime && toolUse.startTime) {
@@ -166,21 +326,7 @@ export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): Reac
 
   const hasOutput = !!(toolUse.output || toolUse.error)
 
-  const outputLines = useMemo(() => {
-    if (!toolUse.output) return { lines: [], totalCount: 0, needsTruncation: false }
-    const lines = toolUse.output.split('\n')
-    return {
-      lines,
-      totalCount: lines.length,
-      needsTruncation: lines.length > MAX_LINES
-    }
-  }, [toolUse.output])
-
-  const displayedOutput = useMemo(() => {
-    if (!toolUse.output) return ''
-    if (!outputLines.needsTruncation || showFullOutput) return toolUse.output
-    return outputLines.lines.slice(0, MAX_LINES).join('\n')
-  }, [toolUse.output, outputLines, showFullOutput])
+  const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
   return (
     <div
@@ -218,22 +364,8 @@ export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): Reac
           <span className="w-3 shrink-0" />
         )}
 
-        {/* Tool icon */}
-        <span className="text-muted-foreground shrink-0">
-          {getToolIcon(toolUse.name)}
-        </span>
-
-        {/* Tool name */}
-        <span className="font-medium text-foreground shrink-0">
-          {toolUse.name}
-        </span>
-
-        {/* Tool label (file path, command, etc.) */}
-        {label && (
-          <span className="text-muted-foreground truncate font-mono">
-            {label}
-          </span>
-        )}
+        {/* Tool-specific collapsed content */}
+        <CollapsedContent toolUse={toolUse} cwd={cwd} />
 
         {/* Spacer */}
         <span className="flex-1" />
@@ -250,7 +382,7 @@ export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): Reac
         <StatusIndicator status={toolUse.status} />
       </button>
 
-      {/* Expandable output with smooth transition */}
+      {/* Expandable detail view with rich renderer */}
       <div
         className={cn(
           'transition-all duration-150 overflow-hidden',
@@ -259,32 +391,13 @@ export const ToolCard = memo(function ToolCard({ toolUse }: ToolCardProps): Reac
         data-testid="tool-output"
       >
         <div className="border-t border-border px-3.5 py-2.5">
-          {toolUse.error && (
-            <div className="text-red-400 font-mono whitespace-pre-wrap break-all">
-              {toolUse.error}
-            </div>
-          )}
-          {toolUse.output && (
-            <div>
-              <pre className="text-muted-foreground font-mono whitespace-pre-wrap break-all max-h-60 overflow-y-auto">
-                {displayedOutput}
-              </pre>
-              {outputLines.needsTruncation && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setShowFullOutput(!showFullOutput)
-                  }}
-                  className="mt-1.5 text-blue-500 hover:text-blue-400 text-xs font-medium transition-colors"
-                  data-testid="show-more-button"
-                >
-                  {showFullOutput
-                    ? 'Show less'
-                    : `Show more (${outputLines.totalCount - MAX_LINES} more lines)`}
-                </button>
-              )}
-            </div>
-          )}
+          <Renderer
+            name={toolUse.name}
+            input={toolUse.input}
+            output={toolUse.output}
+            error={toolUse.error}
+            status={toolUse.status}
+          />
         </div>
       </div>
     </div>

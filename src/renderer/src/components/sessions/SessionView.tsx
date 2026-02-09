@@ -607,7 +607,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
           upsertToolUse(toolId, {
             name: toolName,
-            input: state.input || {},
+            // Only include input when the SDK actually provides it, so we don't
+            // overwrite the initial input with {} on subsequent status updates.
+            ...(state.input ? { input: state.input } : {}),
             status: statusMap[state.status] || 'running',
             startTime: state.time?.start || Date.now(),
             endTime: state.time?.end,
@@ -1088,6 +1090,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               <MessageRenderer
                 key={message.id}
                 message={message}
+                cwd={worktreePath}
               />
             ))}
             {/* Streaming message */}
@@ -1101,6 +1104,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   parts: streamingParts
                 }}
                 isStreaming={isStreaming}
+                cwd={worktreePath}
               />
             )}
             {/* Typing indicator when waiting for response */}

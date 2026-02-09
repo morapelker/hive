@@ -9,10 +9,12 @@ interface AssistantCanvasProps {
   isStreaming?: boolean
   /** Interleaved parts (text + tool uses) for rich rendering */
   parts?: StreamingPart[]
+  /** Working directory for relative path display */
+  cwd?: string | null
 }
 
 /** Render interleaved parts (text + tool cards) */
-function renderParts(parts: StreamingPart[], isStreaming: boolean): React.JSX.Element {
+function renderParts(parts: StreamingPart[], isStreaming: boolean, cwd?: string | null): React.JSX.Element {
   return (
     <>
       {parts.map((part, index) => {
@@ -28,7 +30,7 @@ function renderParts(parts: StreamingPart[], isStreaming: boolean): React.JSX.El
 
         if (part.type === 'tool_use' && part.toolUse) {
           return (
-            <ToolCard key={`tool-${part.toolUse.id}`} toolUse={part.toolUse} />
+            <ToolCard key={`tool-${part.toolUse.id}`} toolUse={part.toolUse} cwd={cwd} />
           )
         }
 
@@ -46,7 +48,8 @@ export function AssistantCanvas({
   content,
   timestamp,
   isStreaming = false,
-  parts
+  parts,
+  cwd
 }: AssistantCanvasProps): React.JSX.Element {
   const hasParts = parts && parts.length > 0
 
@@ -54,7 +57,7 @@ export function AssistantCanvas({
     <div className="px-6 py-5" data-testid="message-assistant">
       <div className="text-sm text-foreground leading-relaxed">
         {hasParts ? (
-          renderParts(parts, isStreaming)
+          renderParts(parts, isStreaming, cwd)
         ) : (
           <>
             <MarkdownRenderer content={content} />

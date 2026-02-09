@@ -5,11 +5,13 @@ import type { OpenCodeMessage } from './SessionView'
 interface MessageRendererProps {
   message: OpenCodeMessage
   isStreaming?: boolean
+  cwd?: string | null
 }
 
 export function MessageRenderer({
   message,
-  isStreaming = false
+  isStreaming = false,
+  cwd
 }: MessageRendererProps): React.JSX.Element {
   if (message.role === 'user') {
     return <UserBubble content={message.content} timestamp={message.timestamp} />
@@ -22,6 +24,7 @@ export function MessageRenderer({
       timestamp={message.timestamp}
       isStreaming={isStreaming}
       parts={message.parts}
+      cwd={cwd}
     />
   )
 }
