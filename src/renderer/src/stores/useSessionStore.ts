@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 // Session mode type
 export type SessionMode = 'build' | 'plan'
@@ -30,6 +31,8 @@ interface SessionState {
   // UI State
   activeSessionId: string | null
   activeWorktreeId: string | null
+  // Persisted: last active session per worktree
+  activeSessionByWorktree: Record<string, string>
 
   // Actions
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
@@ -55,7 +58,9 @@ function generateSessionName(): string {
   return `Session ${hours}:${minutes}`
 }
 
-export const useSessionStore = create<SessionState>((set, get) => ({
+export const useSessionStore = create<SessionState>()(
+  persist(
+    (set, get) => ({
   // Initial state
   sessionsByWorktree: new Map(),
   tabOrderByWorktree: new Map(),
@@ -64,6 +69,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   error: null,
   activeSessionId: null,
   activeWorktreeId: null,
+  activeSessionByWorktree: {},
 
   // Load sessions for a worktree from database (only active sessions for tabs)
   loadSessions: async (worktreeId: string, _projectId: string) => {
@@ -104,8 +110,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // Set active session if none selected and sessions exist
         let activeSessionId = state.activeSessionId
         if (state.activeWorktreeId === worktreeId && !activeSessionId && sortedSessions.length > 0) {
-          const tabOrder = newTabOrderMap.get(worktreeId)!
-          activeSessionId = tabOrder[0] || sortedSessions[0].id
+          // Try to restore persisted active session
+          const persistedSessionId = state.activeSessionByWorktree[worktreeId]
+          const sessionExists = persistedSessionId && sortedSessions.some(s => s.id === persistedSessionId)
+
+          if (sessionExists) {
+            activeSessionId = persistedSessionId
+          } else {
+            const tabOrder = newTabOrderMap.get(worktreeId)!
+            activeSessionId = tabOrder[0] || sortedSessions[0].id
+          }
         }
 
         return {
@@ -151,7 +165,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           sessionsByWorktree: newSessionsMap,
           tabOrderByWorktree: newTabOrderMap,
           modeBySession: newModeMap,
-          activeSessionId: session.id
+          activeSessionId: session.id,
+          activeSessionByWorktree: {
+            ...state.activeSessionByWorktree,
+            [worktreeId]: session.id
+          }
         }
       })
 
@@ -203,10 +221,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           }
         }
 
+        // Update persisted active session mapping
+        const newActiveByWorktree = { ...state.activeSessionByWorktree }
+        for (const [worktreeId] of newSessionsMap.entries()) {
+          if (newActiveByWorktree[worktreeId] === sessionId) {
+            if (newActiveSessionId) {
+              newActiveByWorktree[worktreeId] = newActiveSessionId
+            } else {
+              delete newActiveByWorktree[worktreeId]
+            }
+          }
+        }
+
         return {
           sessionsByWorktree: newSessionsMap,
           tabOrderByWorktree: newTabOrderMap,
-          activeSessionId: newActiveSessionId
+          activeSessionId: newActiveSessionId,
+          activeSessionByWorktree: newActiveByWorktree
         }
       })
 
@@ -267,7 +298,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // Set active session
   setActiveSession: (sessionId: string | null) => {
-    set({ activeSessionId: sessionId })
+    const worktreeId = get().activeWorktreeId
+    if (sessionId && worktreeId) {
+      set((state) => ({
+        activeSessionId: sessionId,
+        activeSessionByWorktree: {
+          ...state.activeSessionByWorktree,
+          [worktreeId]: sessionId
+        }
+      }))
+    } else {
+      set({ activeSessionId: sessionId })
+    }
   },
 
   // Set active worktree and load its sessions
@@ -282,10 +324,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Check if we already have sessions for this worktree
       const existingSessions = state.sessionsByWorktree.get(worktreeId)
       if (existingSessions) {
-        // Use existing tab order to set active session
-        const tabOrder = state.tabOrderByWorktree.get(worktreeId) || []
-        const activeId = tabOrder[0] || (existingSessions.length > 0 ? existingSessions[0].id : null)
-        set({ activeSessionId: activeId })
+        // Try to restore persisted active session for this worktree
+        const persistedSessionId = state.activeSessionByWorktree[worktreeId]
+        const sessionExists = persistedSessionId && existingSessions.some(s => s.id === persistedSessionId)
+
+        if (sessionExists) {
+          set({ activeSessionId: persistedSessionId })
+        } else {
+          // Fallback to first tab
+          const tabOrder = state.tabOrderByWorktree.get(worktreeId) || []
+          const activeId = tabOrder[0] || (existingSessions.length > 0 ? existingSessions[0].id : null)
+          set({ activeSessionId: activeId })
+        }
       } else {
         // Clear active session until sessions are loaded
         set({ activeSessionId: null })
@@ -386,4 +436,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.error('Failed to persist session mode:', error)
     }
   }
-}))
+    }),
+    {
+      name: 'hive-session-tabs',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        activeSessionByWorktree: state.activeSessionByWorktree,
+      }),
+    }
+  )
+)

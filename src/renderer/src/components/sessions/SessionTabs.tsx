@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Plus, X, ChevronLeft, ChevronRight, FileCode } from 'lucide-react'
+import { Plus, X, ChevronLeft, ChevronRight, FileCode, Loader2 } from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -38,6 +38,10 @@ function SessionTab({
   isDragging,
   isDragOver
 }: SessionTabProps): React.JSX.Element {
+  const sessionStatus = useWorktreeStatusStore(
+    (state) => state.sessionStatuses[sessionId]?.status ?? null
+  )
+
   return (
     <div
       data-testid={`session-tab-${sessionId}`}
@@ -63,6 +67,12 @@ function SessionTab({
         isDragOver && 'bg-accent/50'
       )}
     >
+      {sessionStatus === 'working' && (
+        <Loader2 className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0" data-testid={`tab-spinner-${sessionId}`} />
+      )}
+      {sessionStatus === 'unread' && !isActive && (
+        <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" data-testid={`tab-unread-${sessionId}`} />
+      )}
       <span className="truncate flex-1">{name || 'Untitled'}</span>
       <button
         onClick={onClose}
