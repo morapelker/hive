@@ -572,7 +572,7 @@ class OpenCodeService {
   /**
    * Get the selected model from settings DB, or fallback to DEFAULT_MODEL
    */
-  private getSelectedModel(): { providerID: string; modelID: string } {
+  private getSelectedModel(): { providerID: string; modelID: string; variant?: string } {
     try {
       const db = getDatabase()
       const value = db.getSetting(SELECTED_MODEL_DB_KEY)
@@ -591,7 +591,7 @@ class OpenCodeService {
   /**
    * Set the selected model in settings DB
    */
-  setSelectedModel(model: { providerID: string; modelID: string }): void {
+  setSelectedModel(model: { providerID: string; modelID: string; variant?: string }): void {
     try {
       const db = getDatabase()
       db.setSetting(SELECTED_MODEL_DB_KEY, JSON.stringify(model))
@@ -621,8 +621,8 @@ class OpenCodeService {
       throw new Error('No OpenCode instance available')
     }
 
-    const model = this.getSelectedModel()
-    log.info('Using model for prompt', { model })
+    const { variant, ...model } = this.getSelectedModel()
+    log.info('Using model for prompt', { model, variant })
 
     try {
       // Use promptAsync for non-blocking behavior - events will stream the response
@@ -631,6 +631,7 @@ class OpenCodeService {
         query: { directory: worktreePath },
         body: {
           model,
+          variant,
           parts
         }
       })

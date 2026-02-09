@@ -115,7 +115,7 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
   // Set the selected model
   ipcMain.handle(
     'opencode:setModel',
-    async (_event, model: { providerID: string; modelID: string }) => {
+    async (_event, model: { providerID: string; modelID: string; variant?: string }) => {
       log.info('IPC: opencode:setModel', { model })
       try {
         openCodeService.setSelectedModel(model)

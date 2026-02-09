@@ -63,6 +63,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     category: 'session',
     defaultBinding: { key: 'r', modifiers: [isMac ? 'meta' : 'ctrl'] }
   },
+  {
+    id: 'model:cycle-variant',
+    label: 'Cycle Model Variant',
+    description: 'Cycle through thinking-level variants (e.g., high/max)',
+    category: 'session',
+    defaultBinding: { key: 't', modifiers: ['alt'] }
+  },
 
   // Navigation shortcuts
   {
@@ -207,12 +214,20 @@ export function deserializeBinding(serialized: string): KeyBinding {
  * For cross-platform, treats both ctrl and meta as "command" when modifier is 'meta'.
  */
 export function eventMatchesBinding(event: KeyboardEvent, binding: KeyBinding): boolean {
-  // Check key (case-insensitive)
-  if (event.key.toLowerCase() !== binding.key.toLowerCase()) return false
+  // On macOS, Alt+key produces dead characters (e.g., Alt+T → †) so event.key
+  // won't match. Fall back to event.code (physical key) when alt is involved.
+  const altRequired = binding.modifiers.includes('alt')
+  let keyMatches: boolean
+  if (altRequired && event.altKey && event.code) {
+    const codeKey = event.code.replace(/^Key/, '').replace(/^Digit/, '').toLowerCase()
+    keyMatches = codeKey === binding.key.toLowerCase()
+  } else {
+    keyMatches = event.key.toLowerCase() === binding.key.toLowerCase()
+  }
+  if (!keyMatches) return false
 
   const ctrlRequired = binding.modifiers.includes('ctrl')
   const metaRequired = binding.modifiers.includes('meta')
-  const altRequired = binding.modifiers.includes('alt')
   const shiftRequired = binding.modifiers.includes('shift')
 
   // For cross-platform, treat both ctrl and meta as the same "command" key

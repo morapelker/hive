@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
-import { Check, ChevronDown } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { Check, ChevronDown, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { toast } from 'sonner'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +16,7 @@ interface ModelInfo {
   id: string
   name?: string
   providerID: string
+  variants?: Record<string, Record<string, unknown>>
 }
 
 interface ProviderModels {
@@ -23,10 +25,13 @@ interface ProviderModels {
   models: ModelInfo[]
 }
 
-/** Strip date suffix from model ID: claude-opus-4-5-20251101 -> claude-opus-4-5 */
-function shortenModelName(modelID: string, name?: string): string {
-  if (name) return name
-  return modelID.replace(/(-\d{8,})$/, '')
+function getDisplayName(model: ModelInfo): string {
+  return model.name || model.id
+}
+
+function getVariantKeys(model: ModelInfo): string[] {
+  if (!model.variants) return []
+  return Object.keys(model.variants)
 }
 
 export function ModelSelector(): React.JSX.Element {
@@ -34,6 +39,9 @@ export function ModelSelector(): React.JSX.Element {
   const setSelectedModel = useSettingsStore((state) => state.setSelectedModel)
   const [providers, setProviders] = useState<ProviderModels[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [filter, setFilter] = useState('')
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const filterInputRef = useRef<HTMLInputElement>(null)
 
   // Load available models on mount
   useEffect(() => {
@@ -73,10 +81,14 @@ export function ModelSelector(): React.JSX.Element {
         for (const [modelID, modelData] of Object.entries(provider.models)) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const md = modelData as any
+          const variants = md?.variants && typeof md.variants === 'object'
+            ? md.variants as Record<string, Record<string, unknown>>
+            : undefined
           models.push({
             id: md?.id || modelID,
             name: md?.name,
-            providerID
+            providerID,
+            variants
           })
         }
       }
@@ -93,35 +105,96 @@ export function ModelSelector(): React.JSX.Element {
     return result
   }
 
-  function handleSelect(model: ModelInfo): void {
-    setSelectedModel({ providerID: model.providerID, modelID: model.id })
+  function handleSelectModel(model: ModelInfo): void {
+    const variantKeys = getVariantKeys(model)
+    // When selecting a new model, pick its first variant if available
+    const variant = variantKeys.length > 0 ? variantKeys[0] : undefined
+    setSelectedModel({ providerID: model.providerID, modelID: model.id, variant })
   }
 
-  function isActive(model: ModelInfo): boolean {
+  function handleSelectVariant(model: ModelInfo, variant: string): void {
+    setSelectedModel({ providerID: model.providerID, modelID: model.id, variant })
+  }
+
+  function isActiveModel(model: ModelInfo): boolean {
     if (!selectedModel) {
-      // Default model
       return model.providerID === 'anthropic' && model.id === 'claude-opus-4-5-20251101'
     }
     return selectedModel.providerID === model.providerID && selectedModel.modelID === model.id
   }
 
-  // Determine display name for the pill
-  const displayName = (() => {
-    if (selectedModel) {
-      // Find the model in providers to get its name
-      for (const provider of providers) {
-        const found = provider.models.find(
-          (m) => m.id === selectedModel.modelID && m.providerID === selectedModel.providerID
-        )
-        if (found) return shortenModelName(found.id, found.name)
+  // Find the currently selected model info
+  const currentModel = useMemo((): ModelInfo | null => {
+    const modelID = selectedModel?.modelID || 'claude-opus-4-5-20251101'
+    const providerID = selectedModel?.providerID || 'anthropic'
+    for (const provider of providers) {
+      if (provider.providerID === providerID) {
+        const found = provider.models.find((m) => m.id === modelID)
+        if (found) return found
       }
-      return shortenModelName(selectedModel.modelID)
     }
-    return shortenModelName('claude-opus-4-5-20251101')
-  })()
+    return null
+  }, [selectedModel, providers])
+
+  // Cycle thinking-level variant for Alt+T
+  const cycleVariant = useCallback(() => {
+    if (!currentModel) return
+    const variantKeys = getVariantKeys(currentModel)
+    if (variantKeys.length <= 1) return
+
+    const currentVariant = selectedModel?.variant
+    const currentIndex = currentVariant ? variantKeys.indexOf(currentVariant) : -1
+    const nextIndex = (currentIndex + 1) % variantKeys.length
+    const nextVariant = variantKeys[nextIndex]
+
+    setSelectedModel({
+      providerID: currentModel.providerID,
+      modelID: currentModel.id,
+      variant: nextVariant
+    })
+    toast.success(`Variant: ${nextVariant}`)
+  }, [selectedModel, currentModel, setSelectedModel])
+
+  // Listen for centralized Alt+T shortcut via custom event
+  useEffect(() => {
+    const handleCycleVariant = (): void => cycleVariant()
+    window.addEventListener('hive:cycle-variant', handleCycleVariant)
+    return () => window.removeEventListener('hive:cycle-variant', handleCycleVariant)
+  }, [cycleVariant])
+
+  // Determine display name for the pill
+  const displayName = currentModel
+    ? getDisplayName(currentModel)
+    : getDisplayName({ id: selectedModel?.modelID || 'claude-opus-4-5-20251101', providerID: 'anthropic' })
+
+  const filteredProviders = useMemo(() => {
+    if (!filter.trim()) return providers
+    const q = filter.toLowerCase()
+    return providers
+      .map((provider) => ({
+        ...provider,
+        models: provider.models.filter(
+          (m) =>
+            getDisplayName(m).toLowerCase().includes(q) ||
+            m.id.toLowerCase().includes(q) ||
+            provider.providerName.toLowerCase().includes(q)
+        )
+      }))
+      .filter((p) => p.models.length > 0)
+  }, [providers, filter])
+
+  const currentVariantKeys = currentModel ? getVariantKeys(currentModel) : []
+  const hasVariants = currentVariantKeys.length > 0
 
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      open={dropdownOpen}
+      onOpenChange={(open) => {
+        setDropdownOpen(open)
+        if (!open) setFilter('')
+        else setTimeout(() => filterInputRef.current?.focus(), 0)
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
@@ -134,36 +207,80 @@ export function ModelSelector(): React.JSX.Element {
           data-testid="model-selector"
         >
           <span className="truncate max-w-[140px]">{isLoading ? 'Loading...' : displayName}</span>
+          {hasVariants && selectedModel?.variant && (
+            <span className="text-[10px] font-semibold text-primary uppercase" data-testid="variant-indicator">
+              {selectedModel.variant}
+            </span>
+          )}
           <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64 max-h-80 overflow-y-auto">
-        {providers.map((provider, index) => (
+        <div className="flex items-center gap-1.5 px-2 pb-1.5 pt-1">
+          <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <input
+            ref={filterInputRef}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
+            placeholder="Filter models..."
+            className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
+          />
+        </div>
+        <DropdownMenuSeparator />
+        {filteredProviders.map((provider, index) => (
           <div key={provider.providerID}>
             {index > 0 && <DropdownMenuSeparator />}
             <DropdownMenuLabel className="text-xs text-muted-foreground">
               {provider.providerName}
             </DropdownMenuLabel>
-            {provider.models.map((model) => (
-              <DropdownMenuItem
-                key={`${model.providerID}:${model.id}`}
-                onClick={() => handleSelect(model)}
-                className="flex items-center justify-between gap-2 cursor-pointer"
-                data-testid={`model-option-${model.id}`}
-              >
-                <span className="truncate text-sm">
-                  {shortenModelName(model.id, model.name)}
-                </span>
-                {isActive(model) && (
-                  <Check className="h-4 w-4 shrink-0 text-primary" />
-                )}
-              </DropdownMenuItem>
-            ))}
+            {provider.models.map((model) => {
+              const active = isActiveModel(model)
+              const variantKeys = getVariantKeys(model)
+              return (
+                <div key={`${model.providerID}:${model.id}`}>
+                  <DropdownMenuItem
+                    onClick={() => handleSelectModel(model)}
+                    className="flex items-center justify-between gap-2 cursor-pointer"
+                    data-testid={`model-item-${model.id}`}
+                  >
+                    <span className="truncate text-sm">
+                      {getDisplayName(model)}
+                    </span>
+                    {active && (
+                      <Check className="h-4 w-4 shrink-0 text-primary" />
+                    )}
+                  </DropdownMenuItem>
+                  {variantKeys.length > 0 && active && (
+                    <div className="flex gap-1 pl-6 pb-1" data-testid={`variant-chips-${model.id}`}>
+                      {variantKeys.map((variant) => (
+                        <button
+                          key={variant}
+                          className={cn(
+                            'text-[10px] px-1.5 py-0.5 rounded',
+                            selectedModel?.variant === variant
+                              ? 'bg-primary text-primary-foreground'
+                              : 'bg-muted text-muted-foreground hover:bg-accent'
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleSelectVariant(model, variant)
+                          }}
+                          data-testid={`variant-chip-${variant}`}
+                        >
+                          {variant}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         ))}
-        {providers.length === 0 && !isLoading && (
+        {filteredProviders.length === 0 && !isLoading && (
           <div className="px-2 py-4 text-center text-sm text-muted-foreground">
-            No models available
+            {filter ? 'No matching models' : 'No models available'}
           </div>
         )}
       </DropdownMenuContent>

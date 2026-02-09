@@ -11,6 +11,7 @@ export type TerminalOption = 'terminal' | 'iterm' | 'warp' | 'alacritty' | 'kitt
 export interface SelectedModel {
   providerID: string
   modelID: string
+  variant?: string
 }
 
 export type QuickActionType = 'cursor' | 'ghostty' | 'copy-path'

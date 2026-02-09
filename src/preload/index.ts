@@ -563,7 +563,7 @@ const opencodeOps = {
     ipcRenderer.invoke('opencode:models'),
 
   // Set the selected model for prompts
-  setModel: (model: { providerID: string; modelID: string }): Promise<{ success: boolean; error?: string }> =>
+  setModel: (model: { providerID: string; modelID: string; variant?: string }): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:setModel', model),
 
   // Generate a descriptive session name using Claude Haiku via OpenCode

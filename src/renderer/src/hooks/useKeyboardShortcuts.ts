@@ -198,6 +198,15 @@ function getShortcutHandlers(
       }
     },
 
+    {
+      id: 'model:cycle-variant',
+      binding: getEffectiveBinding('model:cycle-variant'),
+      allowInInput: true,
+      handler: () => {
+        window.dispatchEvent(new CustomEvent('hive:cycle-variant'))
+      }
+    },
+
     // =====================
     // Navigation shortcuts
     // =====================
