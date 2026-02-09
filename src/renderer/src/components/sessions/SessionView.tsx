@@ -402,6 +402,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     scrollToBottom()
   }, [messages, streamingContent, streamingParts, scrollToBottom])
 
+  // Auto-focus textarea when session changes or view becomes connected
+  useEffect(() => {
+    if (viewState.status === 'connected' && textareaRef.current) {
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus()
+      })
+    }
+  }, [sessionId, viewState.status])
+
   // Auto-resize textarea
   useEffect(() => {
     const textarea = textareaRef.current

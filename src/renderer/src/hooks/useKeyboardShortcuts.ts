@@ -137,7 +137,7 @@ function getShortcutHandlers(
     {
       id: 'project:run',
       binding: getEffectiveBinding('project:run'),
-      allowInInput: false,
+      allowInInput: true,
       handler: () => {
         const worktreeId = useWorktreeStore.getState().selectedWorktreeId
         if (!worktreeId) {

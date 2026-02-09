@@ -1,8 +1,8 @@
-import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
+import { app, shell, BrowserWindow, Menu, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
 import { registerDatabaseHandlers, registerProjectHandlers, registerWorktreeHandlers, registerOpenCodeHandlers, cleanupOpenCode, registerFileTreeHandlers, cleanupFileTreeWatchers, registerGitFileHandlers, registerSettingsHandlers, registerFileHandlers, registerScriptHandlers, cleanupScripts } from './ipc'
 import { createLogger, getLogDir } from './services/logger'
@@ -212,12 +212,27 @@ app.whenReady().then(() => {
     registerLoggingHandlers()
   }
 
-  // Default open or close DevTools by F12 in development
-  // and ignore CommandOrControl + R in production.
-  // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
+  // Custom menu: remove Reload (Cmd+R) so the renderer can use it for "Run Project".
+  // We keep devtools toggle for development convenience.
+  const menuTemplate: Electron.MenuItemConstructorOptions[] = [
+    { role: 'appMenu' },
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        ...(is.dev ? [{ role: 'toggleDevTools' as const }] : []),
+        { type: 'separator' as const },
+        { role: 'resetZoom' as const },
+        { role: 'zoomIn' as const },
+        { role: 'zoomOut' as const },
+        { type: 'separator' as const },
+        { role: 'togglefullscreen' as const }
+      ]
+    },
+    { role: 'windowMenu' }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
 
   createWindow()
 

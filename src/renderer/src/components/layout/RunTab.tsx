@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react'
 import Ansi from 'ansi-to-react'
-import { Play, Square, RotateCcw, Loader2 } from 'lucide-react'
+import { Play, Square, RotateCcw, Loader2, Trash2 } from 'lucide-react'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -209,8 +209,19 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
           ) : null}
         </div>
 
-        {hasRunScript && (
-          <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1">
+          {runOutput.length > 0 && (
+            <button
+              onClick={() => clearRunOutput(worktreeId!)}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-accent transition-colors"
+              data-testid="clear-button"
+            >
+              <Trash2 className="h-3 w-3" />
+              Clear
+            </button>
+          )}
+          {hasRunScript && (
+            <>
             {runRunning ? (
               <>
                 <button
@@ -244,8 +255,9 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
                 Run
               </button>
             )}
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   )

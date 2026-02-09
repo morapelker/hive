@@ -14,6 +14,7 @@ import {
 import { useProjectStore, useWorktreeStore } from '@/stores'
 import { WorktreeList } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
+import { HighlightedText } from './HighlightedText'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { gitToast } from '@/lib/toast'
 
@@ -33,9 +34,11 @@ interface Project {
 
 interface ProjectItemProps {
   project: Project
+  nameMatchIndices?: number[]
+  pathMatchIndices?: number[]
 }
 
-export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
+export function ProjectItem({ project, nameMatchIndices, pathMatchIndices }: ProjectItemProps): React.JSX.Element {
   const {
     selectedProjectId,
     expandedProjectIds,
@@ -183,9 +186,26 @@ export function ProjectItem({ project }: ProjectItemProps): React.JSX.Element {
                 onClick={(e) => e.stopPropagation()}
               />
             ) : (
-              <span className="flex-1 text-sm truncate" title={project.path}>
-                {project.name}
-              </span>
+              <div className="flex-1 min-w-0">
+                {nameMatchIndices ? (
+                  <HighlightedText
+                    text={project.name}
+                    indices={nameMatchIndices}
+                    className="text-sm truncate block"
+                  />
+                ) : (
+                  <span className="text-sm truncate block" title={project.path}>
+                    {project.name}
+                  </span>
+                )}
+                {pathMatchIndices && (
+                  <HighlightedText
+                    text={project.path}
+                    indices={pathMatchIndices}
+                    className="text-[10px] text-muted-foreground truncate block"
+                  />
+                )}
+              </div>
             )}
 
             {/* Create Worktree Button */}

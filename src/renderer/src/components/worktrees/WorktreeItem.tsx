@@ -28,8 +28,10 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { useWorktreeStore } from '@/stores'
+import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
+import { PulseAnimation } from './PulseAnimation'
 
 interface Worktree {
   id: string
@@ -53,6 +55,9 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
     useWorktreeStore()
 
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
+  const isRunProcessAlive = useScriptStore(
+    (s) => s.scriptStates[worktree.id]?.runRunning ?? false
+  )
   const isSelected = selectedWorktreeId === worktree.id
 
   const handleClick = (): void => {
@@ -133,7 +138,9 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
           data-testid={`worktree-item-${worktree.id}`}
         >
           {/* Branch Icon / Status Badge */}
-          {worktreeStatus === 'working' ? (
+          {isRunProcessAlive ? (
+            <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />
+          ) : worktreeStatus === 'working' ? (
             <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
           ) : worktree.is_default ? (
             <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
