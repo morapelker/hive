@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react'
+import Ansi from 'ansi-to-react'
 import { Play, Square, RotateCcw, Loader2 } from 'lucide-react'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -185,8 +186,8 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
             )
           }
           return (
-            <div key={i} className="whitespace-pre-wrap break-all">
-              {line}
+            <div key={i} className="whitespace-pre-wrap break-all [&_code]:all-unset">
+              <Ansi>{line}</Ansi>
             </div>
           )
         })}

@@ -27,6 +27,13 @@ interface ScriptEvent {
   exitCode?: number
 }
 
+const colorEnv = {
+  ...process.env,
+  FORCE_COLOR: '3',
+  TERM: 'xterm-256color',
+  COLORTERM: 'truecolor'
+}
+
 export class ScriptRunner {
   private mainWindow: BrowserWindow | null = null
   private runningProcesses: Map<string, ChildProcess> = new Map()
@@ -172,7 +179,7 @@ export class ScriptRunner {
     return new Promise((resolve) => {
       const proc = spawn('sh', ['-c', command], {
         cwd,
-        env: process.env,
+        env: colorEnv,
         stdio: ['ignore', 'pipe', 'pipe']
       })
 
@@ -212,7 +219,7 @@ export class ScriptRunner {
 
     const proc = spawn('sh', ['-c', combined], {
       cwd,
-      env: process.env,
+      env: colorEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32'
     })
@@ -287,7 +294,7 @@ export class ScriptRunner {
 
       const proc = spawn('sh', ['-c', command], {
         cwd,
-        env: process.env,
+        env: colorEnv,
         stdio: ['ignore', 'pipe', 'pipe']
       })
 
