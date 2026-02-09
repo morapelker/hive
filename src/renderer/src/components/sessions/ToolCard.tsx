@@ -312,9 +312,10 @@ function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string
 interface ToolCardProps {
   toolUse: ToolUseInfo
   cwd?: string | null
+  compact?: boolean
 }
 
-export const ToolCard = memo(function ToolCard({ toolUse, cwd }: ToolCardProps): React.JSX.Element {
+export const ToolCard = memo(function ToolCard({ toolUse, cwd, compact = false }: ToolCardProps): React.JSX.Element {
   const [isExpanded, setIsExpanded] = useState(false)
 
   const duration = useMemo(() => {
@@ -331,7 +332,7 @@ export const ToolCard = memo(function ToolCard({ toolUse, cwd }: ToolCardProps):
   return (
     <div
       className={cn(
-        'my-3 rounded-lg border border-l-2 text-xs',
+        compact ? 'my-0 rounded-md border border-l-2 text-xs' : 'my-1 rounded-md border border-l-2 text-xs',
         toolUse.status === 'running' && 'animate-pulse',
         toolUse.status === 'error'
           ? 'border-red-500/30 bg-red-500/5'
@@ -346,24 +347,13 @@ export const ToolCard = memo(function ToolCard({ toolUse, cwd }: ToolCardProps):
       <button
         onClick={() => hasOutput && setIsExpanded(!isExpanded)}
         className={cn(
-          'flex items-center gap-2 w-full px-3.5 py-2.5 text-left',
+          compact ? 'flex items-center gap-1.5 w-full px-2 py-1.5 text-left' : 'flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left',
           hasOutput && 'cursor-pointer hover:bg-muted/50 transition-colors'
         )}
         disabled={!hasOutput}
+        aria-expanded={hasOutput ? isExpanded : undefined}
         data-testid="tool-card-header"
       >
-        {/* Expand/Collapse chevron with smooth rotation */}
-        {hasOutput ? (
-          <ChevronDown
-            className={cn(
-              'h-3 w-3 text-muted-foreground shrink-0 transition-transform duration-150',
-              !isExpanded && '-rotate-90'
-            )}
-          />
-        ) : (
-          <span className="w-3 shrink-0" />
-        )}
-
         {/* Tool-specific collapsed content */}
         <CollapsedContent toolUse={toolUse} cwd={cwd} />
 
@@ -380,6 +370,19 @@ export const ToolCard = memo(function ToolCard({ toolUse, cwd }: ToolCardProps):
 
         {/* Status indicator */}
         <StatusIndicator status={toolUse.status} />
+
+        {/* Expand/Collapse affordance */}
+        {hasOutput && (
+          <span className="ml-1 inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {isExpanded ? 'Hide' : 'View'}
+            <ChevronDown
+              className={cn(
+                'h-2.5 w-2.5 shrink-0 transition-transform duration-150',
+                !isExpanded && '-rotate-90'
+              )}
+            />
+          </span>
+        )}
       </button>
 
       {/* Expandable detail view with rich renderer */}
@@ -390,7 +393,7 @@ export const ToolCard = memo(function ToolCard({ toolUse, cwd }: ToolCardProps):
         )}
         data-testid="tool-output"
       >
-        <div className="border-t border-border px-3.5 py-2.5">
+        <div className={cn('border-t border-border', compact ? 'px-2 py-1.5' : 'px-2.5 py-2')}>
           <Renderer
             name={toolUse.name}
             input={toolUse.input}

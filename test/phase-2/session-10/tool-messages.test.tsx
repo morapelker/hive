@@ -136,7 +136,7 @@ describe('Session 10: Tool Message Rendering', () => {
           })}
         />
       )
-      expect(screen.getByText('npm run build')).toBeInTheDocument()
+      expect(screen.getAllByText('npm run build').length).toBeGreaterThan(0)
     })
 
     test('Edit tool shows file path', () => {
@@ -160,7 +160,7 @@ describe('Session 10: Tool Message Rendering', () => {
           })}
         />
       )
-      expect(screen.getByText('useEffect')).toBeInTheDocument()
+      expect(screen.getByText(/useEffect/)).toBeInTheDocument()
     })
 
     test('Glob tool shows pattern', () => {
@@ -201,9 +201,9 @@ describe('Session 10: Tool Message Rendering', () => {
       )
 
       await user.click(screen.getByTestId('tool-card-header'))
-      // Should show "Show more" button when output exceeds MAX_LINES
-      expect(screen.getByTestId('show-more-button')).toBeInTheDocument()
-      expect(screen.getByTestId('show-more-button').textContent).toContain('Show more')
+      // ReadToolView truncates with "Show all".
+      expect(screen.getByTestId('show-all-button')).toBeInTheDocument()
+      expect(screen.getByTestId('show-all-button').textContent).toContain('Show all')
     })
 
     test('Tool card has correct data attributes', () => {
@@ -322,6 +322,307 @@ describe('Session 10: Tool Message Rendering', () => {
       expect(toolCards).toHaveLength(2)
     })
 
+    test('Two consecutive tool calls render compact cards without grouping', () => {
+      const parts: StreamingPart[] = [
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-1',
+            name: 'Read',
+            input: { file_path: '/src/a.ts' },
+            status: 'success',
+            startTime: Date.now() - 100,
+            endTime: Date.now() - 50
+          }
+        },
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-2',
+            name: 'Edit',
+            input: { file_path: '/src/b.ts' },
+            status: 'success',
+            startTime: Date.now() - 40,
+            endTime: Date.now()
+          }
+        }
+      ]
+
+      render(
+        <AssistantCanvas
+          content=""
+          timestamp={new Date().toISOString()}
+          parts={parts}
+        />
+      )
+
+      expect(screen.getByTestId('tool-call-inline-group')).toBeInTheDocument()
+      expect(screen.queryByTestId('tool-call-group')).not.toBeInTheDocument()
+      const toolCards = screen.getAllByTestId('tool-card')
+      expect(toolCards).toHaveLength(2)
+      const firstClassTokens = toolCards[0].className.split(/\s+/)
+      const secondClassTokens = toolCards[1].className.split(/\s+/)
+      expect(firstClassTokens).toContain('my-0')
+      expect(secondClassTokens).toContain('my-0')
+    })
+
+    test('Whitespace text between consecutive tool calls does not create visual gaps', () => {
+      const parts: StreamingPart[] = [
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-1',
+            name: 'Read',
+            input: { file_path: '/src/a.ts' },
+            status: 'success',
+            startTime: Date.now() - 100,
+            endTime: Date.now() - 50
+          }
+        },
+        { type: 'text', text: '\n\n   \n' },
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-2',
+            name: 'Edit',
+            input: { file_path: '/src/b.ts' },
+            status: 'success',
+            startTime: Date.now() - 40,
+            endTime: Date.now()
+          }
+        }
+      ]
+
+      render(
+        <AssistantCanvas
+          content=""
+          timestamp={new Date().toISOString()}
+          parts={parts}
+        />
+      )
+
+      expect(screen.getByTestId('tool-call-inline-group')).toBeInTheDocument()
+      const toolCards = screen.getAllByTestId('tool-card')
+      expect(toolCards).toHaveLength(2)
+      // No markdown paragraph should render for whitespace-only text parts.
+      expect(screen.getByTestId('message-assistant').querySelectorAll('p').length).toBe(0)
+    })
+
+    test('Zero-width text between consecutive tool calls does not break compact grouping', () => {
+      const parts: StreamingPart[] = [
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-1',
+            name: 'Read',
+            input: { file_path: '/src/a.ts' },
+            status: 'success',
+            startTime: Date.now() - 100,
+            endTime: Date.now() - 50
+          }
+        },
+        { type: 'text', text: '\u200B\u200C\uFEFF' },
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-2',
+            name: 'Edit',
+            input: { file_path: '/src/b.ts' },
+            status: 'success',
+            startTime: Date.now() - 40,
+            endTime: Date.now()
+          }
+        }
+      ]
+
+      render(
+        <AssistantCanvas
+          content=""
+          timestamp={new Date().toISOString()}
+          parts={parts}
+        />
+      )
+
+      expect(screen.getByTestId('tool-call-inline-group')).toBeInTheDocument()
+      expect(screen.getAllByTestId('tool-card')).toHaveLength(2)
+      expect(screen.getByTestId('message-assistant').querySelectorAll('p').length).toBe(0)
+    })
+
+    test('Tool-only assistant messages use compact vertical spacing', () => {
+      const parts: StreamingPart[] = [
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-1',
+            name: 'Read',
+            input: { file_path: '/src/main.ts' },
+            status: 'success',
+            startTime: Date.now() - 100,
+            endTime: Date.now()
+          }
+        }
+      ]
+
+      render(
+        <AssistantCanvas
+          content=""
+          timestamp={new Date().toISOString()}
+          parts={parts}
+        />
+      )
+
+      const assistantCanvas = screen.getByTestId('message-assistant')
+      expect(assistantCanvas.className.split(/\s+/)).toContain('py-1')
+
+      const toolCard = screen.getByTestId('tool-card')
+      expect(toolCard.className.split(/\s+/)).toContain('my-0')
+    })
+
+    test('Assistant messages that include tools and text still use compact vertical spacing', () => {
+      const parts: StreamingPart[] = [
+        { type: 'text', text: 'Running quick checks.' },
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-1',
+            name: 'Grep',
+            input: { pattern: 'def foo' },
+            status: 'success',
+            startTime: Date.now() - 80,
+            endTime: Date.now()
+          }
+        }
+      ]
+
+      render(
+        <AssistantCanvas
+          content=""
+          timestamp={new Date().toISOString()}
+          parts={parts}
+        />
+      )
+
+      const assistantCanvas = screen.getByTestId('message-assistant')
+      expect(assistantCanvas.className.split(/\s+/)).toContain('py-1')
+    })
+
+    test('Assistant messages without tools keep standard vertical spacing', () => {
+      const parts: StreamingPart[] = [
+        { type: 'text', text: 'Just a normal assistant text response.' }
+      ]
+
+      render(
+        <AssistantCanvas
+          content="Just a normal assistant text response."
+          timestamp={new Date().toISOString()}
+          parts={parts}
+        />
+      )
+
+      const assistantCanvas = screen.getByTestId('message-assistant')
+      expect(assistantCanvas.className.split(/\s+/)).toContain('py-5')
+    })
+
+    test('AssistantCanvas collapses 3+ consecutive tool calls into compact group', () => {
+      const parts: StreamingPart[] = [
+        { type: 'text', text: 'Running tools...' },
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-1',
+            name: 'Read',
+            input: { file_path: '/src/a.ts' },
+            status: 'success',
+            startTime: Date.now() - 200,
+            endTime: Date.now() - 150
+          }
+        },
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-2',
+            name: 'Read',
+            input: { file_path: '/src/b.ts' },
+            status: 'success',
+            startTime: Date.now() - 140,
+            endTime: Date.now() - 90
+          }
+        },
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-3',
+            name: 'Edit',
+            input: { file_path: '/src/c.ts' },
+            status: 'success',
+            startTime: Date.now() - 80,
+            endTime: Date.now() - 40
+          }
+        }
+      ]
+
+      render(
+        <AssistantCanvas
+          content="Running tools..."
+          timestamp={new Date().toISOString()}
+          parts={parts}
+        />
+      )
+
+      expect(screen.getByTestId('tool-call-group')).toBeInTheDocument()
+      // Collapsed by default to save vertical space.
+      expect(screen.queryByTestId('tool-card')).not.toBeInTheDocument()
+    })
+
+    test('Tool call group expands to show individual tool cards', async () => {
+      const user = userEvent.setup()
+      const parts: StreamingPart[] = [
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-1',
+            name: 'Read',
+            input: { file_path: '/src/a.ts' },
+            status: 'success',
+            startTime: Date.now() - 200,
+            endTime: Date.now() - 150
+          }
+        },
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-2',
+            name: 'Read',
+            input: { file_path: '/src/b.ts' },
+            status: 'success',
+            startTime: Date.now() - 140,
+            endTime: Date.now() - 90
+          }
+        },
+        {
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-3',
+            name: 'Bash',
+            input: { command: 'pnpm test' },
+            status: 'running',
+            startTime: Date.now() - 80
+          }
+        }
+      ]
+
+      render(
+        <AssistantCanvas
+          content=""
+          timestamp={new Date().toISOString()}
+          parts={parts}
+        />
+      )
+
+      await user.click(screen.getByTestId('tool-call-group-header'))
+      expect(screen.getAllByTestId('tool-card')).toHaveLength(3)
+    })
+
     test('AssistantCanvas shows streaming cursor when streaming', () => {
       const parts: StreamingPart[] = [
         { type: 'text', text: 'I am thinking...' }
@@ -415,6 +716,30 @@ describe('Session 10: Tool Message Rendering', () => {
       expect(screen.getByTestId('message-user')).toBeInTheDocument()
       expect(screen.queryByTestId('tool-card')).not.toBeInTheDocument()
     })
+
+    test('User and assistant message timestamps are not displayed', () => {
+      const timestamp = '2026-02-09T12:34:56.000Z'
+      const renderedTime = new Date(timestamp).toLocaleTimeString()
+
+      const userMessage: OpenCodeMessage = {
+        id: 'user-1',
+        role: 'user',
+        content: 'Hello',
+        timestamp
+      }
+      const assistantMessage: OpenCodeMessage = {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Hi there',
+        timestamp
+      }
+
+      const { rerender } = render(<MessageRenderer message={userMessage} />)
+      expect(screen.getByTestId('message-user').textContent).not.toContain(renderedTime)
+
+      rerender(<MessageRenderer message={assistantMessage} />)
+      expect(screen.getByTestId('message-assistant').textContent).not.toContain(renderedTime)
+    })
   })
 
   describe('Tool Status States', () => {
@@ -498,7 +823,7 @@ describe('Session 10: Tool Message Rendering', () => {
       const elapsed = performance.now() - start
 
       expect(elapsed).toBeLessThan(50)
-      expect(screen.getAllByTestId('tool-card')).toHaveLength(10)
+      expect(screen.getByTestId('tool-call-group')).toBeInTheDocument()
     })
   })
 })

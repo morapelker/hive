@@ -303,7 +303,7 @@ This document tests all markdown features for performance.`
       expect(card.className).toContain('border-red-500/30')
     })
 
-    test('Tool cards have my-3 vertical margin', () => {
+    test('Tool cards use compact vertical margin', () => {
       const toolUse: ToolUseInfo = {
         id: 'tool-1',
         name: 'Read',
@@ -313,7 +313,7 @@ This document tests all markdown features for performance.`
       }
       render(<ToolCard toolUse={toolUse} />)
       const card = screen.getByTestId('tool-card')
-      expect(card.className).toContain('my-3')
+      expect(card.className).toContain('my-1')
     })
 
     test('Tool output with smooth transition', () => {

@@ -5,7 +5,7 @@ interface UserBubbleProps {
   timestamp: string
 }
 
-export function UserBubble({ content, timestamp }: UserBubbleProps): React.JSX.Element {
+export function UserBubble({ content }: UserBubbleProps): React.JSX.Element {
   return (
     <div className="flex justify-end px-6 py-4" data-testid="message-user">
       <div
@@ -15,9 +15,6 @@ export function UserBubble({ content, timestamp }: UserBubbleProps): React.JSX.E
         )}
       >
         <p className="text-sm whitespace-pre-wrap leading-relaxed">{content}</p>
-        <span className="block text-[10px] text-muted-foreground mt-1.5 text-right">
-          {new Date(timestamp).toLocaleTimeString()}
-        </span>
       </div>
     </div>
   )

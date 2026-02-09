@@ -6,6 +6,7 @@ import { SessionView, OpenCodeMessage, SessionViewState } from '../../src/render
 // Mock clipboard API
 const mockWriteText = vi.fn().mockResolvedValue(undefined)
 const mockReadText = vi.fn().mockResolvedValue('')
+const mockConsoleInfo = vi.fn()
 
 // Mock toast
 vi.mock('sonner', () => ({
@@ -67,6 +68,7 @@ const mockDbMessage = {
 // Setup and teardown
 beforeEach(() => {
   vi.clearAllMocks()
+  mockConsoleInfo.mockReset()
 
   // Reset mock implementations
   mockDbMessage.getBySession.mockResolvedValue(mockDemoMessages)
@@ -136,6 +138,8 @@ beforeEach(() => {
 
   // Mock scrollIntoView
   Element.prototype.scrollIntoView = vi.fn()
+
+  vi.spyOn(console, 'info').mockImplementation(mockConsoleInfo)
 
   // Mock window.systemOps (needed for response logging check)
   Object.defineProperty(window, 'systemOps', {
@@ -214,6 +218,32 @@ describe('Session 8: Session View', () => {
   })
 
   describe('Message List', () => {
+    test('Session opening does not emit tool spacing debug logs', async () => {
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
+
+      expect(mockConsoleInfo).not.toHaveBeenCalledWith(
+        '[SessionDebug] Session opened',
+        expect.anything()
+      )
+      expect(mockConsoleInfo).toHaveBeenCalledTimes(0)
+    })
+
+    test('Messages do not display timestamps', async () => {
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        const messageList = screen.getByTestId('message-list')
+        const userMessageTime = new Date(mockDemoMessages[0].created_at).toLocaleTimeString()
+        const assistantMessageTime = new Date(mockDemoMessages[1].created_at).toLocaleTimeString()
+        expect(messageList.textContent).not.toContain(userMessageTime)
+        expect(messageList.textContent).not.toContain(assistantMessageTime)
+      })
+    })
+
     test('Message list is scrollable', async () => {
       render(<SessionView sessionId="test-session-1" />)
 
@@ -243,15 +273,6 @@ describe('Session 8: Session View', () => {
       })
     })
 
-    test('Messages display timestamps', async () => {
-      render(<SessionView sessionId="test-session-1" />)
-
-      await waitFor(() => {
-        // Look for time formats in the messages
-        const messageList = screen.getByTestId('message-list')
-        expect(messageList.textContent).toMatch(/\d{1,2}:\d{2}/)
-      })
-    })
   })
 
   describe('Input Area', () => {
