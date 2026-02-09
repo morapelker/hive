@@ -11,6 +11,7 @@ import { ContextIndicator } from './ContextIndicator'
 import { AttachmentButton } from './AttachmentButton'
 import { AttachmentPreview } from './AttachmentPreview'
 import type { Attachment } from './AttachmentPreview'
+import { SlashCommandPopover } from './SlashCommandPopover'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
@@ -257,6 +258,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [isSending, setIsSending] = useState(false)
   const [queuedCount, setQueuedCount] = useState(0)
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description?: string; template: string }>>([])
+  const [showSlashCommands, setShowSlashCommands] = useState(false)
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
@@ -719,6 +722,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           })
         }
 
+        // Fetch slash commands (fire-and-forget)
+        const fetchCommands = (path: string): void => {
+          window.opencodeOps.commands(path).then((result) => {
+            if (result.success && result.commands) {
+              setSlashCommands(result.commands)
+            }
+          }).catch((err) => {
+            console.warn('Failed to fetch slash commands:', err)
+          })
+        }
+
         if (existingOpcSessionId) {
           // Try to reconnect to existing session
           const reconnectResult = await window.opencodeOps.reconnect(
@@ -729,6 +743,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           if (reconnectResult.success) {
             setOpencodeSessionId(existingOpcSessionId)
             fetchModelLimit(wtPath)
+            fetchCommands(wtPath)
             // Create response log file if logging is enabled
             if (isLogModeRef.current) {
               try {
@@ -748,6 +763,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         if (connectResult.success && connectResult.sessionId) {
           setOpencodeSessionId(connectResult.sessionId)
           fetchModelLimit(wtPath)
+          fetchCommands(wtPath)
           // Store the OpenCode session ID in database for future reconnection
           await window.db.session.update(sessionId, {
             opencode_session_id: connectResult.sessionId
@@ -965,6 +981,26 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setAttachments(prev => prev.filter(a => a.id !== id))
   }, [])
 
+  // Slash command handlers
+  const handleInputChange = useCallback((value: string) => {
+    setInputValue(value)
+    if (value.startsWith('/') && value.length >= 1) {
+      setShowSlashCommands(true)
+    } else {
+      setShowSlashCommands(false)
+    }
+  }, [])
+
+  const handleCommandSelect = useCallback((cmd: { name: string; template: string }) => {
+    setInputValue(`/${cmd.name} `)
+    setShowSlashCommands(false)
+    textareaRef.current?.focus()
+  }, [])
+
+  const handleSlashClose = useCallback(() => {
+    setShowSlashCommands(false)
+  }, [])
+
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
     if (!items) return
@@ -1090,9 +1126,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       {/* Input area */}
       <div className="p-4 bg-background" data-testid="input-area" role="form" aria-label="Message input">
+        <div className="max-w-3xl mx-auto relative">
+          {/* Slash command popover — outside overflow-hidden so it can render above */}
+          <SlashCommandPopover
+            commands={slashCommands}
+            filter={inputValue}
+            onSelect={handleCommandSelect}
+            onClose={handleSlashClose}
+            visible={showSlashCommands}
+          />
         <div
           className={cn(
-            'max-w-3xl mx-auto rounded-xl border-2 transition-colors duration-200 overflow-hidden',
+            'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
             mode === 'build'
               ? 'border-blue-500/50 bg-blue-500/5'
               : 'border-violet-500/50 bg-violet-500/5'
@@ -1110,7 +1155,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           <textarea
             ref={textareaRef}
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={(e) => handleInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder="Type your message..."
@@ -1151,6 +1196,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               {isStreaming ? <ListPlus className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
             </Button>
           </div>
+        </div>
         </div>
       </div>
     </div>

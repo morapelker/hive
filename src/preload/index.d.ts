@@ -292,6 +292,10 @@ declare global {
         worktreePath: string,
         modelId: string
       ) => Promise<{ success: boolean; model?: { id: string; name: string; limit: { context: number } }; error?: string }>
+      // List available slash commands from the SDK
+      commands: (
+        worktreePath: string
+      ) => Promise<{ success: boolean; commands: OpenCodeCommand[]; error?: string }>
       // Subscribe to streaming events
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
     }
@@ -457,6 +461,13 @@ interface ScriptOutputEvent {
   command?: string
   data?: string
   exitCode?: number
+}
+
+// OpenCode command type (slash commands)
+interface OpenCodeCommand {
+  name: string
+  description?: string
+  template: string
 }
 
 // OpenCode stream event type

@@ -1014,6 +1014,23 @@ class OpenCodeService {
   }
 
   /**
+   * List available slash commands from the OpenCode SDK
+   */
+  async listCommands(worktreePath: string): Promise<Array<{ name: string; description?: string; template: string }>> {
+    const instance = await this.getOrCreateInstance()
+
+    try {
+      const result = await instance.client.command.list({
+        query: { directory: worktreePath }
+      })
+      return result.data || []
+    } catch (error) {
+      log.warn('Failed to list commands', { worktreePath, error })
+      return []
+    }
+  }
+
+  /**
    * Cleanup the OpenCode instance
    */
   async cleanup(): Promise<void> {

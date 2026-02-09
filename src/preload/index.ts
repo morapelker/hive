@@ -554,6 +554,12 @@ const opencodeOps = {
   ): Promise<{ success: boolean; model?: { id: string; name: string; limit: { context: number } }; error?: string }> =>
     ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId }),
 
+  // List available slash commands from the SDK
+  commands: (
+    worktreePath: string
+  ): Promise<{ success: boolean; commands: Array<{ name: string; description?: string; template: string }>; error?: string }> =>
+    ipcRenderer.invoke('opencode:commands', { worktreePath }),
+
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, event: OpenCodeStreamEvent): void => {

@@ -171,6 +171,25 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // List available slash commands
+  ipcMain.handle(
+    'opencode:commands',
+    async (_event, { worktreePath }: { worktreePath: string }) => {
+      log.info('IPC: opencode:commands', { worktreePath })
+      try {
+        const commands = await openCodeService.listCommands(worktreePath)
+        return { success: true, commands }
+      } catch (error) {
+        log.error('IPC: opencode:commands failed', { error })
+        return {
+          success: false,
+          commands: [],
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Get messages from an OpenCode session
   ipcMain.handle(
     'opencode:messages',
