@@ -8,6 +8,9 @@ import { ModeToggle } from './ModeToggle'
 import { ModelSelector } from './ModelSelector'
 import { QueuedIndicator } from './QueuedIndicator'
 import { ContextIndicator } from './ContextIndicator'
+import { AttachmentButton } from './AttachmentButton'
+import { AttachmentPreview } from './AttachmentPreview'
+import type { Attachment } from './AttachmentPreview'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
@@ -253,6 +256,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [viewState, setViewState] = useState<SessionViewState>({ status: 'connecting' })
   const [isSending, setIsSending] = useState(false)
   const [queuedCount, setQueuedCount] = useState(0)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
@@ -900,7 +904,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
           : ''
         const promptMessage = modePrefix + trimmedValue
-        const parts: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: promptMessage }]
+        const parts: MessagePart[] = [
+          ...attachments.map(a => ({ type: 'file' as const, mime: a.mime, url: a.dataUrl, filename: a.name })),
+          { type: 'text' as const, text: promptMessage }
+        ]
+        setAttachments([])
         const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, parts)
         if (!result.success) {
           console.error('Failed to send prompt to OpenCode:', result.error)
@@ -910,6 +918,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // Don't set isSending to false here - wait for streaming to complete
       } else {
         // No OpenCode connection - show placeholder
+        setAttachments([])
         console.warn('No OpenCode connection, showing placeholder response')
         setTimeout(async () => {
           try {
@@ -934,7 +943,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       toast.error('Failed to send message')
       setIsSending(false)
     }
-  }, [inputValue, isStreaming, sessionId, worktreePath, opencodeSessionId])
+  }, [inputValue, isStreaming, sessionId, worktreePath, opencodeSessionId, attachments])
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(
@@ -946,6 +955,36 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     },
     [handleSend]
   )
+
+  // Attachment handlers
+  const handleAttach = useCallback((file: { name: string; mime: string; dataUrl: string }) => {
+    setAttachments(prev => [...prev, { id: crypto.randomUUID(), ...file }])
+  }, [])
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== id))
+  }, [])
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (!file) continue
+        const reader = new FileReader()
+        reader.onload = () => {
+          handleAttach({
+            name: file.name || 'pasted-image.png',
+            mime: file.type,
+            dataUrl: reader.result as string
+          })
+        }
+        reader.readAsDataURL(file)
+      }
+    }
+  }, [handleAttach])
 
   // Global Tab key handler — toggles Build/Plan mode, blocks tab character insertion
   const toggleSessionMode = useSessionStore((state) => state.toggleSessionMode)
@@ -1064,12 +1103,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             <ModeToggle sessionId={sessionId} />
           </div>
 
+          {/* Attachment previews */}
+          <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
+
           {/* Middle: textarea */}
           <textarea
             ref={textareaRef}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder="Type your message..."
             aria-label="Message input"
             className={cn(
@@ -1090,6 +1133,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           <div className="flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-2">
               <ModelSelector />
+              <AttachmentButton onAttach={handleAttach} />
               <ContextIndicator sessionId={sessionId} modelId={currentModelId} />
               <span className="text-xs text-muted-foreground">
                 Enter to send, Shift+Enter for new line
