@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, ListPlus, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, ArrowDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -367,9 +367,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  // Streaming throttle ref (~100ms batching for text updates)
-  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Smart auto-scroll tracking
+  const isAutoScrollEnabledRef = useRef(true)
+  const [showScrollFab, setShowScrollFab] = useState(false)
+  const lastScrollTopRef = useRef(0)
+  const scrollCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isScrollCooldownActiveRef = useRef(false)
+
+  // Streaming rAF ref (frame-synced flushing for text updates)
+  const rafRef = useRef<number | null>(null)
 
   // Session auto-naming ref: tracks whether naming has been triggered
   const hasTriggeredNamingRef = useRef(false)
@@ -426,9 +434,86 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
 
-  useEffect(() => {
+  // Smart auto-scroll: detect upward scroll and lock out auto-scroll with cooldown
+  const SCROLL_COOLDOWN_MS = 2000
+
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+
+    const currentScrollTop = el.scrollTop
+    const scrollingUp = currentScrollTop < lastScrollTopRef.current
+    lastScrollTopRef.current = currentScrollTop
+
+    const distanceFromBottom = el.scrollHeight - currentScrollTop - el.clientHeight
+    const isNearBottom = distanceFromBottom < 80
+
+    // Upward scroll during streaming → immediately disable + start cooldown
+    if (scrollingUp && (isSending || isStreaming)) {
+      isAutoScrollEnabledRef.current = false
+      setShowScrollFab(true)
+      isScrollCooldownActiveRef.current = true
+
+      // Reset cooldown timer
+      if (scrollCooldownRef.current !== null) {
+        clearTimeout(scrollCooldownRef.current)
+      }
+      scrollCooldownRef.current = setTimeout(() => {
+        scrollCooldownRef.current = null
+        isScrollCooldownActiveRef.current = false
+        // After cooldown, check if user has scrolled back to bottom
+        const elNow = scrollContainerRef.current
+        if (elNow) {
+          const dist = elNow.scrollHeight - elNow.scrollTop - elNow.clientHeight
+          if (dist < 80) {
+            isAutoScrollEnabledRef.current = true
+            setShowScrollFab(false)
+          }
+        }
+      }, SCROLL_COOLDOWN_MS)
+      return
+    }
+
+    // Near bottom and no active cooldown → re-enable auto-scroll
+    if (isNearBottom && !isScrollCooldownActiveRef.current) {
+      isAutoScrollEnabledRef.current = true
+      setShowScrollFab(false)
+    } else if (!isNearBottom && (isSending || isStreaming)) {
+      // Far from bottom during streaming (no cooldown needed, just update state)
+      isAutoScrollEnabledRef.current = false
+      setShowScrollFab(true)
+    }
+  }, [isSending, isStreaming])
+
+  // Handle FAB click — cancel cooldown, re-enable auto-scroll, scroll to bottom
+  const handleScrollToBottomClick = useCallback(() => {
+    if (scrollCooldownRef.current !== null) {
+      clearTimeout(scrollCooldownRef.current)
+      scrollCooldownRef.current = null
+    }
+    isScrollCooldownActiveRef.current = false
+    isAutoScrollEnabledRef.current = true
+    setShowScrollFab(false)
     scrollToBottom()
+  }, [scrollToBottom])
+
+  // Conditional auto-scroll: only scroll when enabled
+  useEffect(() => {
+    if (isAutoScrollEnabledRef.current) {
+      scrollToBottom()
+    }
   }, [messages, streamingContent, streamingParts, scrollToBottom])
+
+  // Reset auto-scroll state on session switch
+  useEffect(() => {
+    if (scrollCooldownRef.current !== null) {
+      clearTimeout(scrollCooldownRef.current)
+      scrollCooldownRef.current = null
+    }
+    isScrollCooldownActiveRef.current = false
+    isAutoScrollEnabledRef.current = true
+    setShowScrollFab(false)
+  }, [sessionId])
 
   // Auto-focus textarea when session changes or view becomes connected
   useEffect(() => {
@@ -448,11 +533,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [inputValue])
 
-  // Clean up throttle timer on unmount
+  // Clean up rAF on unmount
   useEffect(() => {
     return () => {
-      if (throttleRef.current !== null) {
-        clearTimeout(throttleRef.current)
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
       }
     }
   }, [])
@@ -475,21 +560,21 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setStreamingContent(streamingContentRef.current)
   }, [])
 
-  // Schedule a throttled flush (~100ms batching for text updates)
+  // Schedule a frame-synced flush (requestAnimationFrame for text updates)
   const scheduleFlush = useCallback(() => {
-    if (throttleRef.current === null) {
-      throttleRef.current = setTimeout(() => {
-        throttleRef.current = null
+    if (rafRef.current === null) {
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null
         flushStreamingState()
-      }, 100)
+      })
     }
   }, [flushStreamingState])
 
-  // Immediate flush — cancels pending throttle and flushes now (for tool updates and stream end)
+  // Immediate flush — cancels pending rAF and flushes now (for tool updates and stream end)
   const immediateFlush = useCallback(() => {
-    if (throttleRef.current !== null) {
-      clearTimeout(throttleRef.current)
-      throttleRef.current = null
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
     }
     flushStreamingState()
   }, [flushStreamingState])
@@ -516,13 +601,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       })
       // Also update legacy streamingContent for backward compat
       streamingContentRef.current += delta
-      // Throttled: batch text updates at ~100ms intervals
+      // Frame-synced: batch text updates per animation frame
       scheduleFlush()
     },
     [updateStreamingPartsRef, scheduleFlush]
   )
 
-  // Helper: set full text on the last text part (throttled)
+  // Helper: set full text on the last text part (frame-synced)
   const setTextContent = useCallback(
     (text: string) => {
       updateStreamingPartsRef((parts) => {
@@ -533,7 +618,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return [...parts, { type: 'text' as const, text }]
       })
       streamingContentRef.current = text
-      // Throttled: batch text updates at ~100ms intervals
+      // Frame-synced: batch text updates per animation frame
       scheduleFlush()
     },
     [updateStreamingPartsRef, scheduleFlush]
@@ -580,9 +665,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Reset streaming state
   const resetStreamingState = useCallback(() => {
-    if (throttleRef.current !== null) {
-      clearTimeout(throttleRef.current)
-      throttleRef.current = null
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
     }
     streamingPartsRef.current = []
     setStreamingParts([])
@@ -1162,6 +1247,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
     setInputValue('')
 
+    // User just sent a message — cancel any scroll cooldown and resume auto-scroll
+    if (scrollCooldownRef.current !== null) {
+      clearTimeout(scrollCooldownRef.current)
+      scrollCooldownRef.current = null
+    }
+    isScrollCooldownActiveRef.current = false
+    isAutoScrollEnabledRef.current = true
+    setShowScrollFab(false)
+
     // Set worktree status to 'working'
     useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
 
@@ -1388,59 +1482,85 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       data-testid="session-view"
       data-session-id={sessionId}
     >
-      {/* Message list */}
-      <div className="flex-1 overflow-y-auto" data-testid="message-list">
-        {messages.length === 0 && !hasStreamingContent ? (
-          <div className="flex-1 flex items-center justify-center h-full text-muted-foreground">
-            <div className="text-center">
-              <p className="text-lg font-medium">Start a conversation</p>
-              <p className="text-sm mt-1">Type a message below to begin</p>
-              {!opencodeSessionId && worktreePath && (
-                <p className="text-xs mt-2 text-yellow-500">Connecting to OpenCode...</p>
-              )}
-              {!worktreePath && (
-                <p className="text-xs mt-2 text-yellow-500">No worktree selected</p>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="py-4">
-            {messages.map((message) => (
-              <MessageRenderer key={message.id} message={message} cwd={worktreePath} />
-            ))}
-            {/* Streaming message */}
-            {hasStreamingContent && (
-              <MessageRenderer
-                message={{
-                  id: 'streaming',
-                  role: 'assistant',
-                  content: streamingContent,
-                  timestamp: new Date().toISOString(),
-                  parts: streamingParts
-                }}
-                isStreaming={isStreaming}
-                cwd={worktreePath}
-              />
-            )}
-            {/* Typing indicator when waiting for response */}
-            {isSending && !hasStreamingContent && (
-              <div className="px-6 py-5" data-testid="typing-indicator">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" />
-                  <span
-                    className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
-                    style={{ animationDelay: '0.1s' }}
-                  />
-                  <span
-                    className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
-                    style={{ animationDelay: '0.2s' }}
-                  />
-                </div>
+      {/* Message list with scroll tracking */}
+      <div className="relative flex-1 min-h-0">
+        <div
+          ref={scrollContainerRef}
+          className="h-full overflow-y-auto"
+          onScroll={handleScroll}
+          data-testid="message-list"
+        >
+          {messages.length === 0 && !hasStreamingContent ? (
+            <div className="flex-1 flex items-center justify-center h-full text-muted-foreground">
+              <div className="text-center">
+                <p className="text-lg font-medium">Start a conversation</p>
+                <p className="text-sm mt-1">Type a message below to begin</p>
+                {!opencodeSessionId && worktreePath && (
+                  <p className="text-xs mt-2 text-yellow-500">Connecting to OpenCode...</p>
+                )}
+                {!worktreePath && (
+                  <p className="text-xs mt-2 text-yellow-500">No worktree selected</p>
+                )}
               </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
+            </div>
+          ) : (
+            <div className="py-4">
+              {messages.map((message) => (
+                <MessageRenderer key={message.id} message={message} cwd={worktreePath} />
+              ))}
+              {/* Streaming message */}
+              {hasStreamingContent && (
+                <MessageRenderer
+                  message={{
+                    id: 'streaming',
+                    role: 'assistant',
+                    content: streamingContent,
+                    timestamp: new Date().toISOString(),
+                    parts: streamingParts
+                  }}
+                  isStreaming={isStreaming}
+                  cwd={worktreePath}
+                />
+              )}
+              {/* Typing indicator when waiting for response */}
+              {isSending && !hasStreamingContent && (
+                <div className="px-6 py-5" data-testid="typing-indicator">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" />
+                    <span
+                      className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
+                      style={{ animationDelay: '0.1s' }}
+                    />
+                    <span
+                      className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
+                      style={{ animationDelay: '0.2s' }}
+                    />
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
+        {/* Scroll-to-bottom FAB */}
+        <button
+          onClick={handleScrollToBottomClick}
+          className={cn(
+            'absolute bottom-4 right-4 z-10',
+            'h-8 w-8 rounded-full',
+            'bg-muted/80 backdrop-blur-sm border border-border',
+            'flex items-center justify-center',
+            'shadow-md hover:bg-muted transition-all duration-200',
+            'cursor-pointer',
+            showScrollFab
+              ? 'opacity-100 translate-y-0'
+              : 'opacity-0 translate-y-2 pointer-events-none'
+          )}
+          aria-label="Scroll to bottom"
+          data-testid="scroll-to-bottom-fab"
+        >
+          <ArrowDown className="h-4 w-4" />
+        </button>
       </div>
 
       {/* Input area */}
