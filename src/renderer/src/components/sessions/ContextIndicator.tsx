@@ -1,11 +1,6 @@
 import { useMemo } from 'react'
 import { useContextStore } from '@/stores/useContextStore'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger
-} from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 interface ContextIndicatorProps {
@@ -24,16 +19,20 @@ function getBarColor(percent: number): string {
   return 'bg-green-500'
 }
 
-export function ContextIndicator({ sessionId, modelId }: ContextIndicatorProps): React.JSX.Element | null {
+export function ContextIndicator({
+  sessionId,
+  modelId
+}: ContextIndicatorProps): React.JSX.Element | null {
   // Select raw state values (stable references) to avoid infinite re-render
   const tokenInfo = useContextStore((state) => state.tokensBySession[sessionId])
   const modelLimit = useContextStore((state) => state.modelLimits[modelId])
+  const cost = useContextStore((state) => state.costBySession[sessionId]) ?? 0
 
   // Compute derived values locally
   const { used, limit, percent, tokens } = useMemo(() => {
     const t = tokenInfo ?? { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
     const lim = modelLimit ?? 0
-    const u = t.input + t.output + t.cacheRead
+    const u = t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite
     const pct = lim > 0 ? Math.min(100, Math.round((u / lim) * 100)) : 0
     return { used: u, limit: lim, percent: pct, tokens: t }
   }, [tokenInfo, modelLimit])
@@ -45,13 +44,13 @@ export function ContextIndicator({ sessionId, modelId }: ContextIndicatorProps):
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div
-            className="w-[120px] flex-shrink-0 cursor-default"
-            data-testid="context-indicator"
-          >
+          <div className="w-[120px] flex-shrink-0 cursor-default" data-testid="context-indicator">
             <div className="h-1.5 rounded-full bg-muted overflow-hidden">
               <div
-                className={cn('h-full rounded-full transition-all duration-300', getBarColor(percent))}
+                className={cn(
+                  'h-full rounded-full transition-all duration-300',
+                  getBarColor(percent)
+                )}
                 style={{ width: `${Math.min(100, percent)}%` }}
                 data-testid="context-bar"
               />
@@ -71,6 +70,11 @@ export function ContextIndicator({ sessionId, modelId }: ContextIndicatorProps):
               <div>Cache read: {formatNumber(tokens.cacheRead)}</div>
               <div>Cache write: {formatNumber(tokens.cacheWrite)}</div>
             </div>
+            {cost > 0 && (
+              <div className="border-t border-background/20 pt-1.5">
+                <div>Session cost: ${cost.toFixed(4)}</div>
+              </div>
+            )}
           </div>
         </TooltipContent>
       </Tooltip>

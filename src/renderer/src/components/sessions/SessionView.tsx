@@ -16,6 +16,7 @@ import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
+import { extractTokens, extractCost } from '@/lib/token-utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from './QuestionPrompt'
@@ -708,39 +709,48 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
 
       // Reconstruct token usage from stored assistant messages
+      // Snapshot approach: find the LAST assistant message with tokens > 0 (walk backward)
+      // Cost: sum across ALL assistant messages
       useContextStore.getState().resetSessionTokens(sessionId)
-      for (const msg of dbMessages) {
+      let totalCost = 0
+      let snapshotSet = false
+
+      for (let i = dbMessages.length - 1; i >= 0; i--) {
+        const msg = dbMessages[i]
         if (msg.role === 'assistant' && msg.opencode_message_json) {
           try {
             const msgJson = JSON.parse(msg.opencode_message_json)
-            const tokens = msgJson?.tokens || msgJson?.info?.tokens
-            if (tokens) {
-              useContextStore.getState().addMessageTokens(sessionId, {
-                input: typeof tokens.input === 'number' ? tokens.input : 0,
-                output: typeof tokens.output === 'number' ? tokens.output : 0,
-                reasoning: typeof tokens.reasoning === 'number' ? tokens.reasoning : 0,
-                cacheRead:
-                  typeof tokens.cacheRead === 'number'
-                    ? tokens.cacheRead
-                    : typeof tokens.cache_read === 'number'
-                      ? tokens.cache_read
-                      : typeof tokens.cache?.read === 'number'
-                        ? tokens.cache.read
-                        : 0,
-                cacheWrite:
-                  typeof tokens.cacheWrite === 'number'
-                    ? tokens.cacheWrite
-                    : typeof tokens.cache_write === 'number'
-                      ? tokens.cache_write
-                      : typeof tokens.cache?.write === 'number'
-                        ? tokens.cache.write
-                        : 0
-              })
+
+            // DEBUG: log the shape of the stored JSON to understand token location
+            if (i === dbMessages.length - 1 || !snapshotSet) {
+              console.log('[context-debug] msgJson keys:', Object.keys(msgJson))
+              console.log('[context-debug] msgJson.tokens:', msgJson?.tokens)
+              console.log('[context-debug] msgJson.info?.tokens:', msgJson?.info?.tokens)
+              console.log(
+                '[context-debug] raw opencode_message_json (first 500):',
+                msg.opencode_message_json?.substring(0, 500)
+              )
+            }
+
+            // Accumulate cost from every assistant message
+            totalCost += extractCost(msgJson)
+
+            // Set token snapshot from the last assistant message with tokens > 0
+            if (!snapshotSet) {
+              const tokens = extractTokens(msgJson)
+              console.log('[context-debug] extractTokens result:', tokens)
+              if (tokens) {
+                useContextStore.getState().setSessionTokens(sessionId, tokens)
+                snapshotSet = true
+              }
             }
           } catch {
             // Ignore parse errors
           }
         }
+      }
+      if (totalCost > 0) {
+        useContextStore.getState().setSessionCost(sessionId, totalCost)
       }
 
       return loadedMessages
@@ -1105,33 +1115,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
             }
 
-            // Extract token usage from completed messages (per-message, not per-session).
-            // Finalization is handled by session.status, NOT here.
+            // Extract token usage from completed messages (snapshot replacement).
+            // On each completed assistant message, replace the token snapshot.
             const info = event.data?.info
             if (info?.time?.completed) {
-              const tokens = info?.tokens
-              if (tokens) {
-                useContextStore.getState().addMessageTokens(sessionId, {
-                  input: typeof tokens.input === 'number' ? tokens.input : 0,
-                  output: typeof tokens.output === 'number' ? tokens.output : 0,
-                  reasoning: typeof tokens.reasoning === 'number' ? tokens.reasoning : 0,
-                  cacheRead:
-                    typeof tokens.cacheRead === 'number'
-                      ? tokens.cacheRead
-                      : typeof tokens.cache_read === 'number'
-                        ? tokens.cache_read
-                        : typeof tokens.cache?.read === 'number'
-                          ? tokens.cache.read
-                          : 0,
-                  cacheWrite:
-                    typeof tokens.cacheWrite === 'number'
-                      ? tokens.cacheWrite
-                      : typeof tokens.cache_write === 'number'
-                        ? tokens.cache_write
-                        : typeof tokens.cache?.write === 'number'
-                          ? tokens.cache.write
-                          : 0
-                })
+              const data = event.data as Record<string, unknown> | undefined
+              if (data) {
+                const tokens = extractTokens(data)
+                if (tokens) {
+                  useContextStore.getState().setSessionTokens(sessionId, tokens)
+                }
+                const cost = extractCost(data)
+                if (cost > 0) {
+                  useContextStore.getState().addSessionCost(sessionId, cost)
+                }
               }
             }
           } else if (event.type === 'session.idle') {
