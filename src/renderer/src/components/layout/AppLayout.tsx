@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { SessionHistory } from '@/components/sessions/SessionHistory'
 import { CommandPalette } from '@/components/command-palette'
 import { SettingsModal } from '@/components/settings'
+import { FileSearchDialog } from '@/components/file-search'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
 import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
@@ -58,6 +59,9 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
       </ErrorBoundary>
       <ErrorBoundary componentName="SettingsModal" fallback={null}>
         <SettingsModal />
+      </ErrorBoundary>
+      <ErrorBoundary componentName="FileSearchDialog" fallback={null}>
+        <FileSearchDialog />
       </ErrorBoundary>
     </div>
   )

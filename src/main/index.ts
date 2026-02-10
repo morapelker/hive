@@ -135,6 +135,18 @@ function createWindow(): void {
       mainWindow!.webContents.send('shortcut:new-session')
     }
 
+    // Intercept Cmd+D — forward to renderer to toggle file search dialog
+    if (
+      input.key.toLowerCase() === 'd' &&
+      (input.meta || input.control) &&
+      !input.alt &&
+      !input.shift &&
+      input.type === 'keyDown'
+    ) {
+      event.preventDefault()
+      mainWindow!.webContents.send('shortcut:file-search')
+    }
+
     // Intercept Cmd+W — never close the window, forward to renderer to close session tab
     if (
       input.key.toLowerCase() === 'w' &&

@@ -252,6 +252,7 @@ declare global {
       openInApp: (appName: string, path: string) => Promise<{ success: boolean; error?: string }>
       onNewSessionShortcut: (callback: () => void) => () => void
       onCloseSessionShortcut: (callback: () => void) => () => void
+      onFileSearchShortcut: (callback: () => void) => () => void
       onNotificationNavigate: (
         callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
       ) => () => void

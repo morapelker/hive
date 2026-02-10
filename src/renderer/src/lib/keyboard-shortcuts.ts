@@ -21,13 +21,7 @@ export interface ShortcutDefinition {
   defaultBinding: KeyBinding
 }
 
-export type ShortcutCategory =
-  | 'session'
-  | 'navigation'
-  | 'git'
-  | 'sidebar'
-  | 'focus'
-  | 'settings'
+export type ShortcutCategory = 'session' | 'navigation' | 'git' | 'sidebar' | 'focus' | 'settings'
 
 // ==========================================
 // Default Shortcut Definitions
@@ -72,6 +66,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
   },
 
   // Navigation shortcuts
+  {
+    id: 'nav:file-search',
+    label: 'Search Files',
+    description: 'Open the file search dialog',
+    category: 'navigation',
+    defaultBinding: { key: 'd', modifiers: ['meta'] }
+  },
   {
     id: 'nav:command-palette',
     label: 'Open Command Palette',
@@ -219,7 +220,10 @@ export function eventMatchesBinding(event: KeyboardEvent, binding: KeyBinding): 
   const altRequired = binding.modifiers.includes('alt')
   let keyMatches: boolean
   if (altRequired && event.altKey && event.code) {
-    const codeKey = event.code.replace(/^Key/, '').replace(/^Digit/, '').toLowerCase()
+    const codeKey = event.code
+      .replace(/^Key/, '')
+      .replace(/^Digit/, '')
+      .toLowerCase()
     keyMatches = codeKey === binding.key.toLowerCase()
   } else {
     keyMatches = event.key.toLowerCase() === binding.key.toLowerCase()

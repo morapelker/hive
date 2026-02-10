@@ -313,6 +313,17 @@ const systemOps = {
     }
   },
 
+  // Subscribe to Cmd+D / Ctrl+D file search shortcut from main process
+  onFileSearchShortcut: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on('shortcut:file-search', handler)
+    return () => {
+      ipcRenderer.removeListener('shortcut:file-search', handler)
+    }
+  },
+
   // Subscribe to notification navigation events (from native notifications)
   onNotificationNavigate: (
     callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void

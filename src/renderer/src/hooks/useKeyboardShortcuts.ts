@@ -4,7 +4,8 @@ import {
   useProjectStore,
   useLayoutStore,
   useSessionHistoryStore,
-  useCommandPaletteStore
+  useCommandPaletteStore,
+  useFileSearchStore
 } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
@@ -94,6 +95,17 @@ export function useKeyboardShortcuts(): void {
 
     const cleanup = window.systemOps.onNewSessionShortcut(() => {
       createNewSession()
+    })
+
+    return cleanup
+  }, [])
+
+  // Listen for Cmd+D / Ctrl+D forwarded from the main process via IPC
+  useEffect(() => {
+    if (!window.systemOps?.onFileSearchShortcut) return
+
+    const cleanup = window.systemOps.onFileSearchShortcut(() => {
+      useFileSearchStore.getState().toggle()
     })
 
     return cleanup
@@ -257,6 +269,14 @@ function getShortcutHandlers(
     // =====================
     // Navigation shortcuts
     // =====================
+    {
+      id: 'nav:file-search',
+      binding: getEffectiveBinding('nav:file-search'),
+      allowInInput: true,
+      handler: () => {
+        useFileSearchStore.getState().toggle()
+      }
+    },
     {
       id: 'nav:command-palette',
       binding: getEffectiveBinding('nav:command-palette'),
