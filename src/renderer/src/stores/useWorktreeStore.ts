@@ -26,6 +26,7 @@ interface WorktreeState {
   // UI State
   selectedWorktreeId: string | null
   creatingForProjectId: string | null
+  archivingWorktreeIds: Set<string>
 
   // Actions
   loadWorktrees: (projectId: string) => Promise<void>
@@ -69,6 +70,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   error: null,
   selectedWorktreeId: null,
   creatingForProjectId: null,
+  archivingWorktreeIds: new Set(),
 
   // Load worktrees for a project from database
   loadWorktrees: async (projectId: string) => {
@@ -164,6 +166,11 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       return { success: false, error: 'Cannot archive the default worktree' }
     }
 
+    // Mark as archiving
+    set((state) => ({
+      archivingWorktreeIds: new Set([...state.archivingWorktreeIds, worktreeId])
+    }))
+
     try {
       const result = await window.worktreeOps.delete({
         worktreeId,
@@ -199,6 +206,13 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         success: false,
         error: error instanceof Error ? error.message : 'Failed to archive worktree'
       }
+    } finally {
+      // Always clear archiving state
+      set((state) => {
+        const next = new Set(state.archivingWorktreeIds)
+        next.delete(worktreeId)
+        return { archivingWorktreeIds: next }
+      })
     }
   },
 
@@ -216,6 +230,11 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       toast.error('Cannot unbranch the default worktree')
       return { success: false, error: 'Cannot unbranch the default worktree' }
     }
+
+    // Mark as archiving (same loading state for unbranch)
+    set((state) => ({
+      archivingWorktreeIds: new Set([...state.archivingWorktreeIds, worktreeId])
+    }))
 
     try {
       const result = await window.worktreeOps.delete({
@@ -252,6 +271,13 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         success: false,
         error: error instanceof Error ? error.message : 'Failed to unbranch worktree'
       }
+    } finally {
+      // Always clear archiving state
+      set((state) => {
+        const next = new Set(state.archivingWorktreeIds)
+        next.delete(worktreeId)
+        return { archivingWorktreeIds: next }
+      })
     }
   },
 
