@@ -387,6 +387,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const isLogModeRef = useRef<boolean>(false)
   const logFilePathRef = useRef<string | null>(null)
 
+  // Child session → subtask index mapping for subagent content routing
+  const childToSubtaskIndexRef = useRef<Map<string, number>>(new Map())
+
   // Streaming dedup refs
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
   const hasFinalizedCurrentResponseRef = useRef(false)
@@ -686,6 +689,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     hasTriggeredNamingRef.current = false
     finalizedMessageIdsRef.current.clear()
     hasFinalizedCurrentResponseRef.current = false
+    childToSubtaskIndexRef.current.clear()
 
     const loadMessagesFromDatabase = async (): Promise<OpenCodeMessage[]> => {
       const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
@@ -791,6 +795,107 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Skip user-message echoes; user messages are already rendered locally.
             if (eventRole === 'user') return
 
+            // Route child/subagent events into their SubtaskCard
+            if (event.childSessionId) {
+              let subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
+
+              // Auto-create subtask entry on first child event (SDK doesn't
+              // emit a dedicated "subtask" part — the child session just starts
+              // streaming).
+              if (subtaskIdx === undefined) {
+                subtaskIdx = streamingPartsRef.current.length
+                updateStreamingPartsRef((parts) => [
+                  ...parts,
+                  {
+                    type: 'subtask',
+                    subtask: {
+                      id: event.childSessionId!,
+                      sessionID: event.childSessionId!,
+                      prompt: '',
+                      description: '',
+                      agent: 'task',
+                      parts: [],
+                      status: 'running'
+                    }
+                  }
+                ])
+                childToSubtaskIndexRef.current.set(event.childSessionId, subtaskIdx)
+                immediateFlush()
+              }
+
+              if (subtaskIdx !== undefined) {
+                const childPart = event.data?.part
+                if (childPart?.type === 'text') {
+                  updateStreamingPartsRef((parts) => {
+                    const updated = [...parts]
+                    const subtask = updated[subtaskIdx]
+                    if (subtask?.type === 'subtask' && subtask.subtask) {
+                      const lastPart = subtask.subtask.parts[subtask.subtask.parts.length - 1]
+                      if (lastPart?.type === 'text') {
+                        lastPart.text =
+                          (lastPart.text || '') + (event.data?.delta || childPart.text || '')
+                      } else {
+                        subtask.subtask.parts = [
+                          ...subtask.subtask.parts,
+                          { type: 'text', text: event.data?.delta || childPart.text || '' }
+                        ]
+                      }
+                    }
+                    return updated
+                  })
+                  scheduleFlush()
+                } else if (childPart?.type === 'tool') {
+                  const state = childPart.state || childPart
+                  const toolId =
+                    state.toolCallId || childPart.callID || childPart.id || `tool-${Date.now()}`
+                  updateStreamingPartsRef((parts) => {
+                    const updated = [...parts]
+                    const subtask = updated[subtaskIdx]
+                    if (subtask?.type === 'subtask' && subtask.subtask) {
+                      const existing = subtask.subtask.parts.find(
+                        (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
+                      )
+                      if (existing && existing.type === 'tool_use' && existing.toolUse) {
+                        // Update existing tool
+                        const statusMap: Record<string, string> = {
+                          running: 'running',
+                          completed: 'success',
+                          error: 'error'
+                        }
+                        existing.toolUse.status = (statusMap[state.status] || 'running') as
+                          | 'pending'
+                          | 'running'
+                          | 'success'
+                          | 'error'
+                        if (state.time?.end) existing.toolUse.endTime = state.time.end
+                        if (state.status === 'completed') existing.toolUse.output = state.output
+                        if (state.status === 'error') existing.toolUse.error = state.error
+                      } else {
+                        // Add new tool
+                        subtask.subtask.parts = [
+                          ...subtask.subtask.parts,
+                          {
+                            type: 'tool_use',
+                            toolUse: {
+                              id: toolId,
+                              name: childPart.tool || state.name || 'unknown',
+                              input: state.input,
+                              status: 'running',
+                              startTime: state.time?.start || Date.now()
+                            }
+                          }
+                        ]
+                      }
+                    }
+                    return updated
+                  })
+                  immediateFlush()
+                }
+                setIsStreaming(true)
+                return // Don't process as top-level part
+              }
+            }
+
             const part = event.data?.part
             if (!part) return
 
@@ -852,6 +957,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               })
               setIsStreaming(true)
             } else if (part.type === 'subtask') {
+              const subtaskIndex = streamingPartsRef.current.length // index it will be at
               updateStreamingPartsRef((parts) => [
                 ...parts,
                 {
@@ -867,6 +973,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   }
                 }
               ])
+              // Map child session ID to this subtask's index
+              if (part.sessionID) {
+                childToSubtaskIndexRef.current.set(part.sessionID, subtaskIndex)
+              }
               immediateFlush()
               setIsStreaming(true)
             } else if (part.type === 'reasoning') {
@@ -991,6 +1101,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               void finalizeResponseFromDatabase()
             }
           } else if (event.type === 'session.idle') {
+            // Child session idle — update subtask status, don't finalize parent
+            if (event.childSessionId) {
+              const subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
+              if (subtaskIdx !== undefined) {
+                updateStreamingPartsRef((parts) => {
+                  const updated = [...parts]
+                  const subtask = updated[subtaskIdx]
+                  if (subtask?.type === 'subtask' && subtask.subtask) {
+                    subtask.subtask.status = 'completed'
+                  }
+                  return updated
+                })
+                immediateFlush()
+              }
+              return // Don't finalize the parent session
+            }
+
             // Session finished processing — flush any pending throttled updates
             immediateFlush()
             setIsSending(false)
