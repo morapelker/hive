@@ -401,6 +401,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
   const hasFinalizedCurrentResponseRef = useRef(false)
 
+  // Generation counter to prevent stale closures from processing events for
+  // the wrong session (cross-tab bleed prevention). Incremented on every
+  // sessionId change; the stream handler captures the current value and rejects
+  // events when the ref has moved on.
+  const streamGenerationRef = useRef(0)
+
   // Echo detection: stores the full prompt text (including mode prefix) so we
   // can recognise SDK echoes of the user message even when the event lacks a
   // role field.
@@ -752,6 +758,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
     }
 
+    // Increment generation counter to invalidate stale closures from previous
+    // sessions. This prevents cross-tab content bleed when multiple SessionView
+    // instances process events concurrently during tab transitions.
+    streamGenerationRef.current += 1
+    const currentGeneration = streamGenerationRef.current
+
+    // Partial clear — reset display data but preserve streaming status.
+    // Do NOT call resetStreamingState() here because that would set
+    // isStreaming = false, killing the loading indicator when switching to a
+    // tab that's actively streaming. Let the stream subscription's
+    // session.status events control isStreaming.
+    streamingPartsRef.current = []
+    streamingContentRef.current = ''
+    childToSubtaskIndexRef.current = new Map()
+    setStreamingParts([])
+    setStreamingContent('')
+    hasFinalizedCurrentResponseRef.current = false
+
     // Subscribe to OpenCode stream events SYNCHRONOUSLY before any async work.
     // This prevents a race condition where session.idle arrives during async
     // initialization (DB loads, reconnect) and is missed by both this handler
@@ -760,6 +784,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       ? window.opencodeOps.onStream((event) => {
           // Only handle events for this session
           if (event.sessionId !== sessionId) return
+
+          // Guard: generation check — prevents stale closures from processing
+          // events when the user has already switched to a different session.
+          if (streamGenerationRef.current !== currentGeneration) return
 
           // Log event if response logging is active
           if (isLogModeRef.current && logFilePathRef.current) {
@@ -1174,7 +1202,28 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       try {
         // 1. Load messages from database
-        await loadMessagesFromDatabase()
+        const loadedMessages = await loadMessagesFromDatabase()
+
+        // 1b. Restore streaming parts from the last persisted assistant message.
+        // When the user switches away from a session with an active tool call
+        // and then switches back, streamingPartsRef is empty. Without this
+        // restoration, incoming tool results can't find their matching callID
+        // and create a new detached entry. Re-populating the parts ref from
+        // the DB lets tool results merge correctly.
+        if (loadedMessages.length > 0) {
+          const lastMsg = loadedMessages[loadedMessages.length - 1]
+          if (lastMsg.role === 'assistant' && lastMsg.parts && lastMsg.parts.length > 0) {
+            streamingPartsRef.current = lastMsg.parts.map((p) => ({ ...p }))
+            setStreamingParts([...streamingPartsRef.current])
+
+            const textParts = lastMsg.parts.filter((p) => p.type === 'text')
+            if (textParts.length > 0) {
+              const content = textParts.map((p) => p.text || '').join('')
+              streamingContentRef.current = content
+              setStreamingContent(content)
+            }
+          }
+        }
 
         // 2. Get session info to find worktree
         const session = (await window.db.session.get(sessionId)) as DbSession | null

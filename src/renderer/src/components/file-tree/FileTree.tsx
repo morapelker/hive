@@ -4,6 +4,7 @@ import { FolderOpen } from 'lucide-react'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { FileTreeHeader } from './FileTreeHeader'
+import { FileTreeFilter } from './FileTreeFilter'
 import { VirtualFileTreeNode } from './FileTreeNode'
 import { cn } from '@/lib/utils'
 
@@ -36,6 +37,9 @@ interface FileTreeProps {
   onClose?: () => void
   onFileClick?: (node: FileTreeNode) => void
   className?: string
+  hideHeader?: boolean
+  hideGitIndicators?: boolean
+  hideGitContextActions?: boolean
 }
 
 // Helper to check if a node matches the filter
@@ -96,7 +100,10 @@ export function FileTree({
   worktreePath,
   onClose,
   onFileClick,
-  className
+  className,
+  hideHeader,
+  hideGitIndicators,
+  hideGitContextActions
 }: FileTreeProps): React.JSX.Element {
   const {
     isLoading,
@@ -113,11 +120,7 @@ export function FileTree({
     handleFileChange
   } = useFileTreeStore()
 
-  const {
-    getFileStatuses,
-    loadFileStatuses,
-    refreshStatuses
-  } = useGitStore()
+  const { getFileStatuses, loadFileStatuses, refreshStatuses } = useGitStore()
 
   const unsubscribeRef = useRef<(() => void) | null>(null)
   const gitUnsubscribeRef = useRef<(() => void) | null>(null)
@@ -179,7 +182,15 @@ export function FileTree({
         gitUnsubscribeRef.current = null
       }
     }
-  }, [worktreePath, loadFileTree, loadFileStatuses, refreshStatuses, startWatching, stopWatching, handleFileChange])
+  }, [
+    worktreePath,
+    loadFileTree,
+    loadFileStatuses,
+    refreshStatuses,
+    startWatching,
+    stopWatching,
+    handleFileChange
+  ])
 
   // Cleanup watching on unmount
   useEffect(() => {
@@ -249,23 +260,92 @@ export function FileTree({
     }
   }, [worktreePath, loadFileTree, loadFileStatuses])
 
+  const headerElement = !hideHeader ? (
+    <FileTreeHeader
+      filter={filter}
+      isLoading={isLoading}
+      onFilterChange={handleFilterChange}
+      onRefresh={handleRefresh}
+      onCollapseAll={handleCollapseAll}
+      onClose={onClose}
+    />
+  ) : (
+    <div className="p-2 border-b">
+      <FileTreeFilter value={filter} onChange={handleFilterChange} />
+    </div>
+  )
+
   // No worktree selected
   if (!worktreePath) {
     return (
       <div className={cn('flex flex-col h-full', className)}>
-        <FileTreeHeader
-          filter=""
-          isLoading={false}
-          onFilterChange={() => {}}
-          onRefresh={() => {}}
-          onCollapseAll={() => {}}
-          onClose={onClose}
-        />
+        {!hideHeader ? (
+          <FileTreeHeader
+            filter=""
+            isLoading={false}
+            onFilterChange={() => {}}
+            onRefresh={() => {}}
+            onCollapseAll={() => {}}
+            onClose={onClose}
+          />
+        ) : (
+          <div className="p-2 border-b">
+            <FileTreeFilter value="" onChange={() => {}} />
+          </div>
+        )}
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="text-center text-muted-foreground">
             <FolderOpen className="h-10 w-10 mx-auto mb-3 opacity-50" />
             <p className="text-sm">Select a worktree</p>
             <p className="text-xs mt-1 opacity-75">to view its files</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className={cn('flex flex-col h-full', className)}>
+        {headerElement}
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center text-destructive">
+            <p className="text-sm font-medium">Error loading files</p>
+            <p className="text-xs mt-1 opacity-75">{error}</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Loading state
+  if (isLoading && tree.length === 0) {
+    return (
+      <div className={cn('flex flex-col h-full', className)}>
+        {headerElement}
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center text-muted-foreground">
+            <div
+              className="h-6 w-6 mx-auto mb-3 border-2 border-current border-t-transparent rounded-full animate-spin"
+              aria-label="Loading files"
+            />
+            <p className="text-sm">Loading files...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Empty state
+  if (tree.length === 0) {
+    return (
+      <div className={cn('flex flex-col h-full', className)}>
+        {headerElement}
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center text-muted-foreground">
+            <FolderOpen className="h-10 w-10 mx-auto mb-3 opacity-50" />
+            <p className="text-sm">No files found</p>
           </div>
         </div>
       </div>
@@ -308,7 +388,10 @@ export function FileTree({
         />
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="text-center text-muted-foreground">
-            <div className="h-6 w-6 mx-auto mb-3 border-2 border-current border-t-transparent rounded-full animate-spin" aria-label="Loading files" />
+            <div
+              className="h-6 w-6 mx-auto mb-3 border-2 border-current border-t-transparent rounded-full animate-spin"
+              aria-label="Loading files"
+            />
             <p className="text-sm">Loading files...</p>
           </div>
         </div>
@@ -342,14 +425,7 @@ export function FileTree({
 
   return (
     <div className={cn('flex flex-col h-full', className)} data-testid="file-tree">
-      <FileTreeHeader
-        filter={filter}
-        isLoading={isLoading}
-        onFilterChange={handleFilterChange}
-        onRefresh={handleRefresh}
-        onCollapseAll={handleCollapseAll}
-        onClose={onClose}
-      />
+      {headerElement}
       <div
         ref={parentRef}
         className="flex-1 overflow-auto py-1"
@@ -388,6 +464,8 @@ export function FileTree({
                   onFileClick={onFileClick}
                   worktreePath={worktreePath}
                   gitStatusMap={gitStatusMap}
+                  hideGitIndicators={hideGitIndicators}
+                  hideGitContextActions={hideGitContextActions}
                 />
               </div>
             )

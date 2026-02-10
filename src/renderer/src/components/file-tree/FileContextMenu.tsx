@@ -34,6 +34,7 @@ interface FileContextMenuProps {
   gitStatus?: GitStatusCode
   staged?: boolean
   onClose?: () => void
+  hideGitContextActions?: boolean
 }
 
 export function FileContextMenu({
@@ -42,7 +43,8 @@ export function FileContextMenu({
   worktreePath,
   gitStatus,
   staged,
-  onClose
+  onClose,
+  hideGitContextActions
 }: FileContextMenuProps): React.JSX.Element {
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false)
   const [showDiffModal, setShowDiffModal] = useState(false)
@@ -108,11 +110,12 @@ export function FileContextMenu({
   }, [onClose])
 
   // Determine which git actions to show
-  const showStage = gitStatus && !staged && gitStatus !== 'C'
-  const showUnstage = staged
-  const showDiscard = gitStatus && gitStatus !== '?' && gitStatus !== 'C'
-  const showGitignore = gitStatus === '?'
-  const showViewChanges = gitStatus && gitStatus !== 'C' && !node.isDirectory
+  const showStage = !hideGitContextActions && gitStatus && !staged && gitStatus !== 'C'
+  const showUnstage = !hideGitContextActions && staged
+  const showDiscard = !hideGitContextActions && gitStatus && gitStatus !== '?' && gitStatus !== 'C'
+  const showGitignore = !hideGitContextActions && gitStatus === '?'
+  const showViewChanges =
+    !hideGitContextActions && gitStatus && gitStatus !== 'C' && !node.isDirectory
 
   return (
     <>
@@ -147,9 +150,7 @@ export function FileContextMenu({
                 >
                   <Trash2 className="mr-2 h-4 w-4 text-red-500" />
                   {showDiscardConfirm ? 'Click again to confirm' : 'Discard Changes'}
-                  {showDiscardConfirm && (
-                    <AlertCircle className="ml-auto h-4 w-4 text-red-500" />
-                  )}
+                  {showDiscardConfirm && <AlertCircle className="ml-auto h-4 w-4 text-red-500" />}
                 </ContextMenuItem>
               )}
               {showGitignore && (
@@ -162,31 +163,31 @@ export function FileContextMenu({
             </>
           )}
 
-        {/* File actions */}
-        <ContextMenuItem onClick={handleOpenInEditor}>
-          <FileCode className="mr-2 h-4 w-4" />
-          Open in Editor
-        </ContextMenuItem>
-        <ContextMenuItem onClick={handleOpenInFinder}>
-          <FolderOpen className="mr-2 h-4 w-4" />
-          {node.isDirectory ? 'Open in Finder' : 'Reveal in Finder'}
-        </ContextMenuItem>
+          {/* File actions */}
+          <ContextMenuItem onClick={handleOpenInEditor}>
+            <FileCode className="mr-2 h-4 w-4" />
+            Open in Editor
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleOpenInFinder}>
+            <FolderOpen className="mr-2 h-4 w-4" />
+            {node.isDirectory ? 'Open in Finder' : 'Reveal in Finder'}
+          </ContextMenuItem>
 
-        <ContextMenuSeparator />
+          <ContextMenuSeparator />
 
-        {/* Copy actions */}
-        <ContextMenuItem onClick={handleCopyPath}>
-          <Copy className="mr-2 h-4 w-4" />
-          Copy Path
-          <ContextMenuShortcut>Abs</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuItem onClick={handleCopyRelativePath}>
-          <Copy className="mr-2 h-4 w-4" />
-          Copy Relative Path
-          <ContextMenuShortcut>Rel</ContextMenuShortcut>
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+          {/* Copy actions */}
+          <ContextMenuItem onClick={handleCopyPath}>
+            <Copy className="mr-2 h-4 w-4" />
+            Copy Path
+            <ContextMenuShortcut>Abs</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleCopyRelativePath}>
+            <Copy className="mr-2 h-4 w-4" />
+            Copy Relative Path
+            <ContextMenuShortcut>Rel</ContextMenuShortcut>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       {/* Diff Modal */}
       {showViewChanges && (

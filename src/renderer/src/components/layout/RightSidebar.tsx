@@ -3,8 +3,7 @@ import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { ResizeHandle } from './ResizeHandle'
-import { FileTree } from '@/components/file-tree'
-import { GitStatusPanel } from '@/components/git'
+import { FileSidebar } from '@/components/file-tree'
 import { BottomPanel } from './BottomPanel'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 
@@ -52,29 +51,19 @@ export function RightSidebar(): React.JSX.Element {
         data-testid="right-sidebar"
         data-width={rightSidebarWidth}
         role="complementary"
-        aria-label="Git status and file tree"
+        aria-label="File sidebar"
       >
-        {/* Top half: Git status + File tree */}
+        {/* Top half: Tabbed sidebar (Changes / Files) */}
         <div className="flex flex-col flex-1 min-h-0" data-testid="right-sidebar-top">
           <ErrorBoundary
-            componentName="GitStatusPanel"
-            fallback={
-              <div className="border-b p-2">
-                <ErrorFallback compact title="Git panel error" />
-              </div>
-            }
-          >
-            <GitStatusPanel worktreePath={selectedWorktreePath} />
-          </ErrorBoundary>
-          <ErrorBoundary
-            componentName="FileTree"
+            componentName="FileSidebar"
             fallback={
               <div className="flex-1 p-2">
-                <ErrorFallback compact title="File tree error" />
+                <ErrorFallback compact title="File sidebar error" />
               </div>
             }
           >
-            <FileTree
+            <FileSidebar
               worktreePath={selectedWorktreePath}
               onClose={toggleRightSidebar}
               onFileClick={handleFileClick}

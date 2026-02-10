@@ -81,6 +81,8 @@ interface VirtualFileTreeNodeProps {
   onFileClick?: (node: FileTreeNode) => void
   worktreePath: string
   gitStatusMap: Map<string, GitFileStatus>
+  hideGitIndicators?: boolean
+  hideGitContextActions?: boolean
 }
 
 export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
@@ -92,7 +94,9 @@ export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
   onToggle,
   onFileClick,
   worktreePath,
-  gitStatusMap
+  gitStatusMap,
+  hideGitIndicators,
+  hideGitContextActions
 }: VirtualFileTreeNodeProps) {
   const handleClick = useCallback(() => {
     if (node.isDirectory) {
@@ -113,10 +117,7 @@ export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
   )
 
   // Get git status for this node
-  const gitStatus = useMemo(
-    () => getNodeGitStatus(node, gitStatusMap),
-    [node, gitStatusMap]
-  )
+  const gitStatus = useMemo(() => getNodeGitStatus(node, gitStatusMap), [node, gitStatusMap])
 
   const nodeContent = (
     <div
@@ -168,12 +169,8 @@ export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
       </span>
 
       {/* Git status indicator */}
-      {gitStatus && (
-        <GitStatusIndicator
-          status={gitStatus.status}
-          staged={gitStatus.staged}
-          className="ml-1"
-        />
+      {!hideGitIndicators && gitStatus && (
+        <GitStatusIndicator status={gitStatus.status} staged={gitStatus.staged} className="ml-1" />
       )}
     </div>
   )
@@ -184,6 +181,7 @@ export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
       worktreePath={worktreePath}
       gitStatus={gitStatus?.status}
       staged={gitStatus?.staged}
+      hideGitContextActions={hideGitContextActions}
     >
       <ContextMenuTrigger asChild>{nodeContent}</ContextMenuTrigger>
     </FileContextMenu>
