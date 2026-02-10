@@ -762,6 +762,21 @@ const opencodeOps = {
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:question:reject', { requestId, worktreePath }),
 
+  // Reply to a pending permission request (allow once, allow always, or reject)
+  permissionReply: (
+    requestId: string,
+    reply: 'once' | 'always' | 'reject',
+    worktreePath?: string,
+    message?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:permission:reply', { requestId, reply, worktreePath, message }),
+
+  // List all pending permission requests
+  permissionList: (
+    worktreePath?: string
+  ): Promise<{ success: boolean; permissions: unknown[]; error?: string }> =>
+    ipcRenderer.invoke('opencode:permission:list', { worktreePath }),
+
   // Send a slash command to a session via the SDK command endpoint
   command: (
     worktreePath: string,

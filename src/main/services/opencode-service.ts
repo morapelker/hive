@@ -862,6 +862,52 @@ class OpenCodeService {
   }
 
   /**
+   * Reply to a pending permission request from the AI
+   * Uses direct HTTP since v1 SDK lacks the permission namespace
+   */
+  async permissionReply(
+    requestId: string,
+    reply: 'once' | 'always' | 'reject',
+    worktreePath?: string,
+    message?: string
+  ): Promise<void> {
+    const instance = await this.getOrCreateInstance()
+    const url = new URL(`/permission/${encodeURIComponent(requestId)}/reply`, instance.server.url)
+    if (worktreePath) url.searchParams.set('directory', worktreePath)
+    const body: Record<string, string> = { reply }
+    if (message) body.message = message
+    const resp = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(`Permission reply failed (${resp.status}): ${text}`)
+    }
+  }
+
+  /**
+   * List pending permission requests
+   * Uses direct HTTP since v1 SDK lacks the permission namespace
+   */
+  async permissionList(worktreePath?: string): Promise<unknown[]> {
+    const instance = await this.getOrCreateInstance()
+    const url = new URL('/permission', instance.server.url)
+    if (worktreePath) url.searchParams.set('directory', worktreePath)
+    const resp = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(`Permission list failed (${resp.status}): ${text}`)
+    }
+    const data = await resp.json()
+    return Array.isArray(data) ? data : (data?.data ?? [])
+  }
+
+  /**
    * Get messages from an OpenCode session
    */
   async getMessages(worktreePath: string, opencodeSessionId: string): Promise<unknown[]> {

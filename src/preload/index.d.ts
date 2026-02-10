@@ -347,6 +347,17 @@ declare global {
         requestId: string,
         worktreePath?: string
       ) => Promise<{ success: boolean; error?: string }>
+      // Reply to a pending permission request (allow once, allow always, or reject)
+      permissionReply: (
+        requestId: string,
+        reply: 'once' | 'always' | 'reject',
+        worktreePath?: string,
+        message?: string
+      ) => Promise<{ success: boolean; error?: string }>
+      // List all pending permission requests
+      permissionList: (
+        worktreePath?: string
+      ) => Promise<{ success: boolean; permissions: PermissionRequest[]; error?: string }>
       // Send a slash command to a session via the SDK command endpoint
       command: (
         worktreePath: string,
@@ -585,93 +596,107 @@ declare global {
       }>
     }
   }
-}
 
-// Message part type for prompt API (text + file attachments)
-type MessagePart =
-  | { type: 'text'; text: string }
-  | { type: 'file'; mime: string; url: string; filename?: string }
+  // Message part type for prompt API (text + file attachments)
+  type MessagePart =
+    | { type: 'text'; text: string }
+    | { type: 'file'; mime: string; url: string; filename?: string }
 
-// Script output event type
-interface ScriptOutputEvent {
-  type: 'command-start' | 'output' | 'error' | 'done'
-  command?: string
-  data?: string
-  exitCode?: number
-}
-
-// OpenCode command type (slash commands)
-interface OpenCodeCommand {
-  name: string
-  description?: string
-  template: string
-  agent?: string
-  model?: string
-  source?: 'command' | 'mcp' | 'skill'
-  subtask?: boolean
-  hints?: string[]
-}
-
-// OpenCode stream event type
-interface OpenCodeStreamEvent {
-  type: string
-  sessionId: string
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  data: any
-  childSessionId?: string
-  /** session.status event payload -- only present when type === 'session.status' */
-  statusPayload?: {
-    type: 'idle' | 'busy' | 'retry'
-    attempt?: number
-    message?: string
-    next?: number
+  // Script output event type
+  interface ScriptOutputEvent {
+    type: 'command-start' | 'output' | 'error' | 'done'
+    command?: string
+    data?: string
+    exitCode?: number
   }
-}
 
-// File tree node type
-interface FileTreeNode {
-  name: string
-  path: string
-  relativePath: string
-  isDirectory: boolean
-  extension: string | null
-  children?: FileTreeNode[]
-}
+  // OpenCode command type (slash commands)
+  interface OpenCodeCommand {
+    name: string
+    description?: string
+    template: string
+    agent?: string
+    model?: string
+    source?: 'command' | 'mcp' | 'skill'
+    subtask?: boolean
+    hints?: string[]
+  }
 
-// File tree change event type
-interface FileTreeChangeEvent {
-  worktreePath: string
-  eventType: 'add' | 'addDir' | 'unlink' | 'unlinkDir' | 'change'
-  changedPath: string
-  relativePath: string
-}
+  // OpenCode permission request type
+  interface PermissionRequest {
+    id: string
+    sessionID: string
+    permission: string
+    patterns: string[]
+    metadata: Record<string, unknown>
+    always: string[]
+    tool?: {
+      messageID: string
+      callID: string
+    }
+  }
 
-// Git status types
-type GitStatusCode = 'M' | 'A' | 'D' | '?' | 'C' | ''
+  // OpenCode stream event type
+  interface OpenCodeStreamEvent {
+    type: string
+    sessionId: string
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    data: any
+    childSessionId?: string
+    /** session.status event payload -- only present when type === 'session.status' */
+    statusPayload?: {
+      type: 'idle' | 'busy' | 'retry'
+      attempt?: number
+      message?: string
+      next?: number
+    }
+  }
 
-interface GitFileStatus {
-  path: string
-  relativePath: string
-  status: GitStatusCode
-  staged: boolean
-}
+  // File tree node type
+  interface FileTreeNode {
+    name: string
+    path: string
+    relativePath: string
+    isDirectory: boolean
+    extension: string | null
+    children?: FileTreeNode[]
+  }
 
-interface GitStatusChangedEvent {
-  worktreePath: string
-}
+  // File tree change event type
+  interface FileTreeChangeEvent {
+    worktreePath: string
+    eventType: 'add' | 'addDir' | 'unlink' | 'unlinkDir' | 'change'
+    changedPath: string
+    relativePath: string
+  }
 
-interface GitBranchInfo {
-  name: string
-  tracking: string | null
-  ahead: number
-  behind: number
-}
+  // Git status types
+  type GitStatusCode = 'M' | 'A' | 'D' | '?' | 'C' | ''
 
-interface DetectedApp {
-  id: string
-  name: string
-  command: string
-  available: boolean
+  interface GitFileStatus {
+    path: string
+    relativePath: string
+    status: GitStatusCode
+    staged: boolean
+  }
+
+  interface GitStatusChangedEvent {
+    worktreePath: string
+  }
+
+  interface GitBranchInfo {
+    name: string
+    tracking: string | null
+    ahead: number
+    behind: number
+  }
+
+  interface DetectedApp {
+    id: string
+    name: string
+    command: string
+    available: boolean
+  }
 }
 
 export {}
