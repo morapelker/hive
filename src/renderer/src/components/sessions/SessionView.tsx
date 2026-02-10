@@ -18,6 +18,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
+import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { QuestionPrompt } from './QuestionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 
@@ -352,8 +353,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // OpenCode state
   const [worktreePath, setWorktreePath] = useState<string | null>(null)
+  const [worktreeId, setWorktreeId] = useState<string | null>(null)
   const [opencodeSessionId, setOpencodeSessionId] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
+
+  // Prompt history navigation
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null)
+  const savedDraftRef = useRef<string>('')
 
   // Current model ID for context indicator
   const selectedModel = useSettingsStore((state) => state.selectedModel)
@@ -516,6 +522,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     isAutoScrollEnabledRef.current = true
     setShowScrollFab(false)
     userHasScrolledUpRef.current = false
+  }, [sessionId])
+
+  // Reset prompt history navigation on session change
+  useEffect(() => {
+    setHistoryIndex(null)
+    savedDraftRef.current = ''
   }, [sessionId])
 
   // Auto-focus textarea when session changes or view becomes connected
@@ -1234,6 +1246,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // 3. Get worktree path
         let wtPath: string | null = null
         if (session.worktree_id) {
+          setWorktreeId(session.worktree_id)
           const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
           if (worktree) {
             wtPath = worktree.path
@@ -1520,6 +1533,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       const userMessage = dbMessageToOpenCode(savedUserMessage)
       setMessages((prev) => [...prev, userMessage])
 
+      // Record prompt to history for Up/Down navigation
+      if (worktreeId) {
+        usePromptHistoryStore.getState().addPrompt(worktreeId, trimmedValue)
+      }
+      setHistoryIndex(null)
+      savedDraftRef.current = ''
+
       // Log user prompt if response logging is active
       if (isLogModeRef.current && logFilePathRef.current) {
         try {
@@ -1656,6 +1676,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     isStreaming,
     sessionId,
     worktreePath,
+    worktreeId,
     opencodeSessionId,
     attachments,
     slashCommands
@@ -1673,9 +1694,84 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         handleSend()
+        return
+      }
+
+      // Prompt history navigation with Up/Down arrows
+      if (e.key === 'ArrowUp') {
+        const textarea = e.currentTarget
+        // Only activate at cursor position 0 (very beginning)
+        if (textarea.selectionStart !== 0 || textarea.selectionEnd !== 0) return
+
+        const wId = worktreeId
+        if (!wId) return
+        const history = usePromptHistoryStore.getState().getHistory(wId)
+        if (history.length === 0) return
+
+        e.preventDefault()
+
+        if (historyIndex === null) {
+          // Entering navigation: save current draft, go to most recent
+          savedDraftRef.current = inputValue
+          const newIndex = history.length - 1
+          setHistoryIndex(newIndex)
+          setInputValue(history[newIndex])
+          inputValueRef.current = history[newIndex]
+        } else if (historyIndex > 0) {
+          // Navigate backward
+          const newIndex = historyIndex - 1
+          setHistoryIndex(newIndex)
+          setInputValue(history[newIndex])
+          inputValueRef.current = history[newIndex]
+        }
+        // Place cursor at start so next Up arrow fires immediately
+        requestAnimationFrame(() => {
+          textareaRef.current?.setSelectionRange(0, 0)
+        })
+        // If historyIndex === 0, at oldest — do nothing
+        return
+      }
+
+      if (e.key === 'ArrowDown') {
+        const textarea = e.currentTarget
+        // Only activate at cursor end (very end of text)
+        if (
+          textarea.selectionStart !== textarea.value.length ||
+          textarea.selectionEnd !== textarea.value.length
+        ) {
+          return
+        }
+
+        if (historyIndex === null) return // Not navigating
+
+        const wId = worktreeId
+        if (!wId) return
+        const history = usePromptHistoryStore.getState().getHistory(wId)
+
+        e.preventDefault()
+
+        let newValue: string
+        if (historyIndex < history.length - 1) {
+          // Navigate forward
+          const newIndex = historyIndex + 1
+          setHistoryIndex(newIndex)
+          newValue = history[newIndex]
+        } else {
+          // At newest entry — exit navigation, restore draft
+          setHistoryIndex(null)
+          newValue = savedDraftRef.current
+          savedDraftRef.current = ''
+        }
+        setInputValue(newValue)
+        inputValueRef.current = newValue
+        // Place cursor at end so next Down arrow fires immediately
+        requestAnimationFrame(() => {
+          const len = textareaRef.current?.value.length ?? 0
+          textareaRef.current?.setSelectionRange(len, len)
+        })
       }
     },
-    [handleSend]
+    [handleSend, worktreeId, historyIndex, inputValue]
   )
 
   // Attachment handlers
@@ -1692,6 +1788,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     (value: string) => {
       setInputValue(value)
       inputValueRef.current = value
+
+      // Exit history navigation on manual typing
+      if (historyIndex !== null) {
+        setHistoryIndex(null)
+      }
+
       if (value.startsWith('/') && value.length >= 1) {
         setShowSlashCommands(true)
       } else {
@@ -1704,7 +1806,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         window.db.session.updateDraft(sessionId, value || null)
       }, 3000)
     },
-    [sessionId]
+    [sessionId, historyIndex]
   )
 
   const handleCommandSelect = useCallback((cmd: { name: string; template: string }) => {
