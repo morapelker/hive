@@ -12,7 +12,9 @@ import {
   Check,
   X,
   Loader2,
-  Clock
+  Clock,
+  Plus,
+  Minus
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './tools/types'
@@ -404,6 +406,111 @@ function CollapsedContent({
   )
 }
 
+/** Detect file operation tools that should use the compact inline layout */
+export function isFileOperation(name: string): boolean {
+  const lower = name.toLowerCase()
+  return (
+    lower.includes('read') ||
+    lower === 'cat' ||
+    lower === 'view' ||
+    lower.includes('write') ||
+    lower === 'create' ||
+    lower.includes('edit') ||
+    lower.includes('replace') ||
+    lower.includes('patch')
+  )
+}
+
+/** Resolve a short display label for a file operation tool */
+function getFileToolLabel(name: string): string {
+  const lower = name.toLowerCase()
+  if (lower.includes('read') || lower === 'cat' || lower === 'view') return 'Read'
+  if (lower.includes('write') || lower === 'create') return 'Write'
+  if (lower.includes('edit') || lower.includes('replace') || lower.includes('patch')) return 'Edit'
+  return name
+}
+
+/** Compact single-line renderer for Read/Write/Edit file operations */
+const CompactFileToolCard = memo(function CompactFileToolCard({
+  toolUse,
+  cwd
+}: {
+  toolUse: ToolUseInfo
+  cwd?: string | null
+}): React.JSX.Element {
+  const [isExpanded, setIsExpanded] = useState(false)
+
+  const filePath = (toolUse.input.filePath ||
+    toolUse.input.file_path ||
+    toolUse.input.path ||
+    '') as string
+  const shortPath = shortenPath(filePath, cwd)
+  const label = getFileToolLabel(toolUse.name)
+  const isRunning = toolUse.status === 'pending' || toolUse.status === 'running'
+  const isError = toolUse.status === 'error'
+  const hasOutput = !!(toolUse.output || toolUse.error)
+
+  const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
+
+  const icon = useMemo(() => {
+    if (isExpanded) {
+      return <Minus className="h-3.5 w-3.5 text-muted-foreground" />
+    }
+    if (isRunning) {
+      return (
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" data-testid="tool-spinner" />
+      )
+    }
+    if (isError) {
+      return <X className="h-3.5 w-3.5 text-red-500" data-testid="tool-error" />
+    }
+    return <Plus className="h-3.5 w-3.5 text-muted-foreground" data-testid="tool-success" />
+  }, [isExpanded, isRunning, isError])
+
+  return (
+    <div
+      data-testid="compact-file-tool"
+      data-tool-name={toolUse.name}
+      data-tool-status={toolUse.status}
+    >
+      {/* Compact single-line header */}
+      <button
+        onClick={() => hasOutput && setIsExpanded(!isExpanded)}
+        className={cn(
+          'flex items-center gap-1.5 w-full py-0.5 text-left text-xs',
+          hasOutput && 'cursor-pointer hover:bg-accent/50 transition-colors rounded-sm',
+          !hasOutput && !isRunning && 'cursor-default'
+        )}
+        disabled={!hasOutput && !isRunning}
+      >
+        {icon}
+        <span className="font-medium text-foreground shrink-0">{label}</span>
+        <span
+          className={cn(
+            'font-mono truncate min-w-0',
+            isError ? 'text-red-400' : 'text-muted-foreground'
+          )}
+        >
+          {shortPath}
+        </span>
+      </button>
+
+      {/* Expanded content */}
+      {isExpanded && hasOutput && (
+        <div className="ml-5 mt-0.5 mb-1" data-testid="tool-output">
+          <Renderer
+            name={toolUse.name}
+            input={toolUse.input}
+            output={toolUse.output}
+            error={toolUse.error}
+            status={toolUse.status}
+          />
+        </div>
+      )}
+    </div>
+  )
+})
+
 interface ToolCardProps {
   toolUse: ToolUseInfo
   cwd?: string | null
@@ -427,6 +534,11 @@ export const ToolCard = memo(function ToolCard({
   const hasOutput = !!(toolUse.output || toolUse.error)
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
+
+  // Route file operations to compact layout
+  if (isFileOperation(toolUse.name)) {
+    return <CompactFileToolCard toolUse={toolUse} cwd={cwd} />
+  }
 
   return (
     <div

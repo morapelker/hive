@@ -50,9 +50,7 @@ describe('Session 6: Integration Polish', () => {
 
   describe('Streaming Markdown Rendering', () => {
     test('Streaming markdown renders progressively', () => {
-      const parts: StreamingPart[] = [
-        { type: 'text', text: '# Hello\n\nThis is **bold**' }
-      ]
+      const parts: StreamingPart[] = [{ type: 'text', text: '# Hello\n\nThis is **bold**' }]
 
       const { container } = render(
         <AssistantCanvas
@@ -98,8 +96,8 @@ describe('Session 6: Integration Polish', () => {
         />
       )
 
-      // Verify ToolCard renders between text
-      const toolCard = screen.getByTestId('tool-card')
+      // Read tool renders as compact file tool card
+      const toolCard = screen.getByTestId('compact-file-tool')
       expect(toolCard).toBeDefined()
       expect(toolCard.getAttribute('data-tool-name')).toBe('Read')
     })
@@ -247,8 +245,8 @@ This document tests all markdown features for performance.`
     test('Pending tool has gray left border', () => {
       const toolUse: ToolUseInfo = {
         id: 'tool-1',
-        name: 'Read',
-        input: {},
+        name: 'Bash',
+        input: { command: 'echo pending' },
         status: 'pending',
         startTime: Date.now()
       }
@@ -277,8 +275,8 @@ This document tests all markdown features for performance.`
     test('Successful tool has green left border', () => {
       const toolUse: ToolUseInfo = {
         id: 'tool-1',
-        name: 'Read',
-        input: {},
+        name: 'Bash',
+        input: { command: 'ls' },
         status: 'success',
         startTime: Date.now(),
         endTime: Date.now() + 100
@@ -306,8 +304,8 @@ This document tests all markdown features for performance.`
     test('Tool cards use compact vertical margin', () => {
       const toolUse: ToolUseInfo = {
         id: 'tool-1',
-        name: 'Read',
-        input: {},
+        name: 'Bash',
+        input: { command: 'ls' },
         status: 'success',
         startTime: Date.now()
       }
@@ -381,18 +379,14 @@ This document tests all markdown features for performance.`
     })
 
     test('Bold and italic render correctly', () => {
-      const { container } = render(
-        <MarkdownRenderer content="**bold** and *italic*" />
-      )
+      const { container } = render(<MarkdownRenderer content="**bold** and *italic*" />)
 
       expect(container.querySelector('strong')).toBeDefined()
       expect(container.querySelector('em')).toBeDefined()
     })
 
     test('Unordered list renders with correct styles', () => {
-      const { container } = render(
-        <MarkdownRenderer content={'- item 1\n- item 2\n- item 3'} />
-      )
+      const { container } = render(<MarkdownRenderer content={'- item 1\n- item 2\n- item 3'} />)
 
       const ul = container.querySelector('ul')
       expect(ul).not.toBeNull()
@@ -400,9 +394,7 @@ This document tests all markdown features for performance.`
     })
 
     test('Ordered list renders with correct styles', () => {
-      const { container } = render(
-        <MarkdownRenderer content={'1. first\n2. second\n3. third'} />
-      )
+      const { container } = render(<MarkdownRenderer content={'1. first\n2. second\n3. third'} />)
 
       const ol = container.querySelector('ol')
       expect(ol).not.toBeNull()
@@ -410,9 +402,7 @@ This document tests all markdown features for performance.`
     })
 
     test('Links have safe attributes for Electron', () => {
-      const { container } = render(
-        <MarkdownRenderer content="[click here](https://example.com)" />
-      )
+      const { container } = render(<MarkdownRenderer content="[click here](https://example.com)" />)
 
       const link = container.querySelector('a')
       expect(link?.getAttribute('target')).toBe('_blank')
@@ -420,9 +410,7 @@ This document tests all markdown features for performance.`
     })
 
     test('Inline code renders with muted background', () => {
-      const { container } = render(
-        <MarkdownRenderer content="Use `const` for constants" />
-      )
+      const { container } = render(<MarkdownRenderer content="Use `const` for constants" />)
 
       const inlineCode = container.querySelector('code')
       expect(inlineCode?.className).toContain('bg-muted')
@@ -430,9 +418,7 @@ This document tests all markdown features for performance.`
     })
 
     test('Blockquotes render with left border', () => {
-      const { container } = render(
-        <MarkdownRenderer content="> This is a quote" />
-      )
+      const { container } = render(<MarkdownRenderer content="> This is a quote" />)
 
       const blockquote = container.querySelector('blockquote')
       expect(blockquote?.className).toContain('border-l-2')
