@@ -97,9 +97,11 @@ describe('Session 2: QuestionPrompt UI', () => {
       expect(screen.getByText('Progressive framework')).toBeInTheDocument()
     })
 
-    test('renders header text', () => {
+    test('renders header with question icon and dismiss button', () => {
       render(<QuestionPrompt request={singleQuestion} onReply={vi.fn()} onReject={vi.fn()} />)
-      expect(screen.getByText('AI has a question')).toBeInTheDocument()
+      // Header contains the MessageCircleQuestion icon and dismiss X button
+      expect(screen.getByLabelText('Dismiss')).toBeInTheDocument()
+      expect(screen.getByTestId('question-prompt')).toBeInTheDocument()
     })
 
     test('renders "Type your own answer" when custom is allowed (default)', () => {
