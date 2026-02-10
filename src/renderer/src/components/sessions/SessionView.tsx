@@ -1036,6 +1036,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Skip user-message echoes; user messages are already rendered locally.
             if (eventRole === 'user') return
 
+            // Skip finalization for child/subagent messages — their
+            // message.updated (with time.completed) must NOT trigger parent
+            // finalization or reset isStreaming.
+            if (event.childSessionId) return
+
             // Content-based echo detection for message.updated (same logic as
             // message.part.updated above).  The SDK may send a message.updated
             // for the user message without a role field.
@@ -1059,6 +1064,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // message.updated payloads).  We already early-returned for
             // user echoes above, so any remaining event is an assistant msg.
             if (eventRole !== 'user' && info?.time?.completed) {
+              // Defer finalization if there are active subtasks still running.
+              // In multi-step flows with subagents, the SDK sends message.updated
+              // with time.completed when each step finishes, but the parent continues
+              // in a new step. Only session.idle signals true completion.
+              const hasRunningSubtasks = streamingPartsRef.current.some(
+                (part) => part.type === 'subtask' && part.subtask?.status === 'running'
+              )
+              if (hasRunningSubtasks) return
+
               const messageId = getEventMessageId(event.data)
 
               // Skip duplicate finalization events for the same message.
