@@ -266,7 +266,32 @@ const worktreeOps = {
       last_accessed_at: string
     }
     error?: string
-  }> => ipcRenderer.invoke('worktree:duplicate', params)
+  }> => ipcRenderer.invoke('worktree:duplicate', params),
+
+  // Rename a branch in a worktree
+  renameBranch: (
+    worktreeId: string,
+    worktreePath: string,
+    oldBranch: string,
+    newBranch: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('worktree:renameBranch', { worktreeId, worktreePath, oldBranch, newBranch }),
+
+  // Subscribe to branch-renamed events (auto-rename from main process)
+  onBranchRenamed: (
+    callback: (data: { worktreeId: string; newBranch: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { worktreeId: string; newBranch: string }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('worktree:branchRenamed', handler)
+    return () => {
+      ipcRenderer.removeListener('worktree:branchRenamed', handler)
+    }
+  }
 }
 
 // System operations API

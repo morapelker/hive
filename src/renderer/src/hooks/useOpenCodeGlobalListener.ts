@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 
 /**
@@ -9,8 +10,21 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
  * This listener handles:
  * - Unread status for sessions that finish in background
  * - Title updates for background sessions (active session handled by SessionView)
+ * - Branch auto-rename notifications from the main process
  */
 export function useOpenCodeGlobalListener(): void {
+  // Listen for branch auto-rename events from the main process
+  useEffect(() => {
+    const unsubscribe = window.worktreeOps?.onBranchRenamed
+      ? window.worktreeOps.onBranchRenamed((data) => {
+          const { worktreeId, newBranch } = data
+          useWorktreeStore.getState().updateWorktreeBranch(worktreeId, newBranch)
+        })
+      : () => {}
+
+    return unsubscribe
+  }, [])
+
   useEffect(() => {
     const unsubscribe = window.opencodeOps?.onStream
       ? window.opencodeOps.onStream((event) => {

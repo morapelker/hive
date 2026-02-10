@@ -21,6 +21,7 @@ interface Worktree {
   path: string
   status: 'active' | 'archived'
   is_default: boolean
+  branch_renamed: number // 0 = auto-named (city), 1 = user/auto renamed
   created_at: string
   last_accessed_at: string
 }
@@ -239,6 +240,16 @@ declare global {
         worktree?: Worktree
         error?: string
       }>
+      renameBranch: (
+        worktreeId: string,
+        worktreePath: string,
+        oldBranch: string,
+        newBranch: string
+      ) => Promise<{ success: boolean; error?: string }>
+      // Subscribe to branch-renamed events (auto-rename from main process)
+      onBranchRenamed: (
+        callback: (data: { worktreeId: string; newBranch: string }) => void
+      ) => () => void
     }
     systemOps: {
       getLogDir: () => Promise<string>

@@ -136,7 +136,11 @@ export class GitService {
         return b
       })
     } catch (error) {
-      log.error('Failed to get branches', error instanceof Error ? error : new Error(String(error)), { repoPath: this.repoPath })
+      log.error(
+        'Failed to get branches',
+        error instanceof Error ? error : new Error(String(error)),
+        { repoPath: this.repoPath }
+      )
       return []
     }
   }
@@ -149,7 +153,11 @@ export class GitService {
       const result = await this.git.branch()
       return result.current
     } catch (error) {
-      log.error('Failed to get current branch', error instanceof Error ? error : new Error(String(error)), { repoPath: this.repoPath })
+      log.error(
+        'Failed to get current branch',
+        error instanceof Error ? error : new Error(String(error)),
+        { repoPath: this.repoPath }
+      )
       return 'main'
     }
   }
@@ -200,7 +208,11 @@ export class GitService {
 
       return worktrees
     } catch (error) {
-      log.error('Failed to list worktrees', error instanceof Error ? error : new Error(String(error)), { repoPath: this.repoPath })
+      log.error(
+        'Failed to list worktrees',
+        error instanceof Error ? error : new Error(String(error)),
+        { repoPath: this.repoPath }
+      )
       return []
     }
   }
@@ -239,7 +251,11 @@ export class GitService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to create worktree', error instanceof Error ? error : new Error(String(error)), { projectName, repoPath: this.repoPath })
+      log.error(
+        'Failed to create worktree',
+        error instanceof Error ? error : new Error(String(error)),
+        { projectName, repoPath: this.repoPath }
+      )
       return {
         success: false,
         error: message
@@ -268,7 +284,11 @@ export class GitService {
         return { success: true }
       } catch (cleanupError) {
         const message = cleanupError instanceof Error ? cleanupError.message : 'Unknown error'
-        log.error('Failed to remove worktree', cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), { worktreePath })
+        log.error(
+          'Failed to remove worktree',
+          cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
+          { worktreePath }
+        )
         return {
           success: false,
           error: message
@@ -294,13 +314,20 @@ export class GitService {
         await this.git.branch(['-D', branchName])
       } catch (branchError) {
         // Branch might already be deleted or not exist
-        log.warn('Failed to delete branch (may not exist)', { branchName, error: branchError instanceof Error ? branchError.message : String(branchError) })
+        log.warn('Failed to delete branch (may not exist)', {
+          branchName,
+          error: branchError instanceof Error ? branchError.message : String(branchError)
+        })
       }
 
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to archive worktree', error instanceof Error ? error : new Error(String(error)), { worktreePath, branchName })
+      log.error(
+        'Failed to archive worktree',
+        error instanceof Error ? error : new Error(String(error)),
+        { worktreePath, branchName }
+      )
       return {
         success: false,
         error: message
@@ -334,7 +361,11 @@ export class GitService {
     try {
       await this.git.raw(['worktree', 'prune'])
     } catch (error) {
-      log.error('Failed to prune worktrees', error instanceof Error ? error : new Error(String(error)), { repoPath: this.repoPath })
+      log.error(
+        'Failed to prune worktrees',
+        error instanceof Error ? error : new Error(String(error)),
+        { repoPath: this.repoPath }
+      )
     }
   }
 
@@ -360,7 +391,7 @@ export class GitService {
       // Process staged files
       for (const file of status.staged) {
         // Check if it's already in files (modified but staged some changes)
-        const existing = files.find(f => f.relativePath === file)
+        const existing = files.find((f) => f.relativePath === file)
         if (existing) {
           // File has both staged and unstaged changes
           existing.staged = true
@@ -376,7 +407,7 @@ export class GitService {
 
       // Process created/added files (not yet tracked, staged)
       for (const file of status.created) {
-        const existing = files.find(f => f.relativePath === file)
+        const existing = files.find((f) => f.relativePath === file)
         if (!existing) {
           files.push({
             path: join(this.repoPath, file),
@@ -420,7 +451,11 @@ export class GitService {
       return { success: true, files }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to get file statuses', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
+      log.error(
+        'Failed to get file statuses',
+        error instanceof Error ? error : new Error(message),
+        { repoPath: this.repoPath }
+      )
       return { success: false, error: message }
     }
   }
@@ -434,7 +469,10 @@ export class GitService {
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to stage file', error instanceof Error ? error : new Error(message), { filePath, repoPath: this.repoPath })
+      log.error('Failed to stage file', error instanceof Error ? error : new Error(message), {
+        filePath,
+        repoPath: this.repoPath
+      })
       return { success: false, error: message }
     }
   }
@@ -448,7 +486,10 @@ export class GitService {
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to unstage file', error instanceof Error ? error : new Error(message), { filePath, repoPath: this.repoPath })
+      log.error('Failed to unstage file', error instanceof Error ? error : new Error(message), {
+        filePath,
+        repoPath: this.repoPath
+      })
       return { success: false, error: message }
     }
   }
@@ -476,7 +517,10 @@ export class GitService {
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to discard changes', error instanceof Error ? error : new Error(message), { filePath, repoPath: this.repoPath })
+      log.error('Failed to discard changes', error instanceof Error ? error : new Error(message), {
+        filePath,
+        repoPath: this.repoPath
+      })
       return { success: false, error: message }
     }
   }
@@ -511,7 +555,9 @@ export class GitService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to get branch info', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
+      log.error('Failed to get branch info', error instanceof Error ? error : new Error(message), {
+        repoPath: this.repoPath
+      })
       return { success: false, error: message }
     }
   }
@@ -525,7 +571,9 @@ export class GitService {
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to stage all files', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
+      log.error('Failed to stage all files', error instanceof Error ? error : new Error(message), {
+        repoPath: this.repoPath
+      })
       return { success: false, error: message }
     }
   }
@@ -539,7 +587,11 @@ export class GitService {
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to unstage all files', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
+      log.error(
+        'Failed to unstage all files',
+        error instanceof Error ? error : new Error(message),
+        { repoPath: this.repoPath }
+      )
       return { success: false, error: message }
     }
   }
@@ -558,7 +610,7 @@ export class GitService {
       }
 
       // Check if pattern already exists
-      const lines = content.split('\n').map(l => l.trim())
+      const lines = content.split('\n').map((l) => l.trim())
       if (lines.includes(pattern)) {
         return { success: true } // Already ignored
       }
@@ -574,7 +626,11 @@ export class GitService {
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to add to .gitignore', error instanceof Error ? error : new Error(message), { pattern, repoPath: this.repoPath })
+      log.error(
+        'Failed to add to .gitignore',
+        error instanceof Error ? error : new Error(message),
+        { pattern, repoPath: this.repoPath }
+      )
       return { success: false, error: message }
     }
   }
@@ -598,7 +654,11 @@ export class GitService {
       }
 
       const result = await this.git.commit(message)
-      log.info('Committed changes', { commit: result.commit, summary: result.summary, repoPath: this.repoPath })
+      log.info('Committed changes', {
+        commit: result.commit,
+        summary: result.summary,
+        repoPath: this.repoPath
+      })
 
       return {
         success: true,
@@ -606,7 +666,9 @@ export class GitService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to commit', error instanceof Error ? error : new Error(message), { repoPath: this.repoPath })
+      log.error('Failed to commit', error instanceof Error ? error : new Error(message), {
+        repoPath: this.repoPath
+      })
       return { success: false, error: message }
     }
   }
@@ -620,7 +682,7 @@ export class GitService {
   async push(remote?: string, branch?: string, force?: boolean): Promise<GitPushResult> {
     try {
       const remoteName = remote || 'origin'
-      const branchName = branch || await this.getCurrentBranch()
+      const branchName = branch || (await this.getCurrentBranch())
 
       const options: string[] = []
       if (force) {
@@ -634,20 +696,32 @@ export class GitService {
       }
 
       await this.git.push(remoteName, branchName, options)
-      log.info('Pushed to remote', { remote: remoteName, branch: branchName, force, repoPath: this.repoPath })
+      log.info('Pushed to remote', {
+        remote: remoteName,
+        branch: branchName,
+        force,
+        repoPath: this.repoPath
+      })
 
       return { success: true, pushed: true }
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to push', error instanceof Error ? error : new Error(errMessage), { repoPath: this.repoPath })
+      log.error('Failed to push', error instanceof Error ? error : new Error(errMessage), {
+        repoPath: this.repoPath
+      })
 
       // Provide helpful error messages
       let userMessage = errMessage
       if (errMessage.includes('rejected')) {
-        userMessage = 'Push rejected. The remote contains commits not present locally. Pull first or use force push.'
+        userMessage =
+          'Push rejected. The remote contains commits not present locally. Pull first or use force push.'
       } else if (errMessage.includes('Could not read from remote repository')) {
-        userMessage = 'Could not connect to remote repository. Check your network connection and authentication.'
-      } else if (errMessage.includes('Authentication failed') || errMessage.includes('Permission denied')) {
+        userMessage =
+          'Could not connect to remote repository. Check your network connection and authentication.'
+      } else if (
+        errMessage.includes('Authentication failed') ||
+        errMessage.includes('Permission denied')
+      ) {
         userMessage = 'Authentication failed. Check your credentials.'
       }
 
@@ -664,7 +738,7 @@ export class GitService {
   async pull(remote?: string, branch?: string, rebase?: boolean): Promise<GitPullResult> {
     try {
       const remoteName = remote || 'origin'
-      const branchName = branch || await this.getCurrentBranch()
+      const branchName = branch || (await this.getCurrentBranch())
 
       const options: Record<string, null | string | number> = {}
       if (rebase) {
@@ -686,14 +760,17 @@ export class GitService {
       }
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to pull', error instanceof Error ? error : new Error(errMessage), { repoPath: this.repoPath })
+      log.error('Failed to pull', error instanceof Error ? error : new Error(errMessage), {
+        repoPath: this.repoPath
+      })
 
       // Provide helpful error messages
       let userMessage = errMessage
       if (errMessage.includes('conflict')) {
         userMessage = 'Pull resulted in merge conflicts. Resolve conflicts before continuing.'
       } else if (errMessage.includes('Could not read from remote repository')) {
-        userMessage = 'Could not connect to remote repository. Check your network connection and authentication.'
+        userMessage =
+          'Could not connect to remote repository. Check your network connection and authentication.'
       } else if (errMessage.includes('uncommitted changes')) {
         userMessage = 'You have uncommitted changes. Commit or stash them before pulling.'
       }
@@ -707,7 +784,11 @@ export class GitService {
    * @param filePath - Relative path to the file
    * @param staged - Whether to get staged diff (default: false for unstaged)
    */
-  async getDiff(filePath: string, staged: boolean = false, contextLines?: number): Promise<GitDiffResult> {
+  async getDiff(
+    filePath: string,
+    staged: boolean = false,
+    contextLines?: number
+  ): Promise<GitDiffResult> {
     try {
       const args = ['diff']
 
@@ -734,7 +815,11 @@ export class GitService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to get diff', error instanceof Error ? error : new Error(message), { filePath, staged, repoPath: this.repoPath })
+      log.error('Failed to get diff', error instanceof Error ? error : new Error(message), {
+        filePath,
+        staged,
+        repoPath: this.repoPath
+      })
       return { success: false, error: message }
     }
   }
@@ -754,7 +839,9 @@ export class GitService {
 
       // 2. Find next version number
       const allBranches = await this.getAllBranches()
-      const versionPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`)
+      const versionPattern = new RegExp(
+        `^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`
+      )
       let maxVersion = 1 // means first dup will be v2
       for (const branch of allBranches) {
         const match = branch.match(versionPattern)
@@ -799,12 +886,16 @@ export class GitService {
       return { success: true, name: newBranchName, branchName: newBranchName, path: worktreePath }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to duplicate worktree', error instanceof Error ? error : new Error(message), {
-        sourceBranch,
-        sourceWorktreePath,
-        projectName,
-        repoPath: this.repoPath
-      })
+      log.error(
+        'Failed to duplicate worktree',
+        error instanceof Error ? error : new Error(message),
+        {
+          sourceBranch,
+          sourceWorktreePath,
+          projectName,
+          repoPath: this.repoPath
+        }
+      )
       return { success: false, error: message }
     }
   }
@@ -838,10 +929,48 @@ export class GitService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to get untracked file diff', error instanceof Error ? error : new Error(message), { filePath, repoPath: this.repoPath })
+      log.error(
+        'Failed to get untracked file diff',
+        error instanceof Error ? error : new Error(message),
+        { filePath, repoPath: this.repoPath }
+      )
       return { success: false, error: message }
     }
   }
+
+  /**
+   * Rename a branch in a worktree directory.
+   */
+  async renameBranch(
+    worktreePath: string,
+    oldBranch: string,
+    newBranch: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const git = simpleGit(worktreePath)
+      await git.branch(['-m', oldBranch, newBranch])
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  }
+}
+
+/**
+ * Convert a session title into a safe git branch name.
+ */
+export function canonicalizeBranchName(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-') // spaces and underscores → dashes
+    .replace(/[^a-z0-9\-/.]/g, '') // remove invalid chars
+    .replace(/-{2,}/g, '-') // collapse consecutive dashes
+    .replace(/^-+|-+$/g, '') // strip leading/trailing dashes
+    .slice(0, 50) // truncate
+    .replace(/-+$/, '') // strip trailing dashes after truncation
 }
 
 /**

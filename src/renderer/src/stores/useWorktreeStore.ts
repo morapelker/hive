@@ -12,6 +12,7 @@ interface Worktree {
   path: string
   status: 'active' | 'archived'
   is_default: boolean
+  branch_renamed: number // 0 = auto-named (city), 1 = user/auto renamed
   created_at: string
   last_accessed_at: string
 }
@@ -58,6 +59,7 @@ interface WorktreeState {
     sourceBranch: string,
     sourceWorktreePath: string
   ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
+  updateWorktreeBranch: (worktreeId: string, newBranch: string) => void
 }
 
 export const useWorktreeStore = create<WorktreeState>((set, get) => ({
@@ -338,5 +340,23 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         error: error instanceof Error ? error.message : 'Failed to duplicate worktree'
       }
     }
+  },
+
+  // Update a worktree's branch name (and display name) in the store (after rename)
+  updateWorktreeBranch: (worktreeId: string, newBranch: string) => {
+    set((state) => {
+      const newMap = new Map(state.worktreesByProject)
+      for (const [projectId, worktrees] of newMap.entries()) {
+        const updated = worktrees.map((w) =>
+          w.id === worktreeId
+            ? { ...w, name: newBranch, branch_name: newBranch, branch_renamed: 1 }
+            : w
+        )
+        if (updated.some((w, i) => w !== worktrees[i])) {
+          newMap.set(projectId, updated)
+        }
+      }
+      return { worktreesByProject: newMap }
+    })
   }
 }))

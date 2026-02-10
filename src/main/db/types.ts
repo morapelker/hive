@@ -41,6 +41,7 @@ export interface Worktree {
   path: string
   status: 'active' | 'archived'
   is_default: boolean
+  branch_renamed: number // 0 = auto-named (city), 1 = user/auto renamed
   created_at: string
   last_accessed_at: string
 }
@@ -55,7 +56,9 @@ export interface WorktreeCreate {
 
 export interface WorktreeUpdate {
   name?: string
+  branch_name?: string
   status?: 'active' | 'archived'
+  branch_renamed?: number
   last_accessed_at?: string
 }
 

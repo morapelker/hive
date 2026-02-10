@@ -3,6 +3,8 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createLogger } from './logger'
 import { notificationService } from './notification-service'
 import { getDatabase } from '../db'
+import { CITY_NAMES } from './city-names'
+import { canonicalizeBranchName, createGitService } from './git-service'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -1048,6 +1050,85 @@ class OpenCodeService {
         try {
           const db = getDatabase()
           db.updateSession(hiveSessionId, { name: sessionTitle })
+
+          // Auto-rename branch if still a city name (one-time only)
+          // Skip placeholder titles like "New session - 2026-02-10T15:26:38.962Z"
+          // — only rename when we get a real AI-generated title
+          const isPlaceholderTitle = /^New session\s*-/i.test(sessionTitle)
+          const worktree = db.getWorktreeBySessionId(hiveSessionId)
+          if (worktree && !worktree.branch_renamed && !isPlaceholderTitle) {
+            const isCityName = CITY_NAMES.some(
+              (city) => city.toLowerCase() === worktree.branch_name.toLowerCase()
+            )
+            if (isCityName) {
+              const baseBranch = canonicalizeBranchName(sessionTitle)
+              if (baseBranch && baseBranch !== worktree.branch_name.toLowerCase()) {
+                try {
+                  const gitService = createGitService(worktree.path)
+
+                  // Find an available branch name, appending -2, -3, etc. if needed
+                  let targetBranch = baseBranch
+                  const exists = await gitService.branchExists(targetBranch)
+                  if (exists) {
+                    let found = false
+                    for (let i = 2; i <= 10; i++) {
+                      const candidate = `${baseBranch}-${i}`
+                      if (!(await gitService.branchExists(candidate))) {
+                        targetBranch = candidate
+                        found = true
+                        break
+                      }
+                    }
+                    if (!found) {
+                      // All suffixes taken — give up but stop retrying
+                      db.updateWorktree(worktree.id, { branch_renamed: 1 })
+                      log.warn('Auto-rename: all branch name variants taken', {
+                        baseBranch,
+                        worktreeId: worktree.id
+                      })
+                      // fall through without renaming
+                      targetBranch = ''
+                    }
+                  }
+
+                  if (targetBranch) {
+                    const renameResult = await gitService.renameBranch(
+                      worktree.path,
+                      worktree.branch_name,
+                      targetBranch
+                    )
+                    if (renameResult.success) {
+                      db.updateWorktree(worktree.id, {
+                        name: targetBranch,
+                        branch_name: targetBranch,
+                        branch_renamed: 1
+                      })
+                      // Notify renderer to update the sidebar
+                      this.sendToRenderer('worktree:branchRenamed', {
+                        worktreeId: worktree.id,
+                        newBranch: targetBranch
+                      })
+                      log.info('Auto-renamed branch from city name', {
+                        worktreeId: worktree.id,
+                        oldBranch: worktree.branch_name,
+                        newBranch: targetBranch
+                      })
+                    } else {
+                      // Hard failure (e.g. permissions) — stop retrying
+                      db.updateWorktree(worktree.id, { branch_renamed: 1 })
+                      log.warn('Failed to auto-rename branch', {
+                        error: renameResult.error
+                      })
+                    }
+                  }
+                } catch (err) {
+                  // Unexpected error — stop retrying
+                  db.updateWorktree(worktree.id, { branch_renamed: 1 })
+                  log.warn('Failed to auto-rename branch', { err })
+                }
+              }
+            }
+          }
         } catch (err) {
           log.warn('Failed to persist session title from server', { err })
         }

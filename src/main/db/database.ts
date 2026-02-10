@@ -69,7 +69,11 @@ export class DatabaseService {
 
   // Maps SQLite INTEGER 0/1 to boolean for worktree rows
   private mapWorktreeRow(row: Record<string, unknown>): Worktree {
-    return { ...row, is_default: !!row.is_default } as Worktree
+    return {
+      ...row,
+      is_default: !!row.is_default,
+      branch_renamed: (row.branch_renamed as number) ?? 0
+    } as Worktree
   }
 
   private runMigrations(): void {
@@ -247,13 +251,14 @@ export class DatabaseService {
       path: data.path,
       status: 'active',
       is_default: isDefault,
+      branch_renamed: 0,
       created_at: now,
       last_accessed_at: now
     }
 
     db.prepare(
-      `INSERT INTO worktrees (id, project_id, name, branch_name, path, status, is_default, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO worktrees (id, project_id, name, branch_name, path, status, is_default, branch_renamed, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       worktree.id,
       worktree.project_id,
@@ -262,6 +267,7 @@ export class DatabaseService {
       worktree.path,
       worktree.status,
       isDefault ? 1 : 0,
+      worktree.branch_renamed,
       worktree.created_at,
       worktree.last_accessed_at
     )
@@ -303,15 +309,23 @@ export class DatabaseService {
     if (!existing) return null
 
     const updates: string[] = []
-    const values: (string | null)[] = []
+    const values: (string | number | null)[] = []
 
     if (data.name !== undefined) {
       updates.push('name = ?')
       values.push(data.name)
     }
+    if (data.branch_name !== undefined) {
+      updates.push('branch_name = ?')
+      values.push(data.branch_name)
+    }
     if (data.status !== undefined) {
       updates.push('status = ?')
       values.push(data.status)
+    }
+    if (data.branch_renamed !== undefined) {
+      updates.push('branch_renamed = ?')
+      values.push(data.branch_renamed)
     }
     if (data.last_accessed_at !== undefined) {
       updates.push('last_accessed_at = ?')
@@ -340,6 +354,15 @@ export class DatabaseService {
     const db = this.getDb()
     const now = new Date().toISOString()
     db.prepare('UPDATE worktrees SET last_accessed_at = ? WHERE id = ?').run(now, id)
+  }
+
+  /**
+   * Look up the worktree that owns a given session.
+   */
+  getWorktreeBySessionId(sessionId: string): Worktree | null {
+    const session = this.getSession(sessionId)
+    if (!session?.worktree_id) return null
+    return this.getWorktree(session.worktree_id)
   }
 
   // Session operations

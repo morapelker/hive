@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 6
+export const CURRENT_SCHEMA_VERSION = 7
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -147,6 +147,12 @@ export const MIGRATIONS: Migration[] = [
     version: 6,
     name: 'add_session_draft_input',
     up: `ALTER TABLE sessions ADD COLUMN draft_input TEXT DEFAULT NULL;`,
+    down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
+  },
+  {
+    version: 7,
+    name: 'add_worktree_branch_renamed',
+    up: `ALTER TABLE worktrees ADD COLUMN branch_renamed INTEGER NOT NULL DEFAULT 0;`,
     down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
   }
 ]

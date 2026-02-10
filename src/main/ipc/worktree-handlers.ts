@@ -50,13 +50,19 @@ export function registerWorktreeHandlers(): void {
       }
       error?: string
     }> => {
-      log.info('Creating worktree', { projectName: params.projectName, projectId: params.projectId })
+      log.info('Creating worktree', {
+        projectName: params.projectName,
+        projectId: params.projectId
+      })
       try {
         const gitService = createGitService(params.projectPath)
         const result = await gitService.createWorktree(params.projectName)
 
         if (!result.success || !result.name || !result.path || !result.branchName) {
-          log.warn('Worktree creation failed', { error: result.error, projectName: params.projectName })
+          log.warn('Worktree creation failed', {
+            error: result.error,
+            projectName: params.projectName
+          })
           return {
             success: false,
             error: result.error || 'Failed to create worktree'
@@ -78,7 +84,9 @@ export function registerWorktreeHandlers(): void {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
-        log.error('Worktree creation error', error instanceof Error ? error : new Error(message), { params })
+        log.error('Worktree creation error', error instanceof Error ? error : new Error(message), {
+          params
+        })
         return {
           success: false,
           error: message
@@ -227,7 +235,10 @@ export function registerWorktreeHandlers(): void {
       }
       error?: string
     }> => {
-      log.info('Duplicating worktree', { sourceBranch: params.sourceBranch, projectName: params.projectName })
+      log.info('Duplicating worktree', {
+        sourceBranch: params.sourceBranch,
+        projectName: params.projectName
+      })
       try {
         const gitService = createGitService(params.projectPath)
         const result = await gitService.duplicateWorktree(
@@ -259,7 +270,11 @@ export function registerWorktreeHandlers(): void {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
-        log.error('Worktree duplication error', error instanceof Error ? error : new Error(message), { params })
+        log.error(
+          'Worktree duplication error',
+          error instanceof Error ? error : new Error(message),
+          { params }
+        )
         return {
           success: false,
           error: message
@@ -371,7 +386,10 @@ export function registerWorktreeHandlers(): void {
         // Try VS Code first
         const vsCodeCommands =
           currentPlatform === 'darwin'
-            ? ['/usr/local/bin/code', '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code']
+            ? [
+                '/usr/local/bin/code',
+                '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'
+              ]
             : currentPlatform === 'win32'
               ? ['code.cmd', 'code']
               : ['code']
@@ -444,6 +462,40 @@ export function registerWorktreeHandlers(): void {
         return await gitService.branchExists(branchName)
       } catch {
         return false
+      }
+    }
+  )
+
+  // Rename a branch in a worktree
+  ipcMain.handle(
+    'worktree:renameBranch',
+    async (
+      _event,
+      {
+        worktreeId,
+        worktreePath,
+        oldBranch,
+        newBranch
+      }: { worktreeId: string; worktreePath: string; oldBranch: string; newBranch: string }
+    ) => {
+      log.info('IPC: worktree:renameBranch', { worktreePath, oldBranch, newBranch })
+      try {
+        const gitService = createGitService(worktreePath)
+        const result = await gitService.renameBranch(worktreePath, oldBranch, newBranch)
+        if (result.success) {
+          const db = getDatabase()
+          db.updateWorktree(worktreeId, { branch_name: newBranch, branch_renamed: 1 })
+        }
+        return result
+      } catch (error) {
+        log.error(
+          'IPC: worktree:renameBranch failed',
+          error instanceof Error ? error : new Error('Unknown error')
+        )
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
       }
     }
   )
