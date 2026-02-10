@@ -14,7 +14,7 @@ export interface SelectedModel {
   variant?: string
 }
 
-export type QuickActionType = 'cursor' | 'ghostty' | 'copy-path'
+export type QuickActionType = 'cursor' | 'ghostty' | 'copy-path' | 'finder'
 
 export interface AppSettings {
   // General

@@ -202,6 +202,32 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Send a slash command to a session via the SDK command endpoint
+  ipcMain.handle(
+    'opencode:command',
+    async (
+      _event,
+      {
+        worktreePath,
+        sessionId,
+        command,
+        args
+      }: { worktreePath: string; sessionId: string; command: string; args: string }
+    ) => {
+      log.info('IPC: opencode:command', { worktreePath, sessionId, command, args })
+      try {
+        await openCodeService.sendCommand(worktreePath, sessionId, command, args)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:command failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Reply to a pending question from the AI
   ipcMain.handle(
     'opencode:question:reply',

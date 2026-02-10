@@ -703,12 +703,35 @@ const opencodeOps = {
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:question:reject', { requestId, worktreePath }),
 
+  // Send a slash command to a session via the SDK command endpoint
+  command: (
+    worktreePath: string,
+    opencodeSessionId: string,
+    command: string,
+    args: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:command', {
+      worktreePath,
+      sessionId: opencodeSessionId,
+      command,
+      args
+    }),
+
   // List available slash commands from the SDK
   commands: (
     worktreePath: string
   ): Promise<{
     success: boolean
-    commands: Array<{ name: string; description?: string; template: string }>
+    commands: Array<{
+      name: string
+      description?: string
+      template: string
+      agent?: string
+      model?: string
+      source?: string
+      subtask?: boolean
+      hints?: string[]
+    }>
     error?: string
   }> => ipcRenderer.invoke('opencode:commands', { worktreePath }),
 

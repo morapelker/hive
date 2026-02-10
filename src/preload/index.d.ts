@@ -331,6 +331,13 @@ declare global {
         requestId: string,
         worktreePath?: string
       ) => Promise<{ success: boolean; error?: string }>
+      // Send a slash command to a session via the SDK command endpoint
+      command: (
+        worktreePath: string,
+        opencodeSessionId: string,
+        command: string,
+        args: string
+      ) => Promise<{ success: boolean; error?: string }>
       // List available slash commands from the SDK
       commands: (
         worktreePath: string
@@ -565,6 +572,11 @@ interface OpenCodeCommand {
   name: string
   description?: string
   template: string
+  agent?: string
+  model?: string
+  source?: 'command' | 'mcp' | 'skill'
+  subtask?: boolean
+  hints?: string[]
 }
 
 // OpenCode stream event type

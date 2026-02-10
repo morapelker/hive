@@ -343,7 +343,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [queuedCount, setQueuedCount] = useState(0)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [slashCommands, setSlashCommands] = useState<
-    Array<{ name: string; description?: string; template: string }>
+    Array<{ name: string; description?: string; template: string; agent?: string }>
   >([])
   const [showSlashCommands, setShowSlashCommands] = useState(false)
 
@@ -1517,32 +1517,92 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       // Send to OpenCode if connected
       if (worktreePath && opencodeSessionId) {
-        // Prepend mode context to the prompt
-        const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-        const modePrefix =
-          currentMode === 'plan'
-            ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
-            : ''
-        const promptMessage = modePrefix + trimmedValue
-        // Store the full prompt so the stream handler can detect SDK echoes
-        // of the user message (the SDK often re-emits the prompt without a
-        // role field, making it indistinguishable from assistant text).
-        lastSentPromptRef.current = promptMessage
-        const parts: MessagePart[] = [
-          ...attachments.map((a) => ({
-            type: 'file' as const,
-            mime: a.mime,
-            url: a.dataUrl,
-            filename: a.name
-          })),
-          { type: 'text' as const, text: promptMessage }
-        ]
-        setAttachments([])
-        const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, parts)
-        if (!result.success) {
-          console.error('Failed to send prompt to OpenCode:', result.error)
-          toast.error('Failed to send message to AI')
-          setIsSending(false)
+        // Detect slash commands and route through the SDK command endpoint
+        if (trimmedValue.startsWith('/')) {
+          const spaceIndex = trimmedValue.indexOf(' ')
+          const commandName =
+            spaceIndex > 0 ? trimmedValue.slice(1, spaceIndex) : trimmedValue.slice(1)
+          const commandArgs = spaceIndex > 0 ? trimmedValue.slice(spaceIndex + 1).trim() : ''
+
+          const matchedCommand = slashCommands.find((c) => c.name === commandName)
+
+          if (matchedCommand) {
+            // Auto-switch mode based on command's agent field
+            if (matchedCommand.agent) {
+              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+              const targetMode = matchedCommand.agent === 'plan' ? 'plan' : 'build'
+              if (currentMode !== targetMode) {
+                await useSessionStore.getState().setSessionMode(sessionId, targetMode)
+              }
+            }
+
+            lastSentPromptRef.current = trimmedValue
+            setAttachments([])
+            const result = await window.opencodeOps.command(
+              worktreePath,
+              opencodeSessionId,
+              commandName,
+              commandArgs
+            )
+            if (!result.success) {
+              console.error('Failed to send command:', result.error)
+              toast.error('Failed to send command')
+              setIsSending(false)
+            }
+          } else {
+            // Unknown command — send as regular prompt (SDK may handle it)
+            const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+            const modePrefix =
+              currentMode === 'plan'
+                ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
+                : ''
+            const promptMessage = modePrefix + trimmedValue
+            lastSentPromptRef.current = promptMessage
+            const parts: MessagePart[] = [
+              ...attachments.map((a) => ({
+                type: 'file' as const,
+                mime: a.mime,
+                url: a.dataUrl,
+                filename: a.name
+              })),
+              { type: 'text' as const, text: promptMessage }
+            ]
+            setAttachments([])
+            const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, parts)
+            if (!result.success) {
+              console.error('Failed to send prompt to OpenCode:', result.error)
+              toast.error('Failed to send message to AI')
+              setIsSending(false)
+            }
+          }
+        } else {
+          // Regular prompt — existing code (with mode prefix, attachments, etc.)
+          const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+          const modePrefix =
+            currentMode === 'plan'
+              ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
+              : ''
+          const promptMessage = modePrefix + trimmedValue
+          // Store the full prompt so the stream handler can detect SDK echoes
+          // of the user message (the SDK often re-emits the prompt without a
+          // role field, making it indistinguishable from assistant text).
+          lastSentPromptRef.current = promptMessage
+          const parts: MessagePart[] = [
+            ...attachments.map((a) => ({
+              type: 'file' as const,
+              mime: a.mime,
+              url: a.dataUrl,
+              filename: a.name
+            })),
+            { type: 'text' as const, text: promptMessage }
+          ]
+          setAttachments([])
+          const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, parts)
+          if (!result.success) {
+            console.error('Failed to send prompt to OpenCode:', result.error)
+            toast.error('Failed to send message to AI')
+            setIsSending(false)
+          }
         }
         // Don't set isSending to false here - wait for streaming to complete
       } else {
@@ -1572,7 +1632,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       toast.error('Failed to send message')
       setIsSending(false)
     }
-  }, [inputValue, isStreaming, sessionId, worktreePath, opencodeSessionId, attachments])
+  }, [
+    inputValue,
+    isStreaming,
+    sessionId,
+    worktreePath,
+    opencodeSessionId,
+    attachments,
+    slashCommands
+  ])
 
   // Abort streaming
   const handleAbort = useCallback(async () => {

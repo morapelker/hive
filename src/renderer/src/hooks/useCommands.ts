@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useCallback } from 'react'
-import { useProjectStore, useWorktreeStore, useSessionStore, useThemeStore, useSessionHistoryStore, useLayoutStore } from '@/stores'
+import {
+  useProjectStore,
+  useWorktreeStore,
+  useSessionStore,
+  useThemeStore,
+  useSessionHistoryStore,
+  useLayoutStore
+} from '@/stores'
 import { THEME_PRESETS } from '@/lib/themes'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
@@ -324,7 +331,7 @@ export function useCommands() {
             return
           }
           try {
-            await window.worktreeOps.openInFinder(worktreePath)
+            await window.projectOps.showInFolder(worktreePath)
           } catch {
             toast.error('Failed to reveal in Finder')
           }

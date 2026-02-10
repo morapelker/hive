@@ -1269,9 +1269,18 @@ class OpenCodeService {
   /**
    * List available slash commands from the OpenCode SDK
    */
-  async listCommands(
-    worktreePath: string
-  ): Promise<Array<{ name: string; description?: string; template: string }>> {
+  async listCommands(worktreePath: string): Promise<
+    Array<{
+      name: string
+      description?: string
+      template: string
+      agent?: string
+      model?: string
+      source?: string
+      subtask?: boolean
+      hints?: string[]
+    }>
+  > {
     const instance = await this.getOrCreateInstance()
 
     try {
@@ -1283,6 +1292,31 @@ class OpenCodeService {
       log.warn('Failed to list commands', { worktreePath, error })
       return []
     }
+  }
+
+  /**
+   * Send a slash command to a session via the SDK command endpoint
+   */
+  async sendCommand(
+    worktreePath: string,
+    opencodeSessionId: string,
+    command: string,
+    args: string
+  ): Promise<void> {
+    if (!this.instance) {
+      throw new Error('No OpenCode instance available')
+    }
+    const { variant, ...model } = this.getSelectedModel()
+    await this.instance.client.session.command({
+      path: { id: opencodeSessionId },
+      query: { directory: worktreePath },
+      body: {
+        command,
+        arguments: args,
+        model: `${model.providerID}/${model.modelID}`,
+        variant
+      }
+    })
   }
 
   /**

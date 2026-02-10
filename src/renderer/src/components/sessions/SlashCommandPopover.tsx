@@ -5,6 +5,7 @@ interface SlashCommand {
   name: string
   description?: string
   template: string
+  agent?: string
 }
 
 interface SlashCommandPopoverProps {
@@ -29,9 +30,9 @@ export function SlashCommandPopover({
 
   // Filter commands by substring match
   const filterText = filter.startsWith('/') ? filter.slice(1) : filter
-  const filtered = commands.filter((c) =>
-    c.name.toLowerCase().includes(filterText.toLowerCase())
-  ).slice(0, MAX_VISIBLE_ITEMS)
+  const filtered = commands
+    .filter((c) => c.name.toLowerCase().includes(filterText.toLowerCase()))
+    .slice(0, MAX_VISIBLE_ITEMS)
 
   // Reset selection when filter changes
   useEffect(() => {
@@ -110,10 +111,20 @@ export function SlashCommandPopover({
               onClick={() => onSelect({ name: cmd.name, template: cmd.template })}
             >
               <span className="font-mono text-xs text-muted-foreground">/{cmd.name}</span>
-              {cmd.description && (
-                <span className="text-xs text-muted-foreground truncate">
-                  {cmd.description}
+              {cmd.agent && (
+                <span
+                  className={cn(
+                    'text-[10px] px-1 rounded',
+                    cmd.agent === 'plan'
+                      ? 'bg-violet-500/20 text-violet-400'
+                      : 'bg-blue-500/20 text-blue-400'
+                  )}
+                >
+                  {cmd.agent}
                 </span>
+              )}
+              {cmd.description && (
+                <span className="text-xs text-muted-foreground truncate">{cmd.description}</span>
               )}
             </div>
           ))
