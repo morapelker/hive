@@ -19,8 +19,10 @@ import { useContextStore } from '@/stores/useContextStore'
 import { extractTokens, extractCost } from '@/lib/token-utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
+import { usePermissionStore } from '@/stores/usePermissionStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { QuestionPrompt } from './QuestionPrompt'
+import { PermissionPrompt } from './PermissionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 
 // Types for OpenCode SDK integration
@@ -374,6 +376,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Active question prompt from AI
   const activeQuestion = useQuestionStore((s) => s.getActiveQuestion(sessionId))
+  const activePermission = usePermissionStore((s) => s.getActivePermission(sessionId))
 
   // Streaming parts - tracks interleaved text and tool use during streaming
   const [streamingParts, setStreamingParts] = useState<StreamingPart[]>([])
@@ -868,6 +871,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
+          // Handle permission events
+          if (event.type === 'permission.asked') {
+            const request = event.data
+            if (request?.id && request?.permission) {
+              usePermissionStore.getState().addPermission(sessionId, request)
+            }
+            return
+          }
+
+          if (event.type === 'permission.replied') {
+            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+            if (requestId) {
+              usePermissionStore.getState().removePermission(sessionId, requestId)
+            }
+            return
+          }
+
           // Handle different event types
           const eventRole = getEventMessageRole(event.data)
 
@@ -1304,6 +1324,25 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             })
         }
 
+        // Hydrate any pending permission requests (fire-and-forget)
+        const hydratePermissions = (path: string): void => {
+          window.opencodeOps
+            .permissionList(path)
+            .then((result) => {
+              if (result.success && result.permissions) {
+                for (const req of result.permissions) {
+                  const r = req as PermissionRequest
+                  if (r.id && r.permission) {
+                    usePermissionStore.getState().addPermission(sessionId, r)
+                  }
+                }
+              }
+            })
+            .catch((err) => {
+              console.warn('Failed to hydrate permissions:', err)
+            })
+        }
+
         // Send any pending initial message (e.g., from code review)
         const sendPendingMessage = async (path: string, opcId: string): Promise<void> => {
           const pendingMsg = useSessionStore.getState().consumePendingMessage(sessionId)
@@ -1345,6 +1384,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             setOpencodeSessionId(existingOpcSessionId)
             fetchModelLimit(wtPath)
             fetchCommands(wtPath)
+            hydratePermissions(wtPath)
             // Create response log file if logging is enabled
             if (isLogModeRef.current) {
               try {
@@ -1366,6 +1406,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           setOpencodeSessionId(connectResult.sessionId)
           fetchModelLimit(wtPath)
           fetchCommands(wtPath)
+          hydratePermissions(wtPath)
           // Store the OpenCode session ID in database for future reconnection
           await window.db.session.update(sessionId, {
             opencode_session_id: connectResult.sessionId
@@ -1400,6 +1441,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       unsubscribe()
       // Clear any pending question prompts for this session
       useQuestionStore.getState().clearSession(sessionId)
+      // Clear any pending permission prompts for this session
+      usePermissionStore.getState().clearSession(sessionId)
       // Note: We intentionally do NOT disconnect from OpenCode on unmount.
       // Sessions persist across project switches. The main process keeps
       // event subscriptions alive so responses are not lost.
@@ -1489,6 +1532,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       } catch (err) {
         console.error('Failed to reject question:', err)
         toast.error('Failed to dismiss question')
+      }
+    },
+    [worktreePath]
+  )
+
+  // Handle permission reply (allow once, allow always, or reject)
+  const handlePermissionReply = useCallback(
+    async (requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => {
+      try {
+        await window.opencodeOps.permissionReply(
+          requestId,
+          reply,
+          worktreePath || undefined,
+          message
+        )
+      } catch (err) {
+        console.error('Failed to reply to permission:', err)
+        toast.error('Failed to send permission reply')
       }
     },
     [worktreePath]
@@ -1963,6 +2024,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         <ScrollToBottomFab onClick={handleScrollToBottomClick} visible={showScrollFab} />
       </div>
 
+      {/* Permission prompt from AI */}
+      {activePermission && (
+        <div className="px-4 pb-2">
+          <div className="max-w-3xl mx-auto">
+            <PermissionPrompt request={activePermission} onReply={handlePermissionReply} />
+          </div>
+        </div>
+      )}
+
       {/* Question prompt from AI */}
       {activeQuestion && (
         <div className="px-4 pb-2">
@@ -2015,7 +2085,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               onChange={(e) => handleInputChange(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              placeholder="Type your message..."
+              disabled={!!activePermission}
+              placeholder={
+                activePermission ? 'Waiting for permission response...' : 'Type your message...'
+              }
               aria-label="Message input"
               className={cn(
                 'w-full resize-none bg-transparent px-3 py-2',
@@ -2053,7 +2126,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               ) : (
                 <Button
                   onClick={handleSend}
-                  disabled={!inputValue.trim()}
+                  disabled={!inputValue.trim() || !!activePermission}
                   size="sm"
                   className="h-7 w-7 p-0"
                   aria-label={isStreaming ? 'Queue message' : 'Send message'}

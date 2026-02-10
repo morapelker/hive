@@ -248,6 +248,56 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Reply to a pending permission request
+  ipcMain.handle(
+    'opencode:permission:reply',
+    async (
+      _event,
+      {
+        requestId,
+        reply,
+        worktreePath,
+        message
+      }: {
+        requestId: string
+        reply: 'once' | 'always' | 'reject'
+        worktreePath?: string
+        message?: string
+      }
+    ) => {
+      log.info('IPC: opencode:permission:reply', { requestId, reply })
+      try {
+        await openCodeService.permissionReply(requestId, reply, worktreePath, message)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:permission:reply failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // List all pending permission requests
+  ipcMain.handle(
+    'opencode:permission:list',
+    async (_event, { worktreePath }: { worktreePath?: string }) => {
+      log.info('IPC: opencode:permission:list')
+      try {
+        const permissions = await openCodeService.permissionList(worktreePath)
+        return { success: true, permissions }
+      } catch (error) {
+        log.error('IPC: opencode:permission:list failed', { error })
+        return {
+          success: false,
+          permissions: [],
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Rename a session's title via the OpenCode PATCH API
   ipcMain.handle(
     'opencode:renameSession',
