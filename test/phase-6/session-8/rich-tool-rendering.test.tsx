@@ -235,7 +235,9 @@ describe('Session 8: Rich Tool Rendering', () => {
         <GrepToolView
           name="Grep"
           input={{ pattern: 'auth', path: 'src/' }}
-          output={'src/auth/login.ts:15:const auth = getAuth()\nsrc/auth/session.ts:8:import { auth } from \'./\''}
+          output={
+            "src/auth/login.ts:15:const auth = getAuth()\nsrc/auth/session.ts:8:import { auth } from './'"
+          }
           status="success"
         />
       )
@@ -267,12 +269,7 @@ describe('Session 8: Rich Tool Rendering', () => {
 
     test('shows no matches message when output is empty', () => {
       render(
-        <GrepToolView
-          name="Grep"
-          input={{ pattern: 'nonexistent' }}
-          output=""
-          status="success"
-        />
+        <GrepToolView name="Grep" input={{ pattern: 'nonexistent' }} output="" status="success" />
       )
 
       // Empty output returns null, so no view rendered
@@ -283,12 +280,7 @@ describe('Session 8: Rich Tool Rendering', () => {
       const output = generateLines(30)
 
       render(
-        <GrepToolView
-          name="Grep"
-          input={{ pattern: 'line' }}
-          output={output}
-          status="success"
-        />
+        <GrepToolView name="Grep" input={{ pattern: 'line' }} output={output} status="success" />
       )
 
       const showAllBtn = screen.getByTestId('show-all-button')
@@ -397,13 +389,7 @@ describe('Session 8: Rich Tool Rendering', () => {
     })
 
     test('shows raw input JSON', () => {
-      render(
-        <TodoToolView
-          name="SomeNewTool"
-          input={{ key: 'value' }}
-          status="success"
-        />
-      )
+      render(<TodoToolView name="SomeNewTool" input={{ key: 'value' }} status="success" />)
 
       expect(screen.getByText(/"key"/)).toBeTruthy()
       expect(screen.getByText(/"value"/)).toBeTruthy()
@@ -411,25 +397,14 @@ describe('Session 8: Rich Tool Rendering', () => {
 
     test('shows raw output text', () => {
       render(
-        <TodoToolView
-          name="SomeNewTool"
-          input={{}}
-          output="some output data"
-          status="success"
-        />
+        <TodoToolView name="SomeNewTool" input={{}} output="some output data" status="success" />
       )
 
       expect(screen.getByText('some output data')).toBeTruthy()
     })
 
     test('shows "No custom renderer" note', () => {
-      render(
-        <TodoToolView
-          name="SomeNewTool"
-          input={{}}
-          status="success"
-        />
-      )
+      render(<TodoToolView name="SomeNewTool" input={{}} status="success" />)
 
       expect(screen.getByText(/No custom renderer/)).toBeTruthy()
     })
@@ -437,14 +412,7 @@ describe('Session 8: Rich Tool Rendering', () => {
     test('truncates long output', () => {
       const longOutput = 'x'.repeat(600)
 
-      render(
-        <TodoToolView
-          name="SomeNewTool"
-          input={{}}
-          output={longOutput}
-          status="success"
-        />
-      )
+      render(<TodoToolView name="SomeNewTool" input={{}} output={longOutput} status="success" />)
 
       // Output should be truncated (500 chars + "...")
       const outputEl = screen.getByText(/^x+\.\.\.$/s)
@@ -453,7 +421,11 @@ describe('Session 8: Rich Tool Rendering', () => {
   })
 
   describe('ToolCard routing', () => {
-    function makeToolUse(name: string, output: string = 'output', input: Record<string, unknown> = {}) {
+    function makeToolUse(
+      name: string,
+      output: string = 'output',
+      input: Record<string, unknown> = {}
+    ) {
       return {
         id: `tool-${name}`,
         name,
@@ -491,11 +463,7 @@ describe('Session 8: Rich Tool Rendering', () => {
     })
 
     test('routes Grep tool to GrepToolView', () => {
-      render(
-        <ToolCard
-          toolUse={makeToolUse('Grep', 'src/a.ts:1:match', { pattern: 'test' })}
-        />
-      )
+      render(<ToolCard toolUse={makeToolUse('Grep', 'src/a.ts:1:match', { pattern: 'test' })} />)
 
       fireEvent.click(screen.getByTestId('tool-card-header'))
 
@@ -503,11 +471,7 @@ describe('Session 8: Rich Tool Rendering', () => {
     })
 
     test('routes Glob tool to GrepToolView', () => {
-      render(
-        <ToolCard
-          toolUse={makeToolUse('Glob', 'src/a.ts\nsrc/b.ts', { pattern: '*.ts' })}
-        />
-      )
+      render(<ToolCard toolUse={makeToolUse('Glob', 'src/a.ts\nsrc/b.ts', { pattern: '*.ts' })} />)
 
       fireEvent.click(screen.getByTestId('tool-card-header'))
 
@@ -515,35 +479,30 @@ describe('Session 8: Rich Tool Rendering', () => {
     })
 
     test('routes Bash tool to BashToolView', () => {
-      render(
-        <ToolCard
-          toolUse={makeToolUse('Bash', 'output', { command: 'ls' })}
-        />
-      )
+      render(<ToolCard toolUse={makeToolUse('Bash', 'output', { command: 'ls' })} />)
 
       fireEvent.click(screen.getByTestId('tool-card-header'))
 
       expect(screen.getByTestId('bash-tool-view')).toBeTruthy()
     })
 
-    test('routes Write tool to ReadToolView', () => {
+    test('routes Write tool to WriteToolView', () => {
       render(
         <ToolCard
-          toolUse={makeToolUse('Write', 'File written', { file_path: 'new.ts' })}
+          toolUse={makeToolUse('Write', 'File written', {
+            file_path: 'new.ts',
+            content: 'const x = 1'
+          })}
         />
       )
 
       fireEvent.click(screen.getByTestId('tool-card-header'))
 
-      expect(screen.getByTestId('read-tool-view')).toBeTruthy()
+      expect(screen.getByTestId('write-tool-view')).toBeTruthy()
     })
 
     test('routes unknown tool to TodoToolView', () => {
-      render(
-        <ToolCard
-          toolUse={makeToolUse('mcp__custom', 'custom output', { key: 'val' })}
-        />
-      )
+      render(<ToolCard toolUse={makeToolUse('mcp__custom', 'custom output', { key: 'val' })} />)
 
       fireEvent.click(screen.getByTestId('tool-card-header'))
 
@@ -551,11 +510,7 @@ describe('Session 8: Rich Tool Rendering', () => {
     })
 
     test('routes case-insensitive tool names correctly', () => {
-      render(
-        <ToolCard
-          toolUse={makeToolUse('read_file', 'content', { file_path: 'test.ts' })}
-        />
-      )
+      render(<ToolCard toolUse={makeToolUse('read_file', 'content', { file_path: 'test.ts' })} />)
 
       fireEvent.click(screen.getByTestId('tool-card-header'))
 

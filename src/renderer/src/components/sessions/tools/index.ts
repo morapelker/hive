@@ -1,4 +1,5 @@
 export { ReadToolView } from './ReadToolView'
+export { WriteToolView } from './WriteToolView'
 export { EditToolView } from './EditToolView'
 export { GrepToolView } from './GrepToolView'
 export { BashToolView } from './BashToolView'

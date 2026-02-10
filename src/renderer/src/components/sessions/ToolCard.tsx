@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './tools/types'
 import { ReadToolView } from './tools/ReadToolView'
+import { WriteToolView } from './tools/WriteToolView'
 import { EditToolView } from './tools/EditToolView'
 import { GrepToolView } from './tools/GrepToolView'
 import { BashToolView } from './tools/BashToolView'
@@ -160,8 +161,8 @@ function getLeftBorderColor(status: ToolStatus): string {
 const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   Read: ReadToolView,
   read_file: ReadToolView,
-  Write: ReadToolView, // Similar rendering to Read
-  write_file: ReadToolView,
+  Write: WriteToolView,
+  write_file: WriteToolView,
   Edit: EditToolView,
   edit_file: EditToolView,
   Grep: GrepToolView,
@@ -183,7 +184,7 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   // Try case-insensitive match via known patterns
   const lower = name.toLowerCase()
   if (lower.includes('read') || lower === 'cat' || lower === 'view') return ReadToolView
-  if (lower.includes('write') || lower === 'create') return ReadToolView
+  if (lower.includes('write') || lower === 'create') return WriteToolView
   if (lower.includes('edit') || lower.includes('replace') || lower.includes('patch'))
     return EditToolView
   if (

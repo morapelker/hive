@@ -381,6 +381,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const lastScrollTopRef = useRef(0)
   const scrollCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isScrollCooldownActiveRef = useRef(false)
+  const userHasScrolledUpRef = useRef(false)
 
   // Streaming rAF ref (frame-synced flushing for text updates)
   const rafRef = useRef<number | null>(null)
@@ -442,8 +443,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const distanceFromBottom = el.scrollHeight - currentScrollTop - el.clientHeight
     const isNearBottom = distanceFromBottom < 80
 
-    // Upward scroll during streaming → immediately disable + start cooldown
+    // Upward scroll during streaming → mark as intentional, disable + start cooldown
     if (scrollingUp && (isSending || isStreaming)) {
+      userHasScrolledUpRef.current = true
       isAutoScrollEnabledRef.current = false
       setShowScrollFab(true)
       isScrollCooldownActiveRef.current = true
@@ -462,6 +464,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           if (dist < 80) {
             isAutoScrollEnabledRef.current = true
             setShowScrollFab(false)
+            userHasScrolledUpRef.current = false
           }
         }
       }, SCROLL_COOLDOWN_MS)
@@ -472,8 +475,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     if (isNearBottom && !isScrollCooldownActiveRef.current) {
       isAutoScrollEnabledRef.current = true
       setShowScrollFab(false)
-    } else if (!isNearBottom && (isSending || isStreaming)) {
-      // Far from bottom during streaming (no cooldown needed, just update state)
+      userHasScrolledUpRef.current = false
+    } else if (!isNearBottom && (isSending || isStreaming) && userHasScrolledUpRef.current) {
+      // Far from bottom during streaming, but only if user intentionally scrolled up
       isAutoScrollEnabledRef.current = false
       setShowScrollFab(true)
     }
@@ -488,6 +492,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     isScrollCooldownActiveRef.current = false
     isAutoScrollEnabledRef.current = true
     setShowScrollFab(false)
+    userHasScrolledUpRef.current = false
     scrollToBottom()
   }, [scrollToBottom])
 
@@ -507,6 +512,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     isScrollCooldownActiveRef.current = false
     isAutoScrollEnabledRef.current = true
     setShowScrollFab(false)
+    userHasScrolledUpRef.current = false
   }, [sessionId])
 
   // Auto-focus textarea when session changes or view becomes connected
@@ -1449,6 +1455,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     isScrollCooldownActiveRef.current = false
     isAutoScrollEnabledRef.current = true
     setShowScrollFab(false)
+    userHasScrolledUpRef.current = false
 
     // Set worktree status to 'working'
     useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
