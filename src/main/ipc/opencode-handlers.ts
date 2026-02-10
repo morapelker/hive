@@ -202,6 +202,49 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Reply to a pending question from the AI
+  ipcMain.handle(
+    'opencode:question:reply',
+    async (
+      _event,
+      {
+        requestId,
+        answers,
+        worktreePath
+      }: { requestId: string; answers: string[][]; worktreePath?: string }
+    ) => {
+      log.info('IPC: opencode:question:reply', { requestId })
+      try {
+        await openCodeService.questionReply(requestId, answers, worktreePath)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:question:reply failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Reject/dismiss a pending question from the AI
+  ipcMain.handle(
+    'opencode:question:reject',
+    async (_event, { requestId, worktreePath }: { requestId: string; worktreePath?: string }) => {
+      log.info('IPC: opencode:question:reject', { requestId })
+      try {
+        await openCodeService.questionReject(requestId, worktreePath)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:question:reject failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Get messages from an OpenCode session
   ipcMain.handle(
     'opencode:messages',

@@ -320,6 +320,17 @@ declare global {
         model?: { id: string; name: string; limit: { context: number } }
         error?: string
       }>
+      // Reply to a pending question from the AI
+      questionReply: (
+        requestId: string,
+        answers: string[][],
+        worktreePath?: string
+      ) => Promise<{ success: boolean; error?: string }>
+      // Reject/dismiss a pending question from the AI
+      questionReject: (
+        requestId: string,
+        worktreePath?: string
+      ) => Promise<{ success: boolean; error?: string }>
       // List available slash commands from the SDK
       commands: (
         worktreePath: string

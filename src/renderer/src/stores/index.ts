@@ -25,3 +25,4 @@ export {
 export { useWorktreeStatusStore } from './useWorktreeStatusStore'
 export { useContextStore } from './useContextStore'
 export { useFileSearchStore } from './useFileSearchStore'
+export { useQuestionStore } from './useQuestionStore'

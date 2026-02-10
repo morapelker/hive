@@ -7,6 +7,7 @@ import {
   FolderSearch,
   FilePlus,
   Bot,
+  MessageCircleQuestion,
   ChevronDown,
   Check,
   X,
@@ -21,6 +22,7 @@ import { GrepToolView } from './tools/GrepToolView'
 import { BashToolView } from './tools/BashToolView'
 import { TodoToolView } from './tools/TodoToolView'
 import { TaskToolView } from './tools/TaskToolView'
+import { QuestionToolView } from './tools/QuestionToolView'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
 
@@ -49,7 +51,12 @@ function getToolIcon(name: string): React.JSX.Element {
   if (lowerName.includes('edit') || lowerName.includes('replace') || lowerName.includes('patch')) {
     return <Pencil className={iconClass} />
   }
-  if (lowerName.includes('bash') || lowerName.includes('shell') || lowerName.includes('exec') || lowerName.includes('command')) {
+  if (
+    lowerName.includes('bash') ||
+    lowerName.includes('shell') ||
+    lowerName.includes('exec') ||
+    lowerName.includes('command')
+  ) {
     return <Terminal className={iconClass} />
   }
   if (lowerName.includes('glob') || lowerName.includes('find') || lowerName.includes('list')) {
@@ -60,6 +67,9 @@ function getToolIcon(name: string): React.JSX.Element {
   }
   if (lowerName === 'task') {
     return <Bot className={iconClass} />
+  }
+  if (lowerName.includes('question')) {
+    return <MessageCircleQuestion className={iconClass} />
   }
   // Default
   return <Terminal className={iconClass} />
@@ -118,25 +128,12 @@ function StatusIndicator({ status }: { status: ToolStatus }): React.JSX.Element 
     case 'pending':
     case 'running':
       return (
-        <Loader2
-          className="h-3.5 w-3.5 animate-spin text-blue-500"
-          data-testid="tool-spinner"
-        />
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" data-testid="tool-spinner" />
       )
     case 'success':
-      return (
-        <Check
-          className="h-3.5 w-3.5 text-green-500"
-          data-testid="tool-success"
-        />
-      )
+      return <Check className="h-3.5 w-3.5 text-green-500" data-testid="tool-success" />
     case 'error':
-      return (
-        <X
-          className="h-3.5 w-3.5 text-red-500"
-          data-testid="tool-error"
-        />
-      )
+      return <X className="h-3.5 w-3.5 text-red-500" data-testid="tool-error" />
   }
 }
 
@@ -175,6 +172,8 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   bash: BashToolView,
   Task: TaskToolView,
   task: TaskToolView,
+  mcp_question: QuestionToolView,
+  question: QuestionToolView
 }
 
 /** Resolve a tool name to its rich renderer, falling back to TodoToolView */
@@ -185,11 +184,21 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   const lower = name.toLowerCase()
   if (lower.includes('read') || lower === 'cat' || lower === 'view') return ReadToolView
   if (lower.includes('write') || lower === 'create') return ReadToolView
-  if (lower.includes('edit') || lower.includes('replace') || lower.includes('patch')) return EditToolView
-  if (lower.includes('bash') || lower.includes('shell') || lower.includes('exec') || lower.includes('command')) return BashToolView
-  if (lower.includes('grep') || lower.includes('search') || lower.includes('rg')) return GrepToolView
-  if (lower.includes('glob') || lower.includes('find') || lower.includes('list')) return GrepToolView
+  if (lower.includes('edit') || lower.includes('replace') || lower.includes('patch'))
+    return EditToolView
+  if (
+    lower.includes('bash') ||
+    lower.includes('shell') ||
+    lower.includes('exec') ||
+    lower.includes('command')
+  )
+    return BashToolView
+  if (lower.includes('grep') || lower.includes('search') || lower.includes('rg'))
+    return GrepToolView
+  if (lower.includes('glob') || lower.includes('find') || lower.includes('list'))
+    return GrepToolView
   if (lower === 'task') return TaskToolView
+  if (lower.includes('question')) return QuestionToolView
   // Fallback
   return TodoToolView
 }
@@ -204,17 +213,30 @@ function shortenPath(filePath: string, cwd?: string | null): string {
 }
 
 /** Renders tool-specific collapsed header content (icon + name + contextual info) */
-function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string | null }): React.JSX.Element {
+function CollapsedContent({
+  toolUse,
+  cwd
+}: {
+  toolUse: ToolUseInfo
+  cwd?: string | null
+}): React.JSX.Element {
   const { name, input, output } = toolUse
   const lowerName = name.toLowerCase()
 
   // Bash / Shell / Exec
-  if (lowerName.includes('bash') || lowerName.includes('shell') || lowerName.includes('exec') || lowerName.includes('command')) {
+  if (
+    lowerName.includes('bash') ||
+    lowerName.includes('shell') ||
+    lowerName.includes('exec') ||
+    lowerName.includes('command')
+  ) {
     const command = (input.command || input.cmd || '') as string
     const truncCmd = command.length > 60 ? command.slice(0, 60) + '...' : command
     return (
       <>
-        <span className="text-muted-foreground shrink-0"><Terminal className="h-3.5 w-3.5" /></span>
+        <span className="text-muted-foreground shrink-0">
+          <Terminal className="h-3.5 w-3.5" />
+        </span>
         <span className="font-medium text-foreground shrink-0">Bash</span>
         <span className="font-mono text-muted-foreground truncate min-w-0">
           <span className="text-green-500">$</span> {truncCmd}
@@ -229,9 +251,13 @@ function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string
     const lineCount = output ? output.trimEnd().split('\n').length : null
     return (
       <>
-        <span className="text-muted-foreground shrink-0"><FileText className="h-3.5 w-3.5" /></span>
+        <span className="text-muted-foreground shrink-0">
+          <FileText className="h-3.5 w-3.5" />
+        </span>
         <span className="font-medium text-foreground shrink-0">Read</span>
-        <span className="font-mono text-muted-foreground truncate min-w-0">{shortenPath(filePath, cwd)}</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">
+          {shortenPath(filePath, cwd)}
+        </span>
         {lineCount !== null && (
           <span className="text-muted-foreground/60 shrink-0 text-[10px]">{lineCount} lines</span>
         )}
@@ -246,9 +272,13 @@ function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string
     const lineCount = content ? content.trimEnd().split('\n').length : null
     return (
       <>
-        <span className="text-muted-foreground shrink-0"><FilePlus className="h-3.5 w-3.5" /></span>
+        <span className="text-muted-foreground shrink-0">
+          <FilePlus className="h-3.5 w-3.5" />
+        </span>
         <span className="font-medium text-foreground shrink-0">Write</span>
-        <span className="font-mono text-muted-foreground truncate min-w-0">{shortenPath(filePath, cwd)}</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">
+          {shortenPath(filePath, cwd)}
+        </span>
         {lineCount !== null && (
           <span className="text-muted-foreground/60 shrink-0 text-[10px]">{lineCount} lines</span>
         )}
@@ -265,9 +295,13 @@ function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string
     const addedLines = newString ? newString.split('\n').length : 0
     return (
       <>
-        <span className="text-muted-foreground shrink-0"><Pencil className="h-3.5 w-3.5" /></span>
+        <span className="text-muted-foreground shrink-0">
+          <Pencil className="h-3.5 w-3.5" />
+        </span>
         <span className="font-medium text-foreground shrink-0">Edit</span>
-        <span className="font-mono text-muted-foreground truncate min-w-0">{shortenPath(filePath, cwd)}</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">
+          {shortenPath(filePath, cwd)}
+        </span>
         {(removedLines > 0 || addedLines > 0) && (
           <span className="shrink-0 text-[10px] flex items-center gap-1">
             {removedLines > 0 && <span className="text-red-400">-{removedLines}</span>}
@@ -281,12 +315,16 @@ function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string
   // Grep / Search / Rg
   if (lowerName.includes('grep') || lowerName.includes('search') || lowerName.includes('rg')) {
     const pattern = (input.pattern || input.query || input.regex || '') as string
-    const matchCount = output ? output.split('\n').filter(l => l.trim()).length : null
+    const matchCount = output ? output.split('\n').filter((l) => l.trim()).length : null
     return (
       <>
-        <span className="text-muted-foreground shrink-0"><Search className="h-3.5 w-3.5" /></span>
+        <span className="text-muted-foreground shrink-0">
+          <Search className="h-3.5 w-3.5" />
+        </span>
         <span className="font-medium text-foreground shrink-0">Grep</span>
-        <span className="font-mono text-muted-foreground truncate min-w-0">&quot;{pattern}&quot;</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">
+          &quot;{pattern}&quot;
+        </span>
         {matchCount !== null && matchCount > 0 && (
           <span className="text-muted-foreground/60 shrink-0 text-[10px]">
             {matchCount} {matchCount === 1 ? 'match' : 'matches'}
@@ -299,10 +337,12 @@ function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string
   // Glob / Find / List
   if (lowerName.includes('glob') || lowerName.includes('find') || lowerName.includes('list')) {
     const pattern = (input.pattern || input.glob || '') as string
-    const fileCount = output ? output.split('\n').filter(l => l.trim()).length : null
+    const fileCount = output ? output.split('\n').filter((l) => l.trim()).length : null
     return (
       <>
-        <span className="text-muted-foreground shrink-0"><FolderSearch className="h-3.5 w-3.5" /></span>
+        <span className="text-muted-foreground shrink-0">
+          <FolderSearch className="h-3.5 w-3.5" />
+        </span>
         <span className="font-medium text-foreground shrink-0">Glob</span>
         <span className="font-mono text-muted-foreground truncate min-w-0">{pattern}</span>
         {fileCount !== null && fileCount > 0 && (
@@ -314,13 +354,33 @@ function CollapsedContent({ toolUse, cwd }: { toolUse: ToolUseInfo; cwd?: string
     )
   }
 
+  // Question
+  if (lowerName.includes('question')) {
+    const questions = (input.questions || []) as Array<{ header: string; question: string }>
+    const questionCount = questions.length
+    const firstHeader = questions[0]?.header || 'Question'
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0">
+          <MessageCircleQuestion className="h-3.5 w-3.5" />
+        </span>
+        <span className="font-medium text-foreground shrink-0">Question</span>
+        <span className="text-muted-foreground truncate min-w-0">
+          {questionCount > 1 ? `${questionCount} questions` : firstHeader}
+        </span>
+      </>
+    )
+  }
+
   // Task
   if (lowerName === 'task') {
     const description = (input.description || '') as string
     const subagentType = (input.subagent_type || input.subagentType || '') as string
     return (
       <>
-        <span className="text-muted-foreground shrink-0"><Bot className="h-3.5 w-3.5" /></span>
+        <span className="text-muted-foreground shrink-0">
+          <Bot className="h-3.5 w-3.5" />
+        </span>
         <span className="font-medium text-foreground shrink-0">Task</span>
         {subagentType && (
           <span className="text-[10px] bg-blue-500/15 text-blue-500 dark:text-blue-400 rounded px-1 py-0.5 font-medium shrink-0">
@@ -349,7 +409,11 @@ interface ToolCardProps {
   compact?: boolean
 }
 
-export const ToolCard = memo(function ToolCard({ toolUse, cwd, compact = false }: ToolCardProps): React.JSX.Element {
+export const ToolCard = memo(function ToolCard({
+  toolUse,
+  cwd,
+  compact = false
+}: ToolCardProps): React.JSX.Element {
   const [isExpanded, setIsExpanded] = useState(false)
 
   const duration = useMemo(() => {
@@ -366,11 +430,11 @@ export const ToolCard = memo(function ToolCard({ toolUse, cwd, compact = false }
   return (
     <div
       className={cn(
-        compact ? 'my-0 rounded-md border border-l-2 text-xs' : 'my-1 rounded-md border border-l-2 text-xs',
+        compact
+          ? 'my-0 rounded-md border border-l-2 text-xs'
+          : 'my-1 rounded-md border border-l-2 text-xs',
         toolUse.status === 'running' && 'animate-pulse',
-        toolUse.status === 'error'
-          ? 'border-red-500/30 bg-red-500/5'
-          : 'border-border bg-muted/30'
+        toolUse.status === 'error' ? 'border-red-500/30 bg-red-500/5' : 'border-border bg-muted/30'
       )}
       style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
       data-testid="tool-card"
@@ -381,7 +445,9 @@ export const ToolCard = memo(function ToolCard({ toolUse, cwd, compact = false }
       <button
         onClick={() => hasOutput && setIsExpanded(!isExpanded)}
         className={cn(
-          compact ? 'flex items-center gap-1.5 w-full px-2 py-1.5 text-left' : 'flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left',
+          compact
+            ? 'flex items-center gap-1.5 w-full px-2 py-1.5 text-left'
+            : 'flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left',
           hasOutput && 'cursor-pointer hover:bg-muted/50 transition-colors'
         )}
         disabled={!hasOutput}
@@ -396,7 +462,10 @@ export const ToolCard = memo(function ToolCard({ toolUse, cwd, compact = false }
 
         {/* Duration */}
         {duration && (
-          <span className="text-muted-foreground shrink-0 flex items-center gap-1" data-testid="tool-duration">
+          <span
+            className="text-muted-foreground shrink-0 flex items-center gap-1"
+            data-testid="tool-duration"
+          >
             <Clock className="h-3 w-3" />
             {duration}
           </span>

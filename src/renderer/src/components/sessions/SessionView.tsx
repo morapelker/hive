@@ -17,6 +17,8 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useQuestionStore } from '@/stores/useQuestionStore'
+import { QuestionPrompt } from './QuestionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 
 // Types for OpenCode SDK integration
@@ -356,6 +358,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Current model ID for context indicator
   const selectedModel = useSettingsStore((state) => state.selectedModel)
   const currentModelId = selectedModel?.modelID ?? 'claude-opus-4-5-20251101'
+
+  // Active question prompt from AI
+  const activeQuestion = useQuestionStore((s) => s.getActiveQuestion(sessionId))
 
   // Streaming parts - tracks interleaved text and tool use during streaming
   const [streamingParts, setStreamingParts] = useState<StreamingPart[]>([])
@@ -779,6 +784,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } catch {
               // Never let logging failures break the UI
             }
+          }
+
+          // Handle question events
+          if (event.type === 'question.asked') {
+            const request = event.data
+            if (request?.id && request?.questions) {
+              useQuestionStore.getState().addQuestion(sessionId, request)
+            }
+            return
+          }
+
+          if (event.type === 'question.replied' || event.type === 'question.rejected') {
+            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+            if (requestId) {
+              useQuestionStore.getState().removeQuestion(sessionId, requestId)
+            }
+            return
           }
 
           // Handle different event types
@@ -1304,6 +1326,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // Cleanup on unmount or session change
     return () => {
       unsubscribe()
+      // Clear any pending question prompts for this session
+      useQuestionStore.getState().clearSession(sessionId)
       // Note: We intentionally do NOT disconnect from OpenCode on unmount.
       // Sessions persist across project switches. The main process keeps
       // event subscriptions alive so responses are not lost.
@@ -1371,6 +1395,32 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       })
     }
   }, [sessionId])
+
+  // Handle question reply
+  const handleQuestionReply = useCallback(
+    async (requestId: string, answers: string[][]) => {
+      try {
+        await window.opencodeOps.questionReply(requestId, answers, worktreePath || undefined)
+      } catch (err) {
+        console.error('Failed to reply to question:', err)
+        toast.error('Failed to send answer')
+      }
+    },
+    [worktreePath]
+  )
+
+  // Handle question reject/dismiss
+  const handleQuestionReject = useCallback(
+    async (requestId: string) => {
+      try {
+        await window.opencodeOps.questionReject(requestId, worktreePath || undefined)
+      } catch (err) {
+        console.error('Failed to reject question:', err)
+        toast.error('Failed to dismiss question')
+      }
+    },
+    [worktreePath]
+  )
 
   // Handle send message
   const handleSend = useCallback(async () => {
@@ -1705,6 +1755,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         {/* Scroll-to-bottom FAB */}
         <ScrollToBottomFab onClick={handleScrollToBottomClick} visible={showScrollFab} />
       </div>
+
+      {/* Question prompt from AI */}
+      {activeQuestion && (
+        <div className="px-4 pb-2">
+          <div className="max-w-3xl mx-auto">
+            <QuestionPrompt
+              request={activeQuestion}
+              onReply={handleQuestionReply}
+              onReject={handleQuestionReject}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Input area */}
       <div

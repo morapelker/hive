@@ -829,6 +829,47 @@ class OpenCodeService {
   }
 
   /**
+   * Reply to a pending question from the AI
+   * Uses direct HTTP since v1 SDK lacks the question namespace (available in v2)
+   */
+  async questionReply(
+    requestId: string,
+    answers: string[][],
+    worktreePath?: string
+  ): Promise<void> {
+    const instance = await this.getOrCreateInstance()
+    const url = new URL(`/question/${encodeURIComponent(requestId)}/reply`, instance.server.url)
+    if (worktreePath) url.searchParams.set('directory', worktreePath)
+    const resp = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers })
+    })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(`Question reply failed (${resp.status}): ${text}`)
+    }
+  }
+
+  /**
+   * Reject/dismiss a pending question from the AI
+   * Uses direct HTTP since v1 SDK lacks the question namespace (available in v2)
+   */
+  async questionReject(requestId: string, worktreePath?: string): Promise<void> {
+    const instance = await this.getOrCreateInstance()
+    const url = new URL(`/question/${encodeURIComponent(requestId)}/reject`, instance.server.url)
+    if (worktreePath) url.searchParams.set('directory', worktreePath)
+    const resp = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(`Question reject failed (${resp.status}): ${text}`)
+    }
+  }
+
+  /**
    * Get messages from an OpenCode session
    */
   async getMessages(worktreePath: string, opencodeSessionId: string): Promise<unknown[]> {

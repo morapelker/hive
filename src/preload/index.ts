@@ -688,6 +688,21 @@ const opencodeOps = {
     error?: string
   }> => ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId }),
 
+  // Reply to a pending question from the AI
+  questionReply: (
+    requestId: string,
+    answers: string[][],
+    worktreePath?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:question:reply', { requestId, answers, worktreePath }),
+
+  // Reject/dismiss a pending question from the AI
+  questionReject: (
+    requestId: string,
+    worktreePath?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:question:reject', { requestId, worktreePath }),
+
   // List available slash commands from the SDK
   commands: (
     worktreePath: string
