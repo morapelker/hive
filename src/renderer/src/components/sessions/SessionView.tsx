@@ -1150,6 +1150,36 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } else {
               statusStore.setSessionStatus(sessionId, 'unread')
             }
+          } else if (event.type === 'session.status') {
+            const status = event.statusPayload || event.data?.status
+            if (!status) return
+
+            // Skip child session status -- only parent status drives isStreaming
+            if (event.childSessionId) return
+
+            if (status.type === 'busy') {
+              setIsStreaming(true)
+            } else if (status.type === 'idle') {
+              // Session is truly done -- flush and finalize
+              immediateFlush()
+              setIsSending(false)
+              setQueuedCount(0)
+
+              if (!hasFinalizedCurrentResponseRef.current) {
+                hasFinalizedCurrentResponseRef.current = true
+                void finalizeResponseFromDatabase()
+              }
+
+              // Update worktree status
+              const activeId = useSessionStore.getState().activeSessionId
+              const statusStore = useWorktreeStatusStore.getState()
+              if (activeId === sessionId) {
+                statusStore.clearSessionStatus(sessionId)
+              } else {
+                statusStore.setSessionStatus(sessionId, 'unread')
+              }
+            }
+            // 'retry' status: keep isStreaming true, could add retry UI later
           }
         })
       : () => {}
