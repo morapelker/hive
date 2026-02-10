@@ -59,7 +59,7 @@ let mainWindow: BrowserWindow | null = null
 /**
  * Recursively scan a directory and build a file tree
  */
-async function scanDirectory(
+export async function scanDirectory(
   dirPath: string,
   rootPath: string,
   maxDepth: number = 10,
@@ -92,15 +92,12 @@ async function scanDirectory(
         continue
       }
 
-      // Skip hidden files/folders (starting with .) except important ones
-      if (entry.name.startsWith('.') && ![''].includes(entry.name)) {
-        continue
-      }
-
       if (entry.isDirectory()) {
         // Lazy loading: only get children for first level initially
         const children =
-          currentDepth < 1 ? await scanDirectory(entryPath, rootPath, maxDepth, currentDepth + 1) : undefined
+          currentDepth < 1
+            ? await scanDirectory(entryPath, rootPath, maxDepth, currentDepth + 1)
+            : undefined
 
         nodes.push({
           name: entry.name,
@@ -123,7 +120,11 @@ async function scanDirectory(
 
     return nodes
   } catch (error) {
-    log.error('Failed to scan directory', error instanceof Error ? error : new Error(String(error)), { dirPath })
+    log.error(
+      'Failed to scan directory',
+      error instanceof Error ? error : new Error(String(error)),
+      { dirPath }
+    )
     return []
   }
 }
@@ -131,7 +132,10 @@ async function scanDirectory(
 /**
  * Scan a single directory for lazy loading
  */
-async function scanSingleDirectory(dirPath: string, rootPath: string): Promise<FileTreeNode[]> {
+export async function scanSingleDirectory(
+  dirPath: string,
+  rootPath: string
+): Promise<FileTreeNode[]> {
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true })
     const nodes: FileTreeNode[] = []
@@ -152,10 +156,6 @@ async function scanSingleDirectory(dirPath: string, rootPath: string): Promise<F
       if (!entry.isDirectory() && IGNORE_FILES.has(entry.name)) {
         continue
       }
-      if (entry.name.startsWith('.')) {
-        continue
-      }
-
       if (entry.isDirectory()) {
         nodes.push({
           name: entry.name,
@@ -178,7 +178,11 @@ async function scanSingleDirectory(dirPath: string, rootPath: string): Promise<F
 
     return nodes
   } catch (error) {
-    log.error('Failed to scan single directory', error instanceof Error ? error : new Error(String(error)), { dirPath })
+    log.error(
+      'Failed to scan single directory',
+      error instanceof Error ? error : new Error(String(error)),
+      { dirPath }
+    )
     return []
   }
 }
@@ -248,7 +252,9 @@ export function registerFileTreeHandlers(window: BrowserWindow): void {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
-        log.error('Failed to scan directory', error instanceof Error ? error : new Error(message), { dirPath })
+        log.error('Failed to scan directory', error instanceof Error ? error : new Error(message), {
+          dirPath
+        })
         return {
           success: false,
           error: message
@@ -348,7 +354,11 @@ export function registerFileTreeHandlers(window: BrowserWindow): void {
         return { success: true }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
-        log.error('Failed to start file watcher', error instanceof Error ? error : new Error(message), { worktreePath })
+        log.error(
+          'Failed to start file watcher',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath }
+        )
         return {
           success: false,
           error: message
@@ -402,7 +412,11 @@ export async function cleanupFileTreeWatchers(): Promise<void> {
       await watcher.close()
       log.info('Closed watcher', { path })
     } catch (error) {
-      log.error('Failed to close watcher', error instanceof Error ? error : new Error(String(error)), { path })
+      log.error(
+        'Failed to close watcher',
+        error instanceof Error ? error : new Error(String(error)),
+        { path }
+      )
     }
   }
   watchers.clear()

@@ -40,6 +40,7 @@
     "chokidar": "^3.6.0",
     "cmdk": "0.2.1",
     "diff2html": "^3.4.56",
+    "fix-path": "^4.0.0",
     "lucide-react": "^0.468.0",
     "radix-ui": "^1.4.3",
     "react": "^19.0.0",

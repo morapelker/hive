@@ -1,3 +1,4 @@
+import fixPath from 'fix-path'
 import { app, shell, BrowserWindow, Menu, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
 import { spawn } from 'child_process'
@@ -214,6 +215,10 @@ function registerLoggingHandlers(): void {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
+  // Fix PATH for macOS when launched from Finder/Dock/Spotlight.
+  // Must run before any child process spawning (opencode, scripts).
+  fixPath()
+
   log.info('App starting', { version: app.getVersion(), platform: process.platform })
 
   if (isLogMode) {
