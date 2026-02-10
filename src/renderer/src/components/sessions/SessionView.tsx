@@ -414,25 +414,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     )
   }, [])
 
-  // Extract message ID from OpenCode stream payloads across known shapes
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const getEventMessageId = useCallback((data: any): string | null => {
-    const messageId =
-      data?.message?.id ??
-      data?.info?.messageID ??
-      data?.info?.messageId ??
-      data?.info?.id ??
-      data?.part?.messageID ??
-      data?.part?.messageId ??
-      data?.properties?.message?.id ??
-      data?.properties?.info?.messageID ??
-      data?.properties?.info?.messageId ??
-      data?.properties?.part?.messageID ??
-      data?.properties?.part?.messageId
-
-    return typeof messageId === 'string' && messageId.length > 0 ? messageId : null
-  }, [])
-
   // Auto-scroll to bottom when new messages arrive or streaming updates
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -1033,17 +1014,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setIsStreaming(true)
             }
           } else if (event.type === 'message.updated') {
-            // Skip user-message echoes; user messages are already rendered locally.
+            // Skip user-message echoes
             if (eventRole === 'user') return
 
-            // Skip finalization for child/subagent messages — their
-            // message.updated (with time.completed) must NOT trigger parent
-            // finalization or reset isStreaming.
+            // Skip child/subagent messages
             if (event.childSessionId) return
 
-            // Content-based echo detection for message.updated (same logic as
-            // message.part.updated above).  The SDK may send a message.updated
-            // for the user message without a role field.
+            // Content-based echo detection for message.updated
             if (lastSentPromptRef.current) {
               const parts = event.data?.parts
               if (Array.isArray(parts) && parts.length > 0) {
@@ -1053,38 +1030,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   .join('')
                   .trimEnd()
                 if (textContent.length > 0 && lastSentPromptRef.current.startsWith(textContent)) {
-                  return // echo — skip
+                  return // echo -- skip
                 }
               }
             }
 
+            // Extract token usage from completed messages (per-message, not per-session).
+            // Finalization is handled by session.status, NOT here.
             const info = event.data?.info
-            // Finalize when message is complete.  The role may be explicitly
-            // 'assistant' OR undefined (the SDK often omits role on
-            // message.updated payloads).  We already early-returned for
-            // user echoes above, so any remaining event is an assistant msg.
-            if (eventRole !== 'user' && info?.time?.completed) {
-              // Defer finalization if there are active subtasks still running.
-              // In multi-step flows with subagents, the SDK sends message.updated
-              // with time.completed when each step finishes, but the parent continues
-              // in a new step. Only session.idle signals true completion.
-              const hasRunningSubtasks = streamingPartsRef.current.some(
-                (part) => part.type === 'subtask' && part.subtask?.status === 'running'
-              )
-              if (hasRunningSubtasks) return
-
-              const messageId = getEventMessageId(event.data)
-
-              // Skip duplicate finalization events for the same message.
-              if (messageId && finalizedMessageIdsRef.current.has(messageId)) return
-              if (hasFinalizedCurrentResponseRef.current) return
-
-              if (messageId) {
-                finalizedMessageIdsRef.current.add(messageId)
-              }
-              hasFinalizedCurrentResponseRef.current = true
-
-              // Extract token usage from the completed message
+            if (info?.time?.completed) {
               const tokens = info?.tokens
               if (tokens) {
                 useContextStore.getState().addMessageTokens(sessionId, {
@@ -1109,10 +1063,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                           : 0
                 })
               }
-
-              // Message complete — flush now and reload from DB (main process already persisted it).
-              immediateFlush()
-              void finalizeResponseFromDatabase()
             }
           } else if (event.type === 'session.idle') {
             // Child session idle — update subtask status, don't finalize parent
