@@ -1132,23 +1132,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               return // Don't finalize the parent session
             }
 
-            // Session finished processing — flush any pending throttled updates
+            // Fallback: session.idle for parent acts as safety net.
+            // Primary finalization is handled by session.status {type:'idle'}.
+            // This catches edge cases where session.status events are unavailable.
             immediateFlush()
             setIsSending(false)
             setQueuedCount(0)
 
-            // If message.updated already finalized this response, don't process again.
             if (!hasFinalizedCurrentResponseRef.current) {
               hasFinalizedCurrentResponseRef.current = true
               void finalizeResponseFromDatabase()
-            }
-            // Update worktree status: 'unread' if not viewing, clear if viewing
-            const activeId = useSessionStore.getState().activeSessionId
-            const statusStore = useWorktreeStatusStore.getState()
-            if (activeId === sessionId) {
-              statusStore.clearSessionStatus(sessionId)
-            } else {
-              statusStore.setSessionStatus(sessionId, 'unread')
             }
           } else if (event.type === 'session.status') {
             const status = event.statusPayload || event.data?.status
