@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileTree } from './FileTree'
-import { GitStatusPanel } from '@/components/git'
+import { ChangesView } from './ChangesView'
 
 interface FileSidebarProps {
   worktreePath: string | null
@@ -62,9 +62,7 @@ export function FileSidebar({
 
       <div className="flex-1 overflow-hidden">
         {activeTab === 'changes' ? (
-          <div className="flex flex-col h-full overflow-y-auto">
-            <GitStatusPanel worktreePath={worktreePath} />
-          </div>
+          <ChangesView worktreePath={worktreePath} />
         ) : (
           <FileTree
             worktreePath={worktreePath}

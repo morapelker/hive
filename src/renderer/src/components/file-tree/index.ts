@@ -1,5 +1,6 @@
 export { FileTree } from './FileTree'
 export { FileSidebar } from './FileSidebar'
+export { ChangesView } from './ChangesView'
 export { FileTreeHeader } from './FileTreeHeader'
 export { FileTreeFilter } from './FileTreeFilter'
 export { FileTreeNodeComponent } from './FileTreeNode'

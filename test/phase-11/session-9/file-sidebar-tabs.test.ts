@@ -42,11 +42,11 @@ describe('Session 9: File Sidebar Tabs', () => {
       expect(content).toContain("useState<'changes' | 'files'>('changes')")
     })
 
-    test('Changes tab embeds GitStatusPanel', () => {
+    test('Changes tab embeds ChangesView', () => {
       const content = readFile('FileSidebar.tsx')
-      expect(content).toContain('<GitStatusPanel')
+      expect(content).toContain('<ChangesView')
       expect(content).toContain("activeTab === 'changes'")
-      expect(content).toContain("import { GitStatusPanel } from '@/components/git'")
+      expect(content).toContain("import { ChangesView } from './ChangesView'")
     })
 
     test('renders FileTree when files tab is active', () => {
