@@ -5,7 +5,10 @@ import { ToolCard, type ToolUseInfo } from '../../../src/renderer/src/components
 import { StreamingCursor } from '../../../src/renderer/src/components/sessions/StreamingCursor'
 import { AssistantCanvas } from '../../../src/renderer/src/components/sessions/AssistantCanvas'
 import { MessageRenderer } from '../../../src/renderer/src/components/sessions/MessageRenderer'
-import type { StreamingPart, OpenCodeMessage } from '../../../src/renderer/src/components/sessions/SessionView'
+import type {
+  StreamingPart,
+  OpenCodeMessage
+} from '../../../src/renderer/src/components/sessions/SessionView'
 
 // Mock sonner toast
 vi.mock('sonner', () => ({
@@ -48,7 +51,8 @@ describe('Session 10: Tool Message Rendering', () => {
 
     test('Tool card renders for tool_use event', () => {
       render(<ToolCard toolUse={makeToolUse()} />)
-      expect(screen.getByTestId('tool-card')).toBeInTheDocument()
+      // Read is a file tool → compact layout
+      expect(screen.getByTestId('compact-file-tool')).toBeInTheDocument()
     })
 
     test('Tool card displays tool name', () => {
@@ -86,28 +90,27 @@ describe('Session 10: Tool Message Rendering', () => {
         />
       )
 
-      // Initially collapsed - output hidden via CSS (max-h-0 opacity-0)
-      const output = screen.getByTestId('tool-output')
-      expect(output.className).toContain('max-h-0')
-      expect(output.className).toContain('opacity-0')
+      // Compact file tool uses conditional rendering — output not present initially
+      expect(screen.queryByTestId('tool-output')).not.toBeInTheDocument()
 
-      // Click to expand
-      await user.click(screen.getByTestId('tool-card-header'))
-      expect(output.className).toContain('max-h-[2000px]')
-      expect(output.className).toContain('opacity-100')
+      // Click the button inside compact-file-tool to expand
+      const compactCard = screen.getByTestId('compact-file-tool')
+      const button = compactCard.querySelector('button')!
+      await user.click(button)
+      expect(screen.getByTestId('tool-output')).toBeInTheDocument()
 
-      // Click to collapse
-      await user.click(screen.getByTestId('tool-card-header'))
-      expect(output.className).toContain('max-h-0')
-      expect(output.className).toContain('opacity-0')
+      // Click again to collapse
+      await user.click(button)
+      expect(screen.queryByTestId('tool-output')).not.toBeInTheDocument()
     })
 
     test('Execution time displayed', () => {
+      // Use Bash tool which still renders the regular card layout with duration
       const startTime = Date.now() - 45
       const endTime = Date.now()
       render(
         <ToolCard
-          toolUse={makeToolUse({ startTime, endTime })}
+          toolUse={makeToolUse({ name: 'Bash', input: { command: 'ls' }, startTime, endTime })}
         />
       )
       expect(screen.getByTestId('tool-duration')).toBeInTheDocument()
@@ -186,7 +189,10 @@ describe('Session 10: Tool Message Rendering', () => {
         />
       )
 
-      await user.click(screen.getByTestId('tool-card-header'))
+      // Compact file tool — click the button inside compact-file-tool
+      const compactCard = screen.getByTestId('compact-file-tool')
+      const button = compactCard.querySelector('button')!
+      await user.click(button)
       expect(screen.getByText('Permission denied: /etc/shadow')).toBeInTheDocument()
     })
 
@@ -194,37 +200,33 @@ describe('Session 10: Tool Message Rendering', () => {
       const user = userEvent.setup()
       // Line-based truncation: output must exceed 10 lines
       const longOutput = Array.from({ length: 50 }, (_, i) => `Line ${i + 1}: output`).join('\n')
-      render(
-        <ToolCard
-          toolUse={makeToolUse({ output: longOutput })}
-        />
-      )
+      render(<ToolCard toolUse={makeToolUse({ output: longOutput })} />)
 
-      await user.click(screen.getByTestId('tool-card-header'))
+      // Compact file tool — click the button inside compact-file-tool
+      const compactCard = screen.getByTestId('compact-file-tool')
+      const button = compactCard.querySelector('button')!
+      await user.click(button)
       // ReadToolView truncates with "Show all".
       expect(screen.getByTestId('show-all-button')).toBeInTheDocument()
       expect(screen.getByTestId('show-all-button').textContent).toContain('Show all')
     })
 
     test('Tool card has correct data attributes', () => {
-      render(
-        <ToolCard
-          toolUse={makeToolUse({ name: 'Read', status: 'success' })}
-        />
-      )
-      const card = screen.getByTestId('tool-card')
+      render(<ToolCard toolUse={makeToolUse({ name: 'Read', status: 'success' })} />)
+      // Read is a file tool → compact layout
+      const card = screen.getByTestId('compact-file-tool')
       expect(card).toHaveAttribute('data-tool-name', 'Read')
       expect(card).toHaveAttribute('data-tool-status', 'success')
     })
 
     test('Error tool card has error styling', () => {
-      render(
-        <ToolCard
-          toolUse={makeToolUse({ status: 'error', error: 'Failed' })}
-        />
-      )
-      const card = screen.getByTestId('tool-card')
-      expect(card.className).toContain('border-red')
+      render(<ToolCard toolUse={makeToolUse({ status: 'error', error: 'Failed' })} />)
+      // Compact file tool — check data-tool-status for error state
+      const card = screen.getByTestId('compact-file-tool')
+      expect(card).toHaveAttribute('data-tool-status', 'error')
+      // The file path span should have text-red-400 class for errors
+      const pathSpan = card.querySelector('span.font-mono')
+      expect(pathSpan?.className).toContain('text-red-400')
     })
   })
 
@@ -243,9 +245,7 @@ describe('Session 10: Tool Message Rendering', () => {
 
   describe('AssistantCanvas with Parts', () => {
     test('AssistantCanvas renders text parts', () => {
-      const parts: StreamingPart[] = [
-        { type: 'text', text: 'Hello, here is some text.' }
-      ]
+      const parts: StreamingPart[] = [{ type: 'text', text: 'Hello, here is some text.' }]
       render(
         <AssistantCanvas
           content="Hello, here is some text."
@@ -279,7 +279,8 @@ describe('Session 10: Tool Message Rendering', () => {
         />
       )
       expect(screen.getByText('Let me read the file.')).toBeInTheDocument()
-      expect(screen.getByTestId('tool-card')).toBeInTheDocument()
+      // Read is a file tool → compact layout
+      expect(screen.getByTestId('compact-file-tool')).toBeInTheDocument()
     })
 
     test('AssistantCanvas handles interleaved text and tool messages', () => {
@@ -318,8 +319,9 @@ describe('Session 10: Tool Message Rendering', () => {
 
       expect(screen.getByText('First, let me check the file.')).toBeInTheDocument()
       expect(screen.getByText('Now let me edit it.')).toBeInTheDocument()
-      const toolCards = screen.getAllByTestId('tool-card')
-      expect(toolCards).toHaveLength(2)
+      // Both Read and Edit are file tools → compact layout
+      const compactTools = screen.getAllByTestId('compact-file-tool')
+      expect(compactTools).toHaveLength(2)
     })
 
     test('Two consecutive tool calls render compact cards without grouping', () => {
@@ -348,22 +350,13 @@ describe('Session 10: Tool Message Rendering', () => {
         }
       ]
 
-      render(
-        <AssistantCanvas
-          content=""
-          timestamp={new Date().toISOString()}
-          parts={parts}
-        />
-      )
+      render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
       expect(screen.getByTestId('tool-call-inline-group')).toBeInTheDocument()
       expect(screen.queryByTestId('tool-call-group')).not.toBeInTheDocument()
-      const toolCards = screen.getAllByTestId('tool-card')
-      expect(toolCards).toHaveLength(2)
-      const firstClassTokens = toolCards[0].className.split(/\s+/)
-      const secondClassTokens = toolCards[1].className.split(/\s+/)
-      expect(firstClassTokens).toContain('my-0')
-      expect(secondClassTokens).toContain('my-0')
+      // Both Read and Edit are file tools → compact layout (no my-0 class on compact cards)
+      const compactTools = screen.getAllByTestId('compact-file-tool')
+      expect(compactTools).toHaveLength(2)
     })
 
     test('Whitespace text between consecutive tool calls does not create visual gaps', () => {
@@ -393,17 +386,12 @@ describe('Session 10: Tool Message Rendering', () => {
         }
       ]
 
-      render(
-        <AssistantCanvas
-          content=""
-          timestamp={new Date().toISOString()}
-          parts={parts}
-        />
-      )
+      render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
       expect(screen.getByTestId('tool-call-inline-group')).toBeInTheDocument()
-      const toolCards = screen.getAllByTestId('tool-card')
-      expect(toolCards).toHaveLength(2)
+      // Both Read and Edit are file tools → compact layout
+      const compactTools = screen.getAllByTestId('compact-file-tool')
+      expect(compactTools).toHaveLength(2)
       // No markdown paragraph should render for whitespace-only text parts.
       expect(screen.getByTestId('message-assistant').querySelectorAll('p').length).toBe(0)
     })
@@ -435,16 +423,11 @@ describe('Session 10: Tool Message Rendering', () => {
         }
       ]
 
-      render(
-        <AssistantCanvas
-          content=""
-          timestamp={new Date().toISOString()}
-          parts={parts}
-        />
-      )
+      render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
       expect(screen.getByTestId('tool-call-inline-group')).toBeInTheDocument()
-      expect(screen.getAllByTestId('tool-card')).toHaveLength(2)
+      // Both Read and Edit are file tools → compact layout
+      expect(screen.getAllByTestId('compact-file-tool')).toHaveLength(2)
       expect(screen.getByTestId('message-assistant').querySelectorAll('p').length).toBe(0)
     })
 
@@ -463,19 +446,13 @@ describe('Session 10: Tool Message Rendering', () => {
         }
       ]
 
-      render(
-        <AssistantCanvas
-          content=""
-          timestamp={new Date().toISOString()}
-          parts={parts}
-        />
-      )
+      render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
       const assistantCanvas = screen.getByTestId('message-assistant')
       expect(assistantCanvas.className.split(/\s+/)).toContain('py-1')
 
-      const toolCard = screen.getByTestId('tool-card')
-      expect(toolCard.className.split(/\s+/)).toContain('my-0')
+      // Read is a file tool → compact layout (no my-0 class assertion)
+      expect(screen.getByTestId('compact-file-tool')).toBeInTheDocument()
     })
 
     test('Assistant messages that include tools and text still use compact vertical spacing', () => {
@@ -494,13 +471,7 @@ describe('Session 10: Tool Message Rendering', () => {
         }
       ]
 
-      render(
-        <AssistantCanvas
-          content=""
-          timestamp={new Date().toISOString()}
-          parts={parts}
-        />
-      )
+      render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
       const assistantCanvas = screen.getByTestId('message-assistant')
       expect(assistantCanvas.className.split(/\s+/)).toContain('py-1')
@@ -570,7 +541,8 @@ describe('Session 10: Tool Message Rendering', () => {
       )
 
       expect(screen.getByTestId('tool-call-group')).toBeInTheDocument()
-      // Collapsed by default to save vertical space.
+      // Collapsed by default — neither compact-file-tool nor tool-card should be visible
+      expect(screen.queryByTestId('compact-file-tool')).not.toBeInTheDocument()
       expect(screen.queryByTestId('tool-card')).not.toBeInTheDocument()
     })
 
@@ -611,22 +583,17 @@ describe('Session 10: Tool Message Rendering', () => {
         }
       ]
 
-      render(
-        <AssistantCanvas
-          content=""
-          timestamp={new Date().toISOString()}
-          parts={parts}
-        />
-      )
+      render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
       await user.click(screen.getByTestId('tool-call-group-header'))
-      expect(screen.getAllByTestId('tool-card')).toHaveLength(3)
+      // After expanding: 2 Read (compact-file-tool) + 1 Bash (tool-card)
+      const fileTools = screen.getAllByTestId('compact-file-tool')
+      const cardTools = screen.getAllByTestId('tool-card')
+      expect(fileTools.length + cardTools.length).toBe(3)
     })
 
     test('AssistantCanvas shows streaming cursor when streaming', () => {
-      const parts: StreamingPart[] = [
-        { type: 'text', text: 'I am thinking...' }
-      ]
+      const parts: StreamingPart[] = [{ type: 'text', text: 'I am thinking...' }]
       render(
         <AssistantCanvas
           content="I am thinking..."
@@ -640,10 +607,7 @@ describe('Session 10: Tool Message Rendering', () => {
 
     test('AssistantCanvas falls back to content when no parts', () => {
       render(
-        <AssistantCanvas
-          content="Plain assistant response"
-          timestamp={new Date().toISOString()}
-        />
+        <AssistantCanvas content="Plain assistant response" timestamp={new Date().toISOString()} />
       )
       expect(screen.getByText('Plain assistant response')).toBeInTheDocument()
     })
@@ -665,11 +629,7 @@ describe('Session 10: Tool Message Rendering', () => {
         { type: 'text', text: 'World' }
       ]
       render(
-        <AssistantCanvas
-          content="Hello World"
-          timestamp={new Date().toISOString()}
-          parts={parts}
-        />
+        <AssistantCanvas content="Hello World" timestamp={new Date().toISOString()} parts={parts} />
       )
       expect(screen.getByText(/Hello/)).toBeInTheDocument()
       expect(screen.getByText(/World/)).toBeInTheDocument()
@@ -701,7 +661,8 @@ describe('Session 10: Tool Message Rendering', () => {
       render(<MessageRenderer message={message} />)
 
       expect(screen.getByTestId('message-assistant')).toBeInTheDocument()
-      expect(screen.getByTestId('tool-card')).toBeInTheDocument()
+      // Read is a file tool → compact layout
+      expect(screen.getByTestId('compact-file-tool')).toBeInTheDocument()
     })
 
     test('User messages are unaffected by tool rendering', () => {
@@ -762,7 +723,8 @@ describe('Session 10: Tool Message Rendering', () => {
             }}
           />
         )
-        expect(screen.getByTestId('tool-card')).toHaveAttribute('data-tool-status', status)
+        // Read is a file tool → compact layout
+        expect(screen.getByTestId('compact-file-tool')).toHaveAttribute('data-tool-status', status)
         u()
       }
     })
@@ -770,6 +732,7 @@ describe('Session 10: Tool Message Rendering', () => {
 
   describe('Tool Icons', () => {
     test('Different tool types get different icons', () => {
+      const FILE_TOOLS = new Set(['Read', 'Write', 'Edit'])
       const toolNames = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']
 
       for (const name of toolNames) {
@@ -785,8 +748,10 @@ describe('Session 10: Tool Message Rendering', () => {
             }}
           />
         )
-        // Each tool card renders with an SVG icon
-        const card = screen.getByTestId('tool-card')
+        // File tools use compact layout, others use regular card layout
+        const card = FILE_TOOLS.has(name)
+          ? screen.getByTestId('compact-file-tool')
+          : screen.getByTestId('tool-card')
         const svgs = card.querySelectorAll('svg')
         expect(svgs.length).toBeGreaterThan(0)
         unmount()
@@ -813,13 +778,7 @@ describe('Session 10: Tool Message Rendering', () => {
       }
 
       const start = performance.now()
-      render(
-        <AssistantCanvas
-          content=""
-          timestamp={new Date().toISOString()}
-          parts={parts}
-        />
-      )
+      render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
       const elapsed = performance.now() - start
 
       expect(elapsed).toBeLessThan(50)

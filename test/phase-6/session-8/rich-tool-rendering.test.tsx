@@ -440,8 +440,9 @@ describe('Session 8: Rich Tool Rendering', () => {
     test('routes Read tool to ReadToolView', () => {
       render(<ToolCard toolUse={makeToolUse('Read', 'content', { file_path: 'test.ts' })} />)
 
-      // Expand the card
-      fireEvent.click(screen.getByTestId('tool-card-header'))
+      // Expand the compact file tool card
+      const compactTool = screen.getByTestId('compact-file-tool')
+      fireEvent.click(compactTool.querySelector('button')!)
 
       expect(screen.getByTestId('read-tool-view')).toBeTruthy()
     })
@@ -457,7 +458,8 @@ describe('Session 8: Rich Tool Rendering', () => {
         />
       )
 
-      fireEvent.click(screen.getByTestId('tool-card-header'))
+      const compactTool = screen.getByTestId('compact-file-tool')
+      fireEvent.click(compactTool.querySelector('button')!)
 
       expect(screen.getByTestId('edit-tool-view')).toBeTruthy()
     })
@@ -496,7 +498,8 @@ describe('Session 8: Rich Tool Rendering', () => {
         />
       )
 
-      fireEvent.click(screen.getByTestId('tool-card-header'))
+      const compactTool = screen.getByTestId('compact-file-tool')
+      fireEvent.click(compactTool.querySelector('button')!)
 
       expect(screen.getByTestId('write-tool-view')).toBeTruthy()
     })
@@ -512,7 +515,8 @@ describe('Session 8: Rich Tool Rendering', () => {
     test('routes case-insensitive tool names correctly', () => {
       render(<ToolCard toolUse={makeToolUse('read_file', 'content', { file_path: 'test.ts' })} />)
 
-      fireEvent.click(screen.getByTestId('tool-card-header'))
+      const compactTool = screen.getByTestId('compact-file-tool')
+      fireEvent.click(compactTool.querySelector('button')!)
 
       expect(screen.getByTestId('read-tool-view')).toBeTruthy()
     })
@@ -532,12 +536,14 @@ describe('Session 8: Rich Tool Rendering', () => {
         />
       )
 
-      // Header should show tool name, label, and duration
+      // Compact file tool should show tool name, file path, and success icon
+      const compactTool = screen.getByTestId('compact-file-tool')
+      expect(compactTool).toBeTruthy()
       expect(screen.getByText('Read')).toBeTruthy()
-      // Label in header contains "main.ts" — use getAllByText since renderer also contains it
       const mainTsMatches = screen.getAllByText(/main\.ts/)
       expect(mainTsMatches.length).toBeGreaterThanOrEqual(1)
-      expect(screen.getByTestId('tool-duration')).toBeTruthy()
+      // Compact mode does not show duration
+      expect(screen.queryByTestId('tool-duration')).toBeNull()
       expect(screen.getByTestId('tool-success')).toBeTruthy()
     })
 
@@ -548,15 +554,16 @@ describe('Session 8: Rich Tool Rendering', () => {
             id: 'test-1',
             name: 'Read',
             input: { file_path: 'test.ts' },
-            status: 'running',
+            status: 'success',
             startTime: Date.now()
           }}
         />
       )
 
-      // Header button should be disabled (no output to expand)
-      const header = screen.getByTestId('tool-card-header') as HTMLButtonElement
-      expect(header.disabled).toBe(true)
+      // Compact file tool button should be disabled (no output to expand)
+      const compactTool = screen.getByTestId('compact-file-tool')
+      const button = compactTool.querySelector('button') as HTMLButtonElement
+      expect(button.disabled).toBe(true)
     })
   })
 })

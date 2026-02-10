@@ -197,8 +197,8 @@ describe('Session 10: Integration & Polish', () => {
     test('snapshot token replacement across multiple sets', () => {
       const store = useContextStore.getState()
 
-      // First snapshot
-      store.setSessionTokens('sess-1', {
+      // First message tokens
+      store.addMessageTokens('sess-1', {
         input: 1000,
         output: 500,
         reasoning: 0,
@@ -206,8 +206,8 @@ describe('Session 10: Integration & Polish', () => {
         cacheWrite: 50
       })
 
-      // Second snapshot replaces the first
-      store.setSessionTokens('sess-1', {
+      // Second message tokens
+      store.addMessageTokens('sess-1', {
         input: 2000,
         output: 800,
         reasoning: 200,
@@ -227,7 +227,7 @@ describe('Session 10: Integration & Polish', () => {
     test('context usage percentage calculated correctly', () => {
       const store = useContextStore.getState()
       store.setModelLimit('claude-3', 200000)
-      store.setSessionTokens('sess-1', {
+      store.addMessageTokens('sess-1', {
         input: 50000,
         output: 30000,
         reasoning: 5000,
@@ -244,7 +244,7 @@ describe('Session 10: Integration & Polish', () => {
 
     test('reset clears session tokens', () => {
       const store = useContextStore.getState()
-      store.setSessionTokens('sess-1', {
+      store.addMessageTokens('sess-1', {
         input: 1000,
         output: 500,
         reasoning: 0,
@@ -260,14 +260,14 @@ describe('Session 10: Integration & Polish', () => {
 
     test('independent session token tracking', () => {
       const store = useContextStore.getState()
-      store.setSessionTokens('sess-a', {
+      store.addMessageTokens('sess-a', {
         input: 100,
         output: 50,
         reasoning: 0,
         cacheRead: 0,
         cacheWrite: 0
       })
-      store.setSessionTokens('sess-b', {
+      store.addMessageTokens('sess-b', {
         input: 200,
         output: 100,
         reasoning: 0,
@@ -546,9 +546,9 @@ describe('Session 10: Integration & Polish', () => {
       const assistant = screen.getByTestId('message-assistant')
       expect(assistant).toBeTruthy()
 
-      // Tool card should be rendered
-      const toolCards = assistant.querySelectorAll('[data-testid="tool-card-header"]')
-      expect(toolCards.length).toBe(1)
+      // Read tool renders with compact file tool layout
+      const compactTools = assistant.querySelectorAll('[data-testid="compact-file-tool"]')
+      expect(compactTools.length).toBe(1)
     })
 
     test('AssistantCanvas renders subtask parts', () => {
@@ -830,7 +830,7 @@ describe('Session 10: Integration & Polish', () => {
 
       store.setModelLimit('claude-3-opus', 200000)
       store.setModelLimit('claude-3-sonnet', 180000)
-      store.setSessionTokens('sess-1', {
+      store.addMessageTokens('sess-1', {
         input: 90000,
         output: 0,
         reasoning: 0,
@@ -852,7 +852,7 @@ describe('Session 10: Integration & Polish', () => {
       useSessionStore.setState({
         modeBySession: new Map([['sess-1', 'plan']])
       })
-      useContextStore.getState().setSessionTokens('sess-1', {
+      useContextStore.getState().addMessageTokens('sess-1', {
         input: 1000,
         output: 500,
         reasoning: 0,
