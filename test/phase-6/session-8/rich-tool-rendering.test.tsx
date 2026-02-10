@@ -5,13 +5,13 @@ import { ReadToolView } from '../../../src/renderer/src/components/sessions/tool
 import { EditToolView } from '../../../src/renderer/src/components/sessions/tools/EditToolView'
 import { GrepToolView } from '../../../src/renderer/src/components/sessions/tools/GrepToolView'
 import { BashToolView } from '../../../src/renderer/src/components/sessions/tools/BashToolView'
-import { TodoToolView } from '../../../src/renderer/src/components/sessions/tools/TodoToolView'
+import { FallbackToolView } from '../../../src/renderer/src/components/sessions/tools/FallbackToolView'
 
 /**
  * Session 8: Rich Tool Call Rendering
  *
  * Tests tool-specific view components for known tools (Read, Edit, Grep, Bash)
- * and a fallback TodoToolView for unknown tools, plus ToolCard routing logic.
+ * and a fallback FallbackToolView for unknown tools, plus ToolCard routing logic.
  */
 
 function generateLines(count: number): string {
@@ -372,10 +372,10 @@ describe('Session 8: Rich Tool Rendering', () => {
     })
   })
 
-  describe('TodoToolView', () => {
+  describe('FallbackToolView', () => {
     test('renders for unknown tool with TODO badge', () => {
       render(
-        <TodoToolView
+        <FallbackToolView
           name="mcp__custom_tool"
           input={{ query: 'SELECT * FROM users', limit: 10 }}
           output="Found 42 records"
@@ -383,13 +383,13 @@ describe('Session 8: Rich Tool Rendering', () => {
         />
       )
 
-      expect(screen.getByTestId('todo-tool-view')).toBeTruthy()
+      expect(screen.getByTestId('fallback-tool-view')).toBeTruthy()
       expect(screen.getByText('mcp__custom_tool')).toBeTruthy()
       expect(screen.getByText('TODO')).toBeTruthy()
     })
 
     test('shows raw input JSON', () => {
-      render(<TodoToolView name="SomeNewTool" input={{ key: 'value' }} status="success" />)
+      render(<FallbackToolView name="SomeNewTool" input={{ key: 'value' }} status="success" />)
 
       expect(screen.getByText(/"key"/)).toBeTruthy()
       expect(screen.getByText(/"value"/)).toBeTruthy()
@@ -397,14 +397,19 @@ describe('Session 8: Rich Tool Rendering', () => {
 
     test('shows raw output text', () => {
       render(
-        <TodoToolView name="SomeNewTool" input={{}} output="some output data" status="success" />
+        <FallbackToolView
+          name="SomeNewTool"
+          input={{}}
+          output="some output data"
+          status="success"
+        />
       )
 
       expect(screen.getByText('some output data')).toBeTruthy()
     })
 
     test('shows "No custom renderer" note', () => {
-      render(<TodoToolView name="SomeNewTool" input={{}} status="success" />)
+      render(<FallbackToolView name="SomeNewTool" input={{}} status="success" />)
 
       expect(screen.getByText(/No custom renderer/)).toBeTruthy()
     })
@@ -412,7 +417,9 @@ describe('Session 8: Rich Tool Rendering', () => {
     test('truncates long output', () => {
       const longOutput = 'x'.repeat(600)
 
-      render(<TodoToolView name="SomeNewTool" input={{}} output={longOutput} status="success" />)
+      render(
+        <FallbackToolView name="SomeNewTool" input={{}} output={longOutput} status="success" />
+      )
 
       // Output should be truncated (500 chars + "...")
       const outputEl = screen.getByText(/^x+\.\.\.$/s)
@@ -504,12 +511,12 @@ describe('Session 8: Rich Tool Rendering', () => {
       expect(screen.getByTestId('write-tool-view')).toBeTruthy()
     })
 
-    test('routes unknown tool to TodoToolView', () => {
+    test('routes unknown tool to FallbackToolView', () => {
       render(<ToolCard toolUse={makeToolUse('mcp__custom', 'custom output', { key: 'val' })} />)
 
       fireEvent.click(screen.getByTestId('tool-card-header'))
 
-      expect(screen.getByTestId('todo-tool-view')).toBeTruthy()
+      expect(screen.getByTestId('fallback-tool-view')).toBeTruthy()
     })
 
     test('routes case-insensitive tool names correctly', () => {

@@ -3,14 +3,15 @@ import type { ToolViewProps } from './types'
 
 const MAX_OUTPUT_LENGTH = 500
 
-export function TodoToolView({ name, input, output, error }: ToolViewProps) {
+export function FallbackToolView({ name, input, output, error }: ToolViewProps) {
   const inputJson = JSON.stringify(input, null, 2)
-  const truncatedOutput = output && output.length > MAX_OUTPUT_LENGTH
-    ? output.slice(0, MAX_OUTPUT_LENGTH) + '...'
-    : output
+  const truncatedOutput =
+    output && output.length > MAX_OUTPUT_LENGTH
+      ? output.slice(0, MAX_OUTPUT_LENGTH) + '...'
+      : output
 
   return (
-    <div data-testid="todo-tool-view">
+    <div data-testid="fallback-tool-view">
       {/* Header with TODO badge */}
       <div className="flex items-center gap-1.5 text-muted-foreground mb-2">
         <HelpCircle className="h-3.5 w-3.5" />

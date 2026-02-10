@@ -8,6 +8,7 @@ import {
   FilePlus,
   Bot,
   MessageCircleQuestion,
+  ListTodo,
   ChevronDown,
   Check,
   X,
@@ -23,7 +24,8 @@ import { WriteToolView } from './tools/WriteToolView'
 import { EditToolView } from './tools/EditToolView'
 import { GrepToolView } from './tools/GrepToolView'
 import { BashToolView } from './tools/BashToolView'
-import { TodoToolView } from './tools/TodoToolView'
+import { FallbackToolView } from './tools/FallbackToolView'
+import { TodoWriteToolView } from './tools/TodoWriteToolView'
 import { TaskToolView } from './tools/TaskToolView'
 import { QuestionToolView } from './tools/QuestionToolView'
 
@@ -40,11 +42,20 @@ export interface ToolUseInfo {
   endTime?: number
 }
 
+/** Check if a tool name refers to the TodoWrite tool */
+function isTodoWriteTool(name: string): boolean {
+  const lower = name.toLowerCase()
+  return lower.includes('todowrite') || lower.includes('todo_write')
+}
+
 // Map tool names to icons
 function getToolIcon(name: string): React.JSX.Element {
   const iconClass = 'h-3.5 w-3.5'
   const lowerName = name.toLowerCase()
 
+  if (isTodoWriteTool(lowerName)) {
+    return <ListTodo className={iconClass} />
+  }
   if (lowerName.includes('read') || lowerName === 'cat' || lowerName === 'view') {
     return <FileText className={iconClass} />
   }
@@ -81,6 +92,13 @@ function getToolIcon(name: string): React.JSX.Element {
 // Get a display label for the tool
 function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string | null): string {
   const lowerName = name.toLowerCase()
+
+  // Show summary for todowrite (must be before 'write' check)
+  if (isTodoWriteTool(lowerName)) {
+    const todos = (input.todos || []) as Array<{ status: string }>
+    const completed = todos.filter((t) => t.status === 'completed').length
+    return `${completed}/${todos.length} completed`
+  }
 
   // Show file path for file operations
   if (lowerName.includes('read') || lowerName.includes('write') || lowerName.includes('edit')) {
@@ -176,15 +194,19 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   Task: TaskToolView,
   task: TaskToolView,
   mcp_question: QuestionToolView,
-  question: QuestionToolView
+  question: QuestionToolView,
+  mcp_todowrite: TodoWriteToolView,
+  TodoWrite: TodoWriteToolView,
+  todowrite: TodoWriteToolView
 }
 
-/** Resolve a tool name to its rich renderer, falling back to TodoToolView */
+/** Resolve a tool name to its rich renderer, falling back to FallbackToolView */
 function getToolRenderer(name: string): React.FC<ToolViewProps> {
   // Try exact match first
   if (TOOL_RENDERERS[name]) return TOOL_RENDERERS[name]
   // Try case-insensitive match via known patterns
   const lower = name.toLowerCase()
+  if (lower.includes('todowrite') || lower.includes('todo_write')) return TodoWriteToolView
   if (lower.includes('read') || lower === 'cat' || lower === 'view') return ReadToolView
   if (lower.includes('write') || lower === 'create') return WriteToolView
   if (lower.includes('edit') || lower.includes('replace') || lower.includes('patch'))
@@ -203,7 +225,7 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (lower === 'task') return TaskToolView
   if (lower.includes('question')) return QuestionToolView
   // Fallback
-  return TodoToolView
+  return FallbackToolView
 }
 
 function shortenPath(filePath: string, cwd?: string | null): string {
@@ -244,6 +266,29 @@ function CollapsedContent({
         <span className="font-mono text-muted-foreground truncate min-w-0">
           <span className="text-green-500">$</span> {truncCmd}
         </span>
+      </>
+    )
+  }
+
+  // TodoWrite (must be before 'write' check since name contains 'write')
+  if (isTodoWriteTool(lowerName)) {
+    const todos = (input.todos || []) as Array<{ status: string }>
+    const completed = todos.filter((t) => t.status === 'completed').length
+    const inProgress = todos.filter((t) => t.status === 'in_progress').length
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0">
+          <ListTodo className="h-3.5 w-3.5" />
+        </span>
+        <span className="font-medium text-foreground shrink-0">Tasks</span>
+        <span className="text-muted-foreground truncate min-w-0">
+          {completed}/{todos.length} completed
+        </span>
+        {inProgress > 0 && (
+          <span className="text-[10px] bg-blue-500/15 text-blue-500 dark:text-blue-400 rounded px-1 py-0.5 font-medium shrink-0">
+            {inProgress} active
+          </span>
+        )}
       </>
     )
   }
@@ -408,6 +453,7 @@ function CollapsedContent({
 
 /** Detect file operation tools that should use the compact inline layout */
 export function isFileOperation(name: string): boolean {
+  if (isTodoWriteTool(name)) return false
   const lower = name.toLowerCase()
   return (
     lower.includes('read') ||
@@ -538,6 +584,60 @@ export const ToolCard = memo(function ToolCard({
   // Route file operations to compact layout
   if (isFileOperation(toolUse.name)) {
     return <CompactFileToolCard toolUse={toolUse} cwd={cwd} />
+  }
+
+  // TodoWrite: always-visible, no expand/collapse
+  if (isTodoWriteTool(toolUse.name)) {
+    return (
+      <div
+        className={cn(
+          compact
+            ? 'my-0 rounded-md border border-l-2 text-xs'
+            : 'my-1 rounded-md border border-l-2 text-xs',
+          toolUse.status === 'running' && 'animate-pulse',
+          'border-border bg-muted/30'
+        )}
+        style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
+        data-testid="tool-card"
+        data-tool-name={toolUse.name}
+        data-tool-status={toolUse.status}
+      >
+        {/* Header */}
+        <div
+          className={cn(
+            'flex items-center gap-1.5 w-full text-left',
+            compact ? 'px-2 py-1.5' : 'px-2.5 py-1.5'
+          )}
+          data-testid="tool-card-header"
+        >
+          <CollapsedContent toolUse={toolUse} cwd={cwd} />
+          <span className="flex-1" />
+          {duration && (
+            <span
+              className="text-muted-foreground shrink-0 flex items-center gap-1"
+              data-testid="tool-duration"
+            >
+              <Clock className="h-3 w-3" />
+              {duration}
+            </span>
+          )}
+          <StatusIndicator status={toolUse.status} />
+        </div>
+        {/* Always-visible content */}
+        <div
+          className={cn('border-t border-border', compact ? 'px-2 py-1.5' : 'px-2.5 py-2')}
+          data-testid="tool-output"
+        >
+          <Renderer
+            name={toolUse.name}
+            input={toolUse.input}
+            output={toolUse.output}
+            error={toolUse.error}
+            status={toolUse.status}
+          />
+        </div>
+      </div>
+    )
   }
 
   return (
