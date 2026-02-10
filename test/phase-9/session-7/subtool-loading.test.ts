@@ -1,467 +1,388 @@
 import { describe, test, expect, beforeEach } from 'vitest'
 
 /**
- * Session 7: Subtool Loading Indicator Fix
+ * Session 7: Streaming Lifecycle via session.status
  *
- * Tests that `message.updated` from child sessions does NOT trigger premature
- * finalization of the parent response, and that `isStreaming` stays `true`
- * until the parent's own `session.idle` arrives.
- *
- * Uses pure logic testing (no component rendering) to validate the guard
- * conditions in the stream event handler.
+ * Tests that isStreaming is driven by session.status events (busy/idle),
+ * NOT by session.idle or message.updated finalization. This ensures the
+ * streaming indicator stays active throughout multi-turn subagent flows.
  */
 
 interface StreamEvent {
   type: string
   sessionId: string
   childSessionId?: string
+  statusPayload?: { type: 'idle' | 'busy' | 'retry' }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data?: any
 }
 
-/**
- * Simulates the state variables that SessionView maintains.
- */
 let hasFinalizedCurrentResponse: boolean
 let isStreaming: boolean
-let finalizedMessageIds: Set<string>
 
 /**
- * Simulates the `message.updated` handler logic from SessionView.
- * Returns an object describing what actions were taken.
+ * Simulates the session.status handler from SessionView.
  */
-function handleMessageUpdated(
-  event: StreamEvent,
-  hasRunningSubtasks: boolean = false
-): {
-  skipped: boolean
-  reason?: string
-  finalized?: boolean
+function handleSessionStatus(event: StreamEvent): {
+  handled: boolean
+  action?: string
 } {
-  const eventRole = event.data?.role
+  const status = event.statusPayload || event.data?.status
+  if (!status) return { handled: false }
 
-  // Skip user-message echoes
-  if (eventRole === 'user') {
-    return { skipped: true, reason: 'user-echo' }
-  }
+  // Skip child session status -- only parent status drives isStreaming
+  if (event.childSessionId) return { handled: true, action: 'skip-child' }
 
-  // Session 7 fix: skip finalization for child/subagent messages
-  if (event.childSessionId) {
-    return { skipped: true, reason: 'child-event' }
-  }
-
-  const info = event.data?.info
-  if (eventRole !== 'user' && info?.time?.completed) {
-    // Defer finalization if there are active subtasks still running.
-    // In multi-step flows with subagents, the SDK sends message.updated with
-    // time.completed when each step finishes, but the parent continues in a new step.
-    if (hasRunningSubtasks) {
-      return { skipped: true, reason: 'running-subtasks' }
+  if (status.type === 'busy') {
+    isStreaming = true
+    return { handled: true, action: 'set-busy' }
+  } else if (status.type === 'idle') {
+    if (!hasFinalizedCurrentResponse) {
+      hasFinalizedCurrentResponse = true
+      isStreaming = false
+      return { handled: true, action: 'finalize' }
     }
-
-    const messageId = event.data?.id
-
-    // Skip duplicate finalization
-    if (messageId && finalizedMessageIds.has(messageId)) {
-      return { skipped: true, reason: 'already-finalized' }
-    }
-    if (hasFinalizedCurrentResponse) {
-      return { skipped: true, reason: 'already-finalized' }
-    }
-
-    if (messageId) {
-      finalizedMessageIds.add(messageId)
-    }
-    hasFinalizedCurrentResponse = true
-    // In the real code, this calls finalizeResponseFromDatabase()
-    // which calls resetStreamingState() → setIsStreaming(false)
     isStreaming = false
-    return { skipped: false, finalized: true }
+    return { handled: true, action: 'already-finalized' }
+  } else if (status.type === 'retry') {
+    // Keep streaming active during retries
+    return { handled: true, action: 'retry' }
   }
 
-  return { skipped: true, reason: 'no-completion' }
+  return { handled: false }
 }
 
 /**
- * Simulates the `session.idle` handler logic from SessionView.
- * Returns an object describing what actions were taken.
+ * Simulates the session.idle handler (fallback only).
  */
 function handleSessionIdle(event: StreamEvent): {
   handledAsChild: boolean
   finalized?: boolean
 } {
-  // Session 6 guard: child session idle
   if (event.childSessionId) {
     return { handledAsChild: true }
   }
 
-  // Parent session idle
   if (!hasFinalizedCurrentResponse) {
     hasFinalizedCurrentResponse = true
     isStreaming = false
     return { handledAsChild: false, finalized: true }
   }
-
-  // Already finalized by message.updated
-  isStreaming = false
   return { handledAsChild: false, finalized: false }
 }
 
 /**
- * Simulates individual tool card status updates.
- * Returns whether isStreaming was affected.
+ * Simulates the message.updated handler (token extraction only, no finalization).
  */
-function handleToolUpdate(
-  _toolId: string,
-  status: 'running' | 'success' | 'error'
-): { isStreamingChanged: boolean } {
-  // In the real code, tool updates call setIsStreaming(true), never false.
-  // Tool completion (status = 'success' | 'error') only updates the individual
-  // tool card status, not the global isStreaming state.
-  if (status === 'running') {
-    isStreaming = true
+function handleMessageUpdated(event: StreamEvent): {
+  action: string
+  tokensCaptured?: boolean
+} {
+  if (event.data?.role === 'user') return { action: 'skip-user-echo' }
+  if (event.childSessionId) return { action: 'skip-child' }
+
+  const info = event.data?.info
+  if (info?.time?.completed && info?.tokens) {
+    return { action: 'extract-tokens', tokensCaptured: true }
   }
-  // Note: success/error do NOT set isStreaming to false
-  return { isStreamingChanged: false }
+
+  return { action: 'no-op' }
 }
 
-describe('Session 7: Subtool Loading Indicator Fix', () => {
+describe('Session 7: Streaming Lifecycle via session.status', () => {
   beforeEach(() => {
     hasFinalizedCurrentResponse = false
-    isStreaming = true
-    finalizedMessageIds = new Set()
+    isStreaming = false
   })
 
-  describe('message.updated child guard', () => {
-    test('message.updated from child does not trigger finalization', () => {
-      const result = handleMessageUpdated({
-        type: 'message.updated',
-        sessionId: 'parent-hive-id',
-        childSessionId: 'child-opencode-id',
-        data: {
-          role: 'assistant',
-          info: { time: { completed: Date.now() } },
-          id: 'msg-child-1'
-        }
+  describe('session.status drives isStreaming', () => {
+    test('session.status busy sets isStreaming to true', () => {
+      const result = handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'busy' }
       })
 
-      expect(result.skipped).toBe(true)
-      expect(result.reason).toBe('child-event')
-      expect(result.finalized).toBeUndefined()
-      // isStreaming should NOT have changed
+      expect(result.action).toBe('set-busy')
       expect(isStreaming).toBe(true)
-      // hasFinalizedCurrentResponse should NOT have been set
-      expect(hasFinalizedCurrentResponse).toBe(false)
     })
 
-    test('message.updated from parent with time.completed triggers finalization', () => {
-      const result = handleMessageUpdated({
-        type: 'message.updated',
-        sessionId: 'parent-hive-id',
-        // no childSessionId
-        data: {
-          role: 'assistant',
-          info: { time: { completed: Date.now() } },
-          id: 'msg-parent-1'
-        }
+    test('session.status idle sets isStreaming to false and finalizes', () => {
+      isStreaming = true
+
+      const result = handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'idle' }
       })
 
-      expect(result.skipped).toBe(false)
-      expect(result.finalized).toBe(true)
+      expect(result.action).toBe('finalize')
       expect(isStreaming).toBe(false)
       expect(hasFinalizedCurrentResponse).toBe(true)
     })
 
-    test('message.updated from child without time.completed still skips', () => {
-      const result = handleMessageUpdated({
-        type: 'message.updated',
-        sessionId: 'parent-hive-id',
-        childSessionId: 'child-opencode-id',
-        data: {
-          role: 'assistant',
-          info: { time: {} }, // no completed field
-          id: 'msg-child-2'
-        }
+    test('session.status retry keeps isStreaming true', () => {
+      isStreaming = true
+
+      const result = handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'retry' }
       })
 
-      expect(result.skipped).toBe(true)
-      expect(result.reason).toBe('child-event')
+      expect(result.action).toBe('retry')
       expect(isStreaming).toBe(true)
     })
 
-    test('user echo still skipped before child guard', () => {
-      const result = handleMessageUpdated({
-        type: 'message.updated',
-        sessionId: 'parent-hive-id',
-        childSessionId: 'child-opencode-id',
-        data: {
-          role: 'user',
-          info: { time: { completed: Date.now() } },
-          id: 'msg-user-1'
-        }
+    test('child session.status is ignored', () => {
+      isStreaming = true
+
+      const result = handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        childSessionId: 'child-1',
+        statusPayload: { type: 'idle' }
       })
 
-      // User echo check comes first, so reason is 'user-echo'
-      expect(result.skipped).toBe(true)
-      expect(result.reason).toBe('user-echo')
-    })
-
-    test('message.updated defers finalization when subtasks are running', () => {
-      // This is the key fix for the reported issue: when a subagent completes
-      // mid-stream, the SDK sends message.updated with time.completed.
-      // We should NOT finalize if subtasks are still running (parent will continue).
-      const result = handleMessageUpdated(
-        {
-          type: 'message.updated',
-          sessionId: 'parent-hive-id',
-          data: {
-            role: 'assistant',
-            info: { time: { completed: Date.now() } },
-            id: 'msg-parent-1'
-          }
-        },
-        true // hasRunningSubtasks
-      )
-
-      expect(result.skipped).toBe(true)
-      expect(result.reason).toBe('running-subtasks')
-      // Critical: isStreaming should NOT have changed
+      expect(result.action).toBe('skip-child')
       expect(isStreaming).toBe(true)
-      expect(hasFinalizedCurrentResponse).toBe(false)
     })
 
-    test('message.updated finalizes immediately when no subtasks running', () => {
-      const result = handleMessageUpdated(
-        {
-          type: 'message.updated',
-          sessionId: 'parent-hive-id',
-          data: {
-            role: 'assistant',
-            info: { time: { completed: Date.now() } },
-            id: 'msg-parent-1'
-          }
-        },
-        false // no running subtasks
-      )
+    test('duplicate session.status idle does not double-finalize', () => {
+      isStreaming = true
 
-      expect(result.skipped).toBe(false)
-      expect(result.finalized).toBe(true)
-      // When no subtasks, finalization proceeds normally
-      expect(isStreaming).toBe(false)
-      expect(hasFinalizedCurrentResponse).toBe(true)
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'idle' }
+      })
+
+      const result = handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'idle' }
+      })
+
+      expect(result.action).toBe('already-finalized')
     })
   })
 
-  describe('isStreaming stays true during tool execution', () => {
-    test('isStreaming stays true after first tool completes', () => {
-      // Simulate 3 tools starting
-      handleToolUpdate('tool-1', 'running')
-      handleToolUpdate('tool-2', 'running')
-      handleToolUpdate('tool-3', 'running')
-      expect(isStreaming).toBe(true)
+  describe('message.updated no longer finalizes', () => {
+    test('message.updated with time.completed extracts tokens only', () => {
+      isStreaming = true
 
-      // First tool completes
-      handleToolUpdate('tool-1', 'success')
-      expect(isStreaming).toBe(true)
-
-      // Second tool completes
-      handleToolUpdate('tool-2', 'success')
-      expect(isStreaming).toBe(true)
-
-      // Third tool completes
-      handleToolUpdate('tool-3', 'success')
-      // Still true — only session.idle or message.updated finalization sets it false
-      expect(isStreaming).toBe(true)
-    })
-
-    test('isStreaming stays true when tool errors', () => {
-      handleToolUpdate('tool-1', 'running')
-      handleToolUpdate('tool-1', 'error')
-      // Tool error updates the card status, not the global streaming state
-      expect(isStreaming).toBe(true)
-    })
-  })
-
-  describe('isStreaming becomes false on parent session.idle', () => {
-    test('parent session.idle triggers finalization and stops streaming', () => {
-      const result = handleSessionIdle({
-        type: 'session.idle',
-        sessionId: 'parent-hive-id'
-        // no childSessionId
-      })
-
-      expect(result.handledAsChild).toBe(false)
-      expect(result.finalized).toBe(true)
-      expect(isStreaming).toBe(false)
-      expect(hasFinalizedCurrentResponse).toBe(true)
-    })
-
-    test('child session.idle does not stop parent streaming', () => {
-      const result = handleSessionIdle({
-        type: 'session.idle',
-        sessionId: 'parent-hive-id',
-        childSessionId: 'child-opencode-id'
-      })
-
-      expect(result.handledAsChild).toBe(true)
-      expect(isStreaming).toBe(true)
-      expect(hasFinalizedCurrentResponse).toBe(false)
-    })
-
-    test('parent session.idle after message.updated finalization skips double-finalize', () => {
-      // First: message.updated finalizes
-      handleMessageUpdated({
+      const result = handleMessageUpdated({
         type: 'message.updated',
-        sessionId: 'parent-hive-id',
+        sessionId: 'parent',
         data: {
           role: 'assistant',
-          info: { time: { completed: Date.now() } },
+          info: {
+            time: { completed: Date.now() },
+            tokens: { input: 100, output: 50, reasoning: 0 }
+          },
           id: 'msg-1'
         }
       })
-      expect(hasFinalizedCurrentResponse).toBe(true)
-      expect(isStreaming).toBe(false)
 
-      // Then: session.idle arrives (already finalized)
-      const result = handleSessionIdle({
-        type: 'session.idle',
-        sessionId: 'parent-hive-id'
-      })
-
-      expect(result.handledAsChild).toBe(false)
-      expect(result.finalized).toBe(false) // already done
-    })
-  })
-
-  describe('Full subagent lifecycle', () => {
-    test('child events do not interfere with parent streaming lifecycle', () => {
-      // Parent starts streaming
+      expect(result.action).toBe('extract-tokens')
+      expect(result.tokensCaptured).toBe(true)
+      // CRITICAL: isStreaming unchanged, no finalization
       expect(isStreaming).toBe(true)
+      expect(hasFinalizedCurrentResponse).toBe(false)
+    })
 
-      // Child message.updated arrives (with completion) — should NOT finalize
-      handleMessageUpdated({
+    test('child message.updated is still skipped', () => {
+      const result = handleMessageUpdated({
         type: 'message.updated',
-        sessionId: 'parent-hive-id',
+        sessionId: 'parent',
         childSessionId: 'child-1',
         data: {
           role: 'assistant',
-          info: { time: { completed: Date.now() } },
-          id: 'child-msg-1'
+          info: { time: { completed: Date.now() } }
+        }
+      })
+
+      expect(result.action).toBe('skip-child')
+    })
+
+    test('user message.updated echo is skipped', () => {
+      const result = handleMessageUpdated({
+        type: 'message.updated',
+        sessionId: 'parent',
+        data: { role: 'user' }
+      })
+
+      expect(result.action).toBe('skip-user-echo')
+    })
+  })
+
+  describe('session.idle is fallback only', () => {
+    test('session.idle finalizes if session.status did not', () => {
+      isStreaming = true
+
+      const result = handleSessionIdle({
+        type: 'session.idle',
+        sessionId: 'parent'
+      })
+
+      expect(result.finalized).toBe(true)
+      expect(isStreaming).toBe(false)
+    })
+
+    test('session.idle skips if session.status already finalized', () => {
+      isStreaming = true
+
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'idle' }
+      })
+      expect(hasFinalizedCurrentResponse).toBe(true)
+
+      const result = handleSessionIdle({
+        type: 'session.idle',
+        sessionId: 'parent'
+      })
+
+      expect(result.finalized).toBe(false)
+    })
+
+    test('child session.idle still handled as child', () => {
+      const result = handleSessionIdle({
+        type: 'session.idle',
+        sessionId: 'parent',
+        childSessionId: 'child-1'
+      })
+
+      expect(result.handledAsChild).toBe(true)
+    })
+  })
+
+  describe('Full multi-turn subagent lifecycle', () => {
+    test('isStreaming stays true throughout Task tool execution', () => {
+      // 1. session.status busy -> parent starts
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'busy' }
+      })
+      expect(isStreaming).toBe(true)
+
+      // 2. message.updated with time.completed (turn 1 tool dispatch)
+      //    Old code: would finalize. New code: token extraction only.
+      handleMessageUpdated({
+        type: 'message.updated',
+        sessionId: 'parent',
+        data: {
+          role: 'assistant',
+          info: {
+            time: { completed: Date.now() },
+            tokens: { input: 500, output: 100 }
+          },
+          id: 'msg-turn1'
         }
       })
       expect(isStreaming).toBe(true)
       expect(hasFinalizedCurrentResponse).toBe(false)
 
-      // Child session.idle arrives — should NOT finalize parent
+      // 3. Child session runs and completes
       handleSessionIdle({
         type: 'session.idle',
-        sessionId: 'parent-hive-id',
+        sessionId: 'parent',
         childSessionId: 'child-1'
       })
       expect(isStreaming).toBe(true)
-      expect(hasFinalizedCurrentResponse).toBe(false)
 
-      // Parent message.updated arrives with completion — SHOULD finalize
+      // 4. Turn 2: response text streams (session.status stays busy)
+      //    message.part.updated events would set isStreaming=true in real code
+
+      // 5. Turn 2 message.updated (has tokens)
       handleMessageUpdated({
         type: 'message.updated',
-        sessionId: 'parent-hive-id',
+        sessionId: 'parent',
         data: {
           role: 'assistant',
-          info: { time: { completed: Date.now() } },
-          id: 'parent-msg-1'
+          info: {
+            time: { completed: Date.now() },
+            tokens: { input: 1000, output: 500 }
+          },
+          id: 'msg-turn2'
         }
+      })
+      expect(isStreaming).toBe(true) // Still no finalization
+
+      // 6. session.status idle -> TRUE completion
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'idle' }
       })
       expect(isStreaming).toBe(false)
       expect(hasFinalizedCurrentResponse).toBe(true)
     })
 
-    test('parent message.updated with time.completed defers finalization while subtask runs', () => {
-      // THIS IS THE FIX FOR THE REPORTED ISSUE:
-      // User sends "Use Task tool to research X"
-      // Subagent starts running (running subtask)
-      // Subagent completes (subtask status → completed)
-      // BUT: SDK sends parent message.updated with time.completed to reflect
-      // the step finish (first "turn" of the multi-turn loop is done)
-      // Previous code would finalize here, stopping isStreaming
-      // NEW CODE: defers finalization until the parent's session.idle
-
-      // Subtask is running
-      const hasRunningSubtask = true
-
-      // Parent message.updated arrives with time.completed (mid-step)
-      const result = handleMessageUpdated(
-        {
-          type: 'message.updated',
-          sessionId: 'parent-hive-id',
-          data: {
-            role: 'assistant',
-            info: { time: { completed: Date.now() } },
-            id: 'parent-msg-mid-step'
-          }
-        },
-        hasRunningSubtask
-      )
-
-      // CRITICAL: Should skip finalization
-      expect(result.skipped).toBe(true)
-      expect(result.reason).toBe('running-subtasks')
-      // isStreaming should STAY true
-      expect(isStreaming).toBe(true)
-      expect(hasFinalizedCurrentResponse).toBe(false)
-
-      // Later: Subtask finishes
-      // (In real code this would be session.idle for child, update subtask status)
-
-      // Finally: Parent session.idle arrives (true completion)
-      const finalResult = handleSessionIdle({
-        type: 'session.idle',
-        sessionId: 'parent-hive-id'
+    test('multiple children do not affect parent streaming', () => {
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'busy' }
       })
 
-      expect(finalResult.handledAsChild).toBe(false)
-      expect(finalResult.finalized).toBe(true)
-      expect(isStreaming).toBe(false)
-    })
-
-    test('multiple child completions do not affect parent streaming', () => {
-      // Multiple child message.updated with completion
-      for (let i = 0; i < 5; i++) {
-        handleMessageUpdated({
-          type: 'message.updated',
-          sessionId: 'parent-hive-id',
-          childSessionId: `child-${i}`,
-          data: {
-            role: 'assistant',
-            info: { time: { completed: Date.now() } },
-            id: `child-msg-${i}`
-          }
-        })
-      }
-
-      // isStreaming should still be true
-      expect(isStreaming).toBe(true)
-      expect(hasFinalizedCurrentResponse).toBe(false)
-
-      // Multiple child session.idle events
       for (let i = 0; i < 5; i++) {
         handleSessionIdle({
           type: 'session.idle',
-          sessionId: 'parent-hive-id',
+          sessionId: 'parent',
           childSessionId: `child-${i}`
+        })
+        handleSessionStatus({
+          type: 'session.status',
+          sessionId: 'parent',
+          childSessionId: `child-${i}`,
+          statusPayload: { type: 'idle' }
         })
       }
 
-      // Still streaming — only parent events matter
       expect(isStreaming).toBe(true)
       expect(hasFinalizedCurrentResponse).toBe(false)
 
-      // Finally, parent session.idle
-      handleSessionIdle({
-        type: 'session.idle',
-        sessionId: 'parent-hive-id'
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'idle' }
       })
       expect(isStreaming).toBe(false)
-      expect(hasFinalizedCurrentResponse).toBe(true)
+    })
+
+    test('retry during subagent flow keeps streaming', () => {
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'busy' }
+      })
+
+      // Rate limited -> retry
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'retry' }
+      })
+      expect(isStreaming).toBe(true)
+
+      // Retry succeeds -> busy again
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'busy' }
+      })
+      expect(isStreaming).toBe(true)
+
+      // Eventually done
+      handleSessionStatus({
+        type: 'session.status',
+        sessionId: 'parent',
+        statusPayload: { type: 'idle' }
+      })
+      expect(isStreaming).toBe(false)
     })
   })
 })
