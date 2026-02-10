@@ -518,14 +518,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     userHasScrolledUpRef.current = false
   }, [sessionId])
 
-  // Auto-focus textarea when session changes or view becomes connected
+  // Auto-focus textarea whenever session changes (new session or tab switch)
+  // Focus immediately without waiting for connection — users can type while connecting
   useEffect(() => {
-    if (viewState.status === 'connected' && textareaRef.current) {
+    if (textareaRef.current) {
       requestAnimationFrame(() => {
         textareaRef.current?.focus()
       })
     }
-  }, [sessionId, viewState.status])
+  }, [sessionId])
 
   // Auto-resize textarea
   useEffect(() => {
