@@ -134,6 +134,18 @@ function createWindow(): void {
       event.preventDefault()
       mainWindow!.webContents.send('shortcut:new-session')
     }
+
+    // Intercept Cmd+W — never close the window, forward to renderer to close session tab
+    if (
+      input.key.toLowerCase() === 'w' &&
+      (input.meta || input.control) &&
+      !input.alt &&
+      !input.shift &&
+      input.type === 'keyDown'
+    ) {
+      event.preventDefault()
+      mainWindow!.webContents.send('shortcut:close-session')
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -251,7 +263,27 @@ app.whenReady().then(() => {
   // We keep devtools toggle for development convenience.
   const menuTemplate: Electron.MenuItemConstructorOptions[] = [
     { role: 'appMenu' },
-    { role: 'fileMenu' },
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'New Session',
+          accelerator: 'CmdOrCtrl+T',
+          click: () => {
+            mainWindow?.webContents.send('shortcut:new-session')
+          }
+        },
+        {
+          label: 'Close Tab',
+          accelerator: 'CmdOrCtrl+W',
+          click: () => {
+            mainWindow?.webContents.send('shortcut:close-session')
+          }
+        },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    },
     { role: 'editMenu' },
     {
       label: 'View',

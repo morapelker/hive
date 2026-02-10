@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, ListPlus, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -1377,6 +1377,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [inputValue, isStreaming, sessionId, worktreePath, opencodeSessionId, attachments])
 
+  // Abort streaming
+  const handleAbort = useCallback(async () => {
+    if (!worktreePath || !opencodeSessionId) return
+    await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+  }, [worktreePath, opencodeSessionId])
+
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1615,21 +1621,35 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   Enter to send, Shift+Enter for new line
                 </span>
               </div>
-              <Button
-                onClick={handleSend}
-                disabled={!inputValue.trim()}
-                size="sm"
-                className="h-7 w-7 p-0"
-                aria-label={isStreaming ? 'Queue message' : 'Send message'}
-                title={isStreaming ? 'Queue message' : 'Send message'}
-                data-testid="send-button"
-              >
-                {isStreaming ? (
-                  <ListPlus className="h-3.5 w-3.5" />
-                ) : (
-                  <Send className="h-3.5 w-3.5" />
-                )}
-              </Button>
+              {isStreaming && !inputValue.trim() ? (
+                <Button
+                  onClick={handleAbort}
+                  size="sm"
+                  variant="destructive"
+                  className="h-7 w-7 p-0"
+                  aria-label="Stop streaming"
+                  title="Stop streaming"
+                  data-testid="stop-button"
+                >
+                  <Square className="h-3 w-3" />
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleSend}
+                  disabled={!inputValue.trim()}
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  aria-label={isStreaming ? 'Queue message' : 'Send message'}
+                  title={isStreaming ? 'Queue message' : 'Send message'}
+                  data-testid="send-button"
+                >
+                  {isStreaming ? (
+                    <ListPlus className="h-3.5 w-3.5" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              )}
             </div>
           </div>
         </div>

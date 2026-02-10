@@ -805,6 +805,22 @@ class OpenCodeService {
   }
 
   /**
+   * Abort a streaming session
+   */
+  async abort(worktreePath: string, opencodeSessionId: string): Promise<boolean> {
+    if (!this.instance?.client) {
+      throw new Error('No OpenCode instance for worktree')
+    }
+
+    const result = await this.instance.client.session.abort({
+      path: { id: opencodeSessionId },
+      query: { directory: worktreePath }
+    })
+
+    return result.data === true
+  }
+
+  /**
    * Get messages from an OpenCode session
    */
   async getMessages(worktreePath: string, opencodeSessionId: string): Promise<unknown[]> {

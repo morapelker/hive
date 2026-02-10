@@ -32,7 +32,11 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, worktreePath: string, opencodeSessionId: string, hiveSessionId: string) => {
       log.info('IPC: opencode:reconnect', { worktreePath, opencodeSessionId, hiveSessionId })
       try {
-        const result = await openCodeService.reconnect(worktreePath, opencodeSessionId, hiveSessionId)
+        const result = await openCodeService.reconnect(
+          worktreePath,
+          opencodeSessionId,
+          hiveSessionId
+        )
         return result
       } catch (error) {
         log.error('IPC: opencode:reconnect failed', { error })
@@ -43,40 +47,45 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
 
   // Send a prompt (response streams via onStream)
   // Accepts either { worktreePath, sessionId, parts } object or positional (worktreePath, sessionId, message) for backward compat
-  ipcMain.handle(
-    'opencode:prompt',
-    async (_event, ...args: unknown[]) => {
-      let worktreePath: string
-      let opencodeSessionId: string
-      let messageOrParts: string | Array<{ type: string; text?: string; mime?: string; url?: string; filename?: string }>
+  ipcMain.handle('opencode:prompt', async (_event, ...args: unknown[]) => {
+    let worktreePath: string
+    let opencodeSessionId: string
+    let messageOrParts:
+      | string
+      | Array<{ type: string; text?: string; mime?: string; url?: string; filename?: string }>
 
-      // Support object-style call: { worktreePath, sessionId, parts }
-      if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
-        const obj = args[0] as Record<string, unknown>
-        worktreePath = obj.worktreePath as string
-        opencodeSessionId = obj.sessionId as string
-        // Backward compat: accept message string or parts array
-        messageOrParts = (obj.parts as typeof messageOrParts) || [{ type: 'text', text: obj.message as string }]
-      } else {
-        // Legacy positional args: (worktreePath, sessionId, message)
-        worktreePath = args[0] as string
-        opencodeSessionId = args[1] as string
-        messageOrParts = args[2] as string
-      }
+    // Support object-style call: { worktreePath, sessionId, parts }
+    if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
+      const obj = args[0] as Record<string, unknown>
+      worktreePath = obj.worktreePath as string
+      opencodeSessionId = obj.sessionId as string
+      // Backward compat: accept message string or parts array
+      messageOrParts = (obj.parts as typeof messageOrParts) || [
+        { type: 'text', text: obj.message as string }
+      ]
+    } else {
+      // Legacy positional args: (worktreePath, sessionId, message)
+      worktreePath = args[0] as string
+      opencodeSessionId = args[1] as string
+      messageOrParts = args[2] as string
+    }
 
-      log.info('IPC: opencode:prompt', { worktreePath, opencodeSessionId, partsCount: Array.isArray(messageOrParts) ? messageOrParts.length : 1 })
-      try {
-        await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts)
-        return { success: true }
-      } catch (error) {
-        log.error('IPC: opencode:prompt failed', { error })
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }
+    log.info('IPC: opencode:prompt', {
+      worktreePath,
+      opencodeSessionId,
+      partsCount: Array.isArray(messageOrParts) ? messageOrParts.length : 1
+    })
+    try {
+      await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts)
+      return { success: true }
+    } catch (error) {
+      log.error('IPC: opencode:prompt failed', { error })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
       }
     }
-  )
+  })
 
   // Disconnect session (may kill server if last session for worktree)
   ipcMain.handle(
@@ -134,7 +143,10 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(
     'opencode:generateSessionName',
     async (_event, message: string, worktreePath: string) => {
-      log.info('Session naming: IPC request received', { messageLength: message?.length, worktreePath })
+      log.info('Session naming: IPC request received', {
+        messageLength: message?.length,
+        worktreePath
+      })
       try {
         const name = await openCodeService.generateSessionName(message, worktreePath)
         log.info('Session naming: IPC returning result', { name, success: !!name })
@@ -204,6 +216,24 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',
           messages: []
+        }
+      }
+    }
+  )
+
+  // Abort a streaming session
+  ipcMain.handle(
+    'opencode:abort',
+    async (_event, worktreePath: string, opencodeSessionId: string) => {
+      log.info('IPC: opencode:abort', { worktreePath, opencodeSessionId })
+      try {
+        const result = await openCodeService.abort(worktreePath, opencodeSessionId)
+        return { success: result }
+      } catch (error) {
+        log.error('IPC: opencode:abort failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
         }
       }
     }

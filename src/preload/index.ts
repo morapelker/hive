@@ -299,6 +299,17 @@ const systemOps = {
     }
   },
 
+  // Subscribe to Cmd+W / Ctrl+W close session shortcut from main process
+  onCloseSessionShortcut: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on('shortcut:close-session', handler)
+    return () => {
+      ipcRenderer.removeListener('shortcut:close-session', handler)
+    }
+  },
+
   // Subscribe to notification navigation events (from native notifications)
   onNotificationNavigate: (
     callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
@@ -609,6 +620,13 @@ const opencodeOps = {
       parts
     })
   },
+
+  // Abort a streaming session
+  abort: (
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:abort', worktreePath, opencodeSessionId),
 
   // Disconnect session (may kill server if last session for worktree)
   disconnect: (

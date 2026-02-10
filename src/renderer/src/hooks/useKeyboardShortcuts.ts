@@ -98,6 +98,28 @@ export function useKeyboardShortcuts(): void {
 
     return cleanup
   }, [])
+
+  // Listen for Cmd+W / Ctrl+W forwarded from the main process via IPC
+  useEffect(() => {
+    if (!window.systemOps?.onCloseSessionShortcut) return
+
+    const cleanup = window.systemOps.onCloseSessionShortcut(() => {
+      const { activeSessionId } = useSessionStore.getState()
+      if (!activeSessionId) return // no-op if no session open
+      useSessionStore
+        .getState()
+        .closeSession(activeSessionId)
+        .then((result) => {
+          if (result.success) {
+            toast.success('Session closed')
+          } else {
+            toast.error(result.error || 'Failed to close session')
+          }
+        })
+    })
+
+    return cleanup
+  }, [])
 }
 
 interface ShortcutHandler {
@@ -130,7 +152,7 @@ function getShortcutHandlers(
     {
       id: 'session:close',
       binding: getEffectiveBinding('session:close'),
-      allowInInput: false,
+      allowInInput: true,
       handler: () => {
         const { activeSessionId } = useSessionStore.getState()
         if (!activeSessionId) return // noop if no session

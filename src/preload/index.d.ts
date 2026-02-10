@@ -249,6 +249,7 @@ declare global {
       isLogMode: () => Promise<boolean>
       openInApp: (appName: string, path: string) => Promise<{ success: boolean; error?: string }>
       onNewSessionShortcut: (callback: () => void) => () => void
+      onCloseSessionShortcut: (callback: () => void) => () => void
       onNotificationNavigate: (
         callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
       ) => () => void
@@ -275,6 +276,11 @@ declare global {
         worktreePath: string,
         opencodeSessionId: string,
         messageOrParts: string | MessagePart[]
+      ) => Promise<{ success: boolean; error?: string }>
+      // Abort a streaming session
+      abort: (
+        worktreePath: string,
+        opencodeSessionId: string
       ) => Promise<{ success: boolean; error?: string }>
       // Disconnect session (may kill server if last session for worktree)
       disconnect: (
