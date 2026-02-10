@@ -118,7 +118,6 @@ beforeEach(() => {
       getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
       listModels: vi.fn().mockResolvedValue({ success: true, providers: [] }),
       setModel: vi.fn().mockResolvedValue({ success: true }),
-      generateSessionName: vi.fn().mockResolvedValue({ success: true, name: '' }),
       onStream: vi.fn().mockImplementation((callback: (event: StreamEvent) => void) => {
         streamCallback = callback
         return () => {

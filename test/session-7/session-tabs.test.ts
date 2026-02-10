@@ -173,7 +173,7 @@ describe('Session 7: Session Tabs', () => {
       expect(mockDbSession.create).toHaveBeenCalledWith({
         worktree_id: 'worktree-1',
         project_id: 'project-1',
-        name: expect.stringMatching(/^Session \d{2}:\d{2}$/)
+        name: expect.stringMatching(/^New session - \d{4}-\d{2}-\d{2}T/)
       })
 
       const state = useSessionStore.getState()
@@ -329,9 +329,7 @@ describe('Session 7: Session Tabs', () => {
 
   describe('Session Tabs Integration', () => {
     test('Switching worktree shows different sessions', async () => {
-      const worktree2Sessions = [
-        { ...mockSession1, id: 'w2-session-1', worktree_id: 'worktree-2' }
-      ]
+      const worktree2Sessions = [{ ...mockSession1, id: 'w2-session-1', worktree_id: 'worktree-2' }]
 
       useSessionStore.setState({
         sessionsByWorktree: new Map([

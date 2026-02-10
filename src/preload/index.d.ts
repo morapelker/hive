@@ -306,11 +306,6 @@ declare global {
         providerID: string
         modelID: string
       }) => Promise<{ success: boolean; error?: string }>
-      // Generate a descriptive session name using Claude Haiku via OpenCode
-      generateSessionName: (
-        message: string,
-        worktreePath: string
-      ) => Promise<{ success: boolean; name: string; error?: string }>
       // Get model info (name, context limit)
       modelInfo: (
         worktreePath: string,
@@ -342,6 +337,12 @@ declare global {
       commands: (
         worktreePath: string
       ) => Promise<{ success: boolean; commands: OpenCodeCommand[]; error?: string }>
+      // Rename a session's title via the OpenCode PATCH API
+      renameSession: (
+        opencodeSessionId: string,
+        title: string,
+        worktreePath?: string
+      ) => Promise<{ success: boolean; error?: string }>
       // Subscribe to streaming events
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
     }

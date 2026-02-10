@@ -671,13 +671,6 @@ const opencodeOps = {
   }): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:setModel', model),
 
-  // Generate a descriptive session name using Claude Haiku via OpenCode
-  generateSessionName: (
-    message: string,
-    worktreePath: string
-  ): Promise<{ success: boolean; name: string; error?: string }> =>
-    ipcRenderer.invoke('opencode:generateSessionName', message, worktreePath),
-
   // Get model info (name, context limit)
   modelInfo: (
     worktreePath: string,
@@ -734,6 +727,14 @@ const opencodeOps = {
     }>
     error?: string
   }> => ipcRenderer.invoke('opencode:commands', { worktreePath }),
+
+  // Rename a session's title via the OpenCode PATCH API
+  renameSession: (
+    opencodeSessionId: string,
+    title: string,
+    worktreePath?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:renameSession', { opencodeSessionId, title, worktreePath }),
 
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {

@@ -386,9 +386,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Streaming rAF ref (frame-synced flushing for text updates)
   const rafRef = useRef<number | null>(null)
 
-  // Session auto-naming ref: tracks whether naming has been triggered
-  const hasTriggeredNamingRef = useRef(false)
-
   // Response logging refs
   const isLogModeRef = useRef<boolean>(false)
   const logFilePathRef = useRef<string | null>(null)
@@ -682,7 +679,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Load session info and connect to OpenCode
   useEffect(() => {
-    hasTriggeredNamingRef.current = false
     finalizedMessageIdsRef.current.clear()
     hasFinalizedCurrentResponseRef.current = false
     childToSubtaskIndexRef.current.clear()
@@ -699,10 +695,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
       const loadedMessages = dbMessages.map(dbMessageToOpenCode)
       setMessages(loadedMessages)
-
-      if (loadedMessages.length > 0) {
-        hasTriggeredNamingRef.current = true
-      }
 
       const lastMessage = loadedMessages[loadedMessages.length - 1]
       if (lastMessage?.role === 'assistant') {
@@ -790,6 +782,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } catch {
               // Never let logging failures break the UI
             }
+          }
+
+          // Handle session.updated events — update session title in store
+          // The SDK event structure is: { data: { info: { title, ... } } }
+          if (event.type === 'session.updated') {
+            const sessionTitle = event.data?.info?.title || event.data?.title
+            if (sessionTitle) {
+              useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
+            }
+            return
           }
 
           // Handle question events
@@ -1252,8 +1254,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             setMessages((prev) => [...prev, userMessage])
             // Set worktree status to 'working'
             useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
-            // Prevent auto-naming from overwriting the explicit session name
-            hasTriggeredNamingRef.current = true
             // Apply mode prefix (e.g., plan mode for code reviews)
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
             const modePrefix =
@@ -1470,36 +1470,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       const userMessage = dbMessageToOpenCode(savedUserMessage)
       setMessages((prev) => [...prev, userMessage])
-
-      // Fire-and-forget: generate a descriptive session name on the first message
-      if (!hasTriggeredNamingRef.current && worktreePath) {
-        hasTriggeredNamingRef.current = true
-        console.log('[Session naming] Triggering name generation for session', sessionId)
-        window.opencodeOps
-          .generateSessionName(trimmedValue, worktreePath)
-          .then((result) => {
-            console.log('[Session naming] Result:', {
-              success: result.success,
-              name: result.name,
-              error: result.error
-            })
-            if (result.success && result.name) {
-              useSessionStore
-                .getState()
-                .updateSessionName(sessionId, result.name)
-                .then((updated) => {
-                  console.log('[Session naming] Store update:', {
-                    sessionId,
-                    name: result.name,
-                    updated
-                  })
-                })
-            }
-          })
-          .catch((err) => {
-            console.warn('[Session naming] Failed:', err)
-          })
-      }
 
       // Log user prompt if response logging is active
       if (isLogModeRef.current && logFilePathRef.current) {

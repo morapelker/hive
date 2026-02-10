@@ -64,7 +64,6 @@ const mockOpencodeOps = {
   getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
   listModels: vi.fn().mockResolvedValue({ success: true, providers: {} }),
   setModel: vi.fn().mockResolvedValue({ success: true }),
-  generateSessionName: vi.fn().mockResolvedValue({ success: true, name: 'test' }),
   modelInfo: vi.fn().mockResolvedValue({ success: true, model: null }),
   commands: vi.fn().mockResolvedValue({ success: true, commands: [] }),
   onStream: vi.fn().mockReturnValue(() => {})

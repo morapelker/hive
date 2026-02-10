@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react'
 import { Plus, X, ChevronLeft, ChevronRight, FileCode, Loader2 } from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
@@ -16,6 +16,7 @@ interface SessionTabProps {
   onClick: () => void
   onClose: (e: React.MouseEvent) => void
   onMiddleClick: (e: React.MouseEvent) => void
+  onRename: (newName: string) => void
   onDragStart: (e: React.DragEvent) => void
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
@@ -31,6 +32,7 @@ function SessionTab({
   onClick,
   onClose,
   onMiddleClick,
+  onRename,
   onDragStart,
   onDragOver,
   onDrop,
@@ -38,19 +40,57 @@ function SessionTab({
   isDragging,
   isDragOver
 }: SessionTabProps): React.JSX.Element {
+  const [isEditing, setIsEditing] = useState(false)
+  const [editName, setEditName] = useState(name)
+  const inputRef = useRef<HTMLInputElement>(null)
+
   const sessionStatus = useWorktreeStatusStore(
     (state) => state.sessionStatuses[sessionId]?.status ?? null
   )
 
+  // Focus and select input text when entering edit mode
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [isEditing])
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditName(name)
+    setIsEditing(true)
+  }
+
+  const handleSave = () => {
+    const trimmed = editName.trim()
+    if (trimmed && trimmed !== name) {
+      onRename(trimmed)
+    }
+    setIsEditing(false)
+  }
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSave()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setEditName(name)
+      setIsEditing(false)
+    }
+  }
+
   return (
     <div
       data-testid={`session-tab-${sessionId}`}
-      draggable
+      draggable={!isEditing}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      onClick={onClick}
+      onClick={isEditing ? undefined : onClick}
+      onDoubleClick={handleDoubleClick}
       onMouseDown={(e) => {
         // Middle click to close
         if (e.button === 1) {
@@ -68,12 +108,31 @@ function SessionTab({
       )}
     >
       {sessionStatus === 'working' && (
-        <Loader2 className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0" data-testid={`tab-spinner-${sessionId}`} />
+        <Loader2
+          className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0"
+          data-testid={`tab-spinner-${sessionId}`}
+        />
       )}
       {sessionStatus === 'unread' && !isActive && (
-        <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" data-testid={`tab-unread-${sessionId}`} />
+        <span
+          className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"
+          data-testid={`tab-unread-${sessionId}`}
+        />
       )}
-      <span className="truncate flex-1">{name || 'Untitled'}</span>
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          value={editName}
+          onChange={(e) => setEditName(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={handleKeyDown}
+          className="flex-1 min-w-0 bg-transparent border border-primary/50 rounded px-1 py-0 text-sm outline-none"
+          data-testid={`rename-input-${sessionId}`}
+        />
+      ) : (
+        <span className="truncate flex-1">{name || 'Untitled'}</span>
+      )}
       <button
         onClick={onClose}
         className={cn(
@@ -84,9 +143,7 @@ function SessionTab({
       >
         <X className="h-3 w-3" />
       </button>
-      {isActive && (
-        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-      )}
+      {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
     </div>
   )
 }
@@ -131,9 +188,7 @@ function FileTab({ filePath, name, isActive, onClick, onClose }: FileTabProps): 
       >
         <X className="h-3 w-3" />
       </button>
-      {isActive && (
-        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-      )}
+      {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
     </div>
   )
 }
@@ -154,7 +209,8 @@ export function SessionTabs(): React.JSX.Element | null {
     createSession,
     closeSession,
     setActiveSession,
-    reorderTabs
+    reorderTabs,
+    updateSessionName
   } = useSessionStore()
 
   const { openFiles, activeFilePath, setActiveFile, closeFile } = useFileViewerStore()
@@ -166,14 +222,14 @@ export function SessionTabs(): React.JSX.Element | null {
   const selectedWorktree = useWorktreeStore((state) => {
     if (!selectedWorktreeId) return null
     for (const worktrees of state.worktreesByProject.values()) {
-      const found = worktrees.find(w => w.id === selectedWorktreeId)
+      const found = worktrees.find((w) => w.id === selectedWorktreeId)
       if (found) return found
     }
     return null
   })
 
   const project = selectedWorktree
-    ? projects.find(p => p.id === selectedWorktree.project_id)
+    ? projects.find((p) => p.id === selectedWorktree.project_id)
     : null
 
   // Sync active worktree with selected worktree
@@ -196,12 +252,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const autoStartedRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (
-      !selectedWorktreeId ||
-      !project ||
-      isLoading ||
-      !autoStartSession
-    ) return
+    if (!selectedWorktreeId || !project || isLoading || !autoStartSession) return
 
     const sessions = sessionsByWorktree.get(selectedWorktreeId) || []
     // Only consider auto-start when selected worktree has no loaded active sessions
@@ -218,7 +269,8 @@ export function SessionTabs(): React.JSX.Element | null {
         if (hasActiveSession) return
 
         // Re-check local state to avoid duplicate creation if sessions loaded while awaiting DB.
-        const latestSessions = useSessionStore.getState().sessionsByWorktree.get(selectedWorktreeId) || []
+        const latestSessions =
+          useSessionStore.getState().sessionsByWorktree.get(selectedWorktreeId) || []
         if (latestSessions.length > 0) return
 
         autoStartedRef.current = selectedWorktreeId
@@ -242,9 +294,7 @@ export function SessionTabs(): React.JSX.Element | null {
     if (!container) return
 
     setShowLeftArrow(container.scrollLeft > 0)
-    setShowRightArrow(
-      container.scrollLeft < container.scrollWidth - container.clientWidth - 1
-    )
+    setShowRightArrow(container.scrollLeft < container.scrollWidth - container.clientWidth - 1)
   }, [])
 
   useEffect(() => {
@@ -291,6 +341,14 @@ export function SessionTabs(): React.JSX.Element | null {
     const result = await closeSession(sessionId)
     if (!result.success) {
       toast.error(result.error || 'Failed to close session')
+    }
+  }
+
+  // Handle renaming a session tab
+  const handleRenameSession = async (sessionId: string, newName: string) => {
+    const success = await updateSessionName(sessionId, newName)
+    if (!success) {
+      toast.error('Failed to rename session')
     }
   }
 
@@ -360,13 +418,11 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Get sessions in tab order
   const orderedSessions = tabOrder
-    .map(id => sessions.find(s => s.id === id))
+    .map((id) => sessions.find((s) => s.id === id))
     .filter((s): s is NonNullable<typeof s> => s !== undefined)
 
   // Get file tabs for the current worktree
-  const fileTabs = Array.from(openFiles.values()).filter(
-    (f) => f.worktreeId === selectedWorktreeId
-  )
+  const fileTabs = Array.from(openFiles.values()).filter((f) => f.worktreeId === selectedWorktreeId)
 
   // Determine if a file tab is the active one
   const isFileTabActive = activeFilePath !== null
@@ -422,6 +478,7 @@ export function SessionTabs(): React.JSX.Element | null {
                 onClick={() => handleSessionTabClick(session.id)}
                 onClose={(e) => handleCloseSession(e, session.id)}
                 onMiddleClick={(e) => handleCloseSession(e, session.id)}
+                onRename={(newName) => handleRenameSession(session.id, newName)}
                 onDragStart={(e) => handleDragStart(e, session.id)}
                 onDragOver={(e) => handleDragOver(e, session.id)}
                 onDrop={(e) => handleDrop(e, session.id)}
