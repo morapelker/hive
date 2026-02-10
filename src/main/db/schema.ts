@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 5
+export const CURRENT_SCHEMA_VERSION = 6
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -141,6 +141,12 @@ export const MIGRATIONS: Migration[] = [
         ON session_messages(session_id, opencode_message_id)
         WHERE opencode_message_id IS NOT NULL;
     `,
+    down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
+  },
+  {
+    version: 6,
+    name: 'add_session_draft_input',
+    up: `ALTER TABLE sessions ADD COLUMN draft_input TEXT DEFAULT NULL;`,
     down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
   }
 ]
