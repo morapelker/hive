@@ -186,12 +186,32 @@ export function registerWorktreeHandlers(): void {
         // Get database worktrees
         const dbWorktrees = db.getActiveWorktreesByProject(params.projectId)
 
+        // Build a map of git worktree path -> branch for quick lookup
+        const gitBranchByPath = new Map(gitWorktrees.map((w) => [w.path, w.branch]))
+
         // Check each database worktree
         for (const dbWorktree of dbWorktrees) {
           // If worktree path doesn't exist in git worktrees or on disk
           if (!gitWorktreePaths.has(dbWorktree.path) && !existsSync(dbWorktree.path)) {
             // Mark as archived (worktree was removed outside of Hive)
             db.archiveWorktree(dbWorktree.id)
+            continue
+          }
+
+          // Sync branch name if it was renamed outside of Hive
+          const gitBranch = gitBranchByPath.get(dbWorktree.path)
+          if (gitBranch && gitBranch !== dbWorktree.branch_name) {
+            log.info('Branch renamed externally, updating DB', {
+              worktreeId: dbWorktree.id,
+              oldBranch: dbWorktree.branch_name,
+              newBranch: gitBranch
+            })
+            // Update both branch_name and display name to match git
+            const nameMatchesBranch = dbWorktree.name === dbWorktree.branch_name
+            db.updateWorktree(dbWorktree.id, {
+              branch_name: gitBranch,
+              ...(nameMatchesBranch ? { name: gitBranch } : {})
+            })
           }
         }
 
@@ -490,6 +510,64 @@ export function registerWorktreeHandlers(): void {
       } catch (error) {
         log.error(
           'IPC: worktree:renameBranch failed',
+          error instanceof Error ? error : new Error('Unknown error')
+        )
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // List all branches with checkout status
+  ipcMain.handle(
+    'git:listBranchesWithStatus',
+    async (_event, { projectPath }: { projectPath: string }) => {
+      try {
+        const gitService = createGitService(projectPath)
+        const branches = await gitService.listBranchesWithStatus()
+        return { success: true, branches }
+      } catch (error) {
+        return {
+          success: false,
+          branches: [],
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Create a worktree from a specific existing branch
+  ipcMain.handle(
+    'worktree:createFromBranch',
+    async (
+      _event,
+      {
+        projectId,
+        projectPath,
+        projectName,
+        branchName
+      }: { projectId: string; projectPath: string; projectName: string; branchName: string }
+    ) => {
+      log.info('IPC: worktree:createFromBranch', { projectName, branchName })
+      try {
+        const gitService = createGitService(projectPath)
+        const result = await gitService.createWorktreeFromBranch(projectName, branchName)
+        if (!result.success || !result.path) {
+          return { success: false, error: result.error || 'Failed to create worktree from branch' }
+        }
+        const db = getDatabase()
+        const worktree = db.createWorktree({
+          project_id: projectId,
+          name: result.name || branchName,
+          branch_name: result.branchName || branchName,
+          path: result.path
+        })
+        return { success: true, worktree }
+      } catch (error) {
+        log.error(
+          'IPC: worktree:createFromBranch failed',
           error instanceof Error ? error : new Error('Unknown error')
         )
         return {

@@ -277,6 +277,33 @@ const worktreeOps = {
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('worktree:renameBranch', { worktreeId, worktreePath, oldBranch, newBranch }),
 
+  // Create a worktree from a specific existing branch
+  createFromBranch: (
+    projectId: string,
+    projectPath: string,
+    projectName: string,
+    branchName: string
+  ): Promise<{
+    success: boolean
+    worktree?: {
+      id: string
+      project_id: string
+      name: string
+      branch_name: string
+      path: string
+      status: string
+      created_at: string
+      last_accessed_at: string
+    }
+    error?: string
+  }> =>
+    ipcRenderer.invoke('worktree:createFromBranch', {
+      projectId,
+      projectPath,
+      projectName,
+      branchName
+    }),
+
   // Subscribe to branch-renamed events (auto-rename from main process)
   onBranchRenamed: (
     callback: (data: { worktreeId: string; newBranch: string }) => void
@@ -618,7 +645,21 @@ const gitOps = {
     diff?: string
     fileName?: string
     error?: string
-  }> => ipcRenderer.invoke('git:diff', worktreePath, filePath, staged, isUntracked, contextLines)
+  }> => ipcRenderer.invoke('git:diff', worktreePath, filePath, staged, isUntracked, contextLines),
+
+  // List all branches with their worktree checkout status
+  listBranchesWithStatus: (
+    projectPath: string
+  ): Promise<{
+    success: boolean
+    branches: Array<{
+      name: string
+      isRemote: boolean
+      isCheckedOut: boolean
+      worktreePath?: string
+    }>
+    error?: string
+  }> => ipcRenderer.invoke('git:listBranchesWithStatus', { projectPath })
 }
 
 const opencodeOps = {

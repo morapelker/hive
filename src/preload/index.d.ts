@@ -246,6 +246,16 @@ declare global {
         oldBranch: string,
         newBranch: string
       ) => Promise<{ success: boolean; error?: string }>
+      createFromBranch: (
+        projectId: string,
+        projectPath: string,
+        projectName: string,
+        branchName: string
+      ) => Promise<{
+        success: boolean
+        worktree?: Worktree
+        error?: string
+      }>
       // Subscribe to branch-renamed events (auto-rename from main process)
       onBranchRenamed: (
         callback: (data: { worktreeId: string; newBranch: string }) => void
@@ -560,6 +570,17 @@ declare global {
         success: boolean
         diff?: string
         fileName?: string
+        error?: string
+      }>
+      // List all branches with their worktree checkout status
+      listBranchesWithStatus: (projectPath: string) => Promise<{
+        success: boolean
+        branches: Array<{
+          name: string
+          isRemote: boolean
+          isCheckedOut: boolean
+          worktreePath?: string
+        }>
         error?: string
       }>
     }

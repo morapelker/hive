@@ -1,5 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronRight, Plus, Loader2, Pencil, Trash2, Copy, ExternalLink, RefreshCw, Settings } from 'lucide-react'
+import {
+  ChevronRight,
+  Plus,
+  Loader2,
+  Pencil,
+  Trash2,
+  Copy,
+  ExternalLink,
+  RefreshCw,
+  Settings,
+  GitBranch
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -12,7 +23,7 @@ import {
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
 import { useProjectStore, useWorktreeStore } from '@/stores'
-import { WorktreeList } from '@/components/worktrees'
+import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
@@ -38,7 +49,11 @@ interface ProjectItemProps {
   pathMatchIndices?: number[]
 }
 
-export function ProjectItem({ project, nameMatchIndices, pathMatchIndices }: ProjectItemProps): React.JSX.Element {
+export function ProjectItem({
+  project,
+  nameMatchIndices,
+  pathMatchIndices
+}: ProjectItemProps): React.JSX.Element {
   const {
     selectedProjectId,
     expandedProjectIds,
@@ -55,6 +70,7 @@ export function ProjectItem({ project, nameMatchIndices, pathMatchIndices }: Pro
 
   const [editName, setEditName] = useState(project.name)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const isCreatingWorktree = creatingForProjectId === project.id
 
@@ -144,6 +160,26 @@ export function ProjectItem({ project, nameMatchIndices, pathMatchIndices }: Pro
     [isCreatingWorktree, createWorktree, project]
   )
 
+  const handleBranchSelect = useCallback(
+    async (branchName: string): Promise<void> => {
+      setBranchPickerOpen(false)
+      const result = await window.worktreeOps.createFromBranch(
+        project.id,
+        project.path,
+        project.name,
+        branchName
+      )
+      if (result.success && result.worktree) {
+        useWorktreeStore.getState().loadWorktrees(project.id)
+        useWorktreeStore.getState().selectWorktree(result.worktree.id)
+        gitToast.worktreeCreated(branchName)
+      } else {
+        gitToast.operationFailed('create worktree from branch', result.error)
+      }
+    },
+    [project]
+  )
+
   return (
     <div>
       <ContextMenu>
@@ -213,10 +249,7 @@ export function ProjectItem({ project, nameMatchIndices, pathMatchIndices }: Pro
               <Button
                 variant="ghost"
                 size="icon"
-                className={cn(
-                  'h-5 w-5 p-0 cursor-pointer',
-                  'hover:bg-accent'
-                )}
+                className={cn('h-5 w-5 p-0 cursor-pointer', 'hover:bg-accent')}
                 onClick={handleCreateWorktree}
                 disabled={isCreatingWorktree}
               >
@@ -247,6 +280,10 @@ export function ProjectItem({ project, nameMatchIndices, pathMatchIndices }: Pro
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh Language
           </ContextMenuItem>
+          <ContextMenuItem onClick={() => setBranchPickerOpen(true)}>
+            <GitBranch className="h-4 w-4 mr-2" />
+            New Workspace From...
+          </ContextMenuItem>
           <ContextMenuItem onClick={() => setSettingsOpen(true)}>
             <Settings className="h-4 w-4 mr-2" />
             Project Settings
@@ -266,10 +303,14 @@ export function ProjectItem({ project, nameMatchIndices, pathMatchIndices }: Pro
       {isExpanded && <WorktreeList project={project} />}
 
       {/* Project Settings Dialog */}
-      <ProjectSettingsDialog
-        project={project}
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
+      <ProjectSettingsDialog project={project} open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+      {/* Branch Picker Dialog */}
+      <BranchPickerDialog
+        open={branchPickerOpen}
+        onOpenChange={setBranchPickerOpen}
+        projectPath={project.path}
+        onSelect={handleBranchSelect}
       />
     </div>
   )

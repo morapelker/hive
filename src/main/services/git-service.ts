@@ -957,6 +957,85 @@ export class GitService {
       }
     }
   }
+
+  /**
+   * List all branches with their checkout status across worktrees
+   */
+  async listBranchesWithStatus(): Promise<
+    Array<{
+      name: string
+      isRemote: boolean
+      isCheckedOut: boolean
+      worktreePath?: string
+    }>
+  > {
+    const [branchSummary, worktreeList] = await Promise.all([
+      this.git.branch(['-a']),
+      this.git.raw(['worktree', 'list', '--porcelain'])
+    ])
+
+    const checkedOut = new Map<string, string>()
+    const blocks = worktreeList.split('\n\n').filter(Boolean)
+    for (const block of blocks) {
+      const lines = block.split('\n')
+      const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
+      const branch = lines.find((l) => l.startsWith('branch '))?.replace('branch refs/heads/', '')
+      if (wtPath && branch) checkedOut.set(branch, wtPath)
+    }
+
+    return Object.entries(branchSummary.branches).map(([name, info]) => ({
+      name: info.name,
+      isRemote: name.startsWith('remotes/'),
+      isCheckedOut: checkedOut.has(info.name),
+      worktreePath: checkedOut.get(info.name)
+    }))
+  }
+
+  /**
+   * Create a worktree from a specific existing branch.
+   * If the branch is already checked out in another worktree, duplicate it instead.
+   */
+  async createWorktreeFromBranch(
+    projectName: string,
+    branchName: string
+  ): Promise<CreateWorktreeResult> {
+    try {
+      // Check if branch is already checked out
+      const worktreeList = await this.git.raw(['worktree', 'list', '--porcelain'])
+      const blocks = worktreeList.split('\n\n').filter(Boolean)
+
+      for (const block of blocks) {
+        const lines = block.split('\n')
+        const branch = lines.find((l) => l.startsWith('branch '))?.replace('branch refs/heads/', '')
+        const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
+        if (branch === branchName && wtPath) {
+          // Already checked out — duplicate it
+          return this.duplicateWorktree(branchName, wtPath, projectName)
+        }
+      }
+
+      // Not checked out — create worktree using existing branch
+      const dirName = branchName
+        .replace(/[/\\]/g, '-')
+        .replace(/[^a-zA-Z0-9-]/g, '')
+        .toLowerCase()
+
+      const projectWorktreesDir = this.ensureWorktreesDir(projectName)
+      const worktreePath = join(projectWorktreesDir, dirName)
+
+      await this.git.raw(['worktree', 'add', worktreePath, branchName])
+
+      return { success: true, path: worktreePath, branchName, name: dirName }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error(
+        'Failed to create worktree from branch',
+        error instanceof Error ? error : new Error(message),
+        { projectName, branchName, repoPath: this.repoPath }
+      )
+      return { success: false, error: message }
+    }
+  }
 }
 
 /**
