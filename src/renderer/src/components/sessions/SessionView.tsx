@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { MessageRenderer } from './MessageRenderer'
 import { ModeToggle } from './ModeToggle'
 import { ModelSelector } from './ModelSelector'
-import { QueuedIndicator } from './QueuedIndicator'
+import { QueuedMessageBubble } from './QueuedMessageBubble'
 import { ContextIndicator } from './ContextIndicator'
 import { AttachmentButton } from './AttachmentButton'
 import { AttachmentPreview } from './AttachmentPreview'
@@ -340,7 +340,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [inputValue, setInputValue] = useState('')
   const [viewState, setViewState] = useState<SessionViewState>({ status: 'connecting' })
   const [isSending, setIsSending] = useState(false)
-  const [queuedCount, setQueuedCount] = useState(0)
+  const [queuedMessages, setQueuedMessages] = useState<
+    Array<{
+      id: string
+      content: string
+      timestamp: number
+    }>
+  >([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [slashCommands, setSlashCommands] = useState<
     Array<{ name: string; description?: string; template: string; agent?: string }>
@@ -1157,7 +1163,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // This catches edge cases where session.status events are unavailable.
             immediateFlush()
             setIsSending(false)
-            setQueuedCount(0)
+            setQueuedMessages([])
 
             if (!hasFinalizedCurrentResponseRef.current) {
               hasFinalizedCurrentResponseRef.current = true
@@ -1176,7 +1182,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // Session is truly done -- flush and finalize
               immediateFlush()
               setIsSending(false)
-              setQueuedCount(0)
+              setQueuedMessages([])
 
               if (!hasFinalizedCurrentResponseRef.current) {
                 hasFinalizedCurrentResponseRef.current = true
@@ -1489,7 +1495,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       hasFinalizedCurrentResponseRef.current = false
       setIsSending(true)
     } else {
-      setQueuedCount((prev) => prev + 1)
+      setQueuedMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), content: trimmedValue, timestamp: Date.now() }
+      ])
     }
     setInputValue('')
     inputValueRef.current = ''
@@ -1842,6 +1851,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   </div>
                 </div>
               )}
+              {/* Queued messages rendered as visible bubbles */}
+              {queuedMessages.map((msg) => (
+                <QueuedMessageBubble key={msg.id} content={msg.content} />
+              ))}
               <div ref={messagesEndRef} />
             </div>
           )}
@@ -1914,9 +1927,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               rows={1}
               data-testid="message-input"
             />
-
-            {/* Queued message indicator */}
-            <QueuedIndicator count={queuedCount} />
 
             {/* Bottom row: model selector + context indicator + hint text + send button */}
             <div className="flex items-center justify-between px-3 pb-2.5">
