@@ -7,14 +7,22 @@ export default defineWorkspace([
       name: 'renderer',
       environment: 'jsdom',
       include: ['test/**/*.test.{ts,tsx}'],
-      exclude: ['test/session-3/**/*.test.ts', 'test/phase-9/session-2/**/*.test.ts']
+      exclude: [
+        'test/session-3/**/*.test.ts',
+        'test/phase-9/session-2/**/*.test.ts',
+        'test/phase-9/session-5/**/*.test.ts'
+      ]
     }
   },
   {
     test: {
       name: 'main',
       environment: 'node',
-      include: ['test/session-3/**/*.test.ts', 'test/phase-9/session-2/**/*.test.ts'],
+      include: [
+        'test/session-3/**/*.test.ts',
+        'test/phase-9/session-2/**/*.test.ts',
+        'test/phase-9/session-5/**/*.test.ts'
+      ],
       globals: true
     }
   }

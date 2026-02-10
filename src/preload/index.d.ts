@@ -559,6 +559,7 @@ interface OpenCodeStreamEvent {
   sessionId: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any
+  childSessionId?: string
 }
 
 // File tree node type

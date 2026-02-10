@@ -20,6 +20,7 @@ export interface StreamEvent {
   sessionId: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any
+  childSessionId?: string
 }
 
 // Type for the OpencodeClient from the SDK
@@ -1001,7 +1002,8 @@ class OpenCodeService {
     }
 
     // Get the Hive session ID for routing — check parent session if this is a child/subagent
-    let hiveSessionId = this.getMappedHiveSessionId(instance, sessionId, eventDirectory)
+    const directHiveId = this.getMappedHiveSessionId(instance, sessionId, eventDirectory)
+    let hiveSessionId = directHiveId
 
     if (!hiveSessionId) {
       const parentId = await this.resolveParentSession(instance, sessionId, eventDirectory)
@@ -1015,23 +1017,34 @@ class OpenCodeService {
       return
     }
 
+    // Detect child/subagent events: no direct mapping but resolved through parent
+    const isChildEvent = !directHiveId && !!hiveSessionId
+
     // Log session lifecycle events and trigger notification when unfocused
     if (eventType === 'session.idle') {
       log.info('Forwarding session.idle to renderer', {
         opencodeSessionId: sessionId,
-        hiveSessionId
+        hiveSessionId,
+        isChildEvent
       })
-      this.maybeNotifySessionComplete(hiveSessionId)
+      // Only notify for parent session completion, not child/subagent sessions
+      if (!isChildEvent) {
+        this.maybeNotifySessionComplete(hiveSessionId)
+      }
     }
 
-    // Persist stream events in the main process so message history survives renderer unmount/switching.
-    this.persistStreamEvent(hiveSessionId, eventType, event.properties || event)
+    // Only persist events from the parent session as top-level messages.
+    // Child/subagent events will be rendered inside SubtaskCards, not as standalone messages.
+    if (!isChildEvent) {
+      this.persistStreamEvent(hiveSessionId, eventType, event.properties || event)
+    }
 
     // Send event to renderer
     const streamEvent: StreamEvent = {
       type: eventType,
       sessionId: hiveSessionId,
-      data: event.properties || event
+      data: event.properties || event,
+      ...(isChildEvent ? { childSessionId: sessionId } : {})
     }
 
     this.sendToRenderer('opencode:stream', streamEvent)
