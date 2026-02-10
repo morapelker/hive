@@ -45,8 +45,30 @@ describe('Session 10: Integration & Polish', () => {
 
       // Simulate having sessions loaded for worktree-A
       const sessionsA = [
-        { id: 'session-1', worktree_id: 'wt-a', project_id: 'proj-1', name: 'Session 1', status: 'active' as const, opencode_session_id: null, mode: 'build' as const, created_at: '', updated_at: '', completed_at: null },
-        { id: 'session-2', worktree_id: 'wt-a', project_id: 'proj-1', name: 'Session 2', status: 'active' as const, opencode_session_id: null, mode: 'build' as const, created_at: '', updated_at: '', completed_at: null }
+        {
+          id: 'session-1',
+          worktree_id: 'wt-a',
+          project_id: 'proj-1',
+          name: 'Session 1',
+          status: 'active' as const,
+          opencode_session_id: null,
+          mode: 'build' as const,
+          created_at: '',
+          updated_at: '',
+          completed_at: null
+        },
+        {
+          id: 'session-2',
+          worktree_id: 'wt-a',
+          project_id: 'proj-1',
+          name: 'Session 2',
+          status: 'active' as const,
+          opencode_session_id: null,
+          mode: 'build' as const,
+          created_at: '',
+          updated_at: '',
+          completed_at: null
+        }
       ]
 
       useSessionStore.setState({
@@ -65,15 +87,43 @@ describe('Session 10: Integration & Polish', () => {
 
     test('switching worktrees restores last active session', () => {
       const sessionsA = [
-        { id: 'session-1', worktree_id: 'wt-a', project_id: 'proj-1', name: 'S1', status: 'active' as const, opencode_session_id: null, mode: 'build' as const, created_at: '', updated_at: '', completed_at: null }
+        {
+          id: 'session-1',
+          worktree_id: 'wt-a',
+          project_id: 'proj-1',
+          name: 'S1',
+          status: 'active' as const,
+          opencode_session_id: null,
+          mode: 'build' as const,
+          created_at: '',
+          updated_at: '',
+          completed_at: null
+        }
       ]
       const sessionsB = [
-        { id: 'session-3', worktree_id: 'wt-b', project_id: 'proj-1', name: 'S3', status: 'active' as const, opencode_session_id: null, mode: 'build' as const, created_at: '', updated_at: '', completed_at: null }
+        {
+          id: 'session-3',
+          worktree_id: 'wt-b',
+          project_id: 'proj-1',
+          name: 'S3',
+          status: 'active' as const,
+          opencode_session_id: null,
+          mode: 'build' as const,
+          created_at: '',
+          updated_at: '',
+          completed_at: null
+        }
       ]
 
       useSessionStore.setState({
-        sessionsByWorktree: new Map([['wt-a', sessionsA], ['wt-b', sessionsB]]),
-        tabOrderByWorktree: new Map([['wt-a', ['session-1']], ['wt-b', ['session-3']]]),
+        sessionsByWorktree: new Map([
+          ['wt-a', sessionsA],
+          ['wt-b', sessionsB]
+        ]),
+        tabOrderByWorktree: new Map([
+          ['wt-a', ['session-1']],
+          ['wt-b', ['session-3']]
+        ]),
         activeWorktreeId: 'wt-a',
         activeSessionId: 'session-1',
         activeSessionByWorktree: { 'wt-a': 'session-1', 'wt-b': 'session-3' }
@@ -90,7 +140,18 @@ describe('Session 10: Integration & Polish', () => {
 
     test('stale session ID falls back to first tab', () => {
       const sessions = [
-        { id: 'session-5', worktree_id: 'wt-x', project_id: 'proj-1', name: 'S5', status: 'active' as const, opencode_session_id: null, mode: 'build' as const, created_at: '', updated_at: '', completed_at: null }
+        {
+          id: 'session-5',
+          worktree_id: 'wt-x',
+          project_id: 'proj-1',
+          name: 'S5',
+          status: 'active' as const,
+          opencode_session_id: null,
+          mode: 'build' as const,
+          created_at: '',
+          updated_at: '',
+          completed_at: null
+        }
       ]
 
       useSessionStore.setState({
@@ -128,50 +189,67 @@ describe('Session 10: Integration & Polish', () => {
     beforeEach(() => {
       useContextStore.setState({
         tokensBySession: {},
+        costBySession: {},
         modelLimits: {}
       })
     })
 
-    test('cumulative token tracking across multiple messages', () => {
+    test('snapshot token replacement across multiple sets', () => {
       const store = useContextStore.getState()
 
-      // First message tokens
-      store.addMessageTokens('sess-1', {
-        input: 1000, output: 500, reasoning: 0, cacheRead: 100, cacheWrite: 50
+      // First snapshot
+      store.setSessionTokens('sess-1', {
+        input: 1000,
+        output: 500,
+        reasoning: 0,
+        cacheRead: 100,
+        cacheWrite: 50
       })
 
-      // Second message tokens
-      store.addMessageTokens('sess-1', {
-        input: 2000, output: 800, reasoning: 200, cacheRead: 300, cacheWrite: 100
+      // Second snapshot replaces the first
+      store.setSessionTokens('sess-1', {
+        input: 2000,
+        output: 800,
+        reasoning: 200,
+        cacheRead: 300,
+        cacheWrite: 100
       })
 
       const state = useContextStore.getState()
       const tokens = state.tokensBySession['sess-1']
-      expect(tokens.input).toBe(3000)
-      expect(tokens.output).toBe(1300)
+      expect(tokens.input).toBe(2000)
+      expect(tokens.output).toBe(800)
       expect(tokens.reasoning).toBe(200)
-      expect(tokens.cacheRead).toBe(400)
-      expect(tokens.cacheWrite).toBe(150)
+      expect(tokens.cacheRead).toBe(300)
+      expect(tokens.cacheWrite).toBe(100)
     })
 
     test('context usage percentage calculated correctly', () => {
       const store = useContextStore.getState()
       store.setModelLimit('claude-3', 200000)
-      store.addMessageTokens('sess-1', {
-        input: 50000, output: 30000, reasoning: 5000, cacheRead: 20000, cacheWrite: 1000
+      store.setSessionTokens('sess-1', {
+        input: 50000,
+        output: 30000,
+        reasoning: 5000,
+        cacheRead: 20000,
+        cacheWrite: 1000
       })
 
       const usage = useContextStore.getState().getContextUsage('sess-1', 'claude-3')
-      // used = input + output + cacheRead = 50000 + 30000 + 20000 = 100000
-      expect(usage.used).toBe(100000)
+      // used = input + output + reasoning + cacheRead + cacheWrite = 50000 + 30000 + 5000 + 20000 + 1000 = 106000
+      expect(usage.used).toBe(106000)
       expect(usage.limit).toBe(200000)
-      expect(usage.percent).toBe(50)
+      expect(usage.percent).toBe(53)
     })
 
     test('reset clears session tokens', () => {
       const store = useContextStore.getState()
-      store.addMessageTokens('sess-1', {
-        input: 1000, output: 500, reasoning: 0, cacheRead: 0, cacheWrite: 0
+      store.setSessionTokens('sess-1', {
+        input: 1000,
+        output: 500,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0
       })
 
       store.resetSessionTokens('sess-1')
@@ -182,8 +260,20 @@ describe('Session 10: Integration & Polish', () => {
 
     test('independent session token tracking', () => {
       const store = useContextStore.getState()
-      store.addMessageTokens('sess-a', { input: 100, output: 50, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
-      store.addMessageTokens('sess-b', { input: 200, output: 100, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
+      store.setSessionTokens('sess-a', {
+        input: 100,
+        output: 50,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0
+      })
+      store.setSessionTokens('sess-b', {
+        input: 200,
+        output: 100,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0
+      })
 
       const stateA = useContextStore.getState().tokensBySession['sess-a']
       const stateB = useContextStore.getState().tokensBySession['sess-b']
@@ -270,7 +360,12 @@ describe('Session 10: Integration & Polish', () => {
   describe('Image attachments end-to-end', () => {
     test('AttachmentPreview renders image thumbnails', () => {
       const attachments = [
-        { id: '1', name: 'screenshot.png', mime: 'image/png', dataUrl: 'data:image/png;base64,abc' },
+        {
+          id: '1',
+          name: 'screenshot.png',
+          mime: 'image/png',
+          dataUrl: 'data:image/png;base64,abc'
+        },
         { id: '2', name: 'photo.jpg', mime: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,xyz' }
       ]
 
@@ -286,7 +381,12 @@ describe('Session 10: Integration & Polish', () => {
 
     test('AttachmentPreview renders PDF with file icon', () => {
       const attachments = [
-        { id: '1', name: 'document.pdf', mime: 'application/pdf', dataUrl: 'data:application/pdf;base64,abc' }
+        {
+          id: '1',
+          name: 'document.pdf',
+          mime: 'application/pdf',
+          dataUrl: 'data:application/pdf;base64,abc'
+        }
       ]
 
       render(<AttachmentPreview attachments={attachments} onRemove={() => {}} />)
@@ -417,9 +517,7 @@ describe('Session 10: Integration & Polish', () => {
 
   describe('Rich tool rendering end-to-end', () => {
     test('AssistantCanvas renders text parts', () => {
-      const parts: StreamingPart[] = [
-        { type: 'text', text: 'Hello world' }
-      ]
+      const parts: StreamingPart[] = [{ type: 'text', text: 'Hello world' }]
 
       render(<AssistantCanvas content="" timestamp="" parts={parts} />)
       expect(screen.getByTestId('message-assistant')).toBeTruthy()
@@ -486,9 +584,7 @@ describe('Session 10: Integration & Polish', () => {
     })
 
     test('AssistantCanvas renders compaction parts', () => {
-      const parts: StreamingPart[] = [
-        { type: 'compaction', compactionAuto: true }
-      ]
+      const parts: StreamingPart[] = [{ type: 'compaction', compactionAuto: true }]
 
       render(<AssistantCanvas content="" timestamp="" parts={parts} />)
 
@@ -500,7 +596,14 @@ describe('Session 10: Integration & Polish', () => {
       const parts: StreamingPart[] = [
         { type: 'step_start', stepStart: { snapshot: undefined } },
         { type: 'text', text: 'Hello' },
-        { type: 'step_finish', stepFinish: { reason: 'done', cost: 0.01, tokens: { input: 100, output: 50, reasoning: 0 } } }
+        {
+          type: 'step_finish',
+          stepFinish: {
+            reason: 'done',
+            cost: 0.01,
+            tokens: { input: 100, output: 50, reasoning: 0 }
+          }
+        }
       ]
 
       render(<AssistantCanvas content="" timestamp="" parts={parts} />)
@@ -633,9 +736,7 @@ describe('Session 10: Integration & Polish', () => {
             prompt: 'Search',
             description: 'Searching',
             agent: 'Explore',
-            parts: [
-              { type: 'text', text: 'Found 3 matching files.' }
-            ],
+            parts: [{ type: 'text', text: 'Found 3 matching files.' }],
             status: 'completed'
           }}
         />
@@ -729,8 +830,12 @@ describe('Session 10: Integration & Polish', () => {
 
       store.setModelLimit('claude-3-opus', 200000)
       store.setModelLimit('claude-3-sonnet', 180000)
-      store.addMessageTokens('sess-1', {
-        input: 90000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0
+      store.setSessionTokens('sess-1', {
+        input: 90000,
+        output: 0,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0
       })
 
       const opusUsage = useContextStore.getState().getContextUsage('sess-1', 'claude-3-opus')
@@ -742,13 +847,17 @@ describe('Session 10: Integration & Polish', () => {
 
     test('Session mode unaffected by context tracking', () => {
       // Reset context store to avoid state from previous tests
-      useContextStore.setState({ tokensBySession: {}, modelLimits: {} })
+      useContextStore.setState({ tokensBySession: {}, costBySession: {}, modelLimits: {} })
 
       useSessionStore.setState({
         modeBySession: new Map([['sess-1', 'plan']])
       })
-      useContextStore.getState().addMessageTokens('sess-1', {
-        input: 1000, output: 500, reasoning: 0, cacheRead: 0, cacheWrite: 0
+      useContextStore.getState().setSessionTokens('sess-1', {
+        input: 1000,
+        output: 500,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0
       })
 
       // Session mode should remain unchanged
@@ -828,7 +937,7 @@ describe('Session 10: Integration & Polish', () => {
     test('Context usage with zero limit returns 0 percent', () => {
       useContextStore.setState({
         tokensBySession: {
-          's1': { input: 1000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+          s1: { input: 1000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
         },
         modelLimits: {}
       })
@@ -841,9 +950,9 @@ describe('Session 10: Integration & Polish', () => {
     test('Context usage caps at 100 percent', () => {
       useContextStore.setState({
         tokensBySession: {
-          's1': { input: 300000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+          s1: { input: 300000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
         },
-        modelLimits: { 'm1': 200000 }
+        modelLimits: { m1: 200000 }
       })
 
       const usage = useContextStore.getState().getContextUsage('s1', 'm1')

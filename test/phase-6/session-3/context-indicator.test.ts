@@ -8,15 +8,16 @@ beforeEach(() => {
   // Reset store to initial state
   useContextStore.setState({
     tokensBySession: {},
+    costBySession: {},
     modelLimits: {}
   })
 })
 
 describe('Session 3: Context Indicator', () => {
-  describe('useContextStore - addMessageTokens', () => {
-    test('addMessageTokens accumulates correctly', () => {
+  describe('useContextStore - setSessionTokens', () => {
+    test('setSessionTokens replaces (not accumulates) tokens', () => {
       act(() => {
-        useContextStore.getState().addMessageTokens('session-1', {
+        useContextStore.getState().setSessionTokens('session-1', {
           input: 100,
           output: 50,
           reasoning: 0,
@@ -26,7 +27,7 @@ describe('Session 3: Context Indicator', () => {
       })
 
       act(() => {
-        useContextStore.getState().addMessageTokens('session-1', {
+        useContextStore.getState().setSessionTokens('session-1', {
           input: 200,
           output: 100,
           reasoning: 50,
@@ -37,16 +38,17 @@ describe('Session 3: Context Indicator', () => {
 
       const state = useContextStore.getState()
       const tokens = state.tokensBySession['session-1']
-      expect(tokens.input).toBe(300)
-      expect(tokens.output).toBe(150)
+      // Should be REPLACED, not accumulated
+      expect(tokens.input).toBe(200)
+      expect(tokens.output).toBe(100)
       expect(tokens.reasoning).toBe(50)
-      expect(tokens.cacheRead).toBe(30)
-      expect(tokens.cacheWrite).toBe(15)
+      expect(tokens.cacheRead).toBe(20)
+      expect(tokens.cacheWrite).toBe(10)
     })
 
-    test('addMessageTokens initializes from zero for new session', () => {
+    test('setSessionTokens sets snapshot for new session', () => {
       act(() => {
-        useContextStore.getState().addMessageTokens('new-session', {
+        useContextStore.getState().setSessionTokens('new-session', {
           input: 500,
           output: 200,
           reasoning: 100,
@@ -63,13 +65,21 @@ describe('Session 3: Context Indicator', () => {
       expect(tokens.cacheWrite).toBe(25)
     })
 
-    test('addMessageTokens tracks sessions independently', () => {
+    test('setSessionTokens tracks sessions independently', () => {
       act(() => {
-        useContextStore.getState().addMessageTokens('session-a', {
-          input: 100, output: 50, reasoning: 0, cacheRead: 0, cacheWrite: 0
+        useContextStore.getState().setSessionTokens('session-a', {
+          input: 100,
+          output: 50,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
         })
-        useContextStore.getState().addMessageTokens('session-b', {
-          input: 200, output: 100, reasoning: 50, cacheRead: 10, cacheWrite: 5
+        useContextStore.getState().setSessionTokens('session-b', {
+          input: 200,
+          output: 100,
+          reasoning: 50,
+          cacheRead: 10,
+          cacheWrite: 5
         })
       })
 
@@ -80,10 +90,10 @@ describe('Session 3: Context Indicator', () => {
   })
 
   describe('useContextStore - getContextUsage', () => {
-    test('getContextUsage returns correct percentage', () => {
+    test('getContextUsage returns correct percentage with all 5 categories', () => {
       act(() => {
         useContextStore.getState().setModelLimit('claude-opus', 200000)
-        useContextStore.getState().addMessageTokens('session-1', {
+        useContextStore.getState().setSessionTokens('session-1', {
           input: 80000,
           output: 15000,
           reasoning: 5000,
@@ -93,16 +103,20 @@ describe('Session 3: Context Indicator', () => {
       })
 
       const usage = useContextStore.getState().getContextUsage('session-1', 'claude-opus')
-      // used = input + output + cacheRead = 80000 + 15000 + 1000 = 96000
-      expect(usage.used).toBe(96000)
+      // used = input + output + reasoning + cacheRead + cacheWrite = 80000 + 15000 + 5000 + 1000 + 500 = 101500
+      expect(usage.used).toBe(101500)
       expect(usage.limit).toBe(200000)
-      expect(usage.percent).toBe(48)
+      expect(usage.percent).toBe(51)
     })
 
     test('getContextUsage returns 0 when no limit set', () => {
       act(() => {
-        useContextStore.getState().addMessageTokens('session-1', {
-          input: 100, output: 50, reasoning: 0, cacheRead: 0, cacheWrite: 0
+        useContextStore.getState().setSessionTokens('session-1', {
+          input: 100,
+          output: 50,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
         })
       })
 
@@ -115,8 +129,12 @@ describe('Session 3: Context Indicator', () => {
     test('getContextUsage caps at 100 percent', () => {
       act(() => {
         useContextStore.getState().setModelLimit('claude-opus', 100)
-        useContextStore.getState().addMessageTokens('session-1', {
-          input: 200, output: 100, reasoning: 50, cacheRead: 0, cacheWrite: 0
+        useContextStore.getState().setSessionTokens('session-1', {
+          input: 200,
+          output: 100,
+          reasoning: 50,
+          cacheRead: 0,
+          cacheWrite: 0
         })
       })
 
@@ -138,8 +156,12 @@ describe('Session 3: Context Indicator', () => {
     test('getContextUsage includes token breakdown', () => {
       act(() => {
         useContextStore.getState().setModelLimit('model-1', 200000)
-        useContextStore.getState().addMessageTokens('session-1', {
-          input: 1000, output: 500, reasoning: 200, cacheRead: 100, cacheWrite: 50
+        useContextStore.getState().setSessionTokens('session-1', {
+          input: 1000,
+          output: 500,
+          reasoning: 200,
+          cacheRead: 100,
+          cacheWrite: 50
         })
       })
 
@@ -150,13 +172,34 @@ describe('Session 3: Context Indicator', () => {
       expect(usage.tokens.cacheRead).toBe(100)
       expect(usage.tokens.cacheWrite).toBe(50)
     })
+
+    test('getContextUsage includes cost', () => {
+      act(() => {
+        useContextStore.getState().setModelLimit('model-1', 200000)
+        useContextStore.getState().setSessionTokens('session-1', {
+          input: 1000,
+          output: 500,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
+        })
+        useContextStore.getState().setSessionCost('session-1', 0.025)
+      })
+
+      const usage = useContextStore.getState().getContextUsage('session-1', 'model-1')
+      expect(usage.cost).toBeCloseTo(0.025)
+    })
   })
 
   describe('useContextStore - resetSessionTokens', () => {
     test('resetSessionTokens clears session data', () => {
       act(() => {
-        useContextStore.getState().addMessageTokens('session-1', {
-          input: 100, output: 50, reasoning: 0, cacheRead: 10, cacheWrite: 5
+        useContextStore.getState().setSessionTokens('session-1', {
+          input: 100,
+          output: 50,
+          reasoning: 0,
+          cacheRead: 10,
+          cacheWrite: 5
         })
       })
 
@@ -169,13 +212,40 @@ describe('Session 3: Context Indicator', () => {
       expect(useContextStore.getState().tokensBySession['session-1']).toBeUndefined()
     })
 
+    test('resetSessionTokens also clears cost', () => {
+      act(() => {
+        useContextStore.getState().setSessionTokens('session-1', {
+          input: 100,
+          output: 50,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
+        })
+        useContextStore.getState().setSessionCost('session-1', 0.01)
+      })
+
+      act(() => {
+        useContextStore.getState().resetSessionTokens('session-1')
+      })
+
+      expect(useContextStore.getState().costBySession['session-1']).toBeUndefined()
+    })
+
     test('resetSessionTokens does not affect other sessions', () => {
       act(() => {
-        useContextStore.getState().addMessageTokens('session-1', {
-          input: 100, output: 50, reasoning: 0, cacheRead: 0, cacheWrite: 0
+        useContextStore.getState().setSessionTokens('session-1', {
+          input: 100,
+          output: 50,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
         })
-        useContextStore.getState().addMessageTokens('session-2', {
-          input: 200, output: 100, reasoning: 50, cacheRead: 0, cacheWrite: 0
+        useContextStore.getState().setSessionTokens('session-2', {
+          input: 200,
+          output: 100,
+          reasoning: 50,
+          cacheRead: 0,
+          cacheWrite: 0
         })
       })
 
@@ -221,8 +291,12 @@ describe('Session 3: Context Indicator', () => {
     test('percentage 30 is in green zone (0-60)', () => {
       act(() => {
         useContextStore.getState().setModelLimit('model', 200000)
-        useContextStore.getState().addMessageTokens('s1', {
-          input: 50000, output: 10000, reasoning: 0, cacheRead: 0, cacheWrite: 0
+        useContextStore.getState().setSessionTokens('s1', {
+          input: 50000,
+          output: 10000,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
         })
       })
 
@@ -233,8 +307,12 @@ describe('Session 3: Context Indicator', () => {
     test('percentage 70 is in yellow zone (60-80)', () => {
       act(() => {
         useContextStore.getState().setModelLimit('model', 200000)
-        useContextStore.getState().addMessageTokens('s1', {
-          input: 120000, output: 20000, reasoning: 0, cacheRead: 0, cacheWrite: 0
+        useContextStore.getState().setSessionTokens('s1', {
+          input: 120000,
+          output: 20000,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
         })
       })
 
@@ -245,8 +323,12 @@ describe('Session 3: Context Indicator', () => {
     test('percentage 85 is in orange zone (80-90)', () => {
       act(() => {
         useContextStore.getState().setModelLimit('model', 200000)
-        useContextStore.getState().addMessageTokens('s1', {
-          input: 150000, output: 20000, reasoning: 0, cacheRead: 0, cacheWrite: 0
+        useContextStore.getState().setSessionTokens('s1', {
+          input: 150000,
+          output: 20000,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
         })
       })
 
@@ -257,13 +339,44 @@ describe('Session 3: Context Indicator', () => {
     test('percentage 95 is in red zone (90-100)', () => {
       act(() => {
         useContextStore.getState().setModelLimit('model', 200000)
-        useContextStore.getState().addMessageTokens('s1', {
-          input: 170000, output: 20000, reasoning: 0, cacheRead: 0, cacheWrite: 0
+        useContextStore.getState().setSessionTokens('s1', {
+          input: 170000,
+          output: 20000,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
         })
       })
 
       const usage = useContextStore.getState().getContextUsage('s1', 'model')
       expect(usage.percent).toBe(95)
+    })
+  })
+
+  describe('useContextStore - cost tracking', () => {
+    test('setSessionCost sets cost for session', () => {
+      act(() => {
+        useContextStore.getState().setSessionCost('s1', 0.01)
+      })
+
+      expect(useContextStore.getState().costBySession['s1']).toBeCloseTo(0.01)
+    })
+
+    test('addSessionCost accumulates cost', () => {
+      act(() => {
+        useContextStore.getState().setSessionCost('s1', 0.01)
+        useContextStore.getState().addSessionCost('s1', 0.005)
+      })
+
+      expect(useContextStore.getState().costBySession['s1']).toBeCloseTo(0.015)
+    })
+
+    test('addSessionCost works on new session', () => {
+      act(() => {
+        useContextStore.getState().addSessionCost('s1', 0.02)
+      })
+
+      expect(useContextStore.getState().costBySession['s1']).toBeCloseTo(0.02)
     })
   })
 })

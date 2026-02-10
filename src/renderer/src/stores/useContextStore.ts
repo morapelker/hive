@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-interface TokenInfo {
+export interface TokenInfo {
   input: number
   output: number
   reasoning: number
@@ -17,45 +17,70 @@ const EMPTY_TOKENS: TokenInfo = {
 }
 
 interface ContextState {
-  // Per-session cumulative tokens
+  // Per-session token snapshot (last assistant message with tokens > 0)
   tokensBySession: Record<string, TokenInfo>
+  // Per-session cumulative cost
+  costBySession: Record<string, number>
   // Model context limits (modelId -> contextLimit)
   modelLimits: Record<string, number>
   // Actions
-  addMessageTokens: (sessionId: string, tokens: TokenInfo) => void
+  setSessionTokens: (sessionId: string, tokens: TokenInfo) => void // REPLACE, not add
+  addSessionCost: (sessionId: string, cost: number) => void
+  setSessionCost: (sessionId: string, cost: number) => void
   resetSessionTokens: (sessionId: string) => void
   setModelLimit: (modelId: string, limit: number) => void
   // Derived
-  getContextUsage: (sessionId: string, modelId: string) => { used: number; limit: number; percent: number; tokens: TokenInfo }
+  getContextUsage: (
+    sessionId: string,
+    modelId: string
+  ) => {
+    used: number
+    limit: number
+    percent: number
+    tokens: TokenInfo
+    cost: number
+  }
 }
 
 export const useContextStore = create<ContextState>()((set, get) => ({
   tokensBySession: {},
+  costBySession: {},
   modelLimits: {},
 
-  addMessageTokens: (sessionId: string, tokens: TokenInfo) => {
-    set((state) => {
-      const existing = state.tokensBySession[sessionId] ?? { ...EMPTY_TOKENS }
-      return {
-        tokensBySession: {
-          ...state.tokensBySession,
-          [sessionId]: {
-            input: existing.input + tokens.input,
-            output: existing.output + tokens.output,
-            reasoning: existing.reasoning + tokens.reasoning,
-            cacheRead: existing.cacheRead + tokens.cacheRead,
-            cacheWrite: existing.cacheWrite + tokens.cacheWrite
-          }
-        }
+  setSessionTokens: (sessionId: string, tokens: TokenInfo) => {
+    set((state) => ({
+      tokensBySession: {
+        ...state.tokensBySession,
+        [sessionId]: { ...tokens }
       }
-    })
+    }))
+  },
+
+  addSessionCost: (sessionId: string, cost: number) => {
+    set((state) => ({
+      costBySession: {
+        ...state.costBySession,
+        [sessionId]: (state.costBySession[sessionId] ?? 0) + cost
+      }
+    }))
+  },
+
+  setSessionCost: (sessionId: string, cost: number) => {
+    set((state) => ({
+      costBySession: {
+        ...state.costBySession,
+        [sessionId]: cost
+      }
+    }))
   },
 
   resetSessionTokens: (sessionId: string) => {
     set((state) => {
-      const { [sessionId]: _removed, ...rest } = state.tokensBySession
-      void _removed
-      return { tokensBySession: rest }
+      const { [sessionId]: _removedTokens, ...restTokens } = state.tokensBySession
+      const { [sessionId]: _removedCost, ...restCost } = state.costBySession
+      void _removedTokens
+      void _removedCost
+      return { tokensBySession: restTokens, costBySession: restCost }
     })
   },
 
@@ -72,9 +97,11 @@ export const useContextStore = create<ContextState>()((set, get) => ({
     const state = get()
     const tokens = state.tokensBySession[sessionId] ?? { ...EMPTY_TOKENS }
     const limit = state.modelLimits[modelId] ?? 0
-    const used = tokens.input + tokens.output + tokens.cacheRead
+    const cost = state.costBySession[sessionId] ?? 0
+    const used =
+      tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
     const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0
 
-    return { used, limit, percent, tokens }
+    return { used, limit, percent, tokens, cost }
   }
 }))
