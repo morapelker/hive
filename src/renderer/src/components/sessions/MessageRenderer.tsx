@@ -1,5 +1,6 @@
 import { UserBubble } from './UserBubble'
 import { AssistantCanvas } from './AssistantCanvas'
+import { CopyMessageButton } from './CopyMessageButton'
 import type { OpenCodeMessage } from './SessionView'
 
 interface MessageRendererProps {
@@ -13,18 +14,20 @@ export function MessageRenderer({
   isStreaming = false,
   cwd
 }: MessageRendererProps): React.JSX.Element {
-  if (message.role === 'user') {
-    return <UserBubble content={message.content} timestamp={message.timestamp} />
-  }
-
-  // assistant and system messages both render on the canvas
   return (
-    <AssistantCanvas
-      content={message.content}
-      timestamp={message.timestamp}
-      isStreaming={isStreaming}
-      parts={message.parts}
-      cwd={cwd}
-    />
+    <div className="group relative">
+      <CopyMessageButton content={message.content} />
+      {message.role === 'user' ? (
+        <UserBubble content={message.content} timestamp={message.timestamp} />
+      ) : (
+        <AssistantCanvas
+          content={message.content}
+          timestamp={message.timestamp}
+          isStreaming={isStreaming}
+          parts={message.parts}
+          cwd={cwd}
+        />
+      )}
+    </div>
   )
 }
