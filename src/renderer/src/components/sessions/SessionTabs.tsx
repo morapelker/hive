@@ -239,54 +239,36 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }, [selectedWorktreeId, activeWorktreeId])
 
-  // Load sessions when worktree changes
-  useEffect(() => {
-    if (selectedWorktreeId && project) {
-      loadSessions(selectedWorktreeId, project.id)
-    }
-  }, [selectedWorktreeId, project, loadSessions])
-
-  // Auto-start session only when the whole project has no active sessions.
-  const { isLoading } = useSessionStore()
+  // Load sessions when worktree changes, then auto-start if the worktree has 0 sessions.
+  // Auto-start runs as a direct follow-up to loadSessions (not a separate effect) to
+  // eliminate race conditions between the two async operations.
   const autoStartSession = useSettingsStore((state) => state.autoStartSession)
   const autoStartedRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!selectedWorktreeId || !project || isLoading || !autoStartSession) return
-
-    const sessions = sessionsByWorktree.get(selectedWorktreeId) || []
-    // Only consider auto-start when selected worktree has no loaded active sessions
-    // and we haven't already auto-started for this worktree.
-    if (sessions.length > 0 || autoStartedRef.current === selectedWorktreeId) return
+    if (!selectedWorktreeId || !project) return
 
     let cancelled = false
+
     void (async () => {
-      try {
-        const projectSessions = await window.db.session.getByProject(project.id)
-        if (cancelled) return
+      await loadSessions(selectedWorktreeId, project.id)
+      if (cancelled) return
 
-        const hasActiveSession = projectSessions.some((session) => session.status === 'active')
-        if (hasActiveSession) return
+      // After sessions are loaded, check if auto-start is needed
+      if (!autoStartSession) return
+      if (autoStartedRef.current === selectedWorktreeId) return
 
-        // Re-check local state to avoid duplicate creation if sessions loaded while awaiting DB.
-        const latestSessions =
-          useSessionStore.getState().sessionsByWorktree.get(selectedWorktreeId) || []
-        if (latestSessions.length > 0) return
+      const sessions = useSessionStore.getState().sessionsByWorktree.get(selectedWorktreeId) || []
+      if (sessions.length > 0) return
 
-        autoStartedRef.current = selectedWorktreeId
-        const result = await createSession(selectedWorktreeId, project.id)
-        if (!result.success) {
-          toast.error(result.error || 'Failed to auto-create session')
-        }
-      } catch {
-        // Silently skip auto-start on transient read failures; manual creation remains available.
-      }
+      autoStartedRef.current = selectedWorktreeId
+      await createSession(selectedWorktreeId, project.id)
     })()
 
     return () => {
       cancelled = true
     }
-  }, [selectedWorktreeId, project, isLoading, autoStartSession, sessionsByWorktree, createSession])
+  }, [selectedWorktreeId, project, loadSessions, autoStartSession, createSession])
 
   // Check for tab overflow and update arrow visibility
   const checkOverflow = useCallback(() => {

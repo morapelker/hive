@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState, useRef, useEffect } from 'react'
 import {
   GitBranch,
   Folder,
@@ -9,7 +9,8 @@ import {
   Archive,
   GitBranchPlus,
   Copy,
-  ExternalLink
+  ExternalLink,
+  Pencil
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -55,10 +56,65 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
     useWorktreeStore()
 
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
-  const isRunProcessAlive = useScriptStore(
-    (s) => s.scriptStates[worktree.id]?.runRunning ?? false
-  )
+  const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktree.id]?.runRunning ?? false)
   const isSelected = selectedWorktreeId === worktree.id
+
+  // Branch rename state
+  const [isRenamingBranch, setIsRenamingBranch] = useState(false)
+  const [branchNameInput, setBranchNameInput] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
+
+  // Auto-focus the rename input when it appears
+  useEffect(() => {
+    if (isRenamingBranch && renameInputRef.current) {
+      renameInputRef.current.focus()
+      renameInputRef.current.select()
+    }
+  }, [isRenamingBranch])
+
+  const startBranchRename = useCallback((): void => {
+    setBranchNameInput(worktree.branch_name)
+    setIsRenamingBranch(true)
+  }, [worktree.branch_name])
+
+  const handleBranchRename = useCallback(async (): Promise<void> => {
+    const trimmed = branchNameInput.trim()
+    if (!trimmed || trimmed === worktree.branch_name) {
+      setIsRenamingBranch(false)
+      return
+    }
+
+    // Canonicalize for safety
+    const newBranch = trimmed
+      .toLowerCase()
+      .replace(/[\s_]+/g, '-')
+      .replace(/[^a-z0-9\-/.]/g, '')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 50)
+      .replace(/-+$/, '')
+
+    if (!newBranch) {
+      toast.error('Invalid branch name')
+      setIsRenamingBranch(false)
+      return
+    }
+
+    const result = await window.worktreeOps.renameBranch(
+      worktree.id,
+      worktree.path,
+      worktree.branch_name,
+      newBranch
+    )
+
+    if (result.success) {
+      useWorktreeStore.getState().updateWorktreeBranch(worktree.id, newBranch)
+      toast.success(`Branch renamed to ${newBranch}`)
+    } else {
+      toast.error(result.error || 'Failed to rename branch')
+    }
+    setIsRenamingBranch(false)
+  }, [branchNameInput, worktree.id, worktree.path, worktree.branch_name])
 
   const handleClick = (): void => {
     selectWorktree(worktree.id)
@@ -129,13 +185,15 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
   const handleDuplicate = useCallback(async (): Promise<void> => {
     const project = useProjectStore.getState().projects.find((p) => p.id === worktree.project_id)
     if (!project) return
-    const result = await useWorktreeStore.getState().duplicateWorktree(
-      project.id,
-      project.path,
-      project.name,
-      worktree.branch_name,
-      worktree.path
-    )
+    const result = await useWorktreeStore
+      .getState()
+      .duplicateWorktree(
+        project.id,
+        project.path,
+        project.name,
+        worktree.branch_name,
+        worktree.path
+      )
     if (result.success) {
       toast.success(`Duplicated to ${result.worktree?.name || 'new branch'}`)
     } else {
@@ -165,10 +223,26 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
             <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           )}
 
-          {/* Worktree Name */}
-          <span className="flex-1 text-sm truncate" title={worktree.path}>
-            {worktree.name}
-          </span>
+          {/* Worktree Name / Inline Rename Input */}
+          {isRenamingBranch ? (
+            <input
+              ref={renameInputRef}
+              value={branchNameInput}
+              onChange={(e) => setBranchNameInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleBranchRename()
+                if (e.key === 'Escape') setIsRenamingBranch(false)
+              }}
+              onBlur={() => setIsRenamingBranch(false)}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 bg-background border border-border rounded px-1.5 py-0.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
+              data-testid="branch-rename-input"
+            />
+          ) : (
+            <span className="flex-1 text-sm truncate" title={worktree.path}>
+              {worktree.name}
+            </span>
+          )}
 
           {/* Unread dot badge */}
           {worktreeStatus === 'unread' && (
@@ -209,6 +283,10 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
               </DropdownMenuItem>
               {!worktree.is_default && (
                 <>
+                  <DropdownMenuItem onClick={startBranchRename}>
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Rename Branch
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleDuplicate}>
                     <GitBranchPlus className="h-4 w-4 mr-2" />
                     Duplicate
@@ -254,6 +332,10 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
         </ContextMenuItem>
         {!worktree.is_default && (
           <>
+            <ContextMenuItem onClick={startBranchRename}>
+              <Pencil className="h-4 w-4 mr-2" />
+              Rename Branch
+            </ContextMenuItem>
             <ContextMenuItem onClick={handleDuplicate}>
               <GitBranchPlus className="h-4 w-4 mr-2" />
               Duplicate
