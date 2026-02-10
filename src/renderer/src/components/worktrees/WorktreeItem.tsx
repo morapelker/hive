@@ -212,16 +212,18 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
           onClick={handleClick}
           data-testid={`worktree-item-${worktree.id}`}
         >
-          {/* Branch Icon / Status Badge */}
-          {isRunProcessAlive ? (
-            <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />
-          ) : worktreeStatus === 'working' ? (
+          {/* Branch Icons / Status Badges — show up to 2 */}
+          {isRunProcessAlive && <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />}
+          {worktreeStatus === 'working' && (
             <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
-          ) : worktree.is_default ? (
-            <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          ) : (
-            <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           )}
+          {!isRunProcessAlive &&
+            worktreeStatus !== 'working' &&
+            (worktree.is_default ? (
+              <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            ) : (
+              <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            ))}
 
           {/* Worktree Name / Inline Rename Input */}
           {isRenamingBranch ? (
