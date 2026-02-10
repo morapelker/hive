@@ -10,17 +10,23 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
  */
 export function useOpenCodeGlobalListener(): void {
   useEffect(() => {
-    const unsubscribe = window.opencodeOps?.onStream ? window.opencodeOps.onStream((event) => {
-      if (event.type !== 'session.idle') return
+    const unsubscribe = window.opencodeOps?.onStream
+      ? window.opencodeOps.onStream((event) => {
+          // Use session.status (not deprecated session.idle) as the authoritative signal
+          if (event.type !== 'session.status') return
 
-      const sessionId = event.sessionId
-      const activeId = useSessionStore.getState().activeSessionId
+          const status = event.statusPayload || event.data?.status
+          if (status?.type !== 'idle') return
 
-      // Active session is handled by SessionView.
-      if (sessionId === activeId) return
+          const sessionId = event.sessionId
+          const activeId = useSessionStore.getState().activeSessionId
 
-      useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'unread')
-    }) : () => {}
+          // Active session is handled by SessionView.
+          if (sessionId === activeId) return
+
+          useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'unread')
+        })
+      : () => {}
 
     return unsubscribe
   }, [])
