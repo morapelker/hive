@@ -724,7 +724,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       const lastMessage = loadedMessages[loadedMessages.length - 1]
       if (lastMessage?.role === 'assistant') {
-        useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+        const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+        if (currentStatus?.status !== 'working') {
+          useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+        }
       }
 
       // Reconstruct token usage from stored assistant messages
