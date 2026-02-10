@@ -3,6 +3,8 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Loader2 } from 'lucide-react'
 import { FileSearch, type SearchMatch } from './FileSearch'
+import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
+import { cn } from '@/lib/utils'
 
 // Map file extensions to Prism language identifiers
 const extensionToLanguage: Record<string, string> = {
@@ -72,6 +74,11 @@ const extensionToLanguage: Record<string, string> = {
   '.cmd': 'batch'
 }
 
+export function isMarkdownFile(filePath: string): boolean {
+  const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase()
+  return ext === '.md' || ext === '.mdx'
+}
+
 function getLanguageFromPath(filePath: string): string {
   const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase()
   // Check special filenames
@@ -96,6 +103,9 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   const [currentMatchLine, setCurrentMatchLine] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  const isMarkdown = isMarkdownFile(filePath)
+  const [viewMode, setViewMode] = useState<'preview' | 'source'>(isMarkdown ? 'preview' : 'source')
+
   // Load file content
   useEffect(() => {
     let cancelled = false
@@ -119,6 +129,11 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     return () => {
       cancelled = true
     }
+  }, [filePath])
+
+  // Reset view mode when file changes
+  useEffect(() => {
+    setViewMode(isMarkdownFile(filePath) ? 'preview' : 'source')
   }, [filePath])
 
   // Cmd+F keyboard shortcut
@@ -199,8 +214,32 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   return (
     <div className="flex-1 flex flex-col min-h-0" data-testid="file-viewer">
       {/* File path bar */}
-      <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border bg-muted/30 truncate">
-        {filePath}
+      <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border bg-muted/30 flex items-center justify-between">
+        <span className="truncate">{filePath}</span>
+        {isMarkdown && (
+          <div className="flex items-center gap-1 shrink-0 ml-2">
+            <button
+              onClick={() => setViewMode('source')}
+              className={cn(
+                'px-2 py-0.5 rounded text-xs transition-colors',
+                viewMode === 'source' ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+              )}
+              data-testid="source-toggle"
+            >
+              Source
+            </button>
+            <button
+              onClick={() => setViewMode('preview')}
+              className={cn(
+                'px-2 py-0.5 rounded text-xs transition-colors',
+                viewMode === 'preview' ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+              )}
+              data-testid="preview-toggle"
+            >
+              Preview
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Search overlay */}
@@ -212,38 +251,49 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
         />
       )}
 
-      {/* Code content */}
-      <div ref={containerRef} className="flex-1 overflow-auto" data-testid="file-viewer-content">
-        <SyntaxHighlighter
-          language={language}
-          style={oneDark}
-          showLineNumbers
-          wrapLines
-          lineProps={(lineNumber: number) => {
-            const lineIndex = lineNumber - 1 // lineNumber is 1-based
-            const style: React.CSSProperties = {}
-            if (highlightLines.has(lineIndex)) {
-              style.backgroundColor = 'rgba(255, 200, 0, 0.15)'
-            }
-            if (currentMatchLine === lineIndex) {
-              style.backgroundColor = 'rgba(255, 200, 0, 0.3)'
-            }
-            return { style }
-          }}
-          customStyle={{
-            margin: 0,
-            borderRadius: 0,
-            fontSize: '13px',
-            lineHeight: '20px',
-            minHeight: '100%'
-          }}
-          codeTagProps={{
-            style: { fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace' }
-          }}
+      {/* Content area */}
+      {viewMode === 'preview' && isMarkdown ? (
+        <div
+          className="flex-1 overflow-auto p-6 prose prose-sm dark:prose-invert max-w-none"
+          data-testid="file-viewer-markdown-preview"
         >
-          {content}
-        </SyntaxHighlighter>
-      </div>
+          <MarkdownRenderer content={content} />
+        </div>
+      ) : (
+        <div ref={containerRef} className="flex-1 overflow-auto" data-testid="file-viewer-content">
+          <SyntaxHighlighter
+            language={language}
+            style={oneDark}
+            showLineNumbers
+            wrapLines
+            lineProps={(lineNumber: number) => {
+              const lineIndex = lineNumber - 1 // lineNumber is 1-based
+              const style: React.CSSProperties = {}
+              if (highlightLines.has(lineIndex)) {
+                style.backgroundColor = 'rgba(255, 200, 0, 0.15)'
+              }
+              if (currentMatchLine === lineIndex) {
+                style.backgroundColor = 'rgba(255, 200, 0, 0.3)'
+              }
+              return { style }
+            }}
+            customStyle={{
+              margin: 0,
+              borderRadius: 0,
+              fontSize: '13px',
+              lineHeight: '20px',
+              minHeight: '100%'
+            }}
+            codeTagProps={{
+              style: {
+                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace'
+              }
+            }}
+          >
+            {content}
+          </SyntaxHighlighter>
+        </div>
+      )}
     </div>
   )
 }
