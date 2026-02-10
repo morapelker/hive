@@ -104,7 +104,10 @@ const db = {
       dateFrom?: string
       dateTo?: string
       includeArchived?: boolean
-    }) => ipcRenderer.invoke('db:session:search', options)
+    }) => ipcRenderer.invoke('db:session:search', options),
+    getDraft: (sessionId: string) => ipcRenderer.invoke('db:session:getDraft', sessionId),
+    updateDraft: (sessionId: string, draft: string | null) =>
+      ipcRenderer.invoke('db:session:updateDraft', sessionId, draft)
   },
 
   // Session Messages

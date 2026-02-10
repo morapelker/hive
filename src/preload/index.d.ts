@@ -155,6 +155,8 @@ declare global {
         ) => Promise<Session | null>
         delete: (id: string) => Promise<boolean>
         search: (options: SessionSearchOptions) => Promise<SessionWithWorktree[]>
+        getDraft: (sessionId: string) => Promise<string | null>
+        updateDraft: (sessionId: string, draft: string | null) => Promise<void>
       }
       message: {
         create: (data: {

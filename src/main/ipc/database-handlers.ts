@@ -23,7 +23,11 @@ function withErrorHandler<T>(
   try {
     return handler()
   } catch (error) {
-    log.error(`Failed to ${operation}`, error instanceof Error ? error : new Error(String(error)), context)
+    log.error(
+      `Failed to ${operation}`,
+      error instanceof Error ? error : new Error(String(error)),
+      context
+    )
     throw error
   }
 }
@@ -156,6 +160,14 @@ export function registerDatabaseHandlers(): void {
 
   ipcMain.handle('db:session:search', (_event, options: SessionSearchOptions) => {
     return getDatabase().searchSessions(options)
+  })
+
+  ipcMain.handle('db:session:getDraft', (_event, sessionId: string) => {
+    return getDatabase().getSessionDraft(sessionId)
+  })
+
+  ipcMain.handle('db:session:updateDraft', (_event, sessionId: string, draft: string | null) => {
+    getDatabase().updateSessionDraft(sessionId, draft)
   })
 
   // Session Messages

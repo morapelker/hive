@@ -1,7 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { SessionView, OpenCodeMessage, SessionViewState } from '../../src/renderer/src/components/sessions/SessionView'
+import {
+  SessionView,
+  OpenCodeMessage,
+  SessionViewState
+} from '../../src/renderer/src/components/sessions/SessionView'
 
 // Mock clipboard API
 const mockWriteText = vi.fn().mockResolvedValue(undefined)
@@ -54,13 +58,15 @@ This function uses recursion to calculate the factorial.`,
 
 // Mock window.db.message
 const mockDbMessage = {
-  create: vi.fn().mockImplementation((data) => Promise.resolve({
-    id: `msg-${Date.now()}`,
-    session_id: data.session_id,
-    role: data.role,
-    content: data.content,
-    created_at: new Date().toISOString()
-  })),
+  create: vi.fn().mockImplementation((data) =>
+    Promise.resolve({
+      id: `msg-${Date.now()}`,
+      session_id: data.session_id,
+      role: data.role,
+      content: data.content,
+      created_at: new Date().toISOString()
+    })
+  ),
   getBySession: vi.fn().mockResolvedValue(mockDemoMessages),
   delete: vi.fn().mockResolvedValue(true)
 }
@@ -72,13 +78,15 @@ beforeEach(() => {
 
   // Reset mock implementations
   mockDbMessage.getBySession.mockResolvedValue(mockDemoMessages)
-  mockDbMessage.create.mockImplementation((data) => Promise.resolve({
-    id: `msg-${Date.now()}`,
-    session_id: data.session_id,
-    role: data.role,
-    content: data.content,
-    created_at: new Date().toISOString()
-  }))
+  mockDbMessage.create.mockImplementation((data) =>
+    Promise.resolve({
+      id: `msg-${Date.now()}`,
+      session_id: data.session_id,
+      role: data.role,
+      content: data.content,
+      created_at: new Date().toISOString()
+    })
+  )
 
   // Mock window.db
   Object.defineProperty(window, 'db', {
@@ -97,7 +105,9 @@ beforeEach(() => {
           updated_at: new Date().toISOString(),
           completed_at: null
         }),
-        update: vi.fn().mockResolvedValue(null)
+        update: vi.fn().mockResolvedValue(null),
+        getDraft: vi.fn().mockResolvedValue(null),
+        updateDraft: vi.fn().mockResolvedValue(undefined)
       },
       worktree: {
         get: vi.fn().mockResolvedValue(null)
@@ -272,7 +282,6 @@ describe('Session 8: Session View', () => {
         expect(assistantMessages[0]).not.toHaveClass('bg-muted/30')
       })
     })
-
   })
 
   describe('Input Area', () => {
@@ -439,9 +448,12 @@ describe('Session 8: Session View', () => {
       await user.click(sendButton)
 
       // Wait for simulated response
-      await waitFor(() => {
-        expect(screen.queryByTestId('typing-indicator')).not.toBeInTheDocument()
-      }, { timeout: 3000 })
+      await waitFor(
+        () => {
+          expect(screen.queryByTestId('typing-indicator')).not.toBeInTheDocument()
+        },
+        { timeout: 3000 }
+      )
     })
   })
 
@@ -583,18 +595,24 @@ describe('Session 8: Session View', () => {
       await user.click(sendButton)
 
       // Wait for typing indicator to disappear (response received)
-      await waitFor(() => {
-        expect(screen.queryByTestId('typing-indicator')).not.toBeInTheDocument()
-      }, { timeout: 3000 })
+      await waitFor(
+        () => {
+          expect(screen.queryByTestId('typing-indicator')).not.toBeInTheDocument()
+        },
+        { timeout: 3000 }
+      )
 
       // Send second message
       await user.type(input, 'Second message')
       await user.click(sendButton)
 
-      await waitFor(() => {
-        const userMessages = screen.getAllByTestId('message-user')
-        expect(userMessages.length).toBe(initialUserMessages + 2)
-      }, { timeout: 3000 })
+      await waitFor(
+        () => {
+          const userMessages = screen.getAllByTestId('message-user')
+          expect(userMessages.length).toBe(initialUserMessages + 2)
+        },
+        { timeout: 3000 }
+      )
     })
   })
 

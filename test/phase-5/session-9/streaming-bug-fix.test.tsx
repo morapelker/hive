@@ -71,9 +71,11 @@ beforeEach(() => {
 
   mockDbMessage.getBySession.mockResolvedValue([])
   mockDbMessage.delete.mockResolvedValue(true)
-  mockDbMessage.create.mockImplementation((data: { session_id: string; role: 'user' | 'assistant' | 'system'; content: string }) => {
-    return Promise.resolve(makeSavedMessage(data))
-  })
+  mockDbMessage.create.mockImplementation(
+    (data: { session_id: string; role: 'user' | 'assistant' | 'system'; content: string }) => {
+      return Promise.resolve(makeSavedMessage(data))
+    }
+  )
 
   Object.defineProperty(window, 'db', {
     value: {
@@ -91,7 +93,9 @@ beforeEach(() => {
           updated_at: new Date().toISOString(),
           completed_at: null
         }),
-        update: vi.fn().mockResolvedValue(null)
+        update: vi.fn().mockResolvedValue(null),
+        getDraft: vi.fn().mockResolvedValue(null),
+        updateDraft: vi.fn().mockResolvedValue(undefined)
       },
       worktree: {
         get: vi.fn().mockResolvedValue(null)

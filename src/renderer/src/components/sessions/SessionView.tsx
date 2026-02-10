@@ -390,6 +390,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Child session → subtask index mapping for subagent content routing
   const childToSubtaskIndexRef = useRef<Map<string, number>>(new Map())
 
+  // Draft persistence refs
+  const inputValueRef = useRef('')
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Streaming dedup refs
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
   const hasFinalizedCurrentResponseRef = useRef(false)
@@ -671,6 +675,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     finalizedMessageIdsRef.current.clear()
     hasFinalizedCurrentResponseRef.current = false
     childToSubtaskIndexRef.current.clear()
+
+    // Load saved draft for this session
+    window.db.session.getDraft(sessionId).then((draft) => {
+      if (draft) {
+        setInputValue(draft)
+        inputValueRef.current = draft
+      }
+    })
 
     const loadMessagesFromDatabase = async (): Promise<OpenCodeMessage[]> => {
       const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
@@ -1299,6 +1311,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
+  // Save draft on unmount or session change
+  useEffect(() => {
+    return () => {
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+      const currentValue = inputValueRef.current
+      if (currentValue) {
+        window.db.session.updateDraft(sessionId, currentValue)
+      }
+    }
+  }, [sessionId])
+
   // Handle retry connection
   const handleRetry = useCallback(async () => {
     setViewState({ status: 'connecting' })
@@ -1364,6 +1387,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       setQueuedCount((prev) => prev + 1)
     }
     setInputValue('')
+    inputValueRef.current = ''
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+    window.db.session.updateDraft(sessionId, null)
 
     // User just sent a message — cancel any scroll cooldown and resume auto-scroll
     if (scrollCooldownRef.current !== null) {
@@ -1518,14 +1544,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }, [])
 
   // Slash command handlers
-  const handleInputChange = useCallback((value: string) => {
-    setInputValue(value)
-    if (value.startsWith('/') && value.length >= 1) {
-      setShowSlashCommands(true)
-    } else {
-      setShowSlashCommands(false)
-    }
-  }, [])
+  const handleInputChange = useCallback(
+    (value: string) => {
+      setInputValue(value)
+      inputValueRef.current = value
+      if (value.startsWith('/') && value.length >= 1) {
+        setShowSlashCommands(true)
+      } else {
+        setShowSlashCommands(false)
+      }
+
+      // Debounce draft persistence (3 seconds)
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+      draftTimerRef.current = setTimeout(() => {
+        window.db.session.updateDraft(sessionId, value || null)
+      }, 3000)
+    },
+    [sessionId]
+  )
 
   const handleCommandSelect = useCallback((cmd: { name: string; template: string }) => {
     setInputValue(`/${cmd.name} `)

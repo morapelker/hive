@@ -506,6 +506,20 @@ export class DatabaseService {
     return db.prepare(query).all(...values) as SessionWithWorktree[]
   }
 
+  // Session draft operations
+  getSessionDraft(sessionId: string): string | null {
+    const db = this.getDb()
+    const row = db.prepare('SELECT draft_input FROM sessions WHERE id = ?').get(sessionId) as
+      | { draft_input: string | null }
+      | undefined
+    return row?.draft_input ?? null
+  }
+
+  updateSessionDraft(sessionId: string, draft: string | null): void {
+    const db = this.getDb()
+    db.prepare('UPDATE sessions SET draft_input = ? WHERE id = ?').run(draft, sessionId)
+  }
+
   // Session message operations
   createSessionMessage(data: SessionMessageCreate): SessionMessage {
     const db = this.getDb()
@@ -589,12 +603,18 @@ export class DatabaseService {
       | undefined
     if (!updated) return null
 
-    db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), updated.session_id)
+    db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(
+      new Date().toISOString(),
+      updated.session_id
+    )
 
     return updated
   }
 
-  getSessionMessageByOpenCodeId(sessionId: string, opencodeMessageId: string): SessionMessage | null {
+  getSessionMessageByOpenCodeId(
+    sessionId: string,
+    opencodeMessageId: string
+  ): SessionMessage | null {
     const db = this.getDb()
     const row = db
       .prepare(
@@ -664,7 +684,9 @@ export class DatabaseService {
   getIndexes(): { name: string; tbl_name: string }[] {
     const db = this.getDb()
     return db
-      .prepare("SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'")
+      .prepare(
+        "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'"
+      )
       .all() as { name: string; tbl_name: string }[]
   }
 
