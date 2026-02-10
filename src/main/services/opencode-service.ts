@@ -21,6 +21,13 @@ export interface StreamEvent {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any
   childSessionId?: string
+  /** session.status event payload -- only present when type === 'session.status' */
+  statusPayload?: {
+    type: 'idle' | 'busy' | 'retry'
+    attempt?: number
+    message?: string
+    next?: number
+  }
 }
 
 // Type for the OpencodeClient from the SDK
@@ -1044,7 +1051,10 @@ class OpenCodeService {
       type: eventType,
       sessionId: hiveSessionId,
       data: event.properties || event,
-      ...(isChildEvent ? { childSessionId: sessionId } : {})
+      ...(isChildEvent ? { childSessionId: sessionId } : {}),
+      ...(eventType === 'session.status' && event.properties?.status
+        ? { statusPayload: event.properties.status }
+        : {})
     }
 
     this.sendToRenderer('opencode:stream', streamEvent)
