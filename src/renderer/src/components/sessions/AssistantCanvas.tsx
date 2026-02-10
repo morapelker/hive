@@ -84,13 +84,22 @@ function statusChipLabel(status: 'pending' | 'running' | 'success' | 'error'): s
   }
 }
 
-function ToolCallGroup({ toolUses, cwd }: { toolUses: ToolUseInfo[]; cwd?: string | null }): React.JSX.Element {
+function ToolCallGroup({
+  toolUses,
+  cwd
+}: {
+  toolUses: ToolUseInfo[]
+  cwd?: string | null
+}): React.JSX.Element {
   const [isExpanded, setIsExpanded] = useState(false)
   const status = useMemo(() => groupStatus(toolUses), [toolUses])
   const summary = useMemo(() => formatToolSummary(toolUses), [toolUses])
 
   return (
-    <div className="my-1 overflow-hidden rounded-md border border-border/60 bg-muted/20" data-testid="tool-call-group">
+    <div
+      className="my-1 overflow-hidden rounded-md border border-border/60 bg-muted/20"
+      data-testid="tool-call-group"
+    >
       <button
         type="button"
         onClick={() => setIsExpanded((expanded) => !expanded)}
@@ -182,7 +191,11 @@ function renderParts(
         )
       } else if (toolUses.length > 1) {
         renderedParts.push(
-          <div key={`tool-inline-group-${startIndex}`} className="my-0.5 flex flex-col gap-2" data-testid="tool-call-inline-group">
+          <div
+            key={`tool-inline-group-${startIndex}`}
+            className="my-0.5 flex flex-col gap-2"
+            data-testid="tool-call-inline-group"
+          >
             {toolUses.map((toolUse) => (
               <ToolCard key={`tool-${toolUse.id}`} toolUse={toolUse} cwd={cwd} compact={true} />
             ))}
@@ -216,7 +229,9 @@ function renderParts(
     }
 
     if (part.type === 'compaction') {
-      renderedParts.push(<CompactionPill key={`compaction-${index}`} auto={part.compactionAuto ?? false} />)
+      renderedParts.push(
+        <CompactionPill key={`compaction-${index}`} auto={part.compactionAuto ?? false} />
+      )
       index += 1
       continue
     }
@@ -252,7 +267,10 @@ export function AssistantCanvas({
   const shouldUseCompactToolSpacing = hasToolParts(parts)
 
   return (
-    <div className={cn('px-6', shouldUseCompactToolSpacing ? 'py-1' : 'py-5')} data-testid="message-assistant">
+    <div
+      className={cn('px-6', shouldUseCompactToolSpacing ? 'py-1' : 'py-5')}
+      data-testid="message-assistant"
+    >
       <div className="text-sm text-foreground leading-relaxed">
         {hasParts ? (
           renderParts(parts, isStreaming, cwd, shouldUseCompactToolSpacing)
@@ -263,9 +281,6 @@ export function AssistantCanvas({
           </>
         )}
       </div>
-      {isStreaming && (
-        <span className="block text-[10px] text-blue-500 animate-pulse mt-2">Streaming...</span>
-      )}
     </div>
   )
 }

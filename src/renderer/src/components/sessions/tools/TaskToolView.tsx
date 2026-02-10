@@ -31,16 +31,15 @@ export function TaskToolView({ input, output, error }: ToolViewProps) {
     ? cleanOutput
     : outputLines.slice(0, MAX_PREVIEW_LINES).join('\n')
 
-  const truncatedPrompt = prompt.length > MAX_PROMPT_LENGTH
-    ? prompt.slice(0, MAX_PROMPT_LENGTH) + '...'
-    : prompt
+  const truncatedPrompt =
+    prompt.length > MAX_PROMPT_LENGTH ? prompt.slice(0, MAX_PROMPT_LENGTH) + '...' : prompt
 
   return (
     <div data-testid="task-tool-view">
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
         <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-        <span className="text-xs font-medium text-foreground">{description || 'Agent Task'}</span>
+        <span className="text-xs font-medium text-foreground">{description || 'Sub-agent'}</span>
         {subagentType && (
           <span className="text-[10px] bg-blue-500/15 text-blue-500 dark:text-blue-400 rounded px-1.5 py-0.5 font-medium">
             {subagentType}
@@ -57,10 +56,12 @@ export function TaskToolView({ input, output, error }: ToolViewProps) {
           >
             <FileText className="h-3 w-3" />
             <span>Prompt</span>
-            <ChevronDown className={cn(
-              'h-2.5 w-2.5 transition-transform duration-150',
-              !showPrompt && '-rotate-90'
-            )} />
+            <ChevronDown
+              className={cn(
+                'h-2.5 w-2.5 transition-transform duration-150',
+                !showPrompt && '-rotate-90'
+              )}
+            />
           </button>
           {showPrompt && (
             <pre className="mt-1 text-xs font-mono text-muted-foreground bg-muted/50 rounded p-2 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
@@ -91,13 +92,13 @@ export function TaskToolView({ input, output, error }: ToolViewProps) {
               className="flex items-center gap-1 mt-1.5 text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
               data-testid="show-all-button"
             >
-              <ChevronDown className={cn(
-                'h-3 w-3 transition-transform duration-150',
-                showAllOutput && 'rotate-180'
-              )} />
-              {showAllOutput
-                ? 'Show less'
-                : `Show all ${outputLines.length} lines`}
+              <ChevronDown
+                className={cn(
+                  'h-3 w-3 transition-transform duration-150',
+                  showAllOutput && 'rotate-180'
+                )}
+              />
+              {showAllOutput ? 'Show less' : `Show all ${outputLines.length} lines`}
             </button>
           )}
         </div>

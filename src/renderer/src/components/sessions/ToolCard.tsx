@@ -382,7 +382,7 @@ function CollapsedContent({
         <span className="text-muted-foreground shrink-0">
           <Bot className="h-3.5 w-3.5" />
         </span>
-        <span className="font-medium text-foreground shrink-0">Task</span>
+        <span className="font-medium text-foreground shrink-0">Agent</span>
         {subagentType && (
           <span className="text-[10px] bg-blue-500/15 text-blue-500 dark:text-blue-400 rounded px-1 py-0.5 font-medium shrink-0">
             {subagentType}
