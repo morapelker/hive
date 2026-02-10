@@ -55,6 +55,8 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
   const { selectedWorktreeId, selectWorktree, archiveWorktree, unbranchWorktree } =
     useWorktreeStore()
 
+  const archivingWorktreeIds = useWorktreeStore((s) => s.archivingWorktreeIds)
+  const isArchiving = archivingWorktreeIds.has(worktree.id)
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktree.id]?.runRunning ?? false)
   const isSelected = selectedWorktreeId === worktree.id
@@ -207,23 +209,32 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
         <div
           className={cn(
             'group flex items-center gap-1.5 pl-8 pr-2 py-1 rounded-md cursor-pointer transition-colors',
-            isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+            isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+            isArchiving && 'opacity-50 pointer-events-none'
           )}
           onClick={handleClick}
           data-testid={`worktree-item-${worktree.id}`}
         >
           {/* Branch Icons / Status Badges — show up to 2 */}
-          {isRunProcessAlive && <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />}
-          {worktreeStatus === 'working' && (
-            <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
+          {isArchiving ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+          ) : (
+            <>
+              {isRunProcessAlive && (
+                <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />
+              )}
+              {worktreeStatus === 'working' && (
+                <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
+              )}
+              {!isRunProcessAlive &&
+                worktreeStatus !== 'working' &&
+                (worktree.is_default ? (
+                  <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                ) : (
+                  <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                ))}
+            </>
           )}
-          {!isRunProcessAlive &&
-            worktreeStatus !== 'working' &&
-            (worktree.is_default ? (
-              <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            ) : (
-              <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            ))}
 
           {/* Worktree Name / Inline Rename Input */}
           {isRenamingBranch ? (
