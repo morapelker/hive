@@ -12,6 +12,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  sort_order: number
   created_at: string
   last_accessed_at: string
 }
@@ -26,9 +27,6 @@ interface ProjectState {
   selectedProjectId: string | null
   expandedProjectIds: Set<string>
   editingProjectId: string | null
-
-  // Ordering
-  projectOrder: string[] // persisted custom order of project IDs
 
   // Actions
   loadProjects: () => Promise<void>
@@ -65,52 +63,13 @@ export const useProjectStore = create<ProjectState>()(
       selectedProjectId: null,
       expandedProjectIds: new Set(),
       editingProjectId: null,
-      projectOrder: [],
 
-      // Load all projects from database
+      // Load all projects from database (already ordered by sort_order ASC)
       loadProjects: async () => {
         set({ isLoading: true, error: null })
         try {
           const projects = await window.db.project.getAll()
-
-          // Read order directly from localStorage to avoid Zustand persist rehydration race.
-          // On startup, loadProjects fires before persist middleware rehydrates, so
-          // get().projectOrder would be [] even when localStorage has a saved order.
-          let customOrder = get().projectOrder
-          if (customOrder.length === 0) {
-            try {
-              const raw = localStorage.getItem('hive-projects')
-              if (raw) {
-                const parsed = JSON.parse(raw)
-                if (Array.isArray(parsed?.state?.projectOrder)) {
-                  customOrder = parsed.state.projectOrder
-                }
-              }
-            } catch {
-              // Ignore parse errors
-            }
-          }
-
-          if (customOrder.length > 0) {
-            // Apply custom order: ordered projects first, then any new ones at the end
-            const ordered: typeof projects = []
-            for (const id of customOrder) {
-              const p = projects.find((proj) => proj.id === id)
-              if (p) ordered.push(p)
-            }
-            // Append projects not in custom order (newly added)
-            for (const p of projects) {
-              if (!customOrder.includes(p.id)) ordered.push(p)
-            }
-            set({ projects: ordered, isLoading: false })
-          } else {
-            // Default: sort by last_accessed_at descending
-            const sortedProjects = projects.sort(
-              (a, b) =>
-                new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
-            )
-            set({ projects: sortedProjects, isLoading: false })
-          }
+          set({ projects, isLoading: false })
         } catch (error) {
           set({
             error: error instanceof Error ? error.message : 'Failed to load projects',
@@ -185,8 +144,7 @@ export const useProjectStore = create<ProjectState>()(
                 projects: state.projects.filter((p) => p.id !== id),
                 selectedProjectId: state.selectedProjectId === id ? null : state.selectedProjectId,
                 expandedProjectIds: newExpandedIds,
-                editingProjectId: state.editingProjectId === id ? null : state.editingProjectId,
-                projectOrder: state.projectOrder.filter((pid) => pid !== id)
+                editingProjectId: state.editingProjectId === id ? null : state.editingProjectId
               }
             })
           }
@@ -300,61 +258,44 @@ export const useProjectStore = create<ProjectState>()(
       // Reorder projects via drag-and-drop
       reorderProjects: (fromIndex: number, toIndex: number) => {
         set((state) => {
-          const currentProjects = state.projects
-
-          // Build order array from current state or existing custom order
-          let order: string[]
-          if (state.projectOrder.length > 0) {
-            order = [...state.projectOrder]
-            // Add any new projects not in order
-            for (const p of currentProjects) {
-              if (!order.includes(p.id)) order.push(p.id)
-            }
-            // Remove stale IDs
-            order = order.filter((id) => currentProjects.some((p) => p.id === id))
-          } else {
-            order = currentProjects.map((p) => p.id)
-          }
+          const projects = [...state.projects]
 
           if (
             fromIndex < 0 ||
-            fromIndex >= order.length ||
+            fromIndex >= projects.length ||
             toIndex < 0 ||
-            toIndex >= order.length
+            toIndex >= projects.length
           ) {
             return state
           }
 
           // Splice move
-          const [removed] = order.splice(fromIndex, 1)
-          order.splice(toIndex, 0, removed)
+          const [removed] = projects.splice(fromIndex, 1)
+          projects.splice(toIndex, 0, removed)
 
-          // Reorder the projects array to match
-          const reordered: typeof currentProjects = []
-          for (const id of order) {
-            const p = currentProjects.find((proj) => proj.id === id)
-            if (p) reordered.push(p)
-          }
+          // Persist new order to database (fire and forget)
+          const orderedIds = projects.map((p) => p.id)
+          window.db.project.reorder(orderedIds).catch(() => {
+            // Ignore reorder persistence errors
+          })
 
-          return { projectOrder: order, projects: reordered }
+          return { projects }
         })
       }
     }),
     {
       name: 'hive-projects',
       storage: createJSONStorage(() => localStorage),
-      // Only persist expandedProjectIds and projectOrder
+      // Only persist expandedProjectIds
       partialize: (state) => ({
-        expandedProjectIds: Array.from(state.expandedProjectIds),
-        projectOrder: state.projectOrder
+        expandedProjectIds: Array.from(state.expandedProjectIds)
       }),
       // Merge persisted state, converting array back to Set
       merge: (persistedState, currentState) => ({
         ...currentState,
         expandedProjectIds: new Set(
           (persistedState as { expandedProjectIds?: string[] })?.expandedProjectIds ?? []
-        ),
-        projectOrder: (persistedState as { projectOrder?: string[] })?.projectOrder ?? []
+        )
       })
     }
   )

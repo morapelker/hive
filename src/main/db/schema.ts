@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 7
+export const CURRENT_SCHEMA_VERSION = 8
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -153,6 +153,20 @@ export const MIGRATIONS: Migration[] = [
     version: 7,
     name: 'add_worktree_branch_renamed',
     up: `ALTER TABLE worktrees ADD COLUMN branch_renamed INTEGER NOT NULL DEFAULT 0;`,
+    down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
+  },
+  {
+    version: 8,
+    name: 'add_project_sort_order',
+    up: `
+      ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+
+      -- Initialize sort_order from current last_accessed_at ranking (most recent = 0)
+      UPDATE projects SET sort_order = (
+        SELECT COUNT(*) FROM projects p2
+        WHERE p2.last_accessed_at > projects.last_accessed_at
+      );
+    `,
     down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
   }
 ]

@@ -9,6 +9,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  sort_order: number
   created_at: string
   last_accessed_at: string
 }
@@ -109,6 +110,7 @@ declare global {
         ) => Promise<Project | null>
         delete: (id: string) => Promise<boolean>
         touch: (id: string) => Promise<boolean>
+        reorder: (orderedIds: string[]) => Promise<boolean>
       }
       worktree: {
         create: (data: {

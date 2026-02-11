@@ -39,6 +39,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  sort_order: number
   created_at: string
   last_accessed_at: string
 }
