@@ -192,6 +192,7 @@ declare global {
       readFromClipboard: () => Promise<string>
       detectLanguage: (projectPath: string) => Promise<string | null>
       loadLanguageIcons: () => Promise<Record<string, string>>
+      initRepository: (path: string) => Promise<{ success: boolean; error?: string }>
     }
     worktreeOps: {
       create: (params: { projectId: string; projectPath: string; projectName: string }) => Promise<{

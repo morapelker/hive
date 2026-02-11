@@ -1,5 +1,6 @@
 import { ipcMain, dialog, shell, clipboard, BrowserWindow } from 'electron'
 import { existsSync, statSync, readFileSync } from 'fs'
+import { execSync } from 'child_process'
 import { join, basename, extname } from 'path'
 import { createLogger } from '../services/logger'
 import { detectProjectLanguage } from '../services/language-detector'
@@ -76,7 +77,8 @@ export function registerProjectHandlers(): void {
     if (!isGitRepository(path)) {
       return {
         success: false,
-        error: 'The selected folder is not a Git repository. Please select a folder containing a .git directory.'
+        error:
+          'The selected folder is not a Git repository. Please select a folder containing a .git directory.'
       }
     }
 
@@ -86,6 +88,29 @@ export function registerProjectHandlers(): void {
       name: basename(path)
     }
   })
+
+  // Initialize a new git repository in a directory
+  ipcMain.handle(
+    'git:init',
+    async (_event, path: string): Promise<{ success: boolean; error?: string }> => {
+      try {
+        log.info('Initializing git repository', { path })
+        execSync('git init --initial-branch=main', { cwd: path, encoding: 'utf-8' })
+        log.info('Git repository initialized successfully', { path })
+        return { success: true }
+      } catch (error) {
+        log.error(
+          'Failed to initialize git repository',
+          error instanceof Error ? error : new Error(String(error)),
+          { path }
+        )
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }
+    }
+  )
 
   // Open path in Finder/Explorer
   ipcMain.handle('shell:showItemInFolder', (_event, path: string): void => {
@@ -117,55 +142,53 @@ export function registerProjectHandlers(): void {
   )
 
   // Load custom language icons as data URLs
-  ipcMain.handle(
-    'project:loadLanguageIcons',
-    (): Record<string, string> => {
-      const db = getDatabase()
-      const raw = db.getSetting('language_icons')
-      if (!raw) return {}
+  ipcMain.handle('project:loadLanguageIcons', (): Record<string, string> => {
+    const db = getDatabase()
+    const raw = db.getSetting('language_icons')
+    if (!raw) return {}
 
-      try {
-        const iconPaths: Record<string, string> = JSON.parse(raw)
-        const result: Record<string, string> = {}
+    try {
+      const iconPaths: Record<string, string> = JSON.parse(raw)
+      const result: Record<string, string> = {}
 
-        const mimeTypes: Record<string, string> = {
-          '.svg': 'image/svg+xml',
-          '.png': 'image/png',
-          '.jpg': 'image/jpeg',
-          '.jpeg': 'image/jpeg',
-          '.gif': 'image/gif',
-          '.webp': 'image/webp'
-        }
-
-        for (const [language, filePath] of Object.entries(iconPaths)) {
-          try {
-            if (!existsSync(filePath)) {
-              log.warn('Language icon file not found', { language, filePath })
-              continue
-            }
-            const ext = extname(filePath).toLowerCase()
-            const mime = mimeTypes[ext]
-            if (!mime) {
-              log.warn('Unsupported icon file type', { language, filePath, ext })
-              continue
-            }
-            const data = readFileSync(filePath)
-            result[language] = `data:${mime};base64,${data.toString('base64')}`
-          } catch (err) {
-            log.warn(
-              'Failed to read language icon',
-              { language, filePath, error: err instanceof Error ? err.message : String(err) }
-            )
-          }
-        }
-
-        return result
-      } catch {
-        log.warn('Failed to parse language_icons setting')
-        return {}
+      const mimeTypes: Record<string, string> = {
+        '.svg': 'image/svg+xml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp'
       }
+
+      for (const [language, filePath] of Object.entries(iconPaths)) {
+        try {
+          if (!existsSync(filePath)) {
+            log.warn('Language icon file not found', { language, filePath })
+            continue
+          }
+          const ext = extname(filePath).toLowerCase()
+          const mime = mimeTypes[ext]
+          if (!mime) {
+            log.warn('Unsupported icon file type', { language, filePath, ext })
+            continue
+          }
+          const data = readFileSync(filePath)
+          result[language] = `data:${mime};base64,${data.toString('base64')}`
+        } catch (err) {
+          log.warn('Failed to read language icon', {
+            language,
+            filePath,
+            error: err instanceof Error ? err.message : String(err)
+          })
+        }
+      }
+
+      return result
+    } catch {
+      log.warn('Failed to parse language_icons setting')
+      return {}
     }
-  )
+  })
 
   // Seed default custom language icons if not already set
   const db = getDatabase()

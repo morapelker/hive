@@ -166,7 +166,11 @@ const projectOps = {
 
   // Load custom language icons as data URLs
   loadLanguageIcons: (): Promise<Record<string, string>> =>
-    ipcRenderer.invoke('project:loadLanguageIcons')
+    ipcRenderer.invoke('project:loadLanguageIcons'),
+
+  // Initialize a new git repository in a directory
+  initRepository: (path: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:init', path)
 }
 
 // Worktree operations API
