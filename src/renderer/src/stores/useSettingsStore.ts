@@ -37,6 +37,9 @@ export interface AppSettings {
 
   // Quick Actions
   lastOpenAction: QuickActionType | null
+
+  // Chrome
+  customChromeCommand: string // Custom chrome launch command, e.g. "open -a Chrome {url}"
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -48,7 +51,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   commitTemplate: '',
   autoFetchInterval: 0,
   selectedModel: null,
-  lastOpenAction: null
+  lastOpenAction: null,
+  customChromeCommand: ''
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -102,7 +106,8 @@ function extractSettings(state: SettingsState): AppSettings {
     commitTemplate: state.commitTemplate,
     autoFetchInterval: state.autoFetchInterval,
     selectedModel: state.selectedModel,
-    lastOpenAction: state.lastOpenAction
+    lastOpenAction: state.lastOpenAction,
+    customChromeCommand: state.customChromeCommand
   }
 }
 
@@ -175,6 +180,7 @@ export const useSettingsStore = create<SettingsState>()(
         autoFetchInterval: state.autoFetchInterval,
         selectedModel: state.selectedModel,
         lastOpenAction: state.lastOpenAction,
+        customChromeCommand: state.customChromeCommand,
         activeSection: state.activeSection
       })
     }

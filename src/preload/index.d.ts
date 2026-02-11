@@ -286,6 +286,10 @@ declare global {
       }>
       isLogMode: () => Promise<boolean>
       openInApp: (appName: string, path: string) => Promise<{ success: boolean; error?: string }>
+      openInChrome: (
+        url: string,
+        customCommand?: string
+      ) => Promise<{ success: boolean; error?: string }>
       onNewSessionShortcut: (callback: () => void) => () => void
       onCloseSessionShortcut: (callback: () => void) => () => void
       onFileSearchShortcut: (callback: () => void) => () => void
