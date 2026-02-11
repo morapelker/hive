@@ -8,12 +8,8 @@ interface MarkdownRendererProps {
 }
 
 const components: Components = {
-  h1: ({ children }) => (
-    <h1 className="text-xl font-bold mt-6 mb-3 first:mt-0">{children}</h1>
-  ),
-  h2: ({ children }) => (
-    <h2 className="text-lg font-semibold mt-5 mb-2 first:mt-0">{children}</h2>
-  ),
+  h1: ({ children }) => <h1 className="text-xl font-bold mt-6 mb-3 first:mt-0">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-lg font-semibold mt-5 mb-2 first:mt-0">{children}</h2>,
   h3: ({ children }) => (
     <h3 className="text-base font-semibold mt-4 mb-2 first:mt-0">{children}</h3>
   ),
@@ -36,9 +32,7 @@ const components: Components = {
       {children}
     </th>
   ),
-  td: ({ children }) => (
-    <td className="border border-border px-3 py-1.5">{children}</td>
-  ),
+  td: ({ children }) => <td className="border border-border px-3 py-1.5">{children}</td>,
   a: ({ href, children }) => (
     <a
       href={href}
@@ -54,16 +48,15 @@ const components: Components = {
   em: ({ children }) => <em className="italic">{children}</em>,
   code: ({ className, children }) => {
     const match = /language-(\w+)/.exec(className || '')
-    const isBlock = match !== null
+    const content = String(children)
+    const isBlock = match !== null || content.includes('\n')
 
     if (isBlock) {
-      const code = String(children).replace(/\n$/, '')
-      return <CodeBlock code={code} language={match![1]} />
+      const code = content.replace(/\n$/, '')
+      return <CodeBlock code={code} language={match?.[1] ?? 'text'} />
     }
 
-    return (
-      <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono">{children}</code>
-    )
+    return <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono">{children}</code>
   },
   pre: ({ children }) => <>{children}</>
 }
