@@ -13,6 +13,7 @@ import { WorktreeItem } from '../../../src/renderer/src/components/worktrees/Wor
 // Store imports
 // =====================================================
 import { useScriptStore } from '../../../src/renderer/src/stores/useScriptStore'
+import { deleteBuffer } from '../../../src/renderer/src/lib/output-ring-buffer'
 import { useWorktreeStatusStore } from '../../../src/renderer/src/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 import { useProjectStore } from '../../../src/renderer/src/stores/useProjectStore'
@@ -112,13 +113,30 @@ const mockDb = {
 beforeEach(() => {
   vi.clearAllMocks()
 
-  Object.defineProperty(window, 'scriptOps', { value: mockScriptOps, writable: true, configurable: true })
-  Object.defineProperty(window, 'worktreeOps', { value: mockWorktreeOps, writable: true, configurable: true })
-  Object.defineProperty(window, 'projectOps', { value: mockProjectOps, writable: true, configurable: true })
+  Object.defineProperty(window, 'scriptOps', {
+    value: mockScriptOps,
+    writable: true,
+    configurable: true
+  })
+  Object.defineProperty(window, 'worktreeOps', {
+    value: mockWorktreeOps,
+    writable: true,
+    configurable: true
+  })
+  Object.defineProperty(window, 'projectOps', {
+    value: mockProjectOps,
+    writable: true,
+    configurable: true
+  })
   Object.defineProperty(window, 'db', { value: mockDb, writable: true, configurable: true })
 
   // Reset stores
   useScriptStore.setState({ scriptStates: {} })
+  deleteBuffer('wt-store-1')
+  deleteBuffer('wt-store-2')
+  deleteBuffer('wt-store-3')
+  deleteBuffer('wt-store-4')
+  deleteBuffer('wt-cross-1')
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
   useLayoutStore.getState().setBottomPanelTab('setup')
   useWorktreeStore.setState({ selectedWorktreeId: null, worktreesByProject: new Map() })
@@ -227,38 +245,49 @@ describe('RunTab Component', () => {
     act(() => {
       useWorktreeStore.setState({
         selectedWorktreeId: worktreeId,
-        worktreesByProject: new Map([[projectId, [{
-          id: worktreeId,
-          project_id: projectId,
-          name: 'test-worktree',
-          branch_name: 'test-branch',
-          path: '/tmp/test',
-          status: 'active' as const,
-          is_default: false,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        }]]])
+        worktreesByProject: new Map([
+          [
+            projectId,
+            [
+              {
+                id: worktreeId,
+                project_id: projectId,
+                name: 'test-worktree',
+                branch_name: 'test-branch',
+                path: '/tmp/test',
+                status: 'active' as const,
+                is_default: false,
+                created_at: new Date().toISOString(),
+                last_accessed_at: new Date().toISOString()
+              }
+            ]
+          ]
+        ])
       })
       useProjectStore.setState({
-        projects: [{
-          id: projectId,
-          name: 'Test Project',
-          path: '/tmp/test',
-          description: null,
-          tags: null,
-          language: null,
-          setup_script: null,
-          run_script: null,
-          archive_script: null,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        }]
+        projects: [
+          {
+            id: projectId,
+            name: 'Test Project',
+            path: '/tmp/test',
+            description: null,
+            tags: null,
+            language: null,
+            setup_script: null,
+            run_script: null,
+            archive_script: null,
+            created_at: new Date().toISOString(),
+            last_accessed_at: new Date().toISOString()
+          }
+        ]
       })
       useLayoutStore.getState().setBottomPanelTab('run')
     })
 
     render(<BottomPanel />)
-    expect(screen.getByText('No run script configured. Add one in Project Settings.')).toBeInTheDocument()
+    expect(
+      screen.getByText('No run script configured. Add one in Project Settings.')
+    ).toBeInTheDocument()
   })
 })
 
@@ -278,32 +307,41 @@ describe('SetupTab Integration', () => {
     act(() => {
       useWorktreeStore.setState({
         selectedWorktreeId: worktreeId,
-        worktreesByProject: new Map([[projectId, [{
-          id: worktreeId,
-          project_id: projectId,
-          name: 'setup-worktree',
-          branch_name: 'setup-branch',
-          path: '/tmp/setup',
-          status: 'active' as const,
-          is_default: false,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        }]]])
+        worktreesByProject: new Map([
+          [
+            projectId,
+            [
+              {
+                id: worktreeId,
+                project_id: projectId,
+                name: 'setup-worktree',
+                branch_name: 'setup-branch',
+                path: '/tmp/setup',
+                status: 'active' as const,
+                is_default: false,
+                created_at: new Date().toISOString(),
+                last_accessed_at: new Date().toISOString()
+              }
+            ]
+          ]
+        ])
       })
       useProjectStore.setState({
-        projects: [{
-          id: projectId,
-          name: 'Setup Project',
-          path: '/tmp/setup',
-          description: null,
-          tags: null,
-          language: null,
-          setup_script: 'echo hello',
-          run_script: null,
-          archive_script: null,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        }]
+        projects: [
+          {
+            id: projectId,
+            name: 'Setup Project',
+            path: '/tmp/setup',
+            description: null,
+            tags: null,
+            language: null,
+            setup_script: 'echo hello',
+            run_script: null,
+            archive_script: null,
+            created_at: new Date().toISOString(),
+            last_accessed_at: new Date().toISOString()
+          }
+        ]
       })
     })
 
@@ -348,7 +386,7 @@ describe('Script Store Integration', () => {
     const state = useScriptStore.getState().getScriptState(worktreeId)
     expect(state.runRunning).toBe(true)
     expect(state.runPid).toBe(12345)
-    expect(state.runOutput).toEqual(['running...'])
+    expect(useScriptStore.getState().getRunOutput('wt-store-3')).toEqual(['running...'])
   })
 
   test('clearRunOutput resets run output', () => {
@@ -356,8 +394,7 @@ describe('Script Store Integration', () => {
     useScriptStore.getState().appendRunOutput(worktreeId, 'output')
     useScriptStore.getState().clearRunOutput(worktreeId)
 
-    const state = useScriptStore.getState().getScriptState(worktreeId)
-    expect(state.runOutput).toEqual([])
+    expect(useScriptStore.getState().getRunOutput('wt-store-4')).toEqual([])
   })
 
   test('getScriptState returns defaults for unknown worktree', () => {
@@ -365,7 +402,7 @@ describe('Script Store Integration', () => {
     expect(state.setupOutput).toEqual([])
     expect(state.setupRunning).toBe(false)
     expect(state.setupError).toBeNull()
-    expect(state.runOutput).toEqual([])
+    expect(useScriptStore.getState().getRunOutput('unknown-wt')).toEqual([])
     expect(state.runRunning).toBe(false)
     expect(state.runPid).toBeNull()
   })
@@ -471,30 +508,35 @@ describe('Default Worktree Store', () => {
   test('getDefaultWorktree returns default worktree', () => {
     const projectId = 'proj-default-1'
     useWorktreeStore.setState({
-      worktreesByProject: new Map([[projectId, [
-        {
-          id: 'wt-default',
-          project_id: projectId,
-          name: '(no-worktree)',
-          branch_name: '',
-          path: '/tmp/project',
-          status: 'active' as const,
-          is_default: true,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        },
-        {
-          id: 'wt-regular',
-          project_id: projectId,
-          name: 'feature',
-          branch_name: 'feature',
-          path: '/tmp/project/worktrees/feature',
-          status: 'active' as const,
-          is_default: false,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        }
-      ]]])
+      worktreesByProject: new Map([
+        [
+          projectId,
+          [
+            {
+              id: 'wt-default',
+              project_id: projectId,
+              name: '(no-worktree)',
+              branch_name: '',
+              path: '/tmp/project',
+              status: 'active' as const,
+              is_default: true,
+              created_at: new Date().toISOString(),
+              last_accessed_at: new Date().toISOString()
+            },
+            {
+              id: 'wt-regular',
+              project_id: projectId,
+              name: 'feature',
+              branch_name: 'feature',
+              path: '/tmp/project/worktrees/feature',
+              status: 'active' as const,
+              is_default: false,
+              created_at: new Date().toISOString(),
+              last_accessed_at: new Date().toISOString()
+            }
+          ]
+        ]
+      ])
     })
 
     const defaultWt = useWorktreeStore.getState().getDefaultWorktree(projectId)
@@ -506,19 +548,24 @@ describe('Default Worktree Store', () => {
   test('getDefaultWorktree returns null for project with no default', () => {
     const projectId = 'proj-no-default'
     useWorktreeStore.setState({
-      worktreesByProject: new Map([[projectId, [
-        {
-          id: 'wt-x',
-          project_id: projectId,
-          name: 'feature',
-          branch_name: 'feature',
-          path: '/tmp/x',
-          status: 'active' as const,
-          is_default: false,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        }
-      ]]])
+      worktreesByProject: new Map([
+        [
+          projectId,
+          [
+            {
+              id: 'wt-x',
+              project_id: projectId,
+              name: 'feature',
+              branch_name: 'feature',
+              path: '/tmp/x',
+              status: 'active' as const,
+              is_default: false,
+              created_at: new Date().toISOString(),
+              last_accessed_at: new Date().toISOString()
+            }
+          ]
+        ]
+      ])
     })
 
     expect(useWorktreeStore.getState().getDefaultWorktree(projectId)).toBeNull()
@@ -527,24 +574,29 @@ describe('Default Worktree Store', () => {
   test('archiveWorktree blocks default worktree', async () => {
     const projectId = 'proj-block-archive'
     useWorktreeStore.setState({
-      worktreesByProject: new Map([[projectId, [
-        {
-          id: 'wt-def-block',
-          project_id: projectId,
-          name: '(no-worktree)',
-          branch_name: '',
-          path: '/tmp/block',
-          status: 'active' as const,
-          is_default: true,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        }
-      ]]])
+      worktreesByProject: new Map([
+        [
+          projectId,
+          [
+            {
+              id: 'wt-def-block',
+              project_id: projectId,
+              name: '(no-worktree)',
+              branch_name: '',
+              path: '/tmp/block',
+              status: 'active' as const,
+              is_default: true,
+              created_at: new Date().toISOString(),
+              last_accessed_at: new Date().toISOString()
+            }
+          ]
+        ]
+      ])
     })
 
-    const result = await useWorktreeStore.getState().archiveWorktree(
-      'wt-def-block', '/tmp/block', '', '/tmp/project'
-    )
+    const result = await useWorktreeStore
+      .getState()
+      .archiveWorktree('wt-def-block', '/tmp/block', '', '/tmp/project')
     expect(result.success).toBe(false)
     expect(result.error).toContain('default')
   })
@@ -552,24 +604,29 @@ describe('Default Worktree Store', () => {
   test('unbranchWorktree blocks default worktree', async () => {
     const projectId = 'proj-block-unbranch'
     useWorktreeStore.setState({
-      worktreesByProject: new Map([[projectId, [
-        {
-          id: 'wt-def-unbranch',
-          project_id: projectId,
-          name: '(no-worktree)',
-          branch_name: '',
-          path: '/tmp/unbranch',
-          status: 'active' as const,
-          is_default: true,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        }
-      ]]])
+      worktreesByProject: new Map([
+        [
+          projectId,
+          [
+            {
+              id: 'wt-def-unbranch',
+              project_id: projectId,
+              name: '(no-worktree)',
+              branch_name: '',
+              path: '/tmp/unbranch',
+              status: 'active' as const,
+              is_default: true,
+              created_at: new Date().toISOString(),
+              last_accessed_at: new Date().toISOString()
+            }
+          ]
+        ]
+      ])
     })
 
-    const result = await useWorktreeStore.getState().unbranchWorktree(
-      'wt-def-unbranch', '/tmp/unbranch', '', '/tmp/project'
-    )
+    const result = await useWorktreeStore
+      .getState()
+      .unbranchWorktree('wt-def-unbranch', '/tmp/unbranch', '', '/tmp/project')
     expect(result.success).toBe(false)
     expect(result.error).toContain('default')
   })

@@ -4,36 +4,42 @@ import { Play, Square, RotateCcw, Loader2, Trash2 } from 'lucide-react'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { getOrCreateBuffer, TRUNCATION_MARKER } from '@/lib/output-ring-buffer'
 
 interface RunTabProps {
   worktreeId: string | null
 }
 
+const emptyOutput: string[] = []
+
 export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
   const outputRef = useRef<HTMLDivElement>(null)
   const unsubRef = useRef<(() => void) | null>(null)
 
-  const scriptState = useScriptStore((s) =>
-    worktreeId ? s.scriptStates[worktreeId] : null
+  // Subscribe to version counter (triggers re-render on each append)
+  const runOutputVersion = useScriptStore((s) =>
+    worktreeId ? (s.scriptStates[worktreeId]?.runOutputVersion ?? 0) : 0
   )
 
-  const emptyOutput: string[] = useMemo(() => [], [])
-  const runOutput = scriptState?.runOutput ?? emptyOutput
-  const runRunning = scriptState?.runRunning ?? false
+  // Produce the ordered array only when version changes
+  const runOutput = useMemo(() => {
+    if (!worktreeId) return emptyOutput
+    return getOrCreateBuffer(worktreeId).toArray()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worktreeId, runOutputVersion])
 
-  const {
-    appendRunOutput,
-    setRunRunning,
-    setRunPid,
-    clearRunOutput
-  } = useScriptStore.getState()
+  const runRunning = useScriptStore((s) =>
+    worktreeId ? (s.scriptStates[worktreeId]?.runRunning ?? false) : false
+  )
+
+  const { appendRunOutput, setRunRunning, setRunPid, clearRunOutput } = useScriptStore.getState()
 
   // Auto-scroll to bottom on new output
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight
     }
-  }, [runOutput])
+  }, [runOutputVersion])
 
   // Subscribe to IPC events for this worktree
   useEffect(() => {
@@ -58,10 +64,7 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
           }
           break
         case 'error':
-          appendRunOutput(
-            worktreeId,
-            `\x00ERR:Process exited with code ${event.exitCode}`
-          )
+          appendRunOutput(worktreeId, `\x00ERR:Process exited with code ${event.exitCode}`)
           setRunRunning(worktreeId, false)
           setRunPid(worktreeId, null)
           break
@@ -124,7 +127,15 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
     } else {
       setRunRunning(worktreeId, false)
     }
-  }, [worktreeId, runRunning, getProject, getWorktreePath, clearRunOutput, setRunRunning, setRunPid])
+  }, [
+    worktreeId,
+    runRunning,
+    getProject,
+    getWorktreePath,
+    clearRunOutput,
+    setRunRunning,
+    setRunPid
+  ])
 
   const handleStop = useCallback(async () => {
     if (!worktreeId) return
@@ -169,6 +180,17 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
           </div>
         )}
         {runOutput.map((line, i) => {
+          if (line === TRUNCATION_MARKER || line.startsWith('\x00TRUNC:')) {
+            const msg = line.startsWith('\x00TRUNC:') ? line.slice(7) : '[older output truncated]'
+            return (
+              <div
+                key={i}
+                className="text-muted-foreground text-center text-[10px] py-1 border-b border-border/50"
+              >
+                {msg}
+              </div>
+            )
+          }
           if (line.startsWith('\x00CMD:')) {
             const cmd = line.slice(5)
             return (
@@ -222,39 +244,39 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
           )}
           {hasRunScript && (
             <>
-            {runRunning ? (
-              <>
+              {runRunning ? (
+                <>
+                  <button
+                    onClick={handleStop}
+                    className="flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-accent transition-colors"
+                    data-testid="stop-button"
+                  >
+                    <Square className="h-3 w-3" />
+                    Stop
+                  </button>
+                  <button
+                    onClick={handleRestart}
+                    className="flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-accent transition-colors"
+                    data-testid="restart-button"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Restart
+                  </button>
+                </>
+              ) : (
                 <button
-                  onClick={handleStop}
+                  onClick={handleRun}
                   className="flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-accent transition-colors"
-                  data-testid="stop-button"
+                  data-testid="run-button"
                 >
-                  <Square className="h-3 w-3" />
-                  Stop
+                  {runRunning ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Play className="h-3 w-3" />
+                  )}
+                  Run
                 </button>
-                <button
-                  onClick={handleRestart}
-                  className="flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-accent transition-colors"
-                  data-testid="restart-button"
-                >
-                  <RotateCcw className="h-3 w-3" />
-                  Restart
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={handleRun}
-                className="flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-accent transition-colors"
-                data-testid="run-button"
-              >
-                {runRunning ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Play className="h-3 w-3" />
-                )}
-                Run
-              </button>
-            )}
+              )}
             </>
           )}
         </div>

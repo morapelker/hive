@@ -6,6 +6,7 @@ import type { BottomPanelTab } from '@/stores/useLayoutStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { extractDevServerUrl } from '@/lib/format-utils'
+import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
 import { SetupTab } from './SetupTab'
 import { RunTab } from './RunTab'
 import { toast } from 'sonner'
@@ -25,12 +26,18 @@ export function BottomPanel(): React.JSX.Element {
   const scriptState = useScriptStore((s) =>
     selectedWorktreeId ? (s.scriptStates[selectedWorktreeId] ?? null) : null
   )
+  const runOutputVersion = useScriptStore((s) =>
+    selectedWorktreeId ? (s.scriptStates[selectedWorktreeId]?.runOutputVersion ?? 0) : 0
+  )
   const customChromeCommand = useSettingsStore((s) => s.customChromeCommand)
 
   const detectedUrl = useMemo(() => {
-    if (!scriptState?.runRunning || !scriptState.runOutput?.length) return null
-    return extractDevServerUrl(scriptState.runOutput)
-  }, [scriptState])
+    if (!selectedWorktreeId || !scriptState?.runRunning) return null
+    const runOutput = getOrCreateBuffer(selectedWorktreeId).toArray()
+    if (!runOutput.length) return null
+    return extractDevServerUrl(runOutput)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWorktreeId, scriptState?.runRunning, runOutputVersion])
 
   const [chromeConfigOpen, setChromeConfigOpen] = useState(false)
   const [chromeCommandInput, setChromeCommandInput] = useState(customChromeCommand)
