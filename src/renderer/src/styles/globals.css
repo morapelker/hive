@@ -1,5 +1,5 @@
-@import "tailwindcss";
-@import "diff2html/bundles/css/diff2html.min.css";
+@import 'tailwindcss';
+@import 'diff2html/bundles/css/diff2html.min.css';
 
 @theme inline {
   --color-background: var(--background);
@@ -114,7 +114,9 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
   }
 }
 
@@ -134,7 +136,9 @@
 
 /* diff2html styles */
 .diff-viewer {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
   font-size: 12px;
 }
 
@@ -175,20 +179,34 @@
   border-color: hsl(var(--border));
 }
 
+/* Dark mode — added lines: dark green text on green background */
 .dark .diff-viewer .d2h-ins {
   background-color: rgba(46, 160, 67, 0.15);
 }
 
 .dark .diff-viewer .d2h-ins .d2h-code-line-ctn {
-  background-color: rgba(46, 160, 67, 0.25);
+  background-color: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
 }
 
+/* Dark mode — removed lines: dark red text on red background */
 .dark .diff-viewer .d2h-del {
   background-color: rgba(248, 81, 73, 0.15);
 }
 
 .dark .diff-viewer .d2h-del .d2h-code-line-ctn {
-  background-color: rgba(248, 81, 73, 0.25);
+  background-color: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
+
+/* Light mode — added lines: dark green text */
+.diff-viewer .d2h-ins .d2h-code-line-ctn {
+  color: #1a7f37;
+}
+
+/* Light mode — removed lines: dark red text */
+.diff-viewer .d2h-del .d2h-code-line-ctn {
+  color: #cf222e;
 }
 
 .dark .diff-viewer .d2h-info {
@@ -219,4 +237,3 @@
 .diff-viewer .d2h-file-side-diff {
   width: 50%;
 }
-
