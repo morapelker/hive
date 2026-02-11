@@ -1269,10 +1269,21 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             if (event.childSessionId) return
 
             if (status.type === 'busy') {
+              // Session became active (again) — restart streaming state.
+              // If we previously finalized on idle, reset so the next idle
+              // can finalize the new response.
               setIsStreaming(true)
+              hasFinalizedCurrentResponseRef.current = false
               newPromptPendingRef.current = false
+              setIsSending(true)
+
+              // Restore worktree status to working/planning
+              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+              useWorktreeStatusStore
+                .getState()
+                .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             } else if (status.type === 'idle') {
-              // Session is truly done -- flush and finalize
+              // Session is done — flush and finalize immediately
               immediateFlush()
               setIsSending(false)
               setQueuedMessages([])
