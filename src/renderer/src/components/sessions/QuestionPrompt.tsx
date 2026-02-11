@@ -36,13 +36,6 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
     (label: string) => {
       if (sending) return
 
-      if (!isMultiple && !isMultiQuestion) {
-        // Single question, single choice — auto-submit immediately
-        setSending(true)
-        onReply(request.id, [[label]])
-        return
-      }
-
       if (isMultiple) {
         // Multi-choice: toggle the selection
         setAnswers((prev) => {
@@ -58,22 +51,22 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
         return
       }
 
-      // Single-choice in multi-question flow: select and auto-advance
+      // Single-choice: select this option (replaces previous selection)
       setAnswers((prev) => {
         const updated = [...prev]
         updated[currentTab] = [label]
         return updated
       })
 
-      if (!isLastTab) {
-        // Auto-advance to next question
+      // Multi-question: auto-advance to next tab
+      if (isMultiQuestion && !isLastTab) {
         setTimeout(() => {
           setCurrentTab((t) => t + 1)
           setEditingCustom(false)
         }, 150)
       }
     },
-    [sending, isMultiple, isMultiQuestion, currentTab, isLastTab, onReply, request.id]
+    [sending, isMultiple, isMultiQuestion, currentTab, isLastTab]
   )
 
   const handleCustomSubmit = useCallback(
@@ -82,14 +75,7 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
       const text = customInputs[currentTab]?.trim()
       if (!text || sending) return
 
-      if (!isMultiQuestion) {
-        // Single question custom text — auto-submit
-        setSending(true)
-        onReply(request.id, [[text]])
-        return
-      }
-
-      // Multi-question: save custom answer and advance
+      // Save custom text as the selected answer (no auto-submit)
       setAnswers((prev) => {
         const updated = [...prev]
         updated[currentTab] = [text]
@@ -97,11 +83,12 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
       })
       setEditingCustom(false)
 
-      if (!isLastTab) {
+      // Multi-question: auto-advance
+      if (isMultiQuestion && !isLastTab) {
         setCurrentTab((t) => t + 1)
       }
     },
-    [customInputs, currentTab, sending, isMultiQuestion, onReply, request.id, isLastTab]
+    [customInputs, currentTab, sending, isMultiQuestion, isLastTab]
   )
 
   const handleCustomInputChange = useCallback(
@@ -274,8 +261,8 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 mt-3 pt-2 border-t border-border/50">
-          {/* Multi-choice submit */}
-          {isMultiple && !isMultiQuestion && (
+          {/* Single-question submit */}
+          {!isMultiQuestion && (
             <Button
               size="sm"
               onClick={() => handleSubmit()}
