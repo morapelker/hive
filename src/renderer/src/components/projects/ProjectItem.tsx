@@ -47,12 +47,24 @@ interface ProjectItemProps {
   project: Project
   nameMatchIndices?: number[]
   pathMatchIndices?: number[]
+  isDragging?: boolean
+  isDragOver?: boolean
+  onDragStart?: (e: React.DragEvent) => void
+  onDragOver?: (e: React.DragEvent) => void
+  onDrop?: (e: React.DragEvent) => void
+  onDragEnd?: () => void
 }
 
 export function ProjectItem({
   project,
   nameMatchIndices,
-  pathMatchIndices
+  pathMatchIndices,
+  isDragging,
+  isDragOver,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd
 }: ProjectItemProps): React.JSX.Element {
   const {
     selectedProjectId,
@@ -192,8 +204,15 @@ export function ProjectItem({
           <div
             className={cn(
               'group flex items-center gap-1 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
-              isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+              isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+              isDragging && 'opacity-50',
+              isDragOver && 'border-t-2 border-primary'
             )}
+            draggable={!!onDragStart && !isEditing}
+            onDragStart={onDragStart}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+            onDragEnd={onDragEnd}
             onClick={handleClick}
             data-testid={`project-item-${project.id}`}
           >
