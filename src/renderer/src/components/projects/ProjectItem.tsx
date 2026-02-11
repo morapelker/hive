@@ -66,7 +66,7 @@ export function ProjectItem({
     refreshLanguage
   } = useProjectStore()
 
-  const { createWorktree, creatingForProjectId } = useWorktreeStore()
+  const { createWorktree, creatingForProjectId, syncWorktrees } = useWorktreeStore()
 
   const [editName, setEditName] = useState(project.name)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -143,6 +143,11 @@ export function ProjectItem({
   const handleCopyPath = async (): Promise<void> => {
     await window.projectOps.copyToClipboard(project.path)
     toast.success('Path copied to clipboard')
+  }
+
+  const handleRefreshProject = async (): Promise<void> => {
+    await syncWorktrees(project.id, project.path)
+    toast.success('Project refreshed')
   }
 
   const handleCreateWorktree = useCallback(
@@ -279,6 +284,10 @@ export function ProjectItem({
           <ContextMenuItem onClick={() => refreshLanguage(project.id)}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh Language
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleRefreshProject}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh Project
           </ContextMenuItem>
           <ContextMenuItem onClick={() => setBranchPickerOpen(true)}>
             <GitBranch className="h-4 w-4 mr-2" />
