@@ -393,8 +393,15 @@ export class GitService {
         // Check if it's already in files (modified but staged some changes)
         const existing = files.find((f) => f.relativePath === file)
         if (existing) {
-          // File has both staged and unstaged changes
-          existing.staged = true
+          // File has both staged and unstaged changes — keep BOTH entries
+          // existing stays as { staged: false } (unstaged changes)
+          // Add new entry for the staged portion
+          files.push({
+            path: join(this.repoPath, file),
+            relativePath: file,
+            status: 'M',
+            staged: true
+          })
         } else {
           files.push({
             path: join(this.repoPath, file),
