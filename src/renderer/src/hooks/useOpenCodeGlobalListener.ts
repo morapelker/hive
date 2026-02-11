@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useQuestionStore } from '@/stores/useQuestionStore'
 
 /**
  * Persistent global listener for OpenCode stream events.
@@ -37,6 +38,27 @@ export function useOpenCodeGlobalListener(): void {
             const sessionTitle = event.data?.info?.title || event.data?.title
             if (sessionTitle) {
               useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
+            }
+            return
+          }
+
+          // Handle question events for background sessions
+          if (event.type === 'question.asked' && sessionId !== activeId) {
+            const request = event.data
+            if (request?.id && request?.questions) {
+              useQuestionStore.getState().addQuestion(sessionId, request)
+              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'answering')
+            }
+            return
+          }
+
+          if (
+            (event.type === 'question.replied' || event.type === 'question.rejected') &&
+            sessionId !== activeId
+          ) {
+            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+            if (requestId) {
+              useQuestionStore.getState().removeQuestion(sessionId, requestId)
             }
             return
           }
