@@ -22,6 +22,11 @@ const mockSessionWithWorktree1 = {
   project_name: 'My Project'
 }
 
+const mockOpenCodeBackedSession = {
+  ...mockSessionWithWorktree1,
+  opencode_session_id: 'opc-session-1'
+}
+
 const mockSessionWithWorktree2 = {
   id: 'session-2',
   worktree_id: 'worktree-1',
@@ -106,20 +111,34 @@ const mockDbSession = {
   search: vi.fn()
 }
 
-const mockDbMessage = {
-  create: vi.fn(),
-  getBySession: vi.fn(),
-  delete: vi.fn()
-}
-
 const mockDbProject = {
   getAll: vi.fn()
 }
 
 const mockDbWorktree = {
+  get: vi.fn(),
   getActiveByProject: vi.fn(),
   touch: vi.fn()
 }
+
+const mockOpenCodeMessages = [
+  {
+    info: {
+      id: 'opc-msg-1',
+      role: 'user',
+      time: { created: Date.now() - 2000 }
+    },
+    parts: [{ type: 'text', text: 'OpenCode user preview' }]
+  },
+  {
+    info: {
+      id: 'opc-msg-2',
+      role: 'assistant',
+      time: { created: Date.now() - 1000 }
+    },
+    parts: [{ type: 'text', text: 'OpenCode assistant preview' }]
+  }
+]
 
 // Setup window.db mock
 beforeEach(() => {
@@ -152,9 +171,7 @@ beforeEach(() => {
   })
 
   useWorktreeStore.setState({
-    worktreesByProject: new Map([
-      ['project-1', [mockWorktree, mockArchivedWorktree]]
-    ]),
+    worktreesByProject: new Map([['project-1', [mockWorktree, mockArchivedWorktree]]]),
     isLoading: false,
     error: null,
     selectedWorktreeId: null,
@@ -174,9 +191,16 @@ beforeEach(() => {
   Object.defineProperty(window, 'db', {
     value: {
       session: mockDbSession,
-      message: mockDbMessage,
       project: mockDbProject,
       worktree: mockDbWorktree
+    },
+    writable: true,
+    configurable: true
+  })
+
+  Object.defineProperty(window, 'opencodeOps', {
+    value: {
+      getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] })
     },
     writable: true,
     configurable: true
@@ -556,17 +580,60 @@ describe('Session 9: Session History', () => {
       expect(selected?.name).toBe('Debug authentication')
     })
 
-    test('Session preview loads messages', async () => {
-      const mockMessages = [
-        { id: 'msg-1', session_id: 'session-1', role: 'user', content: 'Help me debug', created_at: '2024-01-01T10:00:00Z' },
-        { id: 'msg-2', session_id: 'session-1', role: 'assistant', content: 'Sure!', created_at: '2024-01-01T10:01:00Z' }
-      ]
-      mockDbMessage.getBySession.mockResolvedValue(mockMessages)
+    test('Session preview loads OpenCode transcript messages', async () => {
+      mockDbWorktree.get.mockResolvedValue({ ...mockWorktree, path: '/tmp/worktree-preview' })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        messages: mockOpenCodeMessages
+      })
 
-      // The SessionPreview component would call getBySession when rendered
-      const messages = await mockDbMessage.getBySession('session-1')
-      expect(messages).toHaveLength(2)
-      expect(mockDbMessage.getBySession).toHaveBeenCalledWith('session-1')
+      const previewMessages = await useSessionHistoryStore
+        .getState()
+        .getSessionPreviewMessages(mockOpenCodeBackedSession)
+
+      expect(previewMessages).toEqual([
+        { role: 'user', content: 'OpenCode user preview' },
+        { role: 'assistant', content: 'OpenCode assistant preview' }
+      ])
+    })
+
+    test('Session preview prefers OpenCode transcript when available', async () => {
+      mockDbWorktree.get.mockResolvedValue({ ...mockWorktree, path: '/tmp/worktree-preview' })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        messages: mockOpenCodeMessages
+      })
+
+      const previewMessages = await useSessionHistoryStore
+        .getState()
+        .getSessionPreviewMessages(mockOpenCodeBackedSession)
+
+      expect(window.opencodeOps.getMessages).toHaveBeenCalledWith(
+        '/tmp/worktree-preview',
+        'opc-session-1'
+      )
+      expect(previewMessages).toEqual([
+        { role: 'user', content: 'OpenCode user preview' },
+        { role: 'assistant', content: 'OpenCode assistant preview' }
+      ])
+    })
+
+    test('Session preview returns empty when OpenCode fetch fails', async () => {
+      mockDbWorktree.get.mockResolvedValue({ ...mockWorktree, path: '/tmp/worktree-preview' })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        error: 'OpenCode unavailable'
+      })
+
+      const previewMessages = await useSessionHistoryStore
+        .getState()
+        .getSessionPreviewMessages(mockOpenCodeBackedSession)
+
+      expect(window.opencodeOps.getMessages).toHaveBeenCalledWith(
+        '/tmp/worktree-preview',
+        'opc-session-1'
+      )
+      expect(previewMessages).toEqual([])
     })
   })
 

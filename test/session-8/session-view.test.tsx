@@ -6,6 +6,7 @@ import {
   OpenCodeMessage,
   SessionViewState
 } from '../../src/renderer/src/components/sessions/SessionView'
+import { useSessionStore } from '../../src/renderer/src/stores/useSessionStore'
 
 // Mock clipboard API
 const mockWriteText = vi.fn().mockResolvedValue(undefined)
@@ -56,50 +57,64 @@ This function uses recursion to calculate the factorial.`,
   }
 ]
 
-// Mock window.db.message
-const mockDbMessage = {
-  create: vi.fn().mockImplementation((data) =>
-    Promise.resolve({
-      id: `msg-${Date.now()}`,
-      session_id: data.session_id,
-      role: data.role,
-      content: data.content,
-      created_at: new Date().toISOString()
-    })
-  ),
-  getBySession: vi.fn().mockResolvedValue(mockDemoMessages),
-  delete: vi.fn().mockResolvedValue(true)
-}
+const mockOpenCodeTranscript = [
+  {
+    info: {
+      id: 'opc-1',
+      role: 'user',
+      time: { created: Date.now() - 2000 }
+    },
+    parts: [{ type: 'text', text: 'OpenCode user message' }]
+  },
+  {
+    info: {
+      id: 'opc-2',
+      role: 'assistant',
+      time: { created: Date.now() - 1000 },
+      tokens: { input: 11, output: 22, reasoning: 3 },
+      cost: 0.012,
+      modelID: 'claude-opus-4-5-20251101',
+      providerID: 'anthropic'
+    },
+    parts: [{ type: 'text', text: 'OpenCode assistant message' }]
+  }
+]
+
+const mockDefaultOpenCodeTranscript = [
+  {
+    info: {
+      id: 'demo-opc-1',
+      role: 'user',
+      time: { created: Date.now() - 60000 }
+    },
+    parts: [{ type: 'text', text: mockDemoMessages[0].content }]
+  },
+  {
+    info: {
+      id: 'demo-opc-2',
+      role: 'assistant',
+      time: { created: Date.now() - 30000 }
+    },
+    parts: [{ type: 'text', text: mockDemoMessages[1].content }]
+  }
+]
 
 // Setup and teardown
 beforeEach(() => {
   vi.clearAllMocks()
   mockConsoleInfo.mockReset()
 
-  // Reset mock implementations
-  mockDbMessage.getBySession.mockResolvedValue(mockDemoMessages)
-  mockDbMessage.create.mockImplementation((data) =>
-    Promise.resolve({
-      id: `msg-${Date.now()}`,
-      session_id: data.session_id,
-      role: data.role,
-      content: data.content,
-      created_at: new Date().toISOString()
-    })
-  )
-
   // Mock window.db
   Object.defineProperty(window, 'db', {
     value: {
-      message: mockDbMessage,
       session: {
         get: vi.fn().mockResolvedValue({
           id: 'test-session-1',
-          worktree_id: null,
+          worktree_id: 'wt-1',
           project_id: 'proj-1',
           name: 'Test Session',
           status: 'active',
-          opencode_session_id: null,
+          opencode_session_id: 'opc-session-1',
           mode: 'build',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -110,7 +125,18 @@ beforeEach(() => {
         updateDraft: vi.fn().mockResolvedValue(undefined)
       },
       worktree: {
-        get: vi.fn().mockResolvedValue(null)
+        get: vi.fn().mockResolvedValue({
+          id: 'wt-1',
+          project_id: 'proj-1',
+          name: 'WT',
+          branch_name: 'main',
+          path: '/tmp/worktree-default',
+          status: 'active',
+          is_default: true,
+          created_at: new Date().toISOString(),
+          last_accessed_at: new Date().toISOString()
+        }),
+        update: vi.fn().mockResolvedValue(null)
       }
     },
     writable: true,
@@ -121,12 +147,22 @@ beforeEach(() => {
   Object.defineProperty(window, 'opencodeOps', {
     value: {
       connect: vi.fn().mockResolvedValue({ success: false }),
-      reconnect: vi.fn().mockResolvedValue({ success: false }),
+      reconnect: vi.fn().mockResolvedValue({ success: true }),
       prompt: vi.fn().mockResolvedValue({ success: true }),
+      command: vi.fn().mockResolvedValue({ success: true }),
       disconnect: vi.fn().mockResolvedValue({ success: true }),
-      getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
+      abort: vi.fn().mockResolvedValue({ success: true }),
+      getMessages: vi
+        .fn()
+        .mockResolvedValue({ success: true, messages: mockDefaultOpenCodeTranscript }),
       listModels: vi.fn().mockResolvedValue({ success: true, providers: [] }),
       setModel: vi.fn().mockResolvedValue({ success: true }),
+      modelInfo: vi.fn().mockResolvedValue({ success: true }),
+      questionReply: vi.fn().mockResolvedValue({ success: true }),
+      questionReject: vi.fn().mockResolvedValue({ success: true }),
+      permissionReply: vi.fn().mockResolvedValue({ success: true }),
+      permissionList: vi.fn().mockResolvedValue({ success: true, permissions: [] }),
+      commands: vi.fn().mockResolvedValue({ success: true, commands: [] }),
       onStream: vi.fn().mockImplementation(() => () => {})
     },
     writable: true,
@@ -414,8 +450,9 @@ describe('Session 8: Session View', () => {
       expect(input.value).toContain('Line 1')
     })
 
-    test('Shows typing indicator when sending', async () => {
+    test('Sends message through OpenCode when sending', async () => {
       const user = userEvent.setup()
+
       render(<SessionView sessionId="test-session-1" />)
 
       await waitFor(() => {
@@ -428,8 +465,9 @@ describe('Session 8: Session View', () => {
       await user.type(input, 'Test message')
       await user.click(sendButton)
 
-      // Typing indicator should appear
-      expect(screen.getByTestId('typing-indicator')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(window.opencodeOps.prompt).toHaveBeenCalled()
+      })
     })
 
     test('Typing indicator disappears after response', async () => {
@@ -530,8 +568,9 @@ describe('Session 8: Session View', () => {
 
   describe('Error State', () => {
     test('Error state shows retry button when loading fails', async () => {
-      // Mock getBySession to reject
-      mockDbMessage.getBySession.mockRejectedValueOnce(new Error('Database error'))
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('Database error')
+      )
 
       render(<SessionView sessionId="test-session-1" />)
 
@@ -545,16 +584,15 @@ describe('Session 8: Session View', () => {
       const user = userEvent.setup()
 
       // First load fails
-      mockDbMessage.getBySession.mockRejectedValueOnce(new Error('Database error'))
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('Database error')
+      )
 
       render(<SessionView sessionId="test-session-1" />)
 
       await waitFor(() => {
         expect(screen.getByTestId('error-state')).toBeInTheDocument()
       })
-
-      // Now mock successful reload
-      mockDbMessage.getBySession.mockResolvedValueOnce(mockDemoMessages)
 
       // Click retry
       await user.click(screen.getByTestId('retry-button'))
@@ -564,6 +602,410 @@ describe('Session 8: Session View', () => {
         expect(screen.queryByTestId('error-state')).not.toBeInTheDocument()
         expect(screen.getByTestId('message-list')).toBeInTheDocument()
       })
+    })
+  })
+
+  describe('OpenCode transcript hydration', () => {
+    test('Initial hydration calls opencodeOps.getMessages when worktree path and opencode session id exist', async () => {
+      const getMessagesMock = vi
+        .fn()
+        .mockResolvedValue({ success: true, messages: mockOpenCodeTranscript })
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-a',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockImplementation(
+        getMessagesMock
+      )
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(getMessagesMock).toHaveBeenCalledWith('/tmp/worktree-a', 'opc-session-1')
+      })
+    })
+
+    test('Stream finalization refreshes from OpenCode source, not db.message.getBySession', async () => {
+      let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+      const getMessagesMock = vi
+        .fn()
+        .mockResolvedValue({ success: true, messages: mockOpenCodeTranscript })
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-b',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockImplementation(
+        getMessagesMock
+      )
+      ;(window.opencodeOps.onStream as ReturnType<typeof vi.fn>).mockImplementation((callback) => {
+        streamCallback = callback as (event: Record<string, unknown>) => void
+        return () => {}
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(getMessagesMock).toHaveBeenCalledTimes(1)
+      })
+
+      expect(streamCallback).not.toBeNull()
+      streamCallback?.({
+        sessionId: 'test-session-1',
+        type: 'session.status',
+        statusPayload: { type: 'idle' },
+        data: { status: { type: 'idle' } }
+      })
+
+      await waitFor(() => {
+        expect(getMessagesMock).toHaveBeenCalledTimes(2)
+      })
+
+      expect(window.opencodeOps.getMessages).toHaveBeenCalled()
+    })
+
+    test('Initial hydration keeps view connected when OpenCode transcript fetch fails', async () => {
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-c',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: false,
+        error: 'OpenCode unavailable'
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+        expect(screen.queryByTestId('error-state')).not.toBeInTheDocument()
+      })
+
+      expect(window.opencodeOps.getMessages).toHaveBeenCalledTimes(1)
+    })
+
+    test('Canonical refresh replaces in-memory messages instead of merging by id', async () => {
+      let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+      const getMessagesMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          success: true,
+          messages: [
+            {
+              info: { id: 'opc-old-1', role: 'assistant', time: { created: Date.now() - 1000 } },
+              parts: [{ type: 'text', text: 'Old canonical message' }]
+            }
+          ]
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          messages: [
+            {
+              info: { id: 'opc-new-1', role: 'assistant', time: { created: Date.now() } },
+              parts: [{ type: 'text', text: 'New canonical message' }]
+            }
+          ]
+        })
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-d',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockImplementation(
+        getMessagesMock
+      )
+      ;(window.opencodeOps.onStream as ReturnType<typeof vi.fn>).mockImplementation((callback) => {
+        streamCallback = callback as (event: Record<string, unknown>) => void
+        return () => {}
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.queryAllByText('Old canonical message').length).toBeGreaterThan(0)
+      })
+
+      streamCallback?.({
+        sessionId: 'test-session-1',
+        type: 'session.status',
+        statusPayload: { type: 'idle' },
+        data: { status: { type: 'idle' } }
+      })
+
+      await waitFor(() => {
+        expect(screen.getByText('New canonical message')).toBeInTheDocument()
+        expect(screen.queryAllByText('Old canonical message')).toHaveLength(0)
+      })
+    })
+
+    test('Retry path reconnect failure triggers connect before transcript fetch', async () => {
+      const user = userEvent.setup()
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-e',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        error: 'stale session'
+      })
+      ;(window.opencodeOps.connect as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ success: false, error: 'cannot connect yet' })
+        .mockResolvedValueOnce({ success: true, sessionId: 'opc-session-new' })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        messages: mockOpenCodeTranscript
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('error-state')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByTestId('retry-button'))
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('error-state')).not.toBeInTheDocument()
+        expect(window.opencodeOps.connect).toHaveBeenCalledTimes(2)
+      })
+    })
+  })
+
+  describe('SQLite transcript writes', () => {
+    test('Normal send flow does not write user messages to SQLite', async () => {
+      const user = userEvent.setup()
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-send',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        messages: []
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
+      await user.type(screen.getByTestId('message-input'), 'Hello from user')
+      await user.click(screen.getByTestId('send-button'))
+
+      await waitFor(() => {
+        expect(window.opencodeOps.prompt).toHaveBeenCalled()
+      })
+
+      expect(window.opencodeOps.prompt).toHaveBeenCalledTimes(1)
+    })
+
+    test('Pending initial message flow sends directly to OpenCode', async () => {
+      useSessionStore.getState().setPendingMessage('test-session-1', 'pending review prompt')
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-pending',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        messages: []
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(window.opencodeOps.prompt).toHaveBeenCalled()
+      })
+
+      expect(window.opencodeOps.prompt).toHaveBeenCalled()
+    })
+
+    test('No-OpenCode placeholder flow stays local-only', async () => {
+      const user = userEvent.setup()
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: null,
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: null,
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
+      await user.type(screen.getByTestId('message-input'), 'No connection yet')
+      await user.click(screen.getByTestId('send-button'))
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            'OpenCode is not connected. Please ensure a worktree is selected and the connection is established.'
+          )
+        ).toBeInTheDocument()
+      })
+
+      expect(window.opencodeOps.prompt).not.toHaveBeenCalled()
     })
   })
 

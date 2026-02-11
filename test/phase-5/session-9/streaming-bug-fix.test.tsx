@@ -9,49 +9,21 @@ type StreamEvent = {
   data?: any
 }
 
-type MessageRow = {
-  id: string
-  session_id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  opencode_message_id?: string | null
-  opencode_message_json?: string | null
-  opencode_parts_json?: string | null
-  opencode_timeline_json?: string | null
-  created_at: string
-}
-
 let streamCallback: ((event: StreamEvent) => void) | null = null
+let canonicalTranscript: Array<Record<string, unknown>> = []
+let mockGetMessages: ReturnType<typeof vi.fn>
 
-const mockDbMessage = {
-  create: vi.fn(),
-  getBySession: vi.fn(),
-  delete: vi.fn()
-}
-
-function makeSavedMessage(data: {
-  session_id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-}): MessageRow {
+function makeTranscriptAssistantMessage(
+  content: string,
+  messageId: string
+): Record<string, unknown> {
   return {
-    id: `${data.role}-${Math.random().toString(16).slice(2)}`,
-    session_id: data.session_id,
-    role: data.role,
-    content: data.content,
-    created_at: new Date().toISOString()
-  }
-}
-
-function makeAssistantMessage(content: string, messageId: string): MessageRow {
-  return {
-    id: `assistant-row-${messageId}`,
-    session_id: 'test-session-1',
-    role: 'assistant',
-    content,
-    opencode_message_id: messageId,
-    opencode_parts_json: JSON.stringify([{ id: `${messageId}-text`, type: 'text', text: content }]),
-    created_at: new Date().toISOString()
+    info: {
+      id: messageId,
+      role: 'assistant',
+      time: { created: new Date().toISOString() }
+    },
+    parts: [{ type: 'text', text: content }]
   }
 }
 
@@ -68,26 +40,21 @@ function emitStream(event: StreamEvent): void {
 beforeEach(() => {
   vi.clearAllMocks()
   streamCallback = null
-
-  mockDbMessage.getBySession.mockResolvedValue([])
-  mockDbMessage.delete.mockResolvedValue(true)
-  mockDbMessage.create.mockImplementation(
-    (data: { session_id: string; role: 'user' | 'assistant' | 'system'; content: string }) => {
-      return Promise.resolve(makeSavedMessage(data))
-    }
-  )
+  canonicalTranscript = []
+  mockGetMessages = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve({ success: true, messages: canonicalTranscript }))
 
   Object.defineProperty(window, 'db', {
     value: {
-      message: mockDbMessage,
       session: {
         get: vi.fn().mockResolvedValue({
           id: 'test-session-1',
-          worktree_id: null,
+          worktree_id: 'wt-1',
           project_id: 'project-1',
           name: 'Test Session',
           status: 'active',
-          opencode_session_id: null,
+          opencode_session_id: 'opc-session-1',
           mode: 'build',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -98,7 +65,17 @@ beforeEach(() => {
         updateDraft: vi.fn().mockResolvedValue(undefined)
       },
       worktree: {
-        get: vi.fn().mockResolvedValue(null)
+        get: vi.fn().mockResolvedValue({
+          id: 'wt-1',
+          project_id: 'project-1',
+          name: 'WT',
+          branch_name: 'main',
+          path: '/tmp/worktree-streaming-bug-fix',
+          status: 'active',
+          is_default: true,
+          created_at: new Date().toISOString(),
+          last_accessed_at: new Date().toISOString()
+        })
       },
       setting: {
         get: vi.fn().mockResolvedValue(null),
@@ -112,12 +89,19 @@ beforeEach(() => {
   Object.defineProperty(window, 'opencodeOps', {
     value: {
       connect: vi.fn().mockResolvedValue({ success: false }),
-      reconnect: vi.fn().mockResolvedValue({ success: false }),
+      reconnect: vi.fn().mockResolvedValue({ success: true }),
       prompt: vi.fn().mockResolvedValue({ success: true }),
+      command: vi.fn().mockResolvedValue({ success: true }),
       disconnect: vi.fn().mockResolvedValue({ success: true }),
-      getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
+      getMessages: mockGetMessages,
       listModels: vi.fn().mockResolvedValue({ success: true, providers: [] }),
       setModel: vi.fn().mockResolvedValue({ success: true }),
+      modelInfo: vi.fn().mockResolvedValue({ success: true }),
+      questionReply: vi.fn().mockResolvedValue({ success: true }),
+      questionReject: vi.fn().mockResolvedValue({ success: true }),
+      permissionReply: vi.fn().mockResolvedValue({ success: true }),
+      permissionList: vi.fn().mockResolvedValue({ success: true, permissions: [] }),
+      commands: vi.fn().mockResolvedValue({ success: true, commands: [] }),
       onStream: vi.fn().mockImplementation((callback: (event: StreamEvent) => void) => {
         streamCallback = callback
         return () => {
@@ -165,6 +149,9 @@ describe('Session 9: Streaming Bug Fix', () => {
     await waitFor(() => {
       expect(screen.getByTestId('message-list')).toBeInTheDocument()
     })
+    await waitFor(() => {
+      expect(mockGetMessages).toHaveBeenCalledTimes(1)
+    })
 
     emitStream({
       type: 'message.part.updated',
@@ -177,7 +164,7 @@ describe('Session 9: Streaming Bug Fix', () => {
     })
 
     expect(screen.queryAllByTestId('message-assistant')).toHaveLength(0)
-    expect(mockDbMessage.getBySession).toHaveBeenCalledTimes(1)
+    expect(mockGetMessages).toHaveBeenCalledTimes(1)
   })
 
   test('User message.updated events are skipped', async () => {
@@ -185,6 +172,9 @@ describe('Session 9: Streaming Bug Fix', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('message-list')).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(mockGetMessages).toHaveBeenCalledTimes(1)
     })
 
     emitStream({
@@ -202,21 +192,18 @@ describe('Session 9: Streaming Bug Fix', () => {
       await Promise.resolve()
     })
 
-    expect(mockDbMessage.getBySession).toHaveBeenCalledTimes(1)
+    expect(mockGetMessages).toHaveBeenCalledTimes(1)
     expect(screen.queryAllByTestId('message-assistant')).toHaveLength(0)
   })
 
   test('message.updated followed by session.idle renders assistant message exactly once', async () => {
-    const assistantMessage = makeAssistantMessage('Hello from assistant', 'assistant-msg-1')
-    mockDbMessage.getBySession
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([assistantMessage])
-      .mockResolvedValue([assistantMessage])
-
     render(<SessionView sessionId="test-session-1" />)
 
     await waitFor(() => {
       expect(screen.getByTestId('message-list')).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(mockGetMessages).toHaveBeenCalledTimes(1)
     })
 
     emitStream({
@@ -241,9 +228,20 @@ describe('Session 9: Streaming Bug Fix', () => {
       }
     })
 
+    canonicalTranscript = [
+      makeTranscriptAssistantMessage('Hello from assistant', 'assistant-msg-1')
+    ]
+
+    emitStream({
+      type: 'session.idle',
+      sessionId: 'test-session-1',
+      data: {}
+    })
+
     await waitFor(() => {
       expect(screen.getByText('Hello from assistant')).toBeInTheDocument()
       expect(screen.getAllByTestId('message-assistant')).toHaveLength(1)
+      expect(mockGetMessages).toHaveBeenCalledTimes(2)
     })
 
     emitStream({
@@ -257,20 +255,17 @@ describe('Session 9: Streaming Bug Fix', () => {
     })
 
     expect(screen.getAllByTestId('message-assistant')).toHaveLength(1)
-    expect(mockDbMessage.getBySession).toHaveBeenCalledTimes(2)
+    expect(mockGetMessages).toHaveBeenCalledTimes(2)
   })
 
   test('duplicate message.updated events for same message ID are deduplicated', async () => {
-    const assistantMessage = makeAssistantMessage('Deduped reply', 'assistant-msg-2')
-    mockDbMessage.getBySession
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([assistantMessage])
-      .mockResolvedValue([assistantMessage])
-
     render(<SessionView sessionId="test-session-1" />)
 
     await waitFor(() => {
       expect(screen.getByTestId('message-list')).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(mockGetMessages).toHaveBeenCalledTimes(1)
     })
 
     const updatedEvent: StreamEvent = {
@@ -288,25 +283,29 @@ describe('Session 9: Streaming Bug Fix', () => {
     emitStream(updatedEvent)
     emitStream(updatedEvent)
 
+    canonicalTranscript = [makeTranscriptAssistantMessage('Deduped reply', 'assistant-msg-2')]
+
+    emitStream({
+      type: 'session.idle',
+      sessionId: 'test-session-1',
+      data: {}
+    })
+
     await waitFor(() => {
       expect(screen.getByText('Deduped reply')).toBeInTheDocument()
       expect(screen.getAllByTestId('message-assistant')).toHaveLength(1)
+      expect(mockGetMessages).toHaveBeenCalledTimes(2)
     })
-
-    expect(mockDbMessage.getBySession).toHaveBeenCalledTimes(2)
   })
 
   test('session.idle finalizes streamed content when message.updated is not received', async () => {
-    const assistantMessage = makeAssistantMessage('Idle finalized reply', 'assistant-msg-3')
-    mockDbMessage.getBySession
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([assistantMessage])
-      .mockResolvedValue([assistantMessage])
-
     render(<SessionView sessionId="test-session-1" />)
 
     await waitFor(() => {
       expect(screen.getByTestId('message-list')).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(mockGetMessages).toHaveBeenCalledTimes(1)
     })
 
     emitStream({
@@ -319,6 +318,10 @@ describe('Session 9: Streaming Bug Fix', () => {
       }
     })
 
+    canonicalTranscript = [
+      makeTranscriptAssistantMessage('Idle finalized reply', 'assistant-msg-3')
+    ]
+
     emitStream({
       type: 'session.idle',
       sessionId: 'test-session-1',
@@ -328,8 +331,7 @@ describe('Session 9: Streaming Bug Fix', () => {
     await waitFor(() => {
       expect(screen.getByText('Idle finalized reply')).toBeInTheDocument()
       expect(screen.getAllByTestId('message-assistant')).toHaveLength(1)
+      expect(mockGetMessages).toHaveBeenCalledTimes(2)
     })
-
-    expect(mockDbMessage.getBySession).toHaveBeenCalledTimes(2)
   })
 })

@@ -38,11 +38,7 @@ describe('Session 3: Branch Duplication', () => {
     })
 
     test('second duplication creates -v3', () => {
-      const result = getNextVersionName('feature-auth', [
-        'feature-auth',
-        'feature-auth-v2',
-        'main'
-      ])
+      const result = getNextVersionName('feature-auth', ['feature-auth', 'feature-auth-v2', 'main'])
       expect(result).toBe('feature-auth-v3')
     })
 
@@ -63,9 +59,7 @@ describe('Session 3: Branch Duplication', () => {
 
     test('handles branch names with special regex chars', () => {
       // Should not throw a regex error
-      expect(() =>
-        getNextVersionName('fix/auth+login', ['fix/auth+login', 'main'])
-      ).not.toThrow()
+      expect(() => getNextVersionName('fix/auth+login', ['fix/auth+login', 'main'])).not.toThrow()
       const result = getNextVersionName('fix/auth+login', ['fix/auth+login', 'main'])
       expect(result).toBe('fix/auth+login-v2')
     })
@@ -165,7 +159,6 @@ describe('Session 3: Branch Duplication', () => {
         delete: vi.fn(),
         search: vi.fn()
       },
-      message: { create: vi.fn(), getBySession: vi.fn(), delete: vi.fn() },
       schemaVersion: vi.fn(),
       tableExists: vi.fn(),
       getIndexes: vi.fn()
@@ -187,9 +180,8 @@ describe('Session 3: Branch Duplication', () => {
     })
 
     test('Duplicate shown in context menu for non-default worktree', async () => {
-      const { WorktreeItem } = await import(
-        '../../../src/renderer/src/components/worktrees/WorktreeItem'
-      )
+      const { WorktreeItem } =
+        await import('../../../src/renderer/src/components/worktrees/WorktreeItem')
 
       const worktree = {
         id: 'wt-1',
@@ -220,9 +212,8 @@ describe('Session 3: Branch Duplication', () => {
     })
 
     test('Duplicate NOT shown for default worktree', async () => {
-      const { WorktreeItem } = await import(
-        '../../../src/renderer/src/components/worktrees/WorktreeItem'
-      )
+      const { WorktreeItem } =
+        await import('../../../src/renderer/src/components/worktrees/WorktreeItem')
 
       const worktree = {
         id: 'wt-default',
@@ -298,17 +289,11 @@ describe('Session 3: Branch Duplication', () => {
         }
       })
 
-      const { useWorktreeStore } = await import(
-        '../../../src/renderer/src/stores/useWorktreeStore'
-      )
+      const { useWorktreeStore } = await import('../../../src/renderer/src/stores/useWorktreeStore')
 
-      const result = await useWorktreeStore.getState().duplicateWorktree(
-        'proj-1',
-        '/project/path',
-        'my-project',
-        'feature',
-        '/worktree/path'
-      )
+      const result = await useWorktreeStore
+        .getState()
+        .duplicateWorktree('proj-1', '/project/path', 'my-project', 'feature', '/worktree/path')
 
       expect(mockDuplicate).toHaveBeenCalledWith({
         projectId: 'proj-1',

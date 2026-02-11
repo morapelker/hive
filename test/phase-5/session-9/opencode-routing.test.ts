@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const mockDb = {
   getSessionMessageByOpenCodeId: vi.fn(),
-  upsertSessionMessageByOpenCodeId: vi.fn()
+  upsertSessionMessageByOpenCodeId: vi.fn(),
+  updateSession: vi.fn(),
+  getWorktreeBySessionId: vi.fn(),
+  updateWorktree: vi.fn(),
+  getSession: vi.fn(),
+  getProject: vi.fn()
 }
 
 vi.mock('electron', () => ({
@@ -21,6 +26,7 @@ describe('Session 9: OpenCode session routing', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockDb.getSessionMessageByOpenCodeId.mockReturnValue(null)
+    mockDb.getWorktreeBySessionId.mockReturnValue(null)
   })
 
   test('routes event to correct hive session when opencode session IDs collide across directories', async () => {
@@ -47,15 +53,17 @@ describe('Session 9: OpenCode session routing', () => {
       childToParentMap: new Map<string, string>()
     }
 
-    await (openCodeService as never as {
-      handleEvent: (
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        instance: any,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        rawEvent: any,
-        directory?: string
-      ) => Promise<void>
-    }).handleEvent(
+    await (
+      openCodeService as never as {
+        handleEvent: (
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          instance: any,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          rawEvent: any,
+          directory?: string
+        ) => Promise<void>
+      }
+    ).handleEvent(
       instance,
       {
         data: {
@@ -72,5 +80,64 @@ describe('Session 9: OpenCode session routing', () => {
       'opencode:stream',
       expect.objectContaining({ sessionId: 'hive-session-a', type: 'session.idle' })
     )
+  })
+
+  test('routes message.updated without touching DB transcript persistence', async () => {
+    const send = vi.fn()
+
+    openCodeService.setMainWindow({
+      isDestroyed: () => false,
+      isFocused: () => true,
+      webContents: { send }
+    } as never)
+
+    const instance = {
+      client: {
+        session: {
+          get: vi.fn().mockResolvedValue({ data: {} })
+        }
+      },
+      server: { url: 'http://localhost', close: vi.fn() },
+      sessionMap: new Map<string, string>([
+        ['/repo/a::opc-session-1', 'hive-session-a'],
+        ['/repo/b::opc-session-1', 'hive-session-b']
+      ]),
+      sessionDirectories: new Map<string, string>(),
+      directorySubscriptions: new Map(),
+      childToParentMap: new Map<string, string>()
+    }
+
+    await (
+      openCodeService as never as {
+        handleEvent: (
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          instance: any,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          rawEvent: any,
+          directory?: string
+        ) => Promise<void>
+      }
+    ).handleEvent(
+      instance,
+      {
+        data: {
+          type: 'message.updated',
+          properties: {
+            sessionID: 'opc-session-1',
+            info: { messageID: 'msg-1' },
+            message: { id: 'msg-1', role: 'assistant' },
+            parts: [{ type: 'text', text: 'hello' }]
+          }
+        }
+      },
+      '/repo/b'
+    )
+
+    expect(send).toHaveBeenCalledWith(
+      'opencode:stream',
+      expect.objectContaining({ sessionId: 'hive-session-b', type: 'message.updated' })
+    )
+    expect(mockDb.getSessionMessageByOpenCodeId).not.toHaveBeenCalled()
+    expect(mockDb.upsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
   })
 })

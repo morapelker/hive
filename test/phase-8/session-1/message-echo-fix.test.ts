@@ -1,17 +1,23 @@
-import { describe, test, expect, beforeEach, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-// Mock the database module before importing the service
-const mockGetSessionMessageByOpenCodeId = vi.fn().mockReturnValue(null)
-const mockUpsertSessionMessageByOpenCodeId = vi.fn()
+const mockDb = {
+  getSessionMessageByOpenCodeId: vi.fn(),
+  upsertSessionMessageByOpenCodeId: vi.fn(),
+  updateSession: vi.fn(),
+  getWorktreeBySessionId: vi.fn(),
+  updateWorktree: vi.fn(),
+  getSession: vi.fn(),
+  getProject: vi.fn()
+}
+
+const mockBranchExists = vi.fn().mockResolvedValue(false)
+const mockRenameBranch = vi.fn().mockResolvedValue({ success: true })
+const mockCanonicalizeBranchName = vi.fn().mockReturnValue('add-login-screen')
 
 vi.mock('../../../src/main/db', () => ({
-  getDatabase: () => ({
-    getSessionMessageByOpenCodeId: mockGetSessionMessageByOpenCodeId,
-    upsertSessionMessageByOpenCodeId: mockUpsertSessionMessageByOpenCodeId
-  })
+  getDatabase: () => mockDb
 }))
 
-// Mock the logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -21,287 +27,193 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
-// Mock the notification service
 vi.mock('../../../src/main/services/notification-service', () => ({
   notificationService: {
     showSessionComplete: vi.fn()
   }
 }))
 
-// Import service after mocks are set up
+vi.mock('../../../src/main/services/git-service', () => ({
+  canonicalizeBranchName: (...args: unknown[]) => mockCanonicalizeBranchName(...args),
+  createGitService: () => ({
+    branchExists: mockBranchExists,
+    renameBranch: mockRenameBranch
+  })
+}))
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let service: any
 
+function createInstance() {
+  return {
+    client: {
+      session: {
+        get: vi.fn().mockResolvedValue({ data: {} })
+      }
+    },
+    server: { url: 'http://localhost', close: vi.fn() },
+    sessionMap: new Map<string, string>([['/repo/a::opc-session-1', 'hive-session-a']]),
+    sessionDirectories: new Map<string, string>(),
+    directorySubscriptions: new Map(),
+    childToParentMap: new Map<string, string>()
+  }
+}
+
 beforeEach(async () => {
   vi.clearAllMocks()
-  // Re-import to get a fresh singleton for each test
+  mockDb.getSessionMessageByOpenCodeId.mockReturnValue(null)
+  mockDb.getWorktreeBySessionId.mockReturnValue(null)
+
   const mod = await import('../../../src/main/services/opencode-service')
   service = mod.openCodeService
 })
 
 describe('Session 1: Message Echo Fix', () => {
-  describe('extractEventMessageRole', () => {
-    test('extracts role from message.role path', () => {
-      const role = service.extractEventMessageRole({ message: { role: 'user' } })
-      expect(role).toBe('user')
+  test('message.part.updated forwards to renderer without DB transcript persistence', async () => {
+    const send = vi.fn()
+    service.setMainWindow({
+      isDestroyed: () => false,
+      isFocused: () => true,
+      webContents: { send }
     })
 
-    test('extracts role from info.role path', () => {
-      const role = service.extractEventMessageRole({ info: { role: 'assistant' } })
-      expect(role).toBe('assistant')
-    })
+    const instance = createInstance()
 
-    test('extracts role from part.role path', () => {
-      const role = service.extractEventMessageRole({ part: { role: 'user' } })
-      expect(role).toBe('user')
-    })
+    await (
+      service as never as {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        handleEvent: (instance: any, rawEvent: any, directory?: string) => Promise<void>
+      }
+    ).handleEvent(
+      instance,
+      {
+        data: {
+          type: 'message.part.updated',
+          properties: {
+            part: {
+              sessionID: 'opc-session-1',
+              id: 'part-1',
+              type: 'text',
+              text: 'hello'
+            },
+            message: { id: 'msg-1', role: 'assistant' },
+            delta: 'hello'
+          }
+        }
+      },
+      '/repo/a'
+    )
 
-    test('extracts role from direct role path', () => {
-      const role = service.extractEventMessageRole({ role: 'assistant' })
-      expect(role).toBe('assistant')
-    })
-
-    test('extracts role from nested properties.message path', () => {
-      const role = service.extractEventMessageRole({
-        properties: { message: { role: 'assistant' } }
+    expect(send).toHaveBeenCalledWith(
+      'opencode:stream',
+      expect.objectContaining({
+        type: 'message.part.updated',
+        sessionId: 'hive-session-a'
       })
-      expect(role).toBe('assistant')
-    })
-
-    test('extracts role from nested properties.info path', () => {
-      const role = service.extractEventMessageRole({
-        properties: { info: { role: 'user' } }
-      })
-      expect(role).toBe('user')
-    })
-
-    test('extracts role from nested properties.part path', () => {
-      const role = service.extractEventMessageRole({
-        properties: { part: { role: 'assistant' } }
-      })
-      expect(role).toBe('assistant')
-    })
-
-    test('extracts role from nested properties.role path', () => {
-      const role = service.extractEventMessageRole({
-        properties: { role: 'user' }
-      })
-      expect(role).toBe('user')
-    })
-
-    test('extracts role from metadata.role path', () => {
-      const role = service.extractEventMessageRole({ metadata: { role: 'assistant' } })
-      expect(role).toBe('assistant')
-    })
-
-    test('extracts role from content.role path', () => {
-      const role = service.extractEventMessageRole({ content: { role: 'user' } })
-      expect(role).toBe('user')
-    })
-
-    test('returns undefined when role not found', () => {
-      const role = service.extractEventMessageRole({ foo: 'bar' })
-      expect(role).toBeUndefined()
-    })
-
-    test('returns undefined for empty object', () => {
-      const role = service.extractEventMessageRole({})
-      expect(role).toBeUndefined()
-    })
-
-    test('first valid path wins', () => {
-      const role = service.extractEventMessageRole({
-        message: { role: 'user' },
-        info: { role: 'assistant' }
-      })
-      expect(role).toBe('user')
-    })
-
-    test('falls through to later paths when earlier are missing', () => {
-      const role = service.extractEventMessageRole({
-        message: {},
-        info: {},
-        metadata: { role: 'assistant' }
-      })
-      expect(role).toBe('assistant')
-    })
+    )
+    expect(mockDb.getSessionMessageByOpenCodeId).not.toHaveBeenCalled()
+    expect(mockDb.upsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
   })
 
-  describe('persistStreamEvent role guards', () => {
-    const hiveSessionId = 'hive-session-123'
-    const messageId = 'msg-001'
-
-    test('message.part.updated with role=assistant is persisted', () => {
-      const eventData = {
-        message: { role: 'assistant', id: messageId },
-        part: { type: 'text', text: 'Hello', id: 'part-1' },
-        delta: 'Hello'
-      }
-
-      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledTimes(1)
-      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledWith(
-        expect.objectContaining({
-          session_id: hiveSessionId,
-          role: 'assistant',
-          opencode_message_id: messageId
-        })
-      )
+  test('message.updated forwards to renderer without DB transcript persistence', async () => {
+    const send = vi.fn()
+    service.setMainWindow({
+      isDestroyed: () => false,
+      isFocused: () => true,
+      webContents: { send }
     })
 
-    test('message.part.updated with role=user is NOT persisted', () => {
-      const eventData = {
-        message: { role: 'user', id: messageId },
-        part: { type: 'text', text: 'Hello', id: 'part-1' },
-        delta: 'Hello'
+    const instance = createInstance()
+
+    await (
+      service as never as {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        handleEvent: (instance: any, rawEvent: any, directory?: string) => Promise<void>
       }
+    ).handleEvent(
+      instance,
+      {
+        data: {
+          type: 'message.updated',
+          properties: {
+            sessionID: 'opc-session-1',
+            info: { messageID: 'msg-1' },
+            message: { id: 'msg-1', role: 'assistant' },
+            parts: [{ type: 'text', text: 'hello world' }]
+          }
+        }
+      },
+      '/repo/a'
+    )
 
-      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
-    })
-
-    test('message.part.updated with undefined role IS persisted (SDK often omits role)', () => {
-      const eventData = {
-        message: { id: messageId },
-        part: { type: 'text', text: 'Hello', id: 'part-1' },
-        delta: 'Hello'
-      }
-
-      // The SDK often omits the role field on streaming payloads.
-      // undefined role is treated as assistant (only explicit 'user' is skipped).
-      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledTimes(1)
-    })
-
-    test('message.updated with role=assistant is persisted', () => {
-      const eventData = {
-        message: { role: 'assistant', id: messageId },
-        info: { sessionID: 'oc-123' }
-      }
-
-      service.persistStreamEvent(hiveSessionId, 'message.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledTimes(1)
-      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledWith(
-        expect.objectContaining({
-          session_id: hiveSessionId,
-          role: 'assistant',
-          opencode_message_id: messageId
-        })
-      )
-    })
-
-    test('message.updated with role=user is NOT persisted', () => {
-      const eventData = {
-        message: { role: 'user', id: messageId },
-        info: { sessionID: 'oc-123' }
-      }
-
-      service.persistStreamEvent(hiveSessionId, 'message.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
-    })
-
-    test('message.updated with undefined role IS persisted (SDK often omits role)', () => {
-      const eventData = {
-        message: { id: messageId },
-        info: { sessionID: 'oc-123' }
-      }
-
-      // The SDK often omits the role field on message.updated payloads.
-      // undefined role is treated as assistant (only explicit 'user' is skipped).
-      service.persistStreamEvent(hiveSessionId, 'message.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledTimes(1)
-    })
-
-    test('message.updated with role=system IS persisted (only user is skipped)', () => {
-      const eventData = {
-        role: 'system',
-        message: { id: messageId }
-      }
-
-      // Only explicit 'user' role is skipped; other roles (system, undefined) are persisted.
-      service.persistStreamEvent(hiveSessionId, 'message.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledTimes(1)
-    })
-
-    test('unrelated event type is not persisted', () => {
-      const eventData = {
-        message: { role: 'assistant', id: messageId }
-      }
-
-      service.persistStreamEvent(hiveSessionId, 'session.idle', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
-    })
+    expect(send).toHaveBeenCalledWith(
+      'opencode:stream',
+      expect.objectContaining({
+        type: 'message.updated',
+        sessionId: 'hive-session-a'
+      })
+    )
+    expect(mockDb.getSessionMessageByOpenCodeId).not.toHaveBeenCalled()
+    expect(mockDb.upsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
   })
 
-  describe('content-based echo detection', () => {
-    const hiveSessionId = 'hive-session-456'
-    const messageId = 'msg-echo-001'
-
-    test('message.part.updated matching lastPrompt is NOT persisted', () => {
-      // Simulate storing a prompt (as prompt() would do)
-      service.lastPromptBySession.set(hiveSessionId, '[Mode: Plan] Focus on designing.\n\nhello')
-
-      const eventData = {
-        message: { id: messageId },
-        part: { type: 'text', text: '[Mode: Plan] Focus on designing.\n\nhello', id: 'part-1' },
-        delta: '[Mode: Plan] Focus on designing.\n\nhello'
-      }
-
-      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
+  test('session.updated still persists title and worktree metadata updates', async () => {
+    const send = vi.fn()
+    service.setMainWindow({
+      isDestroyed: () => false,
+      isFocused: () => true,
+      webContents: { send }
     })
 
-    test('message.part.updated with partial echo prefix is NOT persisted', () => {
-      service.lastPromptBySession.set(hiveSessionId, '[Mode: Plan] Focus on designing.\n\nhello')
-
-      const eventData = {
-        message: { id: messageId },
-        part: { type: 'text', id: 'part-1' },
-        delta: '[Mode: Plan]'
-      }
-
-      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
+    mockDb.getWorktreeBySessionId.mockReturnValue({
+      id: 'wt-1',
+      path: '/repo/a',
+      branch_name: 'paris',
+      branch_renamed: 0
     })
 
-    test('message.part.updated with non-matching text IS persisted and clears prompt', () => {
-      service.lastPromptBySession.set(hiveSessionId, 'hello')
+    const instance = createInstance()
 
-      const eventData = {
-        message: { id: messageId },
-        part: { type: 'text', text: 'I can help you with that.', id: 'part-1' },
-        delta: 'I can help you with that.'
+    await (
+      service as never as {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        handleEvent: (instance: any, rawEvent: any, directory?: string) => Promise<void>
       }
+    ).handleEvent(
+      instance,
+      {
+        data: {
+          type: 'session.updated',
+          properties: {
+            info: {
+              id: 'opc-session-1',
+              title: 'Add login screen'
+            }
+          }
+        }
+      },
+      '/repo/a'
+    )
 
-      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledTimes(1)
-      // Prompt ref should be cleared after first non-matching text
-      expect(service.lastPromptBySession.has(hiveSessionId)).toBe(false)
+    expect(mockDb.updateSession).toHaveBeenCalledWith('hive-session-a', {
+      name: 'Add login screen'
     })
-
-    test('message.updated matching lastPrompt is NOT persisted', () => {
-      service.lastPromptBySession.set(hiveSessionId, 'hello world')
-
-      const eventData = {
-        message: { id: messageId },
-        info: { sessionID: 'oc-123' },
-        parts: [{ type: 'text', text: 'hello world' }]
-      }
-
-      service.persistStreamEvent(hiveSessionId, 'message.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).not.toHaveBeenCalled()
-    })
-
-    test('tool part events are not affected by echo detection', () => {
-      service.lastPromptBySession.set(hiveSessionId, 'hello')
-
-      const eventData = {
-        message: { id: messageId },
-        part: { type: 'tool', callID: 'call-1', tool: 'Bash', state: { status: 'running' } }
-      }
-
-      service.persistStreamEvent(hiveSessionId, 'message.part.updated', eventData)
-      expect(mockUpsertSessionMessageByOpenCodeId).toHaveBeenCalledTimes(1)
-    })
+    expect(mockCanonicalizeBranchName).toHaveBeenCalledWith('Add login screen')
+    expect(mockRenameBranch).toHaveBeenCalledWith('/repo/a', 'paris', 'add-login-screen')
+    expect(mockDb.updateWorktree).toHaveBeenCalledWith(
+      'wt-1',
+      expect.objectContaining({
+        name: 'add-login-screen',
+        branch_name: 'add-login-screen',
+        branch_renamed: 1
+      })
+    )
+    expect(send).toHaveBeenCalledWith(
+      'worktree:branchRenamed',
+      expect.objectContaining({
+        worktreeId: 'wt-1',
+        newBranch: 'add-login-screen'
+      })
+    )
   })
 })

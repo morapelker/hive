@@ -24,10 +24,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import {
-  useSessionHistoryStore,
-  type SessionWithWorktree
-} from '@/stores/useSessionHistoryStore'
+import { useSessionHistoryStore, type SessionWithWorktree } from '@/stores/useSessionHistoryStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -56,7 +53,11 @@ function formatDate(dateString: string): string {
   } else if (diffDays === 1) {
     return `Yesterday at ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
   } else if (diffDays < 7) {
-    return date.toLocaleDateString(undefined, { weekday: 'long', hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleDateString(undefined, {
+      weekday: 'long',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
   } else {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
   }
@@ -129,10 +130,7 @@ function SessionItem({
         <Button
           variant="ghost"
           size="sm"
-          className={cn(
-            'opacity-0 transition-opacity',
-            isSelected && 'opacity-100'
-          )}
+          className={cn('opacity-0 transition-opacity', isSelected && 'opacity-100')}
           onClick={(e) => {
             e.stopPropagation()
             onLoad()
@@ -154,6 +152,9 @@ interface SessionPreviewProps {
 }
 
 function SessionPreview({ session, onLoad }: SessionPreviewProps): React.JSX.Element {
+  const getSessionPreviewMessages = useSessionHistoryStore(
+    (state) => state.getSessionPreviewMessages
+  )
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
@@ -163,10 +164,9 @@ function SessionPreview({ session, onLoad }: SessionPreviewProps): React.JSX.Ele
     const loadMessages = async (): Promise<void> => {
       setIsLoading(true)
       try {
-        const sessionMessages = await window.db.message.getBySession(session.id)
+        const sessionMessages = await getSessionPreviewMessages(session)
         if (!cancelled) {
-          // Only take first few messages for preview
-          setMessages(sessionMessages.slice(0, 5))
+          setMessages(sessionMessages)
           setIsLoading(false)
         }
       } catch {
@@ -180,7 +180,7 @@ function SessionPreview({ session, onLoad }: SessionPreviewProps): React.JSX.Ele
     return () => {
       cancelled = true
     }
-  }, [session.id])
+  }, [getSessionPreviewMessages, session])
 
   const isOrphaned = !session.worktree_id || session.worktree_name === undefined
 
@@ -257,9 +257,7 @@ function SessionPreview({ session, onLoad }: SessionPreviewProps): React.JSX.Ele
               </div>
             ))}
             {messages.length >= 5 && (
-              <p className="text-xs text-muted-foreground text-center">
-                ...and more messages
-              </p>
+              <p className="text-xs text-muted-foreground text-center">...and more messages</p>
             )}
           </div>
         )}
@@ -433,13 +431,16 @@ export function SessionHistory(): React.JSX.Element | null {
               <Input
                 ref={inputRef}
                 type="text"
-                placeholder="Search sessions..."
+                placeholder="Search title, project, or worktree..."
                 value={filters.keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 className="pl-9"
                 data-testid="session-search-input"
               />
             </div>
+            <p className="text-xs text-muted-foreground">
+              Keyword search matches session metadata (title, project, and worktree) only.
+            </p>
 
             {/* Filter row */}
             <div className="flex flex-wrap items-center gap-2">
@@ -459,10 +460,7 @@ export function SessionHistory(): React.JSX.Element | null {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   {projects.map((project) => (
-                    <DropdownMenuItem
-                      key={project.id}
-                      onClick={() => setProjectFilter(project.id)}
-                    >
+                    <DropdownMenuItem key={project.id} onClick={() => setProjectFilter(project.id)}>
                       {project.name}
                     </DropdownMenuItem>
                   ))}
@@ -506,7 +504,11 @@ export function SessionHistory(): React.JSX.Element | null {
                     {filters.dateFrom || filters.dateTo ? 'Date range' : 'Any time'}
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56" data-testid="date-filter-dropdown">
+                <DropdownMenuContent
+                  align="start"
+                  className="w-56"
+                  data-testid="date-filter-dropdown"
+                >
                   <div className="p-2 space-y-2">
                     <div>
                       <label className="text-xs text-muted-foreground">From</label>
@@ -565,11 +567,7 @@ export function SessionHistory(): React.JSX.Element | null {
 
           {/* Results */}
           <div className="flex-1 overflow-y-auto" data-testid="session-results-list">
-            {error && (
-              <div className="p-4 bg-destructive/10 text-destructive text-sm">
-                {error}
-              </div>
-            )}
+            {error && <div className="p-4 bg-destructive/10 text-destructive text-sm">{error}</div>}
 
             {isSearching ? (
               <div className="flex items-center justify-center py-12">

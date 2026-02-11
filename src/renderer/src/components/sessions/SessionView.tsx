@@ -22,6 +22,7 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
+import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
@@ -76,19 +77,6 @@ interface SessionViewProps {
   sessionId: string
 }
 
-// Database message type from window.db.message
-interface DbMessage {
-  id: string
-  session_id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  opencode_message_id?: string | null
-  opencode_message_json?: string | null
-  opencode_parts_json?: string | null
-  opencode_timeline_json?: string | null
-  created_at: string
-}
-
 // Session type from database
 interface DbSession {
   id: string
@@ -115,183 +103,18 @@ interface DbWorktree {
   last_accessed_at: string
 }
 
-function parseJsonArray(value: string | null | undefined): unknown[] {
-  if (!value) return []
-  try {
-    const parsed = JSON.parse(value)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined
-}
-
-function toTimestampMs(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value !== 'string') return undefined
-  const asNumber = Number(value)
-  if (Number.isFinite(asNumber)) return asNumber
-  const asDate = Date.parse(value)
-  return Number.isNaN(asDate) ? undefined : asDate
-}
-
-function mapToolStatus(value: unknown): ToolStatus {
-  switch (value) {
-    case 'pending':
-      return 'pending'
-    case 'running':
-      return 'running'
-    case 'completed':
-    case 'success':
-      return 'success'
-    case 'error':
-      return 'error'
-    default:
-      return 'running'
-  }
-}
-
-function stringifyValue(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined
-  if (typeof value === 'string') return value
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return String(value)
-  }
-}
-
-function mapStoredPartsToStreamingParts(rawParts: unknown[]): StreamingPart[] {
-  return rawParts.flatMap((rawPart, index) => {
-    const part = asRecord(rawPart)
-    if (!part) return []
-
-    const partType = asString(part.type)
-    if (partType === 'text') {
-      const text = asString(part.text)
-      if (!text) return []
-      return [{ type: 'text', text }]
-    }
-
-    // Support historical data that may already be in renderer-friendly shape.
-    if (partType === 'tool_use') {
-      const rawToolUse = asRecord(part.toolUse)
-      if (!rawToolUse) return []
-
-      const toolUse: ToolUseInfo = {
-        id: asString(rawToolUse.id) ?? `tool-${index}`,
-        name: asString(rawToolUse.name) ?? 'Unknown',
-        input: asRecord(rawToolUse.input) ?? {},
-        status: mapToolStatus(rawToolUse.status),
-        startTime: toTimestampMs(rawToolUse.startTime) ?? Date.now(),
-        endTime: toTimestampMs(rawToolUse.endTime),
-        output: stringifyValue(rawToolUse.output),
-        error: asString(rawToolUse.error)
-      }
-      return [{ type: 'tool_use', toolUse }]
-    }
-
-    if (partType === 'tool') {
-      const state = asRecord(part.state) ?? {}
-      const stateTime = asRecord(state.time) ?? {}
-
-      const toolUse: ToolUseInfo = {
-        id: asString(part.callID) ?? asString(part.id) ?? `tool-${index}`,
-        name: asString(part.tool) ?? asString(part.name) ?? 'Unknown',
-        input: asRecord(state.input) ?? {},
-        status: mapToolStatus(state.status),
-        startTime: toTimestampMs(stateTime.start) ?? Date.now(),
-        endTime: toTimestampMs(stateTime.end),
-        output: stringifyValue(state.output),
-        error: stringifyValue(state.error)
-      }
-      return [{ type: 'tool_use', toolUse }]
-    }
-
-    if (partType === 'subtask') {
-      const childParts = Array.isArray(part.parts)
-        ? mapStoredPartsToStreamingParts(part.parts as unknown[])
-        : []
-      return [
-        {
-          type: 'subtask',
-          subtask: {
-            id: asString(part.id) ?? `subtask-${index}`,
-            sessionID: asString(part.sessionID) ?? '',
-            prompt: asString(part.prompt) ?? '',
-            description: asString(part.description) ?? '',
-            agent: asString(part.agent) ?? 'unknown',
-            parts: childParts,
-            status:
-              part.status === 'completed' || part.status === 'error'
-                ? (part.status as 'completed' | 'error')
-                : 'running'
-          }
-        }
-      ]
-    }
-
-    if (partType === 'step-start' || partType === 'step_start') {
-      return [{ type: 'step_start', stepStart: { snapshot: asString(part.snapshot) } }]
-    }
-
-    if (partType === 'step-finish' || partType === 'step_finish') {
-      const tokens = asRecord(part.tokens)
-      return [
-        {
-          type: 'step_finish',
-          stepFinish: {
-            reason: asString(part.reason) ?? '',
-            cost: typeof part.cost === 'number' ? part.cost : 0,
-            tokens: {
-              input: typeof tokens?.input === 'number' ? tokens.input : 0,
-              output: typeof tokens?.output === 'number' ? tokens.output : 0,
-              reasoning: typeof tokens?.reasoning === 'number' ? tokens.reasoning : 0
-            }
-          }
-        }
-      ]
-    }
-
-    if (partType === 'reasoning') {
-      return [{ type: 'reasoning', reasoning: asString(part.text) ?? '' }]
-    }
-
-    if (partType === 'compaction') {
-      return [{ type: 'compaction', compactionAuto: part.auto === true }]
-    }
-
-    return []
-  })
-}
-
-function loadStoredParts(message: DbMessage): StreamingPart[] | undefined {
-  const rawParts = parseJsonArray(message.opencode_parts_json)
-  if (rawParts.length === 0) return undefined
-
-  const parts = mapStoredPartsToStreamingParts(rawParts)
-  return parts.length > 0 ? parts : undefined
-}
-
-// Convert database message to renderer message
-function dbMessageToOpenCode(msg: DbMessage): OpenCodeMessage {
-  const parts = loadStoredParts(msg)
-
+function createLocalMessage(role: OpenCodeMessage['role'], content: string): OpenCodeMessage {
   return {
-    id: msg.id,
-    role: msg.role,
-    content: msg.content,
-    timestamp: msg.created_at,
-    parts
+    id: `local-${crypto.randomUUID()}`,
+    role,
+    content,
+    timestamp: new Date().toISOString()
   }
 }
 
@@ -420,7 +243,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const hasFinalizedCurrentResponseRef = useRef(false)
 
   // Guard: tracks whether a new prompt was sent during the current streaming cycle.
-  // When true, finalizeResponseFromDatabase skips the full reload to avoid
+  // When true, finalizeResponse skips the full reload to avoid
   // reordering the newly-sent user message.
   const newPromptPendingRef = useRef(false)
 
@@ -434,6 +257,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // can recognise SDK echoes of the user message even when the event lacks a
   // role field.
   const lastSentPromptRef = useRef<string | null>(null)
+
+  // Canonical transcript source used by reload/finalize/retry paths.
+  const transcriptSourceRef = useRef<{
+    worktreePath: string | null
+    opencodeSessionId: string | null
+  }>({
+    worktreePath: null,
+    opencodeSessionId: null
+  })
 
   // Extract message role from OpenCode stream payloads across known shapes
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -759,19 +591,96 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
     })
 
-    const loadMessagesFromDatabase = async (): Promise<OpenCodeMessage[]> => {
-      const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
-      const loadedMessages = dbMessages.map(dbMessageToOpenCode)
+    transcriptSourceRef.current = {
+      worktreePath: null,
+      opencodeSessionId: null
+    }
 
-      setMessages((currentMessages) => {
-        // Find any local messages not yet in the DB result
-        // (e.g., user messages sent during async DB load)
-        const loadedIds = new Set(loadedMessages.map((m) => m.id))
-        const localOnly = currentMessages.filter((m) => !loadedIds.has(m.id))
+    const loadMessages = async (source?: {
+      worktreePath?: string | null
+      opencodeSessionId?: string | null
+    }): Promise<OpenCodeMessage[]> => {
+      const sourceWorktreePath = source?.worktreePath ?? transcriptSourceRef.current.worktreePath
+      const sourceOpencodeSessionId =
+        source?.opencodeSessionId ?? transcriptSourceRef.current.opencodeSessionId
 
-        // Append local-only messages at the end to preserve user intent
-        return localOnly.length > 0 ? [...loadedMessages, ...localOnly] : loadedMessages
-      })
+      if (typeof sourceWorktreePath === 'string' && sourceWorktreePath.length > 0) {
+        transcriptSourceRef.current.worktreePath = sourceWorktreePath
+      }
+      if (typeof sourceOpencodeSessionId === 'string' && sourceOpencodeSessionId.length > 0) {
+        transcriptSourceRef.current.opencodeSessionId = sourceOpencodeSessionId
+      }
+
+      const canUseOpenCodeSource =
+        Boolean(window.opencodeOps) &&
+        typeof sourceWorktreePath === 'string' &&
+        sourceWorktreePath.length > 0 &&
+        typeof sourceOpencodeSessionId === 'string' &&
+        sourceOpencodeSessionId.length > 0
+
+      let loadedMessages: OpenCodeMessage[] = []
+      let loadedFromOpenCode = false
+
+      if (canUseOpenCodeSource) {
+        const result = await window.opencodeOps.getMessages(
+          sourceWorktreePath,
+          sourceOpencodeSessionId
+        )
+        if (result.success) {
+          loadedFromOpenCode = true
+
+          const opencodeMessages = Array.isArray(result.messages) ? result.messages : []
+          loadedMessages = mapOpencodeMessagesToSessionViewMessages(opencodeMessages)
+
+          let totalCost = 0
+          let snapshotTokens: TokenInfo | null = null
+          let snapshotModelRef: SessionModelRef | undefined
+
+          for (let i = opencodeMessages.length - 1; i >= 0; i--) {
+            const rawMessage = opencodeMessages[i]
+            if (typeof rawMessage !== 'object' || rawMessage === null) continue
+
+            const messageRecord = rawMessage as Record<string, unknown>
+            const info = asRecord(messageRecord.info)
+            const role = info?.role ?? messageRecord.role
+            if (role !== 'assistant') continue
+
+            totalCost += extractCost(messageRecord)
+
+            if (!snapshotTokens) {
+              const tokens = extractTokens(messageRecord)
+              if (tokens) {
+                snapshotTokens = tokens
+                snapshotModelRef = extractModelRef(messageRecord) ?? undefined
+              }
+            }
+          }
+
+          if (snapshotTokens || totalCost > 0) {
+            useContextStore.getState().resetSessionTokens(sessionId)
+            if (snapshotTokens) {
+              useContextStore
+                .getState()
+                .setSessionTokens(sessionId, snapshotTokens, snapshotModelRef)
+            }
+            if (totalCost > 0) {
+              useContextStore.getState().setSessionCost(sessionId, totalCost)
+            }
+          }
+        } else {
+          console.warn('Failed to load OpenCode transcript:', result.error)
+        }
+      }
+
+      if (loadedFromOpenCode) {
+        setMessages(loadedMessages)
+      } else {
+        setMessages((currentMessages) => {
+          const loadedIds = new Set(loadedMessages.map((m) => m.id))
+          const localOnly = currentMessages.filter((m) => !loadedIds.has(m.id))
+          return localOnly.length > 0 ? [...loadedMessages, ...localOnly] : loadedMessages
+        })
+      }
 
       const lastMessage = loadedMessages[loadedMessages.length - 1]
       if (lastMessage?.role === 'assistant') {
@@ -781,56 +690,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
       }
 
-      // Reconstruct token usage from stored assistant messages
-      // Snapshot approach: find the LAST assistant message with tokens > 0 (walk backward)
-      // Cost: sum across ALL assistant messages
-      // Scan first, only reset+set if data was found — otherwise keep whatever
-      // the global listener or a previous load may have set
-      let totalCost = 0
-      let snapshotSet = false
-      let snapshotTokens: TokenInfo | null = null
-      let snapshotModelRef: SessionModelRef | undefined
-
-      for (let i = dbMessages.length - 1; i >= 0; i--) {
-        const msg = dbMessages[i]
-        if (msg.role === 'assistant' && msg.opencode_message_json) {
-          try {
-            const msgJson = JSON.parse(msg.opencode_message_json)
-
-            // Accumulate cost from every assistant message
-            totalCost += extractCost(msgJson)
-
-            // Set token snapshot from the last assistant message with tokens > 0
-            if (!snapshotSet) {
-              const tokens = extractTokens(msgJson)
-              if (tokens) {
-                snapshotTokens = tokens
-                snapshotModelRef = extractModelRef(msgJson) ?? undefined
-                snapshotSet = true
-              }
-            }
-          } catch {
-            // Ignore parse errors
-          }
-        }
-      }
-
-      // Only reset and apply if we found data — otherwise keep whatever
-      // the global listener or a previous load may have set
-      if (snapshotTokens || totalCost > 0) {
-        useContextStore.getState().resetSessionTokens(sessionId)
-        if (snapshotTokens) {
-          useContextStore.getState().setSessionTokens(sessionId, snapshotTokens, snapshotModelRef)
-        }
-        if (totalCost > 0) {
-          useContextStore.getState().setSessionCost(sessionId, totalCost)
-        }
-      }
-
       return loadedMessages
     }
 
-    const finalizeResponseFromDatabase = async (): Promise<void> => {
+    const finalizeResponse = async (): Promise<void> => {
       if (newPromptPendingRef.current) {
         // A new prompt was sent during this stream — skip full reload.
         // The next stream completion will finalize both responses.
@@ -840,7 +703,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
 
       try {
-        await loadMessagesFromDatabase()
+        await loadMessages()
       } catch (error) {
         console.error('Failed to refresh messages after stream completion:', error)
         toast.error('Failed to refresh response')
@@ -1259,7 +1122,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
             if (!hasFinalizedCurrentResponseRef.current) {
               hasFinalizedCurrentResponseRef.current = true
-              void finalizeResponseFromDatabase()
+              void finalizeResponse()
             }
           } else if (event.type === 'session.status') {
             const status = event.statusPayload || event.data?.status
@@ -1290,7 +1153,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
               if (!hasFinalizedCurrentResponseRef.current) {
                 hasFinalizedCurrentResponseRef.current = true
-                void finalizeResponseFromDatabase()
+                void finalizeResponse()
               }
 
               // Update worktree status
@@ -1311,10 +1174,36 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       setViewState({ status: 'connecting' })
 
       try {
-        // 1. Load messages from database
-        const loadedMessages = await loadMessagesFromDatabase()
+        // 1. Resolve session/worktree metadata so transcript loading can prefer OpenCode
+        const session = (await window.db.session.get(sessionId)) as DbSession | null
+        if (!session) {
+          throw new Error('Session not found')
+        }
 
-        // 1b. Restore streaming parts from the last persisted assistant message.
+        let wtPath: string | null = null
+        if (session.worktree_id) {
+          setWorktreeId(session.worktree_id)
+          const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
+          if (worktree) {
+            wtPath = worktree.path
+            setWorktreePath(wtPath)
+            transcriptSourceRef.current.worktreePath = wtPath
+          }
+        }
+
+        const existingOpcSessionId = session.opencode_session_id
+        if (existingOpcSessionId) {
+          setOpencodeSessionId(existingOpcSessionId)
+          transcriptSourceRef.current.opencodeSessionId = existingOpcSessionId
+        }
+
+        // 2. Hydrate transcript (OpenCode canonical source when possible)
+        const loadedMessages = await loadMessages({
+          worktreePath: wtPath,
+          opencodeSessionId: existingOpcSessionId
+        })
+
+        // 2b. Restore streaming parts from the last persisted assistant message.
         // When the user switches away from a session with an active tool call
         // and then switches back, streamingPartsRef is empty. Without this
         // restoration, incoming tool results can't find their matching callID
@@ -1353,22 +1242,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           }
         }
 
-        // 2. Get session info to find worktree
-        const session = (await window.db.session.get(sessionId)) as DbSession | null
-        if (!session) {
-          throw new Error('Session not found')
-        }
-
-        // 3. Get worktree path
-        let wtPath: string | null = null
-        if (session.worktree_id) {
-          setWorktreeId(session.worktree_id)
-          const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
-          if (worktree) {
-            wtPath = worktree.path
-            setWorktreePath(wtPath)
-          }
-        }
+        // 3. Continue with OpenCode connection setup
 
         if (!wtPath) {
           // No worktree - just show messages without OpenCode
@@ -1384,7 +1258,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
 
         // 4. Connect to OpenCode
-        const existingOpcSessionId = session.opencode_session_id
 
         // Fetch context limits for all provider/model combinations (fire-and-forget).
         // This avoids model-id collisions across providers and lets context usage use
@@ -1469,15 +1342,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           const pendingMsg = useSessionStore.getState().consumePendingMessage(sessionId)
           if (!pendingMsg) return
           try {
-            // Save user message to database
-            const savedMsg = await window.db.message.create({
-              session_id: sessionId,
-              role: 'user' as const,
-              content: pendingMsg
-            })
-            // Add to messages display
-            const userMessage = dbMessageToOpenCode(savedMsg as DbMessage)
-            setMessages((prev) => [...prev, userMessage])
+            setMessages((prev) => [...prev, createLocalMessage('user', pendingMsg)])
             // Set worktree status based on session mode
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
             useWorktreeStatusStore
@@ -1505,6 +1370,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           )
           if (reconnectResult.success) {
             setOpencodeSessionId(existingOpcSessionId)
+            transcriptSourceRef.current.opencodeSessionId = existingOpcSessionId
             fetchModelLimits()
             fetchCommands(wtPath)
             hydratePermissions(wtPath)
@@ -1527,6 +1393,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const connectResult = await window.opencodeOps.connect(wtPath, sessionId)
         if (connectResult.success && connectResult.sessionId) {
           setOpencodeSessionId(connectResult.sessionId)
+          transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
           fetchModelLimits()
           fetchCommands(wtPath)
           hydratePermissions(wtPath)
@@ -1587,42 +1454,88 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setViewState({ status: 'connecting' })
     setOpencodeSessionId(null)
     setWorktreePath(null)
+    transcriptSourceRef.current = {
+      worktreePath: null,
+      opencodeSessionId: null
+    }
 
     try {
-      const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
-      const loadedMessages = dbMessages.map(dbMessageToOpenCode)
-      setMessages(loadedMessages)
-
       const session = (await window.db.session.get(sessionId)) as DbSession | null
-      if (!session?.worktree_id) {
+      if (!session) {
+        throw new Error('Session not found')
+      }
+
+      if (!session.worktree_id) {
+        setMessages([])
         setViewState({ status: 'connected' })
         return
       }
 
       const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
       if (!worktree) {
+        setMessages([])
         setViewState({ status: 'connected' })
         return
       }
 
       setWorktreePath(worktree.path)
+      transcriptSourceRef.current.worktreePath = worktree.path
+      const existingOpcSessionId = session.opencode_session_id
 
       if (!window.opencodeOps) {
         console.warn('OpenCode API unavailable, retry falling back to local-only mode')
+        setMessages([])
         setViewState({ status: 'connected' })
         return
       }
 
-      const connectResult = await window.opencodeOps.connect(worktree.path, sessionId)
-      if (connectResult.success && connectResult.sessionId) {
+      let activeOpcSessionId = existingOpcSessionId
+
+      if (existingOpcSessionId) {
+        const reconnectResult = await window.opencodeOps.reconnect(
+          worktree.path,
+          existingOpcSessionId,
+          sessionId
+        )
+        if (reconnectResult.success) {
+          setOpencodeSessionId(existingOpcSessionId)
+          transcriptSourceRef.current.opencodeSessionId = existingOpcSessionId
+          activeOpcSessionId = existingOpcSessionId
+        } else {
+          activeOpcSessionId = null
+        }
+      }
+
+      if (!activeOpcSessionId) {
+        const connectResult = await window.opencodeOps.connect(worktree.path, sessionId)
+        if (!connectResult.success || !connectResult.sessionId) {
+          throw new Error(connectResult.error || 'Failed to connect')
+        }
+
+        activeOpcSessionId = connectResult.sessionId
         setOpencodeSessionId(connectResult.sessionId)
+        transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
         await window.db.session.update(sessionId, {
           opencode_session_id: connectResult.sessionId
         })
-        setViewState({ status: 'connected' })
-      } else {
-        throw new Error(connectResult.error || 'Failed to connect')
       }
+
+      const transcriptResult = await window.opencodeOps.getMessages(
+        worktree.path,
+        activeOpcSessionId
+      )
+      if (!transcriptResult.success) {
+        console.warn('Retry transcript load from OpenCode failed:', transcriptResult.error)
+        setMessages([])
+        setViewState({ status: 'connected' })
+        return
+      }
+
+      const loadedMessages = mapOpencodeMessagesToSessionViewMessages(
+        Array.isArray(transcriptResult.messages) ? transcriptResult.messages : []
+      )
+      setMessages(loadedMessages)
+      setViewState({ status: 'connected' })
     } catch (error) {
       console.error('Retry failed:', error)
       setViewState({
@@ -1715,17 +1628,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       .setSessionStatus(sessionId, currentModeForStatus === 'plan' ? 'planning' : 'working')
 
     try {
-      // Save user message to database
-      const savedUserMessage = (await window.db.message.create({
-        session_id: sessionId,
-        role: 'user' as const,
-        content: trimmedValue
-      })) as DbMessage
+      setMessages((prev) => [...prev, createLocalMessage('user', trimmedValue)])
 
-      const userMessage = dbMessageToOpenCode(savedUserMessage)
-      setMessages((prev) => [...prev, userMessage])
-
-      // Mark that a new prompt is in flight — prevents finalizeResponseFromDatabase
+      // Mark that a new prompt is in flight — prevents finalizeResponse
       // from reordering this message if a previous stream is still completing.
       newPromptPendingRef.current = true
 
@@ -1845,21 +1750,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // No OpenCode connection - show placeholder
         setAttachments([])
         console.warn('No OpenCode connection, showing placeholder response')
-        setTimeout(async () => {
-          try {
-            const placeholderContent =
-              'OpenCode is not connected. Please ensure a worktree is selected and the connection is established.'
-            const savedAssistantMessage = (await window.db.message.create({
-              session_id: sessionId,
-              role: 'assistant' as const,
-              content: placeholderContent
-            })) as DbMessage
-
-            const assistantMessage = dbMessageToOpenCode(savedAssistantMessage)
-            setMessages((prev) => [...prev, assistantMessage])
-          } catch (error) {
-            console.error('Failed to save placeholder message:', error)
-          }
+        setTimeout(() => {
+          const placeholderContent =
+            'OpenCode is not connected. Please ensure a worktree is selected and the connection is established.'
+          setMessages((prev) => [...prev, createLocalMessage('assistant', placeholderContent)])
           setIsSending(false)
         }, 500)
       }

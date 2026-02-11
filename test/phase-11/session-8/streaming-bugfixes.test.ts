@@ -15,26 +15,50 @@ const sessionViewPath = path.join(
   'SessionView.tsx'
 )
 
+const transcriptPath = path.join(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  'src',
+  'renderer',
+  'src',
+  'lib',
+  'opencode-transcript.ts'
+)
+
 function readSessionView(): string {
   return fs.readFileSync(sessionViewPath, 'utf-8')
+}
+
+function readTranscriptMapper(): string {
+  return fs.readFileSync(transcriptPath, 'utf-8')
 }
 
 describe('Session 8: Streaming Bugfixes', () => {
   describe('Loading state preservation', () => {
     test('partial clear does not call resetStreamingState during initialization', () => {
       const content = readSessionView()
-      // The stream subscription effect should do a partial clear, NOT call
-      // resetStreamingState() directly. The partial clear resets display data
-      // (parts, content) without touching isStreaming.
-      // Verify the partial clear pattern exists:
-      expect(content).toContain('// Partial clear')
+
+      const partialClearStart = content.indexOf('if (!isStreaming) {')
+      const partialClearEnd = content.indexOf(
+        'hasFinalizedCurrentResponseRef.current = false',
+        partialClearStart
+      )
+      expect(partialClearStart).toBeGreaterThan(-1)
+      expect(partialClearEnd).toBeGreaterThan(partialClearStart)
+
+      const partialClearBlock = content.slice(partialClearStart, partialClearEnd)
+
+      // The stream setup does a partial clear of display state without calling
+      // resetStreamingState (which also toggles isStreaming false).
       expect(content).toContain('streamingPartsRef.current = []')
       expect(content).toContain("streamingContentRef.current = ''")
       expect(content).toContain('setStreamingParts([])')
       expect(content).toContain("setStreamingContent('')")
-      // Verify there's a comment explaining why we don't reset isStreaming:
-      expect(content).toContain('Do NOT')
-      expect(content).toContain('isStreaming')
+      expect(content).toContain('Only clear streaming display state if NOT currently streaming')
+      expect(partialClearBlock).not.toContain('resetStreamingState()')
+      expect(partialClearBlock).not.toContain('setIsStreaming(false)')
     })
 
     test('resetStreamingState still exists for finalization', () => {
@@ -89,7 +113,9 @@ describe('Session 8: Streaming Bugfixes', () => {
       // Verify the restoration logic exists in initializeSession
       expect(content).toContain("lastMsg.role === 'assistant'")
       expect(content).toContain('lastMsg.parts')
-      expect(content).toContain('streamingPartsRef.current = lastMsg.parts.map')
+      expect(content).toContain('const dbParts = lastMsg.parts.map((p) => ({ ...p }))')
+      expect(content).toContain('streamingPartsRef.current = [...dbParts, ...extraParts]')
+      expect(content).toContain('streamingPartsRef.current = dbParts')
     })
 
     test('text content restored from persisted parts', () => {
@@ -113,28 +139,30 @@ describe('Session 8: Streaming Bugfixes', () => {
     })
   })
 
-  describe('mapStoredPartsToStreamingParts', () => {
-    test('function exists for converting DB parts to streaming format', () => {
-      const content = readSessionView()
-      expect(content).toContain('function mapStoredPartsToStreamingParts')
+  describe('OpenCode transcript part mapping', () => {
+    test('function exists for converting OpenCode parts to streaming format', () => {
+      const content = readTranscriptMapper()
+      expect(content).toContain('export function mapOpencodePartToStreamingPart')
     })
 
     test('handles text parts', () => {
-      const content = readSessionView()
+      const content = readTranscriptMapper()
       // Verify text part handling
-      expect(content).toContain("partType === 'text'")
+      expect(content).toContain("if (type === 'text')")
     })
 
     test('handles tool parts with callID for result merging', () => {
-      const content = readSessionView()
+      const content = readTranscriptMapper()
       // Verify tool part handling preserves callID
-      expect(content).toContain("partType === 'tool'")
-      expect(content).toContain('part.callID')
+      expect(content).toContain("if (type === 'tool')")
+      expect(content).toContain(
+        'id: asString(record.callID) ?? asString(record.id) ?? `tool-${index}`'
+      )
     })
 
     test('handles subtask parts', () => {
-      const content = readSessionView()
-      expect(content).toContain("partType === 'subtask'")
+      const content = readTranscriptMapper()
+      expect(content).toContain("if (type === 'subtask')")
     })
   })
 })

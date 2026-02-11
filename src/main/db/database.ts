@@ -514,10 +514,12 @@ export class DatabaseService {
     if (options.keyword) {
       conditions.push(`(
         s.name LIKE ? OR
-        EXISTS (SELECT 1 FROM session_messages m WHERE m.session_id = s.id AND m.content LIKE ?)
+        p.name LIKE ? OR
+        w.name LIKE ? OR
+        w.branch_name LIKE ?
       )`)
       const keyword = `%${options.keyword}%`
-      values.push(keyword, keyword)
+      values.push(keyword, keyword, keyword, keyword)
     }
 
     if (options.project_id) {

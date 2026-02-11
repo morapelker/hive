@@ -144,12 +144,24 @@ describe('Session 12: Integration & Verification', () => {
   describe('streaming state preserved across tab switches', () => {
     test('partial clear preserves isStreaming when switching sessions', () => {
       const content = readSrc('renderer', 'src', 'components', 'sessions', 'SessionView.tsx')
+
+      const partialClearStart = content.indexOf('if (!isStreaming) {')
+      const partialClearEnd = content.indexOf(
+        'hasFinalizedCurrentResponseRef.current = false',
+        partialClearStart
+      )
+      expect(partialClearStart).toBeGreaterThan(-1)
+      expect(partialClearEnd).toBeGreaterThan(partialClearStart)
+
+      const partialClearBlock = content.slice(partialClearStart, partialClearEnd)
+
       // Partial clear resets display data
       expect(content).toContain('streamingPartsRef.current = []')
       expect(content).toContain("streamingContentRef.current = ''")
+      expect(content).toContain('Only clear streaming display state if NOT currently streaming')
       // But does NOT call resetStreamingState which would set isStreaming=false
-      expect(content).toContain('// Partial clear')
-      expect(content).toContain('Do NOT')
+      expect(partialClearBlock).not.toContain('resetStreamingState()')
+      expect(partialClearBlock).not.toContain('setIsStreaming(false)')
     })
 
     test('generation counter prevents stale closures from processing wrong events', () => {
@@ -172,13 +184,17 @@ describe('Session 12: Integration & Verification', () => {
       const content = readSrc('renderer', 'src', 'components', 'sessions', 'SessionView.tsx')
       expect(content).toContain("lastMsg.role === 'assistant'")
       expect(content).toContain('lastMsg.parts')
-      expect(content).toContain('streamingPartsRef.current = lastMsg.parts.map')
+      expect(content).toContain('const dbParts = lastMsg.parts.map((p) => ({ ...p }))')
+      expect(content).toContain('streamingPartsRef.current = [...dbParts, ...extraParts]')
+      expect(content).toContain('streamingPartsRef.current = dbParts')
     })
 
-    test('mapStoredPartsToStreamingParts preserves callID for tool result merging', () => {
-      const content = readSrc('renderer', 'src', 'components', 'sessions', 'SessionView.tsx')
-      expect(content).toContain('function mapStoredPartsToStreamingParts')
-      expect(content).toContain('part.callID')
+    test('mapOpencodePartToStreamingPart preserves callID for tool result merging', () => {
+      const content = readSrc('renderer', 'src', 'lib', 'opencode-transcript.ts')
+      expect(content).toContain('export function mapOpencodePartToStreamingPart')
+      expect(content).toContain(
+        'id: asString(record.callID) ?? asString(record.id) ?? `tool-${index}`'
+      )
     })
 
     test('text content is restored for continuity after switch', () => {
