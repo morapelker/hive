@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { act } from 'react'
 import React from 'react'
 import { useScriptStore } from '../../../src/renderer/src/stores/useScriptStore'
+import { deleteBuffer } from '../../../src/renderer/src/lib/output-ring-buffer'
 
 // ---------------------------------------------------------------------------
 // PulseAnimation tests
@@ -15,9 +16,8 @@ describe('Session 1: Quick Wins', () => {
 
   describe('PulseAnimation', () => {
     test('PulseAnimation renders SVG with path', async () => {
-      const { PulseAnimation } = await import(
-        '../../../src/renderer/src/components/worktrees/PulseAnimation'
-      )
+      const { PulseAnimation } =
+        await import('../../../src/renderer/src/components/worktrees/PulseAnimation')
       const { container } = render(React.createElement(PulseAnimation))
       const svg = container.querySelector('svg')
       expect(svg).toBeTruthy()
@@ -27,9 +27,8 @@ describe('Session 1: Quick Wins', () => {
     })
 
     test('PulseAnimation accepts className prop', async () => {
-      const { PulseAnimation } = await import(
-        '../../../src/renderer/src/components/worktrees/PulseAnimation'
-      )
+      const { PulseAnimation } =
+        await import('../../../src/renderer/src/components/worktrees/PulseAnimation')
       const { container } = render(
         React.createElement(PulseAnimation, { className: 'h-3.5 w-3.5 text-green-500' })
       )
@@ -38,9 +37,8 @@ describe('Session 1: Quick Wins', () => {
     })
 
     test('PulseAnimation has animateTransform for traveling effect', async () => {
-      const { PulseAnimation } = await import(
-        '../../../src/renderer/src/components/worktrees/PulseAnimation'
-      )
+      const { PulseAnimation } =
+        await import('../../../src/renderer/src/components/worktrees/PulseAnimation')
       const { container } = render(React.createElement(PulseAnimation))
       const animateTransform = container.querySelector('animateTransform')
       expect(animateTransform).toBeTruthy()
@@ -76,26 +74,28 @@ describe('Session 1: Quick Wins', () => {
 
       // Reset script store
       useScriptStore.setState({ scriptStates: {} })
+      deleteBuffer('wt-1')
     })
 
     test('Clear button visible when output exists', async () => {
-      // Set some run output in the store
+      // Populate ring buffer before setting state
+      deleteBuffer('wt-1')
+      useScriptStore.getState().appendRunOutput('wt-1', 'line 1')
+      useScriptStore.getState().appendRunOutput('wt-1', 'line 2')
       useScriptStore.setState({
         scriptStates: {
           'wt-1': {
             setupOutput: [],
             setupRunning: false,
             setupError: null,
-            runOutput: ['line 1', 'line 2'],
+            runOutputVersion: 2,
             runRunning: false,
             runPid: null
           }
         }
       })
 
-      const { RunTab } = await import(
-        '../../../src/renderer/src/components/layout/RunTab'
-      )
+      const { RunTab } = await import('../../../src/renderer/src/components/layout/RunTab')
       render(React.createElement(RunTab, { worktreeId: 'wt-1' }))
 
       const clearButton = screen.getByTestId('clear-button')
@@ -110,38 +110,37 @@ describe('Session 1: Quick Wins', () => {
             setupOutput: [],
             setupRunning: false,
             setupError: null,
-            runOutput: [],
+            runOutputVersion: 0,
             runRunning: false,
             runPid: null
           }
         }
       })
 
-      const { RunTab } = await import(
-        '../../../src/renderer/src/components/layout/RunTab'
-      )
+      const { RunTab } = await import('../../../src/renderer/src/components/layout/RunTab')
       render(React.createElement(RunTab, { worktreeId: 'wt-1' }))
 
       expect(screen.queryByTestId('clear-button')).toBeNull()
     })
 
     test('Clear button clears output on click', async () => {
+      // Populate ring buffer before setting state
+      deleteBuffer('wt-1')
+      useScriptStore.getState().appendRunOutput('wt-1', 'line 1')
       useScriptStore.setState({
         scriptStates: {
           'wt-1': {
             setupOutput: [],
             setupRunning: false,
             setupError: null,
-            runOutput: ['line 1'],
+            runOutputVersion: 1,
             runRunning: false,
             runPid: null
           }
         }
       })
 
-      const { RunTab } = await import(
-        '../../../src/renderer/src/components/layout/RunTab'
-      )
+      const { RunTab } = await import('../../../src/renderer/src/components/layout/RunTab')
       render(React.createElement(RunTab, { worktreeId: 'wt-1' }))
 
       const clearButton = screen.getByTestId('clear-button')
@@ -150,8 +149,7 @@ describe('Session 1: Quick Wins', () => {
       })
 
       // After clearing, the store should have empty run output
-      const state = useScriptStore.getState()
-      expect(state.scriptStates['wt-1']?.runOutput).toEqual([])
+      expect(useScriptStore.getState().getRunOutput('wt-1')).toEqual([])
     })
   })
 
@@ -201,16 +199,15 @@ describe('Session 1: Quick Wins', () => {
             setupOutput: [],
             setupRunning: false,
             setupError: null,
-            runOutput: [],
+            runOutputVersion: 0,
             runRunning: true,
             runPid: 123
           }
         }
       })
 
-      const { WorktreeItem } = await import(
-        '../../../src/renderer/src/components/worktrees/WorktreeItem'
-      )
+      const { WorktreeItem } =
+        await import('../../../src/renderer/src/components/worktrees/WorktreeItem')
       const { container } = render(
         React.createElement(WorktreeItem, {
           worktree: mockWorktree,
@@ -234,16 +231,15 @@ describe('Session 1: Quick Wins', () => {
             setupOutput: [],
             setupRunning: false,
             setupError: null,
-            runOutput: [],
+            runOutputVersion: 0,
             runRunning: false,
             runPid: null
           }
         }
       })
 
-      const { WorktreeItem } = await import(
-        '../../../src/renderer/src/components/worktrees/WorktreeItem'
-      )
+      const { WorktreeItem } =
+        await import('../../../src/renderer/src/components/worktrees/WorktreeItem')
       const { container } = render(
         React.createElement(WorktreeItem, {
           worktree: mockWorktree,

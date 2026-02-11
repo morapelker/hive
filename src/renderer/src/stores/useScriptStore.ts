@@ -1,10 +1,11 @@
 import { create } from 'zustand'
+import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
 
 interface ScriptState {
   setupOutput: string[]
   setupRunning: boolean
   setupError: string | null
-  runOutput: string[]
+  runOutputVersion: number
   runRunning: boolean
   runPid: number | null
 }
@@ -14,7 +15,7 @@ function createDefaultScriptState(): ScriptState {
     setupOutput: [],
     setupRunning: false,
     setupError: null,
-    runOutput: [],
+    runOutputVersion: 0,
     runRunning: false,
     runPid: null
   }
@@ -34,6 +35,7 @@ interface ScriptStore {
   setRunRunning: (worktreeId: string, running: boolean) => void
   setRunPid: (worktreeId: string, pid: number | null) => void
   clearRunOutput: (worktreeId: string) => void
+  getRunOutput: (worktreeId: string) => string[]
 
   // Helpers
   getScriptState: (worktreeId: string) => ScriptState
@@ -94,6 +96,11 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
   },
 
   appendRunOutput: (worktreeId, line) => {
+    // O(1) mutation — no array copying
+    const buffer = getOrCreateBuffer(worktreeId)
+    buffer.append(line)
+
+    // Bump version to trigger React re-render
     set((state) => {
       const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
       return {
@@ -101,7 +108,7 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
           ...state.scriptStates,
           [worktreeId]: {
             ...existing,
-            runOutput: [...existing.runOutput, line]
+            runOutputVersion: existing.runOutputVersion + 1
           }
         }
       }
@@ -133,15 +140,26 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
   },
 
   clearRunOutput: (worktreeId) => {
+    const buffer = getOrCreateBuffer(worktreeId)
+    buffer.clear()
+
     set((state) => {
       const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
       return {
         scriptStates: {
           ...state.scriptStates,
-          [worktreeId]: { ...existing, runOutput: [] }
+          [worktreeId]: {
+            ...existing,
+            runOutputVersion: existing.runOutputVersion + 1
+          }
         }
       }
     })
+  },
+
+  getRunOutput: (worktreeId: string): string[] => {
+    const buffer = getOrCreateBuffer(worktreeId)
+    return buffer.toArray()
   },
 
   getScriptState: (worktreeId) => {

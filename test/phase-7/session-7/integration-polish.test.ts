@@ -4,6 +4,7 @@ import React from 'react'
 import { subsequenceMatch } from '../../../src/renderer/src/lib/subsequence-match'
 import { useScriptStore } from '../../../src/renderer/src/stores/useScriptStore'
 import { useFileViewerStore } from '../../../src/renderer/src/stores/useFileViewerStore'
+import { deleteBuffer } from '../../../src/renderer/src/lib/output-ring-buffer'
 
 // ---------------------------------------------------------------------------
 // Session 7: Integration & Polish
@@ -31,7 +32,12 @@ describe('Session 7: Integration & Polish', () => {
         openInEditor: vi.fn().mockResolvedValue({ success: true }),
         duplicate: vi.fn().mockResolvedValue({
           success: true,
-          worktree: { id: 'wt-dup', name: 'feature-auth-v2', branch_name: 'feature-auth-v2', path: '/test/feature-auth-v2' }
+          worktree: {
+            id: 'wt-dup',
+            name: 'feature-auth-v2',
+            branch_name: 'feature-auth-v2',
+            path: '/test/feature-auth-v2'
+          }
         })
       },
       writable: true,
@@ -50,6 +56,7 @@ describe('Session 7: Integration & Polish', () => {
 
     // Reset stores
     useScriptStore.setState({ scriptStates: {} })
+    deleteBuffer('wt-1')
     useFileViewerStore.setState({ activeDiff: null, openFiles: new Map(), activeFilePath: null })
   })
 
@@ -72,11 +79,11 @@ describe('Session 7: Integration & Polish', () => {
       const query = 'al'
 
       const results = projects
-        .map(name => ({
+        .map((name) => ({
           name,
           match: subsequenceMatch(query, name)
         }))
-        .filter(r => r.match.matched)
+        .filter((r) => r.match.matched)
 
       expect(results).toHaveLength(1)
       expect(results[0].name).toBe('alpha-service')
@@ -91,23 +98,33 @@ describe('Session 7: Integration & Polish', () => {
     test('empty filter matches all projects', () => {
       const projects = ['alpha', 'beta', 'gamma']
       const results = projects
-        .map(name => ({
+        .map((name) => ({
           name,
           match: subsequenceMatch('', name)
         }))
-        .filter(r => r.match.matched)
+        .filter((r) => r.match.matched)
 
       expect(results).toHaveLength(3)
     })
 
     test('results sorted by match quality - name matches before path matches', () => {
       const items = [
-        { name: 'my-project', path: '/users/orders-app', nameMatch: subsequenceMatch('orders', 'my-project'), pathMatch: subsequenceMatch('orders', '/users/orders-app') },
-        { name: 'orders-service', path: '/users/svc', nameMatch: subsequenceMatch('orders', 'orders-service'), pathMatch: subsequenceMatch('orders', '/users/svc') }
+        {
+          name: 'my-project',
+          path: '/users/orders-app',
+          nameMatch: subsequenceMatch('orders', 'my-project'),
+          pathMatch: subsequenceMatch('orders', '/users/orders-app')
+        },
+        {
+          name: 'orders-service',
+          path: '/users/svc',
+          nameMatch: subsequenceMatch('orders', 'orders-service'),
+          pathMatch: subsequenceMatch('orders', '/users/svc')
+        }
       ]
 
       const sorted = items
-        .filter(i => i.nameMatch.matched || i.pathMatch.matched)
+        .filter((i) => i.nameMatch.matched || i.pathMatch.matched)
         .sort((a, b) => {
           const aScore = a.nameMatch.matched ? a.nameMatch.score : a.pathMatch.score + 1000
           const bScore = b.nameMatch.matched ? b.nameMatch.score : b.pathMatch.score + 1000
@@ -144,16 +161,15 @@ describe('Session 7: Integration & Polish', () => {
             setupOutput: [],
             setupRunning: false,
             setupError: null,
-            runOutput: [],
+            runOutputVersion: 0,
             runRunning: true,
             runPid: 123
           }
         }
       })
 
-      const { WorktreeItem } = await import(
-        '../../../src/renderer/src/components/worktrees/WorktreeItem'
-      )
+      const { WorktreeItem } =
+        await import('../../../src/renderer/src/components/worktrees/WorktreeItem')
       const { container } = render(
         React.createElement(WorktreeItem, {
           worktree: mockWorktree,
@@ -178,16 +194,15 @@ describe('Session 7: Integration & Polish', () => {
             setupOutput: [],
             setupRunning: false,
             setupError: null,
-            runOutput: [],
+            runOutputVersion: 0,
             runRunning: true,
             runPid: 123
           }
         }
       })
 
-      const { WorktreeItem } = await import(
-        '../../../src/renderer/src/components/worktrees/WorktreeItem'
-      )
+      const { WorktreeItem } =
+        await import('../../../src/renderer/src/components/worktrees/WorktreeItem')
       const { container, rerender } = render(
         React.createElement(WorktreeItem, {
           worktree: mockWorktree,
@@ -206,7 +221,7 @@ describe('Session 7: Integration & Polish', () => {
               setupOutput: [],
               setupRunning: false,
               setupError: null,
-              runOutput: [],
+              runOutputVersion: 0,
               runRunning: false,
               runPid: null
             }
@@ -292,22 +307,25 @@ describe('Session 7: Integration & Polish', () => {
   // -------------------------------------------------------------------------
   describe('Clear Button integration', () => {
     test('clear button in RunTab calls clearRunOutput', async () => {
+      // Populate ring buffer before setting state
+      deleteBuffer('wt-1')
+      useScriptStore.getState().appendRunOutput('wt-1', 'line 1')
+      useScriptStore.getState().appendRunOutput('wt-1', 'line 2')
+      useScriptStore.getState().appendRunOutput('wt-1', 'line 3')
       useScriptStore.setState({
         scriptStates: {
           'wt-1': {
             setupOutput: [],
             setupRunning: false,
             setupError: null,
-            runOutput: ['line 1', 'line 2', 'line 3'],
+            runOutputVersion: 3,
             runRunning: false,
             runPid: null
           }
         }
       })
 
-      const { RunTab } = await import(
-        '../../../src/renderer/src/components/layout/RunTab'
-      )
+      const { RunTab } = await import('../../../src/renderer/src/components/layout/RunTab')
       render(React.createElement(RunTab, { worktreeId: 'wt-1' }))
 
       const clearButton = screen.getByTestId('clear-button')
@@ -318,7 +336,7 @@ describe('Session 7: Integration & Polish', () => {
       })
 
       // Verify output was cleared
-      expect(useScriptStore.getState().scriptStates['wt-1']?.runOutput).toEqual([])
+      expect(useScriptStore.getState().getRunOutput('wt-1')).toEqual([])
     })
   })
 
@@ -327,9 +345,8 @@ describe('Session 7: Integration & Polish', () => {
   // -------------------------------------------------------------------------
   describe('PulseAnimation component', () => {
     test('renders SVG with proper animation attributes', async () => {
-      const { PulseAnimation } = await import(
-        '../../../src/renderer/src/components/worktrees/PulseAnimation'
-      )
+      const { PulseAnimation } =
+        await import('../../../src/renderer/src/components/worktrees/PulseAnimation')
       const { container } = render(React.createElement(PulseAnimation))
 
       const svg = container.querySelector('svg')
