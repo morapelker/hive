@@ -1,13 +1,6 @@
-import { ChevronDown, ExternalLink, Copy, Check, FolderOpen } from 'lucide-react'
+import { Copy, Check, FolderOpen } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
-import { useSettingsStore, type QuickActionType } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
 function CursorIcon({ className }: { className?: string }): React.JSX.Element {
@@ -41,31 +34,10 @@ function GhosttyIcon({ className }: { className?: string }): React.JSX.Element {
   )
 }
 
-interface ActionConfig {
-  id: QuickActionType
-  label: string
-  icon: React.ReactNode
-}
-
-const ACTIONS: ActionConfig[] = [
-  { id: 'cursor', label: 'Cursor', icon: <CursorIcon className="h-3.5 w-3.5" /> },
-  { id: 'ghostty', label: 'Ghostty', icon: <GhosttyIcon className="h-3.5 w-3.5" /> },
-  { id: 'copy-path', label: 'Copy Path', icon: <Copy className="h-3.5 w-3.5" /> },
-  { id: 'finder', label: 'Finder', icon: <FolderOpen className="h-3.5 w-3.5" /> }
-]
-
-function getActionConfig(actionId: QuickActionType | null): ActionConfig | null {
-  if (!actionId) return null
-  return ACTIONS.find((a) => a.id === actionId) || null
-}
-
 export function QuickActions(): React.JSX.Element | null {
-  const lastOpenAction = useSettingsStore((s) => s.lastOpenAction)
-  const updateSetting = useSettingsStore((s) => s.updateSetting)
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const [copied, setCopied] = useState(false)
 
-  // Find the selected worktree path
   const worktreePath = (() => {
     if (!selectedWorktreeId) return null
     for (const worktrees of worktreesByProject.values()) {
@@ -75,10 +47,11 @@ export function QuickActions(): React.JSX.Element | null {
     return null
   })()
 
-  const executeAction = useCallback(
-    async (actionId: QuickActionType) => {
-      if (!worktreePath) return
+  const disabled = !worktreePath
 
+  const handleAction = useCallback(
+    async (actionId: string) => {
+      if (!worktreePath) return
       try {
         if (actionId === 'copy-path') {
           await window.projectOps.copyToClipboard(worktreePath)
@@ -89,76 +62,67 @@ export function QuickActions(): React.JSX.Element | null {
         } else {
           await window.systemOps.openInApp(actionId, worktreePath)
         }
-        updateSetting('lastOpenAction', actionId)
       } catch (error) {
         console.error('Quick action failed:', error)
       }
     },
-    [worktreePath, updateSetting]
+    [worktreePath]
   )
 
-  const lastAction = getActionConfig(lastOpenAction)
-  const disabled = !worktreePath
-
   return (
-    <div className="flex items-center" data-testid="quick-actions">
-      {/* Last operation / default button */}
+    <div className="flex items-center gap-3" data-testid="quick-actions">
       <Button
         variant="ghost"
         size="sm"
-        className="rounded-r-none border-r-0 h-7 px-2.5 gap-1.5 text-xs"
+        className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
         disabled={disabled}
-        onClick={() => executeAction(lastAction?.id || 'cursor')}
-        title={lastAction ? `Open in ${lastAction.label}` : 'Open'}
-        data-testid="quick-action-last"
+        onClick={() => handleAction('cursor')}
+        title="Open in Cursor"
+        data-testid="quick-action-cursor"
       >
-        {lastAction ? (
-          <>
-            {lastAction.id === 'copy-path' && copied ? (
-              <Check className="h-3.5 w-3.5" />
-            ) : (
-              lastAction.icon
-            )}
-            <span>{lastAction.id === 'copy-path' && copied ? 'Copied' : lastAction.label}</span>
-          </>
-        ) : (
-          <>
-            <ExternalLink className="h-3.5 w-3.5" />
-            <span>Open</span>
-          </>
-        )}
+        <CursorIcon className="h-3.5 w-3.5" />
+        <span>Cursor</span>
       </Button>
-
-      {/* Dropdown chevron */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="rounded-l-none h-7 px-1.5"
-            disabled={disabled}
-            data-testid="quick-action-dropdown"
-          >
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-44">
-          {ACTIONS.map((action) => (
-            <DropdownMenuItem
-              key={action.id}
-              onClick={() => executeAction(action.id)}
-              className="gap-2 text-xs"
-              data-testid={`quick-action-${action.id}`}
-            >
-              {action.icon}
-              <span>{action.label}</span>
-              {lastOpenAction === action.id && (
-                <Check className="h-3 w-3 ml-auto text-muted-foreground" />
-              )}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
+        disabled={disabled}
+        onClick={() => handleAction('ghostty')}
+        title="Open in Ghostty"
+        data-testid="quick-action-ghostty"
+      >
+        <GhosttyIcon className="h-3.5 w-3.5" />
+        <span>Ghostty</span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
+        disabled={disabled}
+        onClick={() => handleAction('copy-path')}
+        title="Copy Path"
+        data-testid="quick-action-copy-path"
+      >
+        {copied ? (
+          <Check className="h-3.5 w-3.5 text-green-500" />
+        ) : (
+          <Copy className="h-3.5 w-3.5" />
+        )}
+        <span>{copied ? 'Copied' : 'Copy Path'}</span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
+        disabled={disabled}
+        onClick={() => handleAction('finder')}
+        title="Reveal in Finder"
+        data-testid="quick-action-finder"
+      >
+        <FolderOpen className="h-3.5 w-3.5" />
+        <span>Finder</span>
+      </Button>
     </div>
   )
 }
