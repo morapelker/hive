@@ -709,7 +709,7 @@ const opencodeOps = {
     worktreePath: string,
     opencodeSessionId: string,
     hiveSessionId: string
-  ): Promise<{ success: boolean }> =>
+  ): Promise<{ success: boolean; sessionStatus?: 'idle' | 'busy' | 'retry' }> =>
     ipcRenderer.invoke('opencode:reconnect', worktreePath, opencodeSessionId, hiveSessionId),
 
   // Send a prompt (response streams via onStream)

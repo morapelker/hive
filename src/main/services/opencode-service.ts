@@ -590,13 +590,37 @@ class OpenCodeService {
   }
 
   /**
+   * Query the current status of an OpenCode session (idle/busy/retry).
+   * Returns undefined if the status could not be determined.
+   */
+  private async querySessionStatus(
+    instance: OpenCodeInstance,
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<'idle' | 'busy' | 'retry' | undefined> {
+    try {
+      const result = await instance.client.session.status({
+        query: { directory: worktreePath }
+      })
+      // result.data is { [sessionId]: SessionStatus }
+      const statusMap = result.data as Record<string, { type: string }> | undefined
+      if (statusMap && statusMap[opencodeSessionId]) {
+        return statusMap[opencodeSessionId].type as 'idle' | 'busy' | 'retry'
+      }
+    } catch (error) {
+      log.warn('Failed to query session status', { opencodeSessionId, error })
+    }
+    return undefined
+  }
+
+  /**
    * Try to reconnect to an existing OpenCode session
    */
   async reconnect(
     worktreePath: string,
     opencodeSessionId: string,
     hiveSessionId: string
-  ): Promise<{ success: boolean }> {
+  ): Promise<{ success: boolean; sessionStatus?: 'idle' | 'busy' | 'retry' }> {
     log.info('Attempting to reconnect to OpenCode session', {
       worktreePath,
       opencodeSessionId,
@@ -616,7 +640,12 @@ class OpenCodeService {
           opencodeSessionId,
           hiveSessionId
         })
-        return { success: true }
+        const sessionStatus = await this.querySessionStatus(
+          instance,
+          worktreePath,
+          opencodeSessionId
+        )
+        return { success: true, sessionStatus }
       }
 
       // Try to get the session
@@ -631,11 +660,17 @@ class OpenCodeService {
         // Subscribe to events for this directory
         this.subscribeToDirectory(instance, worktreePath)
 
+        const sessionStatus = await this.querySessionStatus(
+          instance,
+          worktreePath,
+          opencodeSessionId
+        )
         log.info('Successfully reconnected to OpenCode session', {
           opencodeSessionId,
-          hiveSessionId
+          hiveSessionId,
+          sessionStatus
         })
-        return { success: true }
+        return { success: true, sessionStatus }
       }
     } catch (error) {
       log.warn('Failed to reconnect to OpenCode session', { opencodeSessionId, error })

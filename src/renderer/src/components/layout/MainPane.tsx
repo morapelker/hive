@@ -84,7 +84,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     }
 
     // Session is active - render SessionView
-    return <SessionView sessionId={activeSessionId} />
+    return <SessionView key={activeSessionId} sessionId={activeSessionId} />
   }
 
   return (

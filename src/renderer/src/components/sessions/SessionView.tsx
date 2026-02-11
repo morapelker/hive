@@ -856,17 +856,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     streamGenerationRef.current += 1
     const currentGeneration = streamGenerationRef.current
 
-    // Only clear streaming display state if NOT currently streaming this session.
-    // When the user switches away and back to an actively-streaming session,
-    // we preserve streamingPartsRef so incoming tool results can find their
-    // matching callID via upsertToolUse instead of creating detached entries.
-    if (!isStreaming) {
-      streamingPartsRef.current = []
-      streamingContentRef.current = ''
-      childToSubtaskIndexRef.current = new Map()
-      setStreamingParts([])
-      setStreamingContent('')
-    }
+    // Clear streaming display state. The key={sessionId} on SessionView forces a
+    // full remount on session change, so this always starts fresh.
+    streamingPartsRef.current = []
+    streamingContentRef.current = ''
+    childToSubtaskIndexRef.current = new Map()
+    setStreamingParts([])
+    setStreamingContent('')
     hasFinalizedCurrentResponseRef.current = false
 
     // Subscribe to OpenCode stream events SYNCHRONOUSLY before any async work.
@@ -1310,17 +1306,27 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const initializeSession = async (): Promise<void> => {
       setViewState({ status: 'connecting' })
 
+      // Part A: Instantly restore streaming indicators from the global status store.
+      // useWorktreeStatusStore persists across SessionView remounts (key= causes remount),
+      // so if this session was busy before the tab switch, we restore the UI immediately
+      // without waiting for the async reconnect or an SSE event.
+      const storedStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+      if (storedStatus?.status === 'working' || storedStatus?.status === 'planning') {
+        setIsStreaming(true)
+        setIsSending(true)
+      }
+
       try {
         // 1. Load messages from database
         const loadedMessages = await loadMessagesFromDatabase()
 
-        // 1b. Restore streaming parts from the last persisted assistant message.
-        // When the user switches away from a session with an active tool call
-        // and then switches back, streamingPartsRef is empty. Without this
-        // restoration, incoming tool results can't find their matching callID
-        // and create a new detached entry. Re-populating the parts ref from
-        // the DB lets tool results merge correctly.
-        if (loadedMessages.length > 0) {
+        // 1b. Restore streaming parts from the last persisted assistant message,
+        // but ONLY when the session is actively busy. For idle sessions the
+        // completed response is already in `messages` from the DB — populating
+        // the streaming overlay would cause the assistant message to render twice.
+        const isSessionBusy =
+          storedStatus?.status === 'working' || storedStatus?.status === 'planning'
+        if (isSessionBusy && loadedMessages.length > 0) {
           const lastMsg = loadedMessages[loadedMessages.length - 1]
           if (lastMsg.role === 'assistant' && lastMsg.parts && lastMsg.parts.length > 0) {
             const dbParts = lastMsg.parts.map((p) => ({ ...p }))
@@ -1518,6 +1524,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
             }
             setViewState({ status: 'connected' })
+
+            // Part B: Authoritative status from OpenCode SDK.
+            // Corrects Part A if the session finished while we were away,
+            // or confirms busy if the store was accurate.
+            if (reconnectResult.sessionStatus === 'busy') {
+              setIsStreaming(true)
+              setIsSending(true)
+              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+              useWorktreeStatusStore
+                .getState()
+                .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+            } else if (reconnectResult.sessionStatus === 'idle') {
+              // Session actually finished — clear any stale busy indicators
+              setIsStreaming(false)
+              setIsSending(false)
+              useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+            }
+
             await sendPendingMessage(wtPath, existingOpcSessionId)
             return
           }

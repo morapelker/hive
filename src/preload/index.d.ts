@@ -314,7 +314,7 @@ declare global {
         worktreePath: string,
         opencodeSessionId: string,
         hiveSessionId: string
-      ) => Promise<{ success: boolean }>
+      ) => Promise<{ success: boolean; sessionStatus?: 'idle' | 'busy' | 'retry' }>
       // Send a prompt (response streams via onStream)
       // Accepts either a string message or a MessagePart[] array for rich content (text + file attachments)
       prompt: (
