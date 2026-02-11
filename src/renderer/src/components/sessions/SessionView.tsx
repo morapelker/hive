@@ -1496,10 +1496,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // Cleanup on unmount or session change
     return () => {
       unsubscribe()
-      // Clear any pending question prompts for this session
-      useQuestionStore.getState().clearSession(sessionId)
-      // Clear any pending permission prompts for this session
-      usePermissionStore.getState().clearSession(sessionId)
+      // DO NOT clear questions or permissions — they must persist across tab switches.
+      // They are removed individually when answered/rejected via removeQuestion/removePermission.
       // Note: We intentionally do NOT disconnect from OpenCode on unmount.
       // Sessions persist across project switches. The main process keeps
       // event subscriptions alive so responses are not lost.
