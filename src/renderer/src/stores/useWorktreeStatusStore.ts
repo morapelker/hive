@@ -11,16 +11,21 @@ type StatusType = 'working' | 'planning' | 'answering' | 'unread'
 interface WorktreeStatusState {
   // sessionId → status info (null means no status / cleared)
   sessionStatuses: Record<string, SessionStatus | null>
+  // worktreeId → epoch ms of last message activity
+  lastMessageTimeByWorktree: Record<string, number>
 
   // Actions
   setSessionStatus: (sessionId: string, status: StatusType | null) => void
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
   getWorktreeStatus: (worktreeId: string) => StatusType | null
+  setLastMessageTime: (worktreeId: string, timestamp: number) => void
+  getLastMessageTime: (worktreeId: string) => number | null
 }
 
 export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => ({
   sessionStatuses: {},
+  lastMessageTimeByWorktree: {},
 
   setSessionStatus: (sessionId: string, status: StatusType | null) => {
     set((state) => ({
@@ -90,5 +95,25 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     if (hasPlanning) return 'planning'
     if (hasWorking) return 'working'
     return latestUnread ? 'unread' : null
+  },
+
+  setLastMessageTime: (worktreeId: string, timestamp: number) => {
+    const prev = get().lastMessageTimeByWorktree[worktreeId] ?? 0
+    const next = Math.max(prev, timestamp)
+    if (next === prev && prev !== 0) return // no change
+
+    set((state) => ({
+      lastMessageTimeByWorktree: {
+        ...state.lastMessageTimeByWorktree,
+        [worktreeId]: next
+      }
+    }))
+
+    // Persist to SQLite (fire-and-forget)
+    window.db?.worktree?.update(worktreeId, { last_message_at: next }).catch(() => {})
+  },
+
+  getLastMessageTime: (worktreeId: string) => {
+    return get().lastMessageTimeByWorktree[worktreeId] ?? null
   }
 }))

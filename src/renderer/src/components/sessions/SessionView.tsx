@@ -1664,6 +1664,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       // Record prompt to history for Up/Down navigation
       if (worktreeId) {
         usePromptHistoryStore.getState().addPrompt(worktreeId, trimmedValue)
+        useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
       }
       setHistoryIndex(null)
       savedDraftRef.current = ''
