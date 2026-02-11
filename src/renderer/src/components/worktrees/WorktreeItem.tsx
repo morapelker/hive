@@ -1,5 +1,6 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
 import {
+  AlertCircle,
   GitBranch,
   Folder,
   Loader2,
@@ -61,6 +62,17 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktree.id]?.runRunning ?? false)
   const isSelected = selectedWorktreeId === worktree.id
+
+  // Derive display status text + color for second-line row (always shown)
+  const { displayStatus, statusClass } = isArchiving
+    ? { displayStatus: 'Archiving', statusClass: 'font-semibold text-muted-foreground' }
+    : worktreeStatus === 'answering'
+      ? { displayStatus: 'Answer questions', statusClass: 'font-semibold text-amber-500' }
+      : worktreeStatus === 'planning'
+        ? { displayStatus: 'Planning', statusClass: 'font-semibold text-blue-400' }
+        : worktreeStatus === 'working'
+          ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
+          : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
   // Branch rename state
   const [isRenamingBranch, setIsRenamingBranch] = useState(false)
@@ -225,11 +237,16 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
               {isRunProcessAlive && (
                 <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />
               )}
-              {worktreeStatus === 'working' && (
+              {(worktreeStatus === 'working' || worktreeStatus === 'planning') && (
                 <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
+              )}
+              {worktreeStatus === 'answering' && (
+                <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
               )}
               {!isRunProcessAlive &&
                 worktreeStatus !== 'working' &&
+                worktreeStatus !== 'planning' &&
+                worktreeStatus !== 'answering' &&
                 (worktree.is_default ? (
                   <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 ) : (
@@ -238,26 +255,34 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
             </>
           )}
 
-          {/* Worktree Name / Inline Rename Input */}
-          {isRenamingBranch ? (
-            <input
-              ref={renameInputRef}
-              value={branchNameInput}
-              onChange={(e) => setBranchNameInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleBranchRename()
-                if (e.key === 'Escape') setIsRenamingBranch(false)
-              }}
-              onBlur={() => setIsRenamingBranch(false)}
-              onClick={(e) => e.stopPropagation()}
-              className="flex-1 bg-background border border-border rounded px-1.5 py-0.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
-              data-testid="branch-rename-input"
-            />
-          ) : (
-            <span className="flex-1 text-sm truncate" title={worktree.path}>
-              {worktree.name}
+          {/* Worktree Name / Inline Rename Input + Status Line */}
+          <div className="flex-1 min-w-0">
+            {isRenamingBranch ? (
+              <input
+                ref={renameInputRef}
+                value={branchNameInput}
+                onChange={(e) => setBranchNameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleBranchRename()
+                  if (e.key === 'Escape') setIsRenamingBranch(false)
+                }}
+                onBlur={() => setIsRenamingBranch(false)}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-background border border-border rounded px-1.5 py-0.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
+                data-testid="branch-rename-input"
+              />
+            ) : (
+              <span className="text-sm truncate block" title={worktree.path}>
+                {worktree.name}
+              </span>
+            )}
+            <span
+              className={cn('text-[11px] block', statusClass)}
+              data-testid="worktree-status-text"
+            >
+              {displayStatus}
             </span>
-          )}
+          </div>
 
           {/* Unread dot badge */}
           {worktreeStatus === 'unread' && (
