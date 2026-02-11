@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
 import { createGitService, createLogger } from '../services'
+import { CITY_NAMES } from '../services/city-names'
 import { scriptRunner } from '../services/script-runner'
 import { getDatabase } from '../db'
 
@@ -206,11 +207,16 @@ export function registerWorktreeHandlers(): void {
               oldBranch: dbWorktree.branch_name,
               newBranch: gitBranch
             })
-            // Update both branch_name and display name to match git
+            // Update branch_name always. Also update display name if it still matches
+            // the old branch name OR is a city placeholder name (never meaningfully customized).
             const nameMatchesBranch = dbWorktree.name === dbWorktree.branch_name
+            const isCityName = CITY_NAMES.some(
+              (city) => city.toLowerCase() === dbWorktree.name.toLowerCase()
+            )
+            const shouldUpdateName = nameMatchesBranch || isCityName
             db.updateWorktree(dbWorktree.id, {
               branch_name: gitBranch,
-              ...(nameMatchesBranch ? { name: gitBranch } : {})
+              ...(shouldUpdateName ? { name: gitBranch } : {})
             })
           }
         }
