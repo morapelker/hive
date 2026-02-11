@@ -821,16 +821,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     streamGenerationRef.current += 1
     const currentGeneration = streamGenerationRef.current
 
-    // Partial clear — reset display data but preserve streaming status.
-    // Do NOT call resetStreamingState() here because that would set
-    // isStreaming = false, killing the loading indicator when switching to a
-    // tab that's actively streaming. Let the stream subscription's
-    // session.status events control isStreaming.
-    streamingPartsRef.current = []
-    streamingContentRef.current = ''
-    childToSubtaskIndexRef.current = new Map()
-    setStreamingParts([])
-    setStreamingContent('')
+    // Only clear streaming display state if NOT currently streaming this session.
+    // When the user switches away and back to an actively-streaming session,
+    // we preserve streamingPartsRef so incoming tool results can find their
+    // matching callID via upsertToolUse instead of creating detached entries.
+    if (!isStreaming) {
+      streamingPartsRef.current = []
+      streamingContentRef.current = ''
+      childToSubtaskIndexRef.current = new Map()
+      setStreamingParts([])
+      setStreamingContent('')
+    }
     hasFinalizedCurrentResponseRef.current = false
 
     // Subscribe to OpenCode stream events SYNCHRONOUSLY before any async work.
@@ -1275,10 +1276,28 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         if (loadedMessages.length > 0) {
           const lastMsg = loadedMessages[loadedMessages.length - 1]
           if (lastMsg.role === 'assistant' && lastMsg.parts && lastMsg.parts.length > 0) {
-            streamingPartsRef.current = lastMsg.parts.map((p) => ({ ...p }))
+            const dbParts = lastMsg.parts.map((p) => ({ ...p }))
+
+            if (streamingPartsRef.current.length > 0) {
+              // Merge: DB parts are the base, but keep any streaming parts
+              // that have a tool_use with a callID not yet in the DB parts.
+              // This handles tool calls that arrived after the DB snapshot.
+              const dbToolIds = new Set(
+                dbParts
+                  .filter((p) => p.type === 'tool_use' && p.toolUse?.id)
+                  .map((p) => p.toolUse!.id)
+              )
+              const extraParts = streamingPartsRef.current.filter(
+                (p) => p.type === 'tool_use' && p.toolUse?.id && !dbToolIds.has(p.toolUse.id)
+              )
+              streamingPartsRef.current = [...dbParts, ...extraParts]
+            } else {
+              streamingPartsRef.current = dbParts
+            }
+
             setStreamingParts([...streamingPartsRef.current])
 
-            const textParts = lastMsg.parts.filter((p) => p.type === 'text')
+            const textParts = streamingPartsRef.current.filter((p) => p.type === 'text')
             if (textParts.length > 0) {
               const content = textParts.map((p) => p.text || '').join('')
               streamingContentRef.current = content
