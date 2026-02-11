@@ -122,19 +122,32 @@ describe('Session 2: QuestionPrompt UI', () => {
   })
 
   describe('single-choice behavior', () => {
-    test('auto-submits on click', () => {
+    test('clicking option selects it without submitting', () => {
       const onReply = vi.fn()
       render(<QuestionPrompt request={singleQuestion} onReply={onReply} onReject={vi.fn()} />)
       fireEvent.click(screen.getByText('React'))
-      expect(onReply).toHaveBeenCalledWith('q1', [['React']])
+      // Should NOT auto-submit — requires explicit Submit click
+      expect(onReply).not.toHaveBeenCalled()
+      // Option should be visually selected
+      const reactOption = screen.getByTestId('option-React')
+      expect(reactOption.className).toContain('border-blue-500')
     })
 
-    test('does not show submit button for single-choice single-question', () => {
+    test('shows submit button for single-choice single-question', () => {
       render(<QuestionPrompt request={singleQuestion} onReply={vi.fn()} onReject={vi.fn()} />)
-      // No "Submit" button in the action buttons area (only Dismiss)
       const buttons = screen.getAllByRole('button')
       const submitButton = buttons.find((b) => b.textContent === 'Submit' && !b.closest('form'))
-      expect(submitButton).toBeUndefined()
+      expect(submitButton).toBeDefined()
+    })
+
+    test('submit button sends selected option', () => {
+      const onReply = vi.fn()
+      render(<QuestionPrompt request={singleQuestion} onReply={onReply} onReject={vi.fn()} />)
+      fireEvent.click(screen.getByText('React'))
+      const buttons = screen.getAllByRole('button')
+      const submitButton = buttons.find((b) => b.textContent === 'Submit' && !b.closest('form'))!
+      fireEvent.click(submitButton)
+      expect(onReply).toHaveBeenCalledWith('q1', [['React']])
     })
   })
 
@@ -183,13 +196,18 @@ describe('Session 2: QuestionPrompt UI', () => {
       expect(screen.getByPlaceholderText(/type your answer/i)).toBeInTheDocument()
     })
 
-    test('custom text input works for single question', () => {
+    test('custom text input saves answer but does not auto-submit for single question', () => {
       const onReply = vi.fn()
       render(<QuestionPrompt request={singleQuestion} onReply={onReply} onReject={vi.fn()} />)
       fireEvent.click(screen.getByText(/type your own/i))
       const input = screen.getByPlaceholderText(/type your answer/i)
       fireEvent.change(input, { target: { value: 'Svelte' } })
       fireEvent.submit(input.closest('form')!)
+      // Custom text is saved but NOT auto-submitted
+      expect(onReply).not.toHaveBeenCalled()
+      // Now click the action bar Submit button to actually submit
+      const submitButton = screen.getByRole('button', { name: /^submit$/i })
+      fireEvent.click(submitButton)
       expect(onReply).toHaveBeenCalledWith('q1', [['Svelte']])
     })
 
@@ -294,10 +312,13 @@ describe('Session 2: QuestionPrompt UI', () => {
   })
 
   describe('sending state', () => {
-    test('auto-submit calls onReply exactly once', () => {
+    test('submit calls onReply exactly once', () => {
       const onReply = vi.fn()
       render(<QuestionPrompt request={singleQuestion} onReply={onReply} onReject={vi.fn()} />)
       fireEvent.click(screen.getByText('React'))
+      const buttons = screen.getAllByRole('button')
+      const submitButton = buttons.find((b) => b.textContent === 'Submit' && !b.closest('form'))!
+      fireEvent.click(submitButton)
       expect(onReply).toHaveBeenCalledTimes(1)
     })
   })
