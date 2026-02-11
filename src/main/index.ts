@@ -1,7 +1,7 @@
 import fixPath from 'fix-path'
 import { app, shell, BrowserWindow, Menu, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
-import { spawn } from 'child_process'
+import { spawn, exec } from 'child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
@@ -197,6 +197,35 @@ function registerSystemHandlers(): void {
 
   // Check if response logging is enabled
   ipcMain.handle('system:isLogMode', () => isLogMode)
+
+  // Open a URL in Chrome (or default browser) with optional custom command
+  ipcMain.handle(
+    'system:openInChrome',
+    async (_event, { url, customCommand }: { url: string; customCommand?: string }) => {
+      try {
+        if (customCommand) {
+          // If the command contains {url}, substitute it; otherwise append the URL
+          const cmd = customCommand.includes('{url}')
+            ? customCommand.replace(/\{url\}/g, url)
+            : `${customCommand} ${url}`
+          await new Promise<void>((resolve, reject) => {
+            exec(cmd, (error) => {
+              if (error) reject(error)
+              else resolve()
+            })
+          })
+        } else {
+          await shell.openExternal(url)
+        }
+        return { success: true }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }
+    }
+  )
 
   // Open a path in an external app (Cursor, Ghostty) or copy to clipboard
   ipcMain.handle('system:openInApp', async (_, appName: string, path: string) => {

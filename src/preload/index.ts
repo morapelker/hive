@@ -396,6 +396,10 @@ const systemOps = {
     }
   },
 
+  // Open a URL in Chrome (or default browser) with optional custom command
+  openInChrome: (url: string, customCommand?: string) =>
+    ipcRenderer.invoke('system:openInChrome', { url, customCommand }),
+
   // Subscribe to notification navigation events (from native notifications)
   onNotificationNavigate: (
     callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void

@@ -40,6 +40,9 @@ export interface AppSettings {
 
   // Favorites
   favoriteModels: string[] // Array of "providerID::modelID" keys
+
+  // Chrome
+  customChromeCommand: string // Custom chrome launch command, e.g. "open -a Chrome {url}"
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -52,7 +55,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoFetchInterval: 0,
   selectedModel: null,
   lastOpenAction: null,
-  favoriteModels: []
+  favoriteModels: [],
+  customChromeCommand: ''
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -108,7 +112,8 @@ function extractSettings(state: SettingsState): AppSettings {
     autoFetchInterval: state.autoFetchInterval,
     selectedModel: state.selectedModel,
     lastOpenAction: state.lastOpenAction,
-    favoriteModels: state.favoriteModels
+    favoriteModels: state.favoriteModels,
+    customChromeCommand: state.customChromeCommand
   }
 }
 
@@ -191,6 +196,7 @@ export const useSettingsStore = create<SettingsState>()(
         selectedModel: state.selectedModel,
         lastOpenAction: state.lastOpenAction,
         favoriteModels: state.favoriteModels,
+        customChromeCommand: state.customChromeCommand,
         activeSection: state.activeSection
       })
     }
