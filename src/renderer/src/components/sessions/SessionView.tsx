@@ -16,6 +16,7 @@ import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
+import type { TokenInfo, SessionModelRef } from '@/stores/useContextStore'
 import { extractTokens, extractCost, extractModelRef } from '@/lib/token-utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
@@ -769,9 +770,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       // Reconstruct token usage from stored assistant messages
       // Snapshot approach: find the LAST assistant message with tokens > 0 (walk backward)
       // Cost: sum across ALL assistant messages
-      useContextStore.getState().resetSessionTokens(sessionId)
+      // Scan first, only reset+set if data was found — otherwise keep whatever
+      // the global listener or a previous load may have set
       let totalCost = 0
       let snapshotSet = false
+      let snapshotTokens: TokenInfo | null = null
+      let snapshotModelRef: SessionModelRef | undefined
 
       for (let i = dbMessages.length - 1; i >= 0; i--) {
         const msg = dbMessages[i]
@@ -786,8 +790,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             if (!snapshotSet) {
               const tokens = extractTokens(msgJson)
               if (tokens) {
-                const modelRef = extractModelRef(msgJson) ?? undefined
-                useContextStore.getState().setSessionTokens(sessionId, tokens, modelRef)
+                snapshotTokens = tokens
+                snapshotModelRef = extractModelRef(msgJson) ?? undefined
                 snapshotSet = true
               }
             }
@@ -796,8 +800,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           }
         }
       }
-      if (totalCost > 0) {
-        useContextStore.getState().setSessionCost(sessionId, totalCost)
+
+      // Only reset and apply if we found data — otherwise keep whatever
+      // the global listener or a previous load may have set
+      if (snapshotTokens || totalCost > 0) {
+        useContextStore.getState().resetSessionTokens(sessionId)
+        if (snapshotTokens) {
+          useContextStore.getState().setSessionTokens(sessionId, snapshotTokens, snapshotModelRef)
+        }
+        if (totalCost > 0) {
+          useContextStore.getState().setSessionCost(sessionId, totalCost)
+        }
       }
 
       return loadedMessages
