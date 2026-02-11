@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { ArrowUpCircle, ArrowDownCircle, Loader2, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -18,8 +18,10 @@ export function GitPushPull({
   const [forcePush, setForcePush] = useState(false)
   const [rebasePull, setRebasePull] = useState(false)
   const [showForceConfirm, setShowForceConfirm] = useState(false)
+  const [mergeBranch, setMergeBranch] = useState('')
+  const [isMerging, setIsMerging] = useState(false)
 
-  const { push, pull, isPushing, isPulling } = useGitStore()
+  const { push, pull, isPushing, isPulling, refreshStatuses } = useGitStore()
 
   // Subscribe to branch info for ahead/behind counts
   const branchInfoByWorktree = useGitStore((state) => state.branchInfoByWorktree)
@@ -66,6 +68,30 @@ export function GitPushPull({
     }
   }, [worktreePath, rebasePull, pull])
 
+  // Default merge branch to 'main' when worktree changes
+  useEffect(() => {
+    if (worktreePath && !mergeBranch) {
+      setMergeBranch('main')
+    }
+  }, [worktreePath]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleMerge = useCallback(async () => {
+    if (!worktreePath || !mergeBranch.trim()) return
+    setIsMerging(true)
+    try {
+      const result = await window.gitOps.merge(worktreePath, mergeBranch.trim())
+      if (result.success) {
+        toast.success(`Merged ${mergeBranch} successfully`)
+        // Refresh file statuses and branch info after merge
+        await refreshStatuses(worktreePath)
+      } else {
+        toast.error('Merge failed', { description: result.error })
+      }
+    } finally {
+      setIsMerging(false)
+    }
+  }, [worktreePath, mergeBranch, refreshStatuses])
+
   const handleCancelForce = useCallback(() => {
     setShowForceConfirm(false)
     setForcePush(false)
@@ -75,29 +101,31 @@ export function GitPushPull({
     return null
   }
 
-  const isOperating = isPushing || isPulling
+  const isOperating = isPushing || isPulling || isMerging
 
   return (
-    <div className={cn('flex flex-col gap-2 px-2 py-2 border-t', className)} data-testid="git-push-pull">
+    <div
+      className={cn('flex flex-col gap-2 px-2 py-2 border-t', className)}
+      data-testid="git-push-pull"
+    >
       {/* Force push confirmation dialog */}
       {showForceConfirm && (
-        <div className="bg-destructive/10 border border-destructive/50 rounded-md p-2 text-xs" data-testid="force-push-confirm">
+        <div
+          className="bg-destructive/10 border border-destructive/50 rounded-md p-2 text-xs"
+          data-testid="force-push-confirm"
+        >
           <div className="flex items-start gap-2 mb-2">
             <AlertTriangle className="h-4 w-4 text-destructive flex-shrink-0 mt-0.5" />
             <div>
               <p className="font-medium text-destructive">Force push warning</p>
               <p className="text-muted-foreground mt-1">
-                Force pushing will overwrite remote history. This can cause problems for collaborators.
+                Force pushing will overwrite remote history. This can cause problems for
+                collaborators.
               </p>
             </div>
           </div>
           <div className="flex gap-2 justify-end">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs"
-              onClick={handleCancelForce}
-            >
+            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={handleCancelForce}>
               Cancel
             </Button>
             <Button
@@ -107,11 +135,7 @@ export function GitPushPull({
               onClick={handlePush}
               disabled={isPushing}
             >
-              {isPushing ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                'Force Push'
-              )}
+              {isPushing ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Force Push'}
             </Button>
           </div>
         </div>
@@ -136,9 +160,7 @@ export function GitPushPull({
                 <ArrowUpCircle className="h-3 w-3 mr-1" />
               )}
               Push
-              {ahead > 0 && (
-                <span className="ml-1 text-[10px] opacity-75">({ahead})</span>
-              )}
+              {ahead > 0 && <span className="ml-1 text-[10px] opacity-75">({ahead})</span>}
             </Button>
 
             {/* Pull button */}
@@ -156,9 +178,7 @@ export function GitPushPull({
                 <ArrowDownCircle className="h-3 w-3 mr-1" />
               )}
               Pull
-              {behind > 0 && (
-                <span className="ml-1 text-[10px] opacity-75">({behind})</span>
-              )}
+              {behind > 0 && <span className="ml-1 text-[10px] opacity-75">({behind})</span>}
             </Button>
           </div>
 
@@ -192,6 +212,30 @@ export function GitPushPull({
               No upstream branch set. Push will set upstream.
             </div>
           )}
+
+          {/* Merge section */}
+          <div className="flex gap-2 items-center border-t pt-2" data-testid="merge-section">
+            <span className="text-[10px] text-muted-foreground whitespace-nowrap">Merge from</span>
+            <input
+              value={mergeBranch}
+              onChange={(e) => setMergeBranch(e.target.value)}
+              className="flex-1 bg-background border border-border rounded px-1.5 py-0.5 text-xs
+                         focus:outline-none focus:ring-1 focus:ring-ring min-w-0"
+              placeholder="branch name"
+              disabled={isMerging || isOperating}
+              data-testid="merge-branch-input"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 text-xs whitespace-nowrap"
+              onClick={handleMerge}
+              disabled={isMerging || isOperating || !mergeBranch.trim()}
+              data-testid="merge-button"
+            >
+              {isMerging ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Merge'}
+            </Button>
+          </div>
         </>
       )}
     </div>

@@ -85,6 +85,12 @@ export interface GitDiffResult {
   error?: string
 }
 
+export interface GitMergeResult {
+  success: boolean
+  error?: string
+  conflicts?: string[]
+}
+
 /**
  * GitService - Handles all git operations for worktrees
  */
@@ -776,6 +782,43 @@ export class GitService {
       }
 
       return { success: false, error: userMessage }
+    }
+  }
+
+  /**
+   * Merge a branch into the current branch
+   * @param sourceBranch - Branch to merge from
+   */
+  async merge(sourceBranch: string): Promise<{
+    success: boolean
+    error?: string
+    conflicts?: string[]
+  }> {
+    try {
+      log.info('Merging branch', { sourceBranch, repoPath: this.repoPath })
+      await this.git.merge([sourceBranch])
+      return { success: true }
+    } catch (error) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'git' in error &&
+        (error as { git?: { conflicts?: string[] } }).git?.conflicts?.length
+      ) {
+        const conflicts = (error as { git: { conflicts: string[] } }).git.conflicts
+        log.warn('Merge resulted in conflicts', { sourceBranch, conflicts })
+        return {
+          success: false,
+          error: `Merge conflicts in ${conflicts.length} file(s). Resolve conflicts before continuing.`,
+          conflicts
+        }
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      log.error('Merge failed', error instanceof Error ? error : new Error(message), {
+        sourceBranch,
+        repoPath: this.repoPath
+      })
+      return { success: false, error: message }
     }
   }
 

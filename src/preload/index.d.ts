@@ -595,6 +595,15 @@ declare global {
         }>
         error?: string
       }>
+      // Merge a branch into the current branch
+      merge: (
+        worktreePath: string,
+        sourceBranch: string
+      ) => Promise<{
+        success: boolean
+        error?: string
+        conflicts?: string[]
+      }>
     }
   }
 

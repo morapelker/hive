@@ -663,7 +663,17 @@ const gitOps = {
       worktreePath?: string
     }>
     error?: string
-  }> => ipcRenderer.invoke('git:listBranchesWithStatus', { projectPath })
+  }> => ipcRenderer.invoke('git:listBranchesWithStatus', { projectPath }),
+
+  // Merge a branch into the current branch
+  merge: (
+    worktreePath: string,
+    sourceBranch: string
+  ): Promise<{
+    success: boolean
+    error?: string
+    conflicts?: string[]
+  }> => ipcRenderer.invoke('git:merge', worktreePath, sourceBranch)
 }
 
 const opencodeOps = {
