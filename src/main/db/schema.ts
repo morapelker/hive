@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 8
+export const CURRENT_SCHEMA_VERSION = 9
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -159,6 +159,20 @@ export const MIGRATIONS: Migration[] = [
     version: 8,
     name: 'add_project_custom_icon',
     up: `ALTER TABLE projects ADD COLUMN custom_icon TEXT DEFAULT NULL;`,
+    down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
+  },
+  {
+    version: 9,
+    name: 'add_project_sort_order',
+    up: `
+      ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+
+      -- Initialize sort_order from current last_accessed_at ranking (most recent = 0)
+      UPDATE projects SET sort_order = (
+        SELECT COUNT(*) FROM projects p2
+        WHERE p2.last_accessed_at > projects.last_accessed_at
+      );
+    `,
     down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
   }
 ]

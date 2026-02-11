@@ -13,6 +13,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  sort_order: number
   created_at: string
   last_accessed_at: string
 }
@@ -51,6 +52,7 @@ interface ProjectState {
   setEditingProject: (id: string | null) => void
   touchProject: (id: string) => Promise<void>
   refreshLanguage: (projectId: string) => Promise<void>
+  reorderProjects: (fromIndex: number, toIndex: number) => void
 }
 
 export const useProjectStore = create<ProjectState>()(
@@ -64,17 +66,12 @@ export const useProjectStore = create<ProjectState>()(
       expandedProjectIds: new Set(),
       editingProjectId: null,
 
-      // Load all projects from database
+      // Load all projects from database (already ordered by sort_order ASC)
       loadProjects: async () => {
         set({ isLoading: true, error: null })
         try {
           const projects = await window.db.project.getAll()
-          // Sort by last_accessed_at descending (most recent first)
-          const sortedProjects = projects.sort(
-            (a, b) =>
-              new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
-          )
-          set({ projects: sortedProjects, isLoading: false })
+          set({ projects, isLoading: false })
         } catch (error) {
           set({
             error: error instanceof Error ? error.message : 'Failed to load projects',
@@ -265,6 +262,34 @@ export const useProjectStore = create<ProjectState>()(
         } catch {
           // Ignore refresh errors
         }
+      },
+
+      // Reorder projects via drag-and-drop
+      reorderProjects: (fromIndex: number, toIndex: number) => {
+        set((state) => {
+          const projects = [...state.projects]
+
+          if (
+            fromIndex < 0 ||
+            fromIndex >= projects.length ||
+            toIndex < 0 ||
+            toIndex >= projects.length
+          ) {
+            return state
+          }
+
+          // Splice move
+          const [removed] = projects.splice(fromIndex, 1)
+          projects.splice(toIndex, 0, removed)
+
+          // Persist new order to database (fire and forget)
+          const orderedIds = projects.map((p) => p.id)
+          window.db.project.reorder(orderedIds).catch(() => {
+            // Ignore reorder persistence errors
+          })
+
+          return { projects }
+        })
       }
     }),
     {

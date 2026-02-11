@@ -126,6 +126,9 @@ export class DatabaseService {
   createProject(data: ProjectCreate): Project {
     const db = this.getDb()
     const now = new Date().toISOString()
+    // New projects get sort_order 0 (top), bump all others down
+    db.prepare('UPDATE projects SET sort_order = sort_order + 1').run()
+
     const project: Project = {
       id: randomUUID(),
       name: data.name,
@@ -136,13 +139,14 @@ export class DatabaseService {
       setup_script: data.setup_script ?? null,
       run_script: data.run_script ?? null,
       archive_script: data.archive_script ?? null,
+      sort_order: 0,
       created_at: now,
       last_accessed_at: now
     }
 
     db.prepare(
-      `INSERT INTO projects (id, name, path, description, tags, language, setup_script, run_script, archive_script, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, path, description, tags, language, setup_script, run_script, archive_script, sort_order, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       project.id,
       project.name,
@@ -153,6 +157,7 @@ export class DatabaseService {
       project.setup_script,
       project.run_script,
       project.archive_script,
+      project.sort_order,
       project.created_at,
       project.last_accessed_at
     )
@@ -174,7 +179,20 @@ export class DatabaseService {
 
   getAllProjects(): Project[] {
     const db = this.getDb()
-    return db.prepare('SELECT * FROM projects ORDER BY last_accessed_at DESC').all() as Project[]
+    return db
+      .prepare('SELECT * FROM projects ORDER BY sort_order ASC, last_accessed_at DESC')
+      .all() as Project[]
+  }
+
+  reorderProjects(orderedIds: string[]): void {
+    const db = this.getDb()
+    const stmt = db.prepare('UPDATE projects SET sort_order = ? WHERE id = ?')
+    const tx = db.transaction(() => {
+      for (let i = 0; i < orderedIds.length; i++) {
+        stmt.run(i, orderedIds[i])
+      }
+    })
+    tx()
   }
 
   updateProject(id: string, data: ProjectUpdate): Project | null {

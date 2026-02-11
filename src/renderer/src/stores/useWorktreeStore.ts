@@ -20,6 +20,7 @@ interface Worktree {
 interface WorktreeState {
   // Data - keyed by project ID
   worktreesByProject: Map<string, Worktree[]>
+  worktreeOrderByProject: Map<string, string[]>
   isLoading: boolean
   error: string | null
 
@@ -61,11 +62,31 @@ interface WorktreeState {
     sourceWorktreePath: string
   ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
   updateWorktreeBranch: (worktreeId: string, newBranch: string) => void
+  reorderWorktrees: (projectId: string, fromIndex: number, toIndex: number) => void
+}
+
+// Load persisted worktree order from localStorage
+function loadPersistedOrder(): Map<string, string[]> {
+  try {
+    const raw = localStorage.getItem('hive-worktree-order')
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, string[]>
+      const map = new Map<string, string[]>()
+      for (const [pid, order] of Object.entries(parsed)) {
+        if (Array.isArray(order)) map.set(pid, order)
+      }
+      return map
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return new Map()
 }
 
 export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Initial state
   worktreesByProject: new Map(),
+  worktreeOrderByProject: loadPersistedOrder(),
   isLoading: false,
   error: null,
   selectedWorktreeId: null,
@@ -323,9 +344,29 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     }
   },
 
-  // Get worktrees for a specific project
+  // Get worktrees for a specific project (applies custom order if available)
   getWorktreesForProject: (projectId: string) => {
-    return get().worktreesByProject.get(projectId) || []
+    const worktrees = get().worktreesByProject.get(projectId) || []
+    const customOrder = get().worktreeOrderByProject.get(projectId)
+
+    if (!customOrder || customOrder.length === 0) return worktrees
+
+    // Separate default worktree (always first) from non-default
+    const defaultWorktree = worktrees.find((w) => w.is_default)
+    const nonDefault = worktrees.filter((w) => !w.is_default)
+
+    // Sort non-default worktrees by custom order; unordered ones go at end
+    const ordered: typeof nonDefault = []
+    for (const id of customOrder) {
+      const wt = nonDefault.find((w) => w.id === id)
+      if (wt) ordered.push(wt)
+    }
+    // Append any worktrees not in the custom order (newly created)
+    for (const wt of nonDefault) {
+      if (!customOrder.includes(wt.id)) ordered.push(wt)
+    }
+
+    return defaultWorktree ? [defaultWorktree, ...ordered] : ordered
   },
 
   // Get the default worktree for a project
@@ -383,6 +424,53 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         }
       }
       return { worktreesByProject: newMap }
+    })
+  },
+
+  // Reorder non-default worktrees within a project via drag-and-drop
+  reorderWorktrees: (projectId: string, fromIndex: number, toIndex: number) => {
+    set((state) => {
+      const worktrees = state.worktreesByProject.get(projectId) || []
+      const nonDefault = worktrees.filter((w) => !w.is_default)
+
+      // Build current order from existing custom order or derive from current array
+      const existingOrder = state.worktreeOrderByProject.get(projectId)
+      let order: string[]
+      if (existingOrder && existingOrder.length > 0) {
+        // Start from existing order, adding any new worktrees at end
+        order = [...existingOrder]
+        for (const wt of nonDefault) {
+          if (!order.includes(wt.id)) order.push(wt.id)
+        }
+        // Remove any stale IDs (archived worktrees)
+        order = order.filter((id) => nonDefault.some((w) => w.id === id))
+      } else {
+        order = nonDefault.map((w) => w.id)
+      }
+
+      if (fromIndex < 0 || fromIndex >= order.length || toIndex < 0 || toIndex >= order.length) {
+        return state
+      }
+
+      // Remove from old position and insert at new position
+      const [removed] = order.splice(fromIndex, 1)
+      order.splice(toIndex, 0, removed)
+
+      const newOrderMap = new Map(state.worktreeOrderByProject)
+      newOrderMap.set(projectId, order)
+
+      // Persist to localStorage
+      try {
+        const serialized: Record<string, string[]> = {}
+        for (const [pid, o] of newOrderMap.entries()) {
+          serialized[pid] = o
+        }
+        localStorage.setItem('hive-worktree-order', JSON.stringify(serialized))
+      } catch {
+        // Ignore storage errors
+      }
+
+      return { worktreeOrderByProject: newOrderMap }
     })
   }
 }))

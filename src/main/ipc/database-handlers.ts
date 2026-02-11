@@ -95,6 +95,11 @@ export function registerDatabaseHandlers(): void {
     return true
   })
 
+  ipcMain.handle('db:project:reorder', (_event, orderedIds: string[]) => {
+    getDatabase().reorderProjects(orderedIds)
+    return true
+  })
+
   // Worktrees
   ipcMain.handle('db:worktree:create', (_event, data: WorktreeCreate) => {
     return getDatabase().createWorktree(data)

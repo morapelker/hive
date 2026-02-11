@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { Loader2, FolderPlus } from 'lucide-react'
 import { useProjectStore } from '@/stores'
 import { ProjectItem } from './ProjectItem'
@@ -10,8 +10,57 @@ interface ProjectListProps {
 }
 
 export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Element {
-  const { projects, isLoading, error, loadProjects } = useProjectStore()
+  const { projects, isLoading, error, loadProjects, reorderProjects } = useProjectStore()
   const [filterQuery, setFilterQuery] = useState('')
+
+  // Drag state for project reordering
+  const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
+  const [dragOverProjectId, setDragOverProjectId] = useState<string | null>(null)
+
+  const handleDragStart = useCallback((e: React.DragEvent, projectId: string) => {
+    setDraggedProjectId(projectId)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', projectId)
+  }, [])
+
+  const handleDragOver = useCallback(
+    (e: React.DragEvent, projectId: string) => {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      if (draggedProjectId && draggedProjectId !== projectId) {
+        setDragOverProjectId(projectId)
+      }
+    },
+    [draggedProjectId]
+  )
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent, targetProjectId: string) => {
+      e.preventDefault()
+      if (!draggedProjectId || draggedProjectId === targetProjectId) return
+
+      const fromIndex = projects.findIndex((p) => p.id === draggedProjectId)
+      const toIndex = projects.findIndex((p) => p.id === targetProjectId)
+
+      if (fromIndex !== -1 && toIndex !== -1) {
+        // The visual indicator (border-t) shows "insert before target".
+        // After splice removes fromIndex, indices above it shift down by 1.
+        // When dragging downward (fromIndex < toIndex), we need toIndex - 1
+        // so the item lands before the target, not after it.
+        const adjustedIndex = fromIndex < toIndex ? toIndex - 1 : toIndex
+        reorderProjects(fromIndex, adjustedIndex)
+      }
+
+      setDraggedProjectId(null)
+      setDragOverProjectId(null)
+    },
+    [draggedProjectId, projects, reorderProjects]
+  )
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedProjectId(null)
+    setDragOverProjectId(null)
+  }, [])
 
   // Load projects on mount
   useEffect(() => {
@@ -19,10 +68,11 @@ export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Eleme
   }, [loadProjects])
 
   const filteredProjects = useMemo(() => {
-    if (!filterQuery.trim()) return projects.map(p => ({ project: p, nameMatch: null, pathMatch: null }))
+    if (!filterQuery.trim())
+      return projects.map((p) => ({ project: p, nameMatch: null, pathMatch: null }))
 
     return projects
-      .map(project => ({
+      .map((project) => ({
         project,
         nameMatch: subsequenceMatch(filterQuery, project.name),
         pathMatch: subsequenceMatch(filterQuery, project.path)
@@ -69,26 +119,34 @@ export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Eleme
     )
   }
 
+  const isDraggable = !filterQuery.trim()
+
   // Project list
   return (
     <div data-testid="project-list">
-      {projects.length > 1 && (
-        <ProjectFilter value={filterQuery} onChange={setFilterQuery} />
-      )}
+      {projects.length > 1 && <ProjectFilter value={filterQuery} onChange={setFilterQuery} />}
       <div className="space-y-0.5">
         {filteredProjects.map((item) => (
           <ProjectItem
             key={item.project.id}
             project={item.project}
             nameMatchIndices={item.nameMatch?.matched ? item.nameMatch.indices : undefined}
-            pathMatchIndices={item.pathMatch?.matched && !item.nameMatch?.matched ? item.pathMatch.indices : undefined}
+            pathMatchIndices={
+              item.pathMatch?.matched && !item.nameMatch?.matched
+                ? item.pathMatch.indices
+                : undefined
+            }
+            isDragging={isDraggable && draggedProjectId === item.project.id}
+            isDragOver={isDraggable && dragOverProjectId === item.project.id}
+            onDragStart={isDraggable ? (e) => handleDragStart(e, item.project.id) : undefined}
+            onDragOver={isDraggable ? (e) => handleDragOver(e, item.project.id) : undefined}
+            onDrop={isDraggable ? (e) => handleDrop(e, item.project.id) : undefined}
+            onDragEnd={isDraggable ? handleDragEnd : undefined}
           />
         ))}
       </div>
       {filterQuery && filteredProjects.length === 0 && (
-        <div className="text-xs text-muted-foreground text-center py-4">
-          No matching projects
-        </div>
+        <div className="text-xs text-muted-foreground text-center py-4">No matching projects</div>
       )}
     </div>
   )
