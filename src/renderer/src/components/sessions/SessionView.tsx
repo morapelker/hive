@@ -551,14 +551,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [sessionId])
 
-  // Auto-resize textarea
+  // Auto-resize textarea (depends on sessionId to handle pre-populated drafts)
   useEffect(() => {
     const textarea = textareaRef.current
     if (textarea) {
-      textarea.style.height = 'auto'
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+      requestAnimationFrame(() => {
+        textarea.style.height = 'auto'
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+      })
     }
-  }, [inputValue])
+  }, [inputValue, sessionId])
 
   // Clean up rAF and scroll cooldown on unmount
   useEffect(() => {
@@ -2050,7 +2052,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       {/* Permission prompt from AI */}
       {activePermission && (
         <div className="px-4 pb-2">
-          <div className="max-w-3xl mx-auto">
+          <div className="max-w-4xl mx-auto">
             <PermissionPrompt request={activePermission} onReply={handlePermissionReply} />
           </div>
         </div>
@@ -2059,7 +2061,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       {/* Question prompt from AI */}
       {activeQuestion && (
         <div className="px-4 pb-2">
-          <div className="max-w-3xl mx-auto">
+          <div className="max-w-4xl mx-auto">
             <QuestionPrompt
               request={activeQuestion}
               onReply={handleQuestionReply}
@@ -2076,7 +2078,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         role="form"
         aria-label="Message input"
       >
-        <div className="max-w-3xl mx-auto relative">
+        <div className="max-w-4xl mx-auto relative">
           {/* Slash command popover — outside overflow-hidden so it can render above */}
           <SlashCommandPopover
             commands={slashCommands}
