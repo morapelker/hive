@@ -11,6 +11,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useScriptStore } from '@/stores/useScriptStore'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { toast } from 'sonner'
 
@@ -116,8 +117,23 @@ export function useKeyboardShortcuts(): void {
     if (!window.systemOps?.onCloseSessionShortcut) return
 
     const cleanup = window.systemOps.onCloseSessionShortcut(() => {
+      const { activeFilePath, activeDiff } = useFileViewerStore.getState()
+
+      // Priority 1: Close active file tab
+      if (activeFilePath) {
+        useFileViewerStore.getState().closeFile(activeFilePath)
+        return
+      }
+
+      // Priority 2: Clear active diff view
+      if (activeDiff) {
+        useFileViewerStore.getState().clearActiveDiff()
+        return
+      }
+
+      // Priority 3: Close active session tab
       const { activeSessionId } = useSessionStore.getState()
-      if (!activeSessionId) return // no-op if no session open
+      if (!activeSessionId) return
       useSessionStore
         .getState()
         .closeSession(activeSessionId)
@@ -166,8 +182,23 @@ function getShortcutHandlers(
       binding: getEffectiveBinding('session:close'),
       allowInInput: true,
       handler: () => {
+        const { activeFilePath, activeDiff } = useFileViewerStore.getState()
+
+        // Priority 1: Close active file tab
+        if (activeFilePath) {
+          useFileViewerStore.getState().closeFile(activeFilePath)
+          return
+        }
+
+        // Priority 2: Clear active diff view
+        if (activeDiff) {
+          useFileViewerStore.getState().clearActiveDiff()
+          return
+        }
+
+        // Priority 3: Close active session tab
         const { activeSessionId } = useSessionStore.getState()
-        if (!activeSessionId) return // noop if no session
+        if (!activeSessionId) return
         useSessionStore
           .getState()
           .closeSession(activeSessionId)
