@@ -13,9 +13,7 @@ export function EditToolView({ input, error }: ToolViewProps) {
 
   if (error) {
     return (
-      <div className="text-red-400 font-mono text-xs whitespace-pre-wrap break-all">
-        {error}
-      </div>
+      <div className="text-red-400 font-mono text-xs whitespace-pre-wrap break-all">{error}</div>
     )
   }
 
@@ -65,9 +63,7 @@ export function EditToolView({ input, error }: ToolViewProps) {
                 {i + 1}
               </span>
               <span className="text-red-400 select-none shrink-0 w-4">-</span>
-              <span className="text-red-300 whitespace-pre-wrap break-all">
-                {line || ' '}
-              </span>
+              <span className="text-red-400 whitespace-pre-wrap break-all">{line || ' '}</span>
             </div>
           ))}
           {needsTruncation && !showAll && displayedOld.length < oldLines.length && (
@@ -87,9 +83,7 @@ export function EditToolView({ input, error }: ToolViewProps) {
                 {i + 1}
               </span>
               <span className="text-green-400 select-none shrink-0 w-4">+</span>
-              <span className="text-green-300 whitespace-pre-wrap break-all">
-                {line || ' '}
-              </span>
+              <span className="text-green-400 whitespace-pre-wrap break-all">{line || ' '}</span>
             </div>
           ))}
           {needsTruncation && !showAll && displayedNew.length < newLines.length && (
@@ -112,13 +106,10 @@ export function EditToolView({ input, error }: ToolViewProps) {
           className="flex items-center gap-1 mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
           data-testid="show-all-button"
         >
-          <ChevronDown className={cn(
-            'h-3 w-3 transition-transform duration-150',
-            showAll && 'rotate-180'
-          )} />
-          {showAll
-            ? 'Show less'
-            : `Show all ${totalLines} lines`}
+          <ChevronDown
+            className={cn('h-3 w-3 transition-transform duration-150', showAll && 'rotate-180')}
+          />
+          {showAll ? 'Show less' : `Show all ${totalLines} lines`}
         </button>
       )}
     </div>
