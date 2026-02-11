@@ -1213,6 +1213,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           const lastMsg = loadedMessages[loadedMessages.length - 1]
           if (lastMsg.role === 'assistant' && lastMsg.parts && lastMsg.parts.length > 0) {
             const dbParts = lastMsg.parts.map((p) => ({ ...p }))
+            let restoredParts = dbParts
 
             if (streamingPartsRef.current.length > 0) {
               // Merge: DB parts are the base, but keep any streaming parts
@@ -1226,18 +1227,33 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               const extraParts = streamingPartsRef.current.filter(
                 (p) => p.type === 'tool_use' && p.toolUse?.id && !dbToolIds.has(p.toolUse.id)
               )
-              streamingPartsRef.current = [...dbParts, ...extraParts]
-            } else {
-              streamingPartsRef.current = dbParts
+              restoredParts = [...dbParts, ...extraParts]
             }
 
-            setStreamingParts([...streamingPartsRef.current])
+            const hasActiveStreamingPart = restoredParts.some((part) => {
+              if (part.type === 'tool_use') {
+                return part.toolUse?.status === 'pending' || part.toolUse?.status === 'running'
+              }
+              if (part.type === 'subtask') {
+                return part.subtask?.status === 'running'
+              }
+              return false
+            })
 
-            const textParts = streamingPartsRef.current.filter((p) => p.type === 'text')
-            if (textParts.length > 0) {
+            if (hasActiveStreamingPart) {
+              streamingPartsRef.current = restoredParts
+              setStreamingParts([...streamingPartsRef.current])
+
+              const textParts = streamingPartsRef.current.filter((p) => p.type === 'text')
               const content = textParts.map((p) => p.text || '').join('')
               streamingContentRef.current = content
               setStreamingContent(content)
+              setIsStreaming(true)
+            } else {
+              streamingPartsRef.current = []
+              streamingContentRef.current = ''
+              setStreamingParts([])
+              setStreamingContent('')
             }
           }
         }

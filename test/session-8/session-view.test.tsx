@@ -470,7 +470,7 @@ describe('Session 8: Session View', () => {
       })
     })
 
-    test('Typing indicator disappears after response', async () => {
+    test('Typing indicator is shown while waiting for response events', async () => {
       const user = userEvent.setup()
       render(<SessionView sessionId="test-session-1" />)
 
@@ -484,13 +484,9 @@ describe('Session 8: Session View', () => {
       await user.type(input, 'Test message')
       await user.click(sendButton)
 
-      // Wait for simulated response
-      await waitFor(
-        () => {
-          expect(screen.queryByTestId('typing-indicator')).not.toBeInTheDocument()
-        },
-        { timeout: 3000 }
-      )
+      await waitFor(() => {
+        expect(screen.getByTestId('typing-indicator')).toBeInTheDocument()
+      })
     })
   })
 
@@ -606,6 +602,64 @@ describe('Session 8: Session View', () => {
   })
 
   describe('OpenCode transcript hydration', () => {
+    test('Initial hydration does not render duplicate assistant bubble for last canonical message', async () => {
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-no-dup',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        messages: [
+          {
+            info: {
+              id: 'opc-user-1',
+              role: 'user',
+              time: { created: Date.now() - 1000 }
+            },
+            parts: [{ type: 'text', text: 'Question' }]
+          },
+          {
+            info: {
+              id: 'opc-assistant-1',
+              role: 'assistant',
+              time: { created: Date.now() }
+            },
+            parts: [{ type: 'text', text: 'Single assistant response' }]
+          }
+        ]
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Single assistant response')).toBeInTheDocument()
+      })
+
+      expect(screen.getAllByTestId('message-assistant')).toHaveLength(1)
+    })
+
     test('Initial hydration calls opencodeOps.getMessages when worktree path and opencode session id exist', async () => {
       const getMessagesMock = vi
         .fn()
@@ -1034,14 +1088,6 @@ describe('Session 8: Session View', () => {
       // Send first message
       await user.type(input, 'First message')
       await user.click(sendButton)
-
-      // Wait for typing indicator to disappear (response received)
-      await waitFor(
-        () => {
-          expect(screen.queryByTestId('typing-indicator')).not.toBeInTheDocument()
-        },
-        { timeout: 3000 }
-      )
 
       // Send second message
       await user.type(input, 'Second message')

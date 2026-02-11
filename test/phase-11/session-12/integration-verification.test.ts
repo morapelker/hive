@@ -185,8 +185,11 @@ describe('Session 12: Integration & Verification', () => {
       expect(content).toContain("lastMsg.role === 'assistant'")
       expect(content).toContain('lastMsg.parts')
       expect(content).toContain('const dbParts = lastMsg.parts.map((p) => ({ ...p }))')
-      expect(content).toContain('streamingPartsRef.current = [...dbParts, ...extraParts]')
-      expect(content).toContain('streamingPartsRef.current = dbParts')
+      expect(content).toContain('let restoredParts = dbParts')
+      expect(content).toContain('restoredParts = [...dbParts, ...extraParts]')
+      expect(content).toContain('const hasActiveStreamingPart = restoredParts.some')
+      expect(content).toContain('streamingPartsRef.current = restoredParts')
+      expect(content).toContain('streamingPartsRef.current = []')
     })
 
     test('mapOpencodePartToStreamingPart preserves callID for tool result merging', () => {
