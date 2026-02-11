@@ -1,13 +1,18 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { act } from 'react'
 import { useContextStore } from '../../../src/renderer/src/stores/useContextStore'
-import { extractTokens, extractCost } from '../../../src/renderer/src/lib/token-utils'
+import {
+  extractTokens,
+  extractCost,
+  extractModelRef
+} from '../../../src/renderer/src/lib/token-utils'
 
 beforeEach(() => {
   vi.clearAllMocks()
 
   useContextStore.setState({
     tokensBySession: {},
+    modelBySession: {},
     costBySession: {},
     modelLimits: {}
   })
@@ -118,10 +123,10 @@ describe('Session 1: Context Calculation Fix', () => {
       })
       const usage = store.getContextUsage('s1', 'unknown-model')
       expect(usage.used).toBe(1500)
-      expect(usage.percent).toBe(0)
+      expect(usage.percent).toBeNull()
     })
 
-    test('usage percent caps at 100', () => {
+    test('usage percent can exceed 100 when context over limit', () => {
       const store = useContextStore.getState()
       act(() => {
         store.setModelLimit('model1', 100)
@@ -134,7 +139,62 @@ describe('Session 1: Context Calculation Fix', () => {
         })
       })
       const usage = store.getContextUsage('s1', 'model1')
-      expect(usage.percent).toBe(100)
+      expect(usage.percent).toBe(350)
+    })
+
+    test('context usage uses snapshot model identity over caller model id', () => {
+      const store = useContextStore.getState()
+
+      act(() => {
+        store.setModelLimit('claude-sonnet-4-20250514', 200000, 'anthropic')
+        store.setModelLimit('gpt-4o', 128000, 'openai')
+        store.setSessionTokens(
+          's1',
+          {
+            input: 10000,
+            output: 2000,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          {
+            providerID: 'anthropic',
+            modelID: 'claude-sonnet-4-20250514'
+          }
+        )
+      })
+
+      // Pass a different fallback model id. Store should still use snapshot model limit.
+      const usage = store.getContextUsage('s1', 'gpt-4o', 'openai')
+      expect(usage.limit).toBe(200000)
+      expect(usage.percent).toBe(6)
+    })
+
+    test('context limits are provider+model scoped for duplicate model ids', () => {
+      const store = useContextStore.getState()
+
+      act(() => {
+        store.setModelLimit('same-model', 100000, 'provider-a')
+        store.setModelLimit('same-model', 300000, 'provider-b')
+        store.setSessionTokens(
+          's1',
+          {
+            input: 60000,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          {
+            providerID: 'provider-b',
+            modelID: 'same-model'
+          }
+        )
+      })
+
+      const usage = store.getContextUsage('s1', 'same-model', 'provider-a')
+      expect(usage.limit).toBe(300000)
+      expect(usage.percent).toBe(20)
     })
   })
 
@@ -237,6 +297,27 @@ describe('Session 1: Context Calculation Fix', () => {
 
     test('prefers top-level cost over info.cost', () => {
       expect(extractCost({ cost: 0.01, info: { cost: 0.99 } })).toBe(0.01)
+    })
+  })
+
+  describe('extractModelRef', () => {
+    test('extracts provider/model from top-level fields', () => {
+      const result = extractModelRef({ providerID: 'anthropic', modelID: 'claude-sonnet-4' })
+      expect(result).toEqual({ providerID: 'anthropic', modelID: 'claude-sonnet-4' })
+    })
+
+    test('extracts provider/model from nested info fields', () => {
+      const result = extractModelRef({
+        info: {
+          providerID: 'openai',
+          modelID: 'gpt-4o'
+        }
+      })
+      expect(result).toEqual({ providerID: 'openai', modelID: 'gpt-4o' })
+    })
+
+    test('returns null when model identity is missing', () => {
+      expect(extractModelRef({})).toBeNull()
     })
   })
 })
