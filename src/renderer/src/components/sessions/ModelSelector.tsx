@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Check, ChevronDown, Search } from 'lucide-react'
+import { Check, ChevronDown, Search, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { toast } from 'sonner'
@@ -37,6 +37,8 @@ function getVariantKeys(model: ModelInfo): string[] {
 export function ModelSelector(): React.JSX.Element {
   const selectedModel = useSettingsStore((state) => state.selectedModel)
   const setSelectedModel = useSettingsStore((state) => state.setSelectedModel)
+  const favoriteModels = useSettingsStore((s) => s.favoriteModels)
+  const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel)
   const [providers, setProviders] = useState<ProviderModels[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [filter, setFilter] = useState('')
@@ -64,7 +66,9 @@ export function ModelSelector(): React.JSX.Element {
     }
 
     loadModels()
-    return () => { mounted = false }
+    return () => {
+      mounted = false
+    }
   }, [])
 
   // Parse the providers response into a structured format
@@ -81,9 +85,10 @@ export function ModelSelector(): React.JSX.Element {
         for (const [modelID, modelData] of Object.entries(provider.models)) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const md = modelData as any
-          const variants = md?.variants && typeof md.variants === 'object'
-            ? md.variants as Record<string, Record<string, unknown>>
-            : undefined
+          const variants =
+            md?.variants && typeof md.variants === 'object'
+              ? (md.variants as Record<string, Record<string, unknown>>)
+              : undefined
           models.push({
             id: md?.id || modelID,
             name: md?.name,
@@ -165,7 +170,10 @@ export function ModelSelector(): React.JSX.Element {
   // Determine display name for the pill
   const displayName = currentModel
     ? getDisplayName(currentModel)
-    : getDisplayName({ id: selectedModel?.modelID || 'claude-opus-4-5-20251101', providerID: 'anthropic' })
+    : getDisplayName({
+        id: selectedModel?.modelID || 'claude-opus-4-5-20251101',
+        providerID: 'anthropic'
+      })
 
   const filteredProviders = useMemo(() => {
     if (!filter.trim()) return providers
@@ -182,6 +190,16 @@ export function ModelSelector(): React.JSX.Element {
       }))
       .filter((p) => p.models.length > 0)
   }, [providers, filter])
+
+  const isFavorite = useCallback(
+    (model: ModelInfo) => favoriteModels.includes(`${model.providerID}::${model.id}`),
+    [favoriteModels]
+  )
+
+  const favoriteModelObjects = useMemo(
+    () => providers.flatMap((p) => p.models.filter((m) => isFavorite(m))),
+    [providers, isFavorite]
+  )
 
   const currentVariantKeys = currentModel ? getVariantKeys(currentModel) : []
   const hasVariants = currentVariantKeys.length > 0
@@ -208,7 +226,10 @@ export function ModelSelector(): React.JSX.Element {
         >
           <span className="truncate max-w-[140px]">{isLoading ? 'Loading...' : displayName}</span>
           {hasVariants && selectedModel?.variant && (
-            <span className="text-[10px] font-semibold text-primary uppercase" data-testid="variant-indicator">
+            <span
+              className="text-[10px] font-semibold text-primary uppercase"
+              data-testid="variant-indicator"
+            >
               {selectedModel.variant}
             </span>
           )}
@@ -228,6 +249,31 @@ export function ModelSelector(): React.JSX.Element {
           />
         </div>
         <DropdownMenuSeparator />
+        {favoriteModelObjects.length > 0 && (
+          <>
+            <DropdownMenuLabel className="text-xs text-muted-foreground flex items-center gap-1">
+              <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" /> Favorites
+            </DropdownMenuLabel>
+            {favoriteModelObjects.map((model) => (
+              <DropdownMenuItem
+                key={`fav-${model.providerID}:${model.id}`}
+                onClick={() => handleSelectModel(model)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  toggleFavoriteModel(model.providerID, model.id)
+                }}
+                className="flex items-center justify-between gap-2 cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
+                  <span className="truncate text-sm">{getDisplayName(model)}</span>
+                </span>
+                {isActiveModel(model) && <Check className="h-4 w-4 shrink-0 text-primary" />}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+          </>
+        )}
         {filteredProviders.map((provider, index) => (
           <div key={provider.providerID}>
             {index > 0 && <DropdownMenuSeparator />}
@@ -241,15 +287,20 @@ export function ModelSelector(): React.JSX.Element {
                 <div key={`${model.providerID}:${model.id}`}>
                   <DropdownMenuItem
                     onClick={() => handleSelectModel(model)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      toggleFavoriteModel(model.providerID, model.id)
+                    }}
                     className="flex items-center justify-between gap-2 cursor-pointer"
                     data-testid={`model-item-${model.id}`}
                   >
-                    <span className="truncate text-sm">
-                      {getDisplayName(model)}
+                    <span className="flex items-center gap-1.5">
+                      {isFavorite(model) && (
+                        <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
+                      )}
+                      <span className="truncate text-sm">{getDisplayName(model)}</span>
                     </span>
-                    {active && (
-                      <Check className="h-4 w-4 shrink-0 text-primary" />
-                    )}
+                    {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
                   </DropdownMenuItem>
                   {variantKeys.length > 0 && active && (
                     <div className="flex gap-1 pl-6 pb-1" data-testid={`variant-chips-${model.id}`}>

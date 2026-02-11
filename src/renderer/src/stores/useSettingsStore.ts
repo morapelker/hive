@@ -37,6 +37,9 @@ export interface AppSettings {
 
   // Quick Actions
   lastOpenAction: QuickActionType | null
+
+  // Favorites
+  favoriteModels: string[] // Array of "providerID::modelID" keys
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -48,7 +51,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   commitTemplate: '',
   autoFetchInterval: 0,
   selectedModel: null,
-  lastOpenAction: null
+  lastOpenAction: null,
+  favoriteModels: []
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -64,6 +68,7 @@ interface SettingsState extends AppSettings {
   setActiveSection: (section: string) => void
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   setSelectedModel: (model: SelectedModel) => Promise<void>
+  toggleFavoriteModel: (providerID: string, modelID: string) => void
   resetToDefaults: () => void
   loadFromDatabase: () => Promise<void>
 }
@@ -102,7 +107,8 @@ function extractSettings(state: SettingsState): AppSettings {
     commitTemplate: state.commitTemplate,
     autoFetchInterval: state.autoFetchInterval,
     selectedModel: state.selectedModel,
-    lastOpenAction: state.lastOpenAction
+    lastOpenAction: state.lastOpenAction,
+    favoriteModels: state.favoriteModels
   }
 }
 
@@ -147,6 +153,15 @@ export const useSettingsStore = create<SettingsState>()(
         saveToDatabase(settings)
       },
 
+      toggleFavoriteModel: (providerID: string, modelID: string) => {
+        const key = `${providerID}::${modelID}`
+        const current = get().favoriteModels
+        const updated = current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
+        set({ favoriteModels: updated })
+        const settings = extractSettings({ ...get(), favoriteModels: updated } as SettingsState)
+        saveToDatabase(settings)
+      },
+
       resetToDefaults: () => {
         set({ ...DEFAULT_SETTINGS })
         saveToDatabase(DEFAULT_SETTINGS)
@@ -175,6 +190,7 @@ export const useSettingsStore = create<SettingsState>()(
         autoFetchInterval: state.autoFetchInterval,
         selectedModel: state.selectedModel,
         lastOpenAction: state.lastOpenAction,
+        favoriteModels: state.favoriteModels,
         activeSection: state.activeSection
       })
     }
