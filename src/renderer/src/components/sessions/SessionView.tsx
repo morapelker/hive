@@ -418,6 +418,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
   const hasFinalizedCurrentResponseRef = useRef(false)
 
+  // Guard: tracks whether a new prompt was sent during the current streaming cycle.
+  // When true, finalizeResponseFromDatabase skips the full reload to avoid
+  // reordering the newly-sent user message.
+  const newPromptPendingRef = useRef(false)
+
   // Generation counter to prevent stale closures from processing events for
   // the wrong session (cross-tab bleed prevention). Incremented on every
   // sessionId change; the stream handler captures the current value and rejects
@@ -756,7 +761,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const loadMessagesFromDatabase = async (): Promise<OpenCodeMessage[]> => {
       const dbMessages = (await window.db.message.getBySession(sessionId)) as DbMessage[]
       const loadedMessages = dbMessages.map(dbMessageToOpenCode)
-      setMessages(loadedMessages)
+
+      setMessages((currentMessages) => {
+        // Find any local messages not yet in the DB result
+        // (e.g., user messages sent during async DB load)
+        const loadedIds = new Set(loadedMessages.map((m) => m.id))
+        const localOnly = currentMessages.filter((m) => !loadedIds.has(m.id))
+
+        // Append local-only messages at the end to preserve user intent
+        return localOnly.length > 0 ? [...loadedMessages, ...localOnly] : loadedMessages
+      })
 
       const lastMessage = loadedMessages[loadedMessages.length - 1]
       if (lastMessage?.role === 'assistant') {
@@ -804,6 +818,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
 
     const finalizeResponseFromDatabase = async (): Promise<void> => {
+      if (newPromptPendingRef.current) {
+        // A new prompt was sent during this stream — skip full reload.
+        // The next stream completion will finalize both responses.
+        newPromptPendingRef.current = false
+        resetStreamingState()
+        return
+      }
+
       try {
         await loadMessagesFromDatabase()
       } catch (error) {
@@ -1234,6 +1256,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
             if (status.type === 'busy') {
               setIsStreaming(true)
+              newPromptPendingRef.current = false
             } else if (status.type === 'idle') {
               // Session is truly done -- flush and finalize
               immediateFlush()
@@ -1660,6 +1683,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       const userMessage = dbMessageToOpenCode(savedUserMessage)
       setMessages((prev) => [...prev, userMessage])
+
+      // Mark that a new prompt is in flight — prevents finalizeResponseFromDatabase
+      // from reordering this message if a previous stream is still completing.
+      newPromptPendingRef.current = true
 
       // Record prompt to history for Up/Down navigation
       if (worktreeId) {
