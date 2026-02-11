@@ -94,6 +94,18 @@ export function useOpenCodeGlobalListener(): void {
           if (event.type !== 'session.status') return
 
           const status = event.statusPayload || event.data?.status
+
+          // Background session became busy again — restore working/planning status
+          if (status?.type === 'busy') {
+            if (sessionId !== activeId) {
+              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+              useWorktreeStatusStore
+                .getState()
+                .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+            }
+            return
+          }
+
           if (status?.type !== 'idle') return
 
           // Active session is handled by SessionView.
