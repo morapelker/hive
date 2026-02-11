@@ -54,6 +54,7 @@ interface WorktreeItemProps {
 export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): React.JSX.Element {
   const { selectedWorktreeId, selectWorktree, archiveWorktree, unbranchWorktree } =
     useWorktreeStore()
+  const selectProject = useProjectStore((s) => s.selectProject)
 
   const archivingWorktreeIds = useWorktreeStore((s) => s.archivingWorktreeIds)
   const isArchiving = archivingWorktreeIds.has(worktree.id)
@@ -120,6 +121,7 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
 
   const handleClick = (): void => {
     selectWorktree(worktree.id)
+    selectProject(worktree.project_id)
     useWorktreeStatusStore.getState().clearWorktreeUnread(worktree.id)
   }
 
