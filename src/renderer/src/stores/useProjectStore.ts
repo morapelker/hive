@@ -72,7 +72,24 @@ export const useProjectStore = create<ProjectState>()(
         set({ isLoading: true, error: null })
         try {
           const projects = await window.db.project.getAll()
-          const customOrder = get().projectOrder
+
+          // Read order directly from localStorage to avoid Zustand persist rehydration race.
+          // On startup, loadProjects fires before persist middleware rehydrates, so
+          // get().projectOrder would be [] even when localStorage has a saved order.
+          let customOrder = get().projectOrder
+          if (customOrder.length === 0) {
+            try {
+              const raw = localStorage.getItem('hive-projects')
+              if (raw) {
+                const parsed = JSON.parse(raw)
+                if (Array.isArray(parsed?.state?.projectOrder)) {
+                  customOrder = parsed.state.projectOrder
+                }
+              }
+            } catch {
+              // Ignore parse errors
+            }
+          }
 
           if (customOrder.length > 0) {
             // Apply custom order: ordered projects first, then any new ones at the end

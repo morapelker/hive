@@ -43,7 +43,12 @@ export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Eleme
       const toIndex = projects.findIndex((p) => p.id === targetProjectId)
 
       if (fromIndex !== -1 && toIndex !== -1) {
-        reorderProjects(fromIndex, toIndex)
+        // The visual indicator (border-t) shows "insert before target".
+        // After splice removes fromIndex, indices above it shift down by 1.
+        // When dragging downward (fromIndex < toIndex), we need toIndex - 1
+        // so the item lands before the target, not after it.
+        const adjustedIndex = fromIndex < toIndex ? toIndex - 1 : toIndex
+        reorderProjects(fromIndex, adjustedIndex)
       }
 
       setDraggedProjectId(null)
