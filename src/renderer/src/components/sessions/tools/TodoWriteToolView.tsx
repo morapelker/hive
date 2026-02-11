@@ -14,13 +14,6 @@ interface TodoInput {
   todos: TodoItem[]
 }
 
-const STATUS_ORDER: Record<string, number> = {
-  in_progress: 0,
-  pending: 1,
-  completed: 2,
-  cancelled: 3
-}
-
 function StatusIcon({ status }: { status: TodoItem['status'] }) {
   switch (status) {
     case 'completed':
@@ -53,11 +46,6 @@ function PriorityBadge({ priority }: { priority: TodoItem['priority'] }) {
 export function TodoWriteToolView({ input, error }: ToolViewProps) {
   const todoInput = input as unknown as TodoInput
   const todos = useMemo(() => todoInput?.todos || [], [todoInput?.todos])
-
-  const sorted = useMemo(
-    () => [...todos].sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9)),
-    [todos]
-  )
 
   const counts = useMemo(() => {
     const c = { completed: 0, in_progress: 0, pending: 0, cancelled: 0, total: todos.length }
@@ -102,7 +90,7 @@ export function TodoWriteToolView({ input, error }: ToolViewProps) {
 
       {/* Todo list */}
       <div className="space-y-0.5">
-        {sorted.map((todo) => (
+        {todos.map((todo) => (
           <div
             key={todo.id}
             className={cn(
