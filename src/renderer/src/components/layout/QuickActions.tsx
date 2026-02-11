@@ -1,4 +1,4 @@
-import { Copy, Check, FolderOpen } from 'lucide-react'
+import { Copy, Check, FolderOpen, GitBranch } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -37,16 +37,22 @@ function GhosttyIcon({ className }: { className?: string }): React.JSX.Element {
 export function QuickActions(): React.JSX.Element | null {
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const [copied, setCopied] = useState(false)
+  const [branchCopied, setBranchCopied] = useState(false)
 
-  const worktreePath = (() => {
+  const selectedWorktree = (() => {
     if (!selectedWorktreeId) return null
     for (const worktrees of worktreesByProject.values()) {
-      const worktree = worktrees.find((w) => w.id === selectedWorktreeId)
-      if (worktree) return worktree.path
+      const wt = worktrees.find((w) => w.id === selectedWorktreeId)
+      if (wt) return wt
     }
     return null
   })()
 
+  const worktreePath = selectedWorktree?.path ?? null
+  const branchName =
+    selectedWorktree?.branch_name && selectedWorktree.name !== '(no-worktree)'
+      ? selectedWorktree.branch_name
+      : null
   const disabled = !worktreePath
 
   const handleAction = useCallback(
@@ -57,6 +63,11 @@ export function QuickActions(): React.JSX.Element | null {
           await window.projectOps.copyToClipboard(worktreePath)
           setCopied(true)
           setTimeout(() => setCopied(false), 1500)
+        } else if (actionId === 'copy-branch') {
+          if (!branchName) return
+          await window.projectOps.copyToClipboard(branchName)
+          setBranchCopied(true)
+          setTimeout(() => setBranchCopied(false), 1500)
         } else if (actionId === 'finder') {
           await window.projectOps.showInFolder(worktreePath)
         } else {
@@ -66,7 +77,7 @@ export function QuickActions(): React.JSX.Element | null {
         console.error('Quick action failed:', error)
       }
     },
-    [worktreePath]
+    [worktreePath, branchName]
   )
 
   return (
@@ -123,6 +134,23 @@ export function QuickActions(): React.JSX.Element | null {
         <FolderOpen className="h-3.5 w-3.5" />
         <span>Finder</span>
       </Button>
+      {branchName && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
+          onClick={() => handleAction('copy-branch')}
+          title="Copy branch name"
+          data-testid="quick-action-copy-branch"
+        >
+          {branchCopied ? (
+            <Check className="h-3.5 w-3.5 text-green-500" />
+          ) : (
+            <GitBranch className="h-3.5 w-3.5" />
+          )}
+          <span>{branchCopied ? 'Copied' : 'Copy branch name'}</span>
+        </Button>
+      )}
     </div>
   )
 }
