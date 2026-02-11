@@ -3,12 +3,28 @@ import { Button } from '@/components/ui/button'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useSessionHistoryStore } from '@/stores/useSessionHistoryStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useProjectStore } from '@/stores/useProjectStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { QuickActions } from './QuickActions'
+import hiveLogo from '@/assets/icon.png'
 
 export function Header(): React.JSX.Element {
   const { rightSidebarCollapsed, toggleRightSidebar } = useLayoutStore()
   const { openPanel: openSessionHistory } = useSessionHistoryStore()
   const openSettings = useSettingsStore((s) => s.openSettings)
+  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
+  const projects = useProjectStore((s) => s.projects)
+  const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
+
+  const selectedProject = projects.find((p) => p.id === selectedProjectId)
+  const selectedWorktree = (() => {
+    if (!selectedWorktreeId) return null
+    for (const worktrees of worktreesByProject.values()) {
+      const wt = worktrees.find((w) => w.id === selectedWorktreeId)
+      if (wt) return wt
+    }
+    return null
+  })()
 
   return (
     <header
@@ -18,8 +34,18 @@ export function Header(): React.JSX.Element {
     >
       {/* Spacer for macOS traffic lights */}
       <div className="w-16 flex-shrink-0" />
-      <div className="flex items-center gap-2 flex-1">
-        <h1 className="text-lg font-semibold">Hive</h1>
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <img src={hiveLogo} alt="Hive" className="h-5 w-5 shrink-0 rounded" draggable={false} />
+        {selectedProject ? (
+          <span className="text-sm font-medium truncate" data-testid="header-project-info">
+            {selectedProject.name}
+            {selectedWorktree?.branch_name && selectedWorktree.name !== '(no-worktree)' && (
+              <span className="text-primary font-normal"> ({selectedWorktree.branch_name})</span>
+            )}
+          </span>
+        ) : (
+          <span className="text-sm font-medium">Hive</span>
+        )}
       </div>
       {/* Center: Quick Actions */}
       <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
