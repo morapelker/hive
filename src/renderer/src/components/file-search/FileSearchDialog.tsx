@@ -93,6 +93,15 @@ export function FileSearchDialog() {
   // Flatten the file tree into a searchable list
   const allFiles = useMemo(() => flattenTree(fileTree), [fileTree])
 
+  const loadFileTree = useFileTreeStore((state) => state.loadFileTree)
+
+  // Load file tree on open if not already loaded
+  useEffect(() => {
+    if (isOpen && selectedWorktreePath && fileTree === EMPTY_TREE) {
+      loadFileTree(selectedWorktreePath)
+    }
+  }, [isOpen, selectedWorktreePath, fileTree, loadFileTree])
+
   // Filter and score files based on search query
   const filteredFiles = useMemo(() => {
     if (!searchQuery.trim()) {
