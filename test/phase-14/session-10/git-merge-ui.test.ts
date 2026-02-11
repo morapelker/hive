@@ -2,10 +2,10 @@
  * Session 10: Git Merge UI Tests
  *
  * Testing criteria from IMPLEMENTATION-P14.md:
- * - Renders merge section with input and button
- * - Merge button disabled when input is empty
+ * - Renders merge section with dropdown trigger and button
+ * - Merge button disabled when no branch selected
  * - Calls gitOps.merge on button click
- * - Input defaults to 'main'
+ * - Branch dropdown fetches and filters branches
  * - Shows success toast on successful merge
  * - Shows error toast on failed merge
  * - Merge button shows spinner while merging
@@ -15,11 +15,11 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 
 // Mock types matching the git store
-interface GitBranchInfo {
+interface BranchInfo {
   name: string
-  tracking: string | null
-  ahead: number
-  behind: number
+  isRemote: boolean
+  isCheckedOut: boolean
+  worktreePath?: string
 }
 
 interface MockGitOps {
@@ -44,11 +44,19 @@ interface MockGitOps {
 
 const mockUnsubscribe = vi.fn()
 
+const mockBranches: BranchInfo[] = [
+  { name: 'main', isRemote: false, isCheckedOut: false },
+  { name: 'develop', isRemote: false, isCheckedOut: false },
+  { name: 'feature/login', isRemote: false, isCheckedOut: true, worktreePath: '/repo/wt' },
+  { name: 'remotes/origin/main', isRemote: true, isCheckedOut: false },
+  { name: 'remotes/origin/develop', isRemote: true, isCheckedOut: false }
+]
+
 const mockGitOps: MockGitOps = {
   getFileStatuses: vi.fn().mockResolvedValue({ success: true, files: [] }),
   getBranchInfo: vi.fn().mockResolvedValue({
     success: true,
-    branch: { name: 'feature', tracking: 'origin/feature', ahead: 0, behind: 0 } as GitBranchInfo
+    branch: { name: 'feature', tracking: 'origin/feature', ahead: 0, behind: 0 }
   }),
   stageFile: vi.fn(),
   unstageFile: vi.fn(),
@@ -63,7 +71,7 @@ const mockGitOps: MockGitOps = {
   openInEditor: vi.fn(),
   showInFinder: vi.fn(),
   getDiff: vi.fn(),
-  listBranchesWithStatus: vi.fn(),
+  listBranchesWithStatus: vi.fn().mockResolvedValue({ success: true, branches: mockBranches }),
   merge: vi.fn()
 }
 
@@ -71,6 +79,10 @@ describe('Session 10: Git Merge UI', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(mockGitOps.onStatusChanged).mockReturnValue(mockUnsubscribe)
+    vi.mocked(mockGitOps.listBranchesWithStatus).mockResolvedValue({
+      success: true,
+      branches: mockBranches
+    })
     Object.defineProperty(global, 'window', {
       value: { gitOps: mockGitOps },
       writable: true,
@@ -78,25 +90,78 @@ describe('Session 10: Git Merge UI', () => {
     })
   })
 
-  describe('Merge section rendering', () => {
-    test('merge section has input and button elements', () => {
-      // Verify the merge UI contract: input with placeholder and Merge button
-      const mergeInput = { placeholder: 'branch name', defaultValue: 'main' }
-      const mergeButton = { text: 'Merge', disabled: false }
+  describe('Branch dropdown', () => {
+    test('listBranchesWithStatus returns both local and remote branches', async () => {
+      const result = await mockGitOps.listBranchesWithStatus('/test/repo')
 
-      expect(mergeInput.placeholder).toBe('branch name')
-      expect(mergeButton.text).toBe('Merge')
+      expect(result.success).toBe(true)
+      expect(result.branches).toHaveLength(5)
+
+      const localBranches = result.branches.filter((b: BranchInfo) => !b.isRemote)
+      const remoteBranches = result.branches.filter((b: BranchInfo) => b.isRemote)
+
+      expect(localBranches).toHaveLength(3)
+      expect(remoteBranches).toHaveLength(2)
     })
 
-    test('merge input defaults to main', () => {
-      // The component initializes mergeBranch to 'main' via useEffect
-      const defaultBranch = 'main'
-      expect(defaultBranch).toBe('main')
+    test('branches can be filtered by name', () => {
+      const filter = 'main'
+      const filtered = mockBranches.filter((b) =>
+        b.name.toLowerCase().includes(filter.toLowerCase())
+      )
+
+      expect(filtered).toHaveLength(2) // 'main' and 'remotes/origin/main'
+    })
+
+    test('filtered branches sort local first, then remote', () => {
+      const sorted = [...mockBranches].sort((a, b) => {
+        if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1
+        return a.name.localeCompare(b.name)
+      })
+
+      // Local branches come first
+      const firstRemoteIndex = sorted.findIndex((b) => b.isRemote)
+      // All items before the first remote should be local
+      const allLocalBeforeRemote = sorted.slice(0, firstRemoteIndex).every((b) => !b.isRemote)
+
+      expect(firstRemoteIndex).toBeGreaterThan(0)
+      expect(allLocalBeforeRemote).toBe(true)
+    })
+
+    test('current branch is excluded from the list', () => {
+      const currentBranch = 'feature'
+      const filtered = mockBranches.filter((b) => b.name !== currentBranch)
+
+      // 'feature' is not in mockBranches but 'feature/login' is, so all 5 remain
+      expect(filtered).toHaveLength(5)
+
+      // If current branch were 'main', it should be excluded
+      const filteredMain = mockBranches.filter((b) => b.name !== 'main')
+      expect(filteredMain).toHaveLength(4)
+    })
+
+    test('selecting a branch from dropdown sets mergeBranch', () => {
+      let mergeBranch = ''
+      const handleBranchSelect = (name: string): void => {
+        mergeBranch = name
+      }
+
+      handleBranchSelect('develop')
+      expect(mergeBranch).toBe('develop')
+    })
+
+    test('empty filter shows all branches', () => {
+      const filter = ''
+      const filtered = mockBranches.filter((b) =>
+        b.name.toLowerCase().includes(filter.toLowerCase())
+      )
+
+      expect(filtered).toHaveLength(5)
     })
   })
 
   describe('Merge button disabled states', () => {
-    test('merge button disabled when input is empty', () => {
+    test('merge button disabled when no branch selected', () => {
       const mergeBranch = ''
       const isMerging = false
       const isOperating = false
@@ -106,17 +171,7 @@ describe('Session 10: Git Merge UI', () => {
       expect(isDisabled).toBe(true)
     })
 
-    test('merge button disabled when input is only whitespace', () => {
-      const mergeBranch = '   '
-      const isMerging = false
-      const isOperating = false
-
-      const isDisabled = isMerging || isOperating || !mergeBranch.trim()
-
-      expect(isDisabled).toBe(true)
-    })
-
-    test('merge button enabled when input has valid branch name', () => {
+    test('merge button enabled when branch is selected', () => {
       const mergeBranch = 'main'
       const isMerging = false
       const isOperating = false
@@ -129,7 +184,7 @@ describe('Session 10: Git Merge UI', () => {
     test('merge button disabled while merging', () => {
       const mergeBranch = 'main'
       const isMerging = true
-      const isOperating = true // isMerging contributes to isOperating
+      const isOperating = true
 
       const isDisabled = isMerging || isOperating || !mergeBranch.trim()
 
@@ -139,7 +194,7 @@ describe('Session 10: Git Merge UI', () => {
     test('merge button disabled while pushing or pulling', () => {
       const mergeBranch = 'main'
       const isMerging = false
-      const isOperating = true // isPushing or isPulling
+      const isOperating = true
 
       const isDisabled = isMerging || isOperating || !mergeBranch.trim()
 
@@ -151,10 +206,7 @@ describe('Session 10: Git Merge UI', () => {
     test('calls gitOps.merge with correct params', async () => {
       vi.mocked(mockGitOps.merge).mockResolvedValue({ success: true })
 
-      const worktreePath = '/test/repo'
-      const mergeBranch = 'main'
-
-      const result = await mockGitOps.merge(worktreePath, mergeBranch)
+      const result = await mockGitOps.merge('/test/repo', 'main')
 
       expect(mockGitOps.merge).toHaveBeenCalledWith('/test/repo', 'main')
       expect(result.success).toBe(true)
@@ -163,7 +215,7 @@ describe('Session 10: Git Merge UI', () => {
     test('handles successful merge', async () => {
       vi.mocked(mockGitOps.merge).mockResolvedValue({ success: true })
 
-      const result = await mockGitOps.merge('/test/repo', 'main')
+      const result = await mockGitOps.merge('/test/repo', 'develop')
 
       expect(result.success).toBe(true)
     })
