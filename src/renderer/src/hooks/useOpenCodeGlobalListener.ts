@@ -100,6 +100,15 @@ export function useOpenCodeGlobalListener(): void {
           if (sessionId === activeId) return
 
           useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'unread')
+
+          // Update last message time for the worktree
+          const sessions = useSessionStore.getState().sessionsByWorktree
+          for (const [worktreeId, wSessions] of sessions) {
+            if (wSessions.some((s) => s.id === sessionId)) {
+              useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
+              break
+            }
+          }
         })
       : () => {}
 

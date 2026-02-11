@@ -24,6 +24,7 @@ interface Worktree {
   status: 'active' | 'archived'
   is_default: boolean
   branch_renamed: number // 0 = auto-named (city), 1 = user/auto renamed
+  last_message_at: number | null // epoch ms of last AI message activity
   created_at: string
   last_accessed_at: string
 }
@@ -129,6 +130,7 @@ declare global {
           data: {
             name?: string
             status?: 'active' | 'archived'
+            last_message_at?: number | null
             last_accessed_at?: string
           }
         ) => Promise<Worktree | null>

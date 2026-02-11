@@ -33,6 +33,7 @@ import { useWorktreeStore, useProjectStore } from '@/stores'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
+import { formatRelativeTime } from '@/lib/format-utils'
 import { PulseAnimation } from './PulseAnimation'
 
 interface Worktree {
@@ -43,6 +44,7 @@ interface Worktree {
   path: string
   status: 'active' | 'archived'
   is_default: boolean
+  last_message_at: number | null
   created_at: string
   last_accessed_at: string
 }
@@ -76,8 +78,19 @@ export function WorktreeItem({
   const archivingWorktreeIds = useWorktreeStore((s) => s.archivingWorktreeIds)
   const isArchiving = archivingWorktreeIds.has(worktree.id)
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
+  const lastMessageTime = useWorktreeStatusStore(
+    (state) => state.lastMessageTimeByWorktree[worktree.id] ?? null
+  )
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktree.id]?.runRunning ?? false)
   const isSelected = selectedWorktreeId === worktree.id
+
+  // Auto-refresh relative time every 60 seconds
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!lastMessageTime) return
+    const timer = setInterval(() => setTick((n) => n + 1), 60000)
+    return () => clearInterval(timer)
+  }, [lastMessageTime])
 
   // Derive display status text + color for second-line row (always shown)
   const { displayStatus, statusClass } = isArchiving
@@ -238,7 +251,7 @@ export function WorktreeItem({
       <ContextMenuTrigger asChild>
         <div
           className={cn(
-            'group flex items-center gap-1.5 pl-8 pr-2 py-1 rounded-md cursor-pointer transition-colors',
+            'group flex items-center gap-1.5 pl-8 pr-1 py-1 rounded-md cursor-pointer transition-colors',
             isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
             isArchiving && 'opacity-50 pointer-events-none',
             isDragging && 'opacity-50',
@@ -299,12 +312,21 @@ export function WorktreeItem({
                 {worktree.name}
               </span>
             )}
-            <span
-              className={cn('text-[11px] block', statusClass)}
-              data-testid="worktree-status-text"
-            >
-              {displayStatus}
-            </span>
+            <div className="flex items-center pr-1">
+              <span className={cn('text-[11px]', statusClass)} data-testid="worktree-status-text">
+                {displayStatus}
+              </span>
+              <span className="flex-1" />
+              {lastMessageTime && (
+                <span
+                  className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0"
+                  title={new Date(lastMessageTime).toLocaleString()}
+                  data-testid="worktree-last-message-time"
+                >
+                  {formatRelativeTime(lastMessageTime)}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Unread dot badge */}

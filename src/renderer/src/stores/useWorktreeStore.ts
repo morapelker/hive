@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { useProjectStore } from './useProjectStore'
 import { useScriptStore } from './useScriptStore'
+import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import { toast } from '@/lib/toast'
 
 // Worktree type matching the database schema
@@ -13,6 +14,7 @@ interface Worktree {
   status: 'active' | 'archived'
   is_default: boolean
   branch_renamed: number // 0 = auto-named (city), 1 = user/auto renamed
+  last_message_at: number | null // epoch ms of last AI message activity
   created_at: string
   last_accessed_at: string
 }
@@ -109,6 +111,14 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         newMap.set(projectId, sortedWorktrees)
         return { worktreesByProject: newMap, isLoading: false }
       })
+
+      // Hydrate last-message timestamps from DB into the status store
+      const statusStore = useWorktreeStatusStore.getState()
+      for (const wt of sortedWorktrees) {
+        if (wt.last_message_at) {
+          statusStore.setLastMessageTime(wt.id, wt.last_message_at)
+        }
+      }
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : 'Failed to load worktrees',

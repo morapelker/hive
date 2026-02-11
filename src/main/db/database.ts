@@ -72,7 +72,8 @@ export class DatabaseService {
     return {
       ...row,
       is_default: !!row.is_default,
-      branch_renamed: (row.branch_renamed as number) ?? 0
+      branch_renamed: (row.branch_renamed as number) ?? 0,
+      last_message_at: (row.last_message_at as number) ?? null
     } as Worktree
   }
 
@@ -270,6 +271,7 @@ export class DatabaseService {
       status: 'active',
       is_default: isDefault,
       branch_renamed: 0,
+      last_message_at: null,
       created_at: now,
       last_accessed_at: now
     }
@@ -344,6 +346,10 @@ export class DatabaseService {
     if (data.branch_renamed !== undefined) {
       updates.push('branch_renamed = ?')
       values.push(data.branch_renamed)
+    }
+    if (data.last_message_at !== undefined) {
+      updates.push('last_message_at = ?')
+      values.push(data.last_message_at)
     }
     if (data.last_accessed_at !== undefined) {
       updates.push('last_accessed_at = ?')
