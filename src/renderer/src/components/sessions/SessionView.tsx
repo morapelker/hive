@@ -16,7 +16,7 @@ import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
-import { extractTokens, extractCost } from '@/lib/token-utils'
+import { extractTokens, extractCost, extractModelRef } from '@/lib/token-utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
@@ -368,9 +368,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const savedDraftRef = useRef<string>('')
 
-  // Current model ID for context indicator
+  // Current selected model used as fallback when session snapshot model is unknown
   const selectedModel = useSettingsStore((state) => state.selectedModel)
   const currentModelId = selectedModel?.modelID ?? 'claude-opus-4-5-20251101'
+  const currentProviderId = selectedModel?.providerID ?? 'anthropic'
 
   // Active question prompt from AI
   const activeQuestion = useQuestionStore((s) => s.getActiveQuestion(sessionId))
@@ -740,26 +741,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           try {
             const msgJson = JSON.parse(msg.opencode_message_json)
 
-            // DEBUG: log the shape of the stored JSON to understand token location
-            if (i === dbMessages.length - 1 || !snapshotSet) {
-              console.log('[context-debug] msgJson keys:', Object.keys(msgJson))
-              console.log('[context-debug] msgJson.tokens:', msgJson?.tokens)
-              console.log('[context-debug] msgJson.info?.tokens:', msgJson?.info?.tokens)
-              console.log(
-                '[context-debug] raw opencode_message_json (first 500):',
-                msg.opencode_message_json?.substring(0, 500)
-              )
-            }
-
             // Accumulate cost from every assistant message
             totalCost += extractCost(msgJson)
 
             // Set token snapshot from the last assistant message with tokens > 0
             if (!snapshotSet) {
               const tokens = extractTokens(msgJson)
-              console.log('[context-debug] extractTokens result:', tokens)
               if (tokens) {
-                useContextStore.getState().setSessionTokens(sessionId, tokens)
+                const modelRef = extractModelRef(msgJson) ?? undefined
+                useContextStore.getState().setSessionTokens(sessionId, tokens, modelRef)
                 snapshotSet = true
               }
             }
@@ -1142,7 +1132,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               if (data) {
                 const tokens = extractTokens(data)
                 if (tokens) {
-                  useContextStore.getState().setSessionTokens(sessionId, tokens)
+                  const modelRef = extractModelRef(data) ?? undefined
+                  useContextStore.getState().setSessionTokens(sessionId, tokens, modelRef)
                 }
                 const cost = extractCost(data)
                 if (cost > 0) {
@@ -1274,19 +1265,48 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // 4. Connect to OpenCode
         const existingOpcSessionId = session.opencode_session_id
 
-        // Fetch model context limit (fire-and-forget)
-        const fetchModelLimit = (path: string): void => {
-          const modelId =
-            useSettingsStore.getState().selectedModel?.modelID ?? 'claude-opus-4-5-20251101'
+        // Fetch context limits for all provider/model combinations (fire-and-forget).
+        // This avoids model-id collisions across providers and lets context usage use
+        // the exact model that produced the latest assistant message.
+        const fetchModelLimits = (): void => {
           window.opencodeOps
-            .modelInfo(path, modelId)
+            .listModels()
             .then((result) => {
-              if (result.success && result.model?.limit?.context) {
-                useContextStore.getState().setModelLimit(modelId, result.model.limit.context)
+              const providers = Array.isArray(result.providers)
+                ? result.providers
+                : (result.providers as { providers?: unknown[] } | undefined)?.providers
+              if (!result.success || !Array.isArray(providers)) return
+
+              for (const provider of providers) {
+                if (typeof provider !== 'object' || provider === null) continue
+
+                const providerRecord = provider as Record<string, unknown>
+                const providerID =
+                  typeof providerRecord.id === 'string' ? providerRecord.id : undefined
+                if (!providerID) continue
+
+                const models =
+                  typeof providerRecord.models === 'object' && providerRecord.models !== null
+                    ? (providerRecord.models as Record<string, unknown>)
+                    : {}
+
+                for (const [modelID, modelValue] of Object.entries(models)) {
+                  if (typeof modelValue !== 'object' || modelValue === null) continue
+                  const modelRecord = modelValue as Record<string, unknown>
+                  const limit =
+                    typeof modelRecord.limit === 'object' && modelRecord.limit !== null
+                      ? (modelRecord.limit as Record<string, unknown>)
+                      : undefined
+                  const context = typeof limit?.context === 'number' ? limit.context : 0
+
+                  if (context > 0) {
+                    useContextStore.getState().setModelLimit(modelID, context, providerID)
+                  }
+                }
               }
             })
             .catch((err) => {
-              console.warn('Failed to fetch model info:', err)
+              console.warn('Failed to fetch model limits:', err)
             })
         }
 
@@ -1343,7 +1363,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           )
           if (reconnectResult.success) {
             setOpencodeSessionId(existingOpcSessionId)
-            fetchModelLimit(wtPath)
+            fetchModelLimits()
             fetchCommands(wtPath)
             // Create response log file if logging is enabled
             if (isLogModeRef.current) {
@@ -1364,7 +1384,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const connectResult = await window.opencodeOps.connect(wtPath, sessionId)
         if (connectResult.success && connectResult.sessionId) {
           setOpencodeSessionId(connectResult.sessionId)
-          fetchModelLimit(wtPath)
+          fetchModelLimits()
           fetchCommands(wtPath)
           // Store the OpenCode session ID in database for future reconnection
           await window.db.session.update(sessionId, {
@@ -2033,7 +2053,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               <div className="flex items-center gap-2">
                 <ModelSelector />
                 <AttachmentButton onAttach={handleAttach} />
-                <ContextIndicator sessionId={sessionId} modelId={currentModelId} />
+                <ContextIndicator
+                  sessionId={sessionId}
+                  modelId={currentModelId}
+                  providerId={currentProviderId}
+                />
                 <span className="text-xs text-muted-foreground">
                   Enter to send, Shift+Enter for new line
                 </span>

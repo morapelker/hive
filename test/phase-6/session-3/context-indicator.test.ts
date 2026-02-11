@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { act } from 'react'
-import { useContextStore } from '../../../src/renderer/src/stores/useContextStore'
+import { getModelLimitKey, useContextStore } from '../../../src/renderer/src/stores/useContextStore'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -8,6 +8,7 @@ beforeEach(() => {
   // Reset store to initial state
   useContextStore.setState({
     tokensBySession: {},
+    modelBySession: {},
     costBySession: {},
     modelLimits: {}
   })
@@ -109,7 +110,7 @@ describe('Session 3: Context Indicator', () => {
       expect(usage.percent).toBe(51)
     })
 
-    test('getContextUsage returns 0 when no limit set', () => {
+    test('getContextUsage returns null usage when no limit is known', () => {
       act(() => {
         useContextStore.getState().setSessionTokens('session-1', {
           input: 100,
@@ -122,11 +123,11 @@ describe('Session 3: Context Indicator', () => {
 
       const usage = useContextStore.getState().getContextUsage('session-1', 'unknown-model')
       expect(usage.used).toBe(150)
-      expect(usage.limit).toBe(0)
-      expect(usage.percent).toBe(0)
+      expect(usage.limit).toBeUndefined()
+      expect(usage.percent).toBeNull()
     })
 
-    test('getContextUsage caps at 100 percent', () => {
+    test('getContextUsage can exceed 100 percent', () => {
       act(() => {
         useContextStore.getState().setModelLimit('claude-opus', 100)
         useContextStore.getState().setSessionTokens('session-1', {
@@ -139,7 +140,7 @@ describe('Session 3: Context Indicator', () => {
       })
 
       const usage = useContextStore.getState().getContextUsage('session-1', 'claude-opus')
-      expect(usage.percent).toBe(100)
+      expect(usage.percent).toBe(350)
     })
 
     test('getContextUsage returns zeros for unknown session', () => {
@@ -264,7 +265,7 @@ describe('Session 3: Context Indicator', () => {
         useContextStore.getState().setModelLimit('claude-opus', 200000)
       })
 
-      expect(useContextStore.getState().modelLimits['claude-opus']).toBe(200000)
+      expect(useContextStore.getState().modelLimits[getModelLimitKey('claude-opus')]).toBe(200000)
     })
 
     test('setModelLimit handles multiple models', () => {
@@ -273,8 +274,8 @@ describe('Session 3: Context Indicator', () => {
         useContextStore.getState().setModelLimit('claude-sonnet', 180000)
       })
 
-      expect(useContextStore.getState().modelLimits['claude-opus']).toBe(200000)
-      expect(useContextStore.getState().modelLimits['claude-sonnet']).toBe(180000)
+      expect(useContextStore.getState().modelLimits[getModelLimitKey('claude-opus')]).toBe(200000)
+      expect(useContextStore.getState().modelLimits[getModelLimitKey('claude-sonnet')]).toBe(180000)
     })
 
     test('setModelLimit overwrites previous limit', () => {
@@ -283,7 +284,7 @@ describe('Session 3: Context Indicator', () => {
         useContextStore.getState().setModelLimit('claude-opus', 300000)
       })
 
-      expect(useContextStore.getState().modelLimits['claude-opus']).toBe(300000)
+      expect(useContextStore.getState().modelLimits[getModelLimitKey('claude-opus')]).toBe(300000)
     })
   })
 

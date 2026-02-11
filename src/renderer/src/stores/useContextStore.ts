@@ -8,6 +8,15 @@ export interface TokenInfo {
   cacheWrite: number
 }
 
+export interface SessionModelRef {
+  providerID: string
+  modelID: string
+}
+
+export function getModelLimitKey(modelID: string, providerID?: string): string {
+  return `${providerID ?? '*'}::${modelID}`
+}
+
 const EMPTY_TOKENS: TokenInfo = {
   input: 0,
   output: 0,
@@ -19,40 +28,51 @@ const EMPTY_TOKENS: TokenInfo = {
 interface ContextState {
   // Per-session token snapshot (last assistant message with tokens > 0)
   tokensBySession: Record<string, TokenInfo>
+  // Provider/model identity for each session token snapshot
+  modelBySession: Record<string, SessionModelRef>
   // Per-session cumulative cost
   costBySession: Record<string, number>
-  // Model context limits (modelId -> contextLimit)
+  // Model context limits (providerID::modelID -> contextLimit)
   modelLimits: Record<string, number>
   // Actions
-  setSessionTokens: (sessionId: string, tokens: TokenInfo) => void // REPLACE, not add
+  setSessionTokens: (sessionId: string, tokens: TokenInfo, model?: SessionModelRef) => void
   addSessionCost: (sessionId: string, cost: number) => void
   setSessionCost: (sessionId: string, cost: number) => void
   resetSessionTokens: (sessionId: string) => void
-  setModelLimit: (modelId: string, limit: number) => void
+  setModelLimit: (modelId: string, limit: number, providerID?: string) => void
   // Derived
   getContextUsage: (
     sessionId: string,
-    modelId: string
+    fallbackModelId: string,
+    fallbackProviderId?: string
   ) => {
     used: number
-    limit: number
-    percent: number
+    limit?: number
+    percent: number | null
     tokens: TokenInfo
     cost: number
+    model?: SessionModelRef
   }
 }
 
 export const useContextStore = create<ContextState>()((set, get) => ({
   tokensBySession: {},
+  modelBySession: {},
   costBySession: {},
   modelLimits: {},
 
-  setSessionTokens: (sessionId: string, tokens: TokenInfo) => {
+  setSessionTokens: (sessionId: string, tokens: TokenInfo, model?: SessionModelRef) => {
     set((state) => ({
       tokensBySession: {
         ...state.tokensBySession,
         [sessionId]: { ...tokens }
-      }
+      },
+      modelBySession: model
+        ? {
+            ...state.modelBySession,
+            [sessionId]: model
+          }
+        : state.modelBySession
     }))
   },
 
@@ -77,31 +97,49 @@ export const useContextStore = create<ContextState>()((set, get) => ({
   resetSessionTokens: (sessionId: string) => {
     set((state) => {
       const { [sessionId]: _removedTokens, ...restTokens } = state.tokensBySession
+      const { [sessionId]: _removedModel, ...restModel } = state.modelBySession
       const { [sessionId]: _removedCost, ...restCost } = state.costBySession
       void _removedTokens
+      void _removedModel
       void _removedCost
-      return { tokensBySession: restTokens, costBySession: restCost }
+      return {
+        tokensBySession: restTokens,
+        modelBySession: restModel,
+        costBySession: restCost
+      }
     })
   },
 
-  setModelLimit: (modelId: string, limit: number) => {
+  setModelLimit: (modelId: string, limit: number, providerID?: string) => {
     set((state) => ({
       modelLimits: {
         ...state.modelLimits,
-        [modelId]: limit
+        [getModelLimitKey(modelId, providerID)]: limit
       }
     }))
   },
 
-  getContextUsage: (sessionId: string, modelId: string) => {
+  getContextUsage: (sessionId: string, fallbackModelId: string, fallbackProviderId?: string) => {
     const state = get()
     const tokens = state.tokensBySession[sessionId] ?? { ...EMPTY_TOKENS }
-    const limit = state.modelLimits[modelId] ?? 0
+    const model =
+      state.modelBySession[sessionId] ??
+      (fallbackModelId
+        ? {
+            providerID: fallbackProviderId ?? '*',
+            modelID: fallbackModelId
+          }
+        : undefined)
+
+    const limit = model
+      ? (state.modelLimits[getModelLimitKey(model.modelID, model.providerID)] ??
+        state.modelLimits[getModelLimitKey(model.modelID)])
+      : undefined
     const cost = state.costBySession[sessionId] ?? 0
     const used =
       tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
-    const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0
+    const percent = typeof limit === 'number' && limit > 0 ? Math.round((used / limit) * 100) : null
 
-    return { used, limit, percent, tokens, cost }
+    return { used, limit, percent, tokens, cost, model }
   }
 }))
