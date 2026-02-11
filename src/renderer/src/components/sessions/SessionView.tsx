@@ -535,6 +535,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     userHasScrolledUpRef.current = false
   }, [sessionId])
 
+  // Instant scroll to bottom when session view becomes connected with messages.
+  // This must wait for viewState === 'connected' because the message list DOM
+  // is only rendered in that state (connecting shows a loading spinner).
+  useEffect(() => {
+    if (viewState.status === 'connected' && messages.length > 0) {
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
+      })
+    }
+    // Only trigger on viewState and sessionId changes, NOT on every messages update
+    // (streaming appends messages continuously and should use smooth scroll instead)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewState.status, sessionId])
+
   // Reset prompt history navigation on session change
   useEffect(() => {
     setHistoryIndex(null)
