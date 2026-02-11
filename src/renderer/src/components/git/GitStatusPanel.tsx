@@ -1,5 +1,18 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { ChevronDown, ChevronRight, RefreshCw, GitBranch, ArrowUp, ArrowDown, Plus, Minus, FileDiff, FileSearch, Loader2 } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  RefreshCw,
+  GitBranch,
+  ArrowUp,
+  ArrowDown,
+  Plus,
+  Minus,
+  FileDiff,
+  FileSearch,
+  Loader2,
+  AlertTriangle
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -45,25 +58,13 @@ function CollapsibleSection({
         onClick={() => setIsOpen(!isOpen)}
       >
         <span className="flex items-center gap-1">
-          {isOpen ? (
-            <ChevronDown className="h-3 w-3" />
-          ) : (
-            <ChevronRight className="h-3 w-3" />
-          )}
+          {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           {title}
           <span className="text-[10px] px-1 py-0.5 rounded bg-muted">{count}</span>
         </span>
-        {action && (
-          <span onClick={(e) => e.stopPropagation()}>
-            {action}
-          </span>
-        )}
+        {action && <span onClick={(e) => e.stopPropagation()}>{action}</span>}
       </button>
-      {isOpen && (
-        <div className="pb-1">
-          {children}
-        </div>
-      )}
+      {isOpen && <div className="pb-1">{children}</div>}
     </div>
   )
 }
@@ -140,6 +141,7 @@ export function GitStatusPanel({
 
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isReviewing, setIsReviewing] = useState(false)
+  const [isFixingConflicts, setIsFixingConflicts] = useState(false)
 
   // Load initial data
   useEffect(() => {
@@ -169,38 +171,40 @@ export function GitStatusPanel({
   const branchInfo = worktreePath ? branchInfoByWorktree.get(worktreePath) : undefined
 
   // Get and categorize files - memoized based on the Map and worktreePath
-  const { fileStatuses, stagedFiles, modifiedFiles, untrackedFiles } = useMemo(() => {
-    const files = worktreePath ? fileStatusesByWorktree.get(worktreePath) || [] : []
-    const staged: GitFileStatus[] = []
-    const modified: GitFileStatus[] = []
-    const untracked: GitFileStatus[] = []
+  const { fileStatuses, stagedFiles, modifiedFiles, untrackedFiles, conflictedFiles } =
+    useMemo(() => {
+      const files = worktreePath ? fileStatusesByWorktree.get(worktreePath) || [] : []
+      const staged: GitFileStatus[] = []
+      const modified: GitFileStatus[] = []
+      const untracked: GitFileStatus[] = []
+      const conflicted: GitFileStatus[] = []
 
-    for (const file of files) {
-      if (file.staged) {
-        staged.push(file)
-      } else if (file.status === '?') {
-        untracked.push(file)
-      } else if (file.status === 'M' || file.status === 'D') {
-        modified.push(file)
+      for (const file of files) {
+        if (file.status === 'C') {
+          conflicted.push(file)
+        } else if (file.staged) {
+          staged.push(file)
+        } else if (file.status === '?') {
+          untracked.push(file)
+        } else if (file.status === 'M' || file.status === 'D') {
+          modified.push(file)
+        }
       }
-    }
 
-    return {
-      fileStatuses: files,
-      stagedFiles: staged,
-      modifiedFiles: modified,
-      untrackedFiles: untracked
-    }
-  }, [worktreePath, fileStatusesByWorktree])
+      return {
+        fileStatuses: files,
+        stagedFiles: staged,
+        modifiedFiles: modified,
+        untrackedFiles: untracked,
+        conflictedFiles: conflicted
+      }
+    }, [worktreePath, fileStatusesByWorktree])
 
   const handleRefresh = useCallback(async () => {
     if (!worktreePath) return
     setIsRefreshing(true)
     try {
-      await Promise.all([
-        loadFileStatuses(worktreePath),
-        loadBranchInfo(worktreePath)
-      ])
+      await Promise.all([loadFileStatuses(worktreePath), loadBranchInfo(worktreePath)])
     } finally {
       setIsRefreshing(false)
     }
@@ -226,31 +230,37 @@ export function GitStatusPanel({
     }
   }, [worktreePath, unstageAll])
 
-  const handleToggleFile = useCallback(async (file: GitFileStatus) => {
-    if (!worktreePath) return
-    if (file.staged) {
-      const success = await unstageFile(worktreePath, file.relativePath)
-      if (!success) {
-        toast.error(`Failed to unstage ${file.relativePath}`)
+  const handleToggleFile = useCallback(
+    async (file: GitFileStatus) => {
+      if (!worktreePath) return
+      if (file.staged) {
+        const success = await unstageFile(worktreePath, file.relativePath)
+        if (!success) {
+          toast.error(`Failed to unstage ${file.relativePath}`)
+        }
+      } else {
+        const success = await stageFile(worktreePath, file.relativePath)
+        if (!success) {
+          toast.error(`Failed to stage ${file.relativePath}`)
+        }
       }
-    } else {
-      const success = await stageFile(worktreePath, file.relativePath)
-      if (!success) {
-        toast.error(`Failed to stage ${file.relativePath}`)
-      }
-    }
-  }, [worktreePath, stageFile, unstageFile])
+    },
+    [worktreePath, stageFile, unstageFile]
+  )
 
-  const handleViewDiff = useCallback((file: GitFileStatus) => {
-    if (!worktreePath) return
-    useFileViewerStore.getState().setActiveDiff({
-      worktreePath,
-      filePath: file.relativePath,
-      fileName: file.relativePath.split('/').pop() || file.relativePath,
-      staged: file.staged,
-      isUntracked: file.status === '?'
-    })
-  }, [worktreePath])
+  const handleViewDiff = useCallback(
+    (file: GitFileStatus) => {
+      if (!worktreePath) return
+      useFileViewerStore.getState().setActiveDiff({
+        worktreePath,
+        filePath: file.relativePath,
+        fileName: file.relativePath.split('/').pop() || file.relativePath,
+        staged: file.staged,
+        isUntracked: file.status === '?'
+      })
+    },
+    [worktreePath]
+  )
 
   const handleReview = useCallback(async () => {
     if (!worktreePath) return
@@ -266,7 +276,7 @@ export function GitStatusPanel({
 
       let projectId = ''
       for (const [projId, worktrees] of worktreeStore.worktreesByProject) {
-        if (worktrees.some(w => w.id === selectedWorktreeId)) {
+        if (worktrees.some((w) => w.id === selectedWorktreeId)) {
           projectId = projId
           break
         }
@@ -278,9 +288,7 @@ export function GitStatusPanel({
 
       // 2. Build file list from current git status
       const allFiles = [...stagedFiles, ...modifiedFiles, ...untrackedFiles]
-      const fileList = allFiles
-        .map(f => `- ${f.status}  ${f.relativePath}`)
-        .join('\n')
+      const fileList = allFiles.map((f) => `- ${f.status}  ${f.relativePath}`).join('\n')
 
       // 3. Get branch name for session name
       const branchName = branchInfo?.name || 'unknown'
@@ -309,10 +317,7 @@ export function GitStatusPanel({
       }
 
       // 6. Update session name and set to plan mode
-      await sessionStore.updateSessionName(
-        result.session.id,
-        `Code Review — ${branchName}`
-      )
+      await sessionStore.updateSessionName(result.session.id, `Code Review — ${branchName}`)
       await sessionStore.setSessionMode(result.session.id, 'plan')
 
       // 7. Store pending message for SessionView to pick up after connecting
@@ -325,6 +330,51 @@ export function GitStatusPanel({
     }
   }, [worktreePath, stagedFiles, modifiedFiles, untrackedFiles, branchInfo])
 
+  const hasConflicts = conflictedFiles.length > 0
+
+  const handleFixConflicts = useCallback(async () => {
+    if (!worktreePath) return
+    setIsFixingConflicts(true)
+    try {
+      const worktreeStore = useWorktreeStore.getState()
+      const selectedWorktreeId = worktreeStore.selectedWorktreeId
+      if (!selectedWorktreeId) {
+        toast.error('No worktree selected')
+        return
+      }
+
+      let projectId = ''
+      for (const [projId, worktrees] of worktreeStore.worktreesByProject) {
+        if (worktrees.some((w) => w.id === selectedWorktreeId)) {
+          projectId = projId
+          break
+        }
+      }
+      if (!projectId) {
+        toast.error('Could not find project for worktree')
+        return
+      }
+
+      const branchName = branchInfo?.name || 'unknown'
+
+      const sessionStore = useSessionStore.getState()
+      const result = await sessionStore.createSession(selectedWorktreeId, projectId)
+      if (!result.success || !result.session) {
+        toast.error('Failed to create session')
+        return
+      }
+
+      await sessionStore.updateSessionName(result.session.id, `Merge Conflicts — ${branchName}`)
+
+      sessionStore.setPendingMessage(result.session.id, 'Fix merge conflicts')
+    } catch (error) {
+      console.error('Failed to start conflict resolution:', error)
+      toast.error('Failed to start conflict resolution')
+    } finally {
+      setIsFixingConflicts(false)
+    }
+  }, [worktreePath, branchInfo])
+
   if (!worktreePath) {
     return null
   }
@@ -334,7 +384,12 @@ export function GitStatusPanel({
   const hasStaged = stagedFiles.length > 0
 
   return (
-    <div className={cn('flex flex-col border-b', className)} data-testid="git-status-panel" role="region" aria-label="Git status">
+    <div
+      className={cn('flex flex-col border-b', className)}
+      data-testid="git-status-panel"
+      role="region"
+      aria-label="Git status"
+    >
       {/* Header with branch info */}
       <div className="flex items-center justify-between px-2 py-1.5 bg-muted/30">
         <div className="flex items-center gap-1.5 text-xs">
@@ -343,15 +398,24 @@ export function GitStatusPanel({
             {branchInfo?.name || 'Loading...'}
           </span>
           {branchInfo && branchInfo.tracking && (
-            <span className="flex items-center gap-1 text-muted-foreground" data-testid="git-ahead-behind">
+            <span
+              className="flex items-center gap-1 text-muted-foreground"
+              data-testid="git-ahead-behind"
+            >
               {branchInfo.ahead > 0 && (
-                <span className="flex items-center gap-0.5" title={`${branchInfo.ahead} commit(s) ahead`}>
+                <span
+                  className="flex items-center gap-0.5"
+                  title={`${branchInfo.ahead} commit(s) ahead`}
+                >
                   <ArrowUp className="h-3 w-3" />
                   {branchInfo.ahead}
                 </span>
               )}
               {branchInfo.behind > 0 && (
-                <span className="flex items-center gap-0.5" title={`${branchInfo.behind} commit(s) behind`}>
+                <span
+                  className="flex items-center gap-0.5"
+                  title={`${branchInfo.behind} commit(s) behind`}
+                >
                   <ArrowDown className="h-3 w-3" />
                   {branchInfo.behind}
                 </span>
@@ -360,6 +424,24 @@ export function GitStatusPanel({
           )}
         </div>
         <div className="flex items-center gap-0.5">
+          {hasConflicts && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 px-1.5 text-[10px] font-bold text-orange-500 hover:text-orange-400 hover:bg-orange-500/10"
+              onClick={handleFixConflicts}
+              disabled={isFixingConflicts}
+              title={`${conflictedFiles.length} file(s) with merge conflicts — click to fix with AI`}
+              data-testid="git-merge-conflicts-button"
+            >
+              {isFixingConflicts ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-0.5" />
+              ) : (
+                <AlertTriangle className="h-3 w-3 mr-0.5" />
+              )}
+              CONFLICTS
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -390,11 +472,26 @@ export function GitStatusPanel({
       </div>
 
       {!hasChanges ? (
-        <div className="px-2 py-3 text-xs text-muted-foreground text-center">
-          No changes
-        </div>
+        <div className="px-2 py-3 text-xs text-muted-foreground text-center">No changes</div>
       ) : (
         <div className="max-h-[200px] overflow-y-auto">
+          {/* Merge Conflicts */}
+          <CollapsibleSection
+            title="Conflicts"
+            count={conflictedFiles.length}
+            testId="git-conflicts-section"
+          >
+            {conflictedFiles.map((file) => (
+              <FileItem
+                key={file.relativePath}
+                file={file}
+                onToggle={handleToggleFile}
+                onViewDiff={handleViewDiff}
+                isStaged={false}
+              />
+            ))}
+          </CollapsibleSection>
+
           {/* Staged Changes */}
           <CollapsibleSection
             title="Staged Changes"
@@ -479,9 +576,7 @@ export function GitStatusPanel({
       )}
 
       {/* Commit Form - show when there are staged changes */}
-      {hasStaged && (
-        <GitCommitForm worktreePath={worktreePath} />
-      )}
+      {hasStaged && <GitCommitForm worktreePath={worktreePath} />}
 
       {/* Push/Pull Controls */}
       <GitPushPull worktreePath={worktreePath} />
