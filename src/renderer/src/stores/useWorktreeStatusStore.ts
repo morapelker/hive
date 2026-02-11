@@ -2,25 +2,27 @@ import { create } from 'zustand'
 import { useSessionStore } from './useSessionStore'
 
 interface SessionStatus {
-  status: 'working' | 'unread'
+  status: 'working' | 'planning' | 'answering' | 'unread'
   timestamp: number
 }
+
+type StatusType = 'working' | 'planning' | 'answering' | 'unread'
 
 interface WorktreeStatusState {
   // sessionId → status info (null means no status / cleared)
   sessionStatuses: Record<string, SessionStatus | null>
 
   // Actions
-  setSessionStatus: (sessionId: string, status: 'working' | 'unread' | null) => void
+  setSessionStatus: (sessionId: string, status: StatusType | null) => void
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
-  getWorktreeStatus: (worktreeId: string) => 'working' | 'unread' | null
+  getWorktreeStatus: (worktreeId: string) => StatusType | null
 }
 
 export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => ({
   sessionStatuses: {},
 
-  setSessionStatus: (sessionId: string, status: 'working' | 'unread' | null) => {
+  setSessionStatus: (sessionId: string, status: StatusType | null) => {
     set((state) => ({
       sessionStatuses: {
         ...state.sessionStatuses,
@@ -57,21 +59,25 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     }
   },
 
-  getWorktreeStatus: (worktreeId: string): 'working' | 'unread' | null => {
+  getWorktreeStatus: (worktreeId: string): StatusType | null => {
     const { sessionStatuses } = get()
     // Get all sessions for this worktree from the session store
     const sessionStore = useSessionStore.getState()
     const sessions = sessionStore.sessionsByWorktree.get(worktreeId) || []
     const sessionIds = sessions.map((s) => s.id)
 
+    let hasPlanning = false
+    let hasWorking = false
     let latestUnread: SessionStatus | null = null
 
     for (const id of sessionIds) {
       const entry = sessionStatuses[id]
       if (!entry) continue
 
-      // If any session is working, return 'working' immediately
-      if (entry.status === 'working') return 'working'
+      // answering has the highest priority — return immediately
+      if (entry.status === 'answering') return 'answering'
+      if (entry.status === 'planning') hasPlanning = true
+      if (entry.status === 'working') hasWorking = true
 
       // Track the latest unread
       if (entry.status === 'unread') {
@@ -81,6 +87,8 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       }
     }
 
+    if (hasPlanning) return 'planning'
+    if (hasWorking) return 'working'
     return latestUnread ? 'unread' : null
   }
 }))

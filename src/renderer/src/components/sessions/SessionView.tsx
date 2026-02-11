@@ -576,6 +576,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [inputValue, sessionId])
 
+  // Set 'answering' status when a question is pending, revert when answered
+  useEffect(() => {
+    if (activeQuestion && sessionId) {
+      useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'answering')
+    } else if (!activeQuestion && sessionId) {
+      // Question answered/dismissed — restore status based on session mode
+      const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+      if (currentStatus?.status === 'answering') {
+        const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+        useWorktreeStatusStore
+          .getState()
+          .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+      }
+    }
+  }, [activeQuestion, sessionId])
+
   // Clean up rAF and scroll cooldown on unmount
   useEffect(() => {
     return () => {
@@ -1396,10 +1412,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Add to messages display
             const userMessage = dbMessageToOpenCode(savedMsg as DbMessage)
             setMessages((prev) => [...prev, userMessage])
-            // Set worktree status to 'working'
-            useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
-            // Apply mode prefix (e.g., plan mode for code reviews)
+            // Set worktree status based on session mode
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+            useWorktreeStatusStore
+              .getState()
+              .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+            // Apply mode prefix (e.g., plan mode for code reviews)
             const modePrefix =
               currentMode === 'plan'
                 ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
@@ -1626,8 +1644,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setShowScrollFab(false)
     userHasScrolledUpRef.current = false
 
-    // Set worktree status to 'working'
-    useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+    // Set worktree status based on session mode (plan → planning, build → working)
+    const currentModeForStatus = useSessionStore.getState().getSessionMode(sessionId)
+    useWorktreeStatusStore
+      .getState()
+      .setSessionStatus(sessionId, currentModeForStatus === 'plan' ? 'planning' : 'working')
 
     try {
       // Save user message to database
