@@ -223,7 +223,23 @@ function renderParts(
     }
 
     if (part.type === 'reasoning' && part.reasoning) {
-      renderedParts.push(<ReasoningBlock key={`reasoning-${index}`} text={part.reasoning} />)
+      // Reasoning is still streaming only if the overall message is streaming
+      // AND there are no meaningful parts after this one (text with content, tool_use, etc.)
+      const hasContentAfter = parts.slice(index + 1).some((p) => {
+        if (p.type === 'tool_use') return true
+        if (p.type === 'text' && hasMeaningfulText(p.text)) return true
+        if (p.type === 'reasoning') return true
+        return false
+      })
+      const isReasoningStreaming = isStreaming && !hasContentAfter
+
+      renderedParts.push(
+        <ReasoningBlock
+          key={`reasoning-${index}`}
+          text={part.reasoning}
+          isStreaming={isReasoningStreaming}
+        />
+      )
       index += 1
       continue
     }
