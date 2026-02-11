@@ -5,6 +5,7 @@ export interface Project {
   description: string | null
   tags: string | null // JSON array
   language: string | null
+  custom_icon: string | null
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
@@ -27,6 +28,7 @@ export interface ProjectUpdate {
   description?: string | null
   tags?: string[] | null
   language?: string | null
+  custom_icon?: string | null
   setup_script?: string | null
   run_script?: string | null
   archive_script?: string | null

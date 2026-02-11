@@ -3,6 +3,7 @@ import { FolderGit2 } from 'lucide-react'
 
 interface LanguageIconProps {
   language: string | null
+  customIcon?: string | null
   className?: string
 }
 
@@ -36,15 +37,18 @@ const customIconsListeners: Array<() => void> = []
 function loadCustomIcons(): void {
   if (customIconsCache !== null || customIconsLoading) return
   customIconsLoading = true
-  window.projectOps.loadLanguageIcons().then((icons) => {
-    customIconsCache = icons
-    customIconsLoading = false
-    for (const listener of customIconsListeners) listener()
-    customIconsListeners.length = 0
-  }).catch(() => {
-    customIconsCache = {}
-    customIconsLoading = false
-  })
+  window.projectOps
+    .loadLanguageIcons()
+    .then((icons) => {
+      customIconsCache = icons
+      customIconsLoading = false
+      for (const listener of customIconsListeners) listener()
+      customIconsListeners.length = 0
+    })
+    .catch(() => {
+      customIconsCache = {}
+      customIconsLoading = false
+    })
 }
 
 function useCustomIcons(): Record<string, string> {
@@ -63,14 +67,78 @@ function useCustomIcons(): Record<string, string> {
   return icons
 }
 
-export function LanguageIcon({ language, className }: LanguageIconProps): React.JSX.Element {
+// Module-level cache for resolved project icon paths (filename -> file:// URL)
+const projectIconCache = new Map<string, string>()
+
+function useProjectIconUrl(customIcon: string | null | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(
+    customIcon ? (projectIconCache.get(customIcon) ?? null) : null
+  )
+
+  useEffect(() => {
+    if (!customIcon) {
+      setUrl(null)
+      return
+    }
+
+    // Check cache first
+    const cached = projectIconCache.get(customIcon)
+    if (cached) {
+      setUrl(cached)
+      return
+    }
+
+    // Resolve to data URL via main process
+    let cancelled = false
+    window.projectOps
+      .getProjectIconPath(customIcon)
+      .then((dataUrl) => {
+        if (cancelled) return
+        if (dataUrl) {
+          projectIconCache.set(customIcon, dataUrl)
+          setUrl(dataUrl)
+        }
+      })
+      .catch(() => {
+        // ignore errors
+      })
+      .catch(() => {
+        // ignore errors
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [customIcon])
+
+  return url
+}
+
+export function LanguageIcon({
+  language,
+  customIcon,
+  className
+}: LanguageIconProps): React.JSX.Element {
   const customIcons = useCustomIcons()
+  const projectIconUrl = useProjectIconUrl(customIcon)
+
+  // Priority 1: Custom project icon (per-project image file)
+  if (customIcon && projectIconUrl) {
+    return (
+      <img
+        src={projectIconUrl}
+        alt="project icon"
+        title="Custom project icon"
+        className="h-4 w-4 shrink-0 object-contain rounded-sm"
+      />
+    )
+  }
 
   if (!language) {
     return <FolderGit2 className={className ?? 'h-4 w-4 text-muted-foreground shrink-0'} />
   }
 
-  // Check for custom icon first
+  // Priority 2: Custom language icon (global language-based icon)
   const customIconUrl = customIcons[language]
   if (customIconUrl) {
     return (
@@ -83,7 +151,7 @@ export function LanguageIcon({ language, className }: LanguageIconProps): React.
     )
   }
 
-  // Fall back to default badge
+  // Priority 3: Default badge
   const config = LANGUAGE_MAP[language]
   if (!config) {
     return <FolderGit2 className={className ?? 'h-4 w-4 text-muted-foreground shrink-0'} />
