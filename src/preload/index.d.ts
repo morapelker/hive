@@ -6,6 +6,7 @@ interface Project {
   description: string | null
   tags: string | null
   language: string | null
+  custom_icon: string | null
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
@@ -101,6 +102,7 @@ declare global {
             description?: string | null
             tags?: string[] | null
             language?: string | null
+            custom_icon?: string | null
             setup_script?: string | null
             run_script?: string | null
             archive_script?: string | null
@@ -193,6 +195,16 @@ declare global {
       detectLanguage: (projectPath: string) => Promise<string | null>
       loadLanguageIcons: () => Promise<Record<string, string>>
       initRepository: (path: string) => Promise<{ success: boolean; error?: string }>
+      pickProjectIcon: (projectId: string) => Promise<{
+        success: boolean
+        filename?: string
+        error?: string
+      }>
+      removeProjectIcon: (projectId: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      getProjectIconPath: (filename: string) => Promise<string | null>
     }
     worktreeOps: {
       create: (params: { projectId: string; projectPath: string; projectName: string }) => Promise<{

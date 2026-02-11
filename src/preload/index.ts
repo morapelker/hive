@@ -44,6 +44,7 @@ const db = {
         description?: string | null
         tags?: string[] | null
         language?: string | null
+        custom_icon?: string | null
         setup_script?: string | null
         run_script?: string | null
         archive_script?: string | null
@@ -170,7 +171,21 @@ const projectOps = {
 
   // Initialize a new git repository in a directory
   initRepository: (path: string): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('git:init', path)
+    ipcRenderer.invoke('git:init', path),
+
+  // Pick a custom project icon via native file dialog
+  pickProjectIcon: (
+    projectId: string
+  ): Promise<{ success: boolean; filename?: string; error?: string }> =>
+    ipcRenderer.invoke('project:pickIcon', projectId),
+
+  // Remove a custom project icon
+  removeProjectIcon: (projectId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('project:removeIcon', projectId),
+
+  // Resolve an icon filename to a full file path
+  getProjectIconPath: (filename: string): Promise<string | null> =>
+    ipcRenderer.invoke('project:getIconPath', filename)
 }
 
 // Worktree operations API

@@ -1,5 +1,13 @@
-import { ipcMain, dialog, shell, clipboard, BrowserWindow } from 'electron'
-import { existsSync, statSync, readFileSync } from 'fs'
+import { ipcMain, dialog, shell, clipboard, BrowserWindow, app } from 'electron'
+import {
+  existsSync,
+  statSync,
+  readFileSync,
+  mkdirSync,
+  copyFileSync,
+  unlinkSync,
+  readdirSync
+} from 'fs'
 import { execSync } from 'child_process'
 import { join, basename, extname } from 'path'
 import { createLogger } from '../services/logger'
@@ -203,4 +211,126 @@ export function registerProjectHandlers(): void {
       })
     )
   }
+
+  // --- Custom Project Icon handlers ---
+
+  const iconDir = join(app.getPath('home'), '.hive', 'project-icons')
+
+  /**
+   * Ensure the project-icons directory exists
+   */
+  function ensureIconDir(): void {
+    if (!existsSync(iconDir)) {
+      mkdirSync(iconDir, { recursive: true })
+    }
+  }
+
+  // Pick a custom project icon via native file dialog, copy to ~/.hive/project-icons/
+  ipcMain.handle(
+    'project:pickIcon',
+    async (
+      _event,
+      projectId: string
+    ): Promise<{ success: boolean; filename?: string; error?: string }> => {
+      try {
+        const window = BrowserWindow.getFocusedWindow()
+        const result = await dialog.showOpenDialog(window!, {
+          properties: ['openFile'],
+          title: 'Select Project Icon',
+          buttonLabel: 'Select Icon',
+          filters: [{ name: 'Images', extensions: ['svg', 'png', 'jpg', 'jpeg', 'webp'] }]
+        })
+
+        if (result.canceled || result.filePaths.length === 0) {
+          return { success: false, error: 'cancelled' }
+        }
+
+        const sourcePath = result.filePaths[0]
+        const ext = extname(sourcePath).toLowerCase()
+        const filename = `${projectId}${ext}`
+
+        ensureIconDir()
+
+        // Remove any previous icon for this project (different extension)
+        const existing = readdirSync(iconDir).filter((f) => f.startsWith(`${projectId}.`))
+        for (const old of existing) {
+          try {
+            unlinkSync(join(iconDir, old))
+          } catch {
+            // ignore cleanup errors
+          }
+        }
+
+        copyFileSync(sourcePath, join(iconDir, filename))
+        log.info('Project icon set', { projectId, filename })
+
+        return { success: true, filename }
+      } catch (error) {
+        log.error(
+          'Failed to pick project icon',
+          error instanceof Error ? error : new Error(String(error)),
+          { projectId }
+        )
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }
+    }
+  )
+
+  // Remove a custom project icon
+  ipcMain.handle(
+    'project:removeIcon',
+    async (_event, projectId: string): Promise<{ success: boolean; error?: string }> => {
+      try {
+        ensureIconDir()
+        const existing = readdirSync(iconDir).filter((f) => f.startsWith(`${projectId}.`))
+        for (const old of existing) {
+          unlinkSync(join(iconDir, old))
+        }
+        log.info('Project icon removed', { projectId })
+        return { success: true }
+      } catch (error) {
+        log.error(
+          'Failed to remove project icon',
+          error instanceof Error ? error : new Error(String(error)),
+          { projectId }
+        )
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }
+    }
+  )
+
+  // Resolve an icon filename to a data URL for the renderer
+  ipcMain.handle('project:getIconPath', (_event, filename: string): string | null => {
+    if (!filename) return null
+    const fullPath = join(iconDir, filename)
+    if (!existsSync(fullPath)) return null
+
+    try {
+      const mimeTypes: Record<string, string> = {
+        '.svg': 'image/svg+xml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp'
+      }
+      const ext = extname(filename).toLowerCase()
+      const mime = mimeTypes[ext]
+      if (!mime) return null
+
+      const data = readFileSync(fullPath)
+      return `data:${mime};base64,${data.toString('base64')}`
+    } catch (err) {
+      log.warn('Failed to read project icon', {
+        filename,
+        error: err instanceof Error ? err.message : String(err)
+      })
+      return null
+    }
+  })
 }

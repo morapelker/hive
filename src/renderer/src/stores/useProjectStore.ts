@@ -9,6 +9,7 @@ interface Project {
   description: string | null
   tags: string | null
   language: string | null
+  custom_icon: string | null
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
@@ -32,7 +33,19 @@ interface ProjectState {
   addProject: (path: string) => Promise<{ success: boolean; error?: string }>
   removeProject: (id: string) => Promise<boolean>
   updateProjectName: (id: string, name: string) => Promise<boolean>
-  updateProject: (id: string, data: { name?: string; description?: string | null; tags?: string[] | null; language?: string | null; setup_script?: string | null; run_script?: string | null; archive_script?: string | null }) => Promise<boolean>
+  updateProject: (
+    id: string,
+    data: {
+      name?: string
+      description?: string | null
+      tags?: string[] | null
+      language?: string | null
+      custom_icon?: string | null
+      setup_script?: string | null
+      run_script?: string | null
+      archive_script?: string | null
+    }
+  ) => Promise<boolean>
   selectProject: (id: string | null) => void
   toggleProjectExpanded: (id: string) => void
   setEditingProject: (id: string | null) => void
@@ -51,188 +64,208 @@ export const useProjectStore = create<ProjectState>()(
       expandedProjectIds: new Set(),
       editingProjectId: null,
 
-  // Load all projects from database
-  loadProjects: async () => {
-    set({ isLoading: true, error: null })
-    try {
-      const projects = await window.db.project.getAll()
-      // Sort by last_accessed_at descending (most recent first)
-      const sortedProjects = projects.sort(
-        (a, b) => new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
-      )
-      set({ projects: sortedProjects, isLoading: false })
-    } catch (error) {
-      set({
-        error: error instanceof Error ? error.message : 'Failed to load projects',
-        isLoading: false
-      })
-    }
-  },
-
-  // Add a new project
-  addProject: async (path: string) => {
-    try {
-      // Validate the project path
-      const validation = await window.projectOps.validateProject(path)
-      if (!validation.success) {
-        return { success: false, error: validation.error }
-      }
-
-      // Check if project already exists
-      const existingProject = await window.db.project.getByPath(path)
-      if (existingProject) {
-        return { success: false, error: 'This project has already been added to Hive.' }
-      }
-
-      // Create the project
-      const project = await window.db.project.create({
-        name: validation.name!,
-        path: validation.path!
-      })
-
-      // Auto-detect language (fire and forget for speed)
-      window.projectOps.detectLanguage(validation.path!).then(async (language) => {
-        if (language) {
-          await window.db.project.update(project.id, { language })
-          set((state) => ({
-            projects: state.projects.map((p) =>
-              p.id === project.id ? { ...p, language } : p
-            )
-          }))
+      // Load all projects from database
+      loadProjects: async () => {
+        set({ isLoading: true, error: null })
+        try {
+          const projects = await window.db.project.getAll()
+          // Sort by last_accessed_at descending (most recent first)
+          const sortedProjects = projects.sort(
+            (a, b) =>
+              new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
+          )
+          set({ projects: sortedProjects, isLoading: false })
+        } catch (error) {
+          set({
+            error: error instanceof Error ? error.message : 'Failed to load projects',
+            isLoading: false
+          })
         }
-      }).catch(() => {
-        // Ignore detection errors
-      })
+      },
 
-      // Add to state
-      set((state) => ({
-        projects: [project, ...state.projects],
-        selectedProjectId: project.id,
-        expandedProjectIds: new Set([...state.expandedProjectIds, project.id])
-      }))
+      // Add a new project
+      addProject: async (path: string) => {
+        try {
+          // Validate the project path
+          const validation = await window.projectOps.validateProject(path)
+          if (!validation.success) {
+            return { success: false, error: validation.error }
+          }
 
-      return { success: true }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to add project'
-      }
-    }
-  },
+          // Check if project already exists
+          const existingProject = await window.db.project.getByPath(path)
+          if (existingProject) {
+            return { success: false, error: 'This project has already been added to Hive.' }
+          }
 
-  // Remove a project
-  removeProject: async (id: string) => {
-    try {
-      const success = await window.db.project.delete(id)
-      if (success) {
+          // Create the project
+          const project = await window.db.project.create({
+            name: validation.name!,
+            path: validation.path!
+          })
+
+          // Auto-detect language (fire and forget for speed)
+          window.projectOps
+            .detectLanguage(validation.path!)
+            .then(async (language) => {
+              if (language) {
+                await window.db.project.update(project.id, { language })
+                set((state) => ({
+                  projects: state.projects.map((p) =>
+                    p.id === project.id ? { ...p, language } : p
+                  )
+                }))
+              }
+            })
+            .catch(() => {
+              // Ignore detection errors
+            })
+
+          // Add to state
+          set((state) => ({
+            projects: [project, ...state.projects],
+            selectedProjectId: project.id,
+            expandedProjectIds: new Set([...state.expandedProjectIds, project.id])
+          }))
+
+          return { success: true }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to add project'
+          }
+        }
+      },
+
+      // Remove a project
+      removeProject: async (id: string) => {
+        try {
+          const success = await window.db.project.delete(id)
+          if (success) {
+            set((state) => {
+              const newExpandedIds = new Set(state.expandedProjectIds)
+              newExpandedIds.delete(id)
+              return {
+                projects: state.projects.filter((p) => p.id !== id),
+                selectedProjectId: state.selectedProjectId === id ? null : state.selectedProjectId,
+                expandedProjectIds: newExpandedIds,
+                editingProjectId: state.editingProjectId === id ? null : state.editingProjectId
+              }
+            })
+          }
+          return success
+        } catch {
+          return false
+        }
+      },
+
+      // Update project name
+      updateProjectName: async (id: string, name: string) => {
+        try {
+          const updatedProject = await window.db.project.update(id, { name })
+          if (updatedProject) {
+            set((state) => ({
+              projects: state.projects.map((p) => (p.id === id ? { ...p, name } : p)),
+              editingProjectId: null
+            }))
+            return true
+          }
+          return false
+        } catch {
+          return false
+        }
+      },
+
+      // Update project fields (generic)
+      updateProject: async (
+        id: string,
+        data: {
+          name?: string
+          description?: string | null
+          tags?: string[] | null
+          language?: string | null
+          custom_icon?: string | null
+          setup_script?: string | null
+          run_script?: string | null
+          archive_script?: string | null
+        }
+      ) => {
+        try {
+          const updatedProject = await window.db.project.update(id, data)
+          if (updatedProject) {
+            // Convert tags from string[] to JSON string for local state
+            const { tags, ...rest } = data
+            const localUpdate: Partial<Project> = { ...rest }
+            if (tags !== undefined) {
+              localUpdate.tags = tags ? JSON.stringify(tags) : null
+            }
+            set((state) => ({
+              projects: state.projects.map((p) => (p.id === id ? { ...p, ...localUpdate } : p))
+            }))
+            return true
+          }
+          return false
+        } catch {
+          return false
+        }
+      },
+
+      // Select a project
+      selectProject: (id: string | null) => {
+        set({ selectedProjectId: id })
+        if (id) {
+          // Touch project to update last_accessed_at
+          get().touchProject(id)
+        }
+      },
+
+      // Toggle project expand/collapse
+      toggleProjectExpanded: (id: string) => {
         set((state) => {
           const newExpandedIds = new Set(state.expandedProjectIds)
-          newExpandedIds.delete(id)
-          return {
-            projects: state.projects.filter((p) => p.id !== id),
-            selectedProjectId: state.selectedProjectId === id ? null : state.selectedProjectId,
-            expandedProjectIds: newExpandedIds,
-            editingProjectId: state.editingProjectId === id ? null : state.editingProjectId
+          if (newExpandedIds.has(id)) {
+            newExpandedIds.delete(id)
+          } else {
+            newExpandedIds.add(id)
           }
+          return { expandedProjectIds: newExpandedIds }
         })
+      },
+
+      // Set project being edited
+      setEditingProject: (id: string | null) => {
+        set({ editingProjectId: id })
+      },
+
+      // Touch project (update last_accessed_at)
+      touchProject: async (id: string) => {
+        try {
+          await window.db.project.touch(id)
+          // Update local state
+          set((state) => ({
+            projects: state.projects.map((p) =>
+              p.id === id ? { ...p, last_accessed_at: new Date().toISOString() } : p
+            )
+          }))
+        } catch {
+          // Ignore touch errors
+        }
+      },
+
+      // Re-detect and update project language
+      refreshLanguage: async (projectId: string) => {
+        const project = get().projects.find((p) => p.id === projectId)
+        if (!project) return
+        try {
+          const language = await window.projectOps.detectLanguage(project.path)
+          await window.db.project.update(projectId, { language })
+          set((state) => ({
+            projects: state.projects.map((p) => (p.id === projectId ? { ...p, language } : p))
+          }))
+        } catch {
+          // Ignore refresh errors
+        }
       }
-      return success
-    } catch {
-      return false
-    }
-  },
-
-  // Update project name
-  updateProjectName: async (id: string, name: string) => {
-    try {
-      const updatedProject = await window.db.project.update(id, { name })
-      if (updatedProject) {
-        set((state) => ({
-          projects: state.projects.map((p) => (p.id === id ? { ...p, name } : p)),
-          editingProjectId: null
-        }))
-        return true
-      }
-      return false
-    } catch {
-      return false
-    }
-  },
-
-  // Update project fields (generic)
-  updateProject: async (id: string, data: { name?: string; description?: string | null; tags?: string[] | null; language?: string | null; setup_script?: string | null; run_script?: string | null; archive_script?: string | null }) => {
-    try {
-      const updatedProject = await window.db.project.update(id, data)
-      if (updatedProject) {
-        set((state) => ({
-          projects: state.projects.map((p) => (p.id === id ? { ...p, ...data } : p))
-        }))
-        return true
-      }
-      return false
-    } catch {
-      return false
-    }
-  },
-
-  // Select a project
-  selectProject: (id: string | null) => {
-    set({ selectedProjectId: id })
-    if (id) {
-      // Touch project to update last_accessed_at
-      get().touchProject(id)
-    }
-  },
-
-  // Toggle project expand/collapse
-  toggleProjectExpanded: (id: string) => {
-    set((state) => {
-      const newExpandedIds = new Set(state.expandedProjectIds)
-      if (newExpandedIds.has(id)) {
-        newExpandedIds.delete(id)
-      } else {
-        newExpandedIds.add(id)
-      }
-      return { expandedProjectIds: newExpandedIds }
-    })
-  },
-
-  // Set project being edited
-  setEditingProject: (id: string | null) => {
-    set({ editingProjectId: id })
-  },
-
-  // Touch project (update last_accessed_at)
-  touchProject: async (id: string) => {
-    try {
-      await window.db.project.touch(id)
-      // Update local state
-      set((state) => ({
-        projects: state.projects.map((p) =>
-          p.id === id ? { ...p, last_accessed_at: new Date().toISOString() } : p
-        )
-      }))
-    } catch {
-      // Ignore touch errors
-    }
-  },
-
-  // Re-detect and update project language
-  refreshLanguage: async (projectId: string) => {
-    const project = get().projects.find((p) => p.id === projectId)
-    if (!project) return
-    try {
-      const language = await window.projectOps.detectLanguage(project.path)
-      await window.db.project.update(projectId, { language })
-      set((state) => ({
-        projects: state.projects.map((p) =>
-          p.id === projectId ? { ...p, language } : p
-        )
-      }))
-    } catch {
-      // Ignore refresh errors
-    }
-  }
     }),
     {
       name: 'hive-projects',
