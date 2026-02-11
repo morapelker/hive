@@ -49,9 +49,25 @@ interface Worktree {
 interface WorktreeItemProps {
   worktree: Worktree
   projectPath: string
+  index?: number
+  isDragging?: boolean
+  isDragOver?: boolean
+  onDragStart?: (e: React.DragEvent) => void
+  onDragOver?: (e: React.DragEvent) => void
+  onDrop?: (e: React.DragEvent) => void
+  onDragEnd?: () => void
 }
 
-export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): React.JSX.Element {
+export function WorktreeItem({
+  worktree,
+  projectPath,
+  isDragging,
+  isDragOver,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd
+}: WorktreeItemProps): React.JSX.Element {
   const { selectedWorktreeId, selectWorktree, archiveWorktree, unbranchWorktree } =
     useWorktreeStore()
   const selectProject = useProjectStore((s) => s.selectProject)
@@ -212,8 +228,15 @@ export function WorktreeItem({ worktree, projectPath }: WorktreeItemProps): Reac
           className={cn(
             'group flex items-center gap-1.5 pl-8 pr-2 py-1 rounded-md cursor-pointer transition-colors',
             isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-            isArchiving && 'opacity-50 pointer-events-none'
+            isArchiving && 'opacity-50 pointer-events-none',
+            isDragging && 'opacity-50',
+            isDragOver && 'border-t-2 border-primary'
           )}
+          draggable={!worktree.is_default && !isRenamingBranch}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          onDragEnd={onDragEnd}
           onClick={handleClick}
           data-testid={`worktree-item-${worktree.id}`}
         >
