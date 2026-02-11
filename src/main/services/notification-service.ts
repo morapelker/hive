@@ -1,4 +1,4 @@
-import { Notification, BrowserWindow } from 'electron'
+import { Notification, BrowserWindow, app } from 'electron'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'NotificationService' })
@@ -13,9 +13,15 @@ interface SessionNotificationData {
 
 class NotificationService {
   private mainWindow: BrowserWindow | null = null
+  private unreadCount = 0
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
+
+    // Clear badge when window gains focus
+    window.on('focus', () => {
+      this.clearBadge()
+    })
   }
 
   showSessionComplete(data: SessionNotificationData): void {
@@ -48,6 +54,15 @@ class NotificationService {
     })
 
     notification.show()
+
+    // Increment dock badge
+    this.unreadCount++
+    app.dock?.setBadge(String(this.unreadCount))
+  }
+
+  private clearBadge(): void {
+    this.unreadCount = 0
+    app.dock?.setBadge('')
   }
 }
 
