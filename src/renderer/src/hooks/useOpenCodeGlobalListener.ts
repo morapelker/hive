@@ -3,6 +3,8 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
+import { useContextStore } from '@/stores/useContextStore'
+import { extractTokens, extractCost, extractModelRef } from '@/lib/token-utils'
 
 /**
  * Persistent global listener for OpenCode stream events.
@@ -32,8 +34,33 @@ export function useOpenCodeGlobalListener(): void {
           const sessionId = event.sessionId
           const activeId = useSessionStore.getState().activeSessionId
 
-          // Handle session.updated for background sessions — update title in store
-          // Active session title is handled by SessionView's own listener
+          // Handle message.updated for background sessions — extract title + tokens
+          if (event.type === 'message.updated' && sessionId !== activeId) {
+            const sessionTitle = event.data?.info?.title || event.data?.title
+            if (sessionTitle) {
+              useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
+            }
+
+            // Extract tokens for background sessions
+            const info = event.data?.info
+            if (info?.time?.completed) {
+              const data = event.data as Record<string, unknown> | undefined
+              if (data) {
+                const tokens = extractTokens(data)
+                if (tokens) {
+                  const modelRef = extractModelRef(data) ?? undefined
+                  useContextStore.getState().setSessionTokens(sessionId, tokens, modelRef)
+                }
+                const cost = extractCost(data)
+                if (cost > 0) {
+                  useContextStore.getState().addSessionCost(sessionId, cost)
+                }
+              }
+            }
+            return
+          }
+
+          // Keep session.updated for background title sync (some events use this type)
           if (event.type === 'session.updated' && sessionId !== activeId) {
             const sessionTitle = event.data?.info?.title || event.data?.title
             if (sessionTitle) {
