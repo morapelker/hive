@@ -22,7 +22,11 @@ export {
   type TerminalOption,
   type AppSettings
 } from './useSettingsStore'
-export { useWorktreeStatusStore } from './useWorktreeStatusStore'
+export {
+  useWorktreeStatusStore,
+  type SessionStatusType,
+  type SessionStatusEntry
+} from './useWorktreeStatusStore'
 export { useContextStore } from './useContextStore'
 export { useFileSearchStore } from './useFileSearchStore'
 export { useQuestionStore } from './useQuestionStore'

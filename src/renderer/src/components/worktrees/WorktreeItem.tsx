@@ -33,7 +33,8 @@ import { useWorktreeStore, useProjectStore } from '@/stores'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
-import { formatRelativeTime } from '@/lib/format-utils'
+import { formatRelativeTime, formatCompletionDuration } from '@/lib/format-utils'
+import beeIcon from '@/assets/bee.png'
 import { PulseAnimation } from './PulseAnimation'
 
 interface Worktree {
@@ -78,6 +79,9 @@ export function WorktreeItem({
   const archivingWorktreeIds = useWorktreeStore((s) => s.archivingWorktreeIds)
   const isArchiving = archivingWorktreeIds.has(worktree.id)
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
+  const completedEntry = useWorktreeStatusStore((state) =>
+    state.getWorktreeCompletedEntry(worktree.id)
+  )
   const lastMessageTime = useWorktreeStatusStore(
     (state) => state.lastMessageTimeByWorktree[worktree.id] ?? null
   )
@@ -101,7 +105,12 @@ export function WorktreeItem({
         ? { displayStatus: 'Planning', statusClass: 'font-semibold text-blue-400' }
         : worktreeStatus === 'working'
           ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
-          : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+          : worktreeStatus === 'completed'
+            ? {
+                displayStatus: `${completedEntry?.word ?? 'Worked'} for ${formatCompletionDuration(completedEntry?.durationMs ?? 0)}`,
+                statusClass: 'font-semibold text-[#C15F3C]'
+              }
+            : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
   // Branch rename state
   const [isRenamingBranch, setIsRenamingBranch] = useState(false)
@@ -279,10 +288,14 @@ export function WorktreeItem({
               {worktreeStatus === 'answering' && (
                 <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
               )}
+              {worktreeStatus === 'completed' && (
+                <img src={beeIcon} alt="bee" className="h-7 w-7 shrink-0" />
+              )}
               {!isRunProcessAlive &&
                 worktreeStatus !== 'working' &&
                 worktreeStatus !== 'planning' &&
                 worktreeStatus !== 'answering' &&
+                worktreeStatus !== 'completed' &&
                 (worktree.is_default ? (
                   <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 ) : (

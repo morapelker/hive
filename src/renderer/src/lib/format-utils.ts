@@ -13,6 +13,28 @@ export function formatRelativeTime(timestamp: number): string {
   return `${diffWeek}w`
 }
 
+export function formatCompletionDuration(ms: number): string {
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.round(minutes / 60)
+  return `${hours}h`
+}
+
+export const COMPLETION_WORDS = [
+  'Worked',
+  'Brewed',
+  'Cooked',
+  'Crafted',
+  'Built',
+  'Forged',
+  'Wove',
+  'Shipped',
+  'Baked',
+  'Hacked'
+]
+
 const DEV_SERVER_URL_PATTERN = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{3,5}\/?/
 
 export function extractDevServerUrl(output: string[]): string | null {

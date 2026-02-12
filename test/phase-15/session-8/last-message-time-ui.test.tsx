@@ -21,12 +21,14 @@ vi.mock('@/stores/useWorktreeStatusStore', () => ({
     (selector: (s: Record<string, unknown>) => unknown) =>
       selector({
         getWorktreeStatus: mockGetWorktreeStatus,
+        getWorktreeCompletedEntry: () => null,
         lastMessageTimeByWorktree: mockLastMessageTimeByWorktree
       }),
     {
       getState: () => ({
         clearWorktreeUnread: vi.fn(),
         getWorktreeStatus: mockGetWorktreeStatus,
+        getWorktreeCompletedEntry: () => null,
         lastMessageTimeByWorktree: mockLastMessageTimeByWorktree
       })
     }
