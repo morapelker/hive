@@ -1226,7 +1226,9 @@ export class GitService {
  * Convert a session title into a safe git branch name.
  */
 export function canonicalizeBranchName(title: string): string {
-  return title
+  const firstThreeWords = title.trim().split(/\s+/).filter(Boolean).slice(0, 3).join(' ')
+
+  return firstThreeWords
     .toLowerCase()
     .replace(/[\s_]+/g, '-') // spaces and underscores → dashes
     .replace(/[^a-z0-9\-/.]/g, '') // remove invalid chars

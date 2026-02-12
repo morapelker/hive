@@ -133,9 +133,10 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       // Must check if branch exists before renaming
       expect(content).toContain('branchExists(targetBranch)')
       // Must try suffixed variants
-      expect(content).toContain('`${baseBranch}-${i}`')
-      // Must iterate from 2 to 10
-      expect(content).toContain('let i = 2; i <= 10')
+      expect(content).toContain('`${baseBranch}-${suffix}`')
+      // Must iterate suffixes starting at 2
+      expect(content).toContain('let suffix = 2')
+      expect(content).toContain('while (suffix <= maxSuffix)')
     })
 
     test('sets branch_renamed=1 on failure to stop retrying', () => {

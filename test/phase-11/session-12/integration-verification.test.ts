@@ -397,8 +397,8 @@ describe('Session 12: Integration & Verification', () => {
       expect(canonicalizeBranchName('Auth Setup Guide')).toBe('auth-setup-guide')
     })
 
-    test('server title with special chars "Fix #123: Memory Leak!" → "fix-123-memory-leak"', () => {
-      expect(canonicalizeBranchName('Fix #123: Memory Leak!')).toBe('fix-123-memory-leak')
+    test('server title with special chars "Fix #123: Memory Leak!" → "fix-123-memory"', () => {
+      expect(canonicalizeBranchName('Fix #123: Memory Leak!')).toBe('fix-123-memory')
     })
 
     test('long server title is truncated to 50 chars', () => {

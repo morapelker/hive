@@ -1137,16 +1137,18 @@ class OpenCodeService {
                   let targetBranch = baseBranch
                   const exists = await gitService.branchExists(targetBranch)
                   if (exists) {
-                    let found = false
-                    for (let i = 2; i <= 10; i++) {
-                      const candidate = `${baseBranch}-${i}`
+                    let suffix = 2
+                    const maxSuffix = 9999
+                    while (suffix <= maxSuffix) {
+                      const candidate = `${baseBranch}-${suffix}`
                       if (!(await gitService.branchExists(candidate))) {
                         targetBranch = candidate
-                        found = true
                         break
                       }
+                      suffix += 1
                     }
-                    if (!found) {
+
+                    if (suffix > maxSuffix) {
                       // All suffixes taken — give up but stop retrying
                       db.updateWorktree(worktree.id, { branch_renamed: 1 })
                       log.warn('Auto-rename: all branch name variants taken', {

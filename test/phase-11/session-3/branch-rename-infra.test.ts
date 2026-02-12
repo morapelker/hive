@@ -31,7 +31,7 @@ describe('Session 3: Branch Rename Infrastructure', () => {
     })
 
     test('collapses consecutive dashes', () => {
-      expect(canonicalizeBranchName('fix -- double  spaces')).toBe('fix-double-spaces')
+      expect(canonicalizeBranchName('fix -- double  spaces')).toBe('fix-double')
     })
 
     test('truncates to 50 characters', () => {
@@ -57,10 +57,8 @@ describe('Session 3: Branch Rename Infrastructure', () => {
       expect(canonicalizeBranchName('fix_the_bug')).toBe('fix-the-bug')
     })
 
-    test('handles mixed case with special chars', () => {
-      expect(canonicalizeBranchName('Auth Refresh Token Support')).toBe(
-        'auth-refresh-token-support'
-      )
+    test('uses only the first 3 words for long titles', () => {
+      expect(canonicalizeBranchName('Auth Refresh Token Support')).toBe('auth-refresh-token')
     })
 
     test('handles leading/trailing spaces and dashes', () => {
