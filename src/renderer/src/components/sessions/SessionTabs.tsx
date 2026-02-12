@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react'
-import { Plus, X, ChevronLeft, ChevronRight, FileCode, Loader2 } from 'lucide-react'
+import {
+  Plus,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  FileCode,
+  Loader2,
+  AlertCircle,
+  Check
+} from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -107,10 +116,25 @@ function SessionTab({
         isDragOver && 'bg-accent/50'
       )}
     >
-      {sessionStatus === 'working' && (
+      {(sessionStatus === 'working' || sessionStatus === 'planning') && (
         <Loader2
-          className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0"
+          className={cn(
+            'h-3 w-3 animate-spin flex-shrink-0',
+            sessionStatus === 'planning' ? 'text-blue-400' : 'text-blue-500'
+          )}
           data-testid={`tab-spinner-${sessionId}`}
+        />
+      )}
+      {sessionStatus === 'answering' && (
+        <AlertCircle
+          className="h-3 w-3 text-amber-500 flex-shrink-0"
+          data-testid={`tab-answering-${sessionId}`}
+        />
+      )}
+      {sessionStatus === 'completed' && (
+        <Check
+          className="h-3 w-3 text-green-500 flex-shrink-0"
+          data-testid={`tab-completed-${sessionId}`}
         />
       )}
       {sessionStatus === 'unread' && !isActive && (

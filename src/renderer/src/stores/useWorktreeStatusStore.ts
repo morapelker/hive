@@ -2,11 +2,11 @@ import { create } from 'zustand'
 import { useSessionStore } from './useSessionStore'
 
 interface SessionStatus {
-  status: 'working' | 'planning' | 'answering' | 'unread'
+  status: 'working' | 'planning' | 'answering' | 'unread' | 'completed'
   timestamp: number
 }
 
-type StatusType = 'working' | 'planning' | 'answering' | 'unread'
+type StatusType = 'working' | 'planning' | 'answering' | 'unread' | 'completed'
 
 interface WorktreeStatusState {
   // sessionId → status info (null means no status / cleared)
@@ -73,6 +73,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
     let hasPlanning = false
     let hasWorking = false
+    let hasCompleted = false
     let latestUnread: SessionStatus | null = null
 
     for (const id of sessionIds) {
@@ -83,6 +84,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       if (entry.status === 'answering') return 'answering'
       if (entry.status === 'planning') hasPlanning = true
       if (entry.status === 'working') hasWorking = true
+      if (entry.status === 'completed') hasCompleted = true
 
       // Track the latest unread
       if (entry.status === 'unread') {
@@ -94,6 +96,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
     if (hasPlanning) return 'planning'
     if (hasWorking) return 'working'
+    if (hasCompleted) return 'completed'
     return latestUnread ? 'unread' : null
   },
 
