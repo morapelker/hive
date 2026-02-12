@@ -474,7 +474,14 @@ class OpenCodeService {
           worktreePath,
           opencodeSessionId
         )
-        return { success: true, sessionStatus }
+        // Fetch revert state so callers always get it
+        const sessionResult = await instance.client.session.get({
+          path: { id: opencodeSessionId },
+          query: { directory: worktreePath }
+        })
+        const revert = asRecord(asRecord(sessionResult.data)?.revert)
+        const revertMessageID = asString(revert?.messageID) ?? null
+        return { success: true, sessionStatus, revertMessageID }
       }
 
       // Try to get the session
@@ -777,11 +784,18 @@ class OpenCodeService {
     })
 
     const sessionData = asRecord(result.data)
+    log.info('getSessionInfo raw data keys:', {
+      keys: sessionData ? Object.keys(sessionData) : 'null'
+    })
+    log.info('getSessionInfo revert field:', { revert: sessionData?.revert })
     const revert = asRecord(sessionData?.revert)
-    return {
-      revertMessageID: asString(revert?.messageID) ?? null,
-      revertDiff: asString(revert?.diff) ?? null
-    }
+    const revertMessageID = asString(revert?.messageID) ?? null
+    const revertDiff = asString(revert?.diff) ?? null
+    log.info('getSessionInfo parsed result:', {
+      revertMessageID,
+      revertDiff: revertDiff ? 'present' : 'null'
+    })
+    return { revertMessageID, revertDiff }
   }
 
   /**
