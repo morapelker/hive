@@ -47,6 +47,8 @@ interface GitStoreState {
 
   // Cross-worktree merge default - keyed by project ID
   defaultMergeBranch: Map<string, string>
+  // Incremented on every commit so components can reset manual merge selections
+  mergeSelectionVersion: number
 
   // Actions
   loadFileStatuses: (worktreePath: string) => Promise<void>
@@ -109,6 +111,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
 
   // Cross-worktree merge default
   defaultMergeBranch: new Map(),
+  mergeSelectionVersion: 0,
 
   // Load file statuses for a worktree
   loadFileStatuses: async (worktreePath: string) => {
@@ -377,6 +380,8 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
             get().setDefaultMergeBranch(worktree.project_id, branchInfo.name)
           }
         }
+        // Bump version so components reset any manual merge-from selection
+        set((state) => ({ mergeSelectionVersion: state.mergeSelectionVersion + 1 }))
       }
       set({ isCommitting: false })
       return result

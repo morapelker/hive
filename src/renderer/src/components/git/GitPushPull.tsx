@@ -59,14 +59,24 @@ export function GitPushPull({
   const defaultMerge = useGitStore((s) =>
     worktreeProjectId ? s.defaultMergeBranch.get(worktreeProjectId) : undefined
   )
+  const mergeSelectionVersion = useGitStore((s) => s.mergeSelectionVersion)
   const currentBranch = branchInfo?.name
+
+  // Reset manual merge selection when a commit happens anywhere
+  const prevVersionRef = useRef(mergeSelectionVersion)
+  useEffect(() => {
+    if (mergeSelectionVersion !== prevVersionRef.current) {
+      prevVersionRef.current = mergeSelectionVersion
+      setMergeBranch('')
+    }
+  }, [mergeSelectionVersion])
 
   // Pre-populate merge branch from cross-worktree default
   useEffect(() => {
     if (defaultMerge && defaultMerge !== currentBranch && !mergeBranch) {
       setMergeBranch(defaultMerge)
     }
-  }, [defaultMerge, currentBranch]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [defaultMerge, currentBranch, mergeBranch])
 
   const hasTracking = !!branchInfo?.tracking
   const ahead = branchInfo?.ahead || 0
