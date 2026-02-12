@@ -212,6 +212,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([])
   const [showSlashCommands, setShowSlashCommands] = useState(false)
   const [revertMessageID, setRevertMessageID] = useState<string | null>(null)
+  const revertDiffRef = useRef<string | null>(null)
 
   const allSlashCommands = useMemo(() => {
     const seen = new Set<string>()
@@ -1246,6 +1247,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           transcriptSourceRef.current.opencodeSessionId = existingOpcSessionId
         }
 
+        // 1b. Hydrate revert boundary BEFORE loading messages so the filter
+        // is applied to the very first render that includes transcript data.
+        if (wtPath && existingOpcSessionId && window.opencodeOps?.sessionInfo) {
+          try {
+            const sessionInfo = await window.opencodeOps.sessionInfo(wtPath, existingOpcSessionId)
+            if (sessionInfo.success) {
+              setRevertMessageID(sessionInfo.revertMessageID ?? null)
+              revertDiffRef.current = sessionInfo.revertDiff ?? null
+            }
+          } catch {
+            // Non-critical — reconnect will also provide revertMessageID
+          }
+        }
+
         // 2. Hydrate transcript (OpenCode canonical source when possible)
         const loadedMessages = await loadMessages({
           worktreePath: wtPath,
@@ -1724,6 +1739,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             }
 
             setRevertMessageID(result.revertMessageID ?? null)
+            revertDiffRef.current = result.revertDiff ?? null
 
             const restoredPrompt =
               typeof result.restoredPrompt === 'string'
@@ -1740,6 +1756,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
             setRevertMessageID(result.revertMessageID ?? null)
             if (result.revertMessageID === null) {
+              revertDiffRef.current = null
               setInputValue('')
               inputValueRef.current = ''
             }
@@ -1793,6 +1810,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     try {
       setRevertMessageID(null)
+      revertDiffRef.current = null
       setMessages((prev) => [...prev, createLocalMessage('user', trimmedValue)])
 
       // Mark that a new prompt is in flight — prevents finalizeResponse
@@ -2118,6 +2136,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     )
   }, [messages, revertMessageID])
 
+  const revertedUserCount = useMemo(() => {
+    if (!revertMessageID) return 0
+    return messages.filter(
+      (message) =>
+        message.role === 'user' && !message.id.startsWith('local-') && message.id >= revertMessageID
+    ).length
+  }, [messages, revertMessageID])
+
   // Determine if there's streaming content to show
   const hasStreamingContent = streamingParts.length > 0 || streamingContent.length > 0
 
@@ -2173,6 +2199,30 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               {visibleMessages.map((message) => (
                 <MessageRenderer key={message.id} message={message} cwd={worktreePath} />
               ))}
+              {/* Revert banner — shows when messages have been undone */}
+              {revertMessageID && revertedUserCount > 0 && (
+                <div
+                  className="mx-6 my-3 rounded-lg border border-border/50 bg-muted/30 px-4 py-3"
+                  data-testid="revert-banner"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">
+                      {revertedUserCount} {revertedUserCount === 1 ? 'message' : 'messages'}{' '}
+                      reverted
+                    </span>
+                    <button
+                      className="text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+                      onClick={() => {
+                        setInputValue('/redo')
+                        inputValueRef.current = '/redo'
+                        textareaRef.current?.focus()
+                      }}
+                    >
+                      /redo to restore
+                    </button>
+                  </div>
+                </div>
+              )}
               {/* Streaming message */}
               {hasStreamingContent && (
                 <MessageRenderer

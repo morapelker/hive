@@ -357,6 +357,16 @@ declare global {
       permissionList: (
         worktreePath?: string
       ) => Promise<{ success: boolean; permissions: PermissionRequest[]; error?: string }>
+      // Get session info (revert state)
+      sessionInfo: (
+        worktreePath: string,
+        opencodeSessionId: string
+      ) => Promise<{
+        success: boolean
+        revertMessageID?: string | null
+        revertDiff?: string | null
+        error?: string
+      }>
       // Undo the last assistant turn/message range
       undo: (
         worktreePath: string,
@@ -365,6 +375,7 @@ declare global {
         success: boolean
         revertMessageID?: string
         restoredPrompt?: string
+        revertDiff?: string | null
         error?: string
       }>
       // Redo the last undone message range

@@ -150,6 +150,9 @@ beforeEach(() => {
       reconnect: vi.fn().mockResolvedValue({ success: true }),
       prompt: vi.fn().mockResolvedValue({ success: true }),
       command: vi.fn().mockResolvedValue({ success: true }),
+      sessionInfo: vi
+        .fn()
+        .mockResolvedValue({ success: true, revertMessageID: null, revertDiff: null }),
       undo: vi.fn().mockResolvedValue({ success: true }),
       redo: vi.fn().mockResolvedValue({ success: true }),
       disconnect: vi.fn().mockResolvedValue({ success: true }),

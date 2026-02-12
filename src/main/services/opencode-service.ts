@@ -763,6 +763,28 @@ class OpenCodeService {
   }
 
   /**
+   * Get session info including revert state from OpenCode
+   */
+  async getSessionInfo(
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<{ revertMessageID: string | null; revertDiff: string | null }> {
+    const instance = await this.getOrCreateInstance()
+
+    const result = await instance.client.session.get({
+      path: { id: opencodeSessionId },
+      query: { directory: worktreePath }
+    })
+
+    const sessionData = asRecord(result.data)
+    const revert = asRecord(sessionData?.revert)
+    return {
+      revertMessageID: asString(revert?.messageID) ?? null,
+      revertDiff: asString(revert?.diff) ?? null
+    }
+  }
+
+  /**
    * Get messages from an OpenCode session
    */
   async getMessages(worktreePath: string, opencodeSessionId: string): Promise<unknown[]> {
@@ -786,7 +808,7 @@ class OpenCodeService {
   async undo(
     worktreePath: string,
     opencodeSessionId: string
-  ): Promise<{ revertMessageID: string; restoredPrompt: string }> {
+  ): Promise<{ revertMessageID: string; restoredPrompt: string; revertDiff: string | null }> {
     const instance = await this.getOrCreateInstance()
 
     const status = await this.querySessionStatus(instance, worktreePath, opencodeSessionId)
@@ -829,9 +851,19 @@ class OpenCodeService {
       }
     })
 
+    // Read back session to get the authoritative revert state (including diff)
+    const updatedSession = await instance.client.session.get({
+      path: { id: opencodeSessionId },
+      query: { directory: worktreePath }
+    })
+    const updatedRevert = asRecord(asRecord(updatedSession.data)?.revert)
+    const actualRevertMessageID = asString(updatedRevert?.messageID) ?? targetMessageID
+    const revertDiff = asString(updatedRevert?.diff) ?? null
+
     return {
-      revertMessageID: targetMessageID,
-      restoredPrompt: extractPromptTextFromMessage(targetMessage)
+      revertMessageID: actualRevertMessageID,
+      restoredPrompt: extractPromptTextFromMessage(targetMessage),
+      revertDiff
     }
   }
 

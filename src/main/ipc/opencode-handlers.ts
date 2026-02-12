@@ -160,6 +160,24 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Get session info (revert state)
+  ipcMain.handle(
+    'opencode:sessionInfo',
+    async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
+      log.info('IPC: opencode:sessionInfo', { worktreePath, sessionId })
+      try {
+        const result = await openCodeService.getSessionInfo(worktreePath, sessionId)
+        return { success: true, ...result }
+      } catch (error) {
+        log.error('IPC: opencode:sessionInfo failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // List available slash commands
   ipcMain.handle(
     'opencode:commands',

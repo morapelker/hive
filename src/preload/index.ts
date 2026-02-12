@@ -798,6 +798,17 @@ const opencodeOps = {
   ): Promise<{ success: boolean; permissions: unknown[]; error?: string }> =>
     ipcRenderer.invoke('opencode:permission:list', { worktreePath }),
 
+  // Get session info (revert state)
+  sessionInfo: (
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<{
+    success: boolean
+    revertMessageID?: string | null
+    revertDiff?: string | null
+    error?: string
+  }> => ipcRenderer.invoke('opencode:sessionInfo', { worktreePath, sessionId: opencodeSessionId }),
+
   // Undo the last assistant turn/message range
   undo: (
     worktreePath: string,
@@ -806,6 +817,7 @@ const opencodeOps = {
     success: boolean
     revertMessageID?: string
     restoredPrompt?: string
+    revertDiff?: string | null
     error?: string
   }> => ipcRenderer.invoke('opencode:undo', { worktreePath, sessionId: opencodeSessionId }),
 
