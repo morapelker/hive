@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      - run: pip3 install setuptools
+      - run: pip3 install --break-system-packages setuptools
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec electron-builder --mac --publish always
         env:
