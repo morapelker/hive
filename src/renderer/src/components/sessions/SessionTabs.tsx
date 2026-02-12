@@ -5,12 +5,13 @@ import {
   ChevronLeft,
   ChevronRight,
   FileCode,
+  GitCompareArrows,
   Loader2,
   AlertCircle,
   Check
 } from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
-import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useFileViewerStore, type FileViewerTab, type DiffTab } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -217,6 +218,58 @@ function FileTab({ filePath, name, isActive, onClick, onClose }: FileTabProps): 
   )
 }
 
+interface DiffTabItemProps {
+  tabKey: string
+  tab: DiffTab
+  isActive: boolean
+  onActivate: () => void
+  onClose: (e: React.MouseEvent) => void
+}
+
+function DiffTabItem({
+  tabKey,
+  tab,
+  isActive,
+  onActivate,
+  onClose
+}: DiffTabItemProps): React.JSX.Element {
+  return (
+    <div
+      data-testid={`diff-tab-${tab.fileName}`}
+      onClick={onActivate}
+      onMouseDown={(e) => {
+        if (e.button === 1) {
+          e.preventDefault()
+          onClose(e)
+        }
+      }}
+      className={cn(
+        'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
+        'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
+        isActive
+          ? 'bg-background text-foreground'
+          : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+      )}
+      title={`${tab.filePath} (${tab.staged ? 'staged' : 'unstaged'})`}
+    >
+      <GitCompareArrows className="h-3.5 w-3.5 flex-shrink-0 text-orange-400" />
+      <span className="truncate flex-1">{tab.fileName}</span>
+      {tab.staged && <span className="text-[10px] text-green-500 font-medium shrink-0">S</span>}
+      <button
+        onClick={onClose}
+        className={cn(
+          'p-0.5 rounded hover:bg-accent transition-opacity',
+          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        )}
+        data-testid={`close-diff-tab-${tabKey}`}
+      >
+        <X className="h-3 w-3" />
+      </button>
+      {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+    </div>
+  )
+}
+
 export function SessionTabs(): React.JSX.Element | null {
   const tabsContainerRef = useRef<HTMLDivElement>(null)
   const [showLeftArrow, setShowLeftArrow] = useState(false)
@@ -376,6 +429,17 @@ export function SessionTabs(): React.JSX.Element | null {
     closeFile(filePath)
   }
 
+  // Handle clicking a diff tab - restore activeDiff for the viewer
+  const handleDiffTabClick = (tabKey: string) => {
+    useFileViewerStore.getState().activateDiffTab(tabKey)
+  }
+
+  // Handle closing a diff tab
+  const handleCloseDiffTab = (e: React.MouseEvent, tabKey: string) => {
+    e.stopPropagation()
+    useFileViewerStore.getState().closeDiffTab(tabKey)
+  }
+
   // Drag and drop handlers
   const handleDragStart = (e: React.DragEvent, sessionId: string) => {
     setDraggedTabId(sessionId)
@@ -427,10 +491,17 @@ export function SessionTabs(): React.JSX.Element | null {
     .map((id) => sessions.find((s) => s.id === id))
     .filter((s): s is NonNullable<typeof s> => s !== undefined)
 
-  // Get file tabs for the current worktree
-  const fileTabs = Array.from(openFiles.values()).filter((f) => f.worktreeId === selectedWorktreeId)
+  // Get file tabs for the current worktree (only regular file tabs, not diff tabs)
+  const fileTabs = Array.from(openFiles.values()).filter(
+    (f): f is FileViewerTab => f.type === 'file' && f.worktreeId === selectedWorktreeId
+  )
 
-  // Determine if a file tab is the active one
+  // Get diff tabs from openFiles
+  const diffTabs = Array.from(openFiles.entries()).filter(
+    (entry): entry is [string, DiffTab] => entry[1].type === 'diff'
+  )
+
+  // Determine if a file/diff tab is the active one
   const isFileTabActive = activeFilePath !== null
 
   return (
@@ -465,7 +536,7 @@ export function SessionTabs(): React.JSX.Element | null {
         className="flex-1 flex overflow-x-auto scrollbar-hide"
         style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
       >
-        {orderedSessions.length === 0 && fileTabs.length === 0 ? (
+        {orderedSessions.length === 0 && fileTabs.length === 0 && diffTabs.length === 0 ? (
           <div
             className="flex items-center px-3 py-1.5 text-sm text-muted-foreground"
             data-testid="no-sessions"
@@ -502,6 +573,17 @@ export function SessionTabs(): React.JSX.Element | null {
                 isActive={isFileTabActive && activeFilePath === file.path}
                 onClick={() => handleFileTabClick(file.path)}
                 onClose={(e) => handleCloseFileTab(e, file.path)}
+              />
+            ))}
+            {/* Diff viewer tabs */}
+            {diffTabs.map(([key, tab]) => (
+              <DiffTabItem
+                key={key}
+                tabKey={key}
+                tab={tab}
+                isActive={isFileTabActive && activeFilePath === key}
+                onActivate={() => handleDiffTabClick(key)}
+                onClose={(e) => handleCloseDiffTab(e, key)}
               />
             ))}
           </>

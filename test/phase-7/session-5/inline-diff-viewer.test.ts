@@ -135,9 +135,8 @@ describe('Session 5: Inline Diff Viewer', () => {
   // ---------------------------------------------------------------------------
   describe('InlineDiffViewer', () => {
     test('renders diff content', async () => {
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -157,9 +156,8 @@ describe('Session 5: Inline Diff Viewer', () => {
     })
 
     test('toolbar shows nav arrows', async () => {
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -179,9 +177,8 @@ describe('Session 5: Inline Diff Viewer', () => {
     })
 
     test('shows filename in toolbar', async () => {
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -200,9 +197,8 @@ describe('Session 5: Inline Diff Viewer', () => {
     })
 
     test('context expansion increases contextLines', async () => {
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -243,9 +239,8 @@ describe('Session 5: Inline Diff Viewer', () => {
     })
 
     test('copy button copies diff to clipboard', async () => {
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -275,9 +270,8 @@ describe('Session 5: Inline Diff Viewer', () => {
     test('close button calls onClose', async () => {
       const onClose = vi.fn()
 
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -299,9 +293,8 @@ describe('Session 5: Inline Diff Viewer', () => {
     })
 
     test('unified/split toggle works', async () => {
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -329,9 +322,8 @@ describe('Session 5: Inline Diff Viewer', () => {
       // Make getDiff hang
       mockGetDiff.mockImplementation(() => new Promise(() => {}))
 
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -353,9 +345,8 @@ describe('Session 5: Inline Diff Viewer', () => {
         error: 'Git error'
       })
 
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -375,9 +366,8 @@ describe('Session 5: Inline Diff Viewer', () => {
     })
 
     test('getDiff called with staged=true for staged files', async () => {
-      const { InlineDiffViewer } = await import(
-        '../../../src/renderer/src/components/diff/InlineDiffViewer'
-      )
+      const { InlineDiffViewer } =
+        await import('../../../src/renderer/src/components/diff/InlineDiffViewer')
 
       render(
         React.createElement(InlineDiffViewer, {
@@ -391,13 +381,7 @@ describe('Session 5: Inline Diff Viewer', () => {
       )
 
       await waitFor(() => {
-        expect(mockGetDiff).toHaveBeenCalledWith(
-          '/path/to/worktree',
-          'src/App.tsx',
-          true,
-          false,
-          3
-        )
+        expect(mockGetDiff).toHaveBeenCalledWith('/path/to/worktree', 'src/App.tsx', true, false, 3)
       })
     })
   })
@@ -406,16 +390,15 @@ describe('Session 5: Inline Diff Viewer', () => {
   // useFileViewerStore activeDiff tests
   // ---------------------------------------------------------------------------
   describe('useFileViewerStore activeDiff', () => {
-    test('setActiveDiff sets diff and clears activeFilePath', async () => {
-      const { useFileViewerStore } = await import(
-        '../../../src/renderer/src/stores/useFileViewerStore'
-      )
+    test('setActiveDiff sets diff and sets activeFilePath to diff tab key', async () => {
+      const { useFileViewerStore } =
+        await import('../../../src/renderer/src/stores/useFileViewerStore')
 
       // Set a file first
       useFileViewerStore.getState().setActiveFile('/some/file.ts')
       expect(useFileViewerStore.getState().activeFilePath).toBe('/some/file.ts')
 
-      // Set active diff
+      // Set active diff — now creates a diff tab entry
       useFileViewerStore.getState().setActiveDiff({
         worktreePath: '/path/to/worktree',
         filePath: 'src/App.tsx',
@@ -427,13 +410,12 @@ describe('Session 5: Inline Diff Viewer', () => {
       const state = useFileViewerStore.getState()
       expect(state.activeDiff).not.toBeNull()
       expect(state.activeDiff?.filePath).toBe('src/App.tsx')
-      expect(state.activeFilePath).toBeNull()
+      expect(state.activeFilePath).toBe('diff:src/App.tsx:unstaged')
     })
 
     test('clearActiveDiff clears diff', async () => {
-      const { useFileViewerStore } = await import(
-        '../../../src/renderer/src/stores/useFileViewerStore'
-      )
+      const { useFileViewerStore } =
+        await import('../../../src/renderer/src/stores/useFileViewerStore')
 
       useFileViewerStore.getState().setActiveDiff({
         worktreePath: '/path/to/worktree',
@@ -450,9 +432,8 @@ describe('Session 5: Inline Diff Viewer', () => {
     })
 
     test('setActiveFile clears activeDiff', async () => {
-      const { useFileViewerStore } = await import(
-        '../../../src/renderer/src/stores/useFileViewerStore'
-      )
+      const { useFileViewerStore } =
+        await import('../../../src/renderer/src/stores/useFileViewerStore')
 
       useFileViewerStore.getState().setActiveDiff({
         worktreePath: '/path/to/worktree',
@@ -470,9 +451,8 @@ describe('Session 5: Inline Diff Viewer', () => {
     })
 
     test('openFile clears activeDiff', async () => {
-      const { useFileViewerStore } = await import(
-        '../../../src/renderer/src/stores/useFileViewerStore'
-      )
+      const { useFileViewerStore } =
+        await import('../../../src/renderer/src/stores/useFileViewerStore')
 
       useFileViewerStore.getState().setActiveDiff({
         worktreePath: '/path/to/worktree',
@@ -502,13 +482,11 @@ describe('Session 5: Inline Diff Viewer', () => {
         ]
       })
 
-      const { useFileViewerStore } = await import(
-        '../../../src/renderer/src/stores/useFileViewerStore'
-      )
+      const { useFileViewerStore } =
+        await import('../../../src/renderer/src/stores/useFileViewerStore')
 
-      const { GitStatusPanel } = await import(
-        '../../../src/renderer/src/components/git/GitStatusPanel'
-      )
+      const { GitStatusPanel } =
+        await import('../../../src/renderer/src/components/git/GitStatusPanel')
 
       render(React.createElement(GitStatusPanel, { worktreePath: '/path/to/worktree' }))
 
@@ -538,13 +516,11 @@ describe('Session 5: Inline Diff Viewer', () => {
         ]
       })
 
-      const { useFileViewerStore } = await import(
-        '../../../src/renderer/src/stores/useFileViewerStore'
-      )
+      const { useFileViewerStore } =
+        await import('../../../src/renderer/src/stores/useFileViewerStore')
 
-      const { GitStatusPanel } = await import(
-        '../../../src/renderer/src/components/git/GitStatusPanel'
-      )
+      const { GitStatusPanel } =
+        await import('../../../src/renderer/src/components/git/GitStatusPanel')
 
       render(React.createElement(GitStatusPanel, { worktreePath: '/path/to/worktree' }))
 
@@ -567,13 +543,11 @@ describe('Session 5: Inline Diff Viewer', () => {
         ]
       })
 
-      const { useFileViewerStore } = await import(
-        '../../../src/renderer/src/stores/useFileViewerStore'
-      )
+      const { useFileViewerStore } =
+        await import('../../../src/renderer/src/stores/useFileViewerStore')
 
-      const { GitStatusPanel } = await import(
-        '../../../src/renderer/src/components/git/GitStatusPanel'
-      )
+      const { GitStatusPanel } =
+        await import('../../../src/renderer/src/components/git/GitStatusPanel')
 
       render(React.createElement(GitStatusPanel, { worktreePath: '/path/to/worktree' }))
 

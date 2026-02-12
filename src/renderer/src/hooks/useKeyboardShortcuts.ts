@@ -119,13 +119,19 @@ export function useKeyboardShortcuts(): void {
     const cleanup = window.systemOps.onCloseSessionShortcut(() => {
       const { activeFilePath, activeDiff } = useFileViewerStore.getState()
 
-      // Priority 1: Close active file tab
+      // Priority 1: Close active diff tab
+      if (activeFilePath?.startsWith('diff:')) {
+        useFileViewerStore.getState().closeDiffTab(activeFilePath)
+        return
+      }
+
+      // Priority 2: Close active file tab
       if (activeFilePath) {
         useFileViewerStore.getState().closeFile(activeFilePath)
         return
       }
 
-      // Priority 2: Clear active diff view
+      // Priority 3: Clear active diff view (legacy — diff without tab)
       if (activeDiff) {
         useFileViewerStore.getState().clearActiveDiff()
         return
@@ -184,19 +190,25 @@ function getShortcutHandlers(
       handler: () => {
         const { activeFilePath, activeDiff } = useFileViewerStore.getState()
 
-        // Priority 1: Close active file tab
+        // Priority 1: Close active diff tab
+        if (activeFilePath?.startsWith('diff:')) {
+          useFileViewerStore.getState().closeDiffTab(activeFilePath)
+          return
+        }
+
+        // Priority 2: Close active file tab
         if (activeFilePath) {
           useFileViewerStore.getState().closeFile(activeFilePath)
           return
         }
 
-        // Priority 2: Clear active diff view
+        // Priority 3: Clear active diff view (legacy — diff without tab)
         if (activeDiff) {
           useFileViewerStore.getState().clearActiveDiff()
           return
         }
 
-        // Priority 3: Close active session tab
+        // Priority 4: Close active session tab
         const { activeSessionId } = useSessionStore.getState()
         if (!activeSessionId) return
         useSessionStore
