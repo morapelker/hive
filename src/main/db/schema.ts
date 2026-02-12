@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 10
+export const CURRENT_SCHEMA_VERSION = 11
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -181,6 +181,12 @@ export const MIGRATIONS: Migration[] = [
     version: 10,
     name: 'add_worktree_last_message_at',
     up: `ALTER TABLE worktrees ADD COLUMN last_message_at INTEGER DEFAULT NULL;`,
+    down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
+  },
+  {
+    version: 11,
+    name: 'add_worktree_session_titles',
+    up: `ALTER TABLE worktrees ADD COLUMN session_titles TEXT DEFAULT '[]';`,
     down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
   }
 ]

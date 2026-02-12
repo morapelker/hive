@@ -115,6 +115,18 @@ export function registerDatabaseHandlers(): void {
     return true
   })
 
+  ipcMain.handle(
+    'db:worktree:appendSessionTitle',
+    (_event, { worktreeId, title }: { worktreeId: string; title: string }) => {
+      try {
+        getDatabase().appendSessionTitle(worktreeId, title)
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  )
+
   // Sessions
   ipcMain.handle('db:session:create', (_event, data: SessionCreate) => {
     return getDatabase().createSession(data)

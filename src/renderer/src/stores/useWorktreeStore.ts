@@ -15,6 +15,7 @@ interface Worktree {
   is_default: boolean
   branch_renamed: number // 0 = auto-named (city), 1 = user/auto renamed
   last_message_at: number | null // epoch ms of last AI message activity
+  session_titles: string // JSON array of session title strings
   created_at: string
   last_accessed_at: string
 }
@@ -65,6 +66,7 @@ interface WorktreeState {
   ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
   updateWorktreeBranch: (worktreeId: string, newBranch: string) => void
   reorderWorktrees: (projectId: string, fromIndex: number, toIndex: number) => void
+  appendSessionTitle: (worktreeId: string, title: string) => void
 }
 
 // Load persisted worktree order from localStorage
@@ -482,5 +484,34 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       return { worktreeOrderByProject: newOrderMap }
     })
+  },
+
+  // Append a session title to a worktree — updates DB and in-memory store
+  appendSessionTitle: (worktreeId: string, title: string) => {
+    // Update in-memory store immediately
+    set((state) => {
+      const newMap = new Map(state.worktreesByProject)
+      for (const [projectId, worktrees] of newMap.entries()) {
+        const updated = worktrees.map((w) => {
+          if (w.id !== worktreeId) return w
+          const titles: string[] = (() => {
+            try {
+              return JSON.parse(w.session_titles || '[]')
+            } catch {
+              return []
+            }
+          })()
+          if (titles.includes(title)) return w
+          return { ...w, session_titles: JSON.stringify([...titles, title]) }
+        })
+        if (updated.some((w, i) => w !== worktrees[i])) {
+          newMap.set(projectId, updated)
+        }
+      }
+      return { worktreesByProject: newMap }
+    })
+
+    // Persist to database (fire-and-forget)
+    window.db.worktree.appendSessionTitle?.(worktreeId, title)
   }
 }))

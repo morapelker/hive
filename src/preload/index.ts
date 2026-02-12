@@ -70,7 +70,9 @@ const db = {
     ) => ipcRenderer.invoke('db:worktree:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('db:worktree:delete', id),
     archive: (id: string) => ipcRenderer.invoke('db:worktree:archive', id),
-    touch: (id: string) => ipcRenderer.invoke('db:worktree:touch', id)
+    touch: (id: string) => ipcRenderer.invoke('db:worktree:touch', id),
+    appendSessionTitle: (worktreeId: string, title: string) =>
+      ipcRenderer.invoke('db:worktree:appendSessionTitle', { worktreeId, title })
   },
 
   // Sessions

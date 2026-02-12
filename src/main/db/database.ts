@@ -73,7 +73,8 @@ export class DatabaseService {
       ...row,
       is_default: !!row.is_default,
       branch_renamed: (row.branch_renamed as number) ?? 0,
-      last_message_at: (row.last_message_at as number) ?? null
+      last_message_at: (row.last_message_at as number) ?? null,
+      session_titles: (row.session_titles as string) ?? '[]'
     } as Worktree
   }
 
@@ -272,6 +273,7 @@ export class DatabaseService {
       is_default: isDefault,
       branch_renamed: 0,
       last_message_at: null,
+      session_titles: '[]',
       created_at: now,
       last_accessed_at: now
     }
@@ -378,6 +380,25 @@ export class DatabaseService {
     const db = this.getDb()
     const now = new Date().toISOString()
     db.prepare('UPDATE worktrees SET last_accessed_at = ? WHERE id = ?').run(now, id)
+  }
+
+  /**
+   * Append a session title to the worktree's session_titles JSON array.
+   * Skips duplicates.
+   */
+  appendSessionTitle(worktreeId: string, title: string): void {
+    const db = this.getDb()
+    const row = db.prepare('SELECT session_titles FROM worktrees WHERE id = ?').get(worktreeId) as
+      | Record<string, unknown>
+      | undefined
+    const titles: string[] = JSON.parse((row?.session_titles as string) || '[]')
+    if (!titles.includes(title)) {
+      titles.push(title)
+      db.prepare('UPDATE worktrees SET session_titles = ? WHERE id = ?').run(
+        JSON.stringify(titles),
+        worktreeId
+      )
+    }
   }
 
   /**
