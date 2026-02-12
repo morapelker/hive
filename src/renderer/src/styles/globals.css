@@ -1,0 +1,277 @@
+@import 'tailwindcss';
+@import 'diff2html/bundles/css/diff2html.min.css';
+@import './xterm.css';
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.5rem;
+  /* Light theme defaults (Daylight) */
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(260 15% 12%);
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(260 15% 12%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(260 15% 12%);
+  --primary: hsl(270 60% 50%);
+  --primary-foreground: hsl(0 0% 100%);
+  --secondary: hsl(260 15% 95%);
+  --secondary-foreground: hsl(260 15% 20%);
+  --muted: hsl(260 15% 95%);
+  --muted-foreground: hsl(260 10% 45%);
+  --accent: hsl(260 15% 95%);
+  --accent-foreground: hsl(260 15% 20%);
+  --destructive: hsl(0 62% 50%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --border: hsl(260 10% 90%);
+  --input: hsl(260 10% 90%);
+  --ring: hsl(270 60% 50%);
+  --chart-1: oklch(64.62% 0.171 250.71);
+  --chart-2: oklch(60.04% 0.118 184.7);
+  --chart-3: oklch(39.87% 0.07 227.39);
+  --chart-4: oklch(74.37% 0.144 85.12);
+  --chart-5: oklch(64.47% 0.222 41.12);
+  --sidebar: hsl(260 15% 97%);
+  --sidebar-foreground: hsl(260 10% 45%);
+  --sidebar-primary: hsl(270 60% 50%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
+  --sidebar-accent: hsl(260 15% 93%);
+  --sidebar-accent-foreground: hsl(260 15% 20%);
+  --sidebar-border: hsl(260 10% 90%);
+  --sidebar-ring: hsl(270 60% 50%);
+}
+
+.dark {
+  /* Dark theme defaults (Amethyst) */
+  --background: hsl(260 15% 8%);
+  --foreground: hsl(260 10% 95%);
+  --card: hsl(260 15% 10%);
+  --card-foreground: hsl(260 10% 95%);
+  --popover: hsl(260 15% 10%);
+  --popover-foreground: hsl(260 10% 95%);
+  --primary: hsl(270 60% 55%);
+  --primary-foreground: hsl(0 0% 100%);
+  --secondary: hsl(260 15% 16%);
+  --secondary-foreground: hsl(260 10% 90%);
+  --muted: hsl(260 15% 16%);
+  --muted-foreground: hsl(260 10% 55%);
+  --accent: hsl(260 15% 16%);
+  --accent-foreground: hsl(260 10% 90%);
+  --destructive: hsl(0 62% 50%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --border: hsl(260 15% 18%);
+  --input: hsl(260 15% 18%);
+  --ring: hsl(270 60% 55%);
+  --chart-1: oklch(70.34% 0.127 227.39);
+  --chart-2: oklch(69.26% 0.128 184.7);
+  --chart-3: oklch(98.48% 0.001 285.98);
+  --chart-4: oklch(74.11% 0.164 68.11);
+  --chart-5: oklch(65.91% 0.204 41.12);
+  --sidebar: hsl(260 15% 7%);
+  --sidebar-foreground: hsl(260 10% 55%);
+  --sidebar-primary: hsl(270 60% 55%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
+  --sidebar-accent: hsl(260 15% 14%);
+  --sidebar-accent-foreground: hsl(260 10% 90%);
+  --sidebar-border: hsl(260 15% 18%);
+  --sidebar-ring: hsl(270 60% 55%);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+  }
+
+  /* Native-feeling scrollbars — thin, transparent, theme-aware */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+  }
+
+  *:hover {
+    scrollbar-color: rgba(128, 128, 128, 0.5) transparent;
+  }
+
+  /* WebKit scrollbar styling (Electron/Chromium) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.25);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(128, 128, 128, 0.45);
+  }
+
+  ::-webkit-scrollbar-thumb:active {
+    background: rgba(128, 128, 128, 0.6);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+/* Electron window drag utilities */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Prevent text selection during resize operations */
+.resize-active {
+  user-select: none;
+}
+
+/* diff2html styles */
+.diff-viewer {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+  font-size: 12px;
+}
+
+.diff-viewer .d2h-empty,
+.diff-viewer .d2h-error {
+  padding: 2rem;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+
+.diff-viewer .d2h-error {
+  color: var(--destructive);
+}
+
+/* Dark mode overrides for diff2html — uses theme-aware CSS custom properties */
+.dark .diff-viewer .d2h-wrapper {
+  background-color: transparent;
+}
+
+.dark .diff-viewer .d2h-file-header {
+  background-color: hsl(var(--muted));
+  border-color: hsl(var(--border));
+}
+
+.dark .diff-viewer .d2h-file-header,
+.dark .diff-viewer .d2h-file-name {
+  color: hsl(var(--foreground));
+}
+
+.dark .diff-viewer .d2h-code-line,
+.dark .diff-viewer .d2h-code-side-line {
+  background-color: hsl(var(--background));
+}
+
+.dark .diff-viewer .d2h-code-linenumber {
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  border-color: hsl(var(--border));
+}
+
+/* Dark mode — added lines: dark green text on green background */
+.dark .diff-viewer .d2h-ins {
+  background-color: rgba(46, 160, 67, 0.15);
+}
+
+.dark .diff-viewer .d2h-ins .d2h-code-line-ctn {
+  background-color: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+}
+
+/* Dark mode — removed lines: dark red text on red background */
+.dark .diff-viewer .d2h-del {
+  background-color: rgba(248, 81, 73, 0.15);
+}
+
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn {
+  background-color: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
+
+/* Light mode — added lines: dark green text */
+.diff-viewer .d2h-ins .d2h-code-line-ctn {
+  color: #1a7f37;
+}
+
+/* Light mode — removed lines: dark red text */
+.diff-viewer .d2h-del .d2h-code-line-ctn {
+  color: #cf222e;
+}
+
+.dark .diff-viewer .d2h-info {
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  border-color: hsl(var(--border));
+}
+
+.dark .diff-viewer .d2h-file-diff {
+  border-color: hsl(var(--border));
+}
+
+.dark .diff-viewer .d2h-diff-table {
+  border-color: hsl(var(--border));
+}
+
+.dark .diff-viewer .d2h-diff-tbody tr {
+  border-color: hsl(var(--border));
+}
+
+/* Ensure line numbers and content align properly */
+.diff-viewer .d2h-code-line-ctn {
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+/* Split view specific adjustments */
+.diff-viewer .d2h-file-side-diff {
+  width: 50%;
+}

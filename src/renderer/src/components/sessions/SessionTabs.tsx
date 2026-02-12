@@ -1,0 +1,716 @@
+import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react'
+import {
+  Plus,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  FileCode,
+  GitCompareArrows,
+  Loader2,
+  AlertCircle,
+  Check
+} from 'lucide-react'
+import { useSessionStore } from '@/stores/useSessionStore'
+import { useFileViewerStore, type FileViewerTab, type DiffTab } from '@/stores/useFileViewerStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useProjectStore } from '@/stores/useProjectStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { cn } from '@/lib/utils'
+import { toast } from '@/lib/toast'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
+
+interface SessionTabProps {
+  sessionId: string
+  name: string
+  isActive: boolean
+  onClick: () => void
+  onClose: (e: React.MouseEvent) => void
+  onMiddleClick: (e: React.MouseEvent) => void
+  onRename: (newName: string) => void
+  onDragStart: (e: React.DragEvent) => void
+  onDragOver: (e: React.DragEvent) => void
+  onDrop: (e: React.DragEvent) => void
+  onDragEnd: () => void
+  isDragging: boolean
+  isDragOver: boolean
+  worktreeId: string
+  onCloseOthers: () => void
+  onCloseToRight: () => void
+}
+
+function SessionTab({
+  sessionId,
+  name,
+  isActive,
+  onClick,
+  onClose,
+  onMiddleClick,
+  onRename,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  isDragging,
+  isDragOver,
+  worktreeId: _worktreeId,
+  onCloseOthers,
+  onCloseToRight
+}: SessionTabProps): React.JSX.Element {
+  const [isEditing, setIsEditing] = useState(false)
+  const [editName, setEditName] = useState(name)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const sessionStatus = useWorktreeStatusStore(
+    (state) => state.sessionStatuses[sessionId]?.status ?? null
+  )
+
+  // Focus and select input text when entering edit mode
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [isEditing])
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditName(name)
+    setIsEditing(true)
+  }
+
+  const handleSave = () => {
+    const trimmed = editName.trim()
+    if (trimmed && trimmed !== name) {
+      onRename(trimmed)
+    }
+    setIsEditing(false)
+  }
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSave()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setEditName(name)
+      setIsEditing(false)
+    }
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          data-testid={`session-tab-${sessionId}`}
+          draggable={!isEditing}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          onDragEnd={onDragEnd}
+          onClick={isEditing ? undefined : onClick}
+          onDoubleClick={handleDoubleClick}
+          onMouseDown={(e) => {
+            // Middle click to close
+            if (e.button === 1) {
+              onMiddleClick(e)
+            }
+          }}
+          className={cn(
+            'group relative flex items-center gap-1 px-3 py-1.5 text-sm cursor-pointer select-none',
+            'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
+            isActive
+              ? 'bg-background text-foreground'
+              : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground',
+            isDragging && 'opacity-50',
+            isDragOver && 'bg-accent/50'
+          )}
+        >
+          {(sessionStatus === 'working' || sessionStatus === 'planning') && (
+            <Loader2
+              className={cn(
+                'h-3 w-3 animate-spin flex-shrink-0',
+                sessionStatus === 'planning' ? 'text-blue-400' : 'text-blue-500'
+              )}
+              data-testid={`tab-spinner-${sessionId}`}
+            />
+          )}
+          {(sessionStatus === 'answering' || sessionStatus === 'permission') && (
+            <AlertCircle
+              className="h-3 w-3 text-amber-500 flex-shrink-0"
+              data-testid={`tab-${sessionStatus === 'permission' ? 'permission' : 'answering'}-${sessionId}`}
+            />
+          )}
+          {sessionStatus === 'completed' && (
+            <Check
+              className="h-3 w-3 text-green-500 flex-shrink-0"
+              data-testid={`tab-completed-${sessionId}`}
+            />
+          )}
+          {sessionStatus === 'unread' && !isActive && (
+            <span
+              className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"
+              data-testid={`tab-unread-${sessionId}`}
+            />
+          )}
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={handleSave}
+              onKeyDown={handleKeyDown}
+              className="flex-1 min-w-0 bg-transparent border border-primary/50 rounded px-1 py-0 text-sm outline-none"
+              data-testid={`rename-input-${sessionId}`}
+            />
+          ) : (
+            <span className="truncate flex-1">{name || 'Untitled'}</span>
+          )}
+          <button
+            onClick={onClose}
+            className={cn(
+              'p-0.5 rounded hover:bg-accent transition-opacity',
+              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            )}
+            data-testid={`close-tab-${sessionId}`}
+          >
+            <X className="h-3 w-3" />
+          </button>
+          {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={(e) => onClose(e as unknown as React.MouseEvent)}>
+          Close
+          <ContextMenuShortcut>&#8984;W</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>
+        <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+interface FileTabProps {
+  filePath: string
+  name: string
+  isActive: boolean
+  onClick: () => void
+  onClose: (e: React.MouseEvent) => void
+  onCloseOthers: () => void
+  onCloseToRight: () => void
+  relativePath: string
+}
+
+function FileTab({
+  filePath,
+  name,
+  isActive,
+  onClick,
+  onClose,
+  onCloseOthers,
+  onCloseToRight,
+  relativePath
+}: FileTabProps): React.JSX.Element {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          data-testid={`file-tab-${name}`}
+          onClick={onClick}
+          onMouseDown={(e) => {
+            if (e.button === 1) {
+              e.preventDefault()
+              onClose(e)
+            }
+          }}
+          className={cn(
+            'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
+            'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
+            isActive
+              ? 'bg-background text-foreground'
+              : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+          )}
+          title={filePath}
+        >
+          <FileCode className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
+          <span className="truncate flex-1">{name}</span>
+          <button
+            onClick={onClose}
+            className={cn(
+              'p-0.5 rounded hover:bg-accent transition-opacity',
+              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            )}
+            data-testid={`close-file-tab-${name}`}
+          >
+            <X className="h-3 w-3" />
+          </button>
+          {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={(e) => onClose(e as unknown as React.MouseEvent)}>
+          Close
+          <ContextMenuShortcut>&#8984;W</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>
+        <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => copyToClipboard(relativePath)}>
+          Copy Relative Path
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => copyToClipboard(filePath)}>
+          Copy Absolute Path
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+function copyToClipboard(text: string) {
+  navigator.clipboard.writeText(text)
+  toast.success('Copied to clipboard')
+}
+
+interface DiffTabItemProps {
+  tabKey: string
+  tab: DiffTab
+  isActive: boolean
+  onActivate: () => void
+  onClose: (e: React.MouseEvent) => void
+  onCloseOthers: () => void
+  onCloseToRight: () => void
+}
+
+function DiffTabItem({
+  tabKey,
+  tab,
+  isActive,
+  onActivate,
+  onClose,
+  onCloseOthers,
+  onCloseToRight
+}: DiffTabItemProps): React.JSX.Element {
+  const absolutePath = `${tab.worktreePath}/${tab.filePath}`
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          data-testid={`diff-tab-${tab.fileName}`}
+          onClick={onActivate}
+          onMouseDown={(e) => {
+            if (e.button === 1) {
+              e.preventDefault()
+              onClose(e)
+            }
+          }}
+          className={cn(
+            'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
+            'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
+            isActive
+              ? 'bg-background text-foreground'
+              : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+          )}
+          title={`${tab.filePath} (${tab.staged ? 'staged' : 'unstaged'})`}
+        >
+          <GitCompareArrows className="h-3.5 w-3.5 flex-shrink-0 text-orange-400" />
+          <span className="truncate flex-1">{tab.fileName}</span>
+          {tab.staged && <span className="text-[10px] text-green-500 font-medium shrink-0">S</span>}
+          <button
+            onClick={onClose}
+            className={cn(
+              'p-0.5 rounded hover:bg-accent transition-opacity',
+              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            )}
+            data-testid={`close-diff-tab-${tabKey}`}
+          >
+            <X className="h-3 w-3" />
+          </button>
+          {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={(e) => onClose(e as unknown as React.MouseEvent)}>
+          Close
+          <ContextMenuShortcut>&#8984;W</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>
+        <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => copyToClipboard(tab.filePath)}>
+          Copy Relative Path
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => copyToClipboard(absolutePath)}>
+          Copy Absolute Path
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+export function SessionTabs(): React.JSX.Element | null {
+  const tabsContainerRef = useRef<HTMLDivElement>(null)
+  const [showLeftArrow, setShowLeftArrow] = useState(false)
+  const [showRightArrow, setShowRightArrow] = useState(false)
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null)
+
+  const {
+    activeWorktreeId,
+    activeSessionId,
+    sessionsByWorktree,
+    tabOrderByWorktree,
+    loadSessions,
+    createSession,
+    closeSession,
+    setActiveSession,
+    reorderTabs,
+    updateSessionName,
+    closeOtherSessions,
+    closeSessionsToRight
+  } = useSessionStore()
+
+  const {
+    openFiles,
+    activeFilePath,
+    setActiveFile,
+    closeFile,
+    closeOtherFiles,
+    closeFilesToRight
+  } = useFileViewerStore()
+
+  const { selectedWorktreeId } = useWorktreeStore()
+  const { projects } = useProjectStore()
+
+  // Get the worktree and project info for the selected worktree
+  const selectedWorktree = useWorktreeStore((state) => {
+    if (!selectedWorktreeId) return null
+    for (const worktrees of state.worktreesByProject.values()) {
+      const found = worktrees.find((w) => w.id === selectedWorktreeId)
+      if (found) return found
+    }
+    return null
+  })
+
+  const project = selectedWorktree
+    ? projects.find((p) => p.id === selectedWorktree.project_id)
+    : null
+
+  // Sync active worktree with selected worktree
+  useEffect(() => {
+    if (selectedWorktreeId !== activeWorktreeId) {
+      useSessionStore.getState().setActiveWorktree(selectedWorktreeId)
+    }
+  }, [selectedWorktreeId, activeWorktreeId])
+
+  // Load sessions when worktree changes, then auto-start if the worktree has 0 sessions.
+  // Auto-start runs as a direct follow-up to loadSessions (not a separate effect) to
+  // eliminate race conditions between the two async operations.
+  const autoStartSession = useSettingsStore((state) => state.autoStartSession)
+  const autoStartedRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!selectedWorktreeId || !project) return
+
+    let cancelled = false
+
+    void (async () => {
+      await loadSessions(selectedWorktreeId, project.id)
+      if (cancelled) return
+
+      // After sessions are loaded, check if auto-start is needed
+      if (!autoStartSession) return
+      if (autoStartedRef.current === selectedWorktreeId) return
+
+      const sessions = useSessionStore.getState().sessionsByWorktree.get(selectedWorktreeId) || []
+      if (sessions.length > 0) return
+
+      autoStartedRef.current = selectedWorktreeId
+      await createSession(selectedWorktreeId, project.id)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedWorktreeId, project, loadSessions, autoStartSession, createSession])
+
+  // Check for tab overflow and update arrow visibility
+  const checkOverflow = useCallback(() => {
+    const container = tabsContainerRef.current
+    if (!container) return
+
+    setShowLeftArrow(container.scrollLeft > 0)
+    setShowRightArrow(container.scrollLeft < container.scrollWidth - container.clientWidth - 1)
+  }, [])
+
+  useEffect(() => {
+    checkOverflow()
+    const container = tabsContainerRef.current
+    if (container) {
+      container.addEventListener('scroll', checkOverflow)
+      window.addEventListener('resize', checkOverflow)
+      return () => {
+        container.removeEventListener('scroll', checkOverflow)
+        window.removeEventListener('resize', checkOverflow)
+      }
+    }
+  }, [checkOverflow, sessionsByWorktree, tabOrderByWorktree, openFiles])
+
+  // Scroll functions
+  const scrollLeft = () => {
+    const container = tabsContainerRef.current
+    if (container) {
+      container.scrollBy({ left: -150, behavior: 'smooth' })
+    }
+  }
+
+  const scrollRight = () => {
+    const container = tabsContainerRef.current
+    if (container) {
+      container.scrollBy({ left: 150, behavior: 'smooth' })
+    }
+  }
+
+  // Handle creating a new session
+  const handleCreateSession = async () => {
+    if (!selectedWorktreeId || !project) return
+
+    const result = await createSession(selectedWorktreeId, project.id)
+    if (!result.success) {
+      toast.error(result.error || 'Failed to create session')
+    }
+  }
+
+  // Handle closing a session
+  const handleCloseSession = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation()
+    const result = await closeSession(sessionId)
+    if (!result.success) {
+      toast.error(result.error || 'Failed to close session')
+    }
+  }
+
+  // Handle renaming a session tab
+  const handleRenameSession = async (sessionId: string, newName: string) => {
+    const success = await updateSessionName(sessionId, newName)
+    if (!success) {
+      toast.error('Failed to rename session')
+    }
+  }
+
+  // Handle clicking a session tab - deactivate file tab and clear unread status
+  const handleSessionTabClick = (sessionId: string) => {
+    setActiveFile(null)
+    setActiveSession(sessionId)
+    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+  }
+
+  // Handle clicking a file tab - keep session but activate file view
+  const handleFileTabClick = (filePath: string) => {
+    setActiveFile(filePath)
+  }
+
+  // Handle closing a file tab
+  const handleCloseFileTab = (e: React.MouseEvent, filePath: string) => {
+    e.stopPropagation()
+    closeFile(filePath)
+  }
+
+  // Handle clicking a diff tab - restore activeDiff for the viewer
+  const handleDiffTabClick = (tabKey: string) => {
+    useFileViewerStore.getState().activateDiffTab(tabKey)
+  }
+
+  // Handle closing a diff tab
+  const handleCloseDiffTab = (e: React.MouseEvent, tabKey: string) => {
+    e.stopPropagation()
+    useFileViewerStore.getState().closeDiffTab(tabKey)
+  }
+
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent, sessionId: string) => {
+    setDraggedTabId(sessionId)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', sessionId)
+  }
+
+  const handleDragOver = (e: React.DragEvent, sessionId: string) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (draggedTabId && draggedTabId !== sessionId) {
+      setDragOverTabId(sessionId)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent, targetSessionId: string) => {
+    e.preventDefault()
+    if (!draggedTabId || !selectedWorktreeId || draggedTabId === targetSessionId) {
+      return
+    }
+
+    const tabOrder = tabOrderByWorktree.get(selectedWorktreeId) || []
+    const fromIndex = tabOrder.indexOf(draggedTabId)
+    const toIndex = tabOrder.indexOf(targetSessionId)
+
+    if (fromIndex !== -1 && toIndex !== -1) {
+      reorderTabs(selectedWorktreeId, fromIndex, toIndex)
+    }
+
+    setDraggedTabId(null)
+    setDragOverTabId(null)
+  }
+
+  const handleDragEnd = () => {
+    setDraggedTabId(null)
+    setDragOverTabId(null)
+  }
+
+  // Don't render if no worktree is selected
+  if (!selectedWorktreeId) {
+    return null
+  }
+
+  const sessions = sessionsByWorktree.get(selectedWorktreeId) || []
+  const tabOrder = tabOrderByWorktree.get(selectedWorktreeId) || []
+
+  // Get sessions in tab order
+  const orderedSessions = tabOrder
+    .map((id) => sessions.find((s) => s.id === id))
+    .filter((s): s is NonNullable<typeof s> => s !== undefined)
+
+  // Get file tabs for the current worktree (only regular file tabs, not diff tabs)
+  const fileTabs = Array.from(openFiles.values()).filter(
+    (f): f is FileViewerTab => f.type === 'file' && f.worktreeId === selectedWorktreeId
+  )
+
+  // Get diff tabs from openFiles
+  const diffTabs = Array.from(openFiles.entries()).filter(
+    (entry): entry is [string, DiffTab] => entry[1].type === 'diff'
+  )
+
+  // Determine if a file/diff tab is the active one
+  const isFileTabActive = activeFilePath !== null
+
+  return (
+    <div
+      className="flex items-center border-b border-border bg-muted/30"
+      data-testid="session-tabs"
+    >
+      {/* New session button - on the left */}
+      <button
+        onClick={handleCreateSession}
+        className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
+        data-testid="create-session"
+        title="Create new session"
+      >
+        <Plus className="h-4 w-4" />
+      </button>
+
+      {/* Left scroll arrow */}
+      {showLeftArrow && (
+        <button
+          onClick={scrollLeft}
+          className="p-1 hover:bg-accent transition-colors shrink-0"
+          data-testid="scroll-left"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+      )}
+
+      {/* Tabs container */}
+      <div
+        ref={tabsContainerRef}
+        className="flex-1 flex overflow-x-auto scrollbar-hide"
+        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+      >
+        {orderedSessions.length === 0 && fileTabs.length === 0 && diffTabs.length === 0 ? (
+          <div
+            className="flex items-center px-3 py-1.5 text-sm text-muted-foreground"
+            data-testid="no-sessions"
+          >
+            No sessions yet. Click + to create one.
+          </div>
+        ) : (
+          <>
+            {/* Session tabs */}
+            {orderedSessions.map((session) => (
+              <SessionTab
+                key={session.id}
+                sessionId={session.id}
+                name={session.name || 'Untitled'}
+                isActive={session.id === activeSessionId && !isFileTabActive}
+                onClick={() => handleSessionTabClick(session.id)}
+                onClose={(e) => handleCloseSession(e, session.id)}
+                onMiddleClick={(e) => handleCloseSession(e, session.id)}
+                onRename={(newName) => handleRenameSession(session.id, newName)}
+                onDragStart={(e) => handleDragStart(e, session.id)}
+                onDragOver={(e) => handleDragOver(e, session.id)}
+                onDrop={(e) => handleDrop(e, session.id)}
+                onDragEnd={handleDragEnd}
+                isDragging={draggedTabId === session.id}
+                isDragOver={dragOverTabId === session.id}
+                worktreeId={selectedWorktreeId}
+                onCloseOthers={() => closeOtherSessions(selectedWorktreeId, session.id)}
+                onCloseToRight={() => closeSessionsToRight(selectedWorktreeId, session.id)}
+              />
+            ))}
+            {/* File viewer tabs */}
+            {fileTabs.map((file) => {
+              const worktreePath = selectedWorktree?.path || ''
+              const relativePath =
+                worktreePath && file.path.startsWith(worktreePath)
+                  ? file.path.slice(worktreePath.length + 1)
+                  : file.name
+              return (
+                <FileTab
+                  key={file.path}
+                  filePath={file.path}
+                  name={file.name}
+                  isActive={isFileTabActive && activeFilePath === file.path}
+                  onClick={() => handleFileTabClick(file.path)}
+                  onClose={(e) => handleCloseFileTab(e, file.path)}
+                  onCloseOthers={() => closeOtherFiles(file.path)}
+                  onCloseToRight={() => closeFilesToRight(file.path)}
+                  relativePath={relativePath}
+                />
+              )
+            })}
+            {/* Diff viewer tabs */}
+            {diffTabs.map(([key, tab]) => (
+              <DiffTabItem
+                key={key}
+                tabKey={key}
+                tab={tab}
+                isActive={isFileTabActive && activeFilePath === key}
+                onActivate={() => handleDiffTabClick(key)}
+                onClose={(e) => handleCloseDiffTab(e, key)}
+                onCloseOthers={() => closeOtherFiles(key)}
+                onCloseToRight={() => closeFilesToRight(key)}
+              />
+            ))}
+          </>
+        )}
+      </div>
+
+      {/* Right scroll arrow */}
+      {showRightArrow && (
+        <button
+          onClick={scrollRight}
+          className="p-1 hover:bg-accent transition-colors shrink-0"
+          data-testid="scroll-right"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  )
+}

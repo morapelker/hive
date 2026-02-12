@@ -1,0 +1,456 @@
+import { ipcMain, BrowserWindow } from 'electron'
+import { openCodeService } from '../services/opencode-service'
+import { createLogger } from '../services/logger'
+
+const log = createLogger({ component: 'OpenCodeHandlers' })
+
+export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
+  // Set the main window for event forwarding
+  openCodeService.setMainWindow(mainWindow)
+
+  // Connect to OpenCode for a worktree (lazy starts server if needed)
+  ipcMain.handle(
+    'opencode:connect',
+    async (_event, worktreePath: string, hiveSessionId: string) => {
+      log.info('IPC: opencode:connect', { worktreePath, hiveSessionId })
+      try {
+        const result = await openCodeService.connect(worktreePath, hiveSessionId)
+        return { success: true, ...result }
+      } catch (error) {
+        log.error('IPC: opencode:connect failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Reconnect to existing OpenCode session
+  ipcMain.handle(
+    'opencode:reconnect',
+    async (_event, worktreePath: string, opencodeSessionId: string, hiveSessionId: string) => {
+      log.info('IPC: opencode:reconnect', { worktreePath, opencodeSessionId, hiveSessionId })
+      try {
+        const result = await openCodeService.reconnect(
+          worktreePath,
+          opencodeSessionId,
+          hiveSessionId
+        )
+        return result
+      } catch (error) {
+        log.error('IPC: opencode:reconnect failed', { error })
+        return { success: false }
+      }
+    }
+  )
+
+  // Send a prompt (response streams via onStream)
+  // Accepts either { worktreePath, sessionId, parts } object or positional (worktreePath, sessionId, message) for backward compat
+  ipcMain.handle('opencode:prompt', async (_event, ...args: unknown[]) => {
+    let worktreePath: string
+    let opencodeSessionId: string
+    let messageOrParts:
+      | string
+      | Array<{ type: string; text?: string; mime?: string; url?: string; filename?: string }>
+    let model: { providerID: string; modelID: string; variant?: string } | undefined
+
+    // Support object-style call: { worktreePath, sessionId, parts }
+    if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
+      const obj = args[0] as Record<string, unknown>
+      worktreePath = obj.worktreePath as string
+      opencodeSessionId = obj.sessionId as string
+      // Backward compat: accept message string or parts array
+      messageOrParts = (obj.parts as typeof messageOrParts) || [
+        { type: 'text', text: obj.message as string }
+      ]
+      const rawModel = obj.model as Record<string, unknown> | undefined
+      if (
+        rawModel &&
+        typeof rawModel.providerID === 'string' &&
+        typeof rawModel.modelID === 'string'
+      ) {
+        model = {
+          providerID: rawModel.providerID,
+          modelID: rawModel.modelID,
+          variant: typeof rawModel.variant === 'string' ? rawModel.variant : undefined
+        }
+      }
+    } else {
+      // Legacy positional args: (worktreePath, sessionId, message)
+      worktreePath = args[0] as string
+      opencodeSessionId = args[1] as string
+      messageOrParts = args[2] as string
+      const rawModel = args[3] as Record<string, unknown> | undefined
+      if (
+        rawModel &&
+        typeof rawModel.providerID === 'string' &&
+        typeof rawModel.modelID === 'string'
+      ) {
+        model = {
+          providerID: rawModel.providerID,
+          modelID: rawModel.modelID,
+          variant: typeof rawModel.variant === 'string' ? rawModel.variant : undefined
+        }
+      }
+    }
+
+    log.info('IPC: opencode:prompt', {
+      worktreePath,
+      opencodeSessionId,
+      partsCount: Array.isArray(messageOrParts) ? messageOrParts.length : 1,
+      model
+    })
+    try {
+      await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
+      return { success: true }
+    } catch (error) {
+      log.error('IPC: opencode:prompt failed', { error })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
+  // Disconnect session (may kill server if last session for worktree)
+  ipcMain.handle(
+    'opencode:disconnect',
+    async (_event, worktreePath: string, opencodeSessionId: string) => {
+      log.info('IPC: opencode:disconnect', { worktreePath, opencodeSessionId })
+      try {
+        await openCodeService.disconnect(worktreePath, opencodeSessionId)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:disconnect failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Get available models from all configured providers
+  ipcMain.handle('opencode:models', async () => {
+    log.info('IPC: opencode:models')
+    try {
+      const providers = await openCodeService.getAvailableModels()
+      return { success: true, providers }
+    } catch (error) {
+      log.error('IPC: opencode:models failed', { error })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        providers: {}
+      }
+    }
+  })
+
+  // Set the selected model
+  ipcMain.handle(
+    'opencode:setModel',
+    async (_event, model: { providerID: string; modelID: string; variant?: string }) => {
+      log.info('IPC: opencode:setModel', { model })
+      try {
+        openCodeService.setSelectedModel(model)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:setModel failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Get model info (name, context limit)
+  ipcMain.handle(
+    'opencode:modelInfo',
+    async (_event, { worktreePath, modelId }: { worktreePath: string; modelId: string }) => {
+      log.info('IPC: opencode:modelInfo', { worktreePath, modelId })
+      try {
+        const model = await openCodeService.getModelInfo(worktreePath, modelId)
+        if (!model) {
+          return { success: false, error: 'Model not found' }
+        }
+        return { success: true, model }
+      } catch (error) {
+        log.error('IPC: opencode:modelInfo failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Get session info (revert state)
+  ipcMain.handle(
+    'opencode:sessionInfo',
+    async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
+      log.info('IPC: opencode:sessionInfo', { worktreePath, sessionId })
+      try {
+        const result = await openCodeService.getSessionInfo(worktreePath, sessionId)
+        return { success: true, ...result }
+      } catch (error) {
+        log.error('IPC: opencode:sessionInfo failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // List available slash commands
+  ipcMain.handle(
+    'opencode:commands',
+    async (_event, { worktreePath }: { worktreePath: string }) => {
+      log.info('IPC: opencode:commands', { worktreePath })
+      try {
+        const commands = await openCodeService.listCommands(worktreePath)
+        return { success: true, commands }
+      } catch (error) {
+        log.error('IPC: opencode:commands failed', { error })
+        return {
+          success: false,
+          commands: [],
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Send a slash command to a session via the SDK command endpoint
+  ipcMain.handle(
+    'opencode:command',
+    async (
+      _event,
+      {
+        worktreePath,
+        sessionId,
+        command,
+        args,
+        model
+      }: {
+        worktreePath: string
+        sessionId: string
+        command: string
+        args: string
+        model?: { providerID: string; modelID: string; variant?: string }
+      }
+    ) => {
+      log.info('IPC: opencode:command', { worktreePath, sessionId, command, args, model })
+      try {
+        await openCodeService.sendCommand(worktreePath, sessionId, command, args, model)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:command failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Undo last message state via OpenCode revert API
+  ipcMain.handle(
+    'opencode:undo',
+    async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
+      log.info('IPC: opencode:undo', { worktreePath, sessionId })
+      try {
+        const result = await openCodeService.undo(worktreePath, sessionId)
+        return { success: true, ...result }
+      } catch (error) {
+        log.error('IPC: opencode:undo failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Redo last undone message state via OpenCode unrevert/revert API
+  ipcMain.handle(
+    'opencode:redo',
+    async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
+      log.info('IPC: opencode:redo', { worktreePath, sessionId })
+      try {
+        const result = await openCodeService.redo(worktreePath, sessionId)
+        return { success: true, ...result }
+      } catch (error) {
+        log.error('IPC: opencode:redo failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Reply to a pending question from the AI
+  ipcMain.handle(
+    'opencode:question:reply',
+    async (
+      _event,
+      {
+        requestId,
+        answers,
+        worktreePath
+      }: { requestId: string; answers: string[][]; worktreePath?: string }
+    ) => {
+      log.info('IPC: opencode:question:reply', { requestId })
+      try {
+        await openCodeService.questionReply(requestId, answers, worktreePath)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:question:reply failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Reject/dismiss a pending question from the AI
+  ipcMain.handle(
+    'opencode:question:reject',
+    async (_event, { requestId, worktreePath }: { requestId: string; worktreePath?: string }) => {
+      log.info('IPC: opencode:question:reject', { requestId })
+      try {
+        await openCodeService.questionReject(requestId, worktreePath)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:question:reject failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Reply to a pending permission request
+  ipcMain.handle(
+    'opencode:permission:reply',
+    async (
+      _event,
+      {
+        requestId,
+        reply,
+        worktreePath,
+        message
+      }: {
+        requestId: string
+        reply: 'once' | 'always' | 'reject'
+        worktreePath?: string
+        message?: string
+      }
+    ) => {
+      log.info('IPC: opencode:permission:reply', { requestId, reply })
+      try {
+        await openCodeService.permissionReply(requestId, reply, worktreePath, message)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:permission:reply failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // List all pending permission requests
+  ipcMain.handle(
+    'opencode:permission:list',
+    async (_event, { worktreePath }: { worktreePath?: string }) => {
+      log.info('IPC: opencode:permission:list')
+      try {
+        const permissions = await openCodeService.permissionList(worktreePath)
+        return { success: true, permissions }
+      } catch (error) {
+        log.error('IPC: opencode:permission:list failed', { error })
+        return {
+          success: false,
+          permissions: [],
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Rename a session's title via the OpenCode PATCH API
+  ipcMain.handle(
+    'opencode:renameSession',
+    async (
+      _event,
+      {
+        opencodeSessionId,
+        title,
+        worktreePath
+      }: { opencodeSessionId: string; title: string; worktreePath?: string }
+    ) => {
+      log.info('IPC: opencode:renameSession', { opencodeSessionId, title })
+      try {
+        await openCodeService.renameSession(opencodeSessionId, title, worktreePath)
+        return { success: true }
+      } catch (error) {
+        log.error('IPC: opencode:renameSession failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Get messages from an OpenCode session
+  ipcMain.handle(
+    'opencode:messages',
+    async (_event, worktreePath: string, opencodeSessionId: string) => {
+      log.info('IPC: opencode:messages', { worktreePath, opencodeSessionId })
+      try {
+        const messages = await openCodeService.getMessages(worktreePath, opencodeSessionId)
+        return { success: true, messages }
+      } catch (error) {
+        log.error('IPC: opencode:messages failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          messages: []
+        }
+      }
+    }
+  )
+
+  // Abort a streaming session
+  ipcMain.handle(
+    'opencode:abort',
+    async (_event, worktreePath: string, opencodeSessionId: string) => {
+      log.info('IPC: opencode:abort', { worktreePath, opencodeSessionId })
+      try {
+        const result = await openCodeService.abort(worktreePath, opencodeSessionId)
+        return { success: result }
+      } catch (error) {
+        log.error('IPC: opencode:abort failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  log.info('OpenCode IPC handlers registered')
+}
+
+export async function cleanupOpenCode(): Promise<void> {
+  log.info('Cleaning up OpenCode service')
+  await openCodeService.cleanup()
+}
