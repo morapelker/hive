@@ -1,9 +1,14 @@
 /**
- * Dog breed names for worktree naming convention
- * Uses AKC-recognized breeds for memorable, unique names
+ * Breed names for worktree naming convention
+ * Uses well-known dog and cat breeds for memorable, unique names
  * All names are valid git branch names (lowercase, hyphens only)
  */
-export const BREED_NAMES = [
+
+/**
+ * Dog breeds — AKC-recognized breeds
+ * All names are lowercase with hyphens, valid as git branch names
+ */
+export const DOG_BREEDS = [
   // Sporting Group
   'golden-retriever',
   'labrador',
@@ -75,6 +80,10 @@ export const BREED_NAMES = [
   'chow-chow'
 ]
 
+/**
+ * Cat breeds — well-known pedigreed cat breeds
+ * All names are lowercase with hyphens, valid as git branch names
+ */
 export const CAT_BREEDS = [
   'persian',
   'maine-coon',
@@ -128,12 +137,12 @@ export const CAT_BREEDS = [
   'sokoke'
 ]
 
-export const ALL_BREED_NAMES = [...BREED_NAMES, ...CAT_BREEDS]
+export const ALL_BREED_NAMES = [...DOG_BREEDS, ...CAT_BREEDS]
 
 export type BreedType = 'dogs' | 'cats'
 
 function getBreedList(breedType: BreedType): string[] {
-  return breedType === 'cats' ? CAT_BREEDS : BREED_NAMES
+  return breedType === 'cats' ? CAT_BREEDS : DOG_BREEDS
 }
 
 /**
@@ -289,12 +298,14 @@ export function selectUniqueBreedName(
   breedType: BreedType = 'dogs'
 ): string {
   const MAX_ATTEMPTS = 10
+
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const breedName = getRandomBreedName(breedType)
     if (!existingNames.has(breedName)) {
       return breedName
     }
   }
+
   const baseName = getRandomBreedName(breedType)
   let version = 1
   let candidateName = `${baseName}-v${version}`
