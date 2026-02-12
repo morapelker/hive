@@ -42,18 +42,6 @@ interface Session {
   completed_at: string | null
 }
 
-interface SessionMessage {
-  id: string
-  session_id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  opencode_message_id?: string | null
-  opencode_message_json?: string | null
-  opencode_parts_json?: string | null
-  opencode_timeline_json?: string | null
-  created_at: string
-}
-
 interface Setting {
   key: string
   value: string
@@ -164,20 +152,6 @@ declare global {
         search: (options: SessionSearchOptions) => Promise<SessionWithWorktree[]>
         getDraft: (sessionId: string) => Promise<string | null>
         updateDraft: (sessionId: string, draft: string | null) => Promise<void>
-      }
-      message: {
-        create: (data: {
-          session_id: string
-          role: 'user' | 'assistant' | 'system'
-          content: string
-          opencode_message_id?: string | null
-          opencode_message_json?: string | null
-          opencode_parts_json?: string | null
-          opencode_timeline_json?: string | null
-          created_at?: string
-        }) => Promise<SessionMessage>
-        getBySession: (sessionId: string) => Promise<SessionMessage[]>
-        delete: (id: string) => Promise<boolean>
       }
       schemaVersion: () => Promise<number>
       tableExists: (tableName: string) => Promise<boolean>

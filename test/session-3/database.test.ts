@@ -95,10 +95,14 @@ describeIf('Session 3: Database', () => {
       db.setSetting('key2', 'value2')
       const settings = db.getAllSettings()
       expect(
-        settings.some((s: { key: string; value: string }) => s.key === 'key1' && s.value === 'value1')
+        settings.some(
+          (s: { key: string; value: string }) => s.key === 'key1' && s.value === 'value1'
+        )
       ).toBe(true)
       expect(
-        settings.some((s: { key: string; value: string }) => s.key === 'key2' && s.value === 'value2')
+        settings.some(
+          (s: { key: string; value: string }) => s.key === 'key2' && s.value === 'value2'
+        )
       ).toBe(true)
     })
   })
@@ -326,7 +330,7 @@ describeIf('Session 3: Database', () => {
       expect(updated?.completed_at).toBeTruthy()
     })
 
-    test('Search sessions by keyword', () => {
+    test('Search sessions by keyword matches metadata/title, not message content', () => {
       const session = db.createSession({
         worktree_id: worktreeId,
         project_id: projectId,
@@ -339,8 +343,11 @@ describeIf('Session 3: Database', () => {
         content: 'Hello world unique content'
       })
 
-      const results = db.searchSessions({ keyword: 'unique content' })
-      expect(results.length).toBe(1)
+      const messageOnlyResults = db.searchSessions({ keyword: 'unique content' })
+      const titleResults = db.searchSessions({ keyword: 'Search Test Session' })
+
+      expect(messageOnlyResults.length).toBe(0)
+      expect(titleResults.length).toBe(1)
     })
 
     test('Search sessions by project', () => {

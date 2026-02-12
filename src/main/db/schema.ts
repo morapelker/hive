@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   completed_at TEXT
 );
 
--- Session messages table (for history/search)
+-- Session messages table (legacy fallback only).
+-- NOTE: Keep this table during OpenCode transcript migration; drop in a follow-up
+-- migration after stabilization.
 CREATE TABLE IF NOT EXISTS session_messages (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

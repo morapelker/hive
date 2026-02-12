@@ -8,29 +8,10 @@ import type {
   WorktreeUpdate,
   SessionCreate,
   SessionUpdate,
-  SessionMessageCreate,
   SessionSearchOptions
 } from '../db'
 
 const log = createLogger({ component: 'DatabaseHandlers' })
-
-// Helper to wrap handlers with error logging
-function withErrorHandler<T>(
-  operation: string,
-  handler: () => T,
-  context?: Record<string, unknown>
-): T {
-  try {
-    return handler()
-  } catch (error) {
-    log.error(
-      `Failed to ${operation}`,
-      error instanceof Error ? error : new Error(String(error)),
-      context
-    )
-    throw error
-  }
-}
 
 export function registerDatabaseHandlers(): void {
   log.info('Registering database handlers')
@@ -173,19 +154,6 @@ export function registerDatabaseHandlers(): void {
 
   ipcMain.handle('db:session:updateDraft', (_event, sessionId: string, draft: string | null) => {
     getDatabase().updateSessionDraft(sessionId, draft)
-  })
-
-  // Session Messages
-  ipcMain.handle('db:message:create', (_event, data: SessionMessageCreate) => {
-    return getDatabase().createSessionMessage(data)
-  })
-
-  ipcMain.handle('db:message:getBySession', (_event, sessionId: string) => {
-    return getDatabase().getSessionMessages(sessionId)
-  })
-
-  ipcMain.handle('db:message:delete', (_event, id: string) => {
-    return getDatabase().deleteSessionMessage(id)
   })
 
   // Utility

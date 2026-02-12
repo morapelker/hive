@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 
 // Session type with worktree/project metadata for display
 interface SessionWithWorktree {
@@ -54,6 +55,9 @@ interface SessionHistoryState {
   performSearch: () => Promise<void>
   selectSession: (sessionId: string | null) => void
   getSelectedSession: () => SessionWithWorktree | null
+  getSessionPreviewMessages: (
+    session: SessionWithWorktree
+  ) => Promise<Array<{ role: string; content: string }>>
 }
 
 const initialFilters: SessionSearchFilters = {
@@ -170,6 +174,37 @@ export const useSessionHistoryStore = create<SessionHistoryState>((set, get) => 
     const { searchResults, selectedSessionId } = get()
     if (!selectedSessionId) return null
     return searchResults.find((s) => s.id === selectedSessionId) || null
+  },
+
+  getSessionPreviewMessages: async (session: SessionWithWorktree) => {
+    if (!session.opencode_session_id || !session.worktree_id) {
+      return []
+    }
+
+    try {
+      const worktree = await window.db.worktree.get(session.worktree_id)
+      if (!worktree?.path) {
+        return []
+      }
+
+      const result = await window.opencodeOps.getMessages(
+        worktree.path,
+        session.opencode_session_id
+      )
+
+      if (!result.success) {
+        return []
+      }
+
+      return mapOpencodeMessagesToSessionViewMessages(result.messages)
+        .slice(0, 5)
+        .map((message) => ({
+          role: message.role,
+          content: message.content
+        }))
+    } catch {
+      return []
+    }
   }
 }))
 
