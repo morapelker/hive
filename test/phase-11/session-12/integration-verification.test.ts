@@ -89,7 +89,7 @@ describe('Session 12: Integration & Verification', () => {
 
     test('auto-rename checks auto-generated name before proceeding', () => {
       const content = readSrc('main', 'services', 'opencode-service.ts')
-      expect(content).toContain('BREED_NAMES.some')
+      expect(content).toContain('ALL_BREED_NAMES.some')
     })
 
     test('once branch_renamed=1 after manual rename, auto-rename skips', () => {

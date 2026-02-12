@@ -139,6 +139,9 @@ export const CAT_BREEDS = [
 
 export const ALL_BREED_NAMES = [...DOG_BREEDS, ...CAT_BREEDS]
 
+/** @deprecated Use DOG_BREEDS instead */
+export const BREED_NAMES = DOG_BREEDS
+
 export type BreedType = 'dogs' | 'cats'
 
 function getBreedList(breedType: BreedType): string[] {

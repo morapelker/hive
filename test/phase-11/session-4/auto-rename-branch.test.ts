@@ -39,12 +39,12 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       // Verify auto-rename logic is present
       expect(content).toContain('Auto-rename branch if still an auto-generated name')
       expect(content).toContain('getWorktreeBySessionId')
-      expect(content).toContain('BREED_NAMES.some')
+      expect(content).toContain('ALL_BREED_NAMES.some')
       expect(content).toContain('canonicalizeBranchName')
       expect(content).toContain("'worktree:branchRenamed'")
     })
 
-    test('imports BREED_NAMES, LEGACY_CITY_NAMES and canonicalizeBranchName', () => {
+    test('imports ALL_BREED_NAMES, LEGACY_CITY_NAMES and canonicalizeBranchName', () => {
       const servicePath = path.join(
         __dirname,
         '..',
@@ -57,7 +57,9 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       )
       const content = fs.readFileSync(servicePath, 'utf-8')
 
-      expect(content).toContain("import { BREED_NAMES, LEGACY_CITY_NAMES } from './breed-names'")
+      expect(content).toContain(
+        "import { ALL_BREED_NAMES, LEGACY_CITY_NAMES } from './breed-names'"
+      )
       expect(content).toContain(
         "import { canonicalizeBranchName, createGitService } from './git-service'"
       )
@@ -238,7 +240,7 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
     test('BREED_NAMES contains expected breeds', () => {
       expect(BREED_NAMES).toContain('golden-retriever')
       expect(BREED_NAMES).toContain('beagle')
-      expect(BREED_NAMES).toContain('corgi')
+      expect(BREED_NAMES).toContain('pembroke-corgi')
     })
 
     test('LEGACY_CITY_NAMES contains expected cities', () => {

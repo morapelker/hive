@@ -16,19 +16,20 @@ vi.mock('simple-git', () => ({
 }))
 
 import {
-  BREED_NAMES,
+  ALL_BREED_NAMES,
+  DOG_BREEDS,
   LEGACY_CITY_NAMES,
   getRandomBreedName,
   selectUniqueBreedName
 } from '../../../src/main/services/breed-names'
 
 describe('Session 2: Dog Breed Names', () => {
-  test('BREED_NAMES contains 120+ entries', () => {
-    expect(BREED_NAMES.length).toBeGreaterThanOrEqual(120)
+  test('ALL_BREED_NAMES contains 100+ entries', () => {
+    expect(ALL_BREED_NAMES.length).toBeGreaterThanOrEqual(100)
   })
 
   test('all breed names are valid git branch names', () => {
-    for (const name of BREED_NAMES) {
+    for (const name of ALL_BREED_NAMES) {
       expect(name).toMatch(/^[a-z][a-z0-9-]*$/)
       expect(name).not.toContain(' ')
       expect(name).not.toContain('_')
@@ -39,23 +40,23 @@ describe('Session 2: Dog Breed Names', () => {
   })
 
   test('no duplicate breed names', () => {
-    const uniqueNames = new Set(BREED_NAMES)
-    expect(uniqueNames.size).toBe(BREED_NAMES.length)
+    const uniqueNames = new Set(ALL_BREED_NAMES)
+    expect(uniqueNames.size).toBe(ALL_BREED_NAMES.length)
   })
 
-  test('getRandomBreedName returns a name from the list', () => {
+  test('getRandomBreedName returns a name from the dog breeds list', () => {
     const name = getRandomBreedName()
-    expect(BREED_NAMES).toContain(name)
+    expect(DOG_BREEDS).toContain(name)
   })
 
   test('selectUniqueBreedName avoids existing names', () => {
-    const existing = new Set(BREED_NAMES.slice(0, 119))
+    const existing = new Set(DOG_BREEDS.slice(0, 55))
     const name = selectUniqueBreedName(existing)
     expect(existing.has(name)).toBe(false)
   })
 
   test('selectUniqueBreedName falls back to suffix when all names taken', () => {
-    const existing = new Set(BREED_NAMES)
+    const existing = new Set(DOG_BREEDS)
     const name = selectUniqueBreedName(existing)
     expect(name).toMatch(/-v\d+$/)
   })
@@ -68,7 +69,7 @@ describe('Session 2: Dog Breed Names', () => {
   })
 
   test('auto-rename detection recognizes breed names', () => {
-    const isAutoName = BREED_NAMES.some(
+    const isAutoName = ALL_BREED_NAMES.some(
       (b) => 'golden-retriever' === b || 'golden-retriever'.startsWith(`${b}-v`)
     )
     expect(isAutoName).toBe(true)
@@ -81,7 +82,9 @@ describe('Session 2: Dog Breed Names', () => {
 
   test('auto-rename detection recognizes versioned breed names', () => {
     const branchName = 'golden-retriever-v2'
-    const isAutoName = BREED_NAMES.some((b) => branchName === b || branchName.startsWith(`${b}-v`))
+    const isAutoName = ALL_BREED_NAMES.some(
+      (b) => branchName === b || branchName.startsWith(`${b}-v`)
+    )
     expect(isAutoName).toBe(true)
   })
 
@@ -96,13 +99,13 @@ describe('Session 2: Dog Breed Names', () => {
   test('auto-rename detection does not match arbitrary branch names', () => {
     const branchName = 'my-feature-branch'
     const isAutoName =
-      BREED_NAMES.some((b) => branchName === b || branchName.startsWith(`${b}-v`)) ||
+      ALL_BREED_NAMES.some((b) => branchName === b || branchName.startsWith(`${b}-v`)) ||
       LEGACY_CITY_NAMES.some((c) => branchName === c || branchName.startsWith(`${c}-v`))
     expect(isAutoName).toBe(false)
   })
 
   test('no overlap between breed names and legacy city names', () => {
-    const breedSet = new Set(BREED_NAMES)
+    const breedSet = new Set(ALL_BREED_NAMES)
     for (const city of LEGACY_CITY_NAMES) {
       expect(breedSet.has(city)).toBe(false)
     }
