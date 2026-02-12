@@ -10,6 +10,7 @@ import { FileSearchDialog } from '@/components/file-search'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
 import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
+import { useWindowFocusRefresh } from '@/hooks/useWindowFocusRefresh'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 
 interface AppLayoutProps {
@@ -23,6 +24,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useOpenCodeGlobalListener()
   // Navigate to session when native notification is clicked
   useNotificationNavigation()
+  // Refresh git statuses when window regains focus
+  useWindowFocusRefresh()
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground" data-testid="app-layout">
