@@ -715,7 +715,18 @@ const gitOps = {
     success: boolean
     error?: string
     conflicts?: string[]
-  }> => ipcRenderer.invoke('git:merge', worktreePath, sourceBranch)
+  }> => ipcRenderer.invoke('git:merge', worktreePath, sourceBranch),
+
+  // Get remote URL for a worktree
+  getRemoteUrl: (
+    worktreePath: string,
+    remote?: string
+  ): Promise<{
+    success: boolean
+    url: string | null
+    remote: string | null
+    error?: string
+  }> => ipcRenderer.invoke('git:getRemoteUrl', { worktreePath, remote })
 }
 
 const opencodeOps = {

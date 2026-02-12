@@ -1086,6 +1086,29 @@ export class GitService {
       return { success: false, error: message }
     }
   }
+
+  /**
+   * Get the remote URL for a given remote name (defaults to 'origin')
+   */
+  async getRemoteUrl(remote = 'origin'): Promise<{
+    success: boolean
+    url: string | null
+    remote: string | null
+    error?: string
+  }> {
+    try {
+      const remotes = await this.git.getRemotes(true)
+      const target = remotes.find((r) => r.name === remote)
+      return {
+        success: true,
+        url: target?.refs?.fetch || target?.refs?.push || null,
+        remote: target?.name || null
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { success: false, url: null, remote: null, error: message }
+    }
+  }
 }
 
 /**

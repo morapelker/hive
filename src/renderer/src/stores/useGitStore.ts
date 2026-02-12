@@ -21,6 +21,12 @@ interface GitBranchInfo {
   behind: number
 }
 
+interface RemoteInfo {
+  hasRemote: boolean
+  isGitHub: boolean
+  url: string | null
+}
+
 interface GitStoreState {
   // Data - keyed by worktree path
   fileStatusesByWorktree: Map<string, GitFileStatus[]>
@@ -32,6 +38,10 @@ interface GitStoreState {
   isCommitting: boolean
   isPushing: boolean
   isPulling: boolean
+
+  // Remote info - keyed by worktree ID
+  remoteInfo: Map<string, RemoteInfo>
+  prTargetBranch: Map<string, string>
 
   // Actions
   loadFileStatuses: (worktreePath: string) => Promise<void>
@@ -48,10 +58,27 @@ interface GitStoreState {
   refreshStatuses: (worktreePath: string) => Promise<void>
   clearStatuses: (worktreePath: string) => void
 
+  // Remote info actions
+  checkRemoteInfo: (worktreeId: string, worktreePath: string) => Promise<void>
+  setPrTargetBranch: (worktreeId: string, branch: string) => void
+
   // Commit, Push, Pull actions
-  commit: (worktreePath: string, message: string) => Promise<{ success: boolean; commitHash?: string; error?: string }>
-  push: (worktreePath: string, remote?: string, branch?: string, force?: boolean) => Promise<{ success: boolean; error?: string }>
-  pull: (worktreePath: string, remote?: string, branch?: string, rebase?: boolean) => Promise<{ success: boolean; error?: string }>
+  commit: (
+    worktreePath: string,
+    message: string
+  ) => Promise<{ success: boolean; commitHash?: string; error?: string }>
+  push: (
+    worktreePath: string,
+    remote?: string,
+    branch?: string,
+    force?: boolean
+  ) => Promise<{ success: boolean; error?: string }>
+  pull: (
+    worktreePath: string,
+    remote?: string,
+    branch?: string,
+    rebase?: boolean
+  ) => Promise<{ success: boolean; error?: string }>
 }
 
 export const useGitStore = create<GitStoreState>()((set, get) => ({
@@ -65,6 +92,10 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   isCommitting: false,
   isPushing: false,
   isPulling: false,
+
+  // Remote info
+  remoteInfo: new Map(),
+  prTargetBranch: new Map(),
 
   // Load file statuses for a worktree
   loadFileStatuses: async (worktreePath: string) => {
@@ -251,6 +282,39 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
     })
   },
 
+  // Check remote info for a worktree
+  checkRemoteInfo: async (worktreeId: string, worktreePath: string) => {
+    try {
+      const result = await window.gitOps.getRemoteUrl(worktreePath)
+      const info: RemoteInfo = {
+        hasRemote: !!result.url,
+        isGitHub: result.url?.includes('github.com') ?? false,
+        url: result.url ?? null
+      }
+      set((state) => {
+        const newRemoteInfo = new Map(state.remoteInfo)
+        newRemoteInfo.set(worktreeId, info)
+        return { remoteInfo: newRemoteInfo }
+      })
+    } catch {
+      // Non-critical — default to no remote
+      set((state) => {
+        const newRemoteInfo = new Map(state.remoteInfo)
+        newRemoteInfo.set(worktreeId, { hasRemote: false, isGitHub: false, url: null })
+        return { remoteInfo: newRemoteInfo }
+      })
+    }
+  },
+
+  // Set PR target branch for a worktree
+  setPrTargetBranch: (worktreeId: string, branch: string) => {
+    set((state) => {
+      const newPrTargetBranch = new Map(state.prTargetBranch)
+      newPrTargetBranch.set(worktreeId, branch)
+      return { prTargetBranch: newPrTargetBranch }
+    })
+  },
+
   // Commit staged changes
   commit: async (worktreePath: string, message: string) => {
     set({ isCommitting: true, error: null })
@@ -307,4 +371,4 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
 }))
 
 // Export types
-export type { GitStatusCode, GitFileStatus, GitBranchInfo }
+export type { GitStatusCode, GitFileStatus, GitBranchInfo, RemoteInfo }

@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from 'react'
 import { Header } from './Header'
 import { LeftSidebar } from './LeftSidebar'
 import { MainPane } from './MainPane'
@@ -12,6 +13,8 @@ import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
 import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
 import { useWindowFocusRefresh } from '@/hooks/useWindowFocusRefresh'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useGitStore } from '@/stores/useGitStore'
 
 interface AppLayoutProps {
   children?: React.ReactNode
@@ -26,6 +29,26 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useNotificationNavigation()
   // Refresh git statuses when window regains focus
   useWindowFocusRefresh()
+
+  // Check remote info on worktree selection (for PR feature)
+  const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
+  const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
+  const selectedWorktreePath = useMemo(() => {
+    if (!selectedWorktreeId) return null
+    for (const worktrees of worktreesByProject.values()) {
+      const wt = worktrees.find((w) => w.id === selectedWorktreeId)
+      if (wt) return wt.path
+    }
+    return null
+  }, [selectedWorktreeId, worktreesByProject])
+
+  useEffect(() => {
+    if (!selectedWorktreeId || !selectedWorktreePath) return
+    const info = useGitStore.getState().remoteInfo.get(selectedWorktreeId)
+    if (!info) {
+      useGitStore.getState().checkRemoteInfo(selectedWorktreeId, selectedWorktreePath)
+    }
+  }, [selectedWorktreeId, selectedWorktreePath])
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground" data-testid="app-layout">

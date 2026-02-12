@@ -6,13 +6,22 @@ import {
   AlertTriangle,
   ChevronDown,
   GitBranch,
+  GitPullRequest,
   Globe,
   Search
 } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem
+} from '@/components/ui/dropdown-menu'
 import { useGitStore } from '@/stores/useGitStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useSessionStore } from '@/stores/useSessionStore'
 import { cn } from '@/lib/utils'
 
 interface BranchInfo {
@@ -50,6 +59,17 @@ export function GitPushPull({
   // Subscribe to branch info for ahead/behind counts
   const branchInfoByWorktree = useGitStore((state) => state.branchInfoByWorktree)
   const branchInfo = worktreePath ? branchInfoByWorktree.get(worktreePath) : undefined
+
+  // PR / remote info
+  const selectedWorktreeId = useWorktreeStore((state) => state.selectedWorktreeId)
+  const remoteInfo = useGitStore((state) =>
+    selectedWorktreeId ? state.remoteInfo.get(selectedWorktreeId) : undefined
+  )
+  const isGitHub = remoteInfo?.isGitHub ?? false
+  const prTargetBranch = useGitStore((state) =>
+    selectedWorktreeId ? state.prTargetBranch.get(selectedWorktreeId) : undefined
+  )
+  const setPrTargetBranch = useGitStore((state) => state.setPrTargetBranch)
 
   const hasTracking = !!branchInfo?.tracking
   const ahead = branchInfo?.ahead || 0
@@ -134,6 +154,9 @@ export function GitPushPull({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [branchDropdownOpen])
 
+  // Remote branches for PR target dropdown
+  const remoteBranches = useMemo(() => branches.filter((b) => b.isRemote), [branches])
+
   // Filter and sort branches — local first, then remote; exclude current branch
   const filteredBranches = useMemo(() => {
     const currentBranch = branchInfo?.name
@@ -169,6 +192,49 @@ export function GitPushPull({
       setIsMerging(false)
     }
   }, [worktreePath, mergeBranch, refreshStatuses])
+
+  const handleCreatePR = useCallback(async () => {
+    if (!worktreePath) return
+
+    const worktreeStore = useWorktreeStore.getState()
+    const wtId = worktreeStore.selectedWorktreeId
+    if (!wtId) {
+      toast.error('No worktree selected')
+      return
+    }
+
+    let projectId = ''
+    for (const [projId, worktrees] of worktreeStore.worktreesByProject) {
+      if (worktrees.some((w) => w.id === wtId)) {
+        projectId = projId
+        break
+      }
+    }
+    if (!projectId) {
+      toast.error('Could not find project for worktree')
+      return
+    }
+
+    const targetBranch = prTargetBranch || branchInfo?.tracking || 'origin/main'
+
+    const sessionStore = useSessionStore.getState()
+    const result = await sessionStore.createSession(wtId, projectId)
+    if (!result.success || !result.session) {
+      toast.error('Failed to create PR session')
+      return
+    }
+
+    await sessionStore.updateSessionName(result.session.id, `PR → ${targetBranch}`)
+    sessionStore.setPendingMessage(
+      result.session.id,
+      [
+        `Create a pull request targeting ${targetBranch}.`,
+        `Use \`gh pr create\` to create the PR.`,
+        `Base the PR title and description on the git diff between HEAD and ${targetBranch}.`,
+        `Make the description comprehensive, summarizing all changes.`
+      ].join(' ')
+    )
+  }, [worktreePath, prTargetBranch, branchInfo])
 
   const handleCancelForce = useCallback(() => {
     setShowForceConfirm(false)
@@ -392,6 +458,54 @@ export function GitPushPull({
               {isMerging ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Merge'}
             </Button>
           </div>
+
+          {/* PR to GitHub section */}
+          {isGitHub && (
+            <div className="flex items-center gap-1 border-t pt-2" data-testid="pr-section">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={handleCreatePR}
+                disabled={isOperating}
+                title="Create Pull Request"
+                data-testid="pr-button"
+              >
+                <GitPullRequest className="h-3.5 w-3.5 mr-1" />
+                PR
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs text-muted-foreground px-2 h-7"
+                    data-testid="pr-target-branch-trigger"
+                  >
+                    → {prTargetBranch || branchInfo?.tracking || 'origin/main'}
+                    <ChevronDown className="h-3 w-3 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-h-60 overflow-y-auto">
+                  {remoteBranches.length === 0 ? (
+                    <DropdownMenuItem disabled>No remote branches</DropdownMenuItem>
+                  ) : (
+                    remoteBranches.map((branch) => (
+                      <DropdownMenuItem
+                        key={branch.name}
+                        onClick={() =>
+                          selectedWorktreeId && setPrTargetBranch(selectedWorktreeId, branch.name)
+                        }
+                        data-testid={`pr-target-branch-${branch.name}`}
+                      >
+                        {branch.name}
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
         </>
       )}
     </div>

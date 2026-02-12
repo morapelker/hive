@@ -12,8 +12,8 @@ Object.defineProperty(window, 'matchMedia', {
     removeListener: vi.fn(),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  })),
+    dispatchEvent: vi.fn()
+  }))
 })
 
 // Mock gitOps for components that use GitStatusPanel
@@ -34,7 +34,8 @@ const mockGitOps = {
   pull: vi.fn().mockResolvedValue({ success: true }),
   openInEditor: vi.fn().mockResolvedValue({ success: true }),
   showInFinder: vi.fn().mockResolvedValue({ success: true }),
-  onStatusChanged: vi.fn().mockReturnValue(() => {})
+  onStatusChanged: vi.fn().mockReturnValue(() => {}),
+  getRemoteUrl: vi.fn().mockResolvedValue({ success: true, url: null, remote: null })
 }
 
 // Mock fileTreeOps

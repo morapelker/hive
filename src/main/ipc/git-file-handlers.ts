@@ -393,6 +393,28 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 
+  // Get remote URL for a worktree
+  ipcMain.handle(
+    'git:getRemoteUrl',
+    async (
+      _event,
+      { worktreePath, remote = 'origin' }: { worktreePath: string; remote?: string }
+    ) => {
+      log.info('Getting remote URL', { worktreePath, remote })
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.getRemoteUrl(remote)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to get remote URL', error instanceof Error ? error : new Error(message), {
+          worktreePath,
+          remote
+        })
+        return { success: false, url: null, remote: null, error: message }
+      }
+    }
+  )
+
   // Get diff for a file
   ipcMain.handle(
     'git:diff',

@@ -679,6 +679,16 @@ declare global {
         error?: string
         conflicts?: string[]
       }>
+      // Get remote URL for a worktree
+      getRemoteUrl: (
+        worktreePath: string,
+        remote?: string
+      ) => Promise<{
+        success: boolean
+        url: string | null
+        remote: string | null
+        error?: string
+      }>
     }
   }
 
