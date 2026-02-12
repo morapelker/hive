@@ -158,7 +158,7 @@ describe('Session 4: Global Listener Busy Handling', () => {
     expect(setSessionStatusSpy).not.toHaveBeenCalled()
   })
 
-  test('session.status idle still sets unread for background session', () => {
+  test('session.status idle sets completed for background session (transitions to unread after 30s)', () => {
     const cb = mountListenerAndGetCallback()
 
     cb({
@@ -167,7 +167,11 @@ describe('Session 4: Global Listener Busy Handling', () => {
       statusPayload: { type: 'idle' }
     })
 
-    expect(setSessionStatusSpy).toHaveBeenCalledWith('session-B', 'unread')
+    expect(setSessionStatusSpy).toHaveBeenCalledWith(
+      'session-B',
+      'completed',
+      expect.objectContaining({ durationMs: 0, word: expect.any(String) })
+    )
   })
 
   test('session.status idle is ignored for the active session', () => {

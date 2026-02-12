@@ -1,24 +1,31 @@
 import { create } from 'zustand'
 import { useSessionStore } from './useSessionStore'
 
-interface SessionStatus {
-  status: 'working' | 'planning' | 'answering' | 'unread' | 'completed'
-  timestamp: number
-}
+export type SessionStatusType = 'working' | 'planning' | 'answering' | 'unread' | 'completed'
 
-type StatusType = 'working' | 'planning' | 'answering' | 'unread' | 'completed'
+export interface SessionStatusEntry {
+  status: SessionStatusType
+  timestamp: number
+  word?: string
+  durationMs?: number
+}
 
 interface WorktreeStatusState {
   // sessionId → status info (null means no status / cleared)
-  sessionStatuses: Record<string, SessionStatus | null>
+  sessionStatuses: Record<string, SessionStatusEntry | null>
   // worktreeId → epoch ms of last message activity
   lastMessageTimeByWorktree: Record<string, number>
 
   // Actions
-  setSessionStatus: (sessionId: string, status: StatusType | null) => void
+  setSessionStatus: (
+    sessionId: string,
+    status: SessionStatusType | null,
+    metadata?: { word?: string; durationMs?: number }
+  ) => void
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
-  getWorktreeStatus: (worktreeId: string) => StatusType | null
+  getWorktreeStatus: (worktreeId: string) => SessionStatusType | null
+  getWorktreeCompletedEntry: (worktreeId: string) => SessionStatusEntry | null
   setLastMessageTime: (worktreeId: string, timestamp: number) => void
   getLastMessageTime: (worktreeId: string) => number | null
 }
@@ -27,11 +34,15 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
   sessionStatuses: {},
   lastMessageTimeByWorktree: {},
 
-  setSessionStatus: (sessionId: string, status: StatusType | null) => {
+  setSessionStatus: (
+    sessionId: string,
+    status: SessionStatusType | null,
+    metadata?: { word?: string; durationMs?: number }
+  ) => {
     set((state) => ({
       sessionStatuses: {
         ...state.sessionStatuses,
-        [sessionId]: status ? { status, timestamp: Date.now() } : null
+        [sessionId]: status ? { status, timestamp: Date.now(), ...metadata } : null
       }
     }))
   },
@@ -64,7 +75,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     }
   },
 
-  getWorktreeStatus: (worktreeId: string): StatusType | null => {
+  getWorktreeStatus: (worktreeId: string): SessionStatusType | null => {
     const { sessionStatuses } = get()
     // Get all sessions for this worktree from the session store
     const sessionStore = useSessionStore.getState()
@@ -74,7 +85,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     let hasPlanning = false
     let hasWorking = false
     let hasCompleted = false
-    let latestUnread: SessionStatus | null = null
+    let latestUnread: SessionStatusEntry | null = null
 
     for (const id of sessionIds) {
       const entry = sessionStatuses[id]
@@ -98,6 +109,18 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     if (hasWorking) return 'working'
     if (hasCompleted) return 'completed'
     return latestUnread ? 'unread' : null
+  },
+
+  getWorktreeCompletedEntry: (worktreeId: string): SessionStatusEntry | null => {
+    const { sessionStatuses } = get()
+    const sessionStore = useSessionStore.getState()
+    const sessions = sessionStore.sessionsByWorktree.get(worktreeId) || []
+
+    for (const s of sessions) {
+      const entry = sessionStatuses[s.id]
+      if (entry?.status === 'completed') return entry
+    }
+    return null
   },
 
   setLastMessageTime: (worktreeId: string, timestamp: number) => {
