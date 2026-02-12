@@ -2136,26 +2136,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Determine if there's streaming content to show
   const visibleMessages = useMemo(() => {
-    if (!revertMessageID) {
-      console.log(
-        '[REVERT-DEBUG] visibleMessages: no revertMessageID, showing all',
-        messages.length,
-        'messages'
-      )
-      return messages
-    }
-    const filtered = messages.filter(
+    if (!revertMessageID) return messages
+    return messages.filter(
       (message) => message.id.startsWith('local-') || message.id < revertMessageID
     )
-    console.log(
-      '[REVERT-DEBUG] visibleMessages: revertMessageID=',
-      revertMessageID,
-      'total=',
-      messages.length,
-      'visible=',
-      filtered.length
-    )
-    return filtered
   }, [messages, revertMessageID])
 
   const revertedUserCount = useMemo(() => {

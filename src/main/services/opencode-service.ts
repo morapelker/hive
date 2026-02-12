@@ -784,18 +784,11 @@ class OpenCodeService {
     })
 
     const sessionData = asRecord(result.data)
-    log.info('getSessionInfo raw data keys:', {
-      keys: sessionData ? Object.keys(sessionData) : 'null'
-    })
-    log.info('getSessionInfo revert field:', { revert: sessionData?.revert })
     const revert = asRecord(sessionData?.revert)
-    const revertMessageID = asString(revert?.messageID) ?? null
-    const revertDiff = asString(revert?.diff) ?? null
-    log.info('getSessionInfo parsed result:', {
-      revertMessageID,
-      revertDiff: revertDiff ? 'present' : 'null'
-    })
-    return { revertMessageID, revertDiff }
+    return {
+      revertMessageID: asString(revert?.messageID) ?? null,
+      revertDiff: asString(revert?.diff) ?? null
+    }
   }
 
   /**
