@@ -18,6 +18,7 @@ jobs:
           cache: pnpm
       - run: pip3 install --break-system-packages setuptools
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: pnpm exec electron-builder --mac --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
