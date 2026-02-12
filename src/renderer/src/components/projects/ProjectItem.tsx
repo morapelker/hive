@@ -41,7 +41,6 @@ import { useProjectStore, useWorktreeStore, useSpaceStore } from '@/stores'
 import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
-import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { gitToast } from '@/lib/toast'
 
 interface Project {
@@ -106,7 +105,6 @@ export function ProjectItem({
   const projectSpaceIds = projectSpaceMap[project.id] ?? []
 
   const [editName, setEditName] = useState(project.name)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [branchPickerOpen, setBranchPickerOpen] = useState(false)
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -339,7 +337,9 @@ export function ProjectItem({
             <GitBranch className="h-4 w-4 mr-2" />
             New Workspace From...
           </ContextMenuItem>
-          <ContextMenuItem onClick={() => setSettingsOpen(true)}>
+          <ContextMenuItem
+            onClick={() => useProjectStore.getState().openProjectSettings(project.id)}
+          >
             <Settings className="h-4 w-4 mr-2" />
             Project Settings
           </ContextMenuItem>
@@ -387,9 +387,6 @@ export function ProjectItem({
 
       {/* Worktree List - shown when project is expanded */}
       {isExpanded && <WorktreeList project={project} />}
-
-      {/* Project Settings Dialog */}
-      <ProjectSettingsDialog project={project} open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       {/* Branch Picker Dialog */}
       <BranchPickerDialog

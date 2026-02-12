@@ -13,8 +13,28 @@ import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
 import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
 import { useWindowFocusRefresh } from '@/hooks/useWindowFocusRefresh'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
+import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDialog'
+import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
+
+function GlobalProjectSettings(): React.JSX.Element | null {
+  const settingsProjectId = useProjectStore((s) => s.settingsProjectId)
+  const closeProjectSettings = useProjectStore((s) => s.closeProjectSettings)
+  const project = useProjectStore((s) => s.projects.find((p) => p.id === s.settingsProjectId))
+
+  if (!project) return null
+
+  return (
+    <ProjectSettingsDialog
+      project={project}
+      open={!!settingsProjectId}
+      onOpenChange={(open) => {
+        if (!open) closeProjectSettings()
+      }}
+    />
+  )
+}
 
 interface AppLayoutProps {
   children?: React.ReactNode
@@ -89,6 +109,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
       <ErrorBoundary componentName="FileSearchDialog" fallback={null}>
         <FileSearchDialog />
       </ErrorBoundary>
+      <GlobalProjectSettings />
     </div>
   )
 }

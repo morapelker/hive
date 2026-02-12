@@ -29,6 +29,7 @@ interface ProjectState {
   selectedProjectId: string | null
   expandedProjectIds: Set<string>
   editingProjectId: string | null
+  settingsProjectId: string | null
 
   // Actions
   loadProjects: () => Promise<void>
@@ -55,6 +56,8 @@ interface ProjectState {
   touchProject: (id: string) => Promise<void>
   refreshLanguage: (projectId: string) => Promise<void>
   reorderProjects: (fromIndex: number, toIndex: number) => void
+  openProjectSettings: (projectId: string) => void
+  closeProjectSettings: () => void
 }
 
 export const useProjectStore = create<ProjectState>()(
@@ -67,6 +70,7 @@ export const useProjectStore = create<ProjectState>()(
       selectedProjectId: null,
       expandedProjectIds: new Set(),
       editingProjectId: null,
+      settingsProjectId: null,
 
       // Load all projects from database (already ordered by sort_order ASC)
       loadProjects: async () => {
@@ -293,6 +297,16 @@ export const useProjectStore = create<ProjectState>()(
 
           return { projects }
         })
+      },
+
+      // Open project settings dialog globally
+      openProjectSettings: (projectId: string) => {
+        set({ settingsProjectId: projectId })
+      },
+
+      // Close project settings dialog
+      closeProjectSettings: () => {
+        set({ settingsProjectId: null })
       }
     }),
     {

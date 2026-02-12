@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react'
 import Ansi from 'ansi-to-react'
-import { RotateCcw, Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { RotateCcw, Loader2, CheckCircle2, XCircle, Settings } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -13,21 +14,15 @@ export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
   const outputRef = useRef<HTMLDivElement>(null)
   const unsubRef = useRef<(() => void) | null>(null)
 
-  const scriptState = useScriptStore((s) =>
-    worktreeId ? s.scriptStates[worktreeId] : null
-  )
+  const scriptState = useScriptStore((s) => (worktreeId ? s.scriptStates[worktreeId] : null))
 
   const emptyOutput: string[] = useMemo(() => [], [])
   const setupOutput = scriptState?.setupOutput ?? emptyOutput
   const setupRunning = scriptState?.setupRunning ?? false
   const setupError = scriptState?.setupError ?? null
 
-  const {
-    appendSetupOutput,
-    setSetupRunning,
-    setSetupError,
-    clearSetupOutput
-  } = useScriptStore.getState()
+  const { appendSetupOutput, setSetupRunning, setSetupError, clearSetupOutput } =
+    useScriptStore.getState()
 
   // Auto-scroll to bottom on new output
   useEffect(() => {
@@ -154,10 +149,21 @@ export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
         data-testid="setup-tab-output"
       >
         {setupOutput.length === 0 && !setupRunning && (
-          <div className="text-muted-foreground text-center py-4">
-            {hasSetupScript
-              ? 'No setup output yet. Click "Rerun Setup" to execute.'
-              : 'No setup script configured. Add one in Project Settings.'}
+          <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground text-xs">
+            {hasSetupScript ? (
+              'No setup output yet. Click "Rerun Setup" to execute.'
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (project) useProjectStore.getState().openProjectSettings(project.id)
+                }}
+              >
+                <Settings className="h-4 w-4 mr-2" />
+                Configure setup script
+              </Button>
+            )}
           </div>
         )}
         {setupOutput.map((line, i) => {
