@@ -2,12 +2,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Check, ChevronDown, Search, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-<<<<<<< HEAD
-import { toast } from '@/lib/toast'
-=======
 import { useSessionStore } from '@/stores/useSessionStore'
-import { toast } from 'sonner'
->>>>>>> session-8-implementation-in-implementation-p17
+import { toast } from '@/lib/toast'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -139,7 +135,6 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
 
   function handleSelectModel(model: ModelInfo): void {
     const variantKeys = getVariantKeys(model)
-<<<<<<< HEAD
     const remembered = useSettingsStore
       .getState()
       .getModelVariantDefault(model.providerID, model.id)
@@ -149,31 +144,22 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
         : variantKeys.length > 0
           ? variantKeys[0]
           : undefined
-    setSelectedModel({ providerID: model.providerID, modelID: model.id, variant })
+    const newModel = { providerID: model.providerID, modelID: model.id, variant }
+    if (sessionId) {
+      useSessionStore.getState().setSessionModel(sessionId, newModel)
+    } else {
+      setSelectedModel(newModel)
+    }
   }
 
   function handleSelectVariant(model: ModelInfo, variant: string): void {
     useSettingsStore.getState().setModelVariantDefault(model.providerID, model.id, variant)
-    setSelectedModel({ providerID: model.providerID, modelID: model.id, variant })
-=======
-    // When selecting a new model, pick its first variant if available
-    const variant = variantKeys.length > 0 ? variantKeys[0] : undefined
     const newModel = { providerID: model.providerID, modelID: model.id, variant }
     if (sessionId) {
       useSessionStore.getState().setSessionModel(sessionId, newModel)
     } else {
       setSelectedModel(newModel)
     }
-  }
-
-  function handleSelectVariant(model: ModelInfo, variant: string): void {
-    const newModel = { providerID: model.providerID, modelID: model.id, variant }
-    if (sessionId) {
-      useSessionStore.getState().setSessionModel(sessionId, newModel)
-    } else {
-      setSelectedModel(newModel)
-    }
->>>>>>> session-8-implementation-in-implementation-p17
   }
 
   function isActiveModel(model: ModelInfo): boolean {
@@ -207,14 +193,10 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
     const nextIndex = (currentIndex + 1) % variantKeys.length
     const nextVariant = variantKeys[nextIndex]
 
-<<<<<<< HEAD
     useSettingsStore
       .getState()
       .setModelVariantDefault(currentModel.providerID, currentModel.id, nextVariant)
-    setSelectedModel({
-=======
     const newModel = {
->>>>>>> session-8-implementation-in-implementation-p17
       providerID: currentModel.providerID,
       modelID: currentModel.id,
       variant: nextVariant
