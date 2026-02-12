@@ -26,9 +26,7 @@ import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcr
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
-
-const PLAN_MODE_PREFIX =
-  '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
+import { PLAN_MODE_PREFIX, stripPlanModePrefix } from '@/lib/constants'
 
 interface SlashCommandInfo {
   name: string
@@ -52,13 +50,6 @@ const BUILT_IN_SLASH_COMMANDS: SlashCommandInfo[] = [
     builtIn: true
   }
 ]
-
-function stripPlanModePrefix(value: string): string {
-  if (value.startsWith(PLAN_MODE_PREFIX)) {
-    return value.slice(PLAN_MODE_PREFIX.length)
-  }
-  return value
-}
 
 // Types for OpenCode SDK integration
 export interface OpenCodeMessage {

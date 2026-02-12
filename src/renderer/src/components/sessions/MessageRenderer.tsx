@@ -1,6 +1,7 @@
 import { UserBubble } from './UserBubble'
 import { AssistantCanvas } from './AssistantCanvas'
 import { CopyMessageButton } from './CopyMessageButton'
+import { PLAN_MODE_PREFIX } from '@/lib/constants'
 import type { OpenCodeMessage } from './SessionView'
 
 interface MessageRendererProps {
@@ -14,11 +15,20 @@ export function MessageRenderer({
   isStreaming = false,
   cwd
 }: MessageRendererProps): React.JSX.Element {
+  const isPlanMode = message.role === 'user' && message.content.startsWith(PLAN_MODE_PREFIX)
+  const displayContent = isPlanMode
+    ? message.content.slice(PLAN_MODE_PREFIX.length)
+    : message.content
+
   return (
     <div className="group relative">
-      <CopyMessageButton content={message.content} />
+      <CopyMessageButton content={displayContent} />
       {message.role === 'user' ? (
-        <UserBubble content={message.content} timestamp={message.timestamp} />
+        <UserBubble
+          content={displayContent}
+          timestamp={message.timestamp}
+          isPlanMode={isPlanMode}
+        />
       ) : (
         <AssistantCanvas
           content={message.content}
