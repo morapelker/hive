@@ -1,37 +1,85 @@
 <div align="center">
   <img src="resources/icon.png" alt="Hive" width="128" />
   <h1>Hive</h1>
-  <p><strong>Desktop app for managing git worktrees with integrated AI coding sessions</strong></p>
+  <p><strong>A native macOS app for managing git worktrees and AI-powered coding sessions.</strong></p>
+  <p>Work on multiple branches simultaneously. Run AI coding agents inline. Never stash again.</p>
 
   <p>
-    <a href="#"><img src="https://img.shields.io/badge/Electron-33-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron" /></a>
-    <a href="#"><img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" /></a>
-    <a href="#"><img src="https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
-    <a href="#"><img src="https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS" /></a>
-    <a href="#"><img src="https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" /></a>
+    <a href="#"><img src="https://img.shields.io/badge/macOS-only-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS" /></a>
     <a href="#"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   </p>
 </div>
 
 ---
 
+## What is Hive?
+
+If you work across multiple branches, features, or repos at the same time, you know the pain -- constant stashing, context switching, and losing your place. Git worktrees solve this, but managing them from the terminal is tedious.
+
+Hive gives you a dedicated workspace for worktree-based development. Create, switch, and archive worktrees visually. Run AI coding sessions directly inside each worktree. See file changes, diffs, and git status in real time -- all from one app.
+
 ## Features
 
-- **Git Worktree Management** -- Create, switch, and archive worktrees with city-themed naming (tokyo, paris, helsinki...)
-- **AI Coding Sessions** -- Integrated [OpenCode](https://opencode.ai) sessions with streaming responses, tool calls, and permission prompts
-- **File Explorer** -- File tree with real-time git status indicators and diff viewing
-- **Git Operations** -- Commit, push, pull, and branch management built in
-- **Themes** -- 10 presets (6 dark, 4 light) with instant switching
-- **Command Palette** -- Fast navigation and actions via keyboard shortcuts
-- **Spaces** -- Organize projects and worktrees into logical groups
+- **Worktree-first workflow** -- Work on multiple branches at the same time without stashing or switching. Create, archive, and organize worktrees with one click.
+- **Built-in AI coding sessions** -- Run AI coding agents directly inside Hive. Stream responses, watch tool calls execute, and approve permissions in real time.
+- **File explorer with live git status** -- See what changed at a glance. View diffs inline without leaving the app.
+- **Full git operations** -- Commit, push, pull, and branch management. No terminal needed.
+- **Spaces** -- Group related projects and worktrees into logical workspaces.
+- **Command palette** -- Navigate and act fast with keyboard shortcuts.
+- **10 themes** -- 6 dark, 4 light. Switch instantly.
+
+## Install
+
+> macOS only.
+
+```bash
+brew tap morapelker/hive
+brew install --cask hive
+```
+
+That's it. Open Hive from your Applications folder and point it at a git repo.
 
 <!-- ## Screenshots
 
-> Screenshots coming soon. Run `pnpm dev` to see Hive in action.
+> Screenshots coming soon.
 
 -->
 
-## Architecture
+---
+
+<details>
+<summary><strong>Development</strong></summary>
+
+### Prerequisites
+
+- **Node.js** 20+
+- **pnpm** 9+
+- **Git** 2.20+ (worktree support)
+
+### Setup
+
+```bash
+git clone https://github.com/anomalyco/hive.git
+cd hive
+pnpm install
+pnpm dev
+```
+
+### Commands
+
+| Command           | Description           |
+| ----------------- | --------------------- |
+| `pnpm dev`        | Start with hot reload |
+| `pnpm build`      | Production build      |
+| `pnpm lint`       | ESLint check          |
+| `pnpm lint:fix`   | ESLint auto-fix       |
+| `pnpm format`     | Prettier format       |
+| `pnpm test`       | Run all tests         |
+| `pnpm test:watch` | Watch mode            |
+| `pnpm test:e2e`   | Playwright E2E tests  |
+| `pnpm build:mac`  | Package for macOS     |
+
+### Architecture
 
 Hive uses Electron's three-process model with strict sandboxing:
 
@@ -68,45 +116,7 @@ Hive uses Electron's three-process model with strict sandboxing:
 └─────────────────────────────────────────────────────┘
 ```
 
-All cross-process communication uses typed IPC through the preload layer. The renderer is fully sandboxed with `contextIsolation: true`.
-
-## Getting Started
-
-### Prerequisites
-
-- **Node.js** 20+
-- **pnpm** 9+
-- **Git** 2.20+ (worktree support)
-
-### Install & Run
-
-```bash
-# Clone the repository
-git clone https://github.com/anomalyco/hive.git
-cd hive
-
-# Install dependencies
-pnpm install
-
-# Start development
-pnpm dev
-```
-
-## Development
-
-| Command           | Description           |
-| ----------------- | --------------------- |
-| `pnpm dev`        | Start with hot reload |
-| `pnpm build`      | Production build      |
-| `pnpm lint`       | ESLint check          |
-| `pnpm lint:fix`   | ESLint auto-fix       |
-| `pnpm format`     | Prettier format       |
-| `pnpm test`       | Run all tests         |
-| `pnpm test:watch` | Watch mode            |
-| `pnpm test:e2e`   | Playwright E2E tests  |
-| `pnpm build:mac`  | Package for macOS     |
-
-## Project Structure
+### Project Structure
 
 ```
 src/
@@ -117,23 +127,12 @@ src/
 ├── preload/               # Bridge layer (typed window.* APIs)
 └── renderer/src/          # React SPA
     ├── components/        # UI organized by domain
-    │   ├── command-palette/
-    │   ├── diff/
-    │   ├── file-tree/
-    │   ├── git/
-    │   ├── layout/
-    │   ├── projects/
-    │   ├── sessions/
-    │   ├── settings/
-    │   ├── spaces/
-    │   ├── ui/            # shadcn/ui primitives
-    │   └── worktrees/
     ├── hooks/             # Custom React hooks
     ├── lib/               # Utilities, themes, helpers
-    └── stores/            # Zustand state management (21 stores)
+    └── stores/            # Zustand state management
 ```
 
-## Tech Stack
+### Tech Stack
 
 | Layer     | Technology                                                                       |
 | --------- | -------------------------------------------------------------------------------- |
@@ -146,16 +145,17 @@ src/
 | AI        | [OpenCode SDK](https://opencode.ai)                                              |
 | Git       | [simple-git](https://github.com/steveukx/git-js)                                 |
 | Build     | [electron-vite](https://electron-vite.org/)                                      |
-| Icons     | [Lucide](https://lucide.dev/)                                                    |
 
-## Documentation
+### Documentation
 
-Detailed documentation lives in [`docs/`](docs/):
+Detailed docs live in [`docs/`](docs/):
 
-- **[PRDs](docs/prd/)** -- Product requirements for all 17 development phases
-- **[Implementation](docs/implementation/)** -- Technical implementation guides per phase
-- **[Specs](docs/specs/)** -- Feature specifications (context calculation, title generation, permissions)
+- **[PRDs](docs/prd/)** -- Product requirements
+- **[Implementation](docs/implementation/)** -- Technical guides
+- **[Specs](docs/specs/)** -- Feature specifications
 - **[Plans](docs/plans/)** -- Active implementation plans
+
+</details>
 
 ## License
 
