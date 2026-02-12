@@ -43,6 +43,9 @@ export interface AppSettings {
 
   // Chrome
   customChromeCommand: string // Custom chrome launch command, e.g. "open -a Chrome {url}"
+
+  // Variant defaults per model
+  modelVariantDefaults: Record<string, string> // "providerID::modelID" → variant
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -56,7 +59,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   selectedModel: null,
   lastOpenAction: null,
   favoriteModels: [],
-  customChromeCommand: ''
+  customChromeCommand: '',
+  modelVariantDefaults: {}
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -73,6 +77,8 @@ interface SettingsState extends AppSettings {
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   setSelectedModel: (model: SelectedModel) => Promise<void>
   toggleFavoriteModel: (providerID: string, modelID: string) => void
+  setModelVariantDefault: (providerID: string, modelID: string, variant: string) => void
+  getModelVariantDefault: (providerID: string, modelID: string) => string | undefined
   resetToDefaults: () => void
   loadFromDatabase: () => Promise<void>
 }
@@ -113,7 +119,8 @@ function extractSettings(state: SettingsState): AppSettings {
     selectedModel: state.selectedModel,
     lastOpenAction: state.lastOpenAction,
     favoriteModels: state.favoriteModels,
-    customChromeCommand: state.customChromeCommand
+    customChromeCommand: state.customChromeCommand,
+    modelVariantDefaults: state.modelVariantDefaults
   }
 }
 
@@ -158,6 +165,22 @@ export const useSettingsStore = create<SettingsState>()(
         saveToDatabase(settings)
       },
 
+      setModelVariantDefault: (providerID: string, modelID: string, variant: string) => {
+        const key = `${providerID}::${modelID}`
+        const updated = { ...get().modelVariantDefaults, [key]: variant }
+        set({ modelVariantDefaults: updated })
+        const settings = extractSettings({
+          ...get(),
+          modelVariantDefaults: updated
+        } as SettingsState)
+        saveToDatabase(settings)
+      },
+
+      getModelVariantDefault: (providerID: string, modelID: string) => {
+        const key = `${providerID}::${modelID}`
+        return get().modelVariantDefaults[key]
+      },
+
       toggleFavoriteModel: (providerID: string, modelID: string) => {
         const key = `${providerID}::${modelID}`
         const current = get().favoriteModels
@@ -197,6 +220,7 @@ export const useSettingsStore = create<SettingsState>()(
         lastOpenAction: state.lastOpenAction,
         favoriteModels: state.favoriteModels,
         customChromeCommand: state.customChromeCommand,
+        modelVariantDefaults: state.modelVariantDefaults,
         activeSection: state.activeSection
       })
     }

@@ -112,12 +112,20 @@ export function ModelSelector(): React.JSX.Element {
 
   function handleSelectModel(model: ModelInfo): void {
     const variantKeys = getVariantKeys(model)
-    // When selecting a new model, pick its first variant if available
-    const variant = variantKeys.length > 0 ? variantKeys[0] : undefined
+    const remembered = useSettingsStore
+      .getState()
+      .getModelVariantDefault(model.providerID, model.id)
+    const variant =
+      remembered && variantKeys.includes(remembered)
+        ? remembered
+        : variantKeys.length > 0
+          ? variantKeys[0]
+          : undefined
     setSelectedModel({ providerID: model.providerID, modelID: model.id, variant })
   }
 
   function handleSelectVariant(model: ModelInfo, variant: string): void {
+    useSettingsStore.getState().setModelVariantDefault(model.providerID, model.id, variant)
     setSelectedModel({ providerID: model.providerID, modelID: model.id, variant })
   }
 
@@ -152,6 +160,9 @@ export function ModelSelector(): React.JSX.Element {
     const nextIndex = (currentIndex + 1) % variantKeys.length
     const nextVariant = variantKeys[nextIndex]
 
+    useSettingsStore
+      .getState()
+      .setModelVariantDefault(currentModel.providerID, currentModel.id, nextVariant)
     setSelectedModel({
       providerID: currentModel.providerID,
       modelID: currentModel.id,
