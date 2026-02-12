@@ -6,6 +6,7 @@ interface SlashCommand {
   description?: string
   template: string
   agent?: string
+  builtIn?: boolean
 }
 
 interface SlashCommandPopoverProps {
@@ -121,6 +122,11 @@ export function SlashCommandPopover({
                   )}
                 >
                   {cmd.agent}
+                </span>
+              )}
+              {cmd.builtIn && (
+                <span className="text-[10px] px-1 rounded bg-emerald-500/20 text-emerald-400">
+                  built-in
                 </span>
               )}
               {cmd.description && (

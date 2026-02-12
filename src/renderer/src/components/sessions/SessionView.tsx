@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -26,6 +26,39 @@ import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcr
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
+
+const PLAN_MODE_PREFIX =
+  '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
+
+interface SlashCommandInfo {
+  name: string
+  description?: string
+  template: string
+  agent?: string
+  builtIn?: boolean
+}
+
+const BUILT_IN_SLASH_COMMANDS: SlashCommandInfo[] = [
+  {
+    name: 'undo',
+    description: 'Undo the last message and file changes',
+    template: '/undo',
+    builtIn: true
+  },
+  {
+    name: 'redo',
+    description: 'Redo the last undone message and file changes',
+    template: '/redo',
+    builtIn: true
+  }
+]
+
+function stripPlanModePrefix(value: string): string {
+  if (value.startsWith(PLAN_MODE_PREFIX)) {
+    return value.slice(PLAN_MODE_PREFIX.length)
+  }
+  return value
+}
 
 // Types for OpenCode SDK integration
 export interface OpenCodeMessage {
@@ -176,10 +209,21 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }>
   >([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [slashCommands, setSlashCommands] = useState<
-    Array<{ name: string; description?: string; template: string; agent?: string }>
-  >([])
+  const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([])
   const [showSlashCommands, setShowSlashCommands] = useState(false)
+  const [revertMessageID, setRevertMessageID] = useState<string | null>(null)
+  const revertDiffRef = useRef<string | null>(null)
+
+  const allSlashCommands = useMemo(() => {
+    const seen = new Set<string>()
+    const ordered = [...BUILT_IN_SLASH_COMMANDS, ...slashCommands]
+    return ordered.filter((command) => {
+      const key = command.name.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [slashCommands])
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
@@ -1203,6 +1247,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           transcriptSourceRef.current.opencodeSessionId = existingOpcSessionId
         }
 
+        // 1b. Hydrate revert boundary BEFORE loading messages so the filter
+        // is applied to the very first render that includes transcript data.
+        if (wtPath && existingOpcSessionId && window.opencodeOps?.sessionInfo) {
+          try {
+            const sessionInfo = await window.opencodeOps.sessionInfo(wtPath, existingOpcSessionId)
+            if (sessionInfo.success) {
+              setRevertMessageID(sessionInfo.revertMessageID ?? null)
+              revertDiffRef.current = sessionInfo.revertDiff ?? null
+            }
+          } catch {
+            // Non-critical — reconnect will also provide revertMessageID
+          }
+        }
+
         // 2. Hydrate transcript (OpenCode canonical source when possible)
         const loadedMessages = await loadMessages({
           worktreePath: wtPath,
@@ -1371,10 +1429,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               .getState()
               .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             // Apply mode prefix (e.g., plan mode for code reviews)
-            const modePrefix =
-              currentMode === 'plan'
-                ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
-                : ''
+            const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
             // Send to OpenCode
             await window.opencodeOps.prompt(path, opcId, modePrefix + pendingMsg)
           } catch (err) {
@@ -1393,6 +1448,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           if (reconnectResult.success) {
             setOpencodeSessionId(existingOpcSessionId)
             transcriptSourceRef.current.opencodeSessionId = existingOpcSessionId
+            // Only update revertMessageID from reconnect if it carries a value;
+            // sessionInfo already hydrated the authoritative value earlier.
+            if (reconnectResult.revertMessageID != null) {
+              setRevertMessageID(reconnectResult.revertMessageID)
+            }
             fetchModelLimits()
             fetchCommands(wtPath)
             hydratePermissions(wtPath)
@@ -1434,6 +1494,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         if (connectResult.success && connectResult.sessionId) {
           setOpencodeSessionId(connectResult.sessionId)
           transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
+          setRevertMessageID(null)
           fetchModelLimits()
           fetchCommands(wtPath)
           hydratePermissions(wtPath)
@@ -1493,6 +1554,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const handleRetry = useCallback(async () => {
     setViewState({ status: 'connecting' })
     setOpencodeSessionId(null)
+    setRevertMessageID(null)
     setWorktreePath(null)
     transcriptSourceRef.current = {
       worktreePath: null,
@@ -1540,8 +1602,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         if (reconnectResult.success) {
           setOpencodeSessionId(existingOpcSessionId)
           transcriptSourceRef.current.opencodeSessionId = existingOpcSessionId
+          if (reconnectResult.revertMessageID != null) {
+            setRevertMessageID(reconnectResult.revertMessageID)
+          }
           activeOpcSessionId = existingOpcSessionId
         } else {
+          setRevertMessageID(null)
           activeOpcSessionId = null
         }
       }
@@ -1555,6 +1621,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         activeOpcSessionId = connectResult.sessionId
         setOpencodeSessionId(connectResult.sessionId)
         transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
+        setRevertMessageID(null)
         await window.db.session.update(sessionId, {
           opencode_session_id: connectResult.sessionId
         })
@@ -1629,10 +1696,90 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     [worktreePath]
   )
 
+  const refreshMessagesFromOpenCode = useCallback(async (): Promise<boolean> => {
+    if (!worktreePath || !opencodeSessionId) return false
+
+    const transcriptResult = await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+    if (!transcriptResult.success) {
+      console.warn('Failed to refresh OpenCode transcript:', transcriptResult.error)
+      return false
+    }
+
+    const loadedMessages = mapOpencodeMessagesToSessionViewMessages(
+      Array.isArray(transcriptResult.messages) ? transcriptResult.messages : []
+    )
+    setMessages(loadedMessages)
+    return true
+  }, [worktreePath, opencodeSessionId])
+
   // Handle send message
   const handleSend = useCallback(async () => {
     const trimmedValue = inputValue.trim()
     if (!trimmedValue) return
+
+    if (trimmedValue.startsWith('/')) {
+      const spaceIndex = trimmedValue.indexOf(' ')
+      const commandName =
+        spaceIndex > 0 ? trimmedValue.slice(1, spaceIndex).toLowerCase() : trimmedValue.slice(1)
+
+      if (commandName === 'undo' || commandName === 'redo') {
+        if (!worktreePath || !opencodeSessionId) {
+          toast.error('OpenCode is not connected')
+          return
+        }
+
+        setShowSlashCommands(false)
+        setInputValue('')
+        inputValueRef.current = ''
+        setHistoryIndex(null)
+        savedDraftRef.current = ''
+        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+        window.db.session.updateDraft(sessionId, null)
+
+        try {
+          if (commandName === 'undo') {
+            const result = await window.opencodeOps.undo(worktreePath, opencodeSessionId)
+            if (!result.success) {
+              toast.error(result.error || 'Nothing to undo')
+              return
+            }
+
+            setRevertMessageID(result.revertMessageID ?? null)
+            revertDiffRef.current = result.revertDiff ?? null
+
+            const restoredPrompt =
+              typeof result.restoredPrompt === 'string'
+                ? stripPlanModePrefix(result.restoredPrompt)
+                : ''
+            setInputValue(restoredPrompt)
+            inputValueRef.current = restoredPrompt
+          } else {
+            const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
+            if (!result.success) {
+              toast.error(result.error || 'Nothing to redo')
+              return
+            }
+
+            setRevertMessageID(result.revertMessageID ?? null)
+            if (result.revertMessageID === null) {
+              revertDiffRef.current = null
+              setInputValue('')
+              inputValueRef.current = ''
+            }
+          }
+
+          const refreshed = await refreshMessagesFromOpenCode()
+          if (!refreshed) {
+            toast.error('Undo/redo completed, but refresh failed')
+          }
+        } catch (error) {
+          console.error('Built-in command failed:', error)
+          toast.error(commandName === 'undo' ? 'Undo failed' : 'Redo failed')
+        }
+
+        return
+      }
+    }
 
     // If already streaming, this is a queued follow-up
     const isQueuedMessage = isStreaming
@@ -1668,6 +1815,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       .setSessionStatus(sessionId, currentModeForStatus === 'plan' ? 'planning' : 'working')
 
     try {
+      setRevertMessageID(null)
+      revertDiffRef.current = null
       setMessages((prev) => [...prev, createLocalMessage('user', trimmedValue)])
 
       // Mark that a new prompt is in flight — prevents finalizeResponse
@@ -1705,9 +1854,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             spaceIndex > 0 ? trimmedValue.slice(1, spaceIndex) : trimmedValue.slice(1)
           const commandArgs = spaceIndex > 0 ? trimmedValue.slice(spaceIndex + 1).trim() : ''
 
-          const matchedCommand = slashCommands.find((c) => c.name === commandName)
+          const matchedCommand = allSlashCommands.find((c) => c.name === commandName)
 
-          if (matchedCommand) {
+          if (matchedCommand && !matchedCommand.builtIn) {
             // Auto-switch mode based on command's agent field
             if (matchedCommand.agent) {
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
@@ -1733,10 +1882,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           } else {
             // Unknown command — send as regular prompt (SDK may handle it)
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-            const modePrefix =
-              currentMode === 'plan'
-                ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
-                : ''
+            const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
             const promptMessage = modePrefix + trimmedValue
             lastSentPromptRef.current = promptMessage
             const parts: MessagePart[] = [
@@ -1759,10 +1905,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         } else {
           // Regular prompt — existing code (with mode prefix, attachments, etc.)
           const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-          const modePrefix =
-            currentMode === 'plan'
-              ? '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
-              : ''
+          const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
           const promptMessage = modePrefix + trimmedValue
           // Store the full prompt so the stream handler can detect SDK echoes
           // of the user message (the SDK often re-emits the prompt without a
@@ -1810,7 +1953,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     worktreeId,
     opencodeSessionId,
     attachments,
-    slashCommands
+    allSlashCommands,
+    refreshMessagesFromOpenCode
   ])
 
   // Abort streaming
@@ -1991,6 +2135,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }, [sessionId, toggleSessionMode])
 
   // Determine if there's streaming content to show
+  const visibleMessages = useMemo(() => {
+    if (!revertMessageID) return messages
+    return messages.filter(
+      (message) => message.id.startsWith('local-') || message.id < revertMessageID
+    )
+  }, [messages, revertMessageID])
+
+  const revertedUserCount = useMemo(() => {
+    if (!revertMessageID) return 0
+    return messages.filter(
+      (message) =>
+        message.role === 'user' && !message.id.startsWith('local-') && message.id >= revertMessageID
+    ).length
+  }, [messages, revertMessageID])
+
+  // Determine if there's streaming content to show
   const hasStreamingContent = streamingParts.length > 0 || streamingContent.length > 0
 
   // Render based on view state
@@ -2027,7 +2187,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           onScroll={handleScroll}
           data-testid="message-list"
         >
-          {messages.length === 0 && !hasStreamingContent ? (
+          {visibleMessages.length === 0 && !hasStreamingContent ? (
             <div className="flex-1 flex items-center justify-center h-full text-muted-foreground">
               <div className="text-center">
                 <p className="text-lg font-medium">Start a conversation</p>
@@ -2042,9 +2202,33 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             </div>
           ) : (
             <div className="py-4">
-              {messages.map((message) => (
+              {visibleMessages.map((message) => (
                 <MessageRenderer key={message.id} message={message} cwd={worktreePath} />
               ))}
+              {/* Revert banner — shows when messages have been undone */}
+              {revertMessageID && revertedUserCount > 0 && (
+                <div
+                  className="mx-6 my-3 rounded-lg border border-border/50 bg-muted/30 px-4 py-3"
+                  data-testid="revert-banner"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">
+                      {revertedUserCount} {revertedUserCount === 1 ? 'message' : 'messages'}{' '}
+                      reverted
+                    </span>
+                    <button
+                      className="text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+                      onClick={() => {
+                        setInputValue('/redo')
+                        inputValueRef.current = '/redo'
+                        textareaRef.current?.focus()
+                      }}
+                    >
+                      /redo to restore
+                    </button>
+                  </div>
+                </div>
+              )}
               {/* Streaming message */}
               {hasStreamingContent && (
                 <MessageRenderer
@@ -2119,7 +2303,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         <div className="max-w-4xl mx-auto relative">
           {/* Slash command popover — outside overflow-hidden so it can render above */}
           <SlashCommandPopover
-            commands={slashCommands}
+            commands={allSlashCommands}
             filter={inputValue}
             onSelect={handleCommandSelect}
             onClose={handleSlashClose}

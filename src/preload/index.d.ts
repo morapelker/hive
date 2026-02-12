@@ -288,7 +288,11 @@ declare global {
         worktreePath: string,
         opencodeSessionId: string,
         hiveSessionId: string
-      ) => Promise<{ success: boolean; sessionStatus?: 'idle' | 'busy' | 'retry' }>
+      ) => Promise<{
+        success: boolean
+        sessionStatus?: 'idle' | 'busy' | 'retry'
+        revertMessageID?: string | null
+      }>
       // Send a prompt (response streams via onStream)
       // Accepts either a string message or a MessagePart[] array for rich content (text + file attachments)
       prompt: (
@@ -353,6 +357,32 @@ declare global {
       permissionList: (
         worktreePath?: string
       ) => Promise<{ success: boolean; permissions: PermissionRequest[]; error?: string }>
+      // Get session info (revert state)
+      sessionInfo: (
+        worktreePath: string,
+        opencodeSessionId: string
+      ) => Promise<{
+        success: boolean
+        revertMessageID?: string | null
+        revertDiff?: string | null
+        error?: string
+      }>
+      // Undo the last assistant turn/message range
+      undo: (
+        worktreePath: string,
+        opencodeSessionId: string
+      ) => Promise<{
+        success: boolean
+        revertMessageID?: string
+        restoredPrompt?: string
+        revertDiff?: string | null
+        error?: string
+      }>
+      // Redo the last undone message range
+      redo: (
+        worktreePath: string,
+        opencodeSessionId: string
+      ) => Promise<{ success: boolean; revertMessageID?: string | null; error?: string }>
       // Send a slash command to a session via the SDK command endpoint
       command: (
         worktreePath: string,
