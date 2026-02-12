@@ -23,16 +23,25 @@ export function formatCompletionDuration(ms: number): string {
 }
 
 export const COMPLETION_WORDS = [
-  'Worked',
+  'Swarmed',
+  'Buzzed',
+  'Hived',
   'Brewed',
-  'Cooked',
-  'Crafted',
-  'Built',
-  'Forged',
-  'Wove',
-  'Shipped',
-  'Baked',
-  'Hacked'
+  'Waxed',
+  'Honeyed',
+  'Sealed',
+  'Capped',
+  'Foraged',
+  'Scouted',
+  'Danced',
+  'Dripped',
+  'Sipped',
+  'Clustered',
+  'Nested',
+  'Scented',
+  'Pollinated',
+  'Gathered',
+  'Hummed'
 ]
 
 const DEV_SERVER_URL_PATTERN = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{3,5}\/?/

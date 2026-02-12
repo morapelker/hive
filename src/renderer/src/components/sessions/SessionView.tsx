@@ -30,6 +30,7 @@ import { usePermissionStore } from '@/stores/usePermissionStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
+import { messageSendTimes } from '@/lib/message-send-times'
 import beeIcon from '@/assets/bee.png'
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
@@ -320,9 +321,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // sessionId change; the stream handler captures the current value and rejects
   // events when the ref has moved on.
   const streamGenerationRef = useRef(0)
-
-  // Completion badge: tracks when streaming started so we can compute duration
-  const streamingStartTimeRef = useRef<number | null>(null)
 
   // Echo detection: stores the full prompt text (including mode prefix) so we
   // can recognise SDK echoes of the user message even when the event lacks a
@@ -1250,11 +1248,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               newPromptPendingRef.current = false
               setIsSending(true)
 
-              // Track streaming start time for completion badge duration
-              if (!streamingStartTimeRef.current) {
-                streamingStartTimeRef.current = Date.now()
-              }
-
               // Restore worktree status to working/planning
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
               useWorktreeStatusStore
@@ -1271,22 +1264,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 void finalizeResponse()
               }
 
-              // Set completion badge with duration and random word
-              const durationMs = streamingStartTimeRef.current
-                ? Date.now() - streamingStartTimeRef.current
-                : 0
-              streamingStartTimeRef.current = null
+              // Set completion badge with duration since user sent the message
+              const sendTime = messageSendTimes.get(sessionId)
+              const durationMs = sendTime ? Date.now() - sendTime : 0
               const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
               const statusStore = useWorktreeStatusStore.getState()
               statusStore.setSessionStatus(sessionId, 'completed', { word, durationMs })
-
-              // Auto-clear completion badge after 30 seconds
-              setTimeout(() => {
-                const current = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-                if (current?.status === 'completed') {
-                  useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-                }
-              }, 30_000)
             }
             // 'retry' status: keep isStreaming true, could add retry UI later
           }
@@ -1904,6 +1887,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     isAutoScrollEnabledRef.current = true
     setShowScrollFab(false)
     userHasScrolledUpRef.current = false
+
+    // Start the completion badge timer from when the user sends the message
+    messageSendTimes.set(sessionId, Date.now())
 
     // Set worktree status based on session mode (plan → planning, build → working)
     const currentModeForStatus = useSessionStore.getState().getSessionMode(sessionId)

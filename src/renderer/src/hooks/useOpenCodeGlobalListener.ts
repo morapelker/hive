@@ -6,6 +6,7 @@ import { useQuestionStore } from '@/stores/useQuestionStore'
 import { useContextStore } from '@/stores/useContextStore'
 import { extractTokens, extractCost, extractModelRef } from '@/lib/token-utils'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
+import { messageSendTimes } from '@/lib/message-send-times'
 
 /**
  * Persistent global listener for OpenCode stream events.
@@ -112,19 +113,13 @@ export function useOpenCodeGlobalListener(): void {
           // Active session is handled by SessionView.
           if (sessionId === activeId) return
 
-          // Set completion badge for background session (duration unknown, use 0)
+          // Set completion badge — duration measured from when user sent the message
+          const sendTime = messageSendTimes.get(sessionId)
+          const durationMs = sendTime ? Date.now() - sendTime : 0
           const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
           useWorktreeStatusStore
             .getState()
-            .setSessionStatus(sessionId, 'completed', { word, durationMs: 0 })
-
-          // After 30 seconds, transition completed → unread for background sessions
-          setTimeout(() => {
-            const current = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-            if (current?.status === 'completed') {
-              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'unread')
-            }
-          }, 30_000)
+            .setSessionStatus(sessionId, 'completed', { word, durationMs })
 
           // Update last message time for the worktree
           const sessions = useSessionStore.getState().sessionsByWorktree
