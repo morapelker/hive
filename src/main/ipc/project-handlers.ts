@@ -198,27 +198,6 @@ export function registerProjectHandlers(): void {
     }
   })
 
-  // Seed default custom language icons if not already set
-  const db = getDatabase()
-  if (!db.getSetting('language_icons')) {
-    db.setSetting(
-      'language_icons',
-      JSON.stringify({
-        python: '/Users/mor/Desktop/python.svg',
-        rust: '/Users/mor/Desktop/rustacean-orig-noshadow.svg',
-        go: '/Users/mor/Desktop/golang.png',
-        typescript: '/Users/mor/Desktop/typescript.svg',
-        swift: '/Users/mor/Desktop/swift.svg',
-        kotlin: '/Users/mor/Desktop/kotlin.svg',
-        csharp: '/Users/mor/Desktop/csharp.svg',
-        cpp: '/Users/mor/Desktop/c-plusplus.svg',
-        c: '/Users/mor/Desktop/c.svg',
-        javascript: '/Users/mor/Desktop/javascript.svg',
-        java: '/Users/mor/Desktop/java.svg'
-      })
-    )
-  }
-
   // --- Custom Project Icon handlers ---
 
   const iconDir = join(app.getPath('home'), '.hive', 'project-icons')

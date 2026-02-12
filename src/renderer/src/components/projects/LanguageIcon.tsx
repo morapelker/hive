@@ -1,6 +1,19 @@
 import { useEffect, useState } from 'react'
 import { FolderGit2 } from 'lucide-react'
 
+// Bundled language icons (Vite resolves these to hashed asset URLs at build time)
+import typescriptIcon from '@/assets/language-icons/typescript.svg'
+import javascriptIcon from '@/assets/language-icons/javascript.svg'
+import pythonIcon from '@/assets/language-icons/python.svg'
+import goIcon from '@/assets/language-icons/go.png'
+import rustIcon from '@/assets/language-icons/rust.svg'
+import swiftIcon from '@/assets/language-icons/swift.svg'
+import javaIcon from '@/assets/language-icons/java.svg'
+import kotlinIcon from '@/assets/language-icons/kotlin.svg'
+import cIcon from '@/assets/language-icons/c.svg'
+import cppIcon from '@/assets/language-icons/c-plusplus.svg'
+import csharpIcon from '@/assets/language-icons/csharp.svg'
+
 interface LanguageIconProps {
   language: string | null
   customIcon?: string | null
@@ -13,6 +26,22 @@ interface LanguageConfig {
   text: string
 }
 
+/** Bundled icon URLs keyed by language identifier */
+const BUNDLED_ICONS: Record<string, string> = {
+  typescript: typescriptIcon,
+  javascript: javascriptIcon,
+  python: pythonIcon,
+  go: goIcon,
+  rust: rustIcon,
+  swift: swiftIcon,
+  java: javaIcon,
+  kotlin: kotlinIcon,
+  c: cIcon,
+  cpp: cppIcon,
+  csharp: csharpIcon
+}
+
+/** Fallback colored badges for languages without a bundled icon */
 const LANGUAGE_MAP: Record<string, LanguageConfig> = {
   typescript: { label: 'TS', bg: 'bg-blue-600', text: 'text-white' },
   javascript: { label: 'JS', bg: 'bg-yellow-500', text: 'text-black' },
@@ -31,7 +60,7 @@ const LANGUAGE_MAP: Record<string, LanguageConfig> = {
   csharp: { label: 'C#', bg: 'bg-green-600', text: 'text-white' }
 }
 
-// Module-level cache for custom icon data URLs
+// Module-level cache for user-override icon data URLs (from DB setting)
 let customIconsCache: Record<string, string> | null = null
 let customIconsLoading = false
 const customIconsListeners: Array<() => void> = []
@@ -69,7 +98,7 @@ function useCustomIcons(): Record<string, string> {
   return icons
 }
 
-// Module-level cache for resolved project icon paths (filename -> file:// URL)
+// Module-level cache for resolved project icon paths (filename -> data URL)
 const projectIconCache = new Map<string, string>()
 
 function useProjectIconUrl(customIcon: string | null | undefined): string | null {
@@ -100,9 +129,6 @@ function useProjectIconUrl(customIcon: string | null | undefined): string | null
           projectIconCache.set(customIcon, dataUrl)
           setUrl(dataUrl)
         }
-      })
-      .catch(() => {
-        // ignore errors
       })
       .catch(() => {
         // ignore errors
@@ -140,12 +166,12 @@ export function LanguageIcon({
     return <FolderGit2 className={className ?? 'h-4 w-4 text-muted-foreground shrink-0'} />
   }
 
-  // Priority 2: Custom language icon (global language-based icon)
-  const customIconUrl = customIcons[language]
-  if (customIconUrl) {
+  // Priority 2: User-override language icon (from DB language_icons setting)
+  const userOverrideUrl = customIcons[language]
+  if (userOverrideUrl) {
     return (
       <img
-        src={customIconUrl}
+        src={userOverrideUrl}
         alt={language}
         title={language}
         className="h-4 w-4 shrink-0 object-contain"
@@ -153,7 +179,20 @@ export function LanguageIcon({
     )
   }
 
-  // Priority 3: Default badge
+  // Priority 3: Bundled language icon (shipped with the app)
+  const bundledUrl = BUNDLED_ICONS[language]
+  if (bundledUrl) {
+    return (
+      <img
+        src={bundledUrl}
+        alt={language}
+        title={language}
+        className="h-4 w-4 shrink-0 object-contain"
+      />
+    )
+  }
+
+  // Priority 4: Colored badge fallback
   const config = LANGUAGE_MAP[language]
   if (!config) {
     return <FolderGit2 className={className ?? 'h-4 w-4 text-muted-foreground shrink-0'} />
