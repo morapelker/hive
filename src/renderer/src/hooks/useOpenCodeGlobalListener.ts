@@ -40,7 +40,11 @@ export function useOpenCodeGlobalListener(): void {
           // Handle message.updated for background sessions — extract title + tokens
           if (event.type === 'message.updated' && sessionId !== activeId) {
             const sessionTitle = event.data?.info?.title || event.data?.title
-            if (sessionTitle) {
+            // Skip OpenCode default placeholder titles like "New session - 2026-02-12T21:33:03.013Z"
+            const isOpenCodeDefault = /^New session\s*-?\s*\d{4}-\d{2}-\d{2}/i.test(
+              sessionTitle || ''
+            )
+            if (sessionTitle && !isOpenCodeDefault) {
               useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
             }
 
@@ -66,7 +70,11 @@ export function useOpenCodeGlobalListener(): void {
           // Keep session.updated for background title sync (some events use this type)
           if (event.type === 'session.updated' && sessionId !== activeId) {
             const sessionTitle = event.data?.info?.title || event.data?.title
-            if (sessionTitle) {
+            // Skip OpenCode default placeholder titles like "New session - 2026-02-12T21:33:03.013Z"
+            const isOpenCodeDefault = /^New session\s*-?\s*\d{4}-\d{2}-\d{2}/i.test(
+              sessionTitle || ''
+            )
+            if (sessionTitle && !isOpenCodeDefault) {
               useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
             }
             return

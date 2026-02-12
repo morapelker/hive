@@ -908,7 +908,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // The SDK event structure is: { data: { info: { title, ... } } }
           if (event.type === 'session.updated') {
             const sessionTitle = event.data?.info?.title || event.data?.title
-            if (sessionTitle) {
+            // Skip OpenCode default placeholder titles like "New session - 2026-02-12T21:33:03.013Z"
+            const isOpenCodeDefault = /^New session\s*-?\s*\d{4}-\d{2}-\d{2}/i.test(
+              sessionTitle || ''
+            )
+            if (sessionTitle && !isOpenCodeDefault) {
               useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
             }
             return
