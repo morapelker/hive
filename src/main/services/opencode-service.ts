@@ -58,6 +58,44 @@ interface OpenCodeInstance {
   childToParentMap: Map<string, string>
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function messageInfo(message: unknown): { id?: string; role?: string; parts: unknown[] } {
+  const record = asRecord(message)
+  const info = asRecord(record?.info)
+  const id = asString(info?.id) ?? asString(record?.id)
+  const role = asString(info?.role) ?? asString(record?.role)
+  const parts = Array.isArray(record?.parts) ? record.parts : []
+  return { id, role, parts }
+}
+
+function extractPromptTextFromMessage(message: unknown): string {
+  const { parts } = messageInfo(message)
+  let bestText = ''
+
+  for (const part of parts) {
+    const partRecord = asRecord(part)
+    if (!partRecord) continue
+    if (partRecord.type !== 'text') continue
+    if (partRecord.synthetic === true || partRecord.ignored === true) continue
+
+    const text = asString(partRecord.text) ?? ''
+    if (text.length > bestText.length) {
+      bestText = text
+    }
+  }
+
+  return bestText
+}
+
 // Dynamic import helper for ESM SDK
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadOpenCodeSDK(): Promise<{ createOpencode: any; createOpencodeClient: any }> {
@@ -407,7 +445,11 @@ class OpenCodeService {
     worktreePath: string,
     opencodeSessionId: string,
     hiveSessionId: string
-  ): Promise<{ success: boolean; sessionStatus?: 'idle' | 'busy' | 'retry' }> {
+  ): Promise<{
+    success: boolean
+    sessionStatus?: 'idle' | 'busy' | 'retry'
+    revertMessageID?: string | null
+  }> {
     log.info('Attempting to reconnect to OpenCode session', {
       worktreePath,
       opencodeSessionId,
@@ -452,12 +494,15 @@ class OpenCodeService {
           worktreePath,
           opencodeSessionId
         )
+        const revert = asRecord(result.data)?.revert
+        const revertMessageID = asString(asRecord(revert)?.messageID) ?? null
         log.info('Successfully reconnected to OpenCode session', {
           opencodeSessionId,
           hiveSessionId,
-          sessionStatus
+          sessionStatus,
+          revertMessageID
         })
-        return { success: true, sessionStatus }
+        return { success: true, sessionStatus, revertMessageID }
       }
     } catch (error) {
       log.warn('Failed to reconnect to OpenCode session', { opencodeSessionId, error })
@@ -736,6 +781,107 @@ class OpenCodeService {
       log.error('Failed to get messages', { opencodeSessionId, error })
       throw error
     }
+  }
+
+  async undo(
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<{ revertMessageID: string; restoredPrompt: string }> {
+    const instance = await this.getOrCreateInstance()
+
+    const status = await this.querySessionStatus(instance, worktreePath, opencodeSessionId)
+    if (status && status !== 'idle') {
+      await this.abort(worktreePath, opencodeSessionId).catch(() => {})
+    }
+
+    const [sessionResult, messagesResult] = await Promise.all([
+      instance.client.session.get({
+        path: { id: opencodeSessionId },
+        query: { directory: worktreePath }
+      }),
+      instance.client.session.messages({
+        path: { id: opencodeSessionId },
+        query: { directory: worktreePath }
+      })
+    ])
+
+    const revertMessageID = asString(asRecord(asRecord(sessionResult.data)?.revert)?.messageID)
+    const messages = Array.isArray(messagesResult.data) ? messagesResult.data : []
+
+    let targetMessage: unknown
+    for (const message of messages) {
+      const info = messageInfo(message)
+      if (info.role !== 'user') continue
+      if (revertMessageID && info.id && info.id >= revertMessageID) continue
+      targetMessage = message
+    }
+
+    const targetMessageID = messageInfo(targetMessage).id
+    if (!targetMessage || !targetMessageID) {
+      throw new Error('Nothing to undo')
+    }
+
+    await instance.client.session.revert({
+      path: { id: opencodeSessionId },
+      query: { directory: worktreePath },
+      body: {
+        messageID: targetMessageID
+      }
+    })
+
+    return {
+      revertMessageID: targetMessageID,
+      restoredPrompt: extractPromptTextFromMessage(targetMessage)
+    }
+  }
+
+  async redo(
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<{ revertMessageID: string | null }> {
+    const instance = await this.getOrCreateInstance()
+
+    const sessionResult = await instance.client.session.get({
+      path: { id: opencodeSessionId },
+      query: { directory: worktreePath }
+    })
+
+    const revertMessageID = asString(asRecord(asRecord(sessionResult.data)?.revert)?.messageID)
+    if (!revertMessageID) {
+      throw new Error('Nothing to redo')
+    }
+
+    const messagesResult = await instance.client.session.messages({
+      path: { id: opencodeSessionId },
+      query: { directory: worktreePath }
+    })
+    const messages = Array.isArray(messagesResult.data) ? messagesResult.data : []
+
+    const nextUserMessageID = messages
+      .map((message) => messageInfo(message))
+      .filter(
+        (info) => info.role === 'user' && typeof info.id === 'string' && info.id > revertMessageID
+      )
+      .map((info) => info.id as string)
+      .sort()[0]
+
+    if (!nextUserMessageID) {
+      await instance.client.session.unrevert({
+        path: { id: opencodeSessionId },
+        query: { directory: worktreePath }
+      })
+      return { revertMessageID: null }
+    }
+
+    await instance.client.session.revert({
+      path: { id: opencodeSessionId },
+      query: { directory: worktreePath },
+      body: {
+        messageID: nextUserMessageID
+      }
+    })
+
+    return { revertMessageID: nextUserMessageID }
   }
 
   /**

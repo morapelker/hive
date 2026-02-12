@@ -150,6 +150,8 @@ beforeEach(() => {
       reconnect: vi.fn().mockResolvedValue({ success: true }),
       prompt: vi.fn().mockResolvedValue({ success: true }),
       command: vi.fn().mockResolvedValue({ success: true }),
+      undo: vi.fn().mockResolvedValue({ success: true }),
+      redo: vi.fn().mockResolvedValue({ success: true }),
       disconnect: vi.fn().mockResolvedValue({ success: true }),
       abort: vi.fn().mockResolvedValue({ success: true }),
       getMessages: vi
@@ -468,6 +470,74 @@ describe('Session 8: Session View', () => {
       await waitFor(() => {
         expect(window.opencodeOps.prompt).toHaveBeenCalled()
       })
+    })
+
+    test('Built-in /undo routes to undo endpoint and does not add user message', async () => {
+      const user = userEvent.setup()
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
+      const input = screen.getByTestId('message-input') as HTMLTextAreaElement
+      const initialUserMessages = screen.getAllByTestId('message-user').length
+
+      await user.type(input, '/undo{Enter}{Enter}')
+
+      await waitFor(() => {
+        expect(window.opencodeOps.undo).toHaveBeenCalledWith(
+          '/tmp/worktree-default',
+          'opc-session-1'
+        )
+      })
+
+      expect(window.opencodeOps.command).not.toHaveBeenCalled()
+      expect(window.opencodeOps.prompt).not.toHaveBeenCalled()
+      expect(screen.getAllByTestId('message-user').length).toBe(initialUserMessages)
+    })
+
+    test('Built-in /undo restores previous prompt text into the input', async () => {
+      const user = userEvent.setup()
+      ;(window.opencodeOps.undo as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        restoredPrompt: 'Refine the component API'
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
+      const input = screen.getByTestId('message-input') as HTMLTextAreaElement
+      await user.type(input, '/undo{Enter}{Enter}')
+
+      await waitFor(() => {
+        expect(input.value).toBe('Refine the component API')
+      })
+    })
+
+    test('Built-in /redo routes to redo endpoint and bypasses command endpoint', async () => {
+      const user = userEvent.setup()
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
+      const input = screen.getByTestId('message-input') as HTMLTextAreaElement
+      await user.type(input, '/redo{Enter}{Enter}')
+
+      await waitFor(() => {
+        expect(window.opencodeOps.redo).toHaveBeenCalledWith(
+          '/tmp/worktree-default',
+          'opc-session-1'
+        )
+      })
+
+      expect(window.opencodeOps.command).not.toHaveBeenCalled()
+      expect(window.opencodeOps.prompt).not.toHaveBeenCalled()
     })
 
     test('Typing indicator is shown while waiting for response events', async () => {

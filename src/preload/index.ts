@@ -693,8 +693,11 @@ const opencodeOps = {
     worktreePath: string,
     opencodeSessionId: string,
     hiveSessionId: string
-  ): Promise<{ success: boolean; sessionStatus?: 'idle' | 'busy' | 'retry' }> =>
-    ipcRenderer.invoke('opencode:reconnect', worktreePath, opencodeSessionId, hiveSessionId),
+  ): Promise<{
+    success: boolean
+    sessionStatus?: 'idle' | 'busy' | 'retry'
+    revertMessageID?: string | null
+  }> => ipcRenderer.invoke('opencode:reconnect', worktreePath, opencodeSessionId, hiveSessionId),
 
   // Send a prompt (response streams via onStream)
   // Accepts either a string message or a MessagePart[] array for rich content (text + file attachments)
@@ -794,6 +797,24 @@ const opencodeOps = {
     worktreePath?: string
   ): Promise<{ success: boolean; permissions: unknown[]; error?: string }> =>
     ipcRenderer.invoke('opencode:permission:list', { worktreePath }),
+
+  // Undo the last assistant turn/message range
+  undo: (
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<{
+    success: boolean
+    revertMessageID?: string
+    restoredPrompt?: string
+    error?: string
+  }> => ipcRenderer.invoke('opencode:undo', { worktreePath, sessionId: opencodeSessionId }),
+
+  // Redo the previously undone message range
+  redo: (
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<{ success: boolean; revertMessageID?: string | null; error?: string }> =>
+    ipcRenderer.invoke('opencode:redo', { worktreePath, sessionId: opencodeSessionId }),
 
   // Send a slash command to a session via the SDK command endpoint
   command: (

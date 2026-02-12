@@ -205,6 +205,42 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // Undo last message state via OpenCode revert API
+  ipcMain.handle(
+    'opencode:undo',
+    async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
+      log.info('IPC: opencode:undo', { worktreePath, sessionId })
+      try {
+        const result = await openCodeService.undo(worktreePath, sessionId)
+        return { success: true, ...result }
+      } catch (error) {
+        log.error('IPC: opencode:undo failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Redo last undone message state via OpenCode unrevert/revert API
+  ipcMain.handle(
+    'opencode:redo',
+    async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
+      log.info('IPC: opencode:redo', { worktreePath, sessionId })
+      try {
+        const result = await openCodeService.redo(worktreePath, sessionId)
+        return { success: true, ...result }
+      } catch (error) {
+        log.error('IPC: opencode:redo failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Reply to a pending question from the AI
   ipcMain.handle(
     'opencode:question:reply',
