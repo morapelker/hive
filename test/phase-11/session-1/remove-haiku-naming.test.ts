@@ -73,26 +73,17 @@ describe('Session 1: Remove Haiku Naming', () => {
       })
     })
 
-    test('createSession uses ISO date format title', async () => {
+    test('createSession uses sequential counter title', async () => {
       // Dynamically import the store after mocks are set up
       const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
 
-      const beforeTime = new Date().toISOString()
       await useSessionStore.getState().createSession('worktree-1', 'project-1')
-      const afterTime = new Date().toISOString()
 
       expect(mockSessionCreate).toHaveBeenCalledOnce()
       const callArgs = mockSessionCreate.mock.calls[0][0]
 
-      // Verify name matches the expected format
-      expect(callArgs.name).toMatch(/^New session - \d{4}-\d{2}-\d{2}T/)
-
-      // Verify the ISO date is within the expected time range
-      const nameParts = callArgs.name.split(' - ')
-      expect(nameParts[0]).toBe('New session')
-      const isoDate = nameParts[1]
-      expect(isoDate >= beforeTime).toBe(true)
-      expect(isoDate <= afterTime).toBe(true)
+      // Verify name matches the expected format: "Session N"
+      expect(callArgs.name).toMatch(/^Session \d+$/)
     })
   })
 
@@ -176,7 +167,7 @@ describe('Session 1: Remove Haiku Naming', () => {
       // The old utility function
       expect(content).not.toMatch(/function generateSessionName\(\)/)
       // The new format should be present
-      expect(content).toContain('New session - ${new Date().toISOString()}')
+      expect(content).toContain('`Session ${sessionNumber}`')
     })
   })
 })

@@ -173,7 +173,7 @@ describe('Session 7: Session Tabs', () => {
       expect(mockDbSession.create).toHaveBeenCalledWith({
         worktree_id: 'worktree-1',
         project_id: 'project-1',
-        name: expect.stringMatching(/^New session - \d{4}-\d{2}-\d{2}T/)
+        name: expect.stringMatching(/^Session \d+$/)
       })
 
       const state = useSessionStore.getState()

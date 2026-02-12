@@ -195,10 +195,13 @@ export const useSessionStore = create<SessionState>()(
             }
           }
 
+          const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
+          const sessionNumber = existingSessions.length + 1
+
           const session = await window.db.session.create({
             worktree_id: worktreeId,
             project_id: projectId,
-            name: `New session - ${new Date().toISOString()}`,
+            name: `Session ${sessionNumber}`,
             ...(defaultModel
               ? {
                   model_provider_id: defaultModel.providerID,
@@ -434,7 +437,7 @@ export const useSessionStore = create<SessionState>()(
             })
 
             // Append non-default session titles to the worktree (updates store + DB)
-            const isDefault = /^New session - \d{4}-/.test(name)
+            const isDefault = /^Session \d+$/.test(name)
             if (!isDefault && worktreeId) {
               useWorktreeStore.getState().appendSessionTitle(worktreeId, name)
             }

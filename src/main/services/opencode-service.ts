@@ -1094,9 +1094,9 @@ class OpenCodeService {
           db.updateSession(hiveSessionId, { name: sessionTitle })
 
           // Auto-rename branch if still an auto-generated name (one-time only)
-          // Skip placeholder titles like "New session - 2026-02-10T15:26:38.962Z"
+          // Skip placeholder titles like "Session 1", "Session 2", etc.
           // — only rename when we get a real AI-generated title
-          const isPlaceholderTitle = /^New session\s*-/i.test(sessionTitle)
+          const isPlaceholderTitle = /^Session \d+$/i.test(sessionTitle)
           const worktree = db.getWorktreeBySessionId(hiveSessionId)
           if (worktree && !worktree.branch_renamed && !isPlaceholderTitle) {
             const isAutoName =

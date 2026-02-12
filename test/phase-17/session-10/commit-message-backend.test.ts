@@ -83,11 +83,11 @@ describe('Session 10: Default Commit Message Backend', () => {
 
   // ── Default name detection ────────────────────────────────────────────────
   describe('default session name detection', () => {
-    const isDefault = (name: string): boolean => /^New session - \d{4}-/.test(name)
+    const isDefault = (name: string): boolean => /^Session \d+$/.test(name)
 
-    test('detects default timestamp names', () => {
-      expect(isDefault('New session - 2025-01-15T10:30:00.000Z')).toBe(true)
-      expect(isDefault('New session - 2026-02-12T08:00:00.000Z')).toBe(true)
+    test('detects default sequential counter names', () => {
+      expect(isDefault('Session 1')).toBe(true)
+      expect(isDefault('Session 42')).toBe(true)
     })
 
     test('rejects meaningful session names', () => {
@@ -97,8 +97,9 @@ describe('Session 10: Default Commit Message Backend', () => {
     })
 
     test('rejects partial matches', () => {
-      expect(isDefault('New session')).toBe(false)
-      expect(isDefault('Session - 2025-01-01')).toBe(false)
+      expect(isDefault('Session')).toBe(false)
+      expect(isDefault('Session abc')).toBe(false)
+      expect(isDefault('New session - 2025-01-01')).toBe(false)
     })
   })
 
@@ -136,7 +137,7 @@ describe('Session 10: Default Commit Message Backend', () => {
       const name = 'Implement dark mode'
       const worktreeId = 'wt-1'
 
-      const isDefault = /^New session - \d{4}-/.test(name)
+      const isDefault = /^Session \d+$/.test(name)
       expect(isDefault).toBe(false)
 
       if (!isDefault && worktreeId) {
@@ -147,10 +148,10 @@ describe('Session 10: Default Commit Message Backend', () => {
     })
 
     test('default session names do NOT trigger appendSessionTitle', async () => {
-      const name = 'New session - 2025-01-15T10:30:00.000Z'
+      const name = 'Session 1'
       const worktreeId = 'wt-1'
 
-      const isDefault = /^New session - \d{4}-/.test(name)
+      const isDefault = /^Session \d+$/.test(name)
       expect(isDefault).toBe(true)
 
       if (!isDefault && worktreeId) {
@@ -164,7 +165,7 @@ describe('Session 10: Default Commit Message Backend', () => {
       const name = 'Implement dark mode'
       const worktreeId: string | null = null
 
-      const isDefault = /^New session - \d{4}-/.test(name)
+      const isDefault = /^Session \d+$/.test(name)
       expect(isDefault).toBe(false)
 
       if (!isDefault && worktreeId) {

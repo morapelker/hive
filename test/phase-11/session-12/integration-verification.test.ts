@@ -119,16 +119,16 @@ describe('Session 12: Integration & Verification', () => {
       expect(content).toContain('sessions.length')
     })
 
-    test('new session gets ISO date title that server recognizes as placeholder', () => {
+    test('new session gets sequential counter title that server recognizes as placeholder', () => {
       const content = readSrc('renderer', 'src', 'stores', 'useSessionStore.ts')
-      expect(content).toContain('New session - ${new Date().toISOString()}')
+      expect(content).toContain('`Session ${sessionNumber}`')
     })
 
     test('server recognizes placeholder title and will auto-generate', () => {
       // The opencode-service skips auto-rename for placeholder titles
       const content = readSrc('main', 'services', 'opencode-service.ts')
       expect(content).toContain('isPlaceholderTitle')
-      expect(content).toContain(/New session/i.source || 'New session')
+      expect(content).toContain('Session')
     })
 
     test('createWorktreeFromBranch IPC and auto-start are both available', () => {
@@ -512,7 +512,7 @@ describe('Session 12: Integration & Verification', () => {
 
       expect(mockSessionCreate).toHaveBeenCalledOnce()
       const callArgs = mockSessionCreate.mock.calls[0][0]
-      expect(callArgs.name).toMatch(/^New session - \d{4}-\d{2}-\d{2}T/)
+      expect(callArgs.name).toMatch(/^Session \d+$/)
     })
 
     test('updateSessionName action exists for title events', async () => {
