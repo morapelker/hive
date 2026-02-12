@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createLogger } from './logger'
 import { notificationService } from './notification-service'
 import { getDatabase } from '../db'
-import { BREED_NAMES, LEGACY_CITY_NAMES } from './breed-names'
+import { ALL_BREED_NAMES, LEGACY_CITY_NAMES } from './breed-names'
 import { canonicalizeBranchName, createGitService } from './git-service'
 
 const log = createLogger({ component: 'OpenCodeService' })
@@ -1100,7 +1100,7 @@ class OpenCodeService {
           const worktree = db.getWorktreeBySessionId(hiveSessionId)
           if (worktree && !worktree.branch_renamed && !isPlaceholderTitle) {
             const isAutoName =
-              BREED_NAMES.some(
+              ALL_BREED_NAMES.some(
                 (b) =>
                   b === worktree.branch_name.toLowerCase() ||
                   worktree.branch_name.toLowerCase().startsWith(`${b}-v`)
