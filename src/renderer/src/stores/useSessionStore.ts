@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { SelectedModel } from './useSettingsStore'
+import { useWorktreeStore } from './useWorktreeStore'
 
 // Session mode type
 export type SessionMode = 'build' | 'plan'
@@ -400,16 +401,32 @@ export const useSessionStore = create<SessionState>()(
         try {
           const updatedSession = await window.db.session.update(sessionId, { name })
           if (updatedSession) {
+            // Find the worktree_id for this session before updating store
+            let worktreeId: string | null = null
+            for (const [wtId, sessions] of get().sessionsByWorktree.entries()) {
+              if (sessions.some((s) => s.id === sessionId)) {
+                worktreeId = wtId
+                break
+              }
+            }
+
             set((state) => {
               const newSessionsMap = new Map(state.sessionsByWorktree)
-              for (const [worktreeId, sessions] of newSessionsMap.entries()) {
+              for (const [wtId, sessions] of newSessionsMap.entries()) {
                 const updated = sessions.map((s) => (s.id === sessionId ? { ...s, name } : s))
                 if (updated.some((s, i) => s !== sessions[i])) {
-                  newSessionsMap.set(worktreeId, updated)
+                  newSessionsMap.set(wtId, updated)
                 }
               }
               return { sessionsByWorktree: newSessionsMap }
             })
+
+            // Append non-default session titles to the worktree (updates store + DB)
+            const isDefault = /^New session - \d{4}-/.test(name)
+            if (!isDefault && worktreeId) {
+              useWorktreeStore.getState().appendSessionTitle(worktreeId, name)
+            }
+
             return true
           }
           return false

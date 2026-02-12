@@ -25,6 +25,7 @@ interface Worktree {
   is_default: boolean
   branch_renamed: number // 0 = auto-named (city), 1 = user/auto renamed
   last_message_at: number | null // epoch ms of last AI message activity
+  session_titles: string // JSON array of session title strings
   created_at: string
   last_accessed_at: string
 }
@@ -128,6 +129,10 @@ declare global {
         delete: (id: string) => Promise<boolean>
         archive: (id: string) => Promise<Worktree | null>
         touch: (id: string) => Promise<boolean>
+        appendSessionTitle: (
+          worktreeId: string,
+          title: string
+        ) => Promise<{ success: boolean; error?: string }>
       }
       session: {
         create: (data: {

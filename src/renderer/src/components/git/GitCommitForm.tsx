@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useGitStore } from '@/stores/useGitStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { cn } from '@/lib/utils'
 
 interface GitCommitFormProps {
@@ -24,6 +25,36 @@ export function GitCommitForm({
   const summaryInputRef = useRef<HTMLInputElement>(null)
 
   const { commit, isCommitting } = useGitStore()
+
+  // Look up worktree to get session_titles for pre-populating commit message
+  const worktreesByProject = useWorktreeStore((state) => state.worktreesByProject)
+  const sessionTitles: string[] = useMemo(() => {
+    if (!worktreePath) return []
+    for (const worktrees of worktreesByProject.values()) {
+      const wt = worktrees.find((w) => w.path === worktreePath)
+      if (wt?.session_titles) {
+        try {
+          return JSON.parse(wt.session_titles)
+        } catch {
+          return []
+        }
+      }
+    }
+    return []
+  }, [worktreePath, worktreesByProject])
+
+  // Pre-populate summary and description from session titles on mount
+  const hasPrePopulated = useRef(false)
+  useEffect(() => {
+    if (hasPrePopulated.current) return
+    if (sessionTitles.length > 0 && !summary) {
+      hasPrePopulated.current = true
+      setSummary(sessionTitles[0])
+      if (sessionTitles.length > 1) {
+        setDescription(sessionTitles.map((t) => `- ${t}`).join('\n'))
+      }
+    }
+  }, [sessionTitles]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subscribe to store state for staged files count
   const fileStatusesByWorktree = useGitStore((state) => state.fileStatusesByWorktree)
