@@ -1,10 +1,22 @@
 import { create } from 'zustand'
 
 export interface FileViewerTab {
+  type: 'file'
   path: string
   name: string
   worktreeId: string
 }
+
+export interface DiffTab {
+  type: 'diff'
+  worktreePath: string
+  filePath: string
+  fileName: string
+  staged: boolean
+  isUntracked: boolean
+}
+
+export type TabEntry = FileViewerTab | DiffTab
 
 export interface ActiveDiff {
   worktreePath: string
@@ -15,7 +27,7 @@ export interface ActiveDiff {
 }
 
 interface FileViewerState {
-  openFiles: Map<string, FileViewerTab>
+  openFiles: Map<string, TabEntry>
   activeFilePath: string | null
   activeDiff: ActiveDiff | null
 
@@ -25,6 +37,8 @@ interface FileViewerState {
   closeAllFiles: () => void
   setActiveDiff: (diff: ActiveDiff | null) => void
   clearActiveDiff: () => void
+  closeDiffTab: (tabKey: string) => void
+  activateDiffTab: (tabKey: string) => void
 }
 
 export const useFileViewerStore = create<FileViewerState>((set) => ({
@@ -35,7 +49,7 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
   openFile: (path: string, name: string, worktreeId: string) => {
     set((state) => {
       const newFiles = new Map(state.openFiles)
-      newFiles.set(path, { path, name, worktreeId })
+      newFiles.set(path, { type: 'file', path, name, worktreeId })
       return { openFiles: newFiles, activeFilePath: path, activeDiff: null }
     })
   },
@@ -65,10 +79,56 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
   },
 
   setActiveDiff: (diff: ActiveDiff | null) => {
-    set({ activeDiff: diff, activeFilePath: null })
+    if (!diff) {
+      set({ activeDiff: null })
+      return
+    }
+    const tabKey = `diff:${diff.filePath}:${diff.staged ? 'staged' : 'unstaged'}`
+    set((state) => {
+      const openFiles = new Map(state.openFiles)
+      openFiles.set(tabKey, {
+        type: 'diff',
+        worktreePath: diff.worktreePath,
+        filePath: diff.filePath,
+        fileName: diff.fileName,
+        staged: diff.staged,
+        isUntracked: diff.isUntracked
+      })
+      return { activeDiff: diff, activeFilePath: tabKey, openFiles }
+    })
   },
 
   clearActiveDiff: () => {
     set({ activeDiff: null })
+  },
+
+  closeDiffTab: (tabKey: string) => {
+    set((state) => {
+      const openFiles = new Map(state.openFiles)
+      openFiles.delete(tabKey)
+      const isActive = state.activeFilePath === tabKey
+      return {
+        openFiles,
+        activeFilePath: isActive ? null : state.activeFilePath,
+        activeDiff: isActive ? null : state.activeDiff
+      }
+    })
+  },
+
+  activateDiffTab: (tabKey: string) => {
+    set((state) => {
+      const tab = state.openFiles.get(tabKey)
+      if (!tab || tab.type !== 'diff') return state
+      return {
+        activeFilePath: tabKey,
+        activeDiff: {
+          worktreePath: tab.worktreePath,
+          filePath: tab.filePath,
+          fileName: tab.fileName,
+          staged: tab.staged,
+          isUntracked: tab.isUntracked
+        }
+      }
+    })
   }
 }))

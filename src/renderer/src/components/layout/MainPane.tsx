@@ -19,7 +19,12 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const activeDiff = useFileViewerStore((state) => state.activeDiff)
 
   const handleCloseDiff = useCallback(() => {
-    useFileViewerStore.getState().clearActiveDiff()
+    const filePath = useFileViewerStore.getState().activeFilePath
+    if (filePath?.startsWith('diff:')) {
+      useFileViewerStore.getState().closeDiffTab(filePath)
+    } else {
+      useFileViewerStore.getState().clearActiveDiff()
+    }
   }, [])
 
   // Determine what to show in the main content area
@@ -66,8 +71,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       )
     }
 
-    // File viewer tab is active - render FileViewer
-    if (activeFilePath) {
+    // File viewer tab is active - render FileViewer (skip diff tab keys)
+    if (activeFilePath && !activeFilePath.startsWith('diff:')) {
       return <FileViewer filePath={activeFilePath} />
     }
 

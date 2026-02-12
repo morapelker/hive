@@ -245,14 +245,14 @@ describe('Session 7: Integration & Polish', () => {
   // Inline Diff integration
   // -------------------------------------------------------------------------
   describe('Inline Diff integration', () => {
-    test('setting active diff clears active file', () => {
+    test('setting active diff switches activeFilePath to diff tab key', () => {
       const store = useFileViewerStore.getState()
 
       // Open a file first
       store.openFile('/test/file.ts', 'file.ts', 'wt-1')
       expect(useFileViewerStore.getState().activeFilePath).toBe('/test/file.ts')
 
-      // Set active diff should clear active file
+      // Set active diff — now creates a diff tab entry
       store.setActiveDiff({
         worktreePath: '/test/worktree',
         filePath: 'src/app.ts',
@@ -262,7 +262,7 @@ describe('Session 7: Integration & Polish', () => {
       })
 
       expect(useFileViewerStore.getState().activeDiff).not.toBeNull()
-      expect(useFileViewerStore.getState().activeFilePath).toBeNull()
+      expect(useFileViewerStore.getState().activeFilePath).toBe('diff:src/app.ts:unstaged')
     })
 
     test('clearing diff does not restore previous file', () => {
@@ -279,7 +279,8 @@ describe('Session 7: Integration & Polish', () => {
       store.clearActiveDiff()
 
       expect(useFileViewerStore.getState().activeDiff).toBeNull()
-      expect(useFileViewerStore.getState().activeFilePath).toBeNull()
+      // activeFilePath retains the diff tab key (tab still exists, just not active diff)
+      expect(useFileViewerStore.getState().activeFilePath).toBe('diff:src/app.ts:unstaged')
     })
 
     test('opening a file clears active diff', () => {
@@ -385,7 +386,8 @@ describe('Session 7: Integration & Polish', () => {
       const state = useFileViewerStore.getState()
       expect(state.activeFilePath).toBe('/c.ts')
       expect(state.activeDiff).toBeNull()
-      expect(state.openFiles.size).toBe(2) // a.ts and c.ts
+      // a.ts, diff:b.ts:unstaged, and c.ts — diff tab persists until explicitly closed
+      expect(state.openFiles.size).toBe(3)
     })
 
     test('closeAllFiles resets diff state too', () => {
