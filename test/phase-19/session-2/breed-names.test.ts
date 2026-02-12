@@ -58,7 +58,27 @@ describe('Session 2: Dog Breed Names', () => {
   test('selectUniqueBreedName falls back to suffix when all names taken', () => {
     const existing = new Set(DOG_BREEDS)
     const name = selectUniqueBreedName(existing)
-    expect(name).toMatch(/-v\d+$/)
+    expect(name).toMatch(/-\d+$/)
+  })
+
+  test('selectUniqueBreedName starts fallback suffixes at -2', () => {
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const existing = new Set(DOG_BREEDS)
+
+    const name = selectUniqueBreedName(existing)
+
+    expect(name).toBe(`${DOG_BREEDS[0]}-2`)
+    randomSpy.mockRestore()
+  })
+
+  test('selectUniqueBreedName appends suffix when first random name already exists', () => {
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValue(0.5)
+    const existing = new Set([DOG_BREEDS[0]])
+
+    const name = selectUniqueBreedName(existing)
+
+    expect(name).toBe(`${DOG_BREEDS[0]}-2`)
+    randomSpy.mockRestore()
   })
 
   test('LEGACY_CITY_NAMES is exported for backward compatibility', () => {
@@ -84,6 +104,14 @@ describe('Session 2: Dog Breed Names', () => {
     const branchName = 'golden-retriever-v2'
     const isAutoName = ALL_BREED_NAMES.some(
       (b) => branchName === b || branchName.startsWith(`${b}-v`)
+    )
+    expect(isAutoName).toBe(true)
+  })
+
+  test('auto-rename detection recognizes numeric suffixed breed names', () => {
+    const branchName = 'golden-retriever-2'
+    const isAutoName = ALL_BREED_NAMES.some(
+      (b) => branchName === b || branchName.startsWith(`${b}-`) || branchName.startsWith(`${b}-v`)
     )
     expect(isAutoName).toBe(true)
   })

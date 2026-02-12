@@ -240,16 +240,13 @@ export function registerWorktreeHandlers(): void {
             // Update branch_name always. Also update display name if it still matches
             // the old branch name OR is a city placeholder name (never meaningfully customized).
             const nameMatchesBranch = dbWorktree.name === dbWorktree.branch_name
+            const worktreeName = dbWorktree.name.toLowerCase()
             const isAutoName =
               ALL_BREED_NAMES.some(
-                (b) =>
-                  b === dbWorktree.name.toLowerCase() ||
-                  dbWorktree.name.toLowerCase().startsWith(`${b}-v`)
+                (b) => b === worktreeName || new RegExp(`^${b}-(?:v)?\\d+$`).test(worktreeName)
               ) ||
               LEGACY_CITY_NAMES.some(
-                (c) =>
-                  c === dbWorktree.name.toLowerCase() ||
-                  dbWorktree.name.toLowerCase().startsWith(`${c}-v`)
+                (c) => c === worktreeName || new RegExp(`^${c}-(?:v)?\\d+$`).test(worktreeName)
               )
             const shouldUpdateName = nameMatchesBranch || isAutoName
             db.updateWorktree(dbWorktree.id, {

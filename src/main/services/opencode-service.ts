@@ -1116,16 +1116,15 @@ class OpenCodeService {
           }
           const worktree = db.getWorktreeBySessionId(hiveSessionId)
           if (worktree && !worktree.branch_renamed && !isPlaceholderTitle) {
+            const currentBranchName = worktree.branch_name.toLowerCase()
             const isAutoName =
               ALL_BREED_NAMES.some(
                 (b) =>
-                  b === worktree.branch_name.toLowerCase() ||
-                  worktree.branch_name.toLowerCase().startsWith(`${b}-v`)
+                  b === currentBranchName || new RegExp(`^${b}-(?:v)?\\d+$`).test(currentBranchName)
               ) ||
               LEGACY_CITY_NAMES.some(
                 (c) =>
-                  c === worktree.branch_name.toLowerCase() ||
-                  worktree.branch_name.toLowerCase().startsWith(`${c}-v`)
+                  c === currentBranchName || new RegExp(`^${c}-(?:v)?\\d+$`).test(currentBranchName)
               )
             if (isAutoName) {
               const baseBranch = canonicalizeBranchName(sessionTitle)
