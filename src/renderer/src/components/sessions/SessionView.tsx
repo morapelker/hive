@@ -2286,6 +2286,67 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [sessionId, toggleSessionMode])
 
+  // Listen for undo/redo turn events from the application menu
+  useEffect(() => {
+    const handleUndo = async (): Promise<void> => {
+      if (useSessionStore.getState().activeSessionId !== sessionId) return
+      if (!worktreePath || !opencodeSessionId) return
+      try {
+        const result = await window.opencodeOps.undo(worktreePath, opencodeSessionId)
+        if (!result.success) {
+          toast.error(result.error || 'Nothing to undo')
+          return
+        }
+        setRevertMessageID(result.revertMessageID ?? null)
+        revertDiffRef.current = result.revertDiff ?? null
+        const restoredPrompt =
+          typeof result.restoredPrompt === 'string'
+            ? stripPlanModePrefix(result.restoredPrompt)
+            : ''
+        setInputValue(restoredPrompt)
+        inputValueRef.current = restoredPrompt
+        await refreshMessagesFromOpenCode()
+      } catch {
+        toast.error('Undo failed')
+      }
+    }
+
+    const handleRedo = async (): Promise<void> => {
+      if (useSessionStore.getState().activeSessionId !== sessionId) return
+      if (!worktreePath || !opencodeSessionId) return
+      try {
+        const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
+        if (!result.success) {
+          toast.error(result.error || 'Nothing to redo')
+          return
+        }
+        setRevertMessageID(result.revertMessageID ?? null)
+        if (result.revertMessageID === null) {
+          revertDiffRef.current = null
+          setInputValue('')
+          inputValueRef.current = ''
+        }
+        await refreshMessagesFromOpenCode()
+      } catch {
+        toast.error('Redo failed')
+      }
+    }
+
+    const onUndo = (): void => {
+      handleUndo()
+    }
+    const onRedo = (): void => {
+      handleRedo()
+    }
+
+    window.addEventListener('hive:undo-turn', onUndo)
+    window.addEventListener('hive:redo-turn', onRedo)
+    return () => {
+      window.removeEventListener('hive:undo-turn', onUndo)
+      window.removeEventListener('hive:redo-turn', onRedo)
+    }
+  }, [sessionId, worktreePath, opencodeSessionId, refreshMessagesFromOpenCode])
+
   // Determine if there's streaming content to show
   const visibleMessages = useMemo(() => {
     if (!revertMessageID) return messages

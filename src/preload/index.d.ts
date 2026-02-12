@@ -345,6 +345,11 @@ declare global {
         callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
       ) => () => void
       onWindowFocused: (callback: () => void) => () => void
+      updateMenuState: (state: {
+        hasActiveSession: boolean
+        hasActiveWorktree: boolean
+      }) => Promise<void>
+      onMenuAction: (channel: string, callback: () => void) => () => void
     }
     loggingOps: {
       createResponseLog: (sessionId: string) => Promise<string>

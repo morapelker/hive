@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Plus, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectStore } from '@/stores'
@@ -48,6 +48,14 @@ export function AddProjectButton(): React.JSX.Element {
       setIsAdding(false)
     }
   }, [isAdding, addProject])
+
+  useEffect(() => {
+    const handler = (): void => {
+      handleAddProject()
+    }
+    window.addEventListener('hive:add-project', handler)
+    return () => window.removeEventListener('hive:add-project', handler)
+  }, [handleAddProject])
 
   const handleInitRepository = useCallback(async (): Promise<void> => {
     if (!gitInitPath) return

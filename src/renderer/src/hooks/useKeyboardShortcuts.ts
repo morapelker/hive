@@ -16,6 +16,71 @@ import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { toast } from '@/lib/toast'
 
 /**
+ * Runs or stops the project run script for the currently selected worktree.
+ * Extracted so it can be shared between the keyboard shortcut and the menu action.
+ */
+function handleRunProject(): void {
+  const worktreeId = useWorktreeStore.getState().selectedWorktreeId
+  if (!worktreeId) {
+    toast.error('Please select a worktree first')
+    return
+  }
+
+  const { worktreesByProject } = useWorktreeStore.getState()
+  let runScript: string | null = null
+  let worktreePath: string | null = null
+
+  for (const [projectId, wts] of worktreesByProject) {
+    const wt = wts.find((w) => w.id === worktreeId)
+    if (wt) {
+      worktreePath = wt.path
+      const proj = useProjectStore.getState().projects.find((p) => p.id === projectId)
+      runScript = proj?.run_script ?? null
+      break
+    }
+  }
+
+  if (!runScript) {
+    toast.info('No run script configured. Add one in Project Settings.')
+    return
+  }
+  if (!worktreePath) return
+
+  const parseCommands = (script: string): string[] =>
+    script
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#'))
+
+  // Switch to Run tab
+  useLayoutStore.getState().setBottomPanelTab('run')
+
+  const scriptState = useScriptStore.getState().getScriptState(worktreeId)
+
+  if (scriptState.runRunning) {
+    // Stop current run (Cmd/Ctrl+R acts as a start/stop toggle)
+    window.scriptOps.kill(worktreeId).then(() => {
+      useScriptStore.getState().setRunRunning(worktreeId, false)
+      useScriptStore.getState().setRunPid(worktreeId, null)
+    })
+  } else {
+    // Start fresh
+    useScriptStore.getState().clearRunOutput(worktreeId)
+    useScriptStore.getState().setRunRunning(worktreeId, true)
+
+    const commands = parseCommands(runScript)
+
+    window.scriptOps.runProject(commands, worktreePath, worktreeId).then((result) => {
+      if (result.success && result.pid) {
+        useScriptStore.getState().setRunPid(worktreeId, result.pid)
+      } else {
+        useScriptStore.getState().setRunRunning(worktreeId, false)
+      }
+    })
+  }
+}
+
+/**
  * Creates a new session for the currently selected worktree.
  * Shared between the keyboard shortcut handler and the main-process IPC listener.
  */
@@ -111,6 +176,12 @@ export function useKeyboardShortcuts(): void {
 
     return cleanup
   }, [])
+
+  // Listen for application menu actions forwarded from the main process via IPC
+  useMenuActionListeners()
+
+  // Reactively update menu enabled/disabled state based on active session/worktree
+  useMenuStateUpdater()
 
   // Listen for Cmd+W / Ctrl+W forwarded from the main process via IPC
   useEffect(() => {
@@ -237,67 +308,7 @@ function getShortcutHandlers(
       id: 'project:run',
       binding: getEffectiveBinding('project:run'),
       allowInInput: true,
-      handler: () => {
-        const worktreeId = useWorktreeStore.getState().selectedWorktreeId
-        if (!worktreeId) {
-          toast.error('Please select a worktree first')
-          return
-        }
-
-        // Find project for this worktree
-        const { worktreesByProject } = useWorktreeStore.getState()
-        let runScript: string | null = null
-        let worktreePath: string | null = null
-
-        for (const [projectId, wts] of worktreesByProject) {
-          const wt = wts.find((w) => w.id === worktreeId)
-          if (wt) {
-            worktreePath = wt.path
-            const proj = useProjectStore.getState().projects.find((p) => p.id === projectId)
-            runScript = proj?.run_script ?? null
-            break
-          }
-        }
-
-        if (!runScript) {
-          toast.info('No run script configured. Add one in Project Settings.')
-          return
-        }
-        if (!worktreePath) return
-
-        const parseCommands = (script: string): string[] =>
-          script
-            .split('\n')
-            .map((l) => l.trim())
-            .filter((l) => l && !l.startsWith('#'))
-
-        // Switch to Run tab
-        useLayoutStore.getState().setBottomPanelTab('run')
-
-        const scriptState = useScriptStore.getState().getScriptState(worktreeId)
-
-        if (scriptState.runRunning) {
-          // Stop current run (Cmd/Ctrl+R acts as a start/stop toggle)
-          window.scriptOps.kill(worktreeId).then(() => {
-            useScriptStore.getState().setRunRunning(worktreeId, false)
-            useScriptStore.getState().setRunPid(worktreeId, null)
-          })
-        } else {
-          // Start fresh
-          useScriptStore.getState().clearRunOutput(worktreeId)
-          useScriptStore.getState().setRunRunning(worktreeId, true)
-
-          const commands = parseCommands(runScript)
-
-          window.scriptOps.runProject(commands, worktreePath, worktreeId).then((result) => {
-            if (result.success && result.pid) {
-              useScriptStore.getState().setRunPid(worktreeId, result.pid)
-            } else {
-              useScriptStore.getState().setRunRunning(worktreeId, false)
-            }
-          })
-        }
-      }
+      handler: handleRunProject
     },
 
     {
@@ -499,4 +510,184 @@ function getActiveWorktreePath(): string | null {
     if (worktree) return worktree.path
   }
   return null
+}
+
+/**
+ * Listens for menu:* IPC channels sent from the application menu and
+ * dispatches them to the appropriate store actions / custom events.
+ */
+function useMenuActionListeners(): void {
+  useEffect(() => {
+    if (!window.systemOps?.onMenuAction) return
+
+    const cleanups: (() => void)[] = []
+
+    const on = (channel: string, handler: () => void): void => {
+      cleanups.push(window.systemOps.onMenuAction(channel, handler))
+    }
+
+    on('menu:new-worktree', () => {
+      const { selectedProjectId } = useProjectStore.getState()
+      if (!selectedProjectId) {
+        toast.info('Please select a project first')
+        return
+      }
+      useWorktreeStore.getState().setCreatingForProject(selectedProjectId)
+    })
+
+    on('menu:add-project', () => {
+      window.dispatchEvent(new CustomEvent('hive:add-project'))
+    })
+
+    on('menu:toggle-mode', () => {
+      const { activeSessionId } = useSessionStore.getState()
+      if (!activeSessionId) return
+      useSessionStore.getState().toggleSessionMode(activeSessionId)
+    })
+
+    on('menu:cycle-model', () => {
+      window.dispatchEvent(new CustomEvent('hive:cycle-variant'))
+    })
+
+    on('menu:run-project', () => {
+      handleRunProject()
+    })
+
+    on('menu:undo-turn', () => {
+      window.dispatchEvent(new CustomEvent('hive:undo-turn'))
+    })
+
+    on('menu:redo-turn', () => {
+      window.dispatchEvent(new CustomEvent('hive:redo-turn'))
+    })
+
+    on('menu:commit', () => {
+      window.dispatchEvent(new CustomEvent('hive:focus-commit'))
+      const { rightSidebarCollapsed, setRightSidebarCollapsed } = useLayoutStore.getState()
+      if (rightSidebarCollapsed) {
+        setRightSidebarCollapsed(false)
+      }
+    })
+
+    on('menu:push', () => {
+      const worktreePath = getActiveWorktreePath()
+      if (!worktreePath) {
+        toast.error('Please select a worktree first')
+        return
+      }
+      useGitStore
+        .getState()
+        .push(worktreePath)
+        .then((result) => {
+          if (result.success) {
+            toast.success('Pushed successfully')
+          } else {
+            toast.error(result.error || 'Failed to push')
+          }
+        })
+    })
+
+    on('menu:pull', () => {
+      const worktreePath = getActiveWorktreePath()
+      if (!worktreePath) {
+        toast.error('Please select a worktree first')
+        return
+      }
+      useGitStore
+        .getState()
+        .pull(worktreePath)
+        .then((result) => {
+          if (result.success) {
+            toast.success('Pulled successfully')
+          } else {
+            toast.error(result.error || 'Failed to pull')
+          }
+        })
+    })
+
+    on('menu:stage-all', () => {
+      const worktreePath = getActiveWorktreePath()
+      if (!worktreePath) return
+      useGitStore.getState().stageAll(worktreePath)
+    })
+
+    on('menu:unstage-all', () => {
+      const worktreePath = getActiveWorktreePath()
+      if (!worktreePath) return
+      useGitStore.getState().unstageAll(worktreePath)
+    })
+
+    on('menu:open-in-editor', () => {
+      const worktreePath = getActiveWorktreePath()
+      if (!worktreePath) return
+      window.worktreeOps.openInEditor(worktreePath)
+    })
+
+    on('menu:open-in-terminal', () => {
+      const worktreePath = getActiveWorktreePath()
+      if (!worktreePath) return
+      window.worktreeOps.openInTerminal(worktreePath)
+    })
+
+    on('menu:command-palette', () => {
+      useCommandPaletteStore.getState().toggle()
+    })
+
+    on('menu:session-history', () => {
+      useSessionHistoryStore.getState().togglePanel()
+    })
+
+    on('menu:toggle-left-sidebar', () => {
+      useLayoutStore.getState().toggleLeftSidebar()
+    })
+
+    on('menu:toggle-right-sidebar', () => {
+      useLayoutStore.getState().toggleRightSidebar()
+    })
+
+    on('menu:focus-left-sidebar', () => {
+      const sidebar = document.querySelector('[data-testid="left-sidebar"]') as HTMLElement
+      if (sidebar) {
+        const focusable = sidebar.querySelector<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+        if (focusable) focusable.focus()
+        else sidebar.focus()
+      }
+    })
+
+    on('menu:focus-main-pane', () => {
+      const mainPane = document.querySelector('[data-testid="main-pane"]') as HTMLElement
+      if (mainPane) {
+        const focusable = mainPane.querySelector<HTMLElement>(
+          'textarea, input, button, [href], select, [tabindex]:not([tabindex="-1"])'
+        )
+        if (focusable) focusable.focus()
+        else mainPane.focus()
+      }
+    })
+
+    return () => {
+      for (const cleanup of cleanups) {
+        cleanup()
+      }
+    }
+  }, [])
+}
+
+/**
+ * Reactively updates the application menu enabled/disabled state based on
+ * whether a session and worktree are currently active.
+ */
+function useMenuStateUpdater(): void {
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
+
+  useEffect(() => {
+    if (!window.systemOps?.updateMenuState) return
+    window.systemOps.updateMenuState({
+      hasActiveSession: !!activeSessionId,
+      hasActiveWorktree: !!selectedWorktreeId
+    })
+  }, [activeSessionId, selectedWorktreeId])
 }

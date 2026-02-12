@@ -1,5 +1,5 @@
 import fixPath from 'fix-path'
-import { app, shell, BrowserWindow, Menu, screen, ipcMain, clipboard } from 'electron'
+import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
 import { spawn, exec } from 'child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
@@ -21,6 +21,8 @@ import {
   registerTerminalHandlers,
   cleanupTerminals
 } from './ipc'
+import { buildMenu, updateMenuState } from './menu'
+import type { MenuState } from './menu'
 import { createLogger, getLogDir } from './services/logger'
 import { createResponseLog, appendResponseLog } from './services/response-logger'
 import { notificationService } from './services/notification-service'
@@ -307,52 +309,19 @@ app.whenReady().then(() => {
     registerLoggingHandlers()
   }
 
-  // Custom menu: remove Reload (Cmd+R) so the renderer can use it for "Run Project".
-  // We keep devtools toggle for development convenience.
-  const menuTemplate: Electron.MenuItemConstructorOptions[] = [
-    { role: 'appMenu' },
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'New Session',
-          accelerator: 'CmdOrCtrl+T',
-          click: () => {
-            mainWindow?.webContents.send('shortcut:new-session')
-          }
-        },
-        {
-          label: 'Close Tab',
-          accelerator: 'CmdOrCtrl+W',
-          click: () => {
-            mainWindow?.webContents.send('shortcut:close-session')
-          }
-        },
-        { type: 'separator' },
-        { role: 'quit' }
-      ]
-    },
-    { role: 'editMenu' },
-    {
-      label: 'View',
-      submenu: [
-        ...(is.dev ? [{ role: 'toggleDevTools' as const }] : []),
-        { type: 'separator' as const },
-        { role: 'resetZoom' as const },
-        { role: 'zoomIn' as const },
-        { role: 'zoomOut' as const },
-        { type: 'separator' as const },
-        { role: 'togglefullscreen' as const }
-      ]
-    },
-    { role: 'windowMenu' }
-  ]
-  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
-
   createWindow()
 
   // Register OpenCode handlers after window is created
   if (mainWindow) {
+    // Build the full application menu (File, Edit, Session, Git, View, Window, Help)
+    log.info('Building application menu')
+    buildMenu(mainWindow, is.dev)
+
+    // Register menu state update handler (renderer tells main which items to enable/disable)
+    ipcMain.handle('menu:updateState', (_event, state: MenuState) => {
+      updateMenuState(state)
+    })
+
     log.info('Registering OpenCode handlers')
     registerOpenCodeHandlers(mainWindow)
     log.info('Registering FileTree handlers')

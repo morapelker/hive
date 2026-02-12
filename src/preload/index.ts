@@ -443,6 +443,23 @@ const systemOps = {
     return () => {
       ipcRenderer.removeListener('app:windowFocused', handler)
     }
+  },
+
+  // Update menu item enabled/disabled state (renderer -> main)
+  updateMenuState: (state: {
+    hasActiveSession: boolean
+    hasActiveWorktree: boolean
+  }): Promise<void> => ipcRenderer.invoke('menu:updateState', state),
+
+  // Subscribe to menu action events from the application menu (main -> renderer)
+  onMenuAction: (channel: string, callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on(channel, handler)
+    return () => {
+      ipcRenderer.removeListener(channel, handler)
+    }
   }
 }
 
