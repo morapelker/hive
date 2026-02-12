@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 interface CodeBlockProps {
   code: string

@@ -7,7 +7,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { cn } from '@/lib/utils'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 interface SessionTabProps {
   sessionId: string

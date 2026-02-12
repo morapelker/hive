@@ -13,10 +13,16 @@ import {
 import { Button } from '@/components/ui/button'
 import { RotateCcw, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 export function SettingsShortcuts(): React.JSX.Element {
-  const { customBindings, setCustomBinding, removeCustomBinding, resetToDefaults, getDisplayString } = useShortcutStore()
+  const {
+    customBindings,
+    setCustomBinding,
+    removeCustomBinding,
+    resetToDefaults,
+    getDisplayString
+  } = useShortcutStore()
   const [recordingId, setRecordingId] = useState<string | null>(null)
   const [conflicts, setConflicts] = useState<string[]>([])
 
@@ -99,10 +105,13 @@ export function SettingsShortcuts(): React.JSX.Element {
           <div>
             <p className="font-medium text-destructive">Shortcut conflict</p>
             <p className="text-muted-foreground">
-              This binding is already used by: {conflicts.map((id) => {
-                const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === id)
-                return shortcut?.label || id
-              }).join(', ')}
+              This binding is already used by:{' '}
+              {conflicts
+                .map((id) => {
+                  const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === id)
+                  return shortcut?.label || id
+                })
+                .join(', ')}
             </p>
           </div>
         </div>
@@ -115,7 +124,10 @@ export function SettingsShortcuts(): React.JSX.Element {
           recordingId={recordingId}
           customBindings={customBindings}
           getDisplayString={getDisplayString}
-          onStartRecording={(id) => { setRecordingId(id); setConflicts([]) }}
+          onStartRecording={(id) => {
+            setRecordingId(id)
+            setConflicts([])
+          }}
           onResetShortcut={handleResetShortcut}
         />
       ))}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { ImageIcon, X } from 'lucide-react'
 import {
   Dialog,

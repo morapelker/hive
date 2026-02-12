@@ -9,7 +9,7 @@ import { extractDevServerUrl } from '@/lib/format-utils'
 import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
 import { SetupTab } from './SetupTab'
 import { RunTab } from './RunTab'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 const tabs: { id: BottomPanelTab; label: string }[] = [
   { id: 'setup', label: 'Setup' },

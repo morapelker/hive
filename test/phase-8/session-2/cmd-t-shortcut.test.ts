@@ -348,7 +348,7 @@ describe('Session 2: Cmd+T Shortcut Fix', () => {
       })
 
       expect(mockCreateSession).not.toHaveBeenCalled()
-      expect(toast.error).toHaveBeenCalledWith('Please select a worktree first')
+      expect(toast.error).toHaveBeenCalledWith('Please select a worktree first', expect.any(Object))
     })
 
     test('IPC callback shows success toast on session creation', async () => {
@@ -360,7 +360,7 @@ describe('Session 2: Cmd+T Shortcut Fix', () => {
         onNewSessionShortcutCallback!()
       })
 
-      expect(toast.success).toHaveBeenCalledWith('New session created')
+      expect(toast.success).toHaveBeenCalledWith('New session created', expect.any(Object))
     })
 
     test('IPC callback shows error toast on creation failure', async () => {
@@ -372,7 +372,7 @@ describe('Session 2: Cmd+T Shortcut Fix', () => {
         onNewSessionShortcutCallback!()
       })
 
-      expect(toast.error).toHaveBeenCalledWith('Something went wrong')
+      expect(toast.error).toHaveBeenCalledWith('Something went wrong', expect.any(Object))
     })
 
     test('cleanup function is called on unmount', () => {

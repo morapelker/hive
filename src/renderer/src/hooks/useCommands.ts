@@ -12,7 +12,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
 import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 /**
  * Hook that registers all available commands and returns filtered commands

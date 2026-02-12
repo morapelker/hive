@@ -49,7 +49,7 @@ describe('Session 8: Copy on Hover', () => {
 
       await waitFor(() => {
         expect(writeTextMock).toHaveBeenCalledWith('Hello world')
-        expect(toast.success).toHaveBeenCalledWith('Copied to clipboard')
+        expect(toast.success).toHaveBeenCalledWith('Copied to clipboard', expect.any(Object))
       })
     })
 
@@ -73,7 +73,7 @@ describe('Session 8: Copy on Hover', () => {
       fireEvent.click(button)
 
       await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith('Failed to copy')
+        expect(toast.error).toHaveBeenCalledWith('Failed to copy', expect.any(Object))
       })
     })
 
