@@ -9,7 +9,7 @@ import { toast } from '@/lib/toast'
 
 export function SettingsGeneral(): React.JSX.Element {
   const { setTheme } = useThemeStore()
-  const { autoStartSession, updateSetting, resetToDefaults } = useSettingsStore()
+  const { autoStartSession, breedType, updateSetting, resetToDefaults } = useSettingsStore()
   const { resetToDefaults: resetShortcuts } = useShortcutStore()
 
   const handleResetAll = (): void => {
@@ -51,6 +51,40 @@ export function SettingsGeneral(): React.JSX.Element {
             )}
           />
         </button>
+      </div>
+
+      {/* Branch naming */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Branch Naming</label>
+        <p className="text-xs text-muted-foreground">
+          Choose the naming theme for auto-generated worktree branches
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => updateSetting('breedType', 'dogs')}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              breedType === 'dogs'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="breed-type-dogs"
+          >
+            Dogs
+          </button>
+          <button
+            onClick={() => updateSetting('breedType', 'cats')}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              breedType === 'cats'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="breed-type-cats"
+          >
+            Cats
+          </button>
+        </div>
       </div>
 
       {/* Reset to defaults */}
