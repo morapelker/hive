@@ -9,7 +9,7 @@ import { useSettingsStore } from '../../../src/renderer/src/stores/useSettingsSt
  * 1. setSessionModel updates session model fields in store
  * 2. setSessionModel persists to database via window.db.session.update
  * 3. setSessionModel pushes model to OpenCode via window.opencodeOps.setModel
- * 4. setSessionModel updates global setting as well
+ * 4. setSessionModel does not mutate global selectedModel
  * 5. createSession defaults to last session's model in same worktree
  * 6. createSession falls back to global selectedModel when no prior sessions
  */
@@ -195,6 +195,25 @@ describe('Session 9: Per-Session Model Frontend', () => {
         providerID: 'anthropic',
         modelID: 'claude-opus-4-5',
         variant: 'high'
+      })
+    })
+
+    test('does not change global selectedModel when updating a session model', async () => {
+      seedSessionWithModel('session-1', 'wt-1')
+
+      useSettingsStore.setState({
+        selectedModel: { providerID: 'openai', modelID: 'gpt-4o' }
+      })
+
+      await useSessionStore.getState().setSessionModel('session-1', {
+        providerID: 'anthropic',
+        modelID: 'claude-opus-4-5',
+        variant: 'high'
+      })
+
+      expect(useSettingsStore.getState().selectedModel).toEqual({
+        providerID: 'openai',
+        modelID: 'gpt-4o'
       })
     })
 

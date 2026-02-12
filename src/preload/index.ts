@@ -747,7 +747,8 @@ const opencodeOps = {
       | Array<
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
-        >
+        >,
+    model?: { providerID: string; modelID: string; variant?: string }
   ): Promise<{ success: boolean; error?: string }> => {
     const parts =
       typeof messageOrParts === 'string'
@@ -756,7 +757,8 @@ const opencodeOps = {
     return ipcRenderer.invoke('opencode:prompt', {
       worktreePath,
       sessionId: opencodeSessionId,
-      parts
+      parts,
+      model
     })
   },
 
@@ -871,13 +873,15 @@ const opencodeOps = {
     worktreePath: string,
     opencodeSessionId: string,
     command: string,
-    args: string
+    args: string,
+    model?: { providerID: string; modelID: string; variant?: string }
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:command', {
       worktreePath,
       sessionId: opencodeSessionId,
       command,
-      args
+      args,
+      model
     }),
 
   // List available slash commands from the SDK

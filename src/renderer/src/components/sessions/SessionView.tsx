@@ -17,8 +17,14 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
 import type { TokenInfo, SessionModelRef } from '@/stores/useContextStore'
-import { extractTokens, extractCost, extractModelRef } from '@/lib/token-utils'
+import {
+  extractTokens,
+  extractCost,
+  extractModelRef,
+  extractSelectedModel
+} from '@/lib/token-utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import type { SelectedModel } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
@@ -111,6 +117,9 @@ interface DbSession {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
+  model_provider_id: string | null
+  model_id: string | null
+  model_variant: string | null
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -231,10 +240,25 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const savedDraftRef = useRef<string>('')
 
-  // Current selected model used as fallback when session snapshot model is unknown
-  const selectedModel = useSettingsStore((state) => state.selectedModel)
-  const currentModelId = selectedModel?.modelID ?? 'claude-opus-4-5-20251101'
-  const currentProviderId = selectedModel?.providerID ?? 'anthropic'
+  // Session-bound model with global fallback for legacy/null sessions
+  const sessionRecord = useSessionStore((state) => {
+    for (const sessions of state.sessionsByWorktree.values()) {
+      const found = sessions.find((session) => session.id === sessionId)
+      if (found) return found
+    }
+    return null
+  })
+  const globalModel = useSettingsStore((state) => state.selectedModel)
+  const effectiveModel: SelectedModel | null =
+    sessionRecord?.model_provider_id && sessionRecord.model_id
+      ? {
+          providerID: sessionRecord.model_provider_id,
+          modelID: sessionRecord.model_id,
+          variant: sessionRecord.model_variant ?? undefined
+        }
+      : globalModel
+  const currentModelId = effectiveModel?.modelID ?? 'claude-opus-4-5-20251101'
+  const currentProviderId = effectiveModel?.providerID ?? 'anthropic'
 
   // Active question prompt from AI
   const activeQuestion = useQuestionStore((s) => s.getActiveQuestion(sessionId))
@@ -284,6 +308,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Streaming dedup refs
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
   const hasFinalizedCurrentResponseRef = useRef(false)
+  const sessionModelHydratedRef = useRef(false)
 
   // Guard: tracks whether a new prompt was sent during the current streaming cycle.
   // When true, finalizeResponse skips the full reload to avoid
@@ -312,6 +337,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     worktreePath: null,
     opencodeSessionId: null
   })
+
+  const getModelForRequests = useCallback((): SelectedModel | undefined => {
+    const state = useSessionStore.getState()
+    for (const sessions of state.sessionsByWorktree.values()) {
+      const found = sessions.find((session) => session.id === sessionId)
+      if (found?.model_provider_id && found.model_id) {
+        return {
+          providerID: found.model_provider_id,
+          modelID: found.model_id,
+          variant: found.model_variant ?? undefined
+        }
+      }
+    }
+
+    return useSettingsStore.getState().selectedModel ?? undefined
+  }, [sessionId])
 
   // Extract message role from OpenCode stream payloads across known shapes
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -451,19 +492,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Push per-session model to OpenCode on tab switch
   useEffect(() => {
-    const state = useSessionStore.getState()
-    for (const sessions of state.sessionsByWorktree.values()) {
-      const session = sessions.find((s) => s.id === sessionId)
-      if (session?.model_id) {
-        window.opencodeOps.setModel({
-          providerID: session.model_provider_id!,
-          modelID: session.model_id,
-          variant: session.model_variant ?? undefined
-        })
-        break
-      }
-    }
-  }, [sessionId])
+    const model = getModelForRequests()
+    if (!model) return
+    window.opencodeOps.setModel(model).catch((error) => {
+      console.error('Failed to push session model to OpenCode:', error)
+    })
+  }, [
+    getModelForRequests,
+    sessionId,
+    sessionRecord?.model_provider_id,
+    sessionRecord?.model_id,
+    sessionRecord?.model_variant
+  ])
 
   // Auto-resize textarea (depends on sessionId to handle pre-populated drafts)
   useEffect(() => {
@@ -643,6 +683,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   useEffect(() => {
     finalizedMessageIdsRef.current.clear()
     hasFinalizedCurrentResponseRef.current = false
+    sessionModelHydratedRef.current = false
     childToSubtaskIndexRef.current.clear()
 
     // Load saved draft for this session
@@ -697,6 +738,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           let totalCost = 0
           let snapshotTokens: TokenInfo | null = null
           let snapshotModelRef: SessionModelRef | undefined
+          let latestUserModel: SelectedModel | null = null
 
           for (let i = opencodeMessages.length - 1; i >= 0; i--) {
             const rawMessage = opencodeMessages[i]
@@ -705,6 +747,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             const messageRecord = rawMessage as Record<string, unknown>
             const info = asRecord(messageRecord.info)
             const role = info?.role ?? messageRecord.role
+
+            if (!latestUserModel && role === 'user') {
+              latestUserModel = extractSelectedModel(messageRecord)
+            }
+
             if (role !== 'assistant') continue
 
             totalCost += extractCost(messageRecord)
@@ -728,6 +775,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             if (totalCost > 0) {
               useContextStore.getState().setSessionCost(sessionId, totalCost)
             }
+          }
+
+          if (!sessionModelHydratedRef.current && latestUserModel) {
+            sessionModelHydratedRef.current = true
+            await useSessionStore.getState().setSessionModel(sessionId, latestUserModel)
           }
         } else {
           console.warn('Failed to load OpenCode transcript:', result.error)
@@ -1261,6 +1313,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           throw new Error('Session not found')
         }
 
+        if (session.model_provider_id && session.model_id) {
+          sessionModelHydratedRef.current = true
+          await window.opencodeOps
+            .setModel({
+              providerID: session.model_provider_id,
+              modelID: session.model_id,
+              variant: session.model_variant ?? undefined
+            })
+            .catch((error) => {
+              console.error('Failed to hydrate session model from database:', error)
+            })
+        }
+
         let wtPath: string | null = null
         if (session.worktree_id) {
           setWorktreeId(session.worktree_id)
@@ -1461,8 +1526,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             // Apply mode prefix (e.g., plan mode for code reviews)
             const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
+            const model = getModelForRequests()
             // Send to OpenCode
-            await window.opencodeOps.prompt(path, opcId, modePrefix + pendingMsg)
+            await window.opencodeOps.prompt(path, opcId, modePrefix + pendingMsg, model)
           } catch (err) {
             console.error('Failed to send pending message:', err)
             toast.error('Failed to send review prompt')
@@ -1878,6 +1944,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       // Send to OpenCode if connected
       if (worktreePath && opencodeSessionId) {
+        const requestModel = getModelForRequests()
+
         // Detect slash commands and route through the SDK command endpoint
         if (trimmedValue.startsWith('/')) {
           const spaceIndex = trimmedValue.indexOf(' ')
@@ -1903,7 +1971,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               worktreePath,
               opencodeSessionId,
               commandName,
-              commandArgs
+              commandArgs,
+              requestModel
             )
             if (!result.success) {
               console.error('Failed to send command:', result.error)
@@ -1926,7 +1995,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               { type: 'text' as const, text: promptMessage }
             ]
             setAttachments([])
-            const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, parts)
+            const result = await window.opencodeOps.prompt(
+              worktreePath,
+              opencodeSessionId,
+              parts,
+              requestModel
+            )
             if (!result.success) {
               console.error('Failed to send prompt to OpenCode:', result.error)
               toast.error('Failed to send message to AI')
@@ -1952,7 +2026,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             { type: 'text' as const, text: promptMessage }
           ]
           setAttachments([])
-          const result = await window.opencodeOps.prompt(worktreePath, opencodeSessionId, parts)
+          const result = await window.opencodeOps.prompt(
+            worktreePath,
+            opencodeSessionId,
+            parts,
+            requestModel
+          )
           if (!result.success) {
             console.error('Failed to send prompt to OpenCode:', result.error)
             toast.error('Failed to send message to AI')
@@ -1985,7 +2064,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     opencodeSessionId,
     attachments,
     allSlashCommands,
-    refreshMessagesFromOpenCode
+    refreshMessagesFromOpenCode,
+    getModelForRequests
   ])
 
   // Abort streaming

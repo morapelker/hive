@@ -627,7 +627,8 @@ class OpenCodeService {
       | Array<
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
-        >
+        >,
+    modelOverride?: { providerID: string; modelID: string; variant?: string }
   ): Promise<void> {
     const parts =
       typeof messageOrParts === 'string'
@@ -644,7 +645,7 @@ class OpenCodeService {
       throw new Error('No OpenCode instance available')
     }
 
-    const { variant, ...model } = this.getSelectedModel()
+    const { variant, ...model } = modelOverride ?? this.getSelectedModel()
     log.info('Using model for prompt', { model, variant })
 
     try {
@@ -1312,12 +1313,13 @@ class OpenCodeService {
     worktreePath: string,
     opencodeSessionId: string,
     command: string,
-    args: string
+    args: string,
+    modelOverride?: { providerID: string; modelID: string; variant?: string }
   ): Promise<void> {
     if (!this.instance) {
       throw new Error('No OpenCode instance available')
     }
-    const { variant, ...model } = this.getSelectedModel()
+    const { variant, ...model } = modelOverride ?? this.getSelectedModel()
     await this.instance.client.session.command({
       path: { id: opencodeSessionId },
       query: { directory: worktreePath },

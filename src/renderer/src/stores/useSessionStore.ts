@@ -549,10 +549,6 @@ export const useSessionStore = create<SessionState>()(
         } catch (error) {
           console.error('Failed to push model to OpenCode:', error)
         }
-
-        // Update global setting as well (so new sessions inherit this choice)
-        const { useSettingsStore } = await import('./useSettingsStore')
-        useSettingsStore.getState().updateSetting('selectedModel', model)
       },
 
       // Set a pending initial message for a session (e.g., code review prompt)

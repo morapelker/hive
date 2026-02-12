@@ -346,7 +346,8 @@ declare global {
       prompt: (
         worktreePath: string,
         opencodeSessionId: string,
-        messageOrParts: string | MessagePart[]
+        messageOrParts: string | MessagePart[],
+        model?: { providerID: string; modelID: string; variant?: string }
       ) => Promise<{ success: boolean; error?: string }>
       // Abort a streaming session
       abort: (
@@ -437,7 +438,8 @@ declare global {
         worktreePath: string,
         opencodeSessionId: string,
         command: string,
-        args: string
+        args: string,
+        model?: { providerID: string; modelID: string; variant?: string }
       ) => Promise<{ success: boolean; error?: string }>
       // List available slash commands from the SDK
       commands: (

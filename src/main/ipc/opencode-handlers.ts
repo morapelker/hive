@@ -53,6 +53,7 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     let messageOrParts:
       | string
       | Array<{ type: string; text?: string; mime?: string; url?: string; filename?: string }>
+    let model: { providerID: string; modelID: string; variant?: string } | undefined
 
     // Support object-style call: { worktreePath, sessionId, parts }
     if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
@@ -63,20 +64,45 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
       messageOrParts = (obj.parts as typeof messageOrParts) || [
         { type: 'text', text: obj.message as string }
       ]
+      const rawModel = obj.model as Record<string, unknown> | undefined
+      if (
+        rawModel &&
+        typeof rawModel.providerID === 'string' &&
+        typeof rawModel.modelID === 'string'
+      ) {
+        model = {
+          providerID: rawModel.providerID,
+          modelID: rawModel.modelID,
+          variant: typeof rawModel.variant === 'string' ? rawModel.variant : undefined
+        }
+      }
     } else {
       // Legacy positional args: (worktreePath, sessionId, message)
       worktreePath = args[0] as string
       opencodeSessionId = args[1] as string
       messageOrParts = args[2] as string
+      const rawModel = args[3] as Record<string, unknown> | undefined
+      if (
+        rawModel &&
+        typeof rawModel.providerID === 'string' &&
+        typeof rawModel.modelID === 'string'
+      ) {
+        model = {
+          providerID: rawModel.providerID,
+          modelID: rawModel.modelID,
+          variant: typeof rawModel.variant === 'string' ? rawModel.variant : undefined
+        }
+      }
     }
 
     log.info('IPC: opencode:prompt', {
       worktreePath,
       opencodeSessionId,
-      partsCount: Array.isArray(messageOrParts) ? messageOrParts.length : 1
+      partsCount: Array.isArray(messageOrParts) ? messageOrParts.length : 1,
+      model
     })
     try {
-      await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts)
+      await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
       return { success: true }
     } catch (error) {
       log.error('IPC: opencode:prompt failed', { error })
@@ -206,12 +232,19 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
         worktreePath,
         sessionId,
         command,
-        args
-      }: { worktreePath: string; sessionId: string; command: string; args: string }
+        args,
+        model
+      }: {
+        worktreePath: string
+        sessionId: string
+        command: string
+        args: string
+        model?: { providerID: string; modelID: string; variant?: string }
+      }
     ) => {
-      log.info('IPC: opencode:command', { worktreePath, sessionId, command, args })
+      log.info('IPC: opencode:command', { worktreePath, sessionId, command, args, model })
       try {
-        await openCodeService.sendCommand(worktreePath, sessionId, command, args)
+        await openCodeService.sendCommand(worktreePath, sessionId, command, args, model)
         return { success: true }
       } catch (error) {
         log.error('IPC: opencode:command failed', { error })

@@ -1,5 +1,11 @@
 import type { SessionModelRef, TokenInfo } from '@/stores/useContextStore'
 
+export interface SelectedModelRef {
+  providerID: string
+  modelID: string
+  variant?: string
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -68,4 +74,70 @@ export function extractModelRef(messageData: Record<string, unknown>): SessionMo
   }
 
   return { providerID, modelID }
+}
+
+/**
+ * Extract full model selection (provider/model + optional variant) from a
+ * parsed OpenCode message JSON object.
+ */
+export function extractSelectedModel(
+  messageData: Record<string, unknown>
+): SelectedModelRef | null {
+  const info = asRecord(messageData.info)
+  const modelRecord = asRecord(messageData.model) ?? asRecord(info?.model)
+
+  const providerFromModel = modelRecord?.providerID
+  const modelIdFromModel = modelRecord?.modelID ?? modelRecord?.id
+
+  let providerID =
+    typeof providerFromModel === 'string'
+      ? providerFromModel
+      : typeof messageData.providerID === 'string'
+        ? messageData.providerID
+        : typeof info?.providerID === 'string'
+          ? info.providerID
+          : undefined
+
+  let modelID =
+    typeof modelIdFromModel === 'string'
+      ? modelIdFromModel
+      : typeof messageData.modelID === 'string'
+        ? messageData.modelID
+        : typeof info?.modelID === 'string'
+          ? info.modelID
+          : undefined
+
+  const modelString =
+    typeof messageData.model === 'string'
+      ? messageData.model
+      : typeof info?.model === 'string'
+        ? info.model
+        : undefined
+
+  if ((!providerID || !modelID) && modelString) {
+    const [providerPart, modelPart] = modelString.split('/')
+    if (providerPart && modelPart) {
+      providerID = providerID ?? providerPart
+      modelID = modelID ?? modelPart
+    }
+  }
+
+  if (!providerID || !modelID) {
+    return null
+  }
+
+  const variantCandidate =
+    typeof modelRecord?.variant === 'string'
+      ? modelRecord.variant
+      : typeof messageData.variant === 'string'
+        ? messageData.variant
+        : typeof info?.variant === 'string'
+          ? info.variant
+          : undefined
+
+  return {
+    providerID,
+    modelID,
+    ...(variantCandidate ? { variant: variantCandidate } : {})
+  }
 }
