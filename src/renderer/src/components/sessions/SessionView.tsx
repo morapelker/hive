@@ -785,7 +785,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
 
       if (loadedFromOpenCode) {
-        setMessages(loadedMessages)
+        // Guard: don't replace existing messages with an empty transcript.
+        // This prevents a race where getMessages returns before the SDK has
+        // committed the final transcript, which would wipe the visible chat.
+        setMessages((currentMessages) =>
+          loadedMessages.length === 0 && currentMessages.length > 0
+            ? currentMessages
+            : loadedMessages
+        )
       } else {
         setMessages((currentMessages) => {
           const loadedIds = new Set(loadedMessages.map((m) => m.id))
