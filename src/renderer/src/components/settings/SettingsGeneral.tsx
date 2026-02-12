@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { DEFAULT_THEME_ID } from '@/lib/themes'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 export function SettingsGeneral(): React.JSX.Element {
   const { setTheme } = useThemeStore()

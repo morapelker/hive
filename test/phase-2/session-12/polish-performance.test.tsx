@@ -68,18 +68,14 @@ describe('Session 12: Polish & Performance', () => {
     })
 
     test('FileTree component imports virtual scrolling', async () => {
-      const mod = await import(
-        '../../../src/renderer/src/components/file-tree/FileTree'
-      )
+      const mod = await import('../../../src/renderer/src/components/file-tree/FileTree')
       expect(mod.FileTree).toBeDefined()
     })
 
     test('FlatNode flattening works for virtual scrolling', async () => {
       // The flattenTree function is internal, but we can verify the FileTree renders
       // a virtual container with the right structure
-      const { FileTree } = await import(
-        '../../../src/renderer/src/components/file-tree/FileTree'
-      )
+      const { FileTree } = await import('../../../src/renderer/src/components/file-tree/FileTree')
 
       // Mock a tree with files
       const mockTree = Array.from({ length: 50 }, (_, i) => ({
@@ -96,9 +92,7 @@ describe('Session 12: Polish & Performance', () => {
         tree: mockTree
       })
 
-      const { useFileTreeStore } = await import(
-        '../../../src/renderer/src/stores/useFileTreeStore'
-      )
+      const { useFileTreeStore } = await import('../../../src/renderer/src/stores/useFileTreeStore')
       // Pre-populate the store so the tree renders immediately
       useFileTreeStore.setState({
         treesByWorktree: new Map([['/test-worktree', mockTree]]),
@@ -148,9 +142,7 @@ describe('Session 12: Polish & Performance', () => {
 
       mockGitOps.getFileStatuses.mockResolvedValueOnce({
         success: true,
-        files: [
-          { path: '/test/file.ts', relativePath: 'file.ts', status: 'M', staged: false }
-        ]
+        files: [{ path: '/test/file.ts', relativePath: 'file.ts', status: 'M', staged: false }]
       })
 
       const start = performance.now()
@@ -163,9 +155,7 @@ describe('Session 12: Polish & Performance', () => {
 
   describe('React.memo Optimization', () => {
     test('ToolCard is memoized', async () => {
-      const { ToolCard } = await import(
-        '../../../src/renderer/src/components/sessions/ToolCard'
-      )
+      const { ToolCard } = await import('../../../src/renderer/src/components/sessions/ToolCard')
       // React.memo wraps the component, giving it a displayName or $$typeof
       // The component itself should be callable
       expect(ToolCard).toBeDefined()
@@ -174,9 +164,8 @@ describe('Session 12: Polish & Performance', () => {
     })
 
     test('CommandItem is memoized', async () => {
-      const { CommandItem } = await import(
-        '../../../src/renderer/src/components/command-palette/CommandItem'
-      )
+      const { CommandItem } =
+        await import('../../../src/renderer/src/components/command-palette/CommandItem')
       expect(CommandItem).toBeDefined()
       expect((CommandItem as { $$typeof?: symbol }).$$typeof).toBeDefined()
     })
@@ -247,9 +236,7 @@ describe('Session 12: Polish & Performance', () => {
     })
 
     test('RightSidebar wraps components in error boundaries', async () => {
-      const mod = await import(
-        '../../../src/renderer/src/components/layout/RightSidebar'
-      )
+      const mod = await import('../../../src/renderer/src/components/layout/RightSidebar')
       expect(mod.RightSidebar).toBeDefined()
     })
   })
@@ -263,9 +250,7 @@ describe('Session 12: Polish & Performance', () => {
         fileStatusesByWorktree: new Map([
           [
             worktreePath,
-            [
-              { path: '/test/a.ts', relativePath: 'a.ts', status: 'M' as const, staged: false }
-            ]
+            [{ path: '/test/a.ts', relativePath: 'a.ts', status: 'M' as const, staged: false }]
           ]
         ]),
         branchInfoByWorktree: new Map([
@@ -281,7 +266,7 @@ describe('Session 12: Polish & Performance', () => {
         stageAllBtn.click()
       })
 
-      expect(mockToast.success).toHaveBeenCalledWith('All changes staged')
+      expect(mockToast.success).toHaveBeenCalledWith('All changes staged', expect.any(Object))
     })
 
     test('Toast shows on stage all failure', async () => {
@@ -292,9 +277,7 @@ describe('Session 12: Polish & Performance', () => {
         fileStatusesByWorktree: new Map([
           [
             worktreePath,
-            [
-              { path: '/test/a.ts', relativePath: 'a.ts', status: 'M' as const, staged: false }
-            ]
+            [{ path: '/test/a.ts', relativePath: 'a.ts', status: 'M' as const, staged: false }]
           ]
         ]),
         branchInfoByWorktree: new Map([
@@ -309,7 +292,7 @@ describe('Session 12: Polish & Performance', () => {
         stageAllBtn.click()
       })
 
-      expect(mockToast.error).toHaveBeenCalledWith('Failed to stage changes')
+      expect(mockToast.error).toHaveBeenCalledWith('Failed to stage changes', expect.any(Object))
     })
 
     test('Toast shows on unstage all success', async () => {
@@ -319,9 +302,7 @@ describe('Session 12: Polish & Performance', () => {
         fileStatusesByWorktree: new Map([
           [
             worktreePath,
-            [
-              { path: '/test/a.ts', relativePath: 'a.ts', status: 'M' as const, staged: true }
-            ]
+            [{ path: '/test/a.ts', relativePath: 'a.ts', status: 'M' as const, staged: true }]
           ]
         ]),
         branchInfoByWorktree: new Map([
@@ -336,7 +317,7 @@ describe('Session 12: Polish & Performance', () => {
         unstageAllBtn.click()
       })
 
-      expect(mockToast.success).toHaveBeenCalledWith('All changes unstaged')
+      expect(mockToast.success).toHaveBeenCalledWith('All changes unstaged', expect.any(Object))
     })
 
     test('Toast shows on git commit success', async () => {
@@ -378,12 +359,8 @@ describe('Session 12: Polish & Performance', () => {
     })
 
     test('FileTree content has tree role and aria-label', async () => {
-      const { FileTree } = await import(
-        '../../../src/renderer/src/components/file-tree/FileTree'
-      )
-      const { useFileTreeStore } = await import(
-        '../../../src/renderer/src/stores/useFileTreeStore'
-      )
+      const { FileTree } = await import('../../../src/renderer/src/components/file-tree/FileTree')
+      const { useFileTreeStore } = await import('../../../src/renderer/src/stores/useFileTreeStore')
 
       const mockTree = [
         {
@@ -411,12 +388,9 @@ describe('Session 12: Polish & Performance', () => {
     })
 
     test('ModeToggle has descriptive aria-label', async () => {
-      const { ModeToggle } = await import(
-        '../../../src/renderer/src/components/sessions/ModeToggle'
-      )
-      const { useSessionStore } = await import(
-        '../../../src/renderer/src/stores/useSessionStore'
-      )
+      const { ModeToggle } =
+        await import('../../../src/renderer/src/components/sessions/ModeToggle')
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
 
       useSessionStore.setState({
         modeBySession: new Map([['s1', 'build']])
@@ -452,9 +426,7 @@ describe('Session 12: Polish & Performance', () => {
         fileStatusesByWorktree: new Map([
           [
             worktreePath,
-            [
-              { path: '/test/a.ts', relativePath: 'a.ts', status: 'M' as const, staged: false }
-            ]
+            [{ path: '/test/a.ts', relativePath: 'a.ts', status: 'M' as const, staged: false }]
           ]
         ]),
         branchInfoByWorktree: new Map([
@@ -502,12 +474,9 @@ describe('Session 12: Polish & Performance', () => {
     })
 
     test('Mode toggle responds under 100ms', async () => {
-      const { ModeToggle } = await import(
-        '../../../src/renderer/src/components/sessions/ModeToggle'
-      )
-      const { useSessionStore } = await import(
-        '../../../src/renderer/src/stores/useSessionStore'
-      )
+      const { ModeToggle } =
+        await import('../../../src/renderer/src/components/sessions/ModeToggle')
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
 
       // Mock window.db for mode toggle persistence
       Object.defineProperty(window, 'db', {
@@ -583,7 +552,10 @@ describe('Session 12: Polish & Performance', () => {
 
       useGitStore.setState({
         branchInfoByWorktree: new Map([
-          [worktreePath, { name: 'feature/test', tracking: 'origin/feature/test', ahead: 2, behind: 1 }]
+          [
+            worktreePath,
+            { name: 'feature/test', tracking: 'origin/feature/test', ahead: 2, behind: 1 }
+          ]
         ])
       })
 

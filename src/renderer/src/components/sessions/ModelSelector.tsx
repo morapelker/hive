@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Check, ChevronDown, Search, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import {
   DropdownMenu,
   DropdownMenuContent,

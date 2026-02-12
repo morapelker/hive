@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ChevronUp, ChevronDown, Columns2, AlignJustify, Copy, X, Loader2, ChevronsUpDown } from 'lucide-react'
-import { toast } from 'sonner'
+import {
+  ChevronUp,
+  ChevronDown,
+  Columns2,
+  AlignJustify,
+  Copy,
+  X,
+  Loader2,
+  ChevronsUpDown
+} from 'lucide-react'
+import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import { DiffViewer, type DiffViewMode } from './DiffViewer'
 import { cn } from '@/lib/utils'
@@ -31,28 +40,25 @@ export function InlineDiffViewer({
   const contentRef = useRef<HTMLDivElement>(null)
 
   // Fetch diff
-  const fetchDiff = useCallback(async (ctx: number) => {
-    setIsLoading(true)
-    setError(null)
-    try {
-      const result = await window.gitOps.getDiff(
-        worktreePath,
-        filePath,
-        staged,
-        isUntracked,
-        ctx
-      )
-      if (result.success && result.diff) {
-        setDiff(result.diff)
-      } else {
-        setError(result.error || 'Failed to load diff')
+  const fetchDiff = useCallback(
+    async (ctx: number) => {
+      setIsLoading(true)
+      setError(null)
+      try {
+        const result = await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked, ctx)
+        if (result.success && result.diff) {
+          setDiff(result.diff)
+        } else {
+          setError(result.error || 'Failed to load diff')
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load diff')
+      } finally {
+        setIsLoading(false)
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load diff')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [worktreePath, filePath, staged, isUntracked])
+    },
+    [worktreePath, filePath, staged, isUntracked]
+  )
 
   // Load on mount and when contextLines changes
   useEffect(() => {
@@ -62,7 +68,9 @@ export function InlineDiffViewer({
   // Get hunk elements
   const getHunkElements = useCallback((): Element[] => {
     if (!contentRef.current) return []
-    return Array.from(contentRef.current.querySelectorAll('.d2h-info, .d2h-code-linenumber.d2h-info'))
+    return Array.from(
+      contentRef.current.querySelectorAll('.d2h-info, .d2h-code-linenumber.d2h-info')
+    )
   }, [])
 
   // Navigate to next hunk
@@ -129,9 +137,7 @@ export function InlineDiffViewer({
           <span className="text-sm font-medium truncate" data-testid="inline-diff-filename">
             {fileName}
           </span>
-          <span className="text-xs text-muted-foreground shrink-0">
-            {statusLabel}
-          </span>
+          <span className="text-xs text-muted-foreground shrink-0">{statusLabel}</span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {/* Hunk navigation */}
@@ -227,7 +233,10 @@ export function InlineDiffViewer({
         )}
 
         {error && (
-          <div className="flex items-center justify-center h-full text-destructive" data-testid="diff-error">
+          <div
+            className="flex items-center justify-center h-full text-destructive"
+            data-testid="diff-error"
+          >
             {error}
           </div>
         )}
@@ -236,10 +245,7 @@ export function InlineDiffViewer({
           <DiffViewer
             diff={diff}
             viewMode={viewMode}
-            className={cn(
-              'h-full',
-              viewMode === 'split' && 'min-w-[800px]'
-            )}
+            className={cn('h-full', viewMode === 'split' && 'min-w-[800px]')}
           />
         )}
       </div>

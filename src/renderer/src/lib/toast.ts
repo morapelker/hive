@@ -1,4 +1,6 @@
+import { createElement } from 'react'
 import { toast as sonnerToast, ExternalToast } from 'sonner'
+import { CheckCircle2, XCircle, Info as InfoIcon, AlertTriangle } from 'lucide-react'
 
 type ToastOptions = ExternalToast & {
   retry?: () => void | Promise<void>
@@ -14,6 +16,7 @@ export const toast = {
   success: (message: string, options?: ToastOptions): string | number => {
     return sonnerToast.success(message, {
       duration: 3000,
+      icon: createElement(CheckCircle2, { className: 'h-4 w-4 text-green-500' }),
       ...options
     })
   },
@@ -26,6 +29,7 @@ export const toast = {
 
     return sonnerToast.error(message, {
       duration: 5000,
+      icon: createElement(XCircle, { className: 'h-4 w-4 text-red-500' }),
       ...rest,
       ...(retry && {
         action: {
@@ -42,6 +46,7 @@ export const toast = {
   warning: (message: string, options?: ToastOptions): string | number => {
     return sonnerToast.warning(message, {
       duration: 4000,
+      icon: createElement(AlertTriangle, { className: 'h-4 w-4 text-amber-500' }),
       ...options
     })
   },
@@ -52,6 +57,7 @@ export const toast = {
   info: (message: string, options?: ToastOptions): string | number => {
     return sonnerToast.info(message, {
       duration: 3000,
+      icon: createElement(InfoIcon, { className: 'h-4 w-4 text-blue-500' }),
       ...options
     })
   },
@@ -140,10 +146,9 @@ export const gitToast = {
   },
 
   operationFailed: (operation: string, error?: string, retry?: () => void): string | number => {
-    return toast.error(
-      error ? `Failed to ${operation}: ${error}` : `Failed to ${operation}`,
-      { retry }
-    )
+    return toast.error(error ? `Failed to ${operation}: ${error}` : `Failed to ${operation}`, {
+      retry
+    })
   }
 }
 

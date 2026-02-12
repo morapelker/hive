@@ -13,7 +13,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 /**
  * Creates a new session for the currently selected worktree.

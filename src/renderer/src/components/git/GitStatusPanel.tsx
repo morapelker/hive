@@ -13,7 +13,7 @@ import {
   Loader2,
   AlertTriangle
 } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
