@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { Loader2, FolderPlus } from 'lucide-react'
-import { useProjectStore } from '@/stores'
+import { useProjectStore, useSpaceStore } from '@/stores'
 import { ProjectItem } from './ProjectItem'
 import { ProjectFilter } from './ProjectFilter'
 import { subsequenceMatch } from '@/lib/subsequence-match'
@@ -67,11 +67,26 @@ export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Eleme
     loadProjects()
   }, [loadProjects])
 
-  const filteredProjects = useMemo(() => {
-    if (!filterQuery.trim())
-      return projects.map((p) => ({ project: p, nameMatch: null, pathMatch: null }))
+  // Space filtering: restrict to projects in the active space
+  const activeSpaceId = useSpaceStore((s) => s.activeSpaceId)
+  const projectSpaceMap = useSpaceStore((s) => s.projectSpaceMap)
 
-    return projects
+  const filteredProjects = useMemo(() => {
+    // First filter by active space
+    let spaceFiltered = projects
+    if (activeSpaceId !== null) {
+      const allowedIds = new Set(
+        Object.entries(projectSpaceMap)
+          .filter(([, spaceIds]) => spaceIds.includes(activeSpaceId))
+          .map(([projectId]) => projectId)
+      )
+      spaceFiltered = projects.filter((p) => allowedIds.has(p.id))
+    }
+
+    if (!filterQuery.trim())
+      return spaceFiltered.map((p) => ({ project: p, nameMatch: null, pathMatch: null }))
+
+    return spaceFiltered
       .map((project) => ({
         project,
         nameMatch: subsequenceMatch(filterQuery, project.name),
@@ -83,7 +98,7 @@ export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Eleme
         const bScore = b.nameMatch.matched ? b.nameMatch.score : b.pathMatch.score + 1000
         return aScore - bScore
       })
-  }, [projects, filterQuery])
+  }, [projects, filterQuery, activeSpaceId, projectSpaceMap])
 
   // Loading state
   if (isLoading && projects.length === 0) {
@@ -115,6 +130,19 @@ export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Eleme
         <FolderPlus className="h-8 w-8 text-muted-foreground mb-2" />
         <p className="text-sm text-muted-foreground">No projects added yet.</p>
         <p className="text-xs text-muted-foreground mt-1">Click + to add a project.</p>
+      </div>
+    )
+  }
+
+  // Space has no assigned projects
+  if (activeSpaceId !== null && filteredProjects.length === 0 && !filterQuery.trim()) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center py-8 px-2 text-center"
+        data-testid="empty-space-state"
+      >
+        <p className="text-sm text-muted-foreground">No projects in this space.</p>
+        <p className="text-xs text-muted-foreground mt-1">Right-click a project to assign it.</p>
       </div>
     )
   }

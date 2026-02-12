@@ -154,6 +154,33 @@ export interface Setting {
   value: string
 }
 
+export interface Space {
+  id: string
+  name: string
+  icon_type: string
+  icon_value: string
+  sort_order: number
+  created_at: string
+}
+
+export interface SpaceCreate {
+  name: string
+  icon_type?: string
+  icon_value?: string
+}
+
+export interface SpaceUpdate {
+  name?: string
+  icon_type?: string
+  icon_value?: string
+  sort_order?: number
+}
+
+export interface ProjectSpaceAssignment {
+  project_id: string
+  space_id: string
+}
+
 // Database response types for queries
 export interface SessionWithWorktree extends Session {
   worktree_name?: string

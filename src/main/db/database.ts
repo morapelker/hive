@@ -20,7 +20,11 @@ import type {
   SessionMessageUpsertByOpenCode,
   Setting,
   SessionSearchOptions,
-  SessionWithWorktree
+  SessionWithWorktree,
+  Space,
+  SpaceCreate,
+  SpaceUpdate,
+  ProjectSpaceAssignment
 } from './types'
 
 export class DatabaseService {
@@ -138,6 +142,7 @@ export class DatabaseService {
       description: data.description ?? null,
       tags: data.tags ? JSON.stringify(data.tags) : null,
       language: null,
+      custom_icon: null,
       setup_script: data.setup_script ?? null,
       run_script: data.run_script ?? null,
       archive_script: data.archive_script ?? null,
@@ -751,6 +756,133 @@ export class DatabaseService {
     const db = this.getDb()
     const result = db.prepare('DELETE FROM session_messages WHERE id = ?').run(id)
     return result.changes > 0
+  }
+
+  // Space operations
+  createSpace(data: SpaceCreate): Space {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+
+    // New spaces get sort_order at the end
+    const maxOrder = db
+      .prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM spaces')
+      .get() as { max_order: number }
+
+    const space: Space = {
+      id: randomUUID(),
+      name: data.name,
+      icon_type: data.icon_type ?? 'default',
+      icon_value: data.icon_value ?? 'Folder',
+      sort_order: maxOrder.max_order + 1,
+      created_at: now
+    }
+
+    db.prepare(
+      `INSERT INTO spaces (id, name, icon_type, icon_value, sort_order, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      space.id,
+      space.name,
+      space.icon_type,
+      space.icon_value,
+      space.sort_order,
+      space.created_at
+    )
+
+    return space
+  }
+
+  getSpace(id: string): Space | null {
+    const db = this.getDb()
+    const row = db.prepare('SELECT * FROM spaces WHERE id = ?').get(id) as Space | undefined
+    return row ?? null
+  }
+
+  listSpaces(): Space[] {
+    const db = this.getDb()
+    return db.prepare('SELECT * FROM spaces ORDER BY sort_order ASC').all() as Space[]
+  }
+
+  updateSpace(id: string, data: SpaceUpdate): Space | null {
+    const db = this.getDb()
+    const existing = this.getSpace(id)
+    if (!existing) return null
+
+    const updates: string[] = []
+    const values: (string | number)[] = []
+
+    if (data.name !== undefined) {
+      updates.push('name = ?')
+      values.push(data.name)
+    }
+    if (data.icon_type !== undefined) {
+      updates.push('icon_type = ?')
+      values.push(data.icon_type)
+    }
+    if (data.icon_value !== undefined) {
+      updates.push('icon_value = ?')
+      values.push(data.icon_value)
+    }
+    if (data.sort_order !== undefined) {
+      updates.push('sort_order = ?')
+      values.push(data.sort_order)
+    }
+
+    if (updates.length === 0) return existing
+
+    values.push(id)
+    db.prepare(`UPDATE spaces SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+
+    return this.getSpace(id)
+  }
+
+  deleteSpace(id: string): boolean {
+    const db = this.getDb()
+    const result = db.prepare('DELETE FROM spaces WHERE id = ?').run(id)
+    return result.changes > 0
+  }
+
+  reorderSpaces(orderedIds: string[]): void {
+    const db = this.getDb()
+    const stmt = db.prepare('UPDATE spaces SET sort_order = ? WHERE id = ?')
+    const tx = db.transaction(() => {
+      for (let i = 0; i < orderedIds.length; i++) {
+        stmt.run(i, orderedIds[i])
+      }
+    })
+    tx()
+  }
+
+  // Project-Space assignment operations
+  assignProjectToSpace(projectId: string, spaceId: string): void {
+    const db = this.getDb()
+    db.prepare('INSERT OR IGNORE INTO project_spaces (project_id, space_id) VALUES (?, ?)').run(
+      projectId,
+      spaceId
+    )
+  }
+
+  removeProjectFromSpace(projectId: string, spaceId: string): void {
+    const db = this.getDb()
+    db.prepare('DELETE FROM project_spaces WHERE project_id = ? AND space_id = ?').run(
+      projectId,
+      spaceId
+    )
+  }
+
+  getProjectIdsForSpace(spaceId: string): string[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare('SELECT project_id FROM project_spaces WHERE space_id = ?')
+      .all(spaceId) as { project_id: string }[]
+    return rows.map((r) => r.project_id)
+  }
+
+  getAllProjectSpaceAssignments(): ProjectSpaceAssignment[] {
+    const db = this.getDb()
+    return db
+      .prepare('SELECT project_id, space_id FROM project_spaces')
+      .all() as ProjectSpaceAssignment[]
   }
 
   // Utility methods

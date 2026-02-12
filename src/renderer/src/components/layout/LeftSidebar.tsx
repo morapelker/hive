@@ -1,10 +1,18 @@
+import { useEffect } from 'react'
 import { useLayoutStore } from '@/stores/useLayoutStore'
+import { useSpaceStore } from '@/stores'
 import { ResizeHandle } from './ResizeHandle'
 import { FolderGit2 } from 'lucide-react'
 import { ProjectList, AddProjectButton } from '@/components/projects'
+import { SpacesTabBar } from '@/components/spaces'
 
 export function LeftSidebar(): React.JSX.Element {
   const { leftSidebarWidth, leftSidebarCollapsed, setLeftSidebarWidth } = useLayoutStore()
+  const loadSpaces = useSpaceStore((s) => s.loadSpaces)
+
+  useEffect(() => {
+    loadSpaces()
+  }, [loadSpaces])
 
   const handleResize = (delta: number): void => {
     setLeftSidebarWidth(leftSidebarWidth + delta)
@@ -12,7 +20,9 @@ export function LeftSidebar(): React.JSX.Element {
 
   const handleAddProject = async (): Promise<void> => {
     // Trigger the add project flow
-    const addButton = document.querySelector('[data-testid="add-project-button"]') as HTMLButtonElement
+    const addButton = document.querySelector(
+      '[data-testid="add-project-button"]'
+    ) as HTMLButtonElement
     if (addButton) {
       addButton.click()
     }
@@ -42,6 +52,7 @@ export function LeftSidebar(): React.JSX.Element {
         <div className="flex-1 overflow-auto p-2">
           <ProjectList onAddProject={handleAddProject} />
         </div>
+        <SpacesTabBar />
       </aside>
       <ResizeHandle onResize={handleResize} direction="left" />
     </div>

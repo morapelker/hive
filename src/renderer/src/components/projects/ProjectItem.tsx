@@ -9,7 +9,8 @@ import {
   ExternalLink,
   RefreshCw,
   Settings,
-  GitBranch
+  GitBranch,
+  FolderHeart
 } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -20,9 +21,13 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuTrigger
+  ContextMenuTrigger,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
+  ContextMenuCheckboxItem
 } from '@/components/ui/context-menu'
-import { useProjectStore, useWorktreeStore } from '@/stores'
+import { useProjectStore, useWorktreeStore, useSpaceStore } from '@/stores'
 import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
@@ -81,6 +86,13 @@ export function ProjectItem({
   } = useProjectStore()
 
   const { createWorktree, creatingForProjectId, syncWorktrees } = useWorktreeStore()
+
+  const spaces = useSpaceStore((s) => s.spaces)
+  const projectSpaceMap = useSpaceStore((s) => s.projectSpaceMap)
+  const assignProjectToSpace = useSpaceStore((s) => s.assignProjectToSpace)
+  const removeProjectFromSpace = useSpaceStore((s) => s.removeProjectFromSpace)
+
+  const projectSpaceIds = projectSpaceMap[project.id] ?? []
 
   const [editName, setEditName] = useState(project.name)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -318,6 +330,37 @@ export function ProjectItem({
             <Settings className="h-4 w-4 mr-2" />
             Project Settings
           </ContextMenuItem>
+          {spaces.length > 0 && (
+            <>
+              <ContextMenuSub>
+                <ContextMenuSubTrigger>
+                  <FolderHeart className="h-4 w-4 mr-2" />
+                  Assign to Space
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent className="w-40">
+                  {spaces.map((space) => {
+                    const isAssigned = projectSpaceIds.includes(space.id)
+                    return (
+                      <ContextMenuCheckboxItem
+                        key={space.id}
+                        checked={isAssigned}
+                        onSelect={(e) => {
+                          e.preventDefault()
+                          if (isAssigned) {
+                            removeProjectFromSpace(project.id, space.id)
+                          } else {
+                            assignProjectToSpace(project.id, space.id)
+                          }
+                        }}
+                      >
+                        {space.name}
+                      </ContextMenuCheckboxItem>
+                    )
+                  })}
+                </ContextMenuSubContent>
+              </ContextMenuSub>
+            </>
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem
             onClick={handleRemove}

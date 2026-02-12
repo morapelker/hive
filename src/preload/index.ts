@@ -120,6 +120,25 @@ const db = {
       ipcRenderer.invoke('db:session:updateDraft', sessionId, draft)
   },
 
+  // Spaces
+  space: {
+    list: () => ipcRenderer.invoke('db:space:list'),
+    create: (data: { name: string; icon_type?: string; icon_value?: string }) =>
+      ipcRenderer.invoke('db:space:create', data),
+    update: (
+      id: string,
+      data: { name?: string; icon_type?: string; icon_value?: string; sort_order?: number }
+    ) => ipcRenderer.invoke('db:space:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('db:space:delete', id),
+    assignProject: (projectId: string, spaceId: string) =>
+      ipcRenderer.invoke('db:space:assignProject', projectId, spaceId),
+    removeProject: (projectId: string, spaceId: string) =>
+      ipcRenderer.invoke('db:space:removeProject', projectId, spaceId),
+    getProjectIds: (spaceId: string) => ipcRenderer.invoke('db:space:getProjectIds', spaceId),
+    getAllAssignments: () => ipcRenderer.invoke('db:space:getAllAssignments'),
+    reorder: (orderedIds: string[]) => ipcRenderer.invoke('db:space:reorder', orderedIds)
+  },
+
   // Utility
   schemaVersion: () => ipcRenderer.invoke('db:schemaVersion'),
   tableExists: (tableName: string) => ipcRenderer.invoke('db:tableExists', tableName),

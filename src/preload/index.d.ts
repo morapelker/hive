@@ -67,6 +67,20 @@ interface SessionSearchOptions {
 }
 
 declare global {
+  interface Space {
+    id: string
+    name: string
+    icon_type: string
+    icon_value: string
+    sort_order: number
+    created_at: string
+  }
+
+  interface ProjectSpaceAssignment {
+    project_id: string
+    space_id: string
+  }
+
   interface Window {
     api: {
       invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>
@@ -166,6 +180,25 @@ declare global {
         search: (options: SessionSearchOptions) => Promise<SessionWithWorktree[]>
         getDraft: (sessionId: string) => Promise<string | null>
         updateDraft: (sessionId: string, draft: string | null) => Promise<void>
+      }
+      space: {
+        list: () => Promise<Space[]>
+        create: (data: { name: string; icon_type?: string; icon_value?: string }) => Promise<Space>
+        update: (
+          id: string,
+          data: {
+            name?: string
+            icon_type?: string
+            icon_value?: string
+            sort_order?: number
+          }
+        ) => Promise<Space | null>
+        delete: (id: string) => Promise<boolean>
+        assignProject: (projectId: string, spaceId: string) => Promise<boolean>
+        removeProject: (projectId: string, spaceId: string) => Promise<boolean>
+        getProjectIds: (spaceId: string) => Promise<string[]>
+        getAllAssignments: () => Promise<ProjectSpaceAssignment[]>
+        reorder: (orderedIds: string[]) => Promise<boolean>
       }
       schemaVersion: () => Promise<number>
       tableExists: (tableName: string) => Promise<boolean>
