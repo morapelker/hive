@@ -118,6 +118,43 @@
       'rlig' 1,
       'calt' 1;
   }
+
+  /* Native-feeling scrollbars — thin, transparent, theme-aware */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+  }
+
+  *:hover {
+    scrollbar-color: rgba(128, 128, 128, 0.5) transparent;
+  }
+
+  /* WebKit scrollbar styling (Electron/Chromium) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.25);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(128, 128, 128, 0.45);
+  }
+
+  ::-webkit-scrollbar-thumb:active {
+    background: rgba(128, 128, 128, 0.6);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
 
 /* Electron window drag utilities */
