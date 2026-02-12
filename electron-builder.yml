@@ -14,6 +14,10 @@ asarUnpack:
   - '**/better-sqlite3/**'
   - '**/node-pty/**'
 
+extraResources:
+  - from: src/native/build/Release/ghostty.node
+    to: native/ghostty.node
+
 # ── macOS ──────────────────────────────────────────────
 mac:
   icon: resources/icon.icns

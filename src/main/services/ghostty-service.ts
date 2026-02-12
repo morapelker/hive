@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { createLogger } from './logger'
 
@@ -72,20 +72,33 @@ class GhosttyService {
       return false
     }
 
+    // In packaged app: <app>/Contents/Resources/native/ghostty.node (via extraResources)
+    // In dev:          <project>/src/native/build/Release/ghostty.node
+    const isPackaged = app.isPackaged
+    const addonPath = isPackaged
+      ? join(process.resourcesPath, 'native', 'ghostty.node')
+      : join(app.getAppPath(), 'src', 'native', 'build', 'Release', 'ghostty.node')
+
+    log.info('Ghostty addon load attempt', {
+      isPackaged,
+      addonPath,
+      __dirname,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath()
+    })
+
     try {
-      // The native addon is built to src/native/build/Release/ghostty.node
-      // Resolve relative to this file's location in the built app
-      const addonPath = join(__dirname, '..', '..', 'native', 'build', 'Release', 'ghostty.node')
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       this.addon = require(addonPath) as GhosttyAddon
       this.available = true
-      log.info('Ghostty native addon loaded', { path: addonPath })
+      log.info('Ghostty native addon loaded successfully', { path: addonPath })
       return true
     } catch (err) {
-      log.warn(
-        'Failed to load Ghostty native addon (this is expected if libghostty is not built)',
-        { error: err instanceof Error ? err.message : String(err) }
-      )
+      log.warn('Failed to load Ghostty native addon', {
+        error: err instanceof Error ? err.message : String(err),
+        addonPath,
+        isPackaged
+      })
       this.available = false
       return false
     }

@@ -27,9 +27,35 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: pip3 install --break-system-packages setuptools
       - run: pnpm install --frozen-lockfile
+
+      - name: Verify libghostty download
+        run: |
+          echo "=== libghostty artifact ==="
+          ls -lh vendor/libghostty.a
+          file vendor/libghostty.a
+
+      - name: Build Ghostty native addon
+        run: pnpm build:native
+        env:
+          GHOSTTY_LIB_PATH: ${{ github.workspace }}/vendor/libghostty.a
+
+      - name: Verify native addon built
+        run: |
+          echo "=== ghostty.node output ==="
+          ls -lhR src/native/build/Release/
+          file src/native/build/Release/ghostty.node
+
       - run: pnpm build
         env:
           GHOSTTY_LIB_PATH: ${{ github.workspace }}/vendor/libghostty.a
+
+      - name: Verify build output structure
+        run: |
+          echo "=== out/ directory ==="
+          ls -lhR out/
+          echo "=== All .node files in workspace ==="
+          find . -name '*.node' -not -path './node_modules/*'
+
       - run: pnpm exec electron-builder --mac --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,3 +64,13 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify packaged app contents
+        if: always()
+        run: |
+          echo "=== .node files in dist ==="
+          find dist -name '*.node' 2>/dev/null || echo "No .node files in dist"
+          echo "=== extraResources check ==="
+          find dist -path '*/Resources/native/*' 2>/dev/null || echo "No native/ in Resources"
+          echo "=== app.asar.unpacked check ==="
+          find dist -path '*/app.asar.unpacked/*' -name '*.node' 2>/dev/null || echo "No .node in asar.unpacked"
