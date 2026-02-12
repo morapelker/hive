@@ -760,7 +760,21 @@ const gitOps = {
     url: string | null
     remote: string | null
     error?: string
-  }> => ipcRenderer.invoke('git:getRemoteUrl', { worktreePath, remote })
+  }> => ipcRenderer.invoke('git:getRemoteUrl', { worktreePath, remote }),
+
+  // Get diff stat (additions/deletions per file) for all uncommitted changes
+  getDiffStat: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    files?: Array<{
+      path: string
+      additions: number
+      deletions: number
+      binary: boolean
+    }>
+    error?: string
+  }> => ipcRenderer.invoke('git:diffStat', worktreePath)
 }
 
 const opencodeOps = {

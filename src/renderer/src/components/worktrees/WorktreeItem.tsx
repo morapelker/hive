@@ -36,6 +36,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
 import { PulseAnimation } from './PulseAnimation'
+import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 
 interface Worktree {
   id: string
@@ -107,6 +108,12 @@ export function WorktreeItem({
             : worktreeStatus === 'plan_ready'
               ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
               : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+
+  // Archive confirmation state
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
+  const [archiveConfirmFiles, setArchiveConfirmFiles] = useState<
+    Array<{ path: string; additions: number; deletions: number; binary: boolean }>
+  >([])
 
   // Branch rename state
   const [isRenamingBranch, setIsRenamingBranch] = useState(false)
@@ -204,7 +211,7 @@ export function WorktreeItem({
     clipboardToast.copied('Path')
   }
 
-  const handleArchive = useCallback(async (): Promise<void> => {
+  const doArchive = useCallback(async (): Promise<void> => {
     const result = await archiveWorktree(
       worktree.id,
       worktree.path,
@@ -214,9 +221,34 @@ export function WorktreeItem({
     if (result.success) {
       gitToast.worktreeArchived(worktree.name)
     } else {
-      gitToast.operationFailed('archive worktree', result.error, handleArchive)
+      gitToast.operationFailed('archive worktree', result.error, doArchive)
     }
   }, [archiveWorktree, worktree, projectPath])
+
+  const handleArchive = useCallback(async (): Promise<void> => {
+    try {
+      const result = await window.gitOps.getDiffStat(worktree.path)
+      if (result.success && result.files && result.files.length > 0) {
+        setArchiveConfirmFiles(result.files)
+        setArchiveConfirmOpen(true)
+        return
+      }
+    } catch {
+      // If we can't check, proceed without confirmation
+    }
+    doArchive()
+  }, [worktree.path, doArchive])
+
+  const handleArchiveConfirm = useCallback((): void => {
+    setArchiveConfirmOpen(false)
+    setArchiveConfirmFiles([])
+    doArchive()
+  }, [doArchive])
+
+  const handleArchiveCancel = useCallback((): void => {
+    setArchiveConfirmOpen(false)
+    setArchiveConfirmFiles([])
+  }, [])
 
   const handleUnbranch = useCallback(async (): Promise<void> => {
     const result = await unbranchWorktree(
@@ -406,6 +438,14 @@ export function WorktreeItem({
           </DropdownMenu>
         </div>
       </ContextMenuTrigger>
+
+      <ArchiveConfirmDialog
+        open={archiveConfirmOpen}
+        worktreeName={worktree.name}
+        files={archiveConfirmFiles}
+        onCancel={handleArchiveCancel}
+        onConfirm={handleArchiveConfirm}
+      />
 
       {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">

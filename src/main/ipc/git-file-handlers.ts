@@ -10,7 +10,9 @@ import {
   GitPushResult,
   GitPullResult,
   GitDiffResult,
-  GitMergeResult
+  GitMergeResult,
+  GitDiffStatFile,
+  GitDiffStatResult
 } from '../services/git-service'
 import { createLogger } from '../services/logger'
 
@@ -472,6 +474,25 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       }
     }
   )
+
+  // Get diff stat (additions/deletions per file) for all uncommitted changes
+  ipcMain.handle(
+    'git:diffStat',
+    async (_event, worktreePath: string): Promise<GitDiffStatResult> => {
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.getDiffStat()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to get diff stat',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
 }
 
 // Export types for use in preload
@@ -483,5 +504,7 @@ export type {
   GitPushResult,
   GitPullResult,
   GitDiffResult,
-  GitMergeResult
+  GitMergeResult,
+  GitDiffStatFile,
+  GitDiffStatResult
 }
