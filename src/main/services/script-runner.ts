@@ -27,11 +27,13 @@ interface ScriptEvent {
   exitCode?: number
 }
 
-const colorEnv = {
-  ...process.env,
-  FORCE_COLOR: '3',
-  TERM: 'xterm-256color',
-  COLORTERM: 'truecolor'
+function getColorEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    FORCE_COLOR: '3',
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor'
+  }
 }
 
 export class ScriptRunner {
@@ -81,11 +83,7 @@ export class ScriptRunner {
     })
   }
 
-  private signalProcessTree(
-    proc: ChildProcess,
-    signal: NodeJS.Signals,
-    eventKey: string
-  ): void {
+  private signalProcessTree(proc: ChildProcess, signal: NodeJS.Signals, eventKey: string): void {
     const pid = proc.pid
     if (!pid) {
       try {
@@ -179,7 +177,7 @@ export class ScriptRunner {
     return new Promise((resolve) => {
       const proc = spawn('sh', ['-c', command], {
         cwd,
-        env: colorEnv,
+        env: getColorEnv(),
         stdio: ['ignore', 'pipe', 'pipe']
       })
 
@@ -207,7 +205,11 @@ export class ScriptRunner {
     })
   }
 
-  async runPersistent(commands: string[], cwd: string, eventKey: string): Promise<PersistentHandle> {
+  async runPersistent(
+    commands: string[],
+    cwd: string,
+    eventKey: string
+  ): Promise<PersistentHandle> {
     if (this.runningProcesses.has(eventKey)) {
       log.warn('runPersistent: process already running for key, killing it first', { eventKey })
       await this.killProcess(eventKey)
@@ -219,7 +221,7 @@ export class ScriptRunner {
 
     const proc = spawn('sh', ['-c', combined], {
       cwd,
-      env: colorEnv,
+      env: getColorEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32'
     })
@@ -294,7 +296,7 @@ export class ScriptRunner {
 
       const proc = spawn('sh', ['-c', command], {
         cwd,
-        env: colorEnv,
+        env: getColorEnv(),
         stdio: ['ignore', 'pipe', 'pipe']
       })
 
@@ -303,9 +305,17 @@ export class ScriptRunner {
           settled = true
           proc.kill('SIGTERM')
           setTimeout(() => {
-            try { proc.kill('SIGKILL') } catch { /* already dead */ }
+            try {
+              proc.kill('SIGKILL')
+            } catch {
+              /* already dead */
+            }
           }, 500)
-          resolve({ success: false, output, error: `Command "${command}" timed out after ${timeout}ms` })
+          resolve({
+            success: false,
+            output,
+            error: `Command "${command}" timed out after ${timeout}ms`
+          })
         }
       }, timeout)
 
@@ -332,7 +342,11 @@ export class ScriptRunner {
           if (code === 0) {
             resolve({ success: true, output })
           } else {
-            resolve({ success: false, output, error: `Command "${command}" exited with code ${code}` })
+            resolve({
+              success: false,
+              output,
+              error: `Command "${command}" exited with code ${code}`
+            })
           }
         }
       })

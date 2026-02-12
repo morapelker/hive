@@ -43,6 +43,30 @@ describe('ScriptRunner process lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  test('runPersistent uses latest PATH at spawn time', async () => {
+    const runner = new ScriptRunner()
+    const proc = new MockChildProcess(3001)
+    const nextPath = '/tmp/hive-path-from-finder'
+    const previousPath = process.env.PATH
+
+    spawnMock.mockReturnValue(proc)
+
+    process.env.PATH = nextPath
+
+    try {
+      await runner.runPersistent(['echo run'], '/tmp', 'script:run:env-check')
+
+      const spawnOptions = spawnMock.mock.calls[0][2] as { env: NodeJS.ProcessEnv }
+      expect(spawnOptions.env.PATH).toBe(nextPath)
+    } finally {
+      if (previousPath === undefined) {
+        delete process.env.PATH
+      } else {
+        process.env.PATH = previousPath
+      }
+    }
+  })
+
   test('runPersistent kills existing process before replacing same event key', async () => {
     const runner = new ScriptRunner()
     const killSpy = vi.spyOn(runner, 'killProcess').mockResolvedValue(true)
