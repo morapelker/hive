@@ -272,6 +272,7 @@ declare global {
       onNotificationNavigate: (
         callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
       ) => () => void
+      onWindowFocused: (callback: () => void) => () => void
     }
     loggingOps: {
       createResponseLog: (sessionId: string) => Promise<string>

@@ -398,6 +398,17 @@ const systemOps = {
     return () => {
       ipcRenderer.removeListener('notification:navigate', handler)
     }
+  },
+
+  // Subscribe to window focus events (for git refresh on app focus)
+  onWindowFocused: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on('app:windowFocused', handler)
+    return () => {
+      ipcRenderer.removeListener('app:windowFocused', handler)
+    }
   }
 }
 

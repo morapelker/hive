@@ -117,6 +117,11 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  // Emit focus event to renderer for git refresh on window focus
+  mainWindow.on('focus', () => {
+    mainWindow!.webContents.send('app:windowFocused')
+  })
+
   // Save window bounds on resize and move
   mainWindow.on('resize', () => saveWindowBounds(mainWindow))
   mainWindow.on('move', () => saveWindowBounds(mainWindow))
