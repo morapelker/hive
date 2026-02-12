@@ -8,7 +8,9 @@ import type {
   WorktreeUpdate,
   SessionCreate,
   SessionUpdate,
-  SessionSearchOptions
+  SessionSearchOptions,
+  SpaceCreate,
+  SpaceUpdate
 } from '../db'
 
 const log = createLogger({ component: 'DatabaseHandlers' })
@@ -154,6 +156,46 @@ export function registerDatabaseHandlers(): void {
 
   ipcMain.handle('db:session:updateDraft', (_event, sessionId: string, draft: string | null) => {
     getDatabase().updateSessionDraft(sessionId, draft)
+  })
+
+  // Spaces
+  ipcMain.handle('db:space:list', () => {
+    return getDatabase().listSpaces()
+  })
+
+  ipcMain.handle('db:space:create', (_event, data: SpaceCreate) => {
+    return getDatabase().createSpace(data)
+  })
+
+  ipcMain.handle('db:space:update', (_event, id: string, data: SpaceUpdate) => {
+    return getDatabase().updateSpace(id, data)
+  })
+
+  ipcMain.handle('db:space:delete', (_event, id: string) => {
+    return getDatabase().deleteSpace(id)
+  })
+
+  ipcMain.handle('db:space:assignProject', (_event, projectId: string, spaceId: string) => {
+    getDatabase().assignProjectToSpace(projectId, spaceId)
+    return true
+  })
+
+  ipcMain.handle('db:space:removeProject', (_event, projectId: string, spaceId: string) => {
+    getDatabase().removeProjectFromSpace(projectId, spaceId)
+    return true
+  })
+
+  ipcMain.handle('db:space:getProjectIds', (_event, spaceId: string) => {
+    return getDatabase().getProjectIdsForSpace(spaceId)
+  })
+
+  ipcMain.handle('db:space:getAllAssignments', () => {
+    return getDatabase().getAllProjectSpaceAssignments()
+  })
+
+  ipcMain.handle('db:space:reorder', (_event, orderedIds: string[]) => {
+    getDatabase().reorderSpaces(orderedIds)
+    return true
   })
 
   // Utility

@@ -16,5 +16,9 @@ export type {
   SessionMessageUpsertByOpenCode,
   Setting,
   SessionSearchOptions,
-  SessionWithWorktree
+  SessionWithWorktree,
+  Space,
+  SpaceCreate,
+  SpaceUpdate,
+  ProjectSpaceAssignment
 } from './types'

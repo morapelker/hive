@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 10
+export const CURRENT_SCHEMA_VERSION = 11
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -181,6 +181,28 @@ export const MIGRATIONS: Migration[] = [
     version: 10,
     name: 'add_worktree_last_message_at',
     up: `ALTER TABLE worktrees ADD COLUMN last_message_at INTEGER DEFAULT NULL;`,
+    down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
+  },
+  {
+    version: 11,
+    name: 'add_project_spaces',
+    up: `
+      CREATE TABLE IF NOT EXISTS spaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        icon_type TEXT NOT NULL DEFAULT 'default',
+        icon_value TEXT NOT NULL DEFAULT 'Folder',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS project_spaces (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        PRIMARY KEY (project_id, space_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_project_spaces_space ON project_spaces(space_id);
+      CREATE INDEX IF NOT EXISTS idx_project_spaces_project ON project_spaces(project_id);
+    `,
     down: `-- SQLite does not support DROP COLUMN; recreate table if needed`
   }
 ]
