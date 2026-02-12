@@ -37,6 +37,9 @@ interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   mode: 'build' | 'plan'
+  model_provider_id: string | null
+  model_id: string | null
+  model_variant: string | null
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -132,6 +135,9 @@ declare global {
           project_id: string
           name?: string | null
           opencode_session_id?: string | null
+          model_provider_id?: string | null
+          model_id?: string | null
+          model_variant?: string | null
         }) => Promise<Session>
         get: (id: string) => Promise<Session | null>
         getByWorktree: (worktreeId: string) => Promise<Session[]>
@@ -144,6 +150,9 @@ declare global {
             status?: 'active' | 'completed' | 'error'
             opencode_session_id?: string | null
             mode?: 'build' | 'plan'
+            model_provider_id?: string | null
+            model_id?: string | null
+            model_variant?: string | null
             updated_at?: string
             completed_at?: string | null
           }
@@ -325,6 +334,7 @@ declare global {
       setModel: (model: {
         providerID: string
         modelID: string
+        variant?: string
       }) => Promise<{ success: boolean; error?: string }>
       // Get model info (name, context limit)
       modelInfo: (

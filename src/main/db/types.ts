@@ -77,6 +77,9 @@ export interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   mode: SessionMode
+  model_provider_id: string | null
+  model_id: string | null
+  model_variant: string | null
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -87,6 +90,9 @@ export interface SessionCreate {
   project_id: string
   name?: string | null
   opencode_session_id?: string | null
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
 }
 
 export interface SessionUpdate {
@@ -94,6 +100,9 @@ export interface SessionUpdate {
   status?: 'active' | 'completed' | 'error'
   opencode_session_id?: string | null
   mode?: SessionMode
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
   updated_at?: string
   completed_at?: string | null
 }

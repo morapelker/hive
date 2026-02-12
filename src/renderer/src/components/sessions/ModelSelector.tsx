@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Check, ChevronDown, Search, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useSessionStore } from '@/stores/useSessionStore'
 import { toast } from 'sonner'
 import {
   DropdownMenu,
@@ -34,8 +35,30 @@ function getVariantKeys(model: ModelInfo): string[] {
   return Object.keys(model.variants)
 }
 
-export function ModelSelector(): React.JSX.Element {
-  const selectedModel = useSettingsStore((state) => state.selectedModel)
+interface ModelSelectorProps {
+  sessionId?: string
+}
+
+export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Element {
+  // Read per-session model from session store (with global fallback)
+  const session = useSessionStore((state) => {
+    if (!sessionId) return null
+    for (const sessions of state.sessionsByWorktree.values()) {
+      const found = sessions.find((s) => s.id === sessionId)
+      if (found) return found
+    }
+    return null
+  })
+  const globalModel = useSettingsStore((state) => state.selectedModel)
+  const sessionModel =
+    session?.model_id && session.model_provider_id
+      ? {
+          providerID: session.model_provider_id,
+          modelID: session.model_id,
+          variant: session.model_variant ?? undefined
+        }
+      : null
+  const selectedModel = sessionModel ?? globalModel
   const setSelectedModel = useSettingsStore((state) => state.setSelectedModel)
   const favoriteModels = useSettingsStore((s) => s.favoriteModels)
   const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel)
@@ -114,11 +137,21 @@ export function ModelSelector(): React.JSX.Element {
     const variantKeys = getVariantKeys(model)
     // When selecting a new model, pick its first variant if available
     const variant = variantKeys.length > 0 ? variantKeys[0] : undefined
-    setSelectedModel({ providerID: model.providerID, modelID: model.id, variant })
+    const newModel = { providerID: model.providerID, modelID: model.id, variant }
+    if (sessionId) {
+      useSessionStore.getState().setSessionModel(sessionId, newModel)
+    } else {
+      setSelectedModel(newModel)
+    }
   }
 
   function handleSelectVariant(model: ModelInfo, variant: string): void {
-    setSelectedModel({ providerID: model.providerID, modelID: model.id, variant })
+    const newModel = { providerID: model.providerID, modelID: model.id, variant }
+    if (sessionId) {
+      useSessionStore.getState().setSessionModel(sessionId, newModel)
+    } else {
+      setSelectedModel(newModel)
+    }
   }
 
   function isActiveModel(model: ModelInfo): boolean {
@@ -152,13 +185,18 @@ export function ModelSelector(): React.JSX.Element {
     const nextIndex = (currentIndex + 1) % variantKeys.length
     const nextVariant = variantKeys[nextIndex]
 
-    setSelectedModel({
+    const newModel = {
       providerID: currentModel.providerID,
       modelID: currentModel.id,
       variant: nextVariant
-    })
+    }
+    if (sessionId) {
+      useSessionStore.getState().setSessionModel(sessionId, newModel)
+    } else {
+      setSelectedModel(newModel)
+    }
     toast.success(`Variant: ${nextVariant}`)
-  }, [selectedModel, currentModel, setSelectedModel])
+  }, [selectedModel, currentModel, setSelectedModel, sessionId])
 
   // Listen for centralized Alt+T shortcut via custom event
   useEffect(() => {
