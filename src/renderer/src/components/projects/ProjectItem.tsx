@@ -17,6 +17,16 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/components/ui/alert-dialog'
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -98,6 +108,7 @@ export function ProjectItem({
   const [editName, setEditName] = useState(project.name)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [branchPickerOpen, setBranchPickerOpen] = useState(false)
+  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const isCreatingWorktree = creatingForProjectId === project.id
 
@@ -155,6 +166,7 @@ export function ProjectItem({
   }
 
   const handleRemove = async (): Promise<void> => {
+    setRemoveConfirmOpen(false)
     const success = await removeProject(project.id)
     if (success) {
       toast.success('Project removed from Hive')
@@ -364,7 +376,7 @@ export function ProjectItem({
           )}
           <ContextMenuSeparator />
           <ContextMenuItem
-            onClick={handleRemove}
+            onClick={() => setRemoveConfirmOpen(true)}
             className="text-destructive focus:text-destructive focus:bg-destructive/10"
           >
             <Trash2 className="h-4 w-4 mr-2" />
@@ -386,6 +398,35 @@ export function ProjectItem({
         projectPath={project.path}
         onSelect={handleBranchSelect}
       />
+
+      {/* Remove Confirmation Dialog */}
+      <AlertDialog open={removeConfirmOpen} onOpenChange={setRemoveConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove project from Hive?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  This will remove <span className="font-semibold">{project.name}</span> from Hive.
+                </p>
+                <p className="font-mono text-xs bg-muted rounded px-2 py-1 break-all">
+                  {project.path}
+                </p>
+                <p>Your files on disk will not be affected.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleRemove}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
