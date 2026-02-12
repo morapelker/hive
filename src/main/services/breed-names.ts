@@ -294,27 +294,22 @@ export function getRandomBreedName(breedType: BreedType = 'dogs'): string {
 
 /**
  * Select a unique breed name that doesn't collide with existing names
- * After MAX_ATTEMPTS, adds a numeric suffix (-v1, -v2, etc.)
+ * If a random base name is taken, adds a numeric suffix (-2, -3, etc.)
  */
 export function selectUniqueBreedName(
   existingNames: Set<string>,
   breedType: BreedType = 'dogs'
 ): string {
-  const MAX_ATTEMPTS = 10
-
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    const breedName = getRandomBreedName(breedType)
-    if (!existingNames.has(breedName)) {
-      return breedName
-    }
+  const baseName = getRandomBreedName(breedType)
+  if (!existingNames.has(baseName)) {
+    return baseName
   }
 
-  const baseName = getRandomBreedName(breedType)
-  let version = 1
-  let candidateName = `${baseName}-v${version}`
+  let version = 2
+  let candidateName = `${baseName}-${version}`
   while (existingNames.has(candidateName)) {
     version++
-    candidateName = `${baseName}-v${version}`
+    candidateName = `${baseName}-${version}`
   }
   return candidateName
 }
