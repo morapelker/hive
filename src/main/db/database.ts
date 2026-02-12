@@ -401,14 +401,17 @@ export class DatabaseService {
       status: 'active',
       opencode_session_id: data.opencode_session_id ?? null,
       mode: 'build',
+      model_provider_id: data.model_provider_id ?? null,
+      model_id: data.model_id ?? null,
+      model_variant: data.model_variant ?? null,
       created_at: now,
       updated_at: now,
       completed_at: null
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, name, status, opencode_session_id, mode, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, name, status, opencode_session_id, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -417,6 +420,9 @@ export class DatabaseService {
       session.status,
       session.opencode_session_id,
       session.mode,
+      session.model_provider_id,
+      session.model_id,
+      session.model_variant,
       session.created_at,
       session.updated_at,
       session.completed_at
@@ -477,6 +483,18 @@ export class DatabaseService {
     if (data.mode !== undefined) {
       updates.push('mode = ?')
       values.push(data.mode)
+    }
+    if (data.model_provider_id !== undefined) {
+      updates.push('model_provider_id = ?')
+      values.push(data.model_provider_id)
+    }
+    if (data.model_id !== undefined) {
+      updates.push('model_id = ?')
+      values.push(data.model_id)
+    }
+    if (data.model_variant !== undefined) {
+      updates.push('model_variant = ?')
+      values.push(data.model_variant)
     }
     if (data.completed_at !== undefined) {
       updates.push('completed_at = ?')

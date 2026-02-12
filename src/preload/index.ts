@@ -80,6 +80,9 @@ const db = {
       project_id: string
       name?: string | null
       opencode_session_id?: string | null
+      model_provider_id?: string | null
+      model_id?: string | null
+      model_variant?: string | null
     }) => ipcRenderer.invoke('db:session:create', data),
     get: (id: string) => ipcRenderer.invoke('db:session:get', id),
     getByWorktree: (worktreeId: string) =>
@@ -94,6 +97,9 @@ const db = {
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
         mode?: 'build' | 'plan'
+        model_provider_id?: string | null
+        model_id?: string | null
+        model_variant?: string | null
         updated_at?: string
         completed_at?: string | null
       }

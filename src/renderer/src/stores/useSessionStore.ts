@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import type { SelectedModel } from './useSettingsStore'
 
 // Session mode type
 export type SessionMode = 'build' | 'plan'
@@ -13,6 +14,9 @@ interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   mode: SessionMode
+  model_provider_id: string | null
+  model_id: string | null
+  model_variant: string | null
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -56,6 +60,7 @@ interface SessionState {
   getSessionMode: (sessionId: string) => SessionMode
   toggleSessionMode: (sessionId: string) => Promise<void>
   setSessionMode: (sessionId: string, mode: SessionMode) => Promise<void>
+  setSessionModel: (sessionId: string, model: SelectedModel) => Promise<void>
   setPendingMessage: (sessionId: string, message: string) => void
   consumePendingMessage: (sessionId: string) => string | null
 }
@@ -154,10 +159,40 @@ export const useSessionStore = create<SessionState>()(
       // Create a new session
       createSession: async (worktreeId: string, projectId: string) => {
         try {
+          // Determine default model from last session in same worktree, or global setting
+          let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
+          const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
+          if (existingSessions.length > 0) {
+            // Sessions are sorted most-recent-first; find the first with a model
+            const lastWithModel = existingSessions.find((s) => s.model_id)
+            if (lastWithModel) {
+              defaultModel = {
+                providerID: lastWithModel.model_provider_id!,
+                modelID: lastWithModel.model_id!,
+                variant: lastWithModel.model_variant ?? undefined
+              }
+            }
+          }
+          if (!defaultModel) {
+            // Fallback to global setting
+            const { useSettingsStore } = await import('./useSettingsStore')
+            const globalModel = useSettingsStore.getState().selectedModel
+            if (globalModel) {
+              defaultModel = globalModel
+            }
+          }
+
           const session = await window.db.session.create({
             worktree_id: worktreeId,
             project_id: projectId,
-            name: `New session - ${new Date().toISOString()}`
+            name: `New session - ${new Date().toISOString()}`,
+            ...(defaultModel
+              ? {
+                  model_provider_id: defaultModel.providerID,
+                  model_id: defaultModel.modelID,
+                  model_variant: defaultModel.variant ?? null
+                }
+              : {})
           })
 
           set((state) => {
@@ -455,6 +490,52 @@ export const useSessionStore = create<SessionState>()(
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
+      },
+
+      // Set model for a specific session (per-session model selection)
+      setSessionModel: async (sessionId: string, model: SelectedModel) => {
+        // Update local state immediately
+        set((state) => {
+          const newSessionsMap = new Map(state.sessionsByWorktree)
+          for (const [worktreeId, sessions] of newSessionsMap.entries()) {
+            const updated = sessions.map((s) =>
+              s.id === sessionId
+                ? {
+                    ...s,
+                    model_provider_id: model.providerID,
+                    model_id: model.modelID,
+                    model_variant: model.variant ?? null
+                  }
+                : s
+            )
+            if (updated.some((s, i) => s !== sessions[i])) {
+              newSessionsMap.set(worktreeId, updated)
+            }
+          }
+          return { sessionsByWorktree: newSessionsMap }
+        })
+
+        // Persist to database
+        try {
+          await window.db.session.update(sessionId, {
+            model_provider_id: model.providerID,
+            model_id: model.modelID,
+            model_variant: model.variant ?? null
+          })
+        } catch (error) {
+          console.error('Failed to persist session model:', error)
+        }
+
+        // Push to OpenCode backend
+        try {
+          await window.opencodeOps.setModel(model)
+        } catch (error) {
+          console.error('Failed to push model to OpenCode:', error)
+        }
+
+        // Update global setting as well (so new sessions inherit this choice)
+        const { useSettingsStore } = await import('./useSettingsStore')
+        useSettingsStore.getState().updateSetting('selectedModel', model)
       },
 
       // Set a pending initial message for a session (e.g., code review prompt)

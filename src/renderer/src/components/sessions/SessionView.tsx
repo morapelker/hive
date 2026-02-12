@@ -438,6 +438,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [sessionId])
 
+  // Push per-session model to OpenCode on tab switch
+  useEffect(() => {
+    const state = useSessionStore.getState()
+    for (const sessions of state.sessionsByWorktree.values()) {
+      const session = sessions.find((s) => s.id === sessionId)
+      if (session?.model_id) {
+        window.opencodeOps.setModel({
+          providerID: session.model_provider_id!,
+          modelID: session.model_id,
+          variant: session.model_variant ?? undefined
+        })
+        break
+      }
+    }
+  }, [sessionId])
+
   // Auto-resize textarea (depends on sessionId to handle pre-populated drafts)
   useEffect(() => {
     const textarea = textareaRef.current
@@ -2342,7 +2358,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             {/* Bottom row: model selector + context indicator + hint text + send button */}
             <div className="flex items-center justify-between px-3 pb-2.5">
               <div className="flex items-center gap-2">
-                <ModelSelector />
+                <ModelSelector sessionId={sessionId} />
                 <AttachmentButton onAttach={handleAttach} />
                 <ContextIndicator
                   sessionId={sessionId}
