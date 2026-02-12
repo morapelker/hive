@@ -780,7 +780,20 @@ declare global {
         remote: string | null
         error?: string
       }>
+      // Get diff stat (additions/deletions per file) for all uncommitted changes
+      getDiffStat: (worktreePath: string) => Promise<{
+        success: boolean
+        files?: GitDiffStatFile[]
+        error?: string
+      }>
     }
+  }
+
+  interface GitDiffStatFile {
+    path: string
+    additions: number
+    deletions: number
+    binary: boolean
   }
 
   // Message part type for prompt API (text + file attachments)

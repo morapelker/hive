@@ -91,6 +91,19 @@ export interface GitMergeResult {
   conflicts?: string[]
 }
 
+export interface GitDiffStatFile {
+  path: string
+  additions: number
+  deletions: number
+  binary: boolean
+}
+
+export interface GitDiffStatResult {
+  success: boolean
+  files?: GitDiffStatFile[]
+  error?: string
+}
+
 /**
  * GitService - Handles all git operations for worktrees
  */
@@ -1107,6 +1120,103 @@ export class GitService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return { success: false, url: null, remote: null, error: message }
+    }
+  }
+
+  /**
+   * Get diff stats (additions/deletions per file) for all uncommitted changes.
+   * Combines both staged and unstaged changes, plus untracked files.
+   */
+  async getDiffStat(): Promise<GitDiffStatResult> {
+    try {
+      const files: GitDiffStatFile[] = []
+      const seen = new Set<string>()
+
+      // Staged changes: git diff --cached --numstat
+      try {
+        const staged = await this.git.raw(['diff', '--cached', '--numstat'])
+        for (const line of staged.trim().split('\n')) {
+          if (!line) continue
+          const [add, del, path] = line.split('\t')
+          if (!path) continue
+          seen.add(path)
+          const binary = add === '-' && del === '-'
+          files.push({
+            path,
+            additions: binary ? 0 : parseInt(add, 10) || 0,
+            deletions: binary ? 0 : parseInt(del, 10) || 0,
+            binary
+          })
+        }
+      } catch {
+        // No staged changes
+      }
+
+      // Unstaged changes: git diff --numstat
+      try {
+        const unstaged = await this.git.raw(['diff', '--numstat'])
+        for (const line of unstaged.trim().split('\n')) {
+          if (!line) continue
+          const [add, del, path] = line.split('\t')
+          if (!path) continue
+          if (seen.has(path)) {
+            // Merge with existing staged entry
+            const existing = files.find((f) => f.path === path)
+            if (existing) {
+              const binary = add === '-' && del === '-'
+              if (!binary) {
+                existing.additions += parseInt(add, 10) || 0
+                existing.deletions += parseInt(del, 10) || 0
+              }
+            }
+          } else {
+            seen.add(path)
+            const binary = add === '-' && del === '-'
+            files.push({
+              path,
+              additions: binary ? 0 : parseInt(add, 10) || 0,
+              deletions: binary ? 0 : parseInt(del, 10) || 0,
+              binary
+            })
+          }
+        }
+      } catch {
+        // No unstaged changes
+      }
+
+      // Untracked files: count their lines as additions
+      try {
+        const status = await this.git.status()
+        for (const file of status.not_added) {
+          if (seen.has(file)) continue
+          seen.add(file)
+          try {
+            const content = await this.git.raw(['show', `:${file}`]).catch(() => null)
+            if (content === null) {
+              // File not in index, read from disk
+              const { readFile: readF } = await import('fs/promises')
+              const fullPath = join(this.repoPath, file)
+              const text = await readF(fullPath, 'utf-8').catch(() => null)
+              const lineCount = text ? text.split('\n').length : 0
+              files.push({ path: file, additions: lineCount, deletions: 0, binary: false })
+            }
+          } catch {
+            files.push({ path: file, additions: 0, deletions: 0, binary: false })
+          }
+        }
+      } catch {
+        // No untracked files
+      }
+
+      return { success: true, files }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log.error(
+        'Failed to get diff stat',
+        error instanceof Error ? error : new Error(message),
+        { repoPath: this.repoPath }
+      )
+      return { success: false, error: message }
     }
   }
 }
