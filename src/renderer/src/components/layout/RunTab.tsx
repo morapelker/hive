@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Ansi from 'ansi-to-react'
-import { Play, Square, RotateCcw, Loader2, Trash2 } from 'lucide-react'
+import { Play, Square, RotateCcw, Loader2, Trash2, Settings } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -185,10 +186,21 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
         data-testid="run-tab-output"
       >
         {runOutput.length === 0 && !runRunning && (
-          <div className="text-muted-foreground text-center py-4">
-            {hasRunScript
-              ? 'No run output yet. Press \u2318R or click Run to start.'
-              : 'No run script configured. Add one in Project Settings.'}
+          <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground text-xs">
+            {hasRunScript ? (
+              'No run output yet. Press ⌘R or click Run to start.'
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (project) useProjectStore.getState().openProjectSettings(project.id)
+                }}
+              >
+                <Settings className="h-4 w-4 mr-2" />
+                Setup run script
+              </Button>
+            )}
           </div>
         )}
         {runOutput.map((line, i) => {
