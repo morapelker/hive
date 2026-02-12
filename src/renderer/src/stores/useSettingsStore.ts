@@ -30,10 +30,6 @@ export interface AppSettings {
   customTerminalCommand: string
   embeddedTerminalBackend: EmbeddedTerminalBackend
 
-  // Git
-  commitTemplate: string
-  autoFetchInterval: number // 0 = disabled, otherwise minutes
-
   // Model
   selectedModel: SelectedModel | null
 
@@ -57,8 +53,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultTerminal: 'terminal',
   customTerminalCommand: '',
   embeddedTerminalBackend: 'xterm',
-  commitTemplate: '',
-  autoFetchInterval: 0,
   selectedModel: null,
   lastOpenAction: null,
   favoriteModels: [],
@@ -118,8 +112,6 @@ function extractSettings(state: SettingsState): AppSettings {
     defaultTerminal: state.defaultTerminal,
     customTerminalCommand: state.customTerminalCommand,
     embeddedTerminalBackend: state.embeddedTerminalBackend,
-    commitTemplate: state.commitTemplate,
-    autoFetchInterval: state.autoFetchInterval,
     selectedModel: state.selectedModel,
     lastOpenAction: state.lastOpenAction,
     favoriteModels: state.favoriteModels,
@@ -219,8 +211,6 @@ export const useSettingsStore = create<SettingsState>()(
         defaultTerminal: state.defaultTerminal,
         customTerminalCommand: state.customTerminalCommand,
         embeddedTerminalBackend: state.embeddedTerminalBackend,
-        commitTemplate: state.commitTemplate,
-        autoFetchInterval: state.autoFetchInterval,
         selectedModel: state.selectedModel,
         lastOpenAction: state.lastOpenAction,
         favoriteModels: state.favoriteModels,

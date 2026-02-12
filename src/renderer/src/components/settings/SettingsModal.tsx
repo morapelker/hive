@@ -1,12 +1,11 @@
 import { useEffect } from 'react'
-import { Settings, Palette, Monitor, Code, Terminal, GitBranch, Keyboard } from 'lucide-react'
+import { Settings, Palette, Monitor, Code, Terminal, Keyboard } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { SettingsAppearance } from './SettingsAppearance'
 import { SettingsGeneral } from './SettingsGeneral'
 import { SettingsEditor } from './SettingsEditor'
 import { SettingsTerminal } from './SettingsTerminal'
-import { SettingsGit } from './SettingsGit'
 import { SettingsShortcuts } from './SettingsShortcuts'
 import { cn } from '@/lib/utils'
 
@@ -15,12 +14,12 @@ const SECTIONS = [
   { id: 'general', label: 'General', icon: Monitor },
   { id: 'editor', label: 'Editor', icon: Code },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
-  { id: 'git', label: 'Git', icon: GitBranch },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard }
 ] as const
 
 export function SettingsModal(): React.JSX.Element {
-  const { isOpen, activeSection, closeSettings, openSettings, setActiveSection } = useSettingsStore()
+  const { isOpen, activeSection, closeSettings, openSettings, setActiveSection } =
+    useSettingsStore()
 
   // Listen for the custom event dispatched by keyboard shortcut handler
   useEffect(() => {
@@ -32,7 +31,12 @@ export function SettingsModal(): React.JSX.Element {
   }, [openSettings])
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) closeSettings() }}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) closeSettings()
+      }}
+    >
       <DialogContent
         className="max-w-3xl h-[70vh] p-0 gap-0 overflow-hidden"
         data-testid="settings-modal"
@@ -71,7 +75,6 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'general' && <SettingsGeneral />}
             {activeSection === 'editor' && <SettingsEditor />}
             {activeSection === 'terminal' && <SettingsTerminal />}
-            {activeSection === 'git' && <SettingsGit />}
             {activeSection === 'shortcuts' && <SettingsShortcuts />}
           </div>
         </div>
