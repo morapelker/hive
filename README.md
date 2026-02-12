@@ -65,6 +65,33 @@ pnpm install
 pnpm dev
 ```
 
+### Ghostty Terminal (Optional)
+
+Hive includes an optional native terminal powered by [Ghostty](https://ghostty.org/)'s `libghostty`. This is only needed if you want to work on the embedded terminal feature.
+
+**Setup:**
+
+1. Build `libghostty` from the Ghostty source ([build instructions](https://ghostty.org/docs/install/build)):
+   ```bash
+   cd ~/Documents/dev
+   git clone https://github.com/ghostty-org/ghostty.git
+   cd ghostty
+   zig build -Doptimize=ReleaseFast
+   ```
+   This produces `macos/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty.a`.
+
+2. If your Ghostty repo is at `~/Documents/dev/ghostty/`, the build will find it automatically. Otherwise, set the path:
+   ```bash
+   export GHOSTTY_LIB_PATH="/path/to/libghostty.a"
+   ```
+
+3. Rebuild the native addon:
+   ```bash
+   cd src/native && npx node-gyp rebuild
+   ```
+
+If `libghostty` is not available, Hive still builds and runs -- the Ghostty terminal feature will just be disabled.
+
 ### Commands
 
 | Command           | Description           |

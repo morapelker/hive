@@ -12,7 +12,7 @@
         "include"
       ],
       "libraries": [
-        "/Users/mor/Documents/dev/ghostty/macos/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty.a"
+        "<!(echo ${GHOSTTY_LIB_PATH:-$HOME/Documents/dev/ghostty/macos/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty.a})"
       ],
       "defines": [
         "NAPI_DISABLE_CPP_EXCEPTIONS"
