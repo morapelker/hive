@@ -26,6 +26,7 @@ describe('Session 4: Cross-Worktree Merge Default', () => {
       branchInfoByWorktree: new Map(),
       fileStatusesByWorktree: new Map(),
       isCommitting: false,
+      mergeSelectionVersion: 0,
       error: null
     })
   })
@@ -98,5 +99,53 @@ describe('Session 4: Cross-Worktree Merge Default', () => {
 
   test('defaultMergeBranch is in-memory only (starts empty)', () => {
     expect(useGitStore.getState().defaultMergeBranch.size).toBe(0)
+  })
+
+  test('commit increments mergeSelectionVersion so components reset manual selections', async () => {
+    useGitStore.setState({
+      branchInfoByWorktree: new Map([
+        ['/repo/wt-1', { name: 'feature-x', tracking: null, ahead: 0, behind: 0 }]
+      ])
+    })
+
+    Object.defineProperty(window, 'gitOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        commit: vi.fn().mockResolvedValue({ success: true, commitHash: 'def456' }),
+        getFileStatuses: vi.fn().mockResolvedValue({ success: true, files: [] }),
+        getBranchInfo: vi.fn().mockResolvedValue({
+          success: true,
+          branch: { name: 'feature-x', tracking: null, ahead: 0, behind: 0 }
+        })
+      }
+    })
+
+    expect(useGitStore.getState().mergeSelectionVersion).toBe(0)
+
+    await useGitStore.getState().commit('/repo/wt-1', 'test commit')
+    await new Promise((resolve) => setTimeout(resolve, 250))
+
+    expect(useGitStore.getState().mergeSelectionVersion).toBe(1)
+
+    // A second commit bumps it again
+    await useGitStore.getState().commit('/repo/wt-1', 'another commit')
+    await new Promise((resolve) => setTimeout(resolve, 250))
+
+    expect(useGitStore.getState().mergeSelectionVersion).toBe(2)
+  })
+
+  test('failed commit does not increment mergeSelectionVersion', async () => {
+    Object.defineProperty(window, 'gitOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        commit: vi.fn().mockResolvedValue({ success: false, error: 'nothing to commit' })
+      }
+    })
+
+    expect(useGitStore.getState().mergeSelectionVersion).toBe(0)
+    await useGitStore.getState().commit('/repo/wt-1', 'test commit')
+    expect(useGitStore.getState().mergeSelectionVersion).toBe(0)
   })
 })
