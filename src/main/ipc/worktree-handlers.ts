@@ -3,7 +3,7 @@ import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
 import { createGitService, createLogger } from '../services'
-import { BREED_NAMES, LEGACY_CITY_NAMES } from '../services/breed-names'
+import { ALL_BREED_NAMES, LEGACY_CITY_NAMES, type BreedType } from '../services/breed-names'
 import { scriptRunner } from '../services/script-runner'
 import { assignPort, releasePort } from '../services/port-registry'
 import { getDatabase } from '../db'
@@ -58,7 +58,22 @@ export function registerWorktreeHandlers(): void {
       })
       try {
         const gitService = createGitService(params.projectPath)
-        const result = await gitService.createWorktree(params.projectName)
+
+        // Read breed type preference from settings
+        let breedType: BreedType = 'dogs'
+        try {
+          const settingsJson = getDatabase().getSetting('app_settings')
+          if (settingsJson) {
+            const settings = JSON.parse(settingsJson)
+            if (settings.breedType === 'cats') {
+              breedType = 'cats'
+            }
+          }
+        } catch {
+          // Fall back to dogs
+        }
+
+        const result = await gitService.createWorktree(params.projectName, breedType)
 
         if (!result.success || !result.name || !result.path || !result.branchName) {
           log.warn('Worktree creation failed', {
@@ -226,7 +241,7 @@ export function registerWorktreeHandlers(): void {
             // the old branch name OR is a city placeholder name (never meaningfully customized).
             const nameMatchesBranch = dbWorktree.name === dbWorktree.branch_name
             const isAutoName =
-              BREED_NAMES.some(
+              ALL_BREED_NAMES.some(
                 (b) =>
                   b === dbWorktree.name.toLowerCase() ||
                   dbWorktree.name.toLowerCase().startsWith(`${b}-v`)

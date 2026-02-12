@@ -168,8 +168,8 @@ describe('Session 3: Branch Rename Infrastructure', () => {
     })
   })
 
-  describe('BREED_NAMES export', () => {
-    test('breed-names.ts exports BREED_NAMES array', () => {
+  describe('DOG_BREEDS export', () => {
+    test('breed-names.ts exports DOG_BREEDS array', () => {
       const breedNamesPath = path.join(
         __dirname,
         '..',
@@ -181,7 +181,7 @@ describe('Session 3: Branch Rename Infrastructure', () => {
         'breed-names.ts'
       )
       const content = fs.readFileSync(breedNamesPath, 'utf-8')
-      expect(content).toContain('export const BREED_NAMES')
+      expect(content).toContain('export const DOG_BREEDS')
     })
   })
 })

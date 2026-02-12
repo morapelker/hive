@@ -20,6 +20,7 @@ export type QuickActionType = 'cursor' | 'ghostty' | 'copy-path' | 'finder'
 export interface AppSettings {
   // General
   autoStartSession: boolean
+  breedType: 'dogs' | 'cats'
 
   // Editor
   defaultEditor: EditorOption
@@ -29,10 +30,6 @@ export interface AppSettings {
   defaultTerminal: TerminalOption
   customTerminalCommand: string
   embeddedTerminalBackend: EmbeddedTerminalBackend
-
-  // Git
-  commitTemplate: string
-  autoFetchInterval: number // 0 = disabled, otherwise minutes
 
   // Model
   selectedModel: SelectedModel | null
@@ -52,13 +49,12 @@ export interface AppSettings {
 
 const DEFAULT_SETTINGS: AppSettings = {
   autoStartSession: true,
+  breedType: 'dogs',
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
   customTerminalCommand: '',
   embeddedTerminalBackend: 'xterm',
-  commitTemplate: '',
-  autoFetchInterval: 0,
   selectedModel: null,
   lastOpenAction: null,
   favoriteModels: [],
@@ -113,13 +109,12 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
 function extractSettings(state: SettingsState): AppSettings {
   return {
     autoStartSession: state.autoStartSession,
+    breedType: state.breedType,
     defaultEditor: state.defaultEditor,
     customEditorCommand: state.customEditorCommand,
     defaultTerminal: state.defaultTerminal,
     customTerminalCommand: state.customTerminalCommand,
     embeddedTerminalBackend: state.embeddedTerminalBackend,
-    commitTemplate: state.commitTemplate,
-    autoFetchInterval: state.autoFetchInterval,
     selectedModel: state.selectedModel,
     lastOpenAction: state.lastOpenAction,
     favoriteModels: state.favoriteModels,
@@ -214,13 +209,12 @@ export const useSettingsStore = create<SettingsState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         autoStartSession: state.autoStartSession,
+        breedType: state.breedType,
         defaultEditor: state.defaultEditor,
         customEditorCommand: state.customEditorCommand,
         defaultTerminal: state.defaultTerminal,
         customTerminalCommand: state.customTerminalCommand,
         embeddedTerminalBackend: state.embeddedTerminalBackend,
-        commitTemplate: state.commitTemplate,
-        autoFetchInterval: state.autoFetchInterval,
         selectedModel: state.selectedModel,
         lastOpenAction: state.lastOpenAction,
         favoriteModels: state.favoriteModels,

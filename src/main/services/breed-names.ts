@@ -1,9 +1,14 @@
 /**
- * Dog breed names for worktree naming convention
- * Uses AKC-recognized breeds for memorable, unique names
+ * Breed names for worktree naming convention
+ * Uses well-known dog and cat breeds for memorable, unique names
  * All names are valid git branch names (lowercase, hyphens only)
  */
-export const BREED_NAMES = [
+
+/**
+ * Dog breeds — AKC-recognized breeds
+ * All names are lowercase with hyphens, valid as git branch names
+ */
+export const DOG_BREEDS = [
   // Sporting Group
   'golden-retriever',
   'labrador',
@@ -72,8 +77,76 @@ export const BREED_NAMES = [
   'boston-terrier',
   'french-bulldog',
   'shiba-inu',
-  'chow-chow',
+  'chow-chow'
 ]
+
+/**
+ * Cat breeds — well-known pedigreed cat breeds
+ * All names are lowercase with hyphens, valid as git branch names
+ */
+export const CAT_BREEDS = [
+  'persian',
+  'maine-coon',
+  'ragdoll',
+  'british-shorthair',
+  'siamese',
+  'abyssinian',
+  'bengal',
+  'birman',
+  'oriental-shorthair',
+  'sphynx',
+  'devon-rex',
+  'scottish-fold',
+  'burmese',
+  'russian-blue',
+  'norwegian-forest',
+  'cornish-rex',
+  'somali',
+  'tonkinese',
+  'singapura',
+  'ragamuffin',
+  'turkish-angora',
+  'american-shorthair',
+  'balinese',
+  'chartreux',
+  'himalayan',
+  'manx',
+  'ocicat',
+  'savannah',
+  'siberian',
+  'turkish-van',
+  'bombay',
+  'egyptian-mau',
+  'havana-brown',
+  'japanese-bobtail',
+  'korat',
+  'laperm',
+  'nebelung',
+  'pixie-bob',
+  'selkirk-rex',
+  'snowshoe',
+  'american-curl',
+  'burmilla',
+  'exotic-shorthair',
+  'munchkin',
+  'peterbald',
+  'toyger',
+  'chausie',
+  'lykoi',
+  'khao-manee',
+  'sokoke'
+]
+
+export const ALL_BREED_NAMES = [...DOG_BREEDS, ...CAT_BREEDS]
+
+/** @deprecated Use DOG_BREEDS instead */
+export const BREED_NAMES = DOG_BREEDS
+
+export type BreedType = 'dogs' | 'cats'
+
+function getBreedList(breedType: BreedType): string[] {
+  return breedType === 'cats' ? CAT_BREEDS : DOG_BREEDS
+}
 
 /**
  * Legacy city names — kept for backward-compatible auto-rename detection.
@@ -213,35 +286,35 @@ export const LEGACY_CITY_NAMES = [
 /**
  * Get a random breed name from the list
  */
-export function getRandomBreedName(): string {
-  const index = Math.floor(Math.random() * BREED_NAMES.length)
-  return BREED_NAMES[index]
+export function getRandomBreedName(breedType: BreedType = 'dogs'): string {
+  const list = getBreedList(breedType)
+  const index = Math.floor(Math.random() * list.length)
+  return list[index]
 }
 
 /**
  * Select a unique breed name that doesn't collide with existing names
  * After MAX_ATTEMPTS, adds a numeric suffix (-v1, -v2, etc.)
  */
-export function selectUniqueBreedName(existingNames: Set<string>): string {
+export function selectUniqueBreedName(
+  existingNames: Set<string>,
+  breedType: BreedType = 'dogs'
+): string {
   const MAX_ATTEMPTS = 10
 
-  // Try to find a unique breed name
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    const breedName = getRandomBreedName()
+    const breedName = getRandomBreedName(breedType)
     if (!existingNames.has(breedName)) {
       return breedName
     }
   }
 
-  // After MAX_ATTEMPTS, use suffix strategy
-  const baseName = getRandomBreedName()
+  const baseName = getRandomBreedName(breedType)
   let version = 1
   let candidateName = `${baseName}-v${version}`
-
   while (existingNames.has(candidateName)) {
     version++
     candidateName = `${baseName}-v${version}`
   }
-
   return candidateName
 }
