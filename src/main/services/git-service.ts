@@ -2,7 +2,7 @@ import simpleGit, { SimpleGit, BranchSummary } from 'simple-git'
 import { app } from 'electron'
 import { join, basename, dirname } from 'path'
 import { existsSync, mkdirSync, rmSync, cpSync } from 'fs'
-import { selectUniqueBreedName } from './breed-names'
+import { selectUniqueBreedName, type BreedType } from './breed-names'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'GitService' })
@@ -239,7 +239,10 @@ export class GitService {
   /**
    * Create a new worktree with a breed-named branch
    */
-  async createWorktree(projectName: string): Promise<CreateWorktreeResult> {
+  async createWorktree(
+    projectName: string,
+    breedType: BreedType = 'dogs'
+  ): Promise<CreateWorktreeResult> {
     try {
       // Get existing branches to avoid collisions
       const existingBranches = await this.getAllBranches()
@@ -250,7 +253,7 @@ export class GitService {
       const existingNames = new Set([...existingBranches, ...existingWorktreeBranches])
 
       // Select a unique breed name
-      const breedName = selectUniqueBreedName(existingNames)
+      const breedName = selectUniqueBreedName(existingNames, breedType)
 
       // Ensure worktrees directory exists
       const projectWorktreesDir = this.ensureWorktreesDir(projectName)
@@ -1211,11 +1214,9 @@ export class GitService {
       return { success: true, files }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      log.error(
-        'Failed to get diff stat',
-        error instanceof Error ? error : new Error(message),
-        { repoPath: this.repoPath }
-      )
+      log.error('Failed to get diff stat', error instanceof Error ? error : new Error(message), {
+        repoPath: this.repoPath
+      })
       return { success: false, error: message }
     }
   }
