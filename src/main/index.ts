@@ -19,13 +19,15 @@ import {
   registerScriptHandlers,
   cleanupScripts,
   registerTerminalHandlers,
-  cleanupTerminals
+  cleanupTerminals,
+  registerUpdaterHandlers
 } from './ipc'
 import { buildMenu, updateMenuState } from './menu'
 import type { MenuState } from './menu'
 import { createLogger, getLogDir } from './services/logger'
 import { createResponseLog, appendResponseLog } from './services/response-logger'
 import { notificationService } from './services/notification-service'
+import { updaterService } from './services/updater'
 
 const log = createLogger({ component: 'Main' })
 
@@ -335,6 +337,10 @@ app.whenReady().then(() => {
 
     // Set up notification service with main window reference
     notificationService.setMainWindow(mainWindow)
+
+    // Register updater IPC handlers and initialize auto-updater
+    registerUpdaterHandlers()
+    updaterService.init(mainWindow)
   }
 
   app.on('activate', function () {

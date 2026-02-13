@@ -787,6 +787,28 @@ declare global {
         error?: string
       }>
     }
+    updaterOps: {
+      checkForUpdate: () => Promise<void>
+      downloadUpdate: () => Promise<void>
+      installUpdate: () => Promise<void>
+      onChecking: (callback: () => void) => () => void
+      onUpdateAvailable: (
+        callback: (data: { version: string; releaseNotes?: string; releaseDate?: string }) => void
+      ) => () => void
+      onUpdateNotAvailable: (callback: (data: { version: string }) => void) => () => void
+      onProgress: (
+        callback: (data: {
+          percent: number
+          bytesPerSecond: number
+          transferred: number
+          total: number
+        }) => void
+      ) => () => void
+      onUpdateDownloaded: (
+        callback: (data: { version: string; releaseNotes?: string }) => void
+      ) => () => void
+      onError: (callback: (data: { message: string }) => void) => () => void
+    }
   }
 
   interface GitDiffStatFile {

@@ -1188,6 +1188,92 @@ const terminalOps = {
   ghosttyShutdown: (): Promise<void> => ipcRenderer.invoke('terminal:ghostty:shutdown')
 }
 
+const updaterOps = {
+  checkForUpdate: (): Promise<void> => ipcRenderer.invoke('updater:check'),
+  downloadUpdate: (): Promise<void> => ipcRenderer.invoke('updater:download'),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('updater:install'),
+
+  onChecking: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on('updater:checking', handler)
+    return () => {
+      ipcRenderer.removeListener('updater:checking', handler)
+    }
+  },
+
+  onUpdateAvailable: (
+    callback: (data: { version: string; releaseNotes?: string; releaseDate?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { version: string; releaseNotes?: string; releaseDate?: string }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('updater:available', handler)
+    return () => {
+      ipcRenderer.removeListener('updater:available', handler)
+    }
+  },
+
+  onUpdateNotAvailable: (callback: (data: { version: string }) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: { version: string }): void => {
+      callback(data)
+    }
+    ipcRenderer.on('updater:not-available', handler)
+    return () => {
+      ipcRenderer.removeListener('updater:not-available', handler)
+    }
+  },
+
+  onProgress: (
+    callback: (data: {
+      percent: number
+      bytesPerSecond: number
+      transferred: number
+      total: number
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { percent: number; bytesPerSecond: number; transferred: number; total: number }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('updater:progress', handler)
+    return () => {
+      ipcRenderer.removeListener('updater:progress', handler)
+    }
+  },
+
+  onUpdateDownloaded: (
+    callback: (data: { version: string; releaseNotes?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { version: string; releaseNotes?: string }
+    ): void => {
+      callback(data)
+    }
+    ipcRenderer.on('updater:downloaded', handler)
+    return () => {
+      ipcRenderer.removeListener('updater:downloaded', handler)
+    }
+  },
+
+  onError: (callback: (data: { message: string }) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: { message: string }): void => {
+      callback(data)
+    }
+    ipcRenderer.on('updater:error', handler)
+    return () => {
+      ipcRenderer.removeListener('updater:error', handler)
+    }
+  }
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -1206,6 +1292,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('loggingOps', loggingOps)
     contextBridge.exposeInMainWorld('scriptOps', scriptOps)
     contextBridge.exposeInMainWorld('terminalOps', terminalOps)
+    contextBridge.exposeInMainWorld('updaterOps', updaterOps)
   } catch (error) {
     console.error(error)
   }
@@ -1236,4 +1323,6 @@ if (process.contextIsolated) {
   window.scriptOps = scriptOps
   // @ts-expect-error (define in dts)
   window.terminalOps = terminalOps
+  // @ts-expect-error (define in dts)
+  window.updaterOps = updaterOps
 }

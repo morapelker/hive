@@ -1,5 +1,6 @@
 import { BrowserWindow, Menu, app, shell } from 'electron'
 import { getLogDir } from './services/logger'
+import { updaterService } from './services/updater'
 
 export interface MenuState {
   hasActiveSession: boolean
@@ -225,6 +226,14 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
     {
       label: 'Help',
       submenu: [
+        {
+          id: 'check-for-updates',
+          label: 'Check for Updates...',
+          click: () => {
+            updaterService.checkForUpdates()
+          }
+        },
+        { type: 'separator' },
         {
           label: 'Open Log Directory',
           click: () => {
