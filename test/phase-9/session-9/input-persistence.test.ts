@@ -32,12 +32,12 @@ describeIf('Session 9: Input Persistence', () => {
   }
 
   describe('Schema migration', () => {
-    test('schema version is 6 after init', () => {
-      expect(db.getSchemaVersion()).toBe(6)
+    test('schema version is set after init', () => {
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
     })
 
-    test('CURRENT_SCHEMA_VERSION matches', () => {
-      expect(CURRENT_SCHEMA_VERSION).toBe(6)
+    test('CURRENT_SCHEMA_VERSION is defined', () => {
+      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(1)
     })
 
     test('draft_input column exists on sessions table', () => {

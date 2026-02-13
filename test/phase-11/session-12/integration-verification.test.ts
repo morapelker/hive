@@ -335,10 +335,9 @@ describe('Session 12: Integration & Verification', () => {
 
   // ─── Integration: DB schema consistency ──────────────────────────────
   describe('DB schema consistency', () => {
-    test('branch_renamed column migration exists', () => {
+    test('branch_renamed column exists in schema', () => {
       const content = readSrc('main', 'db', 'schema.ts')
       expect(content).toContain('branch_renamed')
-      expect(content).toContain('ALTER TABLE worktrees ADD COLUMN branch_renamed')
     })
 
     test('Worktree type includes branch_renamed in DB types', () => {

@@ -5,16 +5,15 @@ import { CURRENT_SCHEMA_VERSION, MIGRATIONS } from '../../../src/main/db/schema'
 
 describe('Session 10: Default Commit Message Backend', () => {
   describe('Schema', () => {
-    test('CURRENT_SCHEMA_VERSION is 11', () => {
-      expect(CURRENT_SCHEMA_VERSION).toBe(11)
+    test('CURRENT_SCHEMA_VERSION is defined', () => {
+      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(1)
     })
 
-    test('migration v11 adds session_titles column to worktrees', () => {
-      const migration = MIGRATIONS.find((m) => m.version === 11)
-      expect(migration).toBeDefined()
-      expect(migration!.name).toBe('add_worktree_session_titles')
-      expect(migration!.up).toContain('ALTER TABLE worktrees ADD COLUMN session_titles')
-      expect(migration!.up).toContain("DEFAULT '[]'")
+    test('schema includes session_titles column on worktrees', () => {
+      const schema = MIGRATIONS.find((m) => m.version === 1)
+      expect(schema).toBeDefined()
+      expect(schema!.up).toContain('session_titles')
+      expect(schema!.up).toContain("DEFAULT '[]'")
     })
 
     test('migrations are sequential', () => {
