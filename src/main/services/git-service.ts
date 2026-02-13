@@ -1049,12 +1049,16 @@ export class GitService {
       if (wtPath && branch) checkedOut.set(branch, wtPath)
     }
 
-    return Object.entries(branchSummary.branches).map(([name, info]) => ({
-      name: name.startsWith('remotes/') ? info.name.replace(/^remotes\//, '') : info.name,
-      isRemote: name.startsWith('remotes/'),
-      isCheckedOut: checkedOut.has(info.name),
-      worktreePath: checkedOut.get(info.name)
-    }))
+    return Object.entries(branchSummary.branches).map(([name, info]) => {
+      const isRemote = name.startsWith('remotes/')
+
+      return {
+        name: normalizeBranchDisplayName(name),
+        isRemote,
+        isCheckedOut: checkedOut.has(info.name),
+        worktreePath: checkedOut.get(info.name)
+      }
+    })
   }
 
   /**
@@ -1260,6 +1264,13 @@ export class GitService {
       return { success: false, error: message }
     }
   }
+}
+
+/**
+ * Remove git's remote branch prefix for UI display.
+ */
+export function normalizeBranchDisplayName(branchName: string): string {
+  return branchName.startsWith('remotes/') ? branchName.replace(/^remotes\//, '') : branchName
 }
 
 /**
