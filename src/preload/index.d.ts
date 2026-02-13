@@ -685,6 +685,16 @@ declare global {
       }>
       // Subscribe to git status change events
       onStatusChanged: (callback: (event: GitStatusChangedEvent) => void) => () => void
+      // Start watching a worktree for git changes (filesystem + .git metadata)
+      watchWorktree: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Stop watching a worktree
+      unwatchWorktree: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
       // Get branch info (name, tracking, ahead/behind)
       getBranchInfo: (worktreePath: string) => Promise<{
         success: boolean

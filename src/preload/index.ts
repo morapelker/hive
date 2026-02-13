@@ -628,6 +628,22 @@ const gitOps = {
     }
   },
 
+  // Start watching a worktree for git changes (filesystem + .git metadata)
+  watchWorktree: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:watchWorktree', worktreePath),
+
+  // Stop watching a worktree
+  unwatchWorktree: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:unwatchWorktree', worktreePath),
+
   // Get branch info (name, tracking, ahead/behind)
   getBranchInfo: (
     worktreePath: string
