@@ -6,12 +6,15 @@ import {
   ChevronDown,
   GitBranch,
   Globe,
-  Search
+  Search,
+  Archive,
+  Trash2
 } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useProjectStore } from '@/stores/useProjectStore'
 import { cn } from '@/lib/utils'
 
 interface BranchInfo {
@@ -32,6 +35,8 @@ export function GitPushPull({
 }: GitPushPullProps): React.JSX.Element | null {
   const [mergeBranch, setMergeBranch] = useState('')
   const [isMerging, setIsMerging] = useState(false)
+  const [isBranchMerged, setIsBranchMerged] = useState(false)
+  const [mergedCheckVersion, setMergedCheckVersion] = useState(0)
 
   // Branch picker dropdown state
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false)
@@ -171,6 +176,73 @@ export function GitPushPull({
     setBranchDropdownOpen(false)
   }, [])
 
+  // Check if the selected merge branch is already merged into HEAD
+  // Re-runs when mergedCheckVersion increments (e.g. after a successful merge)
+  useEffect(() => {
+    if (!worktreePath || !mergeBranch) {
+      setIsBranchMerged(false)
+      return
+    }
+    window.gitOps.isBranchMerged(worktreePath, mergeBranch).then((result) => {
+      if (result.success) {
+        setIsBranchMerged(result.isMerged)
+      }
+    })
+  }, [worktreePath, mergeBranch, mergedCheckVersion])
+
+  // Look up whether the selected merge branch is checked out in a worktree
+  const selectedBranchInfo = useMemo(() => {
+    if (!mergeBranch) return undefined
+    return branches.find((b) => b.name === mergeBranch)
+  }, [branches, mergeBranch])
+
+  const handleArchiveWorktree = useCallback(async () => {
+    // Archive the worktree that has the SELECTED BRANCH checked out (not our worktree)
+    if (!selectedBranchInfo?.worktreePath) return
+
+    const worktreeStore = useWorktreeStore.getState()
+
+    // Find the worktree by its path across all projects
+    let worktree: { id: string; path: string; branch_name: string; project_id: string } | undefined
+    for (const [_projectId, worktrees] of worktreeStore.worktreesByProject) {
+      const found = worktrees.find((w) => w.path === selectedBranchInfo.worktreePath)
+      if (found) {
+        worktree = found
+        break
+      }
+    }
+    if (!worktree) return
+
+    // Get the project path from the project store
+    const project = useProjectStore.getState().projects.find((p) => p.id === worktree!.project_id)
+    if (!project) return
+
+    const result = await worktreeStore.archiveWorktree(
+      worktree.id,
+      worktree.path,
+      worktree.branch_name,
+      project.path
+    )
+    if (result.success) {
+      setMergeBranch('')
+    }
+  }, [selectedBranchInfo?.worktreePath])
+
+  const handleDeleteBranch = useCallback(async () => {
+    if (!worktreePath || !mergeBranch) return
+    try {
+      const result = await window.gitOps.deleteBranch(worktreePath, mergeBranch)
+      if (result.success) {
+        toast.success(`Deleted branch ${mergeBranch}`)
+        setMergeBranch('')
+      } else {
+        toast.error('Failed to delete branch', { description: result.error })
+      }
+    } catch {
+      toast.error('Failed to delete branch')
+    }
+  }, [worktreePath, mergeBranch])
+
   const handleMerge = useCallback(async () => {
     if (!worktreePath || !mergeBranch.trim()) return
     setIsMerging(true)
@@ -180,6 +252,8 @@ export function GitPushPull({
         toast.success(`Merged ${mergeBranch} successfully`)
         // Refresh file statuses and branch info after merge
         await refreshStatuses(worktreePath)
+        // Re-check if the merged branch is now up-to-date
+        setMergedCheckVersion((v) => v + 1)
       } else {
         toast.error('Merge failed', { description: result.error })
       }
@@ -328,16 +402,40 @@ export function GitPushPull({
             </div>
           )}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-6 text-xs whitespace-nowrap"
-          onClick={handleMerge}
-          disabled={isMerging || isOperating || !mergeBranch.trim()}
-          data-testid="merge-button"
-        >
-          {isMerging ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Merge'}
-        </Button>
+        {isBranchMerged && selectedBranchInfo?.isCheckedOut ? (
+          <Button
+            variant="destructive"
+            size="sm"
+            className="h-6 text-xs whitespace-nowrap"
+            onClick={handleArchiveWorktree}
+            data-testid="archive-merged-button"
+          >
+            <Archive className="h-3 w-3 mr-1" />
+            Archive
+          </Button>
+        ) : isBranchMerged && !selectedBranchInfo?.isRemote ? (
+          <Button
+            variant="destructive"
+            size="sm"
+            className="h-6 text-xs whitespace-nowrap"
+            onClick={handleDeleteBranch}
+            data-testid="delete-branch-button"
+          >
+            <Trash2 className="h-3 w-3 mr-1" />
+            Delete
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 text-xs whitespace-nowrap"
+            onClick={handleMerge}
+            disabled={isMerging || isOperating || !mergeBranch.trim()}
+            data-testid="merge-button"
+          >
+            {isMerging ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Merge'}
+          </Button>
+        )}
       </div>
     </div>
   )

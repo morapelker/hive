@@ -758,7 +758,21 @@ const gitOps = {
       binary: boolean
     }>
     error?: string
-  }> => ipcRenderer.invoke('git:diffStat', worktreePath)
+  }> => ipcRenderer.invoke('git:diffStat', worktreePath),
+
+  // Check if a branch has been fully merged into HEAD
+  isBranchMerged: (
+    worktreePath: string,
+    branch: string
+  ): Promise<{ success: boolean; isMerged: boolean }> =>
+    ipcRenderer.invoke('git:isBranchMerged', worktreePath, branch),
+
+  // Delete a local branch
+  deleteBranch: (
+    worktreePath: string,
+    branchName: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:deleteBranch', worktreePath, branchName)
 }
 
 const opencodeOps = {
