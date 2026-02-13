@@ -4,6 +4,7 @@ import { act } from 'react'
 import { useSessionStore } from '../../src/renderer/src/stores/useSessionStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
 import { useProjectStore } from '../../src/renderer/src/stores/useProjectStore'
+import { useGitStore } from '../../src/renderer/src/stores/useGitStore'
 
 // Mock session data
 const mockSession1 = {
@@ -115,6 +116,10 @@ beforeEach(() => {
     editingProjectId: null
   })
 
+  useGitStore.setState({
+    prInfo: new Map()
+  })
+
   // Mock window.db
   Object.defineProperty(window, 'db', {
     value: {
@@ -208,6 +213,77 @@ describe('Session 7: Session Tabs', () => {
       expect(sessions![0].id).toBe('session-2')
       // Should select next session after closing
       expect(state.activeSessionId).toBe('session-2')
+    })
+
+    test('closeSession resets PR creating state for that session only', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([['worktree-1', [mockSession1, mockSession2]]]),
+        tabOrderByWorktree: new Map([['worktree-1', ['session-1', 'session-2']]]),
+        activeSessionId: 'session-1',
+        activeWorktreeId: 'worktree-1'
+      })
+
+      useGitStore.setState({
+        prInfo: new Map([
+          [
+            'worktree-1',
+            {
+              state: 'creating',
+              sessionId: 'session-1',
+              targetBranch: 'origin/main'
+            }
+          ],
+          [
+            'worktree-2',
+            {
+              state: 'creating',
+              sessionId: 'session-other',
+              targetBranch: 'origin/main'
+            }
+          ]
+        ])
+      })
+
+      mockDbSession.update.mockResolvedValue({ ...mockSession1, status: 'completed' })
+
+      await act(async () => {
+        await useSessionStore.getState().closeSession('session-1')
+      })
+
+      expect(useGitStore.getState().prInfo.get('worktree-1')?.state).toBe('none')
+      expect(useGitStore.getState().prInfo.get('worktree-2')?.state).toBe('creating')
+    })
+
+    test('closeSession does not reset non-creating PR state', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([['worktree-1', [mockSession1]]]),
+        tabOrderByWorktree: new Map([['worktree-1', ['session-1']]]),
+        activeSessionId: 'session-1',
+        activeWorktreeId: 'worktree-1'
+      })
+
+      useGitStore.setState({
+        prInfo: new Map([
+          [
+            'worktree-1',
+            {
+              state: 'created',
+              sessionId: 'session-1',
+              targetBranch: 'origin/main',
+              prNumber: 42,
+              prUrl: 'https://github.com/org/repo/pull/42'
+            }
+          ]
+        ])
+      })
+
+      mockDbSession.update.mockResolvedValue({ ...mockSession1, status: 'completed' })
+
+      await act(async () => {
+        await useSessionStore.getState().closeSession('session-1')
+      })
+
+      expect(useGitStore.getState().prInfo.get('worktree-1')?.state).toBe('created')
     })
 
     test('closeSession selects previous session when closing last tab', async () => {

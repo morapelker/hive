@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { SelectedModel } from './useSettingsStore'
+import { useGitStore } from './useGitStore'
 import { useWorktreeStore } from './useWorktreeStore'
 
 // Session mode type
@@ -305,6 +306,15 @@ export const useSessionStore = create<SessionState>()(
               activeSessionByWorktree: newActiveByWorktree
             }
           })
+
+          // If this session was a PR-creating session, cancel the PR flow
+          const gitStore = useGitStore.getState()
+          for (const [worktreeId, prInfo] of gitStore.prInfo.entries()) {
+            if (prInfo.sessionId === sessionId && prInfo.state === 'creating') {
+              gitStore.setPrState(worktreeId, { state: 'none' })
+              break
+            }
+          }
 
           return { success: true }
         } catch (error) {
