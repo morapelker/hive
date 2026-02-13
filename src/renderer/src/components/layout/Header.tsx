@@ -166,6 +166,8 @@ export function Header(): React.JSX.Element {
 
   // Load remote branches for the PR target dropdown
   const [remoteBranches, setRemoteBranches] = useState<{ name: string }[]>([])
+  const [isMergingPR, setIsMergingPR] = useState(false)
+  const [isArchivingWorktree, setIsArchivingWorktree] = useState(false)
   useEffect(() => {
     if (!isGitHub || !selectedWorktree?.path) {
       setRemoteBranches([])
@@ -233,6 +235,7 @@ export function Header(): React.JSX.Element {
     const pr = useGitStore.getState().prInfo.get(selectedWorktreeId)
     if (!pr?.prNumber) return
 
+    setIsMergingPR(true)
     try {
       const result = await window.gitOps.prMerge(selectedWorktree.path, pr.prNumber)
       if (result.success) {
@@ -243,19 +246,30 @@ export function Header(): React.JSX.Element {
       }
     } catch {
       toast.error('Failed to merge PR')
+    } finally {
+      setIsMergingPR(false)
     }
   }, [selectedWorktree?.path, selectedWorktreeId])
 
   const handleArchiveWorktree = useCallback(async () => {
     if (!selectedWorktreeId || !selectedWorktree || !selectedProject) return
-    await useWorktreeStore
-      .getState()
-      .archiveWorktree(
-        selectedWorktreeId,
-        selectedWorktree.path,
-        selectedWorktree.branch_name,
-        selectedProject.path
-      )
+    setIsArchivingWorktree(true)
+    try {
+      const result = await useWorktreeStore
+        .getState()
+        .archiveWorktree(
+          selectedWorktreeId,
+          selectedWorktree.path,
+          selectedWorktree.branch_name,
+          selectedProject.path
+        )
+
+      if (!result.success && result.error) {
+        toast.error(result.error)
+      }
+    } finally {
+      setIsArchivingWorktree(false)
+    }
   }, [selectedWorktreeId, selectedWorktree, selectedProject])
 
   const handleFixConflicts = async () => {
@@ -347,11 +361,16 @@ export function Header(): React.JSX.Element {
             variant="destructive"
             className="h-7 text-xs"
             onClick={handleArchiveWorktree}
+            disabled={isArchivingWorktree}
             title="Archive worktree"
             data-testid="pr-archive-button"
           >
-            <Archive className="h-3.5 w-3.5 mr-1" />
-            Archive
+            {isArchivingWorktree ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+            ) : (
+              <Archive className="h-3.5 w-3.5 mr-1" />
+            )}
+            {isArchivingWorktree ? 'Archiving...' : 'Archive'}
           </Button>
         )}
         {isGitHub && prState === 'created' && isCleanTree && (
@@ -360,11 +379,16 @@ export function Header(): React.JSX.Element {
             variant="outline"
             className="h-7 text-xs bg-emerald-600/10 border-emerald-600/30 text-emerald-500 hover:bg-emerald-600/20"
             onClick={handleMergePR}
+            disabled={isMergingPR}
             title="Merge Pull Request"
             data-testid="pr-merge-button"
           >
-            <GitMerge className="h-3.5 w-3.5 mr-1" />
-            Merge PR
+            {isMergingPR ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+            ) : (
+              <GitMerge className="h-3.5 w-3.5 mr-1" />
+            )}
+            {isMergingPR ? 'Merging...' : 'Merge PR'}
           </Button>
         )}
         {isGitHub &&

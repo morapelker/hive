@@ -171,6 +171,36 @@ describe('Session 4: PR Detection Hook', () => {
       expect(info?.state).toBe('creating')
     })
 
+    test('detects PR URL in tool output (gh pr create command)', () => {
+      useGitStore.getState().setPrState('wt-1', {
+        state: 'creating',
+        sessionId: 'session-1'
+      })
+
+      // Simulate tool output from gh pr create
+      const toolOutput =
+        'Creating pull request for feature-branch into main\nhttps://github.com/org/repo/pull/55'
+      const match = toolOutput.match(PR_URL_PATTERN)
+      expect(match).not.toBeNull()
+
+      if (match) {
+        const prInfo = useGitStore.getState().prInfo.get('wt-1')
+        if (prInfo && prInfo.state === 'creating') {
+          const prNumber = parseInt(match[1], 10)
+          useGitStore.getState().setPrState('wt-1', {
+            ...prInfo,
+            state: 'created',
+            prNumber,
+            prUrl: match[0]
+          })
+        }
+      }
+
+      const info = useGitStore.getState().prInfo.get('wt-1')
+      expect(info?.state).toBe('created')
+      expect(info?.prNumber).toBe(55)
+    })
+
     test('detects PR URL across accumulated text (simulating streaming deltas)', () => {
       useGitStore.getState().setPrState('wt-1', {
         state: 'creating',

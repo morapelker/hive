@@ -805,8 +805,9 @@ class OpenCodeService {
         path: { id: opencodeSessionId },
         query: { directory: worktreePath }
       })
+      const messages = Array.isArray(result.data) ? result.data : []
 
-      return result.data || []
+      return messages
     } catch (error) {
       log.error('Failed to get messages', { opencodeSessionId, error })
       throw error

@@ -161,6 +161,37 @@ function createLocalMessage(role: OpenCodeMessage['role'], content: string): Ope
   }
 }
 
+const TRANSCRIPT_CACHE_KEY_PREFIX = 'hive:session-transcript:'
+
+function getTranscriptCacheKey(sessionId: string): string {
+  return `${TRANSCRIPT_CACHE_KEY_PREFIX}${sessionId}`
+}
+
+function isTestRuntime(): boolean {
+  return typeof process !== 'undefined' && process.env.NODE_ENV === 'test'
+}
+
+function readTranscriptCache(sessionId: string): OpenCodeMessage[] {
+  if (isTestRuntime()) return []
+  try {
+    const raw = window.sessionStorage.getItem(getTranscriptCacheKey(sessionId))
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as OpenCodeMessage[]) : []
+  } catch {
+    return []
+  }
+}
+
+function writeTranscriptCache(sessionId: string, messages: OpenCodeMessage[]): void {
+  if (isTestRuntime()) return
+  try {
+    window.sessionStorage.setItem(getTranscriptCacheKey(sessionId), JSON.stringify(messages))
+  } catch {
+    // Non-fatal cache write failure
+  }
+}
+
 // Loading state component
 function LoadingState(): React.JSX.Element {
   return (
@@ -246,6 +277,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Prompt history navigation
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
+
   const savedDraftRef = useRef<string>('')
 
   // Session-bound model with global fallback for legacy/null sessions
@@ -810,16 +842,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // Guard: don't replace existing messages with an empty transcript.
         // This prevents a race where getMessages returns before the SDK has
         // committed the final transcript, which would wipe the visible chat.
-        setMessages((currentMessages) =>
-          loadedMessages.length === 0 && currentMessages.length > 0
+        setMessages((currentMessages) => {
+          const cachedMessages = readTranscriptCache(sessionId)
+          const useCache =
+            loadedMessages.length === 0 && currentMessages.length === 0 && cachedMessages.length > 0
+          const keepCurrent = loadedMessages.length === 0 && currentMessages.length > 0
+          const nextMessages = keepCurrent
             ? currentMessages
-            : loadedMessages
-        )
+            : useCache
+              ? cachedMessages
+              : loadedMessages
+          return nextMessages
+        })
       } else {
         setMessages((currentMessages) => {
           const loadedIds = new Set(loadedMessages.map((m) => m.id))
           const localOnly = currentMessages.filter((m) => !loadedIds.has(m.id))
-          return localOnly.length > 0 ? [...loadedMessages, ...localOnly] : loadedMessages
+          const nextMessages = localOnly.length > 0 ? [...loadedMessages, ...localOnly] : loadedMessages
+          return nextMessages
         })
       }
 
@@ -843,8 +883,40 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
+      let streamedPartsSnapshot: StreamingPart[] = []
       try {
-        await loadMessages()
+        streamedPartsSnapshot = JSON.parse(
+          JSON.stringify(streamingPartsRef.current ?? [])
+        ) as StreamingPart[]
+      } catch {
+        streamedPartsSnapshot = [...(streamingPartsRef.current ?? [])]
+      }
+      const streamedContentSnapshot = streamingContentRef.current
+
+      try {
+        const refreshedMessages = await loadMessages()
+
+        if (
+          refreshedMessages.length === 0 &&
+          (streamedPartsSnapshot.length > 0 || streamedContentSnapshot.length > 0)
+        ) {
+          setMessages((currentMessages) => {
+            const alreadyHasAssistant = currentMessages.some((message) => message.role === 'assistant')
+            if (alreadyHasAssistant) return currentMessages
+
+            return [
+              ...currentMessages,
+              {
+                id: `local-stream-${crypto.randomUUID()}`,
+                role: 'assistant',
+                content: streamedContentSnapshot,
+                timestamp: new Date().toISOString(),
+                parts: streamedPartsSnapshot
+              }
+            ]
+          })
+        }
+
       } catch (error) {
         console.error('Failed to refresh messages after stream completion:', error)
         toast.error('Failed to refresh response')
@@ -1535,8 +1607,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           if (!pendingMsg) return
           try {
             setMessages((prev) => [...prev, createLocalMessage('user', pendingMsg)])
+            // Start completion timer for auto-sent pending prompts (e.g. PR creation)
+            messageSendTimes.set(sessionId, Date.now())
             // Set worktree status based on session mode
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+            lastSendMode.set(sessionId, currentMode)
             useWorktreeStatusStore
               .getState()
               .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
@@ -1560,6 +1635,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           )
           if (reconnectResult.success) {
             setOpencodeSessionId(existingOpcSessionId)
+            useSessionStore.getState().setOpenCodeSessionId(sessionId, existingOpcSessionId)
             transcriptSourceRef.current.opencodeSessionId = existingOpcSessionId
             // Only update revertMessageID from reconnect if it carries a value;
             // sessionInfo already hydrated the authoritative value earlier.
@@ -1597,6 +1673,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
             }
 
+            // Refresh transcript using the confirmed live OpenCode session ID.
+            // This avoids keeping a stale/partial pre-connect transcript.
+            await loadMessages({ worktreePath: wtPath, opencodeSessionId: existingOpcSessionId })
+
             await sendPendingMessage(wtPath, existingOpcSessionId)
             return
           }
@@ -1606,15 +1686,21 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const connectResult = await window.opencodeOps.connect(wtPath, sessionId)
         if (connectResult.success && connectResult.sessionId) {
           setOpencodeSessionId(connectResult.sessionId)
+          useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
           transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
           setRevertMessageID(null)
           fetchModelLimits()
           fetchCommands(wtPath)
           hydratePermissions(wtPath)
-          // Store the OpenCode session ID in database for future reconnection
-          await window.db.session.update(sessionId, {
-            opencode_session_id: connectResult.sessionId
-          })
+          // Persist only for first-time session connections.
+          // If reconnect to an existing OpenCode session failed and we had to
+          // open a temporary replacement session, keep the original pointer in
+          // DB to avoid losing historical transcript linkage.
+          if (!existingOpcSessionId) {
+            await window.db.session.update(sessionId, {
+              opencode_session_id: connectResult.sessionId
+            })
+          }
           // Create response log file if logging is enabled
           if (isLogModeRef.current) {
             try {
@@ -1625,6 +1711,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             }
           }
           setViewState({ status: 'connected' })
+
+          // Refresh transcript after establishing the active OpenCode session.
+          await loadMessages({ worktreePath: wtPath, opencodeSessionId: connectResult.sessionId })
+
           await sendPendingMessage(wtPath, connectResult.sessionId)
         } else {
           throw new Error(connectResult.error || 'Failed to connect to OpenCode')
@@ -1714,6 +1804,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         )
         if (reconnectResult.success) {
           setOpencodeSessionId(existingOpcSessionId)
+          useSessionStore.getState().setOpenCodeSessionId(sessionId, existingOpcSessionId)
           transcriptSourceRef.current.opencodeSessionId = existingOpcSessionId
           if (reconnectResult.revertMessageID != null) {
             setRevertMessageID(reconnectResult.revertMessageID)
@@ -1733,11 +1824,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
         activeOpcSessionId = connectResult.sessionId
         setOpencodeSessionId(connectResult.sessionId)
+        useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
         transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
         setRevertMessageID(null)
-        await window.db.session.update(sessionId, {
-          opencode_session_id: connectResult.sessionId
-        })
+        if (!existingOpcSessionId) {
+          await window.db.session.update(sessionId, {
+            opencode_session_id: connectResult.sessionId
+          })
+        }
       }
 
       const transcriptResult = await window.opencodeOps.getMessages(
@@ -2368,18 +2462,44 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Determine if there's streaming content to show
   const visibleMessages = useMemo(() => {
     if (!revertMessageID) return messages
+
+    // IDs are not guaranteed to be lexicographically ordered across providers.
+    // Use the message array order (already time-sorted) and trim by index.
+    const boundaryIndex = messages.findIndex((message) => message.id === revertMessageID)
+    if (boundaryIndex === -1) return messages
+
     return messages.filter(
-      (message) => message.id.startsWith('local-') || message.id < revertMessageID
+      (message, index) => message.id.startsWith('local-') || index < boundaryIndex
     )
   }, [messages, revertMessageID])
 
   const revertedUserCount = useMemo(() => {
     if (!revertMessageID) return 0
+
+    const boundaryIndex = messages.findIndex((message) => message.id === revertMessageID)
+    if (boundaryIndex === -1) return 0
+
     return messages.filter(
-      (message) =>
-        message.role === 'user' && !message.id.startsWith('local-') && message.id >= revertMessageID
+      (message, index) =>
+        message.role === 'user' && !message.id.startsWith('local-') && index >= boundaryIndex
     ).length
   }, [messages, revertMessageID])
+
+  // Revert boundaries can become stale when transcript compacts or provider IDs change.
+  // If boundary message no longer exists, clear the boundary instead of hiding content.
+  useEffect(() => {
+    if (!revertMessageID) return
+    if (messages.length === 0) return
+    const boundaryExists = messages.some((message) => message.id === revertMessageID)
+    if (!boundaryExists) {
+      setRevertMessageID(null)
+    }
+  }, [messages, revertMessageID])
+
+  useEffect(() => {
+    if (messages.length === 0) return
+    writeTranscriptCache(sessionId, messages)
+  }, [sessionId, messages])
 
   // Determine if there's streaming content to show
   const hasStreamingContent = streamingParts.length > 0 || streamingContent.length > 0

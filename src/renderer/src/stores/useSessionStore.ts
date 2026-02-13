@@ -62,6 +62,7 @@ interface SessionState {
   toggleSessionMode: (sessionId: string) => Promise<void>
   setSessionMode: (sessionId: string, mode: SessionMode) => Promise<void>
   setSessionModel: (sessionId: string, model: SelectedModel) => Promise<void>
+  setOpenCodeSessionId: (sessionId: string, opencodeSessionId: string | null) => void
   setPendingMessage: (sessionId: string, message: string) => void
   consumePendingMessage: (sessionId: string) => string | null
   closeOtherSessions: (worktreeId: string, keepSessionId: string) => Promise<void>
@@ -595,6 +596,32 @@ export const useSessionStore = create<SessionState>()(
             /* non-critical */
           }
         }
+      },
+
+      // Keep opencode_session_id in sync in-memory after connect/reconnect
+      setOpenCodeSessionId: (sessionId: string, opencodeSessionId: string | null) => {
+        set((state) => {
+          const newSessionsMap = new Map(state.sessionsByWorktree)
+          let updatedAny = false
+
+          for (const [worktreeId, sessions] of newSessionsMap.entries()) {
+            const updatedSessions = sessions.map((s) => {
+              if (s.id !== sessionId) return s
+              updatedAny = true
+              return {
+                ...s,
+                opencode_session_id: opencodeSessionId
+              }
+            })
+
+            if (updatedAny) {
+              newSessionsMap.set(worktreeId, updatedSessions)
+              break
+            }
+          }
+
+          return updatedAny ? { sessionsByWorktree: newSessionsMap } : {}
+        })
       },
 
       // Set a pending initial message for a session (e.g., code review prompt)
