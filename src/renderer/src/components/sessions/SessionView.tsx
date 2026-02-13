@@ -28,6 +28,7 @@ import type { SelectedModel } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
+import { useWorktreeStore } from '@/stores'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode } from '@/lib/message-send-times'
@@ -1989,6 +1990,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       // Send to OpenCode if connected
       if (worktreePath && opencodeSessionId) {
         const requestModel = getModelForRequests()
+
+        // Track which model is being used on this worktree
+        if (requestModel && worktreeId) {
+          useWorktreeStore.getState().updateWorktreeModel(worktreeId, requestModel)
+          window.db?.worktree
+            ?.updateModel({
+              worktreeId,
+              modelProviderId: requestModel.providerID,
+              modelId: requestModel.modelID,
+              modelVariant: requestModel.variant ?? null
+            })
+            .catch(() => {})
+        }
 
         // Detect slash commands and route through the SDK command endpoint
         if (trimmedValue.startsWith('/')) {

@@ -36,6 +36,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
 import { PulseAnimation } from './PulseAnimation'
+import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 
 interface Worktree {
@@ -355,6 +356,7 @@ export function WorktreeItem({
               </span>
             )}
             <div className="flex items-center pr-1">
+              <ModelIcon worktreeId={worktree.id} className="h-2.5 w-2.5 mr-1 shrink-0" />
               <span className={cn('text-[11px]', statusClass)} data-testid="worktree-status-text">
                 {displayStatus}
               </span>
