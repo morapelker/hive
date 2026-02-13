@@ -10,18 +10,15 @@ export function useAutoUpdate(): void {
 
     const cleanups: (() => void)[] = []
 
-    // Update available — show actionable toast
+    // Update available — download starts automatically in background
     cleanups.push(
       window.updaterOps.onUpdateAvailable((data) => {
-        toastId.current = toast.info(`Update v${data.version} available`, {
-          duration: Infinity,
-          action: {
-            label: 'Download',
-            onClick: () => {
-              window.updaterOps.downloadUpdate()
-            }
+        toastId.current = toast.info(
+          `Update v${data.version} found. Downloading in background...`,
+          {
+            duration: 6000
           }
-        })
+        )
       })
     )
 
@@ -47,7 +44,7 @@ export function useAutoUpdate(): void {
         toastId.current = toast.success(`Update v${data.version} ready to install`, {
           duration: Infinity,
           action: {
-            label: 'Restart Now',
+            label: 'Restart to Update',
             onClick: () => {
               window.updaterOps.installUpdate()
             }
