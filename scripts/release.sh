@@ -157,7 +157,12 @@ GH_TOKEN=$(gh auth token)
 
 pnpm exec electron-builder --mac --publish always
 
-ok "Published to GitHub Releases"
+ok "Assets uploaded to GitHub Releases"
+
+# Un-draft the release so it becomes public
+info "Publishing release (removing draft status)..."
+gh release edit "v${NEW_VERSION}" --repo "$REPO" --draft=false
+ok "Release published"
 info "Release URL: https://github.com/${REPO}/releases/tag/v${NEW_VERSION}"
 
 # ── Phase 5: Update Homebrew cask ─────────────────────────────────
