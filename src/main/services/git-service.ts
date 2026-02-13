@@ -1050,7 +1050,7 @@ export class GitService {
     }
 
     return Object.entries(branchSummary.branches).map(([name, info]) => ({
-      name: info.name,
+      name: name.startsWith('remotes/') ? info.name.replace(/^remotes\//, '') : info.name,
       isRemote: name.startsWith('remotes/'),
       isCheckedOut: checkedOut.has(info.name),
       worktreePath: checkedOut.get(info.name)
