@@ -11,6 +11,7 @@ import { SetupTab } from './SetupTab'
 import { RunTab } from './RunTab'
 import { TerminalManager } from '@/components/terminal/TerminalManager'
 import { toast } from '@/lib/toast'
+import { useGhosttyPromotion } from '@/hooks/useGhosttyPromotion'
 
 const tabs: { id: BottomPanelTab; label: string }[] = [
   { id: 'setup', label: 'Setup' },
@@ -20,6 +21,7 @@ const tabs: { id: BottomPanelTab; label: string }[] = [
 
 export function BottomPanel(): React.JSX.Element {
   const activeTab = useLayoutStore((s) => s.bottomPanelTab)
+  useGhosttyPromotion(activeTab === 'terminal')
   const setActiveTab = useLayoutStore((s) => s.setBottomPanelTab)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)

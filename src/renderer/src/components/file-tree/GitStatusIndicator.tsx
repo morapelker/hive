@@ -42,11 +42,7 @@ export function GitStatusIndicator({
 
   return (
     <span
-      className={cn(
-        'text-[10px] font-mono ml-auto flex-shrink-0',
-        colorClass,
-        className
-      )}
+      className={cn('text-[10px] font-mono ml-auto flex-shrink-0', colorClass, className)}
       title={title}
     >
       {status}

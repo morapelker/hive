@@ -42,7 +42,9 @@ export function SettingsEditor(): React.JSX.Element {
       }
     }
     detect()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const isAvailable = (id: string): boolean => {
@@ -89,9 +91,7 @@ export function SettingsEditor(): React.JSX.Element {
                     <span className="text-xs text-muted-foreground">(not found)</span>
                   )}
                 </div>
-                {defaultEditor === opt.id && (
-                  <Check className="h-4 w-4 text-primary" />
-                )}
+                {defaultEditor === opt.id && <Check className="h-4 w-4 text-primary" />}
               </button>
             )
           })}

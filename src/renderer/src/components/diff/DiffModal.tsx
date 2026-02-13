@@ -47,12 +47,7 @@ export function DiffModal({
       setDiff('')
 
       try {
-        const result = await window.gitOps.getDiff(
-          worktreePath,
-          filePath,
-          staged,
-          isUntracked
-        )
+        const result = await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
 
         if (result.success && result.diff) {
           setDiff(result.diff)
@@ -136,10 +131,7 @@ export function DiffModal({
 
         <div className="flex-1 overflow-hidden border rounded-md">
           {isLoading && (
-            <div
-              className="flex items-center justify-center h-full"
-              data-testid="diff-loading"
-            >
+            <div className="flex items-center justify-center h-full" data-testid="diff-loading">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           )}
@@ -157,10 +149,7 @@ export function DiffModal({
             <DiffViewer
               diff={diff}
               viewMode={viewMode}
-              className={cn(
-                'h-full',
-                viewMode === 'split' && 'min-w-[800px]'
-              )}
+              className={cn('h-full', viewMode === 'split' && 'min-w-[800px]')}
             />
           )}
         </div>

@@ -2,13 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
 // Command categories for organization
-export type CommandCategory =
-  | 'navigation'
-  | 'action'
-  | 'git'
-  | 'settings'
-  | 'file'
-  | 'recent'
+export type CommandCategory = 'navigation' | 'action' | 'git' | 'settings' | 'file' | 'recent'
 
 // Individual command definition
 export interface Command {

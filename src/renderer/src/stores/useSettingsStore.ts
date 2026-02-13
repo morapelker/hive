@@ -30,6 +30,7 @@ export interface AppSettings {
   defaultTerminal: TerminalOption
   customTerminalCommand: string
   embeddedTerminalBackend: EmbeddedTerminalBackend
+  ghosttyPromotionDismissed: boolean
 
   // Model
   selectedModel: SelectedModel | null
@@ -55,6 +56,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultTerminal: 'terminal',
   customTerminalCommand: '',
   embeddedTerminalBackend: 'xterm',
+  ghosttyPromotionDismissed: false,
   selectedModel: null,
   lastOpenAction: null,
   favoriteModels: [],
@@ -115,6 +117,7 @@ function extractSettings(state: SettingsState): AppSettings {
     defaultTerminal: state.defaultTerminal,
     customTerminalCommand: state.customTerminalCommand,
     embeddedTerminalBackend: state.embeddedTerminalBackend,
+    ghosttyPromotionDismissed: state.ghosttyPromotionDismissed,
     selectedModel: state.selectedModel,
     lastOpenAction: state.lastOpenAction,
     favoriteModels: state.favoriteModels,
@@ -215,6 +218,7 @@ export const useSettingsStore = create<SettingsState>()(
         defaultTerminal: state.defaultTerminal,
         customTerminalCommand: state.customTerminalCommand,
         embeddedTerminalBackend: state.embeddedTerminalBackend,
+        ghosttyPromotionDismissed: state.ghosttyPromotionDismissed,
         selectedModel: state.selectedModel,
         lastOpenAction: state.lastOpenAction,
         favoriteModels: state.favoriteModels,

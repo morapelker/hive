@@ -6,7 +6,10 @@ interface ModeToggleProps {
   sessionId: string
 }
 
-const MODE_CONFIG: Record<SessionMode, { label: string; icon: typeof Hammer; description: string }> = {
+const MODE_CONFIG: Record<
+  SessionMode,
+  { label: string; icon: typeof Hammer; description: string }
+> = {
   build: {
     label: 'Build',
     icon: Hammer,

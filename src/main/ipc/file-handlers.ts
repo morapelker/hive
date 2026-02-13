@@ -42,7 +42,9 @@ export function registerFileHandlers(): void {
         return { success: true, content }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
-        log.error('Failed to read file', error instanceof Error ? error : new Error(message), { filePath })
+        log.error('Failed to read file', error instanceof Error ? error : new Error(message), {
+          filePath
+        })
         return { success: false, error: message }
       }
     }
@@ -83,7 +85,9 @@ export function registerFileHandlers(): void {
         return { success: true, content }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
-        log.error('Failed to read prompt', error instanceof Error ? error : new Error(message), { promptName })
+        log.error('Failed to read prompt', error instanceof Error ? error : new Error(message), {
+          promptName
+        })
         return { success: false, error: message }
       }
     }

@@ -12,7 +12,11 @@ interface FileTreeFilterProps {
 
 const DEBOUNCE_DELAY = 150
 
-export function FileTreeFilter({ value, onChange, className }: FileTreeFilterProps): React.JSX.Element {
+export function FileTreeFilter({
+  value,
+  onChange,
+  className
+}: FileTreeFilterProps): React.JSX.Element {
   const [localValue, setLocalValue] = useState(value)
   const debounceTimer = useRef<NodeJS.Timeout | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
