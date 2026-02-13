@@ -46,6 +46,9 @@ export interface AppSettings {
 
   // Variant defaults per model
   modelVariantDefaults: Record<string, string> // "providerID::modelID" → variant
+
+  // Model icons
+  showModelIcons: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -61,7 +64,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   lastOpenAction: null,
   favoriteModels: [],
   customChromeCommand: '',
-  modelVariantDefaults: {}
+  modelVariantDefaults: {},
+  showModelIcons: false
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -122,7 +126,8 @@ function extractSettings(state: SettingsState): AppSettings {
     lastOpenAction: state.lastOpenAction,
     favoriteModels: state.favoriteModels,
     customChromeCommand: state.customChromeCommand,
-    modelVariantDefaults: state.modelVariantDefaults
+    modelVariantDefaults: state.modelVariantDefaults,
+    showModelIcons: state.showModelIcons
   }
 }
 
