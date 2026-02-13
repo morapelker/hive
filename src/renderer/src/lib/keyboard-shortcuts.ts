@@ -117,6 +117,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     category: 'git',
     defaultBinding: { key: 'l', modifiers: ['meta', 'shift'] }
   },
+  {
+    id: 'git:merge',
+    label: 'Merge',
+    description: 'Merge selected branch',
+    category: 'git',
+    defaultBinding: { key: 'g', modifiers: ['meta'] }
+  },
 
   // Sidebar shortcuts
   {

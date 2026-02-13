@@ -30,7 +30,16 @@ export function GitPushPull({
   worktreePath,
   className
 }: GitPushPullProps): React.JSX.Element | null {
-  const [mergeBranch, setMergeBranch] = useState('')
+  const mergeBranch = useGitStore((s) =>
+    worktreePath ? s.selectedMergeBranch.get(worktreePath) || '' : ''
+  )
+  const setSelectedMergeBranch = useGitStore((s) => s.setSelectedMergeBranch)
+  const setMergeBranch = useCallback(
+    (branch: string) => {
+      if (worktreePath) setSelectedMergeBranch(worktreePath, branch)
+    },
+    [worktreePath, setSelectedMergeBranch]
+  )
   const [isMerging, setIsMerging] = useState(false)
 
   // Branch picker dropdown state
@@ -69,14 +78,14 @@ export function GitPushPull({
       prevVersionRef.current = mergeSelectionVersion
       setMergeBranch('')
     }
-  }, [mergeSelectionVersion])
+  }, [mergeSelectionVersion, setMergeBranch])
 
   // Pre-populate merge branch from cross-worktree default
   useEffect(() => {
     if (defaultMerge && defaultMerge !== currentBranch && !mergeBranch) {
       setMergeBranch(defaultMerge)
     }
-  }, [defaultMerge, currentBranch, mergeBranch])
+  }, [defaultMerge, currentBranch, mergeBranch, setMergeBranch])
 
   const hasTracking = !!branchInfo?.tracking
   const ahead = branchInfo?.ahead || 0
