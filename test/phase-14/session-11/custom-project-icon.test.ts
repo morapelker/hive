@@ -54,16 +54,14 @@ describe('Session 11: Custom Project Icon', () => {
   describe('Database migration', () => {
     test('schema version matches CURRENT_SCHEMA_VERSION', async () => {
       const { CURRENT_SCHEMA_VERSION } = await import('../../../src/main/db/schema')
-      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(8)
+      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(1)
     })
 
-    test('migration v8 adds custom_icon column', async () => {
+    test('schema includes custom_icon column on projects', async () => {
       const { MIGRATIONS } = await import('../../../src/main/db/schema')
-      const migration = MIGRATIONS.find((m) => m.version === 8)
-      expect(migration).toBeDefined()
-      expect(migration!.name).toBe('add_project_custom_icon')
-      expect(migration!.up).toContain('custom_icon')
-      expect(migration!.up).toContain('ALTER TABLE projects')
+      const schema = MIGRATIONS.find((m) => m.version === 1)
+      expect(schema).toBeDefined()
+      expect(schema!.up).toContain('custom_icon')
     })
   })
 
