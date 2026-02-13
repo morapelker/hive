@@ -48,3 +48,9 @@ win:
 linux:
   icon: resources/icon.png
   category: Development
+
+# ── Auto-update ───────────────────────────────────────
+publish:
+  - provider: github
+    owner: morapelker
+    repo: hive
