@@ -1239,6 +1239,31 @@ export function canonicalizeBranchName(title: string): string {
 }
 
 /**
+ * Parse `git worktree list --porcelain` output to find the worktree path
+ * for a given branch name.
+ *
+ * Porcelain format:
+ *   worktree /path/to/worktree
+ *   HEAD abc123
+ *   branch refs/heads/main
+ *   (blank line)
+ */
+export function parseWorktreeForBranch(porcelainOutput: string, branchName: string): string | null {
+  const blocks = porcelainOutput.trim().split('\n\n')
+  for (const block of blocks) {
+    const lines = block.split('\n')
+    let path = ''
+    let branch = ''
+    for (const line of lines) {
+      if (line.startsWith('worktree ')) path = line.slice('worktree '.length)
+      if (line.startsWith('branch refs/heads/')) branch = line.slice('branch refs/heads/'.length)
+    }
+    if (branch === branchName && path) return path
+  }
+  return null
+}
+
+/**
  * Create a GitService instance for a repository
  */
 export function createGitService(repoPath: string): GitService {

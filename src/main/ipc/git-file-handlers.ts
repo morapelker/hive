@@ -1,8 +1,11 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import {
   createGitService,
+  parseWorktreeForBranch,
   GitFileStatus,
   GitStatusCode,
   GitBranchInfo,
@@ -15,6 +18,8 @@ import {
   GitDiffStatResult
 } from '../services/git-service'
 import { createLogger } from '../services/logger'
+
+const execAsync = promisify(exec)
 
 const log = createLogger({ component: 'GitFileHandlers' })
 
@@ -486,6 +491,61 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const message = error instanceof Error ? error.message : 'Unknown error'
         log.error('Failed to get diff stat', error instanceof Error ? error : new Error(message), {
           worktreePath
+        })
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Merge a PR on GitHub via gh CLI, then sync the local target branch
+  ipcMain.handle(
+    'git:prMerge',
+    async (
+      _event,
+      worktreePath: string,
+      prNumber: number
+    ): Promise<{ success: boolean; error?: string }> => {
+      log.info('Merging PR via gh CLI', { worktreePath, prNumber })
+      try {
+        // Step 1: Merge the PR on GitHub
+        await execAsync(`gh pr merge ${prNumber} --merge`, { cwd: worktreePath })
+
+        // Step 2: Get the target branch name
+        const prInfoResult = await execAsync(
+          `gh pr view ${prNumber} --json baseRefName -q '.baseRefName'`,
+          { cwd: worktreePath }
+        )
+        const targetBranch = prInfoResult.stdout.trim()
+
+        // Step 3: Find local worktree on target branch and sync
+        const worktreeListResult = await execAsync('git worktree list --porcelain', {
+          cwd: worktreePath
+        })
+        const targetWorktreePath = parseWorktreeForBranch(worktreeListResult.stdout, targetBranch)
+
+        if (targetWorktreePath) {
+          const currentBranch = await execAsync('git branch --show-current', {
+            cwd: worktreePath
+          })
+          await execAsync(`git merge ${currentBranch.stdout.trim()}`, {
+            cwd: targetWorktreePath
+          })
+          log.info('Synced local target branch after PR merge', {
+            targetBranch,
+            targetWorktreePath
+          })
+        }
+
+        if (mainWindow) {
+          mainWindow.webContents.send('git:statusChanged', { worktreePath })
+        }
+
+        return { success: true }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error('Failed to merge PR', error instanceof Error ? error : new Error(message), {
+          worktreePath,
+          prNumber
         })
         return { success: false, error: message }
       }

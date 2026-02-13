@@ -6,7 +6,10 @@ import {
   Settings,
   AlertTriangle,
   GitPullRequest,
-  ChevronDown
+  GitMerge,
+  Archive,
+  ChevronDown,
+  Loader2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -24,6 +27,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { QuickActions } from './QuickActions'
+import { usePRDetection } from '@/hooks/usePRDetection'
 import hiveLogo from '@/assets/icon.png'
 
 export function Header(): React.JSX.Element {
@@ -37,6 +41,9 @@ export function Header(): React.JSX.Element {
   const updateSessionName = useSessionStore((s) => s.updateSessionName)
   const setPendingMessage = useSessionStore((s) => s.setPendingMessage)
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
+
+  // Monitor PR session stream events for PR URL detection
+  usePRDetection(selectedWorktreeId)
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId)
   const selectedWorktree = (() => {
@@ -67,6 +74,18 @@ export function Header(): React.JSX.Element {
     ? branchInfoByWorktree.get(selectedWorktree.path)
     : undefined
   const isOperating = useGitStore((state) => state.isPushing || state.isPulling)
+
+  // PR lifecycle state
+  const prInfo = useGitStore((s) =>
+    selectedWorktreeId ? s.prInfo.get(selectedWorktreeId) : undefined
+  )
+  const prState = prInfo?.state ?? 'none'
+
+  // Clean tree detection for merge button visibility
+  const fileStatuses = useGitStore((s) =>
+    selectedWorktree?.path ? s.fileStatusesByWorktree.get(selectedWorktree.path) : undefined
+  )
+  const isCleanTree = !fileStatuses || fileStatuses.length === 0
 
   // Load remote branches for the PR target dropdown
   const [remoteBranches, setRemoteBranches] = useState<{ name: string }[]>([])
@@ -123,7 +142,44 @@ export function Header(): React.JSX.Element {
         `Make the description comprehensive, summarizing all changes.`
       ].join(' ')
     )
+
+    // Tag this session as a PR session for detection
+    useGitStore.getState().setPrState(wtId, {
+      state: 'creating',
+      sessionId: result.session.id,
+      targetBranch
+    })
   }, [selectedWorktree?.path, selectedWorktreeId, prTargetBranch, branchInfo])
+
+  const handleMergePR = useCallback(async () => {
+    if (!selectedWorktree?.path || !selectedWorktreeId) return
+    const pr = useGitStore.getState().prInfo.get(selectedWorktreeId)
+    if (!pr?.prNumber) return
+
+    try {
+      const result = await window.gitOps.prMerge(selectedWorktree.path, pr.prNumber)
+      if (result.success) {
+        toast.success('PR merged successfully')
+        useGitStore.getState().setPrState(selectedWorktreeId, { ...pr, state: 'merged' })
+      } else {
+        toast.error(`Merge failed: ${result.error}`)
+      }
+    } catch {
+      toast.error('Failed to merge PR')
+    }
+  }, [selectedWorktree?.path, selectedWorktreeId])
+
+  const handleArchiveWorktree = useCallback(async () => {
+    if (!selectedWorktreeId || !selectedWorktree || !selectedProject) return
+    await useWorktreeStore
+      .getState()
+      .archiveWorktree(
+        selectedWorktreeId,
+        selectedWorktree.path,
+        selectedWorktree.branch_name,
+        selectedProject.path
+      )
+  }, [selectedWorktreeId, selectedWorktree, selectedProject])
 
   const handleFixConflicts = async () => {
     if (!selectedWorktreeId || !selectedProjectId) return
@@ -180,52 +236,85 @@ export function Header(): React.JSX.Element {
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        {isGitHub && (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              onClick={handleCreatePR}
-              disabled={isOperating}
-              title="Create Pull Request"
-              data-testid="pr-button"
-            >
-              <GitPullRequest className="h-3.5 w-3.5 mr-1" />
-              PR
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-xs text-muted-foreground px-2 h-7"
-                  data-testid="pr-target-branch-trigger"
-                >
-                  → {prTargetBranch || branchInfo?.tracking || 'origin/main'}
-                  <ChevronDown className="h-3 w-3 ml-1" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="max-h-60 overflow-y-auto">
-                {remoteBranches.length === 0 ? (
-                  <DropdownMenuItem disabled>No remote branches</DropdownMenuItem>
-                ) : (
-                  remoteBranches.map((branch) => (
-                    <DropdownMenuItem
-                      key={branch.name}
-                      onClick={() =>
-                        selectedWorktreeId && setPrTargetBranch(selectedWorktreeId, branch.name)
-                      }
-                      data-testid={`pr-target-branch-${branch.name}`}
-                    >
-                      {branch.name}
-                    </DropdownMenuItem>
-                  ))
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
+        {isGitHub && prState === 'merged' && (
+          <Button
+            size="sm"
+            variant="destructive"
+            className="h-7 text-xs"
+            onClick={handleArchiveWorktree}
+            title="Archive worktree"
+            data-testid="pr-archive-button"
+          >
+            <Archive className="h-3.5 w-3.5 mr-1" />
+            Archive
+          </Button>
         )}
+        {isGitHub && prState === 'created' && isCleanTree && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs bg-emerald-600/10 border-emerald-600/30 text-emerald-500 hover:bg-emerald-600/20"
+            onClick={handleMergePR}
+            title="Merge Pull Request"
+            data-testid="pr-merge-button"
+          >
+            <GitMerge className="h-3.5 w-3.5 mr-1" />
+            Merge PR
+          </Button>
+        )}
+        {isGitHub &&
+          (prState === 'none' ||
+            prState === 'creating' ||
+            (prState === 'created' && !isCleanTree)) && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={handleCreatePR}
+                disabled={isOperating || prState === 'creating'}
+                title="Create Pull Request"
+                data-testid="pr-button"
+              >
+                {prState === 'creating' ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                ) : (
+                  <GitPullRequest className="h-3.5 w-3.5 mr-1" />
+                )}
+                PR
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs text-muted-foreground px-2 h-7"
+                    data-testid="pr-target-branch-trigger"
+                  >
+                    → {prTargetBranch || branchInfo?.tracking || 'origin/main'}
+                    <ChevronDown className="h-3 w-3 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-h-60 overflow-y-auto">
+                  {remoteBranches.length === 0 ? (
+                    <DropdownMenuItem disabled>No remote branches</DropdownMenuItem>
+                  ) : (
+                    remoteBranches.map((branch) => (
+                      <DropdownMenuItem
+                        key={branch.name}
+                        onClick={() =>
+                          selectedWorktreeId && setPrTargetBranch(selectedWorktreeId, branch.name)
+                        }
+                        data-testid={`pr-target-branch-${branch.name}`}
+                      >
+                        {branch.name}
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          )}
         <Button
           variant="ghost"
           size="icon"
