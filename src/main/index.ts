@@ -14,6 +14,7 @@ import {
   registerFileTreeHandlers,
   cleanupFileTreeWatchers,
   registerGitFileHandlers,
+  cleanupWorktreeWatchers,
   registerSettingsHandlers,
   registerFileHandlers,
   registerScriptHandlers,
@@ -367,6 +368,8 @@ app.on('will-quit', async () => {
   cleanupScripts()
   // Cleanup file tree watchers
   await cleanupFileTreeWatchers()
+  // Cleanup worktree watchers (git status monitoring)
+  await cleanupWorktreeWatchers()
   // Cleanup OpenCode connections
   await cleanupOpenCode()
   // Close database

@@ -18,6 +18,12 @@ import {
   GitDiffStatResult
 } from '../services/git-service'
 import { createLogger } from '../services/logger'
+import {
+  initWorktreeWatcher,
+  watchWorktree,
+  unwatchWorktree,
+  cleanupWorktreeWatchers
+} from '../services/worktree-watcher'
 
 const execAsync = promisify(exec)
 
@@ -46,6 +52,49 @@ export interface GitBranchInfoResult {
 export function registerGitFileHandlers(window: BrowserWindow): void {
   mainWindow = window
   log.info('Registering git file handlers')
+
+  // Initialize the worktree watcher service with the main window reference
+  initWorktreeWatcher(window)
+
+  // Start watching a worktree for git changes (filesystem + .git metadata)
+  ipcMain.handle(
+    'git:watchWorktree',
+    async (_event, worktreePath: string): Promise<GitOperationResult> => {
+      log.info('Starting worktree watcher', { worktreePath })
+      try {
+        await watchWorktree(worktreePath)
+        return { success: true }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to start worktree watcher',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Stop watching a worktree
+  ipcMain.handle(
+    'git:unwatchWorktree',
+    async (_event, worktreePath: string): Promise<GitOperationResult> => {
+      log.info('Stopping worktree watcher', { worktreePath })
+      try {
+        await unwatchWorktree(worktreePath)
+        return { success: true }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to stop worktree watcher',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
 
   // Get file statuses for a worktree
   ipcMain.handle(
@@ -597,6 +646,9 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 }
+
+// Re-export cleanup function for app quit handler
+export { cleanupWorktreeWatchers }
 
 // Export types for use in preload
 export type {
