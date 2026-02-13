@@ -9,14 +9,9 @@ export const PR_URL_PATTERN = /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/
  * Watches stream events for a PR session and detects when a GitHub PR URL
  * appears in assistant output. Transitions PR state from 'creating' to 'created'.
  *
- * We listen to ALL stream events (not filtered by session ID) because the
- * opencode_session_id is only persisted to the database — it is never written
- * back to the Zustand session store, so we can't reliably look it up in-memory.
- *
- * This is safe because:
- * - The monitoring window is narrow (only while prInfo.state === 'creating')
- * - PR URLs are very distinctive patterns unlikely to appear in unrelated sessions
- * - Detection transitions state to 'created', ending monitoring immediately
+ * Stream detection is scoped to the specific Hive session that started PR
+ * creation (event.sessionId === prInfo.sessionId). This prevents concurrent PR
+ * workflows in sibling worktrees from leaking state into each other.
  *
  * We scan both text content AND tool output (the `gh pr create` command output
  * typically contains the PR URL before the assistant's text summary does).
@@ -79,6 +74,13 @@ export function usePRDetection(worktreeId: string | null): void {
 
     const unsubscribe = window.opencodeOps?.onStream
       ? window.opencodeOps.onStream((event) => {
+          const currentPrInfo = prInfoRef.current
+          if (!currentPrInfo || currentPrInfo.state !== 'creating' || !currentPrInfo.sessionId) {
+            return
+          }
+
+          if (event.sessionId !== currentPrInfo.sessionId) return
+
           // Primary path: message part updates (SDK streams text/tool deltas here)
           if (event.type === 'message.part.updated') {
             const payload = event.data
