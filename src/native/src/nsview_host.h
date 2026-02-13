@@ -42,6 +42,13 @@ NSView* createHostView(NSWindow* window, ViewRect rect);
 // flipping from Electron's top-left origin to AppKit's bottom-left origin.
 void setHostViewFrame(NSView* view, ViewRect rect);
 
+// Associate a Ghostty surface ID with a host view. This enables the native
+// host view to forward input events directly to the correct surface.
+void setHostViewSurfaceId(NSView* view, uint32_t surfaceId);
+
+// Make the given host view the window's first responder.
+void focusHostView(NSView* view);
+
 // Remove the host view from its superview and release it.
 void destroyHostView(NSView* view);
 

@@ -123,6 +123,8 @@ Napi::Value GhosttyCreateSurface(const Napi::CallbackInfo& info) {
     return Napi::Number::New(env, 0);
   }
 
+  setHostViewSurfaceId(hostView, surfaceId);
+
   return Napi::Number::New(env, surfaceId);
 }
 
@@ -160,7 +162,13 @@ void GhosttySetSize(const Napi::CallbackInfo& info) {
 
 // ---------------------------------------------------------------------------
 // ghosttyKeyEvent(surfaceId: number, event: {
-//   action: number, key: number, mods: number, text?: string
+//   action: number,
+//   keycode: number,
+//   mods: number,
+//   consumedMods?: number,
+//   text?: string,
+//   unshiftedCodepoint?: number,
+//   composing?: boolean
 // }) → boolean
 // ---------------------------------------------------------------------------
 Napi::Value GhosttyKeyEvent(const Napi::CallbackInfo& info) {
@@ -176,19 +184,51 @@ Napi::Value GhosttyKeyEvent(const Napi::CallbackInfo& info) {
   auto action = static_cast<ghostty_input_action_e>(
     eventObj.Get("action").As<Napi::Number>().Int32Value()
   );
-  auto key = static_cast<ghostty_input_key_e>(
-    eventObj.Get("key").As<Napi::Number>().Int32Value()
-  );
+
+  // Backward compatibility: accept either `keycode` (preferred) or legacy `key`.
+  uint32_t keycode = 0;
+  if (eventObj.Has("keycode") && eventObj.Get("keycode").IsNumber()) {
+    keycode = eventObj.Get("keycode").As<Napi::Number>().Uint32Value();
+  } else if (eventObj.Has("key") && eventObj.Get("key").IsNumber()) {
+    keycode = eventObj.Get("key").As<Napi::Number>().Uint32Value();
+  }
+
   auto mods = static_cast<ghostty_input_mods_e>(
     eventObj.Get("mods").As<Napi::Number>().Int32Value()
   );
+
+  auto consumedMods = mods;
+  if (eventObj.Has("consumedMods") && eventObj.Get("consumedMods").IsNumber()) {
+    consumedMods = static_cast<ghostty_input_mods_e>(
+      eventObj.Get("consumedMods").As<Napi::Number>().Int32Value()
+    );
+  }
 
   std::string text;
   if (eventObj.Has("text") && eventObj.Get("text").IsString()) {
     text = eventObj.Get("text").As<Napi::String>().Utf8Value();
   }
 
-  bool consumed = GhosttyBridge::instance().keyEvent(surfaceId, action, key, mods, text);
+  uint32_t unshiftedCodepoint = 0;
+  if (eventObj.Has("unshiftedCodepoint") && eventObj.Get("unshiftedCodepoint").IsNumber()) {
+    unshiftedCodepoint = eventObj.Get("unshiftedCodepoint").As<Napi::Number>().Uint32Value();
+  }
+
+  bool composing = false;
+  if (eventObj.Has("composing") && eventObj.Get("composing").IsBoolean()) {
+    composing = eventObj.Get("composing").As<Napi::Boolean>().Value();
+  }
+
+  bool consumed = GhosttyBridge::instance().keyEvent(
+    surfaceId,
+    action,
+    keycode,
+    mods,
+    consumedMods,
+    text,
+    unshiftedCodepoint,
+    composing
+  );
   return Napi::Boolean::New(env, consumed);
 }
 

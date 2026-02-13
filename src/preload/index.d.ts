@@ -611,7 +611,15 @@ declare global {
       ghosttySetSize: (worktreeId: string, width: number, height: number) => Promise<void>
       ghosttyKeyEvent: (
         worktreeId: string,
-        event: { action: number; key: number; mods: number; text?: string }
+        event: {
+          action: number
+          keycode: number
+          mods: number
+          consumedMods?: number
+          text?: string
+          unshiftedCodepoint?: number
+          composing?: boolean
+        }
       ) => Promise<boolean>
       ghosttyMouseButton: (
         worktreeId: string,

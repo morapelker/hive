@@ -6,11 +6,30 @@
 
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include "ghostty_bridge.h"
 #include "nsview_host.h"
 
 namespace ghostty {
+
+namespace {
+
+uint32_t clampPixelSize(double value) {
+  const double rounded = std::round(value);
+  if (rounded < 1.0) return 1;
+  if (rounded > static_cast<double>(UINT32_MAX)) return UINT32_MAX;
+  return static_cast<uint32_t>(rounded);
+}
+
+double viewScaleFactor(NSView* view) {
+  if (!view) return 1.0;
+  NSWindow* window = [view window];
+  return window ? getScaleFactor(window) : 1.0;
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Singleton
@@ -183,10 +202,12 @@ void GhosttyBridge::setFrame(uint32_t surfaceId, double x, double y, double w, d
 
   // Also update the Ghostty surface size
   if (it->second.handle) {
+    const double scale = viewScaleFactor(it->second.view);
+    ghostty_surface_set_content_scale(it->second.handle, scale, scale);
     ghostty_surface_set_size(
       it->second.handle,
-      static_cast<uint32_t>(w),
-      static_cast<uint32_t>(h)
+      clampPixelSize(w * scale),
+      clampPixelSize(h * scale)
     );
   }
 }
@@ -206,15 +227,24 @@ void GhosttyBridge::setSize(uint32_t surfaceId, uint32_t width, uint32_t height)
   auto it = surfaces_.find(surfaceId);
   if (it == surfaces_.end() || !it->second.handle) return;
 
-  ghostty_surface_set_size(it->second.handle, width, height);
+  const double scale = viewScaleFactor(it->second.view);
+  ghostty_surface_set_content_scale(it->second.handle, scale, scale);
+  ghostty_surface_set_size(
+    it->second.handle,
+    clampPixelSize(static_cast<double>(width) * scale),
+    clampPixelSize(static_cast<double>(height) * scale)
+  );
 }
 
 bool GhosttyBridge::keyEvent(
   uint32_t surfaceId,
   ghostty_input_action_e action,
-  ghostty_input_key_e key,
+  uint32_t keycode,
   ghostty_input_mods_e mods,
-  const std::string& text
+  ghostty_input_mods_e consumedMods,
+  const std::string& text,
+  uint32_t unshiftedCodepoint,
+  bool composing
 ) {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -224,10 +254,11 @@ bool GhosttyBridge::keyEvent(
   ghostty_input_key_s keyInput = {};
   keyInput.action = action;
   keyInput.mods = mods;
-  keyInput.consumed_mods = GHOSTTY_MODS_NONE;
-  keyInput.keycode = static_cast<uint32_t>(key);
+  keyInput.consumed_mods = consumedMods;
+  keyInput.keycode = keycode;
   keyInput.text = text.empty() ? nullptr : text.c_str();
-  keyInput.composing = false;
+  keyInput.unshifted_codepoint = unshiftedCodepoint;
+  keyInput.composing = composing;
 
   return ghostty_surface_key(it->second.handle, keyInput);
 }
@@ -268,6 +299,29 @@ void GhosttyBridge::mouseScroll(uint32_t surfaceId, double dx, double dy, int sc
 }
 
 void GhosttyBridge::setFocus(uint32_t surfaceId, bool focused) {
+  NSView* view = nil;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return;
+    view = it->second.view;
+  }
+
+  // NSResponder focus changes can synchronously trigger become/resign callbacks.
+  // Do this outside the bridge mutex to avoid re-entrant deadlocks.
+  if (view && [view window]) {
+    NSWindow* window = [view window];
+    if (focused && [window firstResponder] != view) {
+      [window makeFirstResponder:view];
+    } else if (!focused && [window firstResponder] == view) {
+      [window makeFirstResponder:nil];
+    }
+  }
+
+  setSurfaceFocus(surfaceId, focused);
+}
+
+void GhosttyBridge::setSurfaceFocus(uint32_t surfaceId, bool focused) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   auto it = surfaces_.find(surfaceId);

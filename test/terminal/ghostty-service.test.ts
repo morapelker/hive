@@ -12,7 +12,11 @@ vi.mock('../../src/main/services/logger', () => ({
 
 // Mock electron
 vi.mock('electron', () => ({
-  BrowserWindow: vi.fn()
+  BrowserWindow: vi.fn(),
+  app: {
+    isPackaged: false,
+    getAppPath: vi.fn(() => '/tmp/hive-test-app')
+  }
 }))
 
 // We test the service's exported singleton directly.
@@ -89,7 +93,7 @@ describe('GhosttyService', () => {
 
   describe('input forwarding without addon', () => {
     test('keyEvent returns false when no addon', () => {
-      expect(ghosttyService.keyEvent('wt-1', { action: 1, key: 65, mods: 0 })).toBe(false)
+      expect(ghosttyService.keyEvent('wt-1', { action: 1, keycode: 65, mods: 0 })).toBe(false)
     })
 
     test('mouseButton does not throw when no addon', () => {

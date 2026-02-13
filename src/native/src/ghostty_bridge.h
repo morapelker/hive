@@ -82,9 +82,12 @@ public:
   bool keyEvent(
     uint32_t surfaceId,
     ghostty_input_action_e action,
-    ghostty_input_key_e key,
+    uint32_t keycode,
     ghostty_input_mods_e mods,
-    const std::string& text
+    ghostty_input_mods_e consumedMods,
+    const std::string& text,
+    uint32_t unshiftedCodepoint,
+    bool composing
   );
 
   // Forward mouse events
@@ -101,6 +104,9 @@ public:
 
   // Focus management
   void setFocus(uint32_t surfaceId, bool focused);
+
+  // Update libghostty focus state only (no NSResponder changes).
+  void setSurfaceFocus(uint32_t surfaceId, bool focused);
 
   // Request surface close (graceful)
   void requestClose(uint32_t surfaceId);
