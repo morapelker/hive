@@ -31,7 +31,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "build:native": "cd src/native && npx node-gyp rebuild"
+    "build:native": "cd src/native && npx node-gyp rebuild",
+    "release": "bash scripts/release.sh"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^3.0.0",
