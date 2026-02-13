@@ -50,6 +50,9 @@ interface GitStoreState {
   // Incremented on every commit so components can reset manual merge selections
   mergeSelectionVersion: number
 
+  // Merge branch selection - keyed by worktree path
+  selectedMergeBranch: Map<string, string>
+
   // Actions
   loadFileStatuses: (worktreePath: string) => Promise<void>
   loadBranchInfo: (worktreePath: string) => Promise<void>
@@ -72,6 +75,9 @@ interface GitStoreState {
 
   // Cross-worktree merge default actions
   setDefaultMergeBranch: (projectId: string, branchName: string) => void
+
+  // Merge branch selection actions
+  setSelectedMergeBranch: (worktreePath: string, branch: string) => void
 
   // Commit, Push, Pull actions
   commit: (
@@ -112,6 +118,9 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Cross-worktree merge default
   defaultMergeBranch: new Map(),
   mergeSelectionVersion: 0,
+
+  // Merge branch selection
+  selectedMergeBranch: new Map(),
 
   // Load file statuses for a worktree
   loadFileStatuses: async (worktreePath: string) => {
@@ -357,6 +366,15 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       const newMap = new Map(state.defaultMergeBranch)
       newMap.set(projectId, branchName)
       return { defaultMergeBranch: newMap }
+    })
+  },
+
+  // Set the selected merge branch for a worktree
+  setSelectedMergeBranch: (worktreePath: string, branch: string) => {
+    set((state) => {
+      const newMap = new Map(state.selectedMergeBranch)
+      newMap.set(worktreePath, branch)
+      return { selectedMergeBranch: newMap }
     })
   },
 
