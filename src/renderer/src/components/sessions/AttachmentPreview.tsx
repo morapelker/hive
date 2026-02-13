@@ -17,10 +17,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
   if (attachments.length === 0) return null
 
   return (
-    <div
-      className="flex gap-2 px-3 py-2 overflow-x-auto"
-      data-testid="attachment-preview"
-    >
+    <div className="flex gap-2 px-3 py-2 overflow-x-auto" data-testid="attachment-preview">
       {attachments.map((attachment) => (
         <div
           key={attachment.id}

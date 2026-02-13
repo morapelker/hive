@@ -484,11 +484,9 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         return await gitService.getDiffStat()
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
-        log.error(
-          'Failed to get diff stat',
-          error instanceof Error ? error : new Error(message),
-          { worktreePath }
-        )
+        log.error('Failed to get diff stat', error instanceof Error ? error : new Error(message), {
+          worktreePath
+        })
         return { success: false, error: message }
       }
     }

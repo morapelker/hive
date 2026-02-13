@@ -3,7 +3,13 @@ import { THEME_PRESETS, type ThemePreset } from '@/lib/themes'
 import { useThemeStore } from '@/stores/useThemeStore'
 import { cn } from '@/lib/utils'
 
-function ThemeCard({ preset, isActive }: { preset: ThemePreset; isActive: boolean }): React.JSX.Element {
+function ThemeCard({
+  preset,
+  isActive
+}: {
+  preset: ThemePreset
+  isActive: boolean
+}): React.JSX.Element {
   const setTheme = useThemeStore((s) => s.setTheme)
 
   return (
@@ -24,10 +30,7 @@ function ThemeCard({ preset, isActive }: { preset: ThemePreset; isActive: boolea
       >
         <div className="flex h-full">
           {/* Sidebar preview */}
-          <div
-            className="w-1/4 h-full"
-            style={{ backgroundColor: preset.colors.sidebar }}
-          />
+          <div className="w-1/4 h-full" style={{ backgroundColor: preset.colors.sidebar }} />
           {/* Main area preview */}
           <div className="flex-1 flex flex-col items-center justify-center gap-1 px-2">
             <div
@@ -74,7 +77,10 @@ export function SettingsAppearance(): React.JSX.Element {
 
       {/* Dark Themes */}
       <div>
-        <h3 className="text-sm font-medium text-muted-foreground mb-3" data-testid="dark-themes-header">
+        <h3
+          className="text-sm font-medium text-muted-foreground mb-3"
+          data-testid="dark-themes-header"
+        >
           Dark Themes
         </h3>
         <div className="grid grid-cols-3 gap-3" data-testid="dark-themes-grid">
@@ -86,7 +92,10 @@ export function SettingsAppearance(): React.JSX.Element {
 
       {/* Light Themes */}
       <div>
-        <h3 className="text-sm font-medium text-muted-foreground mb-3" data-testid="light-themes-header">
+        <h3
+          className="text-sm font-medium text-muted-foreground mb-3"
+          data-testid="light-themes-header"
+        >
           Light Themes
         </h3>
         <div className="grid grid-cols-3 gap-3" data-testid="light-themes-grid">

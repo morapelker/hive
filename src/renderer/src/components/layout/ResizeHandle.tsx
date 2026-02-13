@@ -7,7 +7,11 @@ interface ResizeHandleProps {
   className?: string
 }
 
-export function ResizeHandle({ onResize, direction, className }: ResizeHandleProps): React.JSX.Element {
+export function ResizeHandle({
+  onResize,
+  direction,
+  className
+}: ResizeHandleProps): React.JSX.Element {
   const [isDragging, setIsDragging] = useState(false)
   const [startX, setStartX] = useState(0)
 

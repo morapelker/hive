@@ -1,13 +1,13 @@
 import { useEffect, useCallback, useMemo } from 'react'
 import { Command } from 'cmdk'
-import { useCommandPaletteStore, type Command as CommandType } from '@/stores/useCommandPaletteStore'
+import {
+  useCommandPaletteStore,
+  type Command as CommandType
+} from '@/stores/useCommandPaletteStore'
 import { useCommands } from '@/hooks'
 import { categoryLabels } from '@/lib/command-registry'
 import { CommandItem } from './CommandItem'
-import {
-  ArrowLeft,
-  Search
-} from 'lucide-react'
+import { ArrowLeft, Search } from 'lucide-react'
 
 export function CommandPalette() {
   const {
@@ -255,24 +255,22 @@ export function CommandPalette() {
           <div className="flex items-center justify-between border-t border-border px-3 py-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-4">
               <span>
-                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↑↓</kbd>
-                {' '}navigate
+                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↑↓</kbd>{' '}
+                navigate
               </span>
               <span>
-                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↵</kbd>
-                {' '}select
+                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↵</kbd> select
               </span>
               <span>
-                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">esc</kbd>
-                {' '}close
+                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">esc</kbd>{' '}
+                close
               </span>
             </div>
             {commandStack.length > 0 && (
               <span>
-                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">esc</kbd>
-                {' '}or{' '}
-                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">←</kbd>
-                {' '}go back
+                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">esc</kbd> or{' '}
+                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">←</kbd> go
+                back
               </span>
             )}
           </div>

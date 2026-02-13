@@ -59,7 +59,7 @@ export const useLayoutStore = create<LayoutState>()(
 
       setBottomPanelTab: (tab: BottomPanelTab) => {
         set({ bottomPanelTab: tab })
-      },
+      }
     }),
     {
       name: 'hive-layout',
@@ -68,8 +68,8 @@ export const useLayoutStore = create<LayoutState>()(
         leftSidebarWidth: state.leftSidebarWidth,
         leftSidebarCollapsed: state.leftSidebarCollapsed,
         rightSidebarWidth: state.rightSidebarWidth,
-        rightSidebarCollapsed: state.rightSidebarCollapsed,
-      }),
+        rightSidebarCollapsed: state.rightSidebarCollapsed
+      })
     }
   )
 )
@@ -78,10 +78,10 @@ export const LAYOUT_CONSTRAINTS = {
   leftSidebar: {
     default: LEFT_SIDEBAR_DEFAULT,
     min: LEFT_SIDEBAR_MIN,
-    max: LEFT_SIDEBAR_MAX,
+    max: LEFT_SIDEBAR_MAX
   },
   rightSidebar: {
     default: RIGHT_SIDEBAR_DEFAULT,
-    min: 200,
-  },
+    min: 200
+  }
 }

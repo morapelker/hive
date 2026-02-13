@@ -105,9 +105,7 @@ export function ArchiveConfirmDialog({
                         <span className="text-muted-foreground">{fileDir(file.path)}</span>
                         <span className="text-foreground">{fileName(file.path)}</span>
                       </span>
-                      <span className="shrink-0 tabular-nums text-[11px]">
-                        {formatStat(file)}
-                      </span>
+                      <span className="shrink-0 tabular-nums text-[11px]">{formatStat(file)}</span>
                     </div>
                   ))}
                 </div>

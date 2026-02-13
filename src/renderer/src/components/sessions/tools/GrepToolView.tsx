@@ -13,15 +13,13 @@ export function GrepToolView({ input, output, error }: ToolViewProps) {
 
   if (error) {
     return (
-      <div className="text-red-400 font-mono text-xs whitespace-pre-wrap break-all">
-        {error}
-      </div>
+      <div className="text-red-400 font-mono text-xs whitespace-pre-wrap break-all">{error}</div>
     )
   }
 
   if (!output) return null
 
-  const lines = output.split('\n').filter(l => l.trim())
+  const lines = output.split('\n').filter((l) => l.trim())
   const matchCount = lines.length
   const needsTruncation = lines.length > MAX_PREVIEW_LINES
   const displayedLines = showAll ? lines : lines.slice(0, MAX_PREVIEW_LINES)
@@ -32,11 +30,12 @@ export function GrepToolView({ input, output, error }: ToolViewProps) {
       <div className="flex items-center gap-1.5 text-muted-foreground mb-2">
         <Search className="h-3.5 w-3.5" />
         <span className="text-xs">
-          <span className="font-mono font-medium text-foreground">&quot;{pattern}&quot;</span>
-          {' '}in{' '}
+          <span className="font-mono font-medium text-foreground">&quot;{pattern}&quot;</span> in{' '}
           <span className="font-mono">{searchPath}</span>
           {matchCount > 0 && (
-            <span className="ml-1">({matchCount} {matchCount === 1 ? 'match' : 'matches'})</span>
+            <span className="ml-1">
+              ({matchCount} {matchCount === 1 ? 'match' : 'matches'})
+            </span>
           )}
         </span>
       </div>
@@ -79,13 +78,10 @@ export function GrepToolView({ input, output, error }: ToolViewProps) {
           className="flex items-center gap-1 mt-2 text-blue-500 hover:text-blue-400 text-xs font-medium transition-colors"
           data-testid="show-all-button"
         >
-          <ChevronDown className={cn(
-            'h-3 w-3 transition-transform duration-150',
-            showAll && 'rotate-180'
-          )} />
-          {showAll
-            ? 'Show less'
-            : `Show all ${lines.length} results`}
+          <ChevronDown
+            className={cn('h-3 w-3 transition-transform duration-150', showAll && 'rotate-180')}
+          />
+          {showAll ? 'Show less' : `Show all ${lines.length} results`}
         </button>
       )}
     </div>

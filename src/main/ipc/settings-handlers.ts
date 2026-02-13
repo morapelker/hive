@@ -24,7 +24,10 @@ function detectEditors(): DetectedApp[] {
       name: 'Visual Studio Code',
       commands:
         currentPlatform === 'darwin'
-          ? ['/usr/local/bin/code', '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code']
+          ? [
+              '/usr/local/bin/code',
+              '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'
+            ]
           : currentPlatform === 'win32'
             ? ['code.cmd', 'code']
             : ['code']
@@ -42,7 +45,10 @@ function detectEditors(): DetectedApp[] {
       name: 'Sublime Text',
       commands:
         currentPlatform === 'darwin'
-          ? ['/usr/local/bin/subl', '/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl']
+          ? [
+              '/usr/local/bin/subl',
+              '/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl'
+            ]
           : currentPlatform === 'win32'
             ? ['subl.exe']
             : ['subl']
@@ -77,10 +83,10 @@ function detectEditors(): DetectedApp[] {
       }
       // Try which/where
       try {
-        const result = execSync(
-          currentPlatform === 'win32' ? `where ${cmd}` : `which ${cmd}`,
-          { encoding: 'utf-8', timeout: 2000 }
-        ).trim()
+        const result = execSync(currentPlatform === 'win32' ? `where ${cmd}` : `which ${cmd}`, {
+          encoding: 'utf-8',
+          timeout: 2000
+        }).trim()
         if (result) {
           available = true
           resolvedCommand = result.split('\n')[0]
@@ -109,11 +115,23 @@ function detectTerminals(): DetectedApp[] {
   const terminalDefs =
     currentPlatform === 'darwin'
       ? [
-          { id: 'terminal', name: 'Terminal', commands: ['/System/Applications/Utilities/Terminal.app'] },
+          {
+            id: 'terminal',
+            name: 'Terminal',
+            commands: ['/System/Applications/Utilities/Terminal.app']
+          },
           { id: 'iterm', name: 'iTerm2', commands: ['/Applications/iTerm.app'] },
           { id: 'warp', name: 'Warp', commands: ['/Applications/Warp.app'] },
-          { id: 'alacritty', name: 'Alacritty', commands: ['/Applications/Alacritty.app', '/usr/local/bin/alacritty'] },
-          { id: 'kitty', name: 'kitty', commands: ['/Applications/kitty.app', '/usr/local/bin/kitty'] }
+          {
+            id: 'alacritty',
+            name: 'Alacritty',
+            commands: ['/Applications/Alacritty.app', '/usr/local/bin/alacritty']
+          },
+          {
+            id: 'kitty',
+            name: 'kitty',
+            commands: ['/Applications/kitty.app', '/usr/local/bin/kitty']
+          }
         ]
       : currentPlatform === 'win32'
         ? [
@@ -137,10 +155,10 @@ function detectTerminals(): DetectedApp[] {
         break
       }
       try {
-        const result = execSync(
-          currentPlatform === 'win32' ? `where ${cmd}` : `which ${cmd}`,
-          { encoding: 'utf-8', timeout: 2000 }
-        ).trim()
+        const result = execSync(currentPlatform === 'win32' ? `where ${cmd}` : `which ${cmd}`, {
+          encoding: 'utf-8',
+          timeout: 2000
+        }).trim()
         if (result) {
           available = true
           resolvedCommand = result.split('\n')[0]
@@ -170,7 +188,10 @@ export function registerSettingsHandlers(): void {
     try {
       return detectEditors()
     } catch (error) {
-      log.error('Failed to detect editors', error instanceof Error ? error : new Error(String(error)))
+      log.error(
+        'Failed to detect editors',
+        error instanceof Error ? error : new Error(String(error))
+      )
       return []
     }
   })
@@ -180,7 +201,10 @@ export function registerSettingsHandlers(): void {
     try {
       return detectTerminals()
     } catch (error) {
-      log.error('Failed to detect terminals', error instanceof Error ? error : new Error(String(error)))
+      log.error(
+        'Failed to detect terminals',
+        error instanceof Error ? error : new Error(String(error))
+      )
       return []
     }
   })
@@ -253,7 +277,10 @@ export function registerSettingsHandlers(): void {
               spawn('open', ['-a', 'Warp', worktreePath], { detached: true })
               break
             case 'alacritty':
-              spawn('alacritty', ['--working-directory', worktreePath], { detached: true, stdio: 'ignore' })
+              spawn('alacritty', ['--working-directory', worktreePath], {
+                detached: true,
+                stdio: 'ignore'
+              })
               break
             case 'kitty':
               spawn('kitty', ['--directory', worktreePath], { detached: true, stdio: 'ignore' })
@@ -291,7 +318,10 @@ export function registerSettingsHandlers(): void {
       }
       return result
     } catch (error) {
-      log.error('Failed to get all settings', error instanceof Error ? error : new Error(String(error)))
+      log.error(
+        'Failed to get all settings',
+        error instanceof Error ? error : new Error(String(error))
+      )
       return {}
     }
   })

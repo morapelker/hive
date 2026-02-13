@@ -12,7 +12,9 @@ interface SubtaskCardProps {
 function StatusIcon({ status }: { status: 'running' | 'completed' | 'error' }) {
   switch (status) {
     case 'running':
-      return <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" data-testid="subtask-spinner" />
+      return (
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" data-testid="subtask-spinner" />
+      )
     case 'completed':
       return <Check className="h-3.5 w-3.5 text-green-500" data-testid="subtask-check" />
     case 'error':
@@ -35,7 +37,7 @@ export function SubtaskCard({ subtask }: SubtaskCardProps) {
       {/* Header */}
       <button
         type="button"
-        onClick={() => setIsExpanded(prev => !prev)}
+        onClick={() => setIsExpanded((prev) => !prev)}
         className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-muted/30 transition-colors"
         aria-expanded={isExpanded}
         data-testid="subtask-card-header"
@@ -63,13 +65,22 @@ export function SubtaskCard({ subtask }: SubtaskCardProps) {
             subtask.parts.map((part, i) => {
               if (part.type === 'text' && part.text) {
                 return (
-                  <div key={`subtask-part-${i}`} className="text-xs text-foreground leading-relaxed">
+                  <div
+                    key={`subtask-part-${i}`}
+                    className="text-xs text-foreground leading-relaxed"
+                  >
                     <MarkdownRenderer content={part.text} />
                   </div>
                 )
               }
               if (part.type === 'tool_use' && part.toolUse) {
-                return <ToolCard key={`subtask-tool-${part.toolUse.id}`} toolUse={part.toolUse} compact />
+                return (
+                  <ToolCard
+                    key={`subtask-tool-${part.toolUse.id}`}
+                    toolUse={part.toolUse}
+                    compact
+                  />
+                )
               }
               return null
             })

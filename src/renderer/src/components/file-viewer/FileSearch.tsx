@@ -15,7 +15,11 @@ interface FileSearchProps {
 
 export type { SearchMatch }
 
-export function FileSearch({ content, onMatchesChange, onClose }: FileSearchProps): React.JSX.Element {
+export function FileSearch({
+  content,
+  onMatchesChange,
+  onClose
+}: FileSearchProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [matches, setMatches] = useState<SearchMatch[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -92,8 +96,15 @@ export function FileSearch({ content, onMatchesChange, onClose }: FileSearchProp
         className="flex-1 bg-input border border-border rounded px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-ring min-w-0"
         data-testid="file-search-input"
       />
-      <span className="text-xs text-muted-foreground whitespace-nowrap" data-testid="file-search-count">
-        {matches.length > 0 ? `${currentIndex + 1} of ${matches.length}` : query ? 'No results' : ''}
+      <span
+        className="text-xs text-muted-foreground whitespace-nowrap"
+        data-testid="file-search-count"
+      >
+        {matches.length > 0
+          ? `${currentIndex + 1} of ${matches.length}`
+          : query
+            ? 'No results'
+            : ''}
       </span>
       <button
         onClick={() => goToMatch(currentIndex - 1)}

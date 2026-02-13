@@ -1,7 +1,8 @@
 import { type Command, type CommandCategory } from '@/stores/useCommandPaletteStore'
 
 // Platform detection for shortcut display
-const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
+const isMac =
+  typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
 
 // Helper to format shortcuts for display
 export function formatShortcut(key: string, modifiers: string[] = []): string {

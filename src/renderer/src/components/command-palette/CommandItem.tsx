@@ -56,7 +56,12 @@ interface CommandItemProps {
   onMouseEnter: () => void
 }
 
-export const CommandItem = memo(function CommandItem({ command, isSelected, onSelect, onMouseEnter }: CommandItemProps) {
+export const CommandItem = memo(function CommandItem({
+  command,
+  isSelected,
+  onSelect,
+  onMouseEnter
+}: CommandItemProps) {
   const Icon = command.icon ? iconMap[command.icon] : null
   const isEnabled = !command.isEnabled || command.isEnabled()
 
@@ -112,7 +117,9 @@ export const CommandItem = memo(function CommandItem({ command, isSelected, onSe
           <span
             className={cn(
               'text-xs font-mono px-1.5 py-0.5 rounded',
-              isSelected ? 'bg-accent-foreground/20 text-accent-foreground' : 'bg-muted text-muted-foreground'
+              isSelected
+                ? 'bg-accent-foreground/20 text-accent-foreground'
+                : 'bg-muted text-muted-foreground'
             )}
             data-testid={`command-shortcut-${command.id}`}
           >

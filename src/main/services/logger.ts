@@ -137,7 +137,13 @@ class LoggerService {
     }
   }
 
-  private write(level: LogLevel, component: string, message: string, data?: Record<string, unknown>, error?: Error): void {
+  private write(
+    level: LogLevel,
+    component: string,
+    message: string,
+    data?: Record<string, unknown>,
+    error?: Error
+  ): void {
     if (level < this.minLevel) return
 
     if (this.shouldRotate()) {
@@ -172,10 +178,14 @@ class LoggerService {
 
     // Also log to console in development
     if (process.env.NODE_ENV === 'development') {
-      const consoleMethod = level === LogLevel.ERROR ? console.error :
-                           level === LogLevel.WARN ? console.warn :
-                           level === LogLevel.DEBUG ? console.debug :
-                           console.log
+      const consoleMethod =
+        level === LogLevel.ERROR
+          ? console.error
+          : level === LogLevel.WARN
+            ? console.warn
+            : level === LogLevel.DEBUG
+              ? console.debug
+              : console.log
       consoleMethod(`[${entry.level}] [${component}]`, message, data || '', error || '')
     }
   }
