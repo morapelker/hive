@@ -182,32 +182,6 @@ export async function watchWorktree(worktreePath: string): Promise<void> {
         // Don't use awaitWriteFinish for .git files - they're written atomically
         depth: 3 // refs/heads/*, refs/tags/*, refs/remotes/*/*
       })
-
-      const entry = {
-        gitWatcher,
-        worktreeWatcher: null as unknown as chokidar.FSWatcher,
-        gitDebounceTimer: null,
-        worktreeDebounceTimer: null
-      }
-
-      gitWatcher.on('change', (path) => {
-        log.info('Git metadata changed', { path, worktreePath })
-        scheduleGitRefresh(entry, worktreePath)
-      })
-
-      gitWatcher.on('add', (path) => {
-        log.info('Git metadata added', { path, worktreePath })
-        scheduleGitRefresh(entry, worktreePath)
-      })
-
-      gitWatcher.on('unlink', (path) => {
-        log.info('Git metadata removed', { path, worktreePath })
-        scheduleGitRefresh(entry, worktreePath)
-      })
-
-      gitWatcher.on('error', (error) => {
-        log.error('Git watcher error', error, { worktreePath })
-      })
     }
   }
 
@@ -230,13 +204,20 @@ export async function watchWorktree(worktreePath: string): Promise<void> {
     worktreeDebounceTimer: null
   }
 
-  // If gitWatcher was created before the entry object, link it now
+  // Attach git watcher handlers after entry is initialized
   if (gitWatcher) {
-    // Re-attach handlers with the real entry reference
-    gitWatcher.removeAllListeners()
-    gitWatcher.on('change', () => scheduleGitRefresh(entry, worktreePath))
-    gitWatcher.on('add', () => scheduleGitRefresh(entry, worktreePath))
-    gitWatcher.on('unlink', () => scheduleGitRefresh(entry, worktreePath))
+    gitWatcher.on('change', (path) => {
+      log.info('Git metadata changed', { path, worktreePath })
+      scheduleGitRefresh(entry, worktreePath)
+    })
+    gitWatcher.on('add', (path) => {
+      log.info('Git metadata added', { path, worktreePath })
+      scheduleGitRefresh(entry, worktreePath)
+    })
+    gitWatcher.on('unlink', (path) => {
+      log.info('Git metadata removed', { path, worktreePath })
+      scheduleGitRefresh(entry, worktreePath)
+    })
     gitWatcher.on('error', (error) => {
       log.error('Git watcher error', error, { worktreePath })
     })
