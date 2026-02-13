@@ -5,6 +5,7 @@ import {
   History,
   Settings,
   AlertTriangle,
+  Loader2,
   GitPullRequest,
   ChevronDown
 } from 'lucide-react'
@@ -23,8 +24,34 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { QuickActions } from './QuickActions'
 import hiveLogo from '@/assets/icon.png'
+
+type ConflictFixFlow =
+  | {
+      phase: 'starting'
+      worktreePath: string
+    }
+  | {
+      phase: 'running'
+      worktreePath: string
+      sessionId: string
+      seenBusy: boolean
+    }
+  | {
+      phase: 'refreshing'
+      worktreePath: string
+    }
+
+function isConflictFixActiveStatus(status: string | null): boolean {
+  return (
+    status === 'working' ||
+    status === 'planning' ||
+    status === 'answering' ||
+    status === 'permission'
+  )
+}
 
 export function Header(): React.JSX.Element {
   const { rightSidebarCollapsed, toggleRightSidebar } = useLayoutStore()
@@ -37,6 +64,7 @@ export function Header(): React.JSX.Element {
   const updateSessionName = useSessionStore((s) => s.updateSessionName)
   const setPendingMessage = useSessionStore((s) => s.setPendingMessage)
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
+  const [conflictFixFlow, setConflictFixFlow] = useState<ConflictFixFlow | null>(null)
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId)
   const selectedWorktree = (() => {
@@ -67,6 +95,56 @@ export function Header(): React.JSX.Element {
     ? branchInfoByWorktree.get(selectedWorktree.path)
     : undefined
   const isOperating = useGitStore((state) => state.isPushing || state.isPulling)
+
+  const conflictFixSessionStatus = useWorktreeStatusStore((state) =>
+    conflictFixFlow?.phase === 'running'
+      ? (state.sessionStatuses[conflictFixFlow.sessionId]?.status ?? null)
+      : null
+  )
+
+  useEffect(() => {
+    if (!conflictFixFlow || conflictFixFlow.phase !== 'running') return
+
+    const isBusy = isConflictFixActiveStatus(conflictFixSessionStatus)
+
+    if (isBusy && !conflictFixFlow.seenBusy) {
+      setConflictFixFlow((prev) =>
+        prev && prev.phase === 'running' ? { ...prev, seenBusy: true } : prev
+      )
+      return
+    }
+
+    const shouldFinalize =
+      (conflictFixFlow.seenBusy && !isBusy) ||
+      (!conflictFixFlow.seenBusy && conflictFixSessionStatus === 'completed')
+
+    if (!shouldFinalize) return
+
+    let cancelled = false
+    const finishConflictRun = async (): Promise<void> => {
+      setConflictFixFlow((prev) =>
+        prev && prev.phase === 'running'
+          ? { phase: 'refreshing', worktreePath: prev.worktreePath }
+          : prev
+      )
+
+      try {
+        await useGitStore.getState().refreshStatuses(conflictFixFlow.worktreePath)
+      } finally {
+        if (!cancelled) {
+          setConflictFixFlow((prev) =>
+            prev?.worktreePath === conflictFixFlow.worktreePath ? null : prev
+          )
+        }
+      }
+    }
+
+    void finishConflictRun()
+
+    return () => {
+      cancelled = true
+    }
+  }, [conflictFixFlow, conflictFixSessionStatus])
 
   // Load remote branches for the PR target dropdown
   const [remoteBranches, setRemoteBranches] = useState<{ name: string }[]>([])
@@ -126,15 +204,38 @@ export function Header(): React.JSX.Element {
   }, [selectedWorktree?.path, selectedWorktreeId, prTargetBranch, branchInfo])
 
   const handleFixConflicts = async () => {
-    if (!selectedWorktreeId || !selectedProjectId) return
+    if (!selectedWorktreeId || !selectedProjectId || !selectedWorktree?.path) return
+
+    setConflictFixFlow({
+      phase: 'starting',
+      worktreePath: selectedWorktree.path
+    })
+
     const { success, session } = await createSession(selectedWorktreeId, selectedProjectId)
-    if (!success || !session) return
+    if (!success || !session) {
+      setConflictFixFlow(null)
+      return
+    }
 
     const branchName = selectedWorktree?.branch_name || 'unknown'
     await updateSessionName(session.id, `Merge Conflicts -- ${branchName}`)
     setPendingMessage(session.id, 'Fix merge conflicts')
     setActiveSession(session.id)
+
+    setConflictFixFlow({
+      phase: 'running',
+      worktreePath: selectedWorktree.path,
+      sessionId: session.id,
+      seenBusy: false
+    })
   }
+
+  const isFixConflictsLoading =
+    !!selectedWorktree?.path &&
+    !!conflictFixFlow &&
+    conflictFixFlow.worktreePath === selectedWorktree.path
+
+  const showFixConflictsButton = hasConflicts || isFixConflictsLoading
 
   return (
     <header
@@ -161,17 +262,22 @@ export function Header(): React.JSX.Element {
       <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <QuickActions />
       </div>
-      {hasConflicts && (
+      {showFixConflictsButton && (
         <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <Button
             size="sm"
             variant="destructive"
             className="h-7 text-xs font-semibold"
             onClick={handleFixConflicts}
+            disabled={isFixConflictsLoading}
             data-testid="fix-conflicts-button"
           >
-            <AlertTriangle className="h-3.5 w-3.5 mr-1" />
-            Fix conflicts
+            {isFixConflictsLoading ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+            ) : (
+              <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+            )}
+            {isFixConflictsLoading ? 'Fixing conflicts...' : 'Fix conflicts'}
           </Button>
         </div>
       )}
