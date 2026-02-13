@@ -172,40 +172,16 @@ if [[ ! -f "$CASK_FILE" ]]; then
   fatal "Cask file not found: $CASK_FILE"
 fi
 
-# Wait for release assets to be available
-info "Waiting for release assets to be available..."
+# Compute SHA256 from local build artifacts
+DIST_DIR="$PROJECT_DIR/dist"
 DMG_ARM="Hive-${NEW_VERSION}-arm64.dmg"
 DMG_X64="Hive-${NEW_VERSION}.dmg"
 
-MAX_ATTEMPTS=30
-ATTEMPT=0
-while true; do
-  ASSETS=$(gh release view "v${NEW_VERSION}" --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)
-  if echo "$ASSETS" | grep -q "$DMG_ARM" && echo "$ASSETS" | grep -q "$DMG_X64"; then
-    ok "Both DMGs are available"
-    break
-  fi
-  ATTEMPT=$((ATTEMPT + 1))
-  if [[ $ATTEMPT -ge $MAX_ATTEMPTS ]]; then
-    fatal "Timed out waiting for release assets after $((MAX_ATTEMPTS * 10))s"
-  fi
-  info "Assets not ready yet, waiting 10s... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
-  sleep 10
-done
+[[ -f "$DIST_DIR/$DMG_ARM" ]] || fatal "Build artifact not found: $DIST_DIR/$DMG_ARM"
+[[ -f "$DIST_DIR/$DMG_X64" ]] || fatal "Build artifact not found: $DIST_DIR/$DMG_X64"
 
-# Download DMGs to temp directory
-TMPDIR_RELEASE=$(mktemp -d)
-trap 'rm -rf "$TMPDIR_RELEASE"' EXIT
-
-info "Downloading DMGs for checksum..."
-gh release download "v${NEW_VERSION}" \
-  --repo "$REPO" \
-  --pattern "*.dmg" \
-  --dir "$TMPDIR_RELEASE"
-
-# Compute SHA256
-SHA_ARM=$(shasum -a 256 "$TMPDIR_RELEASE/$DMG_ARM" | awk '{print $1}')
-SHA_X64=$(shasum -a 256 "$TMPDIR_RELEASE/$DMG_X64" | awk '{print $1}')
+SHA_ARM=$(shasum -a 256 "$DIST_DIR/$DMG_ARM" | awk '{print $1}')
+SHA_X64=$(shasum -a 256 "$DIST_DIR/$DMG_X64" | awk '{print $1}')
 
 ok "SHA256 (arm64): $SHA_ARM"
 ok "SHA256 (x64):   $SHA_X64"
