@@ -12,6 +12,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
 import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
 import { useWindowFocusRefresh } from '@/hooks/useWindowFocusRefresh'
+import { useAutoUpdate } from '@/hooks/useAutoUpdate'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDialog'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -49,6 +50,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useNotificationNavigation()
   // Refresh git statuses when window regains focus
   useWindowFocusRefresh()
+  // Auto-update notifications
+  useAutoUpdate()
 
   // Check remote info on worktree selection (for PR feature)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
