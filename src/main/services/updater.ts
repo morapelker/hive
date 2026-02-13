@@ -7,7 +7,7 @@ const log = createLogger({ component: 'AutoUpdater' })
 const CHECK_INTERVAL = 4 * 60 * 60 * 1000 // 4 hours
 const INITIAL_DELAY = 10 * 1000 // 10 seconds
 
-autoUpdater.autoDownload = false
+autoUpdater.autoDownload = true
 autoUpdater.autoInstallOnAppQuit = true
 autoUpdater.logger = null
 
