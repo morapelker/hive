@@ -37,3 +37,6 @@ release/
 
 # Signing credentials
 .env.signing
+
+# Cached vendor binaries (e.g. libghostty.a)
+vendor/
