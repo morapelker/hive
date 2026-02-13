@@ -220,14 +220,25 @@ export function ChangesView({ worktreePath, onFileClick }: ChangesViewProps): Re
     (file: GitFileStatus) => {
       if (!worktreePath) return
       const isNewFile = file.status === '?' || file.status === 'A'
-      useFileViewerStore.getState().setActiveDiff({
-        worktreePath,
-        filePath: file.relativePath,
-        fileName: file.relativePath.split('/').pop() || file.relativePath,
-        staged: file.staged,
-        isUntracked: file.status === '?',
-        isNewFile
-      })
+
+      if (isNewFile) {
+        const fullPath = `${worktreePath}/${file.relativePath}`
+        const fileName = file.relativePath.split('/').pop() || file.relativePath
+        const worktreeId = useWorktreeStore.getState().selectedWorktreeId
+        if (worktreeId) {
+          useFileViewerStore.getState().openFile(fullPath, fileName, worktreeId)
+        }
+      } else {
+        useFileViewerStore.getState().setActiveDiff({
+          worktreePath,
+          filePath: file.relativePath,
+          fileName: file.relativePath.split('/').pop() || file.relativePath,
+          staged: file.staged,
+          isUntracked: file.status === '?',
+          isNewFile: false
+        })
+      }
+
       onFileClick?.(file.relativePath)
     },
     [worktreePath, onFileClick]
