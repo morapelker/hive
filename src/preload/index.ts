@@ -765,7 +765,21 @@ const gitOps = {
     worktreePath: string,
     prNumber: number
   ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('git:prMerge', worktreePath, prNumber)
+    ipcRenderer.invoke('git:prMerge', worktreePath, prNumber),
+
+  // Check if a branch has been fully merged into HEAD
+  isBranchMerged: (
+    worktreePath: string,
+    branch: string
+  ): Promise<{ success: boolean; isMerged: boolean }> =>
+    ipcRenderer.invoke('git:isBranchMerged', worktreePath, branch),
+
+  // Delete a local branch
+  deleteBranch: (
+    worktreePath: string,
+    branchName: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:deleteBranch', worktreePath, branchName)
 }
 
 const opencodeOps = {

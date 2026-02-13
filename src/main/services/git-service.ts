@@ -1127,6 +1127,46 @@ export class GitService {
   }
 
   /**
+   * Delete a local branch.
+   * Uses -D (force) to handle branches that may not be fully merged.
+   * @param branchName - The branch to delete
+   */
+  async deleteBranch(branchName: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.git.branch(['-D', branchName])
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log.error('Failed to delete branch', error instanceof Error ? error : new Error(message), {
+        branchName,
+        repoPath: this.repoPath
+      })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Check if a branch has been fully merged into HEAD.
+   * Uses `git rev-list --count HEAD..{branch}` to count commits in the branch
+   * that are not reachable from HEAD. If the count is 0, the branch is fully merged.
+   *
+   * Note: `git merge-base --is-ancestor` cannot be used here because simple-git's
+   * raw() does not throw on its non-zero exit code — it returns empty string for both cases.
+   *
+   * @param branch - Branch name to check
+   * @returns isMerged: true if branch has no commits beyond HEAD
+   */
+  async isBranchMerged(branch: string): Promise<{ success: boolean; isMerged: boolean }> {
+    try {
+      const result = await this.git.raw(['rev-list', '--count', `HEAD..${branch}`])
+      const count = parseInt(result.trim(), 10)
+      return { success: true, isMerged: count === 0 }
+    } catch {
+      return { success: true, isMerged: false }
+    }
+  }
+
+  /**
    * Get diff stats (additions/deletions per file) for all uncommitted changes.
    * Combines both staged and unstaged changes, plus untracked files.
    */

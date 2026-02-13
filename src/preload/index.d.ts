@@ -795,6 +795,16 @@ declare global {
         worktreePath: string,
         prNumber: number
       ) => Promise<{ success: boolean; error?: string }>
+      // Check if a branch has been fully merged into HEAD
+      isBranchMerged: (
+        worktreePath: string,
+        branch: string
+      ) => Promise<{ success: boolean; isMerged: boolean }>
+      // Delete a local branch
+      deleteBranch: (
+        worktreePath: string,
+        branchName: string
+      ) => Promise<{ success: boolean; error?: string }>
     }
     updaterOps: {
       checkForUpdate: () => Promise<void>

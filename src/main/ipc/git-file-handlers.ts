@@ -551,6 +551,51 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       }
     }
   )
+
+  // Check if a branch has been fully merged into the current HEAD
+  ipcMain.handle(
+    'git:isBranchMerged',
+    async (
+      _event,
+      worktreePath: string,
+      branch: string
+    ): Promise<{ success: boolean; isMerged: boolean }> => {
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.isBranchMerged(branch)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to check branch merged status',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath, branch }
+        )
+        return { success: false, isMerged: false }
+      }
+    }
+  )
+
+  // Delete a local branch
+  ipcMain.handle(
+    'git:deleteBranch',
+    async (
+      _event,
+      worktreePath: string,
+      branchName: string
+    ): Promise<{ success: boolean; error?: string }> => {
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.deleteBranch(branchName)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to delete branch', error instanceof Error ? error : new Error(message), {
+          worktreePath,
+          branchName
+        })
+        return { success: false, error: message }
+      }
+    }
+  )
 }
 
 // Export types for use in preload
