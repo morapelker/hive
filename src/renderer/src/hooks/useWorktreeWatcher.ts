@@ -57,14 +57,16 @@ export function useWorktreeWatcher(): void {
     }
 
     previousPathRef.current = worktreePath
+  }, [worktreePath])
 
-    // Cleanup on unmount
+  useEffect(() => {
     return () => {
-      if (worktreePath) {
-        window.gitOps.unwatchWorktree(worktreePath).catch(() => {
+      const currentPath = previousPathRef.current
+      if (currentPath) {
+        window.gitOps.unwatchWorktree(currentPath).catch(() => {
           // Non-critical
         })
       }
     }
-  }, [worktreePath])
+  }, [])
 }
