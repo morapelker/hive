@@ -1,21 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-// Generic API for renderer
-const api = {
-  invoke: <T = unknown>(channel: string, ...args: unknown[]): Promise<T> => {
-    return ipcRenderer.invoke(channel, ...args)
-  },
-  on: (channel: string, callback: (...args: unknown[]) => void): (() => void) => {
-    const subscription = (_event: Electron.IpcRendererEvent, ...args: unknown[]): void => {
-      callback(...args)
-    }
-    ipcRenderer.on(channel, subscription)
-    return () => {
-      ipcRenderer.removeListener(channel, subscription)
-    }
-  }
-}
-
 // Typed database API for renderer
 const db = {
   // Settings
@@ -1287,7 +1271,6 @@ const updaterOps = {
 // just add to the DOM global.
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('api', api)
     contextBridge.exposeInMainWorld('db', db)
     contextBridge.exposeInMainWorld('projectOps', projectOps)
     contextBridge.exposeInMainWorld('worktreeOps', worktreeOps)
@@ -1305,8 +1288,6 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-expect-error (define in dts)
-  window.api = api
   // @ts-expect-error (define in dts)
   window.db = db
   // @ts-expect-error (define in dts)

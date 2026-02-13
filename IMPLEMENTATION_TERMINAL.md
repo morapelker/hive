@@ -435,7 +435,7 @@ Manual:
 **Build libghostty:**
 
 ```bash
-cd /Users/mor/Documents/dev/ghostty
+cd ~/Documents/dev/ghostty
 zig build -Dapp-runtime=none -Doptimize=ReleaseFast -Dxcframework-target=native
 ```
 

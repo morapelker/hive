@@ -54,7 +54,7 @@ However, Hive currently ignores all `question.*` events entirely:
 - There is **no mechanism** to send responses back to the SDK. The only user-to-SDK communication is `prompt()` (line 756 of `opencode-service.ts`). No `question.reply()` or `question.reject()` methods exist in the service or IPC layer.
 - If a question tool call appears, it would render as a regular `tool_use` part with `name: "question"` and fall through to `TodoToolView` (the raw JSON fallback) since `"question"` is not in the `TOOL_RENDERERS` map (line 163 of `ToolCard.tsx`). There would be no interactive UI.
 
-**Reference implementation**: The OpenCode official client at `/Users/mor/Documents/dev/opencode` handles this fully. Key files:
+**Reference implementation**: The OpenCode official client at `<opencode-repo-path>` handles this fully. Key files:
 
 - `packages/opencode/src/question/index.ts` — Question namespace (data model, ask/reply/reject, events, pending state)
 - `packages/opencode/src/tool/question.ts` — QuestionTool definition (blocks until user answers)

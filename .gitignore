@@ -7,8 +7,8 @@ out/
 
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.signing.example
 
 # IDE
 .idea/
@@ -35,8 +35,18 @@ playwright-report/
 # Electron Builder
 release/
 
-# Signing credentials
-.env.signing
-
 # Cached vendor binaries (e.g. libghostty.a)
 vendor/
+
+# Database files
+*.sqlite
+*.sqlite3
+*.db
+
+# Certificates and keys
+*.pem
+*.key
+*.p12
+*.cert
+*.crt
+*.pfx

@@ -99,7 +99,7 @@ test/
 
 ### Objectives
 
-- Study the opencode CLI client at `/Users/mor/Documents/dev/opencode` to understand how undo/redo works
+- Study the opencode CLI client at `<opencode-repo-path>` to understand how undo/redo works
 - Document the exact SDK API for undo and redo (method names, parameters, return types)
 - Determine whether undo/redo triggers stream events that the renderer needs to handle
 - Understand preconditions and error cases
@@ -108,7 +108,7 @@ test/
 
 #### 1. Research the opencode CLI client
 
-Explore the codebase at `/Users/mor/Documents/dev/opencode` to find:
+Explore the codebase at `<opencode-repo-path>` to find:
 
 - How undo/redo commands are defined and invoked
 - What SDK client methods are called (`client.session.undo`, `client.session.redo`, or similar)
@@ -135,7 +135,7 @@ Create a brief summary of the API shape to guide Sessions 2 and 3. This should i
 
 ### Key Files to Explore
 
-- `/Users/mor/Documents/dev/opencode` — reference CLI client (undo/redo implementation)
+- `<opencode-repo-path>` — reference CLI client (undo/redo implementation)
 - `node_modules/@opencode-ai/sdk/dist/index.d.ts` — SDK type definitions
 - `src/main/services/opencode-service.ts` — existing SDK usage patterns in our codebase
 

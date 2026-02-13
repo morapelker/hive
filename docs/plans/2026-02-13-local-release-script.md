@@ -56,16 +56,16 @@
 
 Before writing the script, confirm these are correct (they are based on current analysis):
 
-| Fact                     | Value                                                         |
-| ------------------------ | ------------------------------------------------------------- |
-| GitHub repo              | `morapelker/hive`                                             |
-| Signing identity         | `Developer ID Application: M.A Tedooo Group LTD (SQ65AQ9V2J)` |
-| Ghostty deps release tag | `ghostty-deps-v1`                                             |
-| DMG naming (arm64)       | `Hive-{version}-arm64.dmg`                                    |
-| DMG naming (x64)         | `Hive-{version}.dmg`                                          |
-| Homebrew repo local path | `/Users/mor/Documents/dev/hive-brew`                          |
-| Homebrew cask file       | `Casks/hive.rb`                                               |
-| Default branch           | `main`                                                        |
+| Fact                     | Value                                              |
+| ------------------------ | -------------------------------------------------- |
+| GitHub repo              | `morapelker/hive`                                  |
+| Signing identity         | `Developer ID Application: Your Name (XXXXXXXXXX)` |
+| Ghostty deps release tag | `ghostty-deps-v1`                                  |
+| DMG naming (arm64)       | `Hive-{version}-arm64.dmg`                         |
+| DMG naming (x64)         | `Hive-{version}.dmg`                               |
+| Homebrew repo local path | `~/Documents/dev/hive-brew`                        |
+| Homebrew cask file       | `Casks/hive.rb`                                    |
+| Default branch           | `main`                                             |
 
 ---
 
@@ -95,7 +95,7 @@ Check if `.env.signing` is already in `.gitignore`. If not, append it.
 # Apple notarization (required for signed releases)
 export APPLE_ID="your-apple-id@example.com"
 export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
-export APPLE_TEAM_ID="SQ65AQ9V2J"
+export APPLE_TEAM_ID="XXXXXXXXXX"
 
 # Code signing (optional — electron-builder auto-discovers from keychain)
 # Only set these if you need to override keychain auto-discovery:
@@ -140,7 +140,7 @@ fatal() { err "$1"; exit 1; }
 # ── Constants ─────────────────────────────────────────────────────
 REPO="morapelker/hive"
 GHOSTTY_DEPS_TAG="ghostty-deps-v1"
-HOMEBREW_REPO="/Users/mor/Documents/dev/hive-brew"
+HOMEBREW_REPO="$HOME/Documents/dev/hive-brew"
 HOMEBREW_CASK="Casks/hive.rb"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -556,7 +556,7 @@ The cask file has two `sha256` lines that need different values. Doing this with
 
 ### What about `CSC_LINK` / `CSC_KEY_PASSWORD`?
 
-Not needed locally. `electron-builder` auto-discovers the signing identity from the macOS keychain. The CI needs `CSC_LINK` because it doesn't have a persistent keychain — it imports a `.p12` cert at runtime. Locally, you already have `Developer ID Application: M.A Tedooo Group LTD (SQ65AQ9V2J)` installed.
+Not needed locally. `electron-builder` auto-discovers the signing identity from the macOS keychain. The CI needs `CSC_LINK` because it doesn't have a persistent keychain — it imports a `.p12` cert at runtime. Locally, you already have `Developer ID Application: Your Name (XXXXXXXXXX)` installed.
 
 ### Error recovery
 

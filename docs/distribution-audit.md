@@ -1,7 +1,7 @@
 # Distribution Audit — Machine-Specific Dependencies
 
 > Audit date: 2026-02-12
-> Audited for hardcoded references to `/Users/mor` and other machine-specific paths.
+> Audited for hardcoded references to user home directories and other machine-specific paths.
 
 ---
 
@@ -13,17 +13,17 @@
 When the app first launches and the `language_icons` setting doesn't exist in the DB, it seeds 11 default language icon paths that all point to files on a specific developer's Desktop:
 
 ```ts
-python: '/Users/mor/Desktop/python.svg',
-rust: '/Users/mor/Desktop/rustacean-orig-noshadow.svg',
-go: '/Users/mor/Desktop/golang.png',
-typescript: '/Users/mor/Desktop/typescript.svg',
-swift: '/Users/mor/Desktop/swift.svg',
-kotlin: '/Users/mor/Desktop/kotlin.svg',
-csharp: '/Users/mor/Desktop/csharp.svg',
-cpp: '/Users/mor/Desktop/c-plusplus.svg',
-c: '/Users/mor/Desktop/c.svg',
-javascript: '/Users/mor/Desktop/javascript.svg',
-java: '/Users/mor/Desktop/java.svg'
+python: '~/Desktop/python.svg',
+rust: '~/Desktop/rustacean-orig-noshadow.svg',
+go: '~/Desktop/golang.png',
+typescript: '~/Desktop/typescript.svg',
+swift: '~/Desktop/swift.svg',
+kotlin: '~/Desktop/kotlin.svg',
+csharp: '~/Desktop/csharp.svg',
+cpp: '~/Desktop/c-plusplus.svg',
+c: '~/Desktop/c.svg',
+javascript: '~/Desktop/javascript.svg',
+java: '~/Desktop/java.svg'
 ```
 
 **Impact:**
@@ -50,7 +50,7 @@ The native Node addon build configuration references a static library via an abs
 
 ```json
 "libraries": [
-  "/Users/mor/Documents/dev/ghostty/macos/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty.a"
+  "~/Documents/dev/ghostty/macos/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty.a"
 ]
 ```
 
@@ -88,7 +88,7 @@ The native Node addon build configuration references a static library via an abs
 A test references an app icon PNG via an absolute path:
 
 ```ts
-const sourcePath = '/Users/mor/Desktop/appicon.png'
+const sourcePath = '~/Desktop/appicon.png'
 ```
 
 The test does guard itself:
@@ -136,9 +136,9 @@ Remove the `existsSync` guard so the test actually fails if the fixture is missi
 **Description:**
 Multiple planning and implementation docs reference absolute paths on the developer's machine:
 
-- `/Users/mor/Documents/dev/opencode` — reference OpenCode CLI client
-- `/Users/mor/Desktop/appicon.png` — source app icon
-- `/Users/mor/Documents/dev/ghostty` — Ghostty source directory
+- `~/Documents/dev/opencode` — reference OpenCode CLI client
+- `~/Desktop/appicon.png` — source app icon
+- `~/Documents/dev/ghostty` — Ghostty source directory
 
 **Impact:**
 No runtime impact. These are internal planning documents. However, if the repo is open-sourced or shared with contributors, the paths are confusing and useless.
@@ -147,9 +147,9 @@ No runtime impact. These are internal planning documents. However, if the repo i
 
 Replace all absolute paths with generic placeholders:
 
-- `/Users/mor/Documents/dev/opencode` → `<opencode-repo>` or a GitHub URL if the repo is public
-- `/Users/mor/Desktop/appicon.png` → `resources/appicon.png` (after bundling it)
-- `/Users/mor/Documents/dev/ghostty` → `<ghostty-source>` or a reference to the Ghostty build docs
+- `~/Documents/dev/opencode` → `<opencode-repo>` or a GitHub URL if the repo is public
+- `~/Desktop/appicon.png` → `resources/appicon.png` (after bundling it)
+- `~/Documents/dev/ghostty` → `<ghostty-source>` or a reference to the Ghostty build docs
 
 This is low priority — do it as part of a general docs cleanup pass before open-sourcing.
 

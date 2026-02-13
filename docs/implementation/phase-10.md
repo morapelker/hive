@@ -410,7 +410,7 @@ const [sending, setSending] = useState(false)
 
 Styling should follow the existing tool card patterns — use `bg-zinc-900/50` container, `border border-border`, lucide icons, consistent text sizes.
 
-Reference: `/Users/mor/Documents/dev/opencode` — see `packages/ui/src/components/message-part.tsx` (QuestionPrompt component) and `packages/app/src/components/question-dock.tsx` (QuestionDock component) for the OpenCode client's implementation.
+Reference: `<opencode-repo-path>` — see `packages/ui/src/components/message-part.tsx` (QuestionPrompt component) and `packages/app/src/components/question-dock.tsx` (QuestionDock component) for the OpenCode client's implementation.
 
 #### 2. Implement option rendering
 
@@ -1732,7 +1732,7 @@ Per PRD Phase 10:
 
 ### Reference Implementation
 
-The interactive question feature references the OpenCode official client at `/Users/mor/Documents/dev/opencode`. Key files for implementers:
+The interactive question feature references the OpenCode official client at `<opencode-repo-path>`. Key files for implementers:
 
 - `packages/opencode/src/question/index.ts` — Data model, ask/reply/reject, events
 - `packages/opencode/src/tool/question.ts` — Tool definition (blocks until answered)

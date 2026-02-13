@@ -83,7 +83,7 @@ describe('Session 8: App Icon', () => {
   })
 
   test('source icon is a valid PNG', () => {
-    const sourcePath = '/Users/mor/Desktop/appicon.png'
+    const sourcePath = '/tmp/appicon-test.png'
     if (!existsSync(sourcePath)) {
       // Source icon may not be present in CI
       return

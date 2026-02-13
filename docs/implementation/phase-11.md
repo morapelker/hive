@@ -658,13 +658,13 @@ getWorktreeBySessionId(sessionId: string): Worktree | undefined {
 In the renderer, set up a listener (in `useWorktreeStore.ts` or in a global listener hook) for the `worktree:branchRenamed` event:
 
 ```typescript
-window.api?.on?.('worktree:branchRenamed', (_event, data) => {
+window.worktreeOps?.onBranchRenamed?.((data) => {
   const { worktreeId, newBranch } = data
   useWorktreeStore.getState().updateWorktreeBranch(worktreeId, newBranch)
 })
 ```
 
-If there's no existing `window.api.on` mechanism for custom events, use the preload's `ipcRenderer.on` pattern similar to how `onStream` works.
+Use the preload's typed namespace pattern similar to how `onStream` works.
 
 #### 4. Import dependencies in opencode-service
 

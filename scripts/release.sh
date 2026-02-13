@@ -17,7 +17,7 @@ fatal() { err "$1"; exit 1; }
 # ── Constants ─────────────────────────────────────────────────────
 REPO="morapelker/hive"
 GHOSTTY_DEPS_TAG="ghostty-deps-v1"
-HOMEBREW_REPO="/Users/mor/Documents/dev/hive-brew"
+HOMEBREW_REPO="${HOMEBREW_REPO:-$HOME/Documents/dev/hive-brew}"
 HOMEBREW_CASK="Casks/hive.rb"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"

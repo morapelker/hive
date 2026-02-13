@@ -40,7 +40,7 @@ When the user types `/`, `showSlashCommands` is set to `true` (`SessionView.tsx`
 
 When a slash command is sent, `handleSend` (`SessionView.tsx`, lines 1746-1831) detects the `/` prefix, finds the matching command in `slashCommands`, optionally switches mode based on the command's `agent` field, and calls `window.opencodeOps.command()` to execute it through the SDK's command endpoint.
 
-There is currently no concept of "built-in" commands that the app handles locally without going through the SDK command API. The `/undo` and `/redo` operations do not exist as commands. OpenCode's CLI client (reference implementation at `/Users/mor/Documents/dev/opencode`) implements undo/redo as first-class operations that interact with the session's message history, reverting the last assistant turn or re-applying a reverted turn.
+There is currently no concept of "built-in" commands that the app handles locally without going through the SDK command API. The `/undo` and `/redo` operations do not exist as commands. OpenCode's CLI client (reference implementation at `<opencode-repo-path>`) implements undo/redo as first-class operations that interact with the session's message history, reverting the last assistant turn or re-applying a reverted turn.
 
 #### 1.2 New Design
 
@@ -78,7 +78,7 @@ Built-in commands vs SDK commands:
   3. On failure: show error toast (e.g. "Nothing to redo")
 ```
 
-**Research reference:** The opencode CLI client at `/Users/mor/Documents/dev/opencode` contains the reference implementation for undo/redo. The implementing agent should study how it invokes the SDK's undo/redo endpoints, what parameters are required (session ID, directory), and what the expected response shape is. Key areas to explore in that codebase:
+**Research reference:** The opencode CLI client at `<opencode-repo-path>` contains the reference implementation for undo/redo. The implementing agent should study how it invokes the SDK's undo/redo endpoints, what parameters are required (session ID, directory), and what the expected response shape is. Key areas to explore in that codebase:
 
 - How the CLI defines undo/redo commands
 - What SDK client methods are called (likely `client.session.undo` / `client.session.redo` or similar)
@@ -258,7 +258,7 @@ redo(worktreePath: string, sessionId: string): Promise<{ success: boolean; error
 
 #### 1.5 Research Required
 
-Before implementation, the agent must study the opencode CLI client at `/Users/mor/Documents/dev/opencode` to understand:
+Before implementation, the agent must study the opencode CLI client at `<opencode-repo-path>` to understand:
 
 1. The exact SDK client API for undo/redo (method names, parameters, return types)
 2. Whether undo/redo triggers any stream events that need to be handled (e.g., `session.status`, `message.updated`)

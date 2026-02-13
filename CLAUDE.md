@@ -48,7 +48,7 @@ All renderer↔main communication goes through the preload layer via typed IPC. 
 
 ### Preload (`src/preload/`)
 
-- **`index.ts`** — Exposes typed APIs to renderer window: `window.db`, `window.projectOps`, `window.worktreeOps`, `window.opencodeOps`, `window.gitOps`, `window.fileTreeOps`, `window.settingsOps`, `window.fileOps`, `window.scriptOps`, `window.systemOps`, `window.loggingOps`, `window.api`.
+- **`index.ts`** — Exposes typed APIs to renderer window: `window.db`, `window.projectOps`, `window.worktreeOps`, `window.opencodeOps`, `window.gitOps`, `window.fileTreeOps`, `window.settingsOps`, `window.fileOps`, `window.scriptOps`, `window.systemOps`, `window.loggingOps`.
 - **`index.d.ts`** — Global type declarations for all window APIs and database entities (Project, Worktree, Session, SessionMessage, Setting). This is the single source of truth for shared types between processes.
 
 ### Renderer (`src/renderer/src/`)
