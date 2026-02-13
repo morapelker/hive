@@ -790,6 +790,11 @@ declare global {
         files?: GitDiffStatFile[]
         error?: string
       }>
+      // Merge a PR on GitHub via gh CLI and sync the local target branch
+      prMerge: (
+        worktreePath: string,
+        prNumber: number
+      ) => Promise<{ success: boolean; error?: string }>
     }
     updaterOps: {
       checkForUpdate: () => Promise<void>
