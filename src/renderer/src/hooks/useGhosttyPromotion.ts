@@ -1,7 +1,8 @@
 import { useEffect, useRef, createElement } from 'react'
-import { Sparkles } from 'lucide-react'
+import { toast as sonnerToast } from 'sonner'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { toast } from '@/lib/toast'
+import { GhosttyPromoToast } from '@/components/toasts/GhosttyPromoToast'
 
 /**
  * Shows a promotional toast when Ghostty native terminal is available
@@ -31,25 +32,22 @@ export function useGhosttyPromotion(terminalTabVisible: boolean): void {
 
         shownRef.current = true
 
-        toastId.current = toast.info('Ghostty native terminal is available', {
-          description: 'Get Metal-accelerated rendering with your Ghostty config',
-          duration: Infinity,
-          icon: createElement(Sparkles, { className: 'h-4 w-4 text-blue-500' }),
-          action: {
-            label: 'Activate',
-            onClick: () => {
-              useSettingsStore.getState().updateSetting('embeddedTerminalBackend', 'ghostty')
-              toast.success('Ghostty terminal activated')
-            }
-          },
-          cancel: {
-            label: "Don't show again",
-            onClick: () => {
-              useSettingsStore.getState().updateSetting('ghosttyPromotionDismissed', true)
-              toast.info('You can always enable Ghostty in Settings > Terminal')
-            }
-          }
-        })
+        toastId.current = sonnerToast.custom(
+          (id) =>
+            createElement(GhosttyPromoToast, {
+              onActivate: () => {
+                useSettingsStore.getState().updateSetting('embeddedTerminalBackend', 'ghostty')
+                sonnerToast.dismiss(id)
+                toast.success('Ghostty terminal activated')
+              },
+              onDismiss: () => {
+                useSettingsStore.getState().updateSetting('ghosttyPromotionDismissed', true)
+                sonnerToast.dismiss(id)
+                toast.info('You can always enable Ghostty in Settings > Terminal')
+              }
+            }),
+          { duration: Infinity }
+        )
       } catch {
         // Ghostty check failed, silently skip promotion
       }
