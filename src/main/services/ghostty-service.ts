@@ -17,7 +17,15 @@ interface GhosttyAddon {
   ghosttySetSize(surfaceId: number, width: number, height: number): void
   ghosttyKeyEvent(
     surfaceId: number,
-    event: { action: number; key: number; mods: number; text?: string }
+    event: {
+      action: number
+      keycode: number
+      mods: number
+      consumedMods?: number
+      text?: string
+      unshiftedCodepoint?: number
+      composing?: boolean
+    }
   ): boolean
   ghosttyMouseButton(surfaceId: number, state: number, button: number, mods: number): void
   ghosttyMousePos(surfaceId: number, x: number, y: number, mods: number): void
@@ -36,9 +44,12 @@ export interface GhosttyRect {
 
 export interface GhosttyKeyEvent {
   action: number // 0 = release, 1 = press, 2 = repeat
-  key: number // ghostty_input_key_e value
+  keycode: number // native platform keycode (macOS virtual keycode)
   mods: number // ghostty_input_mods_e bitmask
+  consumedMods?: number
   text?: string
+  unshiftedCodepoint?: number
+  composing?: boolean
 }
 
 export interface GhosttyCreateSurfaceOpts {

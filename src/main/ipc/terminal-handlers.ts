@@ -194,7 +194,15 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
     (
       _event,
       worktreeId: string,
-      keyEvent: { action: number; key: number; mods: number; text?: string }
+      keyEvent: {
+        action: number
+        keycode: number
+        mods: number
+        consumedMods?: number
+        text?: string
+        unshiftedCodepoint?: number
+        composing?: boolean
+      }
     ) => {
       return ghosttyService.keyEvent(worktreeId, keyEvent)
     }

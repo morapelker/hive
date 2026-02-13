@@ -1162,7 +1162,15 @@ const terminalOps = {
 
   ghosttyKeyEvent: (
     worktreeId: string,
-    event: { action: number; key: number; mods: number; text?: string }
+    event: {
+      action: number
+      keycode: number
+      mods: number
+      consumedMods?: number
+      text?: string
+      unshiftedCodepoint?: number
+      composing?: boolean
+    }
   ): Promise<boolean> => ipcRenderer.invoke('terminal:ghostty:keyEvent', worktreeId, event),
 
   ghosttyMouseButton: (
