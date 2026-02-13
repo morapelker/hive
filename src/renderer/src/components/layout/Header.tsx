@@ -24,6 +24,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { QuickActions } from './QuickActions'
+import { usePRDetection } from '@/hooks/usePRDetection'
 import hiveLogo from '@/assets/icon.png'
 
 export function Header(): React.JSX.Element {
@@ -37,6 +38,9 @@ export function Header(): React.JSX.Element {
   const updateSessionName = useSessionStore((s) => s.updateSessionName)
   const setPendingMessage = useSessionStore((s) => s.setPendingMessage)
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
+
+  // Monitor PR session stream events for PR URL detection
+  usePRDetection(selectedWorktreeId)
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId)
   const selectedWorktree = (() => {

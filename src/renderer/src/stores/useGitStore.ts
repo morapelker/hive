@@ -28,6 +28,14 @@ interface RemoteInfo {
   url: string | null
 }
 
+interface PRInfo {
+  state: 'none' | 'creating' | 'created' | 'merged'
+  prNumber?: number
+  prUrl?: string
+  targetBranch?: string
+  sessionId?: string
+}
+
 interface GitStoreState {
   // Data - keyed by worktree path
   fileStatusesByWorktree: Map<string, GitFileStatus[]>
@@ -44,6 +52,9 @@ interface GitStoreState {
   // Remote info - keyed by worktree ID
   remoteInfo: Map<string, RemoteInfo>
   prTargetBranch: Map<string, string>
+
+  // PR lifecycle - keyed by worktree ID
+  prInfo: Map<string, PRInfo>
 
   // Cross-worktree merge default - keyed by project ID
   defaultMergeBranch: Map<string, string>
@@ -69,6 +80,9 @@ interface GitStoreState {
   // Remote info actions
   checkRemoteInfo: (worktreeId: string, worktreePath: string) => Promise<void>
   setPrTargetBranch: (worktreeId: string, branch: string) => void
+
+  // PR lifecycle actions
+  setPrState: (worktreeId: string, info: PRInfo) => void
 
   // Cross-worktree merge default actions
   setDefaultMergeBranch: (projectId: string, branchName: string) => void
@@ -108,6 +122,9 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Remote info
   remoteInfo: new Map(),
   prTargetBranch: new Map(),
+
+  // PR lifecycle
+  prInfo: new Map(),
 
   // Cross-worktree merge default
   defaultMergeBranch: new Map(),
@@ -342,6 +359,15 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
     }
   },
 
+  // Set PR lifecycle state for a worktree
+  setPrState: (worktreeId: string, info: PRInfo) => {
+    set((state) => {
+      const newMap = new Map(state.prInfo)
+      newMap.set(worktreeId, info)
+      return { prInfo: newMap }
+    })
+  },
+
   // Set PR target branch for a worktree
   setPrTargetBranch: (worktreeId: string, branch: string) => {
     set((state) => {
@@ -430,4 +456,4 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
 }))
 
 // Export types
-export type { GitStatusCode, GitFileStatus, GitBranchInfo, RemoteInfo }
+export type { GitStatusCode, GitFileStatus, GitBranchInfo, RemoteInfo, PRInfo }
