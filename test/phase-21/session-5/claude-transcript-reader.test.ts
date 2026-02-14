@@ -141,7 +141,7 @@ describe('claude-transcript-reader', () => {
         }
       })
 
-      const result = translateEntry(entry) as any
+      const result = translateEntry(entry, 0) as any
       expect(result).not.toBeNull()
       expect(result.id).toBe('user-uuid-1')
       expect(result.role).toBe('user')
@@ -169,7 +169,7 @@ describe('claude-transcript-reader', () => {
         }
       })
 
-      const result = translateEntry(entry) as any
+      const result = translateEntry(entry, 0) as any
       expect(result).not.toBeNull()
       expect(result.parts).toHaveLength(1)
 
@@ -184,12 +184,25 @@ describe('claude-transcript-reader', () => {
 
     it('provides default values for missing tool_use fields', () => {
       const block: ClaudeContentBlock = { type: 'tool_use' }
-      const result = translateContentBlock(block, 5) as any
+      const result = translateContentBlock(block, 5, '2026-02-14T10:00:01.000Z') as any
 
       expect(result.toolUse.id).toBe('tool-5')
       expect(result.toolUse.name).toBe('Unknown')
       expect(result.toolUse.input).toEqual({})
       expect(result.toolUse.status).toBe('success')
+      expect(result.toolUse.startTime).toBe(new Date('2026-02-14T10:00:01.000Z').getTime())
+    })
+
+    it('uses 0 as startTime when timestamp is undefined', () => {
+      const block: ClaudeContentBlock = { type: 'tool_use' }
+      const result = translateContentBlock(block, 0, undefined) as any
+      expect(result.toolUse.startTime).toBe(0)
+    })
+
+    it('uses 0 as startTime when timestamp is not parseable', () => {
+      const block: ClaudeContentBlock = { type: 'tool_use' }
+      const result = translateContentBlock(block, 0, 'not-a-date') as any
+      expect(result.toolUse.startTime).toBe(0)
     })
   })
 
@@ -206,7 +219,7 @@ describe('claude-transcript-reader', () => {
         }
       })
 
-      const result = translateEntry(entry) as any
+      const result = translateEntry(entry, 0) as any
       expect(result.parts).toHaveLength(2)
       expect(result.parts[0]).toEqual({
         type: 'reasoning',
@@ -217,7 +230,7 @@ describe('claude-transcript-reader', () => {
 
     it('skips thinking blocks with non-string thinking field', () => {
       const block: ClaudeContentBlock = { type: 'thinking' }
-      const result = translateContentBlock(block, 0)
+      const result = translateContentBlock(block, 0, undefined)
       expect(result).toBeNull()
     })
   })
@@ -274,7 +287,7 @@ describe('claude-transcript-reader', () => {
         message: { role: 'user', content: [] }
       })
 
-      const result = translateEntry(entry) as any
+      const result = translateEntry(entry, 0) as any
       expect(result).not.toBeNull()
       expect(result.content).toBe('')
       expect(result.parts).toEqual([])
@@ -288,7 +301,7 @@ describe('claude-transcript-reader', () => {
         message: { role: 'user' }
       }
 
-      const result = translateEntry(entry) as any
+      const result = translateEntry(entry, 1) as any
       expect(result).not.toBeNull()
       expect(result.content).toBe('')
       expect(result.parts).toEqual([])
@@ -302,7 +315,7 @@ describe('claude-transcript-reader', () => {
         message: { role: 'user', content: 'plain string' as any }
       }
 
-      const result = translateEntry(entry) as any
+      const result = translateEntry(entry, 2) as any
       expect(result).not.toBeNull()
       expect(result.content).toBe('plain string')
       expect(result.parts).toEqual([])
@@ -322,9 +335,18 @@ describe('claude-transcript-reader', () => {
         }
       })
 
-      const result = translateEntry(entry) as any
+      const result = translateEntry(entry, 0) as any
       expect(result.parts).toHaveLength(1)
       expect(result.parts[0].type).toBe('text')
+    })
+  })
+
+  // Fallback ID uses index
+  describe('fallback ID', () => {
+    it('uses entry-${index} when uuid is missing', () => {
+      const entry = makeUserEntry({ uuid: undefined })
+      const result = translateEntry(entry, 7) as any
+      expect(result.id).toBe('entry-7')
     })
   })
 
@@ -336,14 +358,14 @@ describe('claude-transcript-reader', () => {
         timestamp: '2026-06-15T12:30:00.000Z'
       })
 
-      const result = translateEntry(entry) as any
+      const result = translateEntry(entry, 0) as any
       expect(result.id).toBe('my-unique-id')
       expect(result.timestamp).toBe('2026-06-15T12:30:00.000Z')
     })
 
     it('uses message.role from the entry', () => {
       const entry = makeAssistantEntry()
-      const result = translateEntry(entry) as any
+      const result = translateEntry(entry, 1) as any
       expect(result.role).toBe('assistant')
     })
   })

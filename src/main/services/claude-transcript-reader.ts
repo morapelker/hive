@@ -45,9 +45,16 @@ function extractTextFromContent(content: ClaudeContentBlock[] | string | undefin
     .join('')
 }
 
+function parseTimestamp(timestamp: string | undefined): number {
+  if (!timestamp) return 0
+  const ms = new Date(timestamp).getTime()
+  return Number.isNaN(ms) ? 0 : ms
+}
+
 function translateContentBlock(
   block: ClaudeContentBlock,
-  index: number
+  index: number,
+  timestamp: string | undefined
 ): Record<string, unknown> | null {
   switch (block.type) {
     case 'text':
@@ -61,7 +68,7 @@ function translateContentBlock(
           name: block.name ?? 'Unknown',
           input: block.input ?? {},
           status: 'success',
-          startTime: Date.now()
+          startTime: parseTimestamp(timestamp)
         }
       }
 
@@ -76,17 +83,17 @@ function translateContentBlock(
   }
 }
 
-function translateEntry(entry: ClaudeJsonlEntry): Record<string, unknown> | null {
+function translateEntry(entry: ClaudeJsonlEntry, index: number): Record<string, unknown> | null {
   if (entry.type !== 'user' && entry.type !== 'assistant') return null
   if (entry.isSidechain === true) return null
 
   const content = Array.isArray(entry.message?.content) ? entry.message.content : []
   const parts = content
-    .map((block, i) => translateContentBlock(block, i))
+    .map((block, i) => translateContentBlock(block, i, entry.timestamp))
     .filter((p): p is Record<string, unknown> => p !== null)
 
   return {
-    id: entry.uuid ?? `entry-${Date.now()}`,
+    id: entry.uuid ?? `entry-${index}`,
     role: entry.message?.role ?? entry.type,
     timestamp: entry.timestamp ?? new Date(0).toISOString(),
     content: extractTextFromContent(entry.message?.content),
@@ -133,7 +140,7 @@ export async function readClaudeTranscript(
       continue
     }
 
-    const translated = translateEntry(entry)
+    const translated = translateEntry(entry, messages.length)
     if (translated) {
       messages.push(translated)
     }
