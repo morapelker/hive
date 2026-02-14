@@ -287,6 +287,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([])
   const [showSlashCommands, setShowSlashCommands] = useState(false)
   const [revertMessageID, setRevertMessageID] = useState<string | null>(null)
+  const [forkingMessageId, setForkingMessageId] = useState<string | null>(null)
   const revertDiffRef = useRef<string | null>(null)
 
   const allSlashCommands = useMemo(() => {
@@ -1987,6 +1988,80 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     return true
   }, [worktreePath, opencodeSessionId])
 
+  const handleForkFromAssistantMessage = useCallback(
+    async (message: OpenCodeMessage) => {
+      if (forkingMessageId) return
+
+      if (!worktreePath || !opencodeSessionId) {
+        toast.error('Session is not ready to fork yet')
+        return
+      }
+
+      const sourceSession = sessionRecord ?? (await window.db.session.get(sessionId))
+      if (!sourceSession) {
+        toast.error('Session is not ready to fork yet')
+        return
+      }
+
+      const targetWorktreeId = worktreeId ?? sourceSession.worktree_id
+      if (!targetWorktreeId) {
+        toast.error('Session has no worktree to fork into')
+        return
+      }
+
+      const messageIndex = messages.findIndex((candidate) => candidate.id === message.id)
+      if (messageIndex === -1) {
+        toast.error('Could not locate the selected message')
+        return
+      }
+
+      const cutoffMessage = messages
+        .slice(messageIndex + 1)
+        .find((candidate) => !candidate.id.startsWith('local-'))
+
+      setForkingMessageId(message.id)
+
+      try {
+        const forkResult = await window.opencodeOps.fork(
+          worktreePath,
+          opencodeSessionId,
+          cutoffMessage?.id
+        )
+
+        if (!forkResult.success || !forkResult.sessionId) {
+          throw new Error(forkResult.error || 'Failed to fork session')
+        }
+
+        const fallbackForkName = sourceSession.name ? `${sourceSession.name} (fork)` : null
+        const forkedSession = await window.db.session.create({
+          worktree_id: targetWorktreeId,
+          project_id: sourceSession.project_id,
+          name: fallbackForkName,
+          opencode_session_id: forkResult.sessionId,
+          model_provider_id: sourceSession.model_provider_id,
+          model_id: sourceSession.model_id,
+          model_variant: sourceSession.model_variant
+        })
+
+        await useSessionStore.getState().loadSessions(targetWorktreeId, sourceSession.project_id)
+        useSessionStore.getState().setActiveSession(forkedSession.id)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to fork session')
+      } finally {
+        setForkingMessageId(null)
+      }
+    },
+    [
+      forkingMessageId,
+      messages,
+      opencodeSessionId,
+      sessionId,
+      sessionRecord,
+      worktreeId,
+      worktreePath
+    ]
+  )
+
   // Handle send message
   const handleSend = useCallback(
     async (overrideValue?: string) => {
@@ -2664,7 +2739,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           ) : (
             <div className="py-4">
               {visibleMessages.map((message) => (
-                <MessageRenderer key={message.id} message={message} cwd={worktreePath} />
+                <MessageRenderer
+                  key={message.id}
+                  message={message}
+                  cwd={worktreePath}
+                  onForkAssistantMessage={handleForkFromAssistantMessage}
+                  forkDisabled={forkingMessageId !== null && forkingMessageId !== message.id}
+                  isForking={forkingMessageId === message.id}
+                />
               ))}
               {/* Revert banner — shows when messages have been undone */}
               {revertMessageID && revertedUserCount > 0 && (
@@ -2736,6 +2818,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   }}
                   isStreaming={isStreaming}
                   cwd={worktreePath}
+                  onForkAssistantMessage={handleForkFromAssistantMessage}
+                  forkDisabled={true}
                 />
               )}
               {/* Typing indicator — shows while busy unless the blinking cursor is visible */}

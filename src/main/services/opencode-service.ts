@@ -1376,6 +1376,30 @@ class OpenCodeService {
   }
 
   /**
+   * Fork an existing OpenCode session at an optional message boundary.
+   */
+  async forkSession(
+    worktreePath: string,
+    opencodeSessionId: string,
+    messageId?: string
+  ): Promise<{ sessionId: string }> {
+    const instance = await this.getOrCreateInstance()
+
+    const result = await instance.client.session.fork({
+      path: { id: opencodeSessionId },
+      query: { directory: worktreePath },
+      body: messageId ? { messageID: messageId } : undefined
+    })
+
+    const forkedSessionId = asString(asRecord(result.data)?.id)
+    if (!forkedSessionId) {
+      throw new Error('Fork succeeded but no session id returned')
+    }
+
+    return { sessionId: forkedSessionId }
+  }
+
+  /**
    * Cleanup the OpenCode instance
    */
   async cleanup(): Promise<void> {
