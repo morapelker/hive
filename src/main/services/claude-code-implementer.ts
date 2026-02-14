@@ -91,7 +91,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }
     this.sessions.set(key, state)
 
-    log.info('Reconnected (deferred)', { worktreePath, agentSessionId, hiveSessionId })
+    log.info('Reconnected (restored from DB)', { worktreePath, agentSessionId, hiveSessionId })
     return { success: true, sessionStatus: 'idle', revertMessageID: null }
   }
 

@@ -100,20 +100,21 @@ Make Claude session creation and resume fully real and restart-safe.
 
 ### Tasks
 
-- [ ] Implement `connect` with real SDK session creation and stable mapping to Hive session ID.
-- [ ] Implement `reconnect` using persisted agent session ID from DB + worktree path.
-- [ ] Implement `disconnect` and `cleanup` to close SDK resources and detach subscriptions safely.
-- [ ] Ensure reconnect behavior remains correct after app restart with persisted DB session rows.
+- [x] Implement `connect` with real SDK session creation and stable mapping to Hive session ID.
+- [x] Implement `reconnect` using persisted agent session ID from DB + worktree path.
+- [x] Implement `disconnect` and `cleanup` to close SDK resources and detach subscriptions safely.
+- [x] Ensure reconnect behavior remains correct after app restart with persisted DB session rows.
 
 ### Tests
 
-- [ ] Add lifecycle tests for connect -> disconnect -> reconnect using mocked SDK responses.
-- [ ] Add integration-style main-process tests for persisted session ID resume path.
+- [x] Add lifecycle tests for connect -> disconnect -> reconnect using mocked SDK responses.
+  - `test/phase-21/session-3/claude-lifecycle.test.ts` — 32 tests, all passing
+- [x] Add integration-style main-process tests for persisted session ID resume path.
 
 ### Definition of Done
 
-- Claude sessions reconnect successfully after simulated app restart.
-- No leaked subscriptions/timers/handles after disconnect or global cleanup.
+- [x] Claude sessions reconnect successfully after simulated app restart.
+- [x] No leaked subscriptions/timers/handles after disconnect or global cleanup.
 
 ---
 
