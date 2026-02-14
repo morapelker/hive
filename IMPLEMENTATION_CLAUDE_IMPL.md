@@ -70,20 +70,20 @@ Create the real Claude SDK client wrapper and replace mock-only internals with a
 
 ### Tasks
 
-- [ ] Add Claude SDK dependency and typed wrapper module(s) in `src/main/services/`.
-- [ ] Introduce explicit adapter layer in `src/main/services/claude-code-implementer.ts` for:
+- [x] Add Claude SDK dependency and typed wrapper module(s) in `src/main/services/`.
+- [x] Introduce explicit adapter layer in `src/main/services/claude-code-implementer.ts` for:
   - client init
   - session lifecycle calls
   - event subscription lifecycle
   - model lookup
-- [ ] Replace mock transcript directory logic (`~/.hive/claude-code-mock/transcripts`) with SDK-backed reads/writes.
-- [ ] Replace mock maps/timers with runtime state needed only for active subscriptions and cancellation.
-- [ ] Keep structured logging parity with `opencode-service`.
+- [x] Replace mock transcript directory logic (`~/.hive/claude-code-mock/transcripts`) with SDK-backed reads/writes.
+- [x] Replace mock maps/timers with runtime state needed only for active subscriptions and cancellation.
+- [x] Keep structured logging parity with `opencode-service`.
 
 ### Tests
 
-- [ ] Add unit tests for adapter initialization and failure handling with mocked SDK client.
-- [ ] Add unit tests for cleanup behavior (client/session/subscription disposal).
+- [x] Add unit tests for adapter initialization and failure handling with mocked SDK client.
+- [x] Add unit tests for cleanup behavior (client/session/subscription disposal).
 
 ### Definition of Done
 
