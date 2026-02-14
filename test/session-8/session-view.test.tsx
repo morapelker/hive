@@ -120,6 +120,44 @@ beforeEach(() => {
           updated_at: new Date().toISOString(),
           completed_at: null
         }),
+        create: vi.fn().mockResolvedValue({
+          id: 'forked-session-1',
+          worktree_id: 'wt-1',
+          project_id: 'proj-1',
+          name: 'Test Session (fork)',
+          status: 'active',
+          opencode_session_id: 'opc-fork-1',
+          mode: 'build',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          completed_at: null
+        }),
+        getActiveByWorktree: vi.fn().mockResolvedValue([
+          {
+            id: 'test-session-1',
+            worktree_id: 'wt-1',
+            project_id: 'proj-1',
+            name: 'Test Session',
+            status: 'active',
+            opencode_session_id: 'opc-session-1',
+            mode: 'build',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            completed_at: null
+          },
+          {
+            id: 'forked-session-1',
+            worktree_id: 'wt-1',
+            project_id: 'proj-1',
+            name: 'Test Session (fork)',
+            status: 'active',
+            opencode_session_id: 'opc-fork-1',
+            mode: 'build',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            completed_at: null
+          }
+        ]),
         update: vi.fn().mockResolvedValue(null),
         getDraft: vi.fn().mockResolvedValue(null),
         updateDraft: vi.fn().mockResolvedValue(undefined)
@@ -150,6 +188,7 @@ beforeEach(() => {
       reconnect: vi.fn().mockResolvedValue({ success: true }),
       prompt: vi.fn().mockResolvedValue({ success: true }),
       command: vi.fn().mockResolvedValue({ success: true }),
+      fork: vi.fn().mockResolvedValue({ success: true, sessionId: 'opc-fork-1' }),
       sessionInfo: vi
         .fn()
         .mockResolvedValue({ success: true, revertMessageID: null, revertDiff: null }),
@@ -560,6 +599,35 @@ describe('Session 8: Session View', () => {
       await waitFor(() => {
         expect(screen.getByTestId('typing-indicator')).toBeInTheDocument()
       })
+    })
+
+    test('Fork button creates and opens a new forked session tab', async () => {
+      const user = userEvent.setup()
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
+
+      const forkButton = screen.getByTestId('fork-message-button')
+      await user.click(forkButton)
+
+      await waitFor(() => {
+        expect(window.opencodeOps.fork).toHaveBeenCalledWith(
+          '/tmp/worktree-default',
+          'opc-session-1',
+          undefined
+        )
+      })
+
+      expect(window.db.session.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          worktree_id: 'wt-1',
+          project_id: 'proj-1',
+          opencode_session_id: 'opc-fork-1'
+        })
+      )
+      expect(useSessionStore.getState().activeSessionId).toBe('forked-session-1')
     })
   })
 

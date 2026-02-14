@@ -477,6 +477,12 @@ declare global {
         title: string,
         worktreePath?: string
       ) => Promise<{ success: boolean; error?: string }>
+      // Fork an existing session at an optional message boundary
+      fork: (
+        worktreePath: string,
+        opencodeSessionId: string,
+        messageId?: string
+      ) => Promise<{ success: boolean; sessionId?: string; error?: string }>
       // Subscribe to streaming events
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
     }

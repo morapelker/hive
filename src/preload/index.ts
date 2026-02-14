@@ -998,6 +998,18 @@ const opencodeOps = {
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:renameSession', { opencodeSessionId, title, worktreePath }),
 
+  // Fork an existing session at an optional message boundary
+  fork: (
+    worktreePath: string,
+    opencodeSessionId: string,
+    messageId?: string
+  ): Promise<{ success: boolean; sessionId?: string; error?: string }> =>
+    ipcRenderer.invoke('opencode:fork', {
+      worktreePath,
+      sessionId: opencodeSessionId,
+      messageId
+    }),
+
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, event: OpenCodeStreamEvent): void => {
