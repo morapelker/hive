@@ -1,9 +1,18 @@
 import type { BrowserWindow } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { createLogger } from './logger'
 import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
+
+export interface ClaudeQuery {
+  interrupt(): Promise<void>
+  close(): void
+  return?(value?: void): Promise<IteratorResult<unknown, void>>
+  next(...args: unknown[]): Promise<IteratorResult<unknown, void>>
+  [Symbol.asyncIterator](): AsyncGenerator<unknown, void>
+}
 
 export interface ClaudeSessionState {
   claudeSessionId: string
@@ -11,6 +20,8 @@ export interface ClaudeSessionState {
   worktreePath: string
   abortController: AbortController | null
   checkpoints: Map<string, number>
+  query: ClaudeQuery | null
+  materialized: boolean
 }
 
 export class ClaudeCodeImplementer implements AgentSdkImplementer {
@@ -28,29 +39,99 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
   // ── Lifecycle ────────────────────────────────────────────────────
 
-  async connect(_worktreePath: string, _hiveSessionId: string): Promise<{ sessionId: string }> {
-    throw new Error('ClaudeCodeImplementer.connect: not yet implemented (Session 3)')
+  async connect(worktreePath: string, hiveSessionId: string): Promise<{ sessionId: string }> {
+    const placeholderId = `pending::${randomUUID()}`
+
+    const key = this.getSessionKey(worktreePath, placeholderId)
+    const state: ClaudeSessionState = {
+      claudeSessionId: placeholderId,
+      hiveSessionId,
+      worktreePath,
+      abortController: new AbortController(),
+      checkpoints: new Map(),
+      query: null,
+      materialized: false
+    }
+    this.sessions.set(key, state)
+
+    log.info('Connected (deferred)', { worktreePath, hiveSessionId, placeholderId })
+    return { sessionId: placeholderId }
   }
 
   async reconnect(
-    _worktreePath: string,
-    _agentSessionId: string,
-    _hiveSessionId: string
+    worktreePath: string,
+    agentSessionId: string,
+    hiveSessionId: string
   ): Promise<{
     success: boolean
     sessionStatus?: 'idle' | 'busy' | 'retry'
     revertMessageID?: string | null
   }> {
-    throw new Error('ClaudeCodeImplementer.reconnect: not yet implemented (Session 3)')
+    const key = this.getSessionKey(worktreePath, agentSessionId)
+
+    const existing = this.sessions.get(key)
+    if (existing) {
+      existing.hiveSessionId = hiveSessionId
+      log.info('Reconnect: session already registered, updated hiveSessionId', {
+        worktreePath,
+        agentSessionId,
+        hiveSessionId
+      })
+      return { success: true, sessionStatus: 'idle', revertMessageID: null }
+    }
+
+    const state: ClaudeSessionState = {
+      claudeSessionId: agentSessionId,
+      hiveSessionId,
+      worktreePath,
+      abortController: new AbortController(),
+      checkpoints: new Map(),
+      query: null,
+      materialized: true
+    }
+    this.sessions.set(key, state)
+
+    log.info('Reconnected (deferred)', { worktreePath, agentSessionId, hiveSessionId })
+    return { success: true, sessionStatus: 'idle', revertMessageID: null }
   }
 
-  async disconnect(_worktreePath: string, _agentSessionId: string): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.disconnect: not yet implemented (Session 3)')
+  async disconnect(worktreePath: string, agentSessionId: string): Promise<void> {
+    const key = this.getSessionKey(worktreePath, agentSessionId)
+    const session = this.sessions.get(key)
+
+    if (!session) {
+      log.warn('Disconnect: session not found, ignoring', { worktreePath, agentSessionId })
+      return
+    }
+
+    if (session.query) {
+      try {
+        session.query.close()
+      } catch {
+        log.warn('Disconnect: query.close() threw, ignoring', { worktreePath, agentSessionId })
+      }
+      session.query = null
+    }
+
+    if (session.abortController) {
+      session.abortController.abort()
+    }
+
+    this.sessions.delete(key)
+    log.info('Disconnected', { worktreePath, agentSessionId })
   }
 
   async cleanup(): Promise<void> {
     log.info('Cleaning up all Claude Code sessions', { count: this.sessions.size })
     for (const [key, session] of this.sessions) {
+      if (session.query) {
+        try {
+          session.query.close()
+        } catch {
+          log.warn('Cleanup: query.close() threw, ignoring', { key })
+        }
+        session.query = null
+      }
       if (session.abortController) {
         log.debug('Aborting session', { key })
         session.abortController.abort()

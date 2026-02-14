@@ -90,8 +90,9 @@ describe('ClaudeCodeImplementer', () => {
   // ── Stub methods ───────────────────────────────────────────────────
 
   describe('stub methods', () => {
-    it('connect throws /not yet implemented/', async () => {
-      await expect(impl.connect('/path', 'hive-1')).rejects.toThrow(/not yet implemented/)
+    it('connect returns a deferred placeholder sessionId', async () => {
+      const result = await impl.connect('/path', 'hive-1')
+      expect(result.sessionId).toMatch(/^pending::/)
     })
 
     it('prompt throws /not yet implemented/', async () => {
@@ -120,7 +121,9 @@ describe('ClaudeCodeImplementer', () => {
         hiveSessionId: 'hive-1',
         worktreePath: 'wp',
         abortController: controller,
-        checkpoints: new Map()
+        checkpoints: new Map(),
+        query: null,
+        materialized: false
       } satisfies ClaudeSessionState)
 
       await impl.cleanup()
@@ -139,21 +142,27 @@ describe('ClaudeCodeImplementer', () => {
         hiveSessionId: 'h1',
         worktreePath: 'a',
         abortController: c1,
-        checkpoints: new Map()
+        checkpoints: new Map(),
+        query: null,
+        materialized: false
       })
       sessions.set('b::2', {
         claudeSessionId: '2',
         hiveSessionId: 'h2',
         worktreePath: 'b',
         abortController: null,
-        checkpoints: new Map()
+        checkpoints: new Map(),
+        query: null,
+        materialized: false
       })
       sessions.set('c::3', {
         claudeSessionId: '3',
         hiveSessionId: 'h3',
         worktreePath: 'c',
         abortController: c2,
-        checkpoints: new Map()
+        checkpoints: new Map(),
+        query: null,
+        materialized: false
       })
 
       await impl.cleanup()
@@ -168,7 +177,9 @@ describe('ClaudeCodeImplementer', () => {
         hiveSessionId: 'hy',
         worktreePath: 'x',
         abortController: null,
-        checkpoints: new Map()
+        checkpoints: new Map(),
+        query: null,
+        materialized: false
       })
 
       await expect(impl.cleanup()).resolves.toBeUndefined()
@@ -181,7 +192,9 @@ describe('ClaudeCodeImplementer', () => {
         hiveSessionId: 'hv',
         worktreePath: 'k',
         abortController: new AbortController(),
-        checkpoints: new Map()
+        checkpoints: new Map(),
+        query: null,
+        materialized: false
       })
 
       await impl.cleanup()
@@ -231,7 +244,9 @@ describe('ClaudeCodeImplementer', () => {
         hiveSessionId: 'h1',
         worktreePath: '/proj',
         abortController: null,
-        checkpoints: new Map()
+        checkpoints: new Map(),
+        query: null,
+        materialized: false
       }
       ;(impl as any).sessions.set('/proj::s1', state)
 
