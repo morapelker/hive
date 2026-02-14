@@ -472,6 +472,7 @@ export class DatabaseService {
       name: data.name ?? null,
       status: 'active',
       opencode_session_id: data.opencode_session_id ?? null,
+      agent_sdk: data.agent_sdk ?? 'opencode',
       mode: 'build',
       model_provider_id: data.model_provider_id ?? null,
       model_id: data.model_id ?? null,
@@ -482,8 +483,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, name, status, opencode_session_id, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, name, status, opencode_session_id, agent_sdk, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -491,6 +492,7 @@ export class DatabaseService {
       session.name,
       session.status,
       session.opencode_session_id,
+      session.agent_sdk,
       session.mode,
       session.model_provider_id,
       session.model_id,
@@ -551,6 +553,10 @@ export class DatabaseService {
     if (data.opencode_session_id !== undefined) {
       updates.push('opencode_session_id = ?')
       values.push(data.opencode_session_id)
+    }
+    if (data.agent_sdk !== undefined) {
+      updates.push('agent_sdk = ?')
+      values.push(data.agent_sdk)
     }
     if (data.mode !== undefined) {
       updates.push('mode = ?')

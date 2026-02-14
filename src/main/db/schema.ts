@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 1
+export const CURRENT_SCHEMA_VERSION = 2
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -141,5 +141,11 @@ export const MIGRATIONS: Migration[] = [
       DROP TABLE IF EXISTS worktrees;
       DROP TABLE IF EXISTS projects;
     `
+  },
+  {
+    version: 2,
+    name: 'add_agent_sdk_column',
+    up: `ALTER TABLE sessions ADD COLUMN agent_sdk TEXT NOT NULL DEFAULT 'opencode';`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]
