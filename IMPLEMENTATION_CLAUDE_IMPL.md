@@ -49,11 +49,16 @@ Lock all integration decisions that materially affect implementation shape.
 ### Tests
 
 - [x] Add a contract test file that validates the capability map and identifier format assumptions used by Claude adapter construction.
+  - `test/phase-21/session-1/agent-sdk-contract.test.ts` — 12 tests, all passing
 
 ### Definition of Done
 
-- Integration decisions are documented in `docs/specs/agent-sdk-integration.md`.
-- No implementation ambiguity remains for auth, capabilities, or session resume.
+- [x] Integration decisions are documented in `docs/specs/agent-sdk-integration.md`.
+- [x] No implementation ambiguity remains for auth, capabilities, or session resume.
+- [x] `AgentSdkImplementer` interface defined in `src/main/services/agent-sdk-types.ts`.
+- [x] `agent_sdk` column added via migration v2 in `src/main/db/schema.ts`.
+- [x] `@anthropic-ai/claude-agent-sdk@^0.2.42` installed.
+- [x] `pnpm lint`, `pnpm test` (contract tests), and `pnpm build` all pass.
 
 ---
 
