@@ -208,6 +208,16 @@ export function registerOpenCodeHandlers(
     async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
       log.info('IPC: opencode:sessionInfo', { worktreePath, sessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.getSessionInfo(worktreePath, sessionId)
+            return { success: true, ...result }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.getSessionInfo(worktreePath, sessionId)
         return { success: true, ...result }
       } catch (error) {
@@ -432,6 +442,16 @@ export function registerOpenCodeHandlers(
     async (_event, worktreePath: string, opencodeSessionId: string) => {
       log.info('IPC: opencode:messages', { worktreePath, opencodeSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const messages = await impl.getMessages(worktreePath, opencodeSessionId)
+            return { success: true, messages }
+          }
+        }
+        // Fall through to existing OpenCode path
         const messages = await openCodeService.getMessages(worktreePath, opencodeSessionId)
         return { success: true, messages }
       } catch (error) {
