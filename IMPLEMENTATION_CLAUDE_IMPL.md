@@ -161,19 +161,29 @@ Back `getMessages` and `getSessionInfo` with real Claude SDK sources.
 
 ### Tasks
 
-- [ ] Implement `getMessages` against Claude history/message APIs.
-- [ ] Implement `getSessionInfo` with real revert metadata (`revertMessageID`, `revertDiff`) or explicit null behavior when unavailable.
-- [ ] Ensure transcript ordering and message IDs are stable for renderer undo/revert boundary logic.
+- [x] Implement `getMessages` against Claude history/message APIs.
+  - Primary: JSONL transcript reader (`claude-transcript-reader.ts`) reads `~/.claude/projects/` on-disk transcripts
+  - Secondary: In-memory accumulation during `prompt()` streaming for fast access
+  - Messages translated to OpenCode-compatible format for existing renderer mapper
+- [x] Implement `getSessionInfo` with real revert metadata (`revertMessageID`, `revertDiff`) or explicit null behavior when unavailable.
+  - Returns `{ revertMessageID: null, revertDiff: null }` — revert tracking deferred to Session 8
+- [x] Ensure transcript ordering and message IDs are stable for renderer undo/revert boundary logic.
+  - UUIDs from Claude transcripts used as message IDs; timestamp-based ordering preserved
+- [x] Add SDK-aware routing to `opencode:messages` and `opencode:sessionInfo` IPC handlers.
 
 ### Tests
 
-- [ ] Add unit tests for transcript normalization and ordering guarantees.
-- [ ] Add tests for revert metadata behavior across supported/unsupported Claude capabilities.
+- [x] Add unit tests for transcript normalization and ordering guarantees.
+  - `test/phase-21/session-5/claude-transcript-reader.test.ts` — 24 tests
+  - `test/phase-21/session-5/claude-getmessages.test.ts` — 5 tests
+- [x] Add tests for revert metadata behavior across supported/unsupported Claude capabilities.
+  - `test/phase-21/session-5/claude-getsessioninfo.test.ts` — 3 tests
+  - `test/phase-21/session-5/ipc-messages-routing.test.ts` — 5 tests
 
 ### Definition of Done
 
-- Message reload paths in `SessionView` work unchanged with Claude transcript output.
-- Revert boundary UI does not break due to provider-specific ID formats.
+- [x] Message reload paths in `SessionView` work unchanged with Claude transcript output.
+- [x] Revert boundary UI does not break due to provider-specific ID formats.
 
 ---
 
