@@ -180,10 +180,13 @@ export function GitPushPull({
     })
   }, [branches, branchFilter, branchInfo?.name])
 
-  const handleBranchSelect = useCallback((branchName: string) => {
-    setMergeBranch(branchName)
-    setBranchDropdownOpen(false)
-  }, [])
+  const handleBranchSelect = useCallback(
+    (branchName: string) => {
+      setMergeBranch(branchName)
+      setBranchDropdownOpen(false)
+    },
+    [setMergeBranch]
+  )
 
   // Check if the selected merge branch is already merged into HEAD
   // Re-runs when mergedCheckVersion increments (e.g. after a successful merge)
@@ -213,7 +216,7 @@ export function GitPushPull({
 
     // Find the worktree by its path across all projects
     let worktree: { id: string; path: string; branch_name: string; project_id: string } | undefined
-    for (const [_projectId, worktrees] of worktreeStore.worktreesByProject) {
+    for (const [, worktrees] of worktreeStore.worktreesByProject) {
       const found = worktrees.find((w) => w.path === selectedBranchInfo.worktreePath)
       if (found) {
         worktree = found
@@ -235,7 +238,7 @@ export function GitPushPull({
     if (result.success) {
       setMergeBranch('')
     }
-  }, [selectedBranchInfo?.worktreePath])
+  }, [selectedBranchInfo?.worktreePath, setMergeBranch])
 
   const handleDeleteBranch = useCallback(async () => {
     if (!worktreePath || !mergeBranch) return
@@ -250,7 +253,7 @@ export function GitPushPull({
     } catch {
       toast.error('Failed to delete branch')
     }
-  }, [worktreePath, mergeBranch])
+  }, [worktreePath, mergeBranch, setMergeBranch])
 
   const handleMerge = useCallback(async () => {
     if (!worktreePath || !mergeBranch.trim()) return

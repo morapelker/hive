@@ -13,7 +13,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, fireEvent, waitFor, within } from '@testing-library/react'
 import { useGitStore } from '../../../src/renderer/src/stores/useGitStore'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 
@@ -56,6 +56,7 @@ describe('Session 9: Branch Up-to-Date Archive Swap', () => {
       branchInfoByWorktree: new Map([
         ['/path/to/worktree', { name: 'feature-branch', tracking: null, ahead: 0, behind: 0 }]
       ]),
+      selectedMergeBranch: new Map(),
       defaultMergeBranch: new Map(),
       mergeSelectionVersion: 0,
       isPushing: false,
@@ -233,6 +234,104 @@ describe('Session 9: Branch Up-to-Date Archive Swap', () => {
       })
 
       expect(mockIsBranchMerged).toHaveBeenCalledWith('/path/to/worktree', 'main')
+    })
+  })
+
+  describe('merge branch selection stability', () => {
+    test('selecting branch works after worktreePath changes from null to a value', async () => {
+      mockListBranchesWithStatus.mockResolvedValue({
+        success: true,
+        branches: [
+          { name: 'main', isRemote: false, isCheckedOut: false },
+          { name: 'develop', isRemote: false, isCheckedOut: false }
+        ]
+      })
+
+      const { rerender } = render(<GitPushPull worktreePath={null} />)
+
+      rerender(<GitPushPull worktreePath="/path/to/worktree" />)
+
+      fireEvent.click(screen.getByTestId('merge-branch-trigger'))
+
+      await waitFor(() => {
+        expect(mockListBranchesWithStatus).toHaveBeenCalledWith('/path/to/worktree')
+      })
+
+      const dropdown = screen.getByTestId('merge-branch-dropdown')
+      fireEvent.click(within(dropdown).getByRole('button', { name: 'main' }))
+
+      await waitFor(() => {
+        expect(useGitStore.getState().selectedMergeBranch.get('/path/to/worktree')).toBe('main')
+      })
+    })
+
+    test('selecting branch after switching worktree updates the current worktree key', async () => {
+      useWorktreeStore.setState({
+        selectedWorktreeId: 'wt-2',
+        worktreesByProject: new Map([
+          [
+            'proj-1',
+            [
+              {
+                id: 'wt-1',
+                project_id: 'proj-1',
+                path: '/path/to/worktree',
+                branch_name: 'feature-branch',
+                is_default: false,
+                name: 'feature-branch',
+                status: 'active' as const,
+                branch_renamed: 0,
+                last_message_at: null,
+                session_titles: '[]',
+                last_model_provider_id: null,
+                last_model_id: null,
+                last_model_variant: null,
+                created_at: '2024-01-01',
+                last_accessed_at: '2024-01-01'
+              },
+              {
+                id: 'wt-2',
+                project_id: 'proj-1',
+                path: '/path/to/worktree-2',
+                branch_name: 'feature-2',
+                is_default: false,
+                name: 'feature-2',
+                status: 'active' as const,
+                branch_renamed: 0,
+                last_message_at: null,
+                session_titles: '[]',
+                last_model_provider_id: null,
+                last_model_id: null,
+                last_model_variant: null,
+                created_at: '2024-01-01',
+                last_accessed_at: '2024-01-01'
+              }
+            ]
+          ]
+        ])
+      })
+
+      mockListBranchesWithStatus.mockResolvedValue({
+        success: true,
+        branches: [{ name: 'main', isRemote: false, isCheckedOut: false }]
+      })
+
+      const { rerender } = render(<GitPushPull worktreePath="/path/to/worktree" />)
+
+      rerender(<GitPushPull worktreePath="/path/to/worktree-2" />)
+
+      fireEvent.click(screen.getByTestId('merge-branch-trigger'))
+
+      await waitFor(() => {
+        expect(mockListBranchesWithStatus).toHaveBeenCalledWith('/path/to/worktree-2')
+      })
+
+      const dropdown = screen.getByTestId('merge-branch-dropdown')
+      fireEvent.click(within(dropdown).getByRole('button', { name: 'main' }))
+
+      await waitFor(() => {
+        expect(useGitStore.getState().selectedMergeBranch.get('/path/to/worktree-2')).toBe('main')
+      })
     })
   })
 })
