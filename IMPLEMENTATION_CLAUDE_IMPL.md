@@ -126,25 +126,30 @@ Stream real Claude responses into renderer using Hive's normalized event contrac
 
 ### Tasks
 
-- [ ] Replace mock chunk streaming in `prompt` with SDK streaming API.
-- [ ] Map Claude SDK events into normalized `opencode:stream` payload shape:
+- [x] Replace mock chunk streaming in `prompt` with SDK streaming API.
+- [x] Map Claude SDK events into normalized `opencode:stream` payload shape:
   - `type`
   - `sessionId` (Hive session ID)
   - `data`
   - optional `childSessionId`
   - optional `statusPayload` for `session.status`
-- [ ] Implement `abort` via real SDK cancellation/abort APIs.
-- [ ] Ensure child/subtask events are forwarded in format compatible with `SessionView` and `useOpenCodeGlobalListener`.
+- [x] Implement `abort` via real SDK cancellation/abort APIs.
+- [x] Ensure child/subtask events are forwarded in format compatible with `SessionView` and `useOpenCodeGlobalListener`.
 
 ### Tests
 
-- [ ] Replace mock streaming tests with SDK-event-mapping tests in `test/phase-21/session-3` (or new phase folder).
-- [ ] Add abort tests verifying stream termination and final idle status semantics.
+- [x] Replace mock streaming tests with SDK-event-mapping tests in `test/phase-21/session-4/`.
+  - `test/phase-21/session-4/claude-prompt-streaming.test.ts` — 13 tests
+  - `test/phase-21/session-4/claude-abort.test.ts` — 6 tests
+  - `test/phase-21/session-4/db-agent-session-lookup.test.ts` — 3 tests
+  - `test/phase-21/session-4/ipc-sdk-routing.test.ts` — 5 tests
+  - `test/phase-21/session-4/integration-smoke.test.ts` — 5 tests
+- [x] Add abort tests verifying stream termination and final idle status semantics.
 
 ### Definition of Done
 
-- Claude prompt path emits real normalized stream events consumed by existing renderer logic.
-- Abort stops active stream and returns session to idle state consistently.
+- [x] Claude prompt path emits real normalized stream events consumed by existing renderer logic.
+- [x] Abort stops active stream and returns session to idle state consistently.
 
 ---
 

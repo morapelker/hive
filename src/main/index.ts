@@ -332,6 +332,7 @@ app.whenReady().then(() => {
     // OpenCode sessions still route through openCodeService directly (fallback path in handlers)
     // The placeholder just satisfies AgentSdkManager's constructor signature
     const claudeImpl = new ClaudeCodeImplementer()
+    claudeImpl.setDatabaseService(getDatabase())
     const openCodePlaceholder = {
       id: 'opencode' as const,
       capabilities: {
