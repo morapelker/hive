@@ -43,11 +43,10 @@ export class AgentSdkManager {
         await impl.cleanup()
         log.info('Cleaned up SDK', { id })
       } catch (error) {
-        log.error(
-          'Error cleaning up SDK',
-          error instanceof Error ? error : new Error(String(error)),
-          { id }
-        )
+        log.error('Error cleaning up SDK', {
+          id,
+          error: error instanceof Error ? error.message : String(error)
+        })
       }
     }
   }

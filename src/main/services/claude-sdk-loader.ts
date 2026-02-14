@@ -23,7 +23,7 @@ export async function loadClaudeSDK(): Promise<ClaudeSDK> {
     return cachedSDK
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    log.error('Failed to load Claude Code SDK', undefined, { error: message })
+    log.error('Failed to load Claude Code SDK', { error: message })
     throw new Error(
       `Claude Code SDK could not be loaded: ${message}. ` +
         'Ensure @anthropic-ai/claude-agent-sdk is installed.'

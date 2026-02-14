@@ -41,11 +41,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     sessionStatus?: 'idle' | 'busy' | 'retry'
     revertMessageID?: string | null
   }> {
-    throw new Error('ClaudeCodeImplementer.reconnect: not yet implemented (Session 4)')
+    throw new Error('ClaudeCodeImplementer.reconnect: not yet implemented (Session 3)')
   }
 
   async disconnect(_worktreePath: string, _agentSessionId: string): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.disconnect: not yet implemented (Session 4)')
+    throw new Error('ClaudeCodeImplementer.disconnect: not yet implemented (Session 3)')
   }
 
   async cleanup(): Promise<void> {
@@ -72,7 +72,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         >,
     _modelOverride?: { providerID: string; modelID: string; variant?: string }
   ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.prompt: not yet implemented (Session 3)')
+    throw new Error('ClaudeCodeImplementer.prompt: not yet implemented (Session 4)')
   }
 
   async abort(_worktreePath: string, _agentSessionId: string): Promise<boolean> {
@@ -86,7 +86,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   // ── Models ───────────────────────────────────────────────────────
 
   async getAvailableModels(): Promise<unknown> {
-    throw new Error('ClaudeCodeImplementer.getAvailableModels: not yet implemented (Session 5)')
+    throw new Error('ClaudeCodeImplementer.getAvailableModels: not yet implemented (Session 6)')
   }
 
   async getModelInfo(
@@ -97,11 +97,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     name: string
     limit: { context: number; input?: number; output: number }
   } | null> {
-    throw new Error('ClaudeCodeImplementer.getModelInfo: not yet implemented (Session 5)')
+    throw new Error('ClaudeCodeImplementer.getModelInfo: not yet implemented (Session 6)')
   }
 
   setSelectedModel(_model: { providerID: string; modelID: string; variant?: string }): void {
-    throw new Error('ClaudeCodeImplementer.setSelectedModel: not yet implemented (Session 5)')
+    throw new Error('ClaudeCodeImplementer.setSelectedModel: not yet implemented (Session 6)')
   }
 
   // ── Session info ─────────────────────────────────────────────────
@@ -113,7 +113,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     revertMessageID: string | null
     revertDiff: string | null
   }> {
-    throw new Error('ClaudeCodeImplementer.getSessionInfo: not yet implemented (Session 4)')
+    throw new Error('ClaudeCodeImplementer.getSessionInfo: not yet implemented (Session 5)')
   }
 
   // ── Human-in-the-loop ────────────────────────────────────────────
@@ -123,11 +123,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     _answers: string[][],
     _worktreePath?: string
   ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.questionReply: not yet implemented (Session 4)')
+    throw new Error('ClaudeCodeImplementer.questionReply: not yet implemented (Session 7)')
   }
 
   async questionReject(_requestId: string, _worktreePath?: string): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.questionReject: not yet implemented (Session 4)')
+    throw new Error('ClaudeCodeImplementer.questionReject: not yet implemented (Session 7)')
   }
 
   async permissionReply(
@@ -135,11 +135,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     _decision: 'once' | 'always' | 'reject',
     _worktreePath?: string
   ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.permissionReply: not yet implemented (Session 4)')
+    throw new Error('ClaudeCodeImplementer.permissionReply: not yet implemented (Session 7)')
   }
 
   async permissionList(_worktreePath?: string): Promise<unknown[]> {
-    throw new Error('ClaudeCodeImplementer.permissionList: not yet implemented (Session 4)')
+    throw new Error('ClaudeCodeImplementer.permissionList: not yet implemented (Session 7)')
   }
 
   // ── Undo/Redo ────────────────────────────────────────────────────
@@ -149,7 +149,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     _agentSessionId: string,
     _hiveSessionId: string
   ): Promise<unknown> {
-    throw new Error('ClaudeCodeImplementer.undo: not yet implemented (Session 5)')
+    throw new Error('ClaudeCodeImplementer.undo: not yet implemented (Session 8)')
   }
 
   async redo(
@@ -157,13 +157,13 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     _agentSessionId: string,
     _hiveSessionId: string
   ): Promise<unknown> {
-    throw new Error('ClaudeCodeImplementer.redo: not yet implemented (Session 5)')
+    throw new Error('ClaudeCodeImplementer.redo: not yet implemented (Session 8)')
   }
 
   // ── Commands ─────────────────────────────────────────────────────
 
   async listCommands(_worktreePath: string): Promise<unknown[]> {
-    throw new Error('ClaudeCodeImplementer.listCommands: not yet implemented (Session 5)')
+    throw new Error('ClaudeCodeImplementer.listCommands: not yet implemented (Session 7)')
   }
 
   async sendCommand(
@@ -172,7 +172,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     _command: string,
     _args?: string
   ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.sendCommand: not yet implemented (Session 5)')
+    throw new Error('ClaudeCodeImplementer.sendCommand: not yet implemented (Session 7)')
   }
 
   // ── Session management ───────────────────────────────────────────
@@ -182,7 +182,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     _agentSessionId: string,
     _name: string
   ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.renameSession: not yet implemented (Session 5)')
+    throw new Error('ClaudeCodeImplementer.renameSession: not yet implemented (Session 9)')
   }
 
   // ── Internal helpers ─────────────────────────────────────────────
