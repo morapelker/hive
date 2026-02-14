@@ -4,6 +4,7 @@ import { createLogger } from './logger'
 import { loadClaudeSDK } from './claude-sdk-loader'
 import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
+import type { DatabaseService } from '../db/database'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -30,12 +31,17 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   readonly capabilities: AgentSdkCapabilities = CLAUDE_CODE_CAPABILITIES
 
   private mainWindow: BrowserWindow | null = null
+  private dbService: DatabaseService | null = null
   private sessions = new Map<string, ClaudeSessionState>()
 
   // ── Window binding ───────────────────────────────────────────────
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
+  }
+
+  setDatabaseService(db: DatabaseService): void {
+    this.dbService = db
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────
@@ -214,6 +220,24 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           const newKey = this.getSessionKey(worktreePath, sdkSessionId)
           this.sessions.set(newKey, session)
           log.info('Materialized session ID', { oldKey, newKey })
+
+          // Update DB so future IPC calls with the new ID resolve correctly
+          if (this.dbService) {
+            try {
+              this.dbService.updateSession(session.hiveSessionId, {
+                opencode_session_id: sdkSessionId
+              })
+              log.info('Updated DB opencode_session_id', {
+                hiveSessionId: session.hiveSessionId,
+                newAgentSessionId: sdkSessionId
+              })
+            } catch (err) {
+              log.error('Failed to update opencode_session_id in DB', {
+                hiveSessionId: session.hiveSessionId,
+                error: err instanceof Error ? err.message : String(err)
+              })
+            }
+          }
         }
 
         // Capture user message UUIDs as checkpoints

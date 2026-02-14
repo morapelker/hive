@@ -267,6 +267,89 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
     })
   })
 
+  // ── DB materialization update ─────────────────────────────────────
+
+  describe('DB materialization update', () => {
+    it('updates DB opencode_session_id after materialization', async () => {
+      const mockDb = {
+        updateSession: vi.fn(),
+        getSession: vi.fn()
+      }
+      impl.setDatabaseService(mockDb as any)
+
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+      const messages = [
+        { type: 'assistant', session_id: 'real-sdk-id', content: [{ type: 'text', text: 'Hi' }] }
+      ]
+      mockQuery.mockReturnValue(createMockQueryIterator(messages))
+
+      await impl.prompt('/proj', sessionId, 'Hello')
+
+      expect(mockDb.updateSession).toHaveBeenCalledWith('hive-1', {
+        opencode_session_id: 'real-sdk-id'
+      })
+    })
+
+    it('does not fail if dbService is null', async () => {
+      // No setDatabaseService called — dbService is null
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+      const messages = [
+        { type: 'assistant', session_id: 'real-sdk-id', content: [{ type: 'text', text: 'Hi' }] }
+      ]
+      mockQuery.mockReturnValue(createMockQueryIterator(messages))
+
+      // Should not throw
+      await impl.prompt('/proj', sessionId, 'Hello')
+    })
+
+    it('handles DB update error gracefully', async () => {
+      const mockDb = {
+        updateSession: vi.fn().mockImplementation(() => {
+          throw new Error('DB write failed')
+        }),
+        getSession: vi.fn()
+      }
+      impl.setDatabaseService(mockDb as any)
+
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+      const messages = [
+        { type: 'assistant', session_id: 'real-sdk-id', content: [{ type: 'text', text: 'Hi' }] }
+      ]
+      mockQuery.mockReturnValue(createMockQueryIterator(messages))
+
+      // Should not throw even if DB fails
+      await impl.prompt('/proj', sessionId, 'Hello')
+
+      expect(mockDb.updateSession).toHaveBeenCalledWith('hive-1', {
+        opencode_session_id: 'real-sdk-id'
+      })
+    })
+
+    it('does not update DB when session is already materialized', async () => {
+      const mockDb = {
+        updateSession: vi.fn(),
+        getSession: vi.fn()
+      }
+      impl.setDatabaseService(mockDb as any)
+
+      // Reconnect creates an already-materialized session
+      await impl.reconnect('/proj', 'existing-sdk-id', 'hive-1')
+      const messages = [
+        {
+          type: 'assistant',
+          session_id: 'existing-sdk-id',
+          content: [{ type: 'text', text: 'Resumed' }]
+        }
+      ]
+      mockQuery.mockReturnValue(createMockQueryIterator(messages))
+
+      await impl.prompt('/proj', 'existing-sdk-id', 'continue')
+
+      // DB should NOT be updated since session was already materialized
+      expect(mockDb.updateSession).not.toHaveBeenCalled()
+    })
+  })
+
   // ── getMessages() ───────────────────────────────────────────────────
 
   describe('getMessages()', () => {
