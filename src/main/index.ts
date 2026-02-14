@@ -29,6 +29,9 @@ import { createLogger, getLogDir } from './services/logger'
 import { createResponseLog, appendResponseLog } from './services/response-logger'
 import { notificationService } from './services/notification-service'
 import { updaterService } from './services/updater'
+import { ClaudeCodeImplementer } from './services/claude-code-implementer'
+import { AgentSdkManager } from './services/agent-sdk-manager'
+import type { AgentSdkImplementer } from './services/agent-sdk-types'
 
 const log = createLogger({ component: 'Main' })
 
@@ -325,8 +328,51 @@ app.whenReady().then(() => {
       updateMenuState(state)
     })
 
+    // Create SDK manager for multi-provider dispatch
+    // OpenCode sessions still route through openCodeService directly (fallback path in handlers)
+    // The placeholder just satisfies AgentSdkManager's constructor signature
+    const claudeImpl = new ClaudeCodeImplementer()
+    const openCodePlaceholder = {
+      id: 'opencode' as const,
+      capabilities: {
+        supportsUndo: true,
+        supportsRedo: true,
+        supportsCommands: true,
+        supportsPermissionRequests: true,
+        supportsQuestionPrompts: true,
+        supportsModelSelection: true,
+        supportsReconnect: true,
+        supportsPartialStreaming: true
+      },
+      connect: async () => ({ sessionId: '' }),
+      reconnect: async () => ({ success: false }),
+      disconnect: async () => {},
+      cleanup: async () => {},
+      prompt: async () => {},
+      abort: async () => false,
+      getMessages: async () => [],
+      getAvailableModels: async () => ({}),
+      getModelInfo: async () => null,
+      setSelectedModel: () => {},
+      getSessionInfo: async () => ({ revertMessageID: null, revertDiff: null }),
+      questionReply: async () => {},
+      questionReject: async () => {},
+      permissionReply: async () => {},
+      permissionList: async () => [],
+      undo: async () => ({}),
+      redo: async () => ({}),
+      listCommands: async () => [],
+      sendCommand: async () => {},
+      renameSession: async () => {},
+      setMainWindow: () => {}
+    } satisfies AgentSdkImplementer
+    const sdkManager = new AgentSdkManager(openCodePlaceholder, claudeImpl)
+    sdkManager.setMainWindow(mainWindow)
+
+    const databaseService = getDatabase()
+
     log.info('Registering OpenCode handlers')
-    registerOpenCodeHandlers(mainWindow)
+    registerOpenCodeHandlers(mainWindow, sdkManager, databaseService)
     log.info('Registering FileTree handlers')
     registerFileTreeHandlers(mainWindow)
     log.info('Registering GitFile handlers')

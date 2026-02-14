@@ -1,10 +1,16 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { openCodeService } from '../services/opencode-service'
 import { createLogger } from '../services/logger'
+import type { DatabaseService } from '../db/database'
+import type { AgentSdkManager } from '../services/agent-sdk-manager'
 
 const log = createLogger({ component: 'OpenCodeHandlers' })
 
-export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
+export function registerOpenCodeHandlers(
+  mainWindow: BrowserWindow,
+  sdkManager?: AgentSdkManager,
+  dbService?: DatabaseService
+): void {
   // Set the main window for event forwarding
   openCodeService.setMainWindow(mainWindow)
 
@@ -102,6 +108,16 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
       model
     })
     try {
+      // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+      if (sdkManager && dbService) {
+        const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+        if (sdkId === 'claude-code') {
+          const impl = sdkManager.getImplementer('claude-code')
+          await impl.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
+          return { success: true }
+        }
+      }
+      // Fall through to existing OpenCode path
       await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
       return { success: true }
     } catch (error) {
@@ -435,6 +451,16 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, worktreePath: string, opencodeSessionId: string) => {
       log.info('IPC: opencode:abort', { worktreePath, opencodeSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.abort(worktreePath, opencodeSessionId)
+            return { success: result }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.abort(worktreePath, opencodeSessionId)
         return { success: result }
       } catch (error) {
