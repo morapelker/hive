@@ -9,6 +9,13 @@ This document defines the execution plan to replace the current Claude mock prov
 - Several IPC and renderer paths still default to `opencode` behavior for non-session-scoped operations.
 - UI still labels Claude as mock and contains hardcoded capability assumptions.
 
+## Reference Project
+
+An example project demonstrating Claude SDK usage is available at:
+`/Users/mor/Documents/dev/mochi-2/mochi-claude-sdk`
+
+Use this as a reference when implementing SDK integration (client init, streaming, tools, sessions, etc.).
+
 ## Planning Rules
 
 - Every session is scoped to one testable milestone.
