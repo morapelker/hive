@@ -118,6 +118,12 @@ interface SessionViewProps {
   sessionId: string
 }
 
+interface SessionRetryState {
+  attempt?: number
+  message?: string
+  next?: number
+}
+
 // Session type from database
 interface DbSession {
   id: string
@@ -151,6 +157,33 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function extractSessionErrorMessage(data: unknown): string {
+  if (typeof data === 'string') return data
+
+  const record = asRecord(data)
+  if (!record) return 'OpenCode session failed'
+
+  const nestedError = asRecord(record.error)
+  const nestedData = asRecord(record.data)
+
+  return (
+    asString(nestedError?.message) ||
+    asString(nestedError?.name) ||
+    asString(nestedData?.message) ||
+    asString(record.message) ||
+    asString(record.error) ||
+    'OpenCode session failed'
+  )
 }
 
 function createLocalMessage(role: OpenCodeMessage['role'], content: string): OpenCodeMessage {
@@ -275,6 +308,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [worktreeId, setWorktreeId] = useState<string | null>(null)
   const [opencodeSessionId, setOpencodeSessionId] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
+  const [sessionRetry, setSessionRetry] = useState<SessionRetryState | null>(null)
+  const [sessionErrorMessage, setSessionErrorMessage] = useState<string | null>(null)
+  const [retryTickMs, setRetryTickMs] = useState<number>(Date.now())
 
   // Prompt history navigation
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
@@ -1031,6 +1067,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Handle different event types
           const eventRole = getEventMessageRole(event.data)
 
+          if (event.type === 'session.error') {
+            if (event.childSessionId) return
+            setSessionErrorMessage(extractSessionErrorMessage(event.data))
+            return
+          }
+
           if (event.type === 'message.part.updated') {
             // Skip user-message echoes; user messages are already rendered locally.
             if (eventRole === 'user') return
@@ -1351,6 +1393,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // Session became active (again) — restart streaming state.
               // If we previously finalized on idle, reset so the next idle
               // can finalize the new response.
+              setSessionRetry(null)
+              setSessionErrorMessage(null)
               setIsStreaming(true)
               hasFinalizedCurrentResponseRef.current = false
               newPromptPendingRef.current = false
@@ -1363,6 +1407,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             } else if (status.type === 'idle') {
               // Session is done — flush and finalize immediately
+              setSessionRetry(null)
+              setSessionErrorMessage(null)
               immediateFlush()
               setIsSending(false)
               setQueuedMessages([])
@@ -1378,14 +1424,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
               const statusStore = useWorktreeStatusStore.getState()
               statusStore.setSessionStatus(sessionId, 'completed', { word, durationMs })
+            } else if (status.type === 'retry') {
+              setIsStreaming(true)
+              setIsSending(true)
+              setSessionRetry({
+                attempt: asNumber(status.attempt),
+                message: asString(status.message),
+                next: asNumber(status.next)
+              })
             }
-            // 'retry' status: keep isStreaming true, could add retry UI later
           }
         })
       : () => {}
 
     const initializeSession = async (): Promise<void> => {
       setViewState({ status: 'connecting' })
+      setSessionRetry(null)
+      setSessionErrorMessage(null)
 
       // Part A: Instantly restore streaming indicators from the global status store.
       // useWorktreeStatusStore persists across SessionView remounts (key= causes remount),
@@ -1663,6 +1718,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Corrects Part A if the session finished while we were away,
             // or confirms busy if the store was accurate.
             if (reconnectResult.sessionStatus === 'busy') {
+              setSessionRetry(null)
+              setSessionErrorMessage(null)
               setIsStreaming(true)
               setIsSending(true)
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
@@ -1673,7 +1730,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // Session actually finished — clear any stale busy indicators
               setIsStreaming(false)
               setIsSending(false)
+              setSessionRetry(null)
+              setSessionErrorMessage(null)
               useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+            } else if (reconnectResult.sessionStatus === 'retry') {
+              setIsStreaming(true)
+              setIsSending(true)
+              setSessionRetry({})
             }
 
             // Refresh transcript using the confirmed live OpenCode session ID.
@@ -1761,6 +1824,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setViewState({ status: 'connecting' })
     setOpencodeSessionId(null)
     setRevertMessageID(null)
+    setSessionRetry(null)
+    setSessionErrorMessage(null)
     setWorktreePath(null)
     transcriptSourceRef.current = {
       worktreePath: null,
@@ -2055,6 +2120,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         .setSessionStatus(sessionId, currentModeForStatus === 'plan' ? 'planning' : 'working')
 
       try {
+        setSessionRetry(null)
+        setSessionErrorMessage(null)
         setRevertMessageID(null)
         revertDiffRef.current = null
         setMessages((prev) => [...prev, createLocalMessage('user', trimmedValue)])
@@ -2529,6 +2596,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const showPlanReadyImplementFab =
     lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming
 
+  const retrySecondsRemaining = useMemo(() => {
+    if (!sessionRetry?.next) return null
+    return Math.max(0, Math.ceil((sessionRetry.next - retryTickMs) / 1000))
+  }, [sessionRetry, retryTickMs])
+
+  useEffect(() => {
+    if (!sessionRetry?.next) return
+
+    setRetryTickMs(Date.now())
+    const timer = window.setInterval(() => {
+      setRetryTickMs(Date.now())
+    }, 1000)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [sessionRetry?.next])
+
   // Render based on view state
   if (viewState.status === 'connecting') {
     return (
@@ -2602,6 +2687,40 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                     >
                       /redo to restore
                     </button>
+                  </div>
+                </div>
+              )}
+              {sessionErrorMessage && (
+                <div
+                  className="mx-6 my-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3"
+                  data-testid="session-error-banner"
+                >
+                  <div className="flex items-start gap-2 text-destructive">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium">Session error</p>
+                      <p className="mt-0.5 text-sm text-destructive/90">{sessionErrorMessage}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {sessionRetry && (
+                <div
+                  className="mx-6 my-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3"
+                  data-testid="session-retry-banner"
+                >
+                  <div className="flex items-start gap-2 text-destructive">
+                    <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+                    <div>
+                      <p className="text-sm font-medium">
+                        Retrying
+                        {retrySecondsRemaining !== null ? ` in ${retrySecondsRemaining}s` : ''}{' '}
+                        (attempt {sessionRetry.attempt ?? 1})
+                      </p>
+                      {sessionRetry.message && (
+                        <p className="mt-0.5 text-sm text-destructive/90">{sessionRetry.message}</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

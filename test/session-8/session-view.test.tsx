@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   SessionView,
@@ -670,6 +670,137 @@ describe('Session 8: Session View', () => {
       await waitFor(() => {
         expect(screen.queryByTestId('error-state')).not.toBeInTheDocument()
         expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
+    })
+  })
+
+  describe('Session stream status and errors', () => {
+    test('session.status retry renders retry metadata in chat', async () => {
+      let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+      ;(window.opencodeOps.onStream as ReturnType<typeof vi.fn>).mockImplementation((callback) => {
+        streamCallback = callback as (event: Record<string, unknown>) => void
+        return () => {}
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
+
+      act(() => {
+        streamCallback?.({
+          sessionId: 'test-session-1',
+          type: 'session.status',
+          statusPayload: {
+            type: 'retry',
+            attempt: 2,
+            message: 'network hiccup',
+            next: Date.now() + 5000
+          },
+          data: {
+            status: {
+              type: 'retry',
+              attempt: 2,
+              message: 'network hiccup',
+              next: Date.now() + 5000
+            }
+          }
+        })
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('session-retry-banner')).toBeInTheDocument()
+        expect(screen.getByText(/attempt 2/i)).toBeInTheDocument()
+        expect(screen.getByText(/network hiccup/i)).toBeInTheDocument()
+      })
+    })
+
+    test('session.error renders an inline session error banner', async () => {
+      let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+      ;(window.opencodeOps.onStream as ReturnType<typeof vi.fn>).mockImplementation((callback) => {
+        streamCallback = callback as (event: Record<string, unknown>) => void
+        return () => {}
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
+
+      act(() => {
+        streamCallback?.({
+          sessionId: 'test-session-1',
+          type: 'session.error',
+          data: {
+            error: {
+              message: 'provider timeout'
+            }
+          }
+        })
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('session-error-banner')).toBeInTheDocument()
+        expect(screen.getByText(/provider timeout/i)).toBeInTheDocument()
+      })
+    })
+
+    test('busy status clears retry and session error banners', async () => {
+      let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+      ;(window.opencodeOps.onStream as ReturnType<typeof vi.fn>).mockImplementation((callback) => {
+        streamCallback = callback as (event: Record<string, unknown>) => void
+        return () => {}
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
+
+      act(() => {
+        streamCallback?.({
+          sessionId: 'test-session-1',
+          type: 'session.error',
+          data: { error: { message: 'temporary failure' } }
+        })
+        streamCallback?.({
+          sessionId: 'test-session-1',
+          type: 'session.status',
+          statusPayload: {
+            type: 'retry',
+            attempt: 1,
+            next: Date.now() + 3000
+          },
+          data: {
+            status: {
+              type: 'retry',
+              attempt: 1,
+              next: Date.now() + 3000
+            }
+          }
+        })
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('session-error-banner')).toBeInTheDocument()
+        expect(screen.getByTestId('session-retry-banner')).toBeInTheDocument()
+      })
+
+      act(() => {
+        streamCallback?.({
+          sessionId: 'test-session-1',
+          type: 'session.status',
+          statusPayload: { type: 'busy' },
+          data: { status: { type: 'busy' } }
+        })
+      })
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('session-error-banner')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('session-retry-banner')).not.toBeInTheDocument()
       })
     })
   })

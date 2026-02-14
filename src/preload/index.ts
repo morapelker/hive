@@ -464,6 +464,14 @@ export interface OpenCodeStreamEvent {
   sessionId: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any
+  childSessionId?: string
+  /** session.status event payload -- only present when type === 'session.status' */
+  statusPayload?: {
+    type: 'idle' | 'busy' | 'retry'
+    attempt?: number
+    message?: string
+    next?: number
+  }
 }
 
 // File tree node type
