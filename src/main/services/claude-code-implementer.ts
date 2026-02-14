@@ -5,6 +5,7 @@ import { loadClaudeSDK } from './claude-sdk-loader'
 import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
 import type { DatabaseService } from '../db/database'
+import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -24,6 +25,7 @@ export interface ClaudeSessionState {
   checkpoints: Map<string, number>
   query: ClaudeQuery | null
   materialized: boolean
+  messages: unknown[]
 }
 
 export class ClaudeCodeImplementer implements AgentSdkImplementer {
@@ -57,7 +59,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       abortController: new AbortController(),
       checkpoints: new Map(),
       query: null,
-      materialized: false
+      materialized: false,
+      messages: []
     }
     this.sessions.set(key, state)
 
@@ -94,7 +97,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       abortController: new AbortController(),
       checkpoints: new Map(),
       query: null,
-      materialized: true
+      materialized: true,
+      messages: []
     }
     this.sessions.set(key, state)
 
@@ -245,6 +249,26 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           session.checkpoints.set(sdkMessage.uuid as string, messageIndex)
         }
 
+        // Accumulate translated messages in-memory for getMessages()
+        if (msgType === 'user' || msgType === 'assistant') {
+          const sdkMsg = sdkMessage as Record<string, unknown>
+          const translated = translateEntry(
+            {
+              type: msgType,
+              uuid: sdkMsg.uuid as string | undefined,
+              timestamp: new Date().toISOString(),
+              message: sdkMsg.message as
+                | { role?: string; content?: { type: string; [key: string]: unknown }[] | string }
+                | undefined,
+              isSidechain: false
+            },
+            session.messages.length
+          )
+          if (translated) {
+            session.messages.push(translated)
+          }
+        }
+
         // Emit normalized event
         this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex)
         messageIndex++
@@ -290,9 +314,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     return true
   }
 
-  async getMessages(_worktreePath: string, _agentSessionId: string): Promise<unknown[]> {
-    // Real implementation deferred to Session 5 (Transcript + Session Metadata)
-    return []
+  async getMessages(worktreePath: string, agentSessionId: string): Promise<unknown[]> {
+    // First: check in-memory cache
+    const session = this.getSession(worktreePath, agentSessionId)
+    if (session && session.messages.length > 0) {
+      return session.messages
+    }
+    // Fallback: read from JSONL transcript on disk
+    return readClaudeTranscript(worktreePath, agentSessionId)
   }
 
   // ── Models ───────────────────────────────────────────────────────
@@ -325,7 +354,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     revertMessageID: string | null
     revertDiff: string | null
   }> {
-    throw new Error('ClaudeCodeImplementer.getSessionInfo: not yet implemented (Session 5)')
+    // Revert tracking deferred to Session 8 (undo/redo)
+    return { revertMessageID: null, revertDiff: null }
   }
 
   // ── Human-in-the-loop ────────────────────────────────────────────
