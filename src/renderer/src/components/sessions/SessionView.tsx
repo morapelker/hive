@@ -13,6 +13,7 @@ import { AttachmentPreview } from './AttachmentPreview'
 import type { Attachment } from './AttachmentPreview'
 import { SlashCommandPopover } from './SlashCommandPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
+import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
@@ -858,7 +859,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         setMessages((currentMessages) => {
           const loadedIds = new Set(loadedMessages.map((m) => m.id))
           const localOnly = currentMessages.filter((m) => !loadedIds.has(m.id))
-          const nextMessages = localOnly.length > 0 ? [...loadedMessages, ...localOnly] : loadedMessages
+          const nextMessages =
+            localOnly.length > 0 ? [...loadedMessages, ...localOnly] : loadedMessages
           return nextMessages
         })
       }
@@ -901,7 +903,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           (streamedPartsSnapshot.length > 0 || streamedContentSnapshot.length > 0)
         ) {
           setMessages((currentMessages) => {
-            const alreadyHasAssistant = currentMessages.some((message) => message.role === 'assistant')
+            const alreadyHasAssistant = currentMessages.some(
+              (message) => message.role === 'assistant'
+            )
             if (alreadyHasAssistant) return currentMessages
 
             return [
@@ -916,7 +920,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             ]
           })
         }
-
       } catch (error) {
         console.error('Failed to refresh messages after stream completion:', error)
         toast.error('Failed to refresh response')
@@ -1920,222 +1923,254 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }, [worktreePath, opencodeSessionId])
 
   // Handle send message
-  const handleSend = useCallback(async () => {
-    const trimmedValue = inputValue.trim()
-    if (!trimmedValue) return
+  const handleSend = useCallback(
+    async (overrideValue?: string) => {
+      const trimmedValue = (overrideValue ?? inputValue).trim()
+      if (!trimmedValue) return
 
-    if (trimmedValue.startsWith('/')) {
-      const spaceIndex = trimmedValue.indexOf(' ')
-      const commandName =
-        spaceIndex > 0 ? trimmedValue.slice(1, spaceIndex).toLowerCase() : trimmedValue.slice(1)
+      if (trimmedValue.startsWith('/')) {
+        const spaceIndex = trimmedValue.indexOf(' ')
+        const commandName =
+          spaceIndex > 0 ? trimmedValue.slice(1, spaceIndex).toLowerCase() : trimmedValue.slice(1)
 
-      if (commandName === 'undo' || commandName === 'redo') {
-        if (!worktreePath || !opencodeSessionId) {
-          toast.error('OpenCode is not connected')
-          return
-        }
-
-        setShowSlashCommands(false)
-        setInputValue('')
-        inputValueRef.current = ''
-        setHistoryIndex(null)
-        savedDraftRef.current = ''
-        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-        window.db.session.updateDraft(sessionId, null)
-
-        try {
-          if (commandName === 'undo') {
-            const result = await window.opencodeOps.undo(worktreePath, opencodeSessionId)
-            if (!result.success) {
-              toast.error(result.error || 'Nothing to undo')
-              return
-            }
-
-            setRevertMessageID(result.revertMessageID ?? null)
-            revertDiffRef.current = result.revertDiff ?? null
-
-            const restoredPrompt =
-              typeof result.restoredPrompt === 'string'
-                ? stripPlanModePrefix(result.restoredPrompt)
-                : ''
-            setInputValue(restoredPrompt)
-            inputValueRef.current = restoredPrompt
-          } else {
-            const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
-            if (!result.success) {
-              toast.error(result.error || 'Nothing to redo')
-              return
-            }
-
-            setRevertMessageID(result.revertMessageID ?? null)
-            if (result.revertMessageID === null) {
-              revertDiffRef.current = null
-              setInputValue('')
-              inputValueRef.current = ''
-            }
+        if (commandName === 'undo' || commandName === 'redo') {
+          if (!worktreePath || !opencodeSessionId) {
+            toast.error('OpenCode is not connected')
+            return
           }
 
-          const refreshed = await refreshMessagesFromOpenCode()
-          if (!refreshed) {
-            toast.error('Undo/redo completed, but refresh failed')
-          }
-        } catch (error) {
-          console.error('Built-in command failed:', error)
-          toast.error(commandName === 'undo' ? 'Undo failed' : 'Redo failed')
-        }
+          setShowSlashCommands(false)
+          setInputValue('')
+          inputValueRef.current = ''
+          setHistoryIndex(null)
+          savedDraftRef.current = ''
+          if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+          window.db.session.updateDraft(sessionId, null)
 
-        return
-      }
+          try {
+            if (commandName === 'undo') {
+              const result = await window.opencodeOps.undo(worktreePath, opencodeSessionId)
+              if (!result.success) {
+                toast.error(result.error || 'Nothing to undo')
+                return
+              }
 
-      if (commandName === 'clear') {
-        setInputValue('')
-        inputValueRef.current = ''
-        setShowSlashCommands(false)
+              setRevertMessageID(result.revertMessageID ?? null)
+              revertDiffRef.current = result.revertDiff ?? null
 
-        const currentSessionId = sessionId
-        const currentWorktreeId = worktreeId
-        const currentProjectId = sessionRecord?.project_id
+              const restoredPrompt =
+                typeof result.restoredPrompt === 'string'
+                  ? stripPlanModePrefix(result.restoredPrompt)
+                  : ''
+              setInputValue(restoredPrompt)
+              inputValueRef.current = restoredPrompt
+            } else {
+              const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
+              if (!result.success) {
+                toast.error(result.error || 'Nothing to redo')
+                return
+              }
 
-        // Close current tab
-        await useSessionStore.getState().closeSession(currentSessionId)
-
-        // Create new session in the same worktree
-        if (currentWorktreeId && currentProjectId) {
-          const { success, session } = await useSessionStore
-            .getState()
-            .createSession(currentWorktreeId, currentProjectId)
-          if (success && session) {
-            useSessionStore.getState().setActiveSession(session.id)
-          }
-        }
-
-        return
-      }
-    }
-
-    // If already streaming, this is a queued follow-up
-    const isQueuedMessage = isStreaming
-
-    if (!isQueuedMessage) {
-      hasFinalizedCurrentResponseRef.current = false
-      setIsSending(true)
-    } else {
-      setQueuedMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), content: trimmedValue, timestamp: Date.now() }
-      ])
-    }
-    setInputValue('')
-    inputValueRef.current = ''
-    if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-    window.db.session.updateDraft(sessionId, null)
-
-    // User just sent a message — cancel any scroll cooldown and resume auto-scroll
-    if (scrollCooldownRef.current !== null) {
-      clearTimeout(scrollCooldownRef.current)
-      scrollCooldownRef.current = null
-    }
-    isScrollCooldownActiveRef.current = false
-    isAutoScrollEnabledRef.current = true
-    setShowScrollFab(false)
-    userHasScrolledUpRef.current = false
-
-    // Start the completion badge timer from when the user sends the message
-    messageSendTimes.set(sessionId, Date.now())
-
-    // Record the mode at send time — used to derive "Plan ready" vs "Ready"
-    const currentModeForStatus = useSessionStore.getState().getSessionMode(sessionId)
-    lastSendMode.set(sessionId, currentModeForStatus)
-    useWorktreeStatusStore
-      .getState()
-      .setSessionStatus(sessionId, currentModeForStatus === 'plan' ? 'planning' : 'working')
-
-    try {
-      setRevertMessageID(null)
-      revertDiffRef.current = null
-      setMessages((prev) => [...prev, createLocalMessage('user', trimmedValue)])
-
-      // Mark that a new prompt is in flight — prevents finalizeResponse
-      // from reordering this message if a previous stream is still completing.
-      newPromptPendingRef.current = true
-
-      // Record prompt to history for Up/Down navigation
-      if (worktreeId) {
-        usePromptHistoryStore.getState().addPrompt(worktreeId, trimmedValue)
-        useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
-      }
-      setHistoryIndex(null)
-      savedDraftRef.current = ''
-
-      // Log user prompt if response logging is active
-      if (isLogModeRef.current && logFilePathRef.current) {
-        try {
-          const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-          window.loggingOps.appendResponseLog(logFilePathRef.current, {
-            type: 'user_prompt',
-            content: trimmedValue,
-            mode: currentMode
-          })
-        } catch {
-          // Never let logging failures break the UI
-        }
-      }
-
-      // Send to OpenCode if connected
-      if (worktreePath && opencodeSessionId) {
-        const requestModel = getModelForRequests()
-
-        // Track which model is being used on this worktree
-        if (requestModel && worktreeId) {
-          useWorktreeStore.getState().updateWorktreeModel(worktreeId, requestModel)
-          window.db?.worktree
-            ?.updateModel({
-              worktreeId,
-              modelProviderId: requestModel.providerID,
-              modelId: requestModel.modelID,
-              modelVariant: requestModel.variant ?? null
-            })
-            .catch(() => {})
-        }
-
-        // Detect slash commands and route through the SDK command endpoint
-        if (trimmedValue.startsWith('/')) {
-          const spaceIndex = trimmedValue.indexOf(' ')
-          const commandName =
-            spaceIndex > 0 ? trimmedValue.slice(1, spaceIndex) : trimmedValue.slice(1)
-          const commandArgs = spaceIndex > 0 ? trimmedValue.slice(spaceIndex + 1).trim() : ''
-
-          const matchedCommand = allSlashCommands.find((c) => c.name === commandName)
-
-          if (matchedCommand && !matchedCommand.builtIn) {
-            // Auto-switch mode based on command's agent field
-            if (matchedCommand.agent) {
-              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-              const targetMode = matchedCommand.agent === 'plan' ? 'plan' : 'build'
-              if (currentMode !== targetMode) {
-                await useSessionStore.getState().setSessionMode(sessionId, targetMode)
+              setRevertMessageID(result.revertMessageID ?? null)
+              if (result.revertMessageID === null) {
+                revertDiffRef.current = null
+                setInputValue('')
+                inputValueRef.current = ''
               }
             }
 
-            lastSentPromptRef.current = trimmedValue
-            setAttachments([])
-            const result = await window.opencodeOps.command(
-              worktreePath,
-              opencodeSessionId,
-              commandName,
-              commandArgs,
-              requestModel
-            )
-            if (!result.success) {
-              console.error('Failed to send command:', result.error)
-              toast.error('Failed to send command')
-              setIsSending(false)
+            const refreshed = await refreshMessagesFromOpenCode()
+            if (!refreshed) {
+              toast.error('Undo/redo completed, but refresh failed')
+            }
+          } catch (error) {
+            console.error('Built-in command failed:', error)
+            toast.error(commandName === 'undo' ? 'Undo failed' : 'Redo failed')
+          }
+
+          return
+        }
+
+        if (commandName === 'clear') {
+          setInputValue('')
+          inputValueRef.current = ''
+          setShowSlashCommands(false)
+
+          const currentSessionId = sessionId
+          const currentWorktreeId = worktreeId
+          const currentProjectId = sessionRecord?.project_id
+
+          // Close current tab
+          await useSessionStore.getState().closeSession(currentSessionId)
+
+          // Create new session in the same worktree
+          if (currentWorktreeId && currentProjectId) {
+            const { success, session } = await useSessionStore
+              .getState()
+              .createSession(currentWorktreeId, currentProjectId)
+            if (success && session) {
+              useSessionStore.getState().setActiveSession(session.id)
+            }
+          }
+
+          return
+        }
+      }
+
+      // If already streaming, this is a queued follow-up
+      const isQueuedMessage = isStreaming
+
+      if (!isQueuedMessage) {
+        hasFinalizedCurrentResponseRef.current = false
+        setIsSending(true)
+      } else {
+        setQueuedMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), content: trimmedValue, timestamp: Date.now() }
+        ])
+      }
+      setInputValue('')
+      inputValueRef.current = ''
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+      window.db.session.updateDraft(sessionId, null)
+
+      // User just sent a message — cancel any scroll cooldown and resume auto-scroll
+      if (scrollCooldownRef.current !== null) {
+        clearTimeout(scrollCooldownRef.current)
+        scrollCooldownRef.current = null
+      }
+      isScrollCooldownActiveRef.current = false
+      isAutoScrollEnabledRef.current = true
+      setShowScrollFab(false)
+      userHasScrolledUpRef.current = false
+
+      // Start the completion badge timer from when the user sends the message
+      messageSendTimes.set(sessionId, Date.now())
+
+      // Record the mode at send time — used to derive "Plan ready" vs "Ready"
+      const currentModeForStatus = useSessionStore.getState().getSessionMode(sessionId)
+      lastSendMode.set(sessionId, currentModeForStatus)
+      useWorktreeStatusStore
+        .getState()
+        .setSessionStatus(sessionId, currentModeForStatus === 'plan' ? 'planning' : 'working')
+
+      try {
+        setRevertMessageID(null)
+        revertDiffRef.current = null
+        setMessages((prev) => [...prev, createLocalMessage('user', trimmedValue)])
+
+        // Mark that a new prompt is in flight — prevents finalizeResponse
+        // from reordering this message if a previous stream is still completing.
+        newPromptPendingRef.current = true
+
+        // Record prompt to history for Up/Down navigation
+        if (worktreeId) {
+          usePromptHistoryStore.getState().addPrompt(worktreeId, trimmedValue)
+          useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
+        }
+        setHistoryIndex(null)
+        savedDraftRef.current = ''
+
+        // Log user prompt if response logging is active
+        if (isLogModeRef.current && logFilePathRef.current) {
+          try {
+            const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+            window.loggingOps.appendResponseLog(logFilePathRef.current, {
+              type: 'user_prompt',
+              content: trimmedValue,
+              mode: currentMode
+            })
+          } catch {
+            // Never let logging failures break the UI
+          }
+        }
+
+        // Send to OpenCode if connected
+        if (worktreePath && opencodeSessionId) {
+          const requestModel = getModelForRequests()
+
+          // Track which model is being used on this worktree
+          if (requestModel && worktreeId) {
+            useWorktreeStore.getState().updateWorktreeModel(worktreeId, requestModel)
+            window.db?.worktree
+              ?.updateModel({
+                worktreeId,
+                modelProviderId: requestModel.providerID,
+                modelId: requestModel.modelID,
+                modelVariant: requestModel.variant ?? null
+              })
+              .catch(() => {})
+          }
+
+          // Detect slash commands and route through the SDK command endpoint
+          if (trimmedValue.startsWith('/')) {
+            const spaceIndex = trimmedValue.indexOf(' ')
+            const commandName =
+              spaceIndex > 0 ? trimmedValue.slice(1, spaceIndex) : trimmedValue.slice(1)
+            const commandArgs = spaceIndex > 0 ? trimmedValue.slice(spaceIndex + 1).trim() : ''
+
+            const matchedCommand = allSlashCommands.find((c) => c.name === commandName)
+
+            if (matchedCommand && !matchedCommand.builtIn) {
+              // Auto-switch mode based on command's agent field
+              if (matchedCommand.agent) {
+                const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+                const targetMode = matchedCommand.agent === 'plan' ? 'plan' : 'build'
+                if (currentMode !== targetMode) {
+                  await useSessionStore.getState().setSessionMode(sessionId, targetMode)
+                }
+              }
+
+              lastSentPromptRef.current = trimmedValue
+              setAttachments([])
+              const result = await window.opencodeOps.command(
+                worktreePath,
+                opencodeSessionId,
+                commandName,
+                commandArgs,
+                requestModel
+              )
+              if (!result.success) {
+                console.error('Failed to send command:', result.error)
+                toast.error('Failed to send command')
+                setIsSending(false)
+              }
+            } else {
+              // Unknown command — send as regular prompt (SDK may handle it)
+              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+              const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
+              const promptMessage = modePrefix + trimmedValue
+              lastSentPromptRef.current = promptMessage
+              const parts: MessagePart[] = [
+                ...attachments.map((a) => ({
+                  type: 'file' as const,
+                  mime: a.mime,
+                  url: a.dataUrl,
+                  filename: a.name
+                })),
+                { type: 'text' as const, text: promptMessage }
+              ]
+              setAttachments([])
+              const result = await window.opencodeOps.prompt(
+                worktreePath,
+                opencodeSessionId,
+                parts,
+                requestModel
+              )
+              if (!result.success) {
+                console.error('Failed to send prompt to OpenCode:', result.error)
+                toast.error('Failed to send message to AI')
+                setIsSending(false)
+              }
             }
           } else {
-            // Unknown command — send as regular prompt (SDK may handle it)
+            // Regular prompt — existing code (with mode prefix, attachments, etc.)
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
             const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
             const promptMessage = modePrefix + trimmedValue
+            // Store the full prompt so the stream handler can detect SDK echoes
+            // of the user message (the SDK often re-emits the prompt without a
+            // role field, making it indistinguishable from assistant text).
             lastSentPromptRef.current = promptMessage
             const parts: MessagePart[] = [
               ...attachments.map((a) => ({
@@ -2159,67 +2194,43 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setIsSending(false)
             }
           }
+          // Don't set isSending to false here - wait for streaming to complete
         } else {
-          // Regular prompt — existing code (with mode prefix, attachments, etc.)
-          const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-          const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
-          const promptMessage = modePrefix + trimmedValue
-          // Store the full prompt so the stream handler can detect SDK echoes
-          // of the user message (the SDK often re-emits the prompt without a
-          // role field, making it indistinguishable from assistant text).
-          lastSentPromptRef.current = promptMessage
-          const parts: MessagePart[] = [
-            ...attachments.map((a) => ({
-              type: 'file' as const,
-              mime: a.mime,
-              url: a.dataUrl,
-              filename: a.name
-            })),
-            { type: 'text' as const, text: promptMessage }
-          ]
+          // No OpenCode connection - show placeholder
           setAttachments([])
-          const result = await window.opencodeOps.prompt(
-            worktreePath,
-            opencodeSessionId,
-            parts,
-            requestModel
-          )
-          if (!result.success) {
-            console.error('Failed to send prompt to OpenCode:', result.error)
-            toast.error('Failed to send message to AI')
+          console.warn('No OpenCode connection, showing placeholder response')
+          setTimeout(() => {
+            const placeholderContent =
+              'OpenCode is not connected. Please ensure a worktree is selected and the connection is established.'
+            setMessages((prev) => [...prev, createLocalMessage('assistant', placeholderContent)])
             setIsSending(false)
-          }
+          }, 500)
         }
-        // Don't set isSending to false here - wait for streaming to complete
-      } else {
-        // No OpenCode connection - show placeholder
-        setAttachments([])
-        console.warn('No OpenCode connection, showing placeholder response')
-        setTimeout(() => {
-          const placeholderContent =
-            'OpenCode is not connected. Please ensure a worktree is selected and the connection is established.'
-          setMessages((prev) => [...prev, createLocalMessage('assistant', placeholderContent)])
-          setIsSending(false)
-        }, 500)
+      } catch (error) {
+        console.error('Failed to send message:', error)
+        toast.error('Failed to send message')
+        setIsSending(false)
       }
-    } catch (error) {
-      console.error('Failed to send message:', error)
-      toast.error('Failed to send message')
-      setIsSending(false)
-    }
-  }, [
-    inputValue,
-    isStreaming,
-    sessionId,
-    sessionRecord,
-    worktreePath,
-    worktreeId,
-    opencodeSessionId,
-    attachments,
-    allSlashCommands,
-    refreshMessagesFromOpenCode,
-    getModelForRequests
-  ])
+    },
+    [
+      inputValue,
+      isStreaming,
+      sessionId,
+      sessionRecord,
+      worktreePath,
+      worktreeId,
+      opencodeSessionId,
+      attachments,
+      allSlashCommands,
+      refreshMessagesFromOpenCode,
+      getModelForRequests
+    ]
+  )
+
+  const handlePlanReadyImplement = useCallback(async () => {
+    await useSessionStore.getState().setSessionMode(sessionId, 'build')
+    await handleSend('Implement')
+  }, [sessionId, handleSend])
 
   // Abort streaming
   const handleAbort = useCallback(async () => {
@@ -2515,6 +2526,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         (streamingParts[streamingParts.length - 1].type === 'text' ||
           streamingParts[streamingParts.length - 1].type === 'tool_use')))
 
+  const showPlanReadyImplementFab =
+    lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming
+
   // Render based on view state
   if (viewState.status === 'connecting') {
     return (
@@ -2643,8 +2657,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             </div>
           )}
         </div>
+        <PlanReadyImplementFab
+          onClick={handlePlanReadyImplement}
+          visible={showPlanReadyImplementFab}
+        />
         {/* Scroll-to-bottom FAB */}
-        <ScrollToBottomFab onClick={handleScrollToBottomClick} visible={showScrollFab} />
+        <ScrollToBottomFab
+          onClick={handleScrollToBottomClick}
+          visible={showScrollFab}
+          bottomClass={showPlanReadyImplementFab ? 'bottom-16' : 'bottom-4'}
+        />
       </div>
 
       {/* Permission prompt from AI */}
@@ -2752,7 +2774,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 </Button>
               ) : (
                 <Button
-                  onClick={handleSend}
+                  onClick={() => {
+                    void handleSend()
+                  }}
                   disabled={!inputValue.trim() || !!activePermission}
                   size="sm"
                   className="h-7 w-7 p-0"

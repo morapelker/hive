@@ -4,14 +4,20 @@ import { cn } from '@/lib/utils'
 interface ScrollToBottomFabProps {
   onClick: () => void
   visible: boolean
+  bottomClass?: string
 }
 
-export function ScrollToBottomFab({ onClick, visible }: ScrollToBottomFabProps): React.JSX.Element {
+export function ScrollToBottomFab({
+  onClick,
+  visible,
+  bottomClass = 'bottom-4'
+}: ScrollToBottomFabProps): React.JSX.Element {
   return (
     <button
       onClick={onClick}
       className={cn(
-        'absolute bottom-4 right-4 z-10',
+        'absolute right-4 z-10',
+        bottomClass,
         'h-8 w-8 rounded-full',
         'bg-muted/80 backdrop-blur-sm border border-border',
         'flex items-center justify-center',
