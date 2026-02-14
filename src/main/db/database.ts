@@ -343,7 +343,7 @@ export class DatabaseService {
     const db = this.getDb()
     const rows = db
       .prepare(
-        'SELECT * FROM worktrees WHERE project_id = ? ORDER BY is_default DESC, last_accessed_at DESC'
+        'SELECT * FROM worktrees WHERE project_id = ? ORDER BY is_default ASC, last_accessed_at DESC'
       )
       .all(projectId) as Record<string, unknown>[]
     return rows.map((row) => this.mapWorktreeRow(row))
@@ -353,7 +353,7 @@ export class DatabaseService {
     const db = this.getDb()
     const rows = db
       .prepare(
-        "SELECT * FROM worktrees WHERE project_id = ? AND status = 'active' ORDER BY is_default DESC, last_accessed_at DESC"
+        "SELECT * FROM worktrees WHERE project_id = ? AND status = 'active' ORDER BY is_default ASC, last_accessed_at DESC"
       )
       .all(projectId) as Record<string, unknown>[]
     return rows.map((row) => this.mapWorktreeRow(row))

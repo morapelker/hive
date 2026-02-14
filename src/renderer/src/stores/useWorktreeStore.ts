@@ -108,10 +108,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const worktrees = await window.db.worktree.getActiveByProject(projectId)
-      // Sort: default worktrees first, then by last_accessed_at descending
+      // Sort: non-default worktrees by last_accessed_at descending, default worktree last
       const sortedWorktrees = worktrees.sort((a, b) => {
-        if (a.is_default && !b.is_default) return -1
-        if (!a.is_default && b.is_default) return 1
+        if (a.is_default && !b.is_default) return 1
+        if (!a.is_default && b.is_default) return -1
         return new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
       })
       set((state) => {
@@ -393,13 +393,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Get worktrees for a specific project (applies custom order if available)
   getWorktreesForProject: (projectId: string) => {
     const worktrees = get().worktreesByProject.get(projectId) || []
-    const customOrder = get().worktreeOrderByProject.get(projectId)
 
-    if (!customOrder || customOrder.length === 0) return worktrees
-
-    // Separate default worktree (always first) from non-default
+    // Separate default worktree (always last) from non-default
     const defaultWorktree = worktrees.find((w) => w.is_default)
     const nonDefault = worktrees.filter((w) => !w.is_default)
+
+    const customOrder = get().worktreeOrderByProject.get(projectId)
+    if (!customOrder || customOrder.length === 0) {
+      return defaultWorktree ? [...nonDefault, defaultWorktree] : nonDefault
+    }
 
     // Sort non-default worktrees by custom order; unordered ones go at end
     const ordered: typeof nonDefault = []
@@ -412,7 +414,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       if (!customOrder.includes(wt.id)) ordered.push(wt)
     }
 
-    return defaultWorktree ? [defaultWorktree, ...ordered] : ordered
+    return defaultWorktree ? [...ordered, defaultWorktree] : ordered
   },
 
   // Get the default worktree for a project
