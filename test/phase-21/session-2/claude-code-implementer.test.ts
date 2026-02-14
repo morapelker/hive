@@ -95,12 +95,13 @@ describe('ClaudeCodeImplementer', () => {
       expect(result.sessionId).toMatch(/^pending::/)
     })
 
-    it('prompt throws /not yet implemented/', async () => {
-      await expect(impl.prompt('/path', 'sid', 'hello')).rejects.toThrow(/not yet implemented/)
+    it('prompt throws when session not found', async () => {
+      await expect(impl.prompt('/path', 'sid', 'hello')).rejects.toThrow(/session not found/)
     })
 
-    it('getMessages throws /not yet implemented/', async () => {
-      await expect(impl.getMessages('/path', 'sid')).rejects.toThrow(/not yet implemented/)
+    it('getMessages returns empty array (stub)', async () => {
+      const result = await impl.getMessages('/path', 'sid')
+      expect(result).toEqual([])
     })
   })
 

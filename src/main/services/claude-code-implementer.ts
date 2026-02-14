@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { createLogger } from './logger'
+import { loadClaudeSDK } from './claude-sdk-loader'
 import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
 
@@ -143,9 +144,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   // ── Messaging ────────────────────────────────────────────────────
 
   async prompt(
-    _worktreePath: string,
-    _agentSessionId: string,
-    _message:
+    worktreePath: string,
+    agentSessionId: string,
+    message:
       | string
       | Array<
           | { type: 'text'; text: string }
@@ -153,15 +154,121 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         >,
     _modelOverride?: { providerID: string; modelID: string; variant?: string }
   ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.prompt: not yet implemented (Session 4)')
+    const session = this.getSession(worktreePath, agentSessionId)
+    if (!session) {
+      throw new Error(`Prompt failed: session not found for ${worktreePath} / ${agentSessionId}`)
+    }
+
+    this.emitStatus(session.hiveSessionId, 'busy')
+
+    try {
+      const sdk = await loadClaudeSDK()
+
+      // Build prompt string from message parts
+      const prompt =
+        typeof message === 'string'
+          ? message
+          : message
+              .map((part) =>
+                part.type === 'text' ? part.text : `[file: ${part.filename ?? part.url}]`
+              )
+              .join('\n')
+
+      // Fresh AbortController for this prompt turn
+      session.abortController = new AbortController()
+
+      // Build SDK query options
+      const options: Record<string, unknown> = {
+        cwd: session.worktreePath,
+        permissionMode: 'default',
+        abortController: session.abortController,
+        maxThinkingTokens: 31999
+      }
+
+      // If session is materialized (has real SDK ID), add resume
+      if (session.materialized) {
+        options.resume = session.claudeSessionId
+      }
+
+      const queryData = sdk.query({ prompt, options }) as AsyncIterable<Record<string, unknown>>
+      session.query = queryData as unknown as ClaudeQuery
+
+      let messageIndex = 0
+
+      for await (const sdkMessage of queryData) {
+        // Break if aborted
+        if (session.abortController?.signal.aborted) break
+
+        const msgType = sdkMessage.type as string
+
+        // Skip init messages
+        if (msgType === 'init') continue
+
+        // Materialize pending:: to real SDK session ID from first message
+        const sdkSessionId = sdkMessage.session_id as string | undefined
+        if (sdkSessionId && session.claudeSessionId.startsWith('pending::')) {
+          const oldKey = this.getSessionKey(worktreePath, session.claudeSessionId)
+          session.claudeSessionId = sdkSessionId
+          session.materialized = true
+          this.sessions.delete(oldKey)
+          const newKey = this.getSessionKey(worktreePath, sdkSessionId)
+          this.sessions.set(newKey, session)
+          log.info('Materialized session ID', { oldKey, newKey })
+        }
+
+        // Capture user message UUIDs as checkpoints
+        if (msgType === 'user' && sdkMessage.uuid) {
+          session.checkpoints.set(sdkMessage.uuid as string, messageIndex)
+        }
+
+        // Emit normalized event
+        this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex)
+        messageIndex++
+      }
+
+      this.emitStatus(session.hiveSessionId, 'idle')
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      log.error('Prompt streaming error', { worktreePath, agentSessionId, error: errorMessage })
+
+      this.sendToRenderer('opencode:stream', {
+        type: 'session.error',
+        sessionId: session.hiveSessionId,
+        data: { error: errorMessage }
+      })
+      this.emitStatus(session.hiveSessionId, 'idle')
+    } finally {
+      session.query = null
+    }
   }
 
-  async abort(_worktreePath: string, _agentSessionId: string): Promise<boolean> {
-    throw new Error('ClaudeCodeImplementer.abort: not yet implemented (Session 4)')
+  async abort(worktreePath: string, agentSessionId: string): Promise<boolean> {
+    const session = this.getSession(worktreePath, agentSessionId)
+    if (!session) {
+      log.warn('Abort: session not found', { worktreePath, agentSessionId })
+      return false
+    }
+
+    if (session.abortController) {
+      session.abortController.abort()
+    }
+
+    if (session.query) {
+      try {
+        await session.query.interrupt()
+      } catch {
+        log.warn('Abort: query.interrupt() threw, ignoring', { worktreePath, agentSessionId })
+      }
+    }
+
+    session.query = null
+    this.emitStatus(session.hiveSessionId, 'idle')
+    return true
   }
 
   async getMessages(_worktreePath: string, _agentSessionId: string): Promise<unknown[]> {
-    throw new Error('ClaudeCodeImplementer.getMessages: not yet implemented (Session 4)')
+    // Real implementation deferred to Session 5 (Transcript + Session Metadata)
+    return []
   }
 
   // ── Models ───────────────────────────────────────────────────────
@@ -267,6 +374,92 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   }
 
   // ── Internal helpers ─────────────────────────────────────────────
+
+  private emitStatus(
+    hiveSessionId: string,
+    status: 'idle' | 'busy' | 'retry',
+    extra?: { attempt?: number; message?: string; next?: number }
+  ): void {
+    const statusPayload = { type: status, ...extra }
+    this.sendToRenderer('opencode:stream', {
+      type: 'session.status',
+      sessionId: hiveSessionId,
+      data: { status: statusPayload },
+      statusPayload
+    })
+  }
+
+  private emitSdkMessage(
+    hiveSessionId: string,
+    msg: Record<string, unknown>,
+    messageIndex: number
+  ): void {
+    const msgType = msg.type as string
+    const content = msg.content as unknown[] | undefined
+
+    switch (msgType) {
+      case 'assistant': {
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            this.sendToRenderer('opencode:stream', {
+              type: 'message.part.updated',
+              sessionId: hiveSessionId,
+              data: {
+                role: 'assistant',
+                content: block,
+                messageIndex
+              }
+            })
+          }
+        }
+        break
+      }
+      case 'result': {
+        this.sendToRenderer('opencode:stream', {
+          type: 'message.updated',
+          sessionId: hiveSessionId,
+          data: {
+            role: 'assistant',
+            content,
+            isError: msg.is_error ?? false,
+            messageIndex
+          }
+        })
+        break
+      }
+      case 'user': {
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            this.sendToRenderer('opencode:stream', {
+              type: 'message.part.updated',
+              sessionId: hiveSessionId,
+              data: {
+                role: 'user',
+                content: block,
+                messageIndex
+              }
+            })
+          }
+        }
+        break
+      }
+      case 'tool_use': {
+        this.sendToRenderer('opencode:stream', {
+          type: 'message.part.updated',
+          sessionId: hiveSessionId,
+          data: {
+            type: 'tool-use',
+            content: msg,
+            messageIndex
+          }
+        })
+        break
+      }
+      default: {
+        log.debug('Unhandled SDK message type, skipping', { type: msgType })
+      }
+    }
+  }
 
   protected getSessionKey(worktreePath: string, claudeSessionId: string): string {
     return `${worktreePath}::${claudeSessionId}`
