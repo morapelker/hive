@@ -2374,6 +2374,38 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     await handleSend('Implement')
   }, [sessionId, handleSend])
 
+  const handlePlanReadyHandoff = useCallback(async () => {
+    const lastAssistantMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.content.trim().length > 0)
+
+    if (!lastAssistantMessage) {
+      toast.error('No assistant plan message to hand off')
+      return
+    }
+
+    const currentWorktreeId = worktreeId
+    const currentProjectId = sessionRecord?.project_id
+    if (!currentWorktreeId || !currentProjectId) {
+      toast.error('Could not start handoff session')
+      return
+    }
+
+    const handoffPrompt = `Implement the following plan\n${lastAssistantMessage.content}`
+
+    const sessionStore = useSessionStore.getState()
+    const result = await sessionStore.createSession(currentWorktreeId, currentProjectId)
+    if (!result.success || !result.session) {
+      toast.error('Failed to create handoff session')
+      return
+    }
+
+    const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+    sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+    sessionStore.setActiveSession(result.session.id)
+    await setModePromise
+  }, [messages, worktreeId, sessionRecord?.project_id])
+
   // Abort streaming
   const handleAbort = useCallback(async () => {
     if (!worktreePath || !opencodeSessionId) return
@@ -2861,7 +2893,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           )}
         </div>
         <PlanReadyImplementFab
-          onClick={handlePlanReadyImplement}
+          onImplement={handlePlanReadyImplement}
+          onHandoff={handlePlanReadyHandoff}
           visible={showPlanReadyImplementFab}
         />
         {/* Scroll-to-bottom FAB */}
