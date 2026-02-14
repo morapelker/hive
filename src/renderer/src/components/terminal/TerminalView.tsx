@@ -88,7 +88,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
 
   // Re-fit and focus when becoming visible
   useEffect(() => {
-    if (!isVisible || !backendRef.current) return
+    if (!backendRef.current) return
+
+    backendRef.current.setVisible?.(isVisible)
+
+    if (!isVisible) return
 
     const timer = setTimeout(() => {
       const backend = backendRef.current

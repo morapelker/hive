@@ -9,6 +9,8 @@ export class GhosttyBackend implements TerminalBackend {
   readonly type = 'ghostty' as const
   readonly supportsSearch = false // Ghostty handles its own search natively
 
+  private static readonly HIDDEN_RECT = { x: -10000, y: -10000, w: 1, h: 1 }
+
   private worktreeId: string = ''
   private container: HTMLDivElement | null = null
   private resizeObserver: ResizeObserver | null = null
@@ -131,6 +133,22 @@ export class GhosttyBackend implements TerminalBackend {
     window.terminalOps.ghosttySetFocus(this.worktreeId, true).catch(() => {
       // Ignore focus errors
     })
+  }
+
+  setVisible(visible: boolean): void {
+    if (!this.mounted) return
+
+    if (!visible) {
+      window.terminalOps.ghosttySetFocus(this.worktreeId, false).catch(() => {
+        // Ignore focus errors
+      })
+      window.terminalOps.ghosttySetFrame(this.worktreeId, GhosttyBackend.HIDDEN_RECT).catch(() => {
+        // Ignore frame sync errors during teardown
+      })
+      return
+    }
+
+    this.syncFrame()
   }
 
   clear(): void {
