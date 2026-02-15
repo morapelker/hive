@@ -917,6 +917,28 @@ const opencodeOps = {
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:question:reject', { requestId, worktreePath }),
 
+  // Approve a pending plan (ExitPlanMode) — unblocks the SDK to implement
+  planApprove: (
+    worktreePath: string,
+    hiveSessionId: string,
+    requestId?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:plan:approve', { worktreePath, hiveSessionId, requestId }),
+
+  // Reject a pending plan with user feedback — Claude will revise
+  planReject: (
+    worktreePath: string,
+    hiveSessionId: string,
+    feedback: string,
+    requestId?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:plan:reject', {
+      worktreePath,
+      hiveSessionId,
+      feedback,
+      requestId
+    }),
+
   // Reply to a pending permission request (allow once, allow always, or reject)
   permissionReply: (
     requestId: string,

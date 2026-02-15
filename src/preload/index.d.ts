@@ -427,6 +427,19 @@ declare global {
         requestId: string,
         worktreePath?: string
       ) => Promise<{ success: boolean; error?: string }>
+      // Approve a pending plan (ExitPlanMode) — unblocks the SDK to implement
+      planApprove: (
+        worktreePath: string,
+        hiveSessionId: string,
+        requestId?: string
+      ) => Promise<{ success: boolean; error?: string }>
+      // Reject a pending plan with user feedback — Claude will revise
+      planReject: (
+        worktreePath: string,
+        hiveSessionId: string,
+        feedback: string,
+        requestId?: string
+      ) => Promise<{ success: boolean; error?: string }>
       // Reply to a pending permission request (allow once, allow always, or reject)
       permissionReply: (
         requestId: string,

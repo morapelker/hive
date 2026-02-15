@@ -127,6 +127,33 @@ export function useOpenCodeGlobalListener(): void {
             return
           }
 
+          // Handle plan approval events globally so pending state survives tab switches.
+          if (event.type === 'plan.ready') {
+            const data = event.data as
+              | { id?: string; requestId?: string; plan?: string; toolUseID?: string }
+              | undefined
+            const requestId = data?.id || data?.requestId
+            if (requestId) {
+              useSessionStore.getState().setPendingPlan(sessionId, {
+                requestId,
+                planContent: data?.plan ?? '',
+                toolUseID: data?.toolUseID ?? ''
+              })
+              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+            }
+            return
+          }
+
+          if (event.type === 'plan.resolved') {
+            useSessionStore.getState().clearPendingPlan(sessionId)
+            // If session is no longer busy/planning, clear stale plan_ready badge.
+            const current = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+            if (current?.status === 'plan_ready') {
+              useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+            }
+            return
+          }
+
           // Use session.status (not deprecated session.idle) as the authoritative signal
           if (event.type !== 'session.status') return
 

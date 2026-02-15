@@ -336,10 +336,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       : globalModel
   const currentModelId = effectiveModel?.modelID ?? 'claude-opus-4-5-20251101'
   const currentProviderId = effectiveModel?.providerID ?? 'anthropic'
+  // Claude Code SDK uses native plan mode (ExitPlanMode) — skip PLAN_MODE_PREFIX
+  const isClaudeCode = sessionRecord?.agent_sdk === 'claude-code'
 
   // Active question prompt from AI
   const activeQuestion = useQuestionStore((s) => s.getActiveQuestion(sessionId))
   const activePermission = usePermissionStore((s) => s.getActivePermission(sessionId))
+
+  // Pending plan approval (ExitPlanMode blocking tool)
+  const pendingPlan = useSessionStore((s) => s.pendingPlans.get(sessionId) ?? null)
 
   // Completion badge — reactive subscription to this session's status entry
   const completionEntry = useWorktreeStatusStore((state) => {
@@ -1119,6 +1124,31 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
+          // Handle plan events (ExitPlanMode blocking tool)
+          if (event.type === 'plan.ready') {
+            const data = event.data as {
+              id?: string
+              requestId?: string
+              plan?: string
+              toolUseID?: string
+            }
+            const requestId = data?.id || data?.requestId
+            if (requestId) {
+              useSessionStore.getState().setPendingPlan(sessionId, {
+                requestId,
+                planContent: data.plan ?? '',
+                toolUseID: data.toolUseID ?? ''
+              })
+              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+            }
+            return
+          }
+
+          if (event.type === 'plan.resolved') {
+            useSessionStore.getState().clearPendingPlan(sessionId)
+            return
+          }
+
           // Handle different event types
           const eventRole = getEventMessageRole(event.data)
 
@@ -1737,8 +1767,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             useWorktreeStatusStore
               .getState()
               .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
-            // Apply mode prefix (e.g., plan mode for code reviews)
-            const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
+            // Apply mode prefix for OpenCode sessions (Claude Code uses native plan mode)
+            const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
             const model = getModelForRequests()
             // Send to OpenCode
             await window.opencodeOps.prompt(path, opcId, modePrefix + pendingMsg, model)
@@ -2269,7 +2299,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } else {
               // Unknown command — send as regular prompt (SDK may handle it)
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-              const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
+              const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
               const promptMessage = modePrefix + trimmedValue
               lastSentPromptRef.current = promptMessage
               const parts: MessagePart[] = [
@@ -2297,7 +2327,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           } else {
             // Regular prompt — existing code (with mode prefix, attachments, etc.)
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-            const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
+            const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
             const promptMessage = modePrefix + trimmedValue
             // Store the full prompt so the stream handler can detect SDK echoes
             // of the user message (the SDK often re-emits the prompt without a
@@ -2359,9 +2389,77 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   )
 
   const handlePlanReadyImplement = useCallback(async () => {
+    // Claude Code sessions must resolve a real pending ExitPlanMode request.
+    if (isClaudeCode) {
+      if (!worktreePath || !pendingPlan) {
+        toast.error('No pending plan approval found')
+        return
+      }
+
+      const pendingBeforeAction = pendingPlan
+      useSessionStore.getState().clearPendingPlan(sessionId)
+      useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+
+      try {
+        // Approve first (unblocks the SDK), then update frontend state.
+        const result = await window.opencodeOps.planApprove(
+          worktreePath,
+          sessionId,
+          pendingBeforeAction.requestId
+        )
+        if (!result.success) {
+          toast.error(`Plan approve failed: ${result.error ?? 'unknown'}`)
+          // Avoid stale FAB loops if backend no longer has a pending request.
+          if (!(result.error ?? '').toLowerCase().includes('no pending plan')) {
+            useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
+            useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+          }
+          return
+        }
+        await useSessionStore.getState().setSessionMode(sessionId, 'build')
+      } catch (err) {
+        toast.error(`Plan approve error: ${err instanceof Error ? err.message : String(err)}`)
+        useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
+        useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+      }
+      return
+    }
+
+    // OpenCode sessions: legacy non-blocking behavior.
     await useSessionStore.getState().setSessionMode(sessionId, 'build')
     await handleSend('Implement')
-  }, [sessionId, handleSend])
+  }, [sessionId, handleSend, worktreePath, pendingPlan, isClaudeCode])
+
+  const handlePlanReject = useCallback(
+    async (feedback: string) => {
+      if (!worktreePath || !pendingPlan) return
+      const pendingBeforeAction = pendingPlan
+      useSessionStore.getState().clearPendingPlan(sessionId)
+      useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+      try {
+        // Reject first (unblocks the SDK with feedback), then clear frontend state
+        const result = await window.opencodeOps.planReject(
+          worktreePath,
+          sessionId,
+          feedback,
+          pendingBeforeAction.requestId
+        )
+        if (!result.success) {
+          toast.error(`Plan reject failed: ${result.error ?? 'unknown'}`)
+          if (!(result.error ?? '').toLowerCase().includes('no pending plan')) {
+            useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
+            useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+          }
+          return
+        }
+      } catch (err) {
+        toast.error(`Plan reject error: ${err instanceof Error ? err.message : String(err)}`)
+        useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
+        useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+      }
+    },
+    [sessionId, worktreePath, pendingPlan]
+  )
 
   // Abort streaming
   const handleAbort = useCallback(async () => {
@@ -2374,6 +2472,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
+        // When a plan is pending, sending text rejects the plan with feedback
+        const plan = useSessionStore.getState().pendingPlans.get(sessionId)
+        if (plan && inputValue.trim()) {
+          void handlePlanReject(inputValue.trim())
+          setInputValue('')
+          inputValueRef.current = ''
+          return
+        }
         handleSend()
         return
       }
@@ -2452,7 +2558,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         })
       }
     },
-    [handleSend, worktreeId, historyIndex, inputValue]
+    [handleSend, handlePlanReject, sessionId, worktreeId, historyIndex, inputValue]
   )
 
   // Attachment handlers
@@ -2657,8 +2763,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         (streamingParts[streamingParts.length - 1].type === 'text' ||
           streamingParts[streamingParts.length - 1].type === 'tool_use')))
 
-  const showPlanReadyImplementFab =
-    lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming
+  // Show the floating Implement FAB when:
+  // 1. Claude Code sessions: ExitPlanMode is pending approval.
+  // 2. OpenCode sessions: legacy non-blocking plan mode completed.
+  const showPlanReadyImplementFab = isClaudeCode
+    ? !!pendingPlan
+    : lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming && !pendingPlan
 
   const retrySecondsRemaining = useMemo(() => {
     if (!sessionRetry?.next) return null
@@ -2822,6 +2932,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               {queuedMessages.map((msg) => (
                 <QueuedMessageBubble key={msg.id} content={msg.content} />
               ))}
+              {/* Pending plan preview as the last assistant message */}
+              {pendingPlan && (
+                <MessageRenderer
+                  message={{
+                    id: `pending-plan-${pendingPlan.requestId}`,
+                    role: 'assistant',
+                    content: pendingPlan.planContent || 'No plan content available in tool input.',
+                    timestamp: new Date().toISOString()
+                  }}
+                  cwd={worktreePath}
+                />
+              )}
               {/* Completion badge — shows after streaming finishes */}
               {completionEntry && !isSending && (
                 <div
@@ -2841,7 +2963,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           )}
         </div>
         <PlanReadyImplementFab
-          onClick={handlePlanReadyImplement}
+          onClick={() => {
+            void handlePlanReadyImplement()
+          }}
           visible={showPlanReadyImplementFab}
         />
         {/* Scroll-to-bottom FAB */}
@@ -2915,7 +3039,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               onPaste={handlePaste}
               disabled={!!activePermission}
               placeholder={
-                activePermission ? 'Waiting for permission response...' : 'Type your message...'
+                activePermission
+                  ? 'Waiting for permission response...'
+                  : pendingPlan
+                    ? 'Send feedback to revise the plan...'
+                    : 'Type your message...'
               }
               aria-label="Message input"
               className={cn(
@@ -2929,7 +3057,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               data-testid="message-input"
             />
 
-            {/* Bottom row: model selector + context indicator + hint text + send button */}
+            {/* Bottom row: model selector + context indicator + hint text + send/implement buttons */}
             <div className="flex items-center justify-between px-3 pb-2.5">
               <div className="flex items-center gap-2">
                 <ModelSelector sessionId={sessionId} />
@@ -2940,40 +3068,62 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   providerId={currentProviderId}
                 />
                 <span className="text-xs text-muted-foreground">
-                  Enter to send, Shift+Enter for new line
+                  {pendingPlan
+                    ? 'Enter to send feedback to revise the plan'
+                    : 'Enter to send, Shift+Enter for new line'}
                 </span>
               </div>
-              {isStreaming && !inputValue.trim() ? (
-                <Button
-                  onClick={handleAbort}
-                  size="sm"
-                  variant="destructive"
-                  className="h-7 w-7 p-0"
-                  aria-label="Stop streaming"
-                  title="Stop streaming"
-                  data-testid="stop-button"
-                >
-                  <Square className="h-3 w-3" />
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => {
-                    void handleSend()
-                  }}
-                  disabled={!inputValue.trim() || !!activePermission}
-                  size="sm"
-                  className="h-7 w-7 p-0"
-                  aria-label={isStreaming ? 'Queue message' : 'Send message'}
-                  title={isStreaming ? 'Queue message' : 'Send message'}
-                  data-testid="send-button"
-                >
-                  {isStreaming ? (
-                    <ListPlus className="h-3.5 w-3.5" />
-                  ) : (
-                    <Send className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-              )}
+              <div className="flex items-center gap-1.5">
+                {isStreaming && !inputValue.trim() ? (
+                  <Button
+                    onClick={handleAbort}
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 w-7 p-0"
+                    aria-label="Stop streaming"
+                    title="Stop streaming"
+                    data-testid="stop-button"
+                  >
+                    <Square className="h-3 w-3" />
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => {
+                      // When a plan is pending and there's text, send as feedback (reject)
+                      if (pendingPlan && inputValue.trim()) {
+                        void handlePlanReject(inputValue.trim())
+                        handleInputChange('')
+                        return
+                      }
+                      void handleSend()
+                    }}
+                    disabled={!inputValue.trim() || !!activePermission}
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    aria-label={
+                      pendingPlan && inputValue.trim()
+                        ? 'Send feedback'
+                        : isStreaming
+                          ? 'Queue message'
+                          : 'Send message'
+                    }
+                    title={
+                      pendingPlan && inputValue.trim()
+                        ? 'Send feedback to revise the plan'
+                        : isStreaming
+                          ? 'Queue message'
+                          : 'Send message'
+                    }
+                    data-testid="send-button"
+                  >
+                    {isStreaming ? (
+                      <ListPlus className="h-3.5 w-3.5" />
+                    ) : (
+                      <Send className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </div>

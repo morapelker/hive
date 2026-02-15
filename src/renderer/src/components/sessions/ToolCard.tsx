@@ -16,7 +16,8 @@ import {
   Clock,
   Plus,
   Minus,
-  Zap
+  Zap,
+  ClipboardCheck
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './tools/types'
@@ -89,6 +90,9 @@ function getToolIcon(name: string): React.JSX.Element {
   }
   if (lowerName.includes('skill')) {
     return <Zap className={iconClass} />
+  }
+  if (lowerName === 'exitplanmode') {
+    return <ClipboardCheck className={iconClass} />
   }
   // Default
   return <Terminal className={iconClass} />
@@ -458,6 +462,21 @@ function CollapsedContent({
     )
   }
 
+  // ExitPlanMode — plan review tool
+  if (lowerName === 'exitplanmode') {
+    return (
+      <>
+        <span className="text-emerald-500 shrink-0">
+          <ClipboardCheck className="h-3.5 w-3.5" />
+        </span>
+        <span className="font-medium text-foreground shrink-0">Plan Ready</span>
+        <span className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 rounded px-1 py-0.5 font-medium shrink-0">
+          review
+        </span>
+      </>
+    )
+  }
+
   // Default fallback
   const label = getToolLabel(name, input, cwd)
   return (
@@ -628,6 +647,10 @@ export const ToolCard = memo(function ToolCard({
   }, [toolUse.startTime, toolUse.endTime])
 
   const hasOutput = !!(toolUse.output || toolUse.error)
+  const isExitPlanMode = toolUse.name.toLowerCase() === 'exitplanmode'
+  const hasPlanInput =
+    isExitPlanMode && typeof toolUse.input?.plan === 'string' && toolUse.input.plan.length > 0
+  const hasDetail = hasOutput || hasPlanInput
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
@@ -700,25 +723,34 @@ export const ToolCard = memo(function ToolCard({
         compact
           ? 'my-0 rounded-md border border-l-2 text-xs'
           : 'my-1 rounded-md border border-l-2 text-xs',
-        toolUse.status === 'running' && 'animate-pulse',
-        toolUse.status === 'error' ? 'border-red-500/30 bg-red-500/5' : 'border-border bg-muted/30'
+        toolUse.status === 'running' && !isExitPlanMode && 'animate-pulse',
+        isExitPlanMode && toolUse.status === 'running'
+          ? 'border-emerald-500/30 bg-emerald-500/5'
+          : toolUse.status === 'error'
+            ? 'border-red-500/30 bg-red-500/5'
+            : 'border-border bg-muted/30'
       )}
-      style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
+      style={{
+        borderLeftColor:
+          isExitPlanMode && toolUse.status === 'running'
+            ? '#10b981'
+            : getLeftBorderColor(toolUse.status)
+      }}
       data-testid="tool-card"
       data-tool-name={toolUse.name}
       data-tool-status={toolUse.status}
     >
       {/* Header - always visible */}
       <button
-        onClick={() => hasOutput && setIsExpanded(!isExpanded)}
+        onClick={() => hasDetail && setIsExpanded(!isExpanded)}
         className={cn(
           compact
             ? 'flex items-center gap-1.5 w-full px-2 py-1.5 text-left'
             : 'flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left',
-          hasOutput && 'cursor-pointer hover:bg-muted/50 transition-colors'
+          hasDetail && 'cursor-pointer hover:bg-muted/50 transition-colors'
         )}
-        disabled={!hasOutput}
-        aria-expanded={hasOutput ? isExpanded : undefined}
+        disabled={!hasDetail}
+        aria-expanded={hasDetail ? isExpanded : undefined}
         data-testid="tool-card-header"
       >
         {/* Tool-specific collapsed content */}
@@ -742,7 +774,7 @@ export const ToolCard = memo(function ToolCard({
         <StatusIndicator status={toolUse.status} />
 
         {/* Expand/Collapse affordance */}
-        {hasOutput && (
+        {hasDetail && (
           <span className="ml-1 inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {isExpanded ? 'Hide' : 'View'}
             <ChevronDown
@@ -759,7 +791,7 @@ export const ToolCard = memo(function ToolCard({
       <div
         className={cn(
           'transition-all duration-150 overflow-hidden',
-          isExpanded && hasOutput ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+          isExpanded && hasDetail ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
         )}
         data-testid="tool-output"
       >

@@ -7,6 +7,13 @@ import { useWorktreeStore } from './useWorktreeStore'
 // Session mode type
 export type SessionMode = 'build' | 'plan'
 
+// Pending plan approval state (from ExitPlanMode blocking tool)
+export interface PendingPlan {
+  requestId: string
+  planContent: string
+  toolUseID: string
+}
+
 // Session type matching the database schema
 interface Session {
   id: string
@@ -34,6 +41,8 @@ interface SessionState {
   modeBySession: Map<string, SessionMode>
   // Pending initial messages - keyed by session ID (e.g., code review prompts)
   pendingMessages: Map<string, string>
+  // Pending plan approvals - keyed by session ID (from ExitPlanMode blocking tool)
+  pendingPlans: Map<string, PendingPlan>
   isLoading: boolean
   error: string | null
 
@@ -69,6 +78,10 @@ interface SessionState {
   consumePendingMessage: (sessionId: string) => string | null
   closeOtherSessions: (worktreeId: string, keepSessionId: string) => Promise<void>
   closeSessionsToRight: (worktreeId: string, fromSessionId: string) => Promise<void>
+  // Plan approval
+  setPendingPlan: (sessionId: string, plan: PendingPlan) => void
+  clearPendingPlan: (sessionId: string) => void
+  getPendingPlan: (sessionId: string) => PendingPlan | null
 }
 
 export const useSessionStore = create<SessionState>()(
@@ -79,6 +92,7 @@ export const useSessionStore = create<SessionState>()(
       tabOrderByWorktree: new Map(),
       modeBySession: new Map(),
       pendingMessages: new Map(),
+      pendingPlans: new Map(),
       isLoading: false,
       error: null,
       activeSessionId: null,
@@ -692,6 +706,27 @@ export const useSessionStore = create<SessionState>()(
         for (const sessionId of toClose) {
           await get().closeSession(sessionId)
         }
+      },
+
+      // Plan approval state management
+      setPendingPlan: (sessionId: string, plan: PendingPlan) => {
+        set((state) => {
+          const newMap = new Map(state.pendingPlans)
+          newMap.set(sessionId, plan)
+          return { pendingPlans: newMap }
+        })
+      },
+
+      clearPendingPlan: (sessionId: string) => {
+        set((state) => {
+          const newMap = new Map(state.pendingPlans)
+          newMap.delete(sessionId)
+          return { pendingPlans: newMap }
+        })
+      },
+
+      getPendingPlan: (sessionId: string): PendingPlan | null => {
+        return get().pendingPlans.get(sessionId) ?? null
       }
     }),
     {

@@ -41,6 +41,11 @@ export interface PendingQuestionState {
   resolve: (response: { answers: string[][]; rejected?: boolean }) => void
 }
 
+export interface PendingPlanApprovalState {
+  requestId: string
+  resolve: (response: { approved: boolean; feedback?: string }) => void
+}
+
 export interface ClaudeSessionState {
   claudeSessionId: string
   hiveSessionId: string
@@ -54,6 +59,8 @@ export interface ClaudeSessionState {
   toolNames: Map<string, string>
   /** Pending AskUserQuestion awaiting user response */
   pendingQuestion: PendingQuestionState | null
+  /** Pending ExitPlanMode awaiting user approval/rejection */
+  pendingPlanApproval: PendingPlanApprovalState | null
 }
 
 export class ClaudeCodeImplementer implements AgentSdkImplementer {
@@ -72,6 +79,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   >()
   /** Maps pending question requestIds to session keys for IPC routing */
   private pendingQuestionSessions = new Map<string, string>()
+  /** Maps pending plan approval requestIds to session keys for IPC routing */
+  private pendingPlanSessions = new Map<string, string>()
 
   // ── Window binding ───────────────────────────────────────────────
 
@@ -99,7 +108,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       materialized: false,
       messages: [],
       toolNames: new Map(),
-      pendingQuestion: null
+      pendingQuestion: null,
+      pendingPlanApproval: null
     }
     this.sessions.set(key, state)
 
@@ -139,7 +149,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       materialized: true,
       messages: [],
       toolNames: new Map(),
-      pendingQuestion: null
+      pendingQuestion: null,
+      pendingPlanApproval: null
     }
     this.sessions.set(key, state)
 
@@ -264,10 +275,25 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       // Fresh AbortController for this prompt turn
       session.abortController = new AbortController()
 
+      // Determine permission mode from DB session mode
+      // 'plan' mode uses SDK-native plan mode (ExitPlanMode blocking tool)
+      // 'build' mode uses 'default' so canUseTool handles AskUserQuestion
+      let sdkPermissionMode: string = 'default'
+      if (this.dbService) {
+        try {
+          const dbSession = this.dbService.getSession(session.hiveSessionId)
+          if (dbSession?.mode === 'plan') {
+            sdkPermissionMode = 'plan'
+          }
+        } catch {
+          // Fall through to default mode
+        }
+      }
+
       // Build SDK query options
       const options: Record<string, unknown> = {
         cwd: session.worktreePath,
-        permissionMode: 'default',
+        permissionMode: sdkPermissionMode,
         abortController: session.abortController,
         maxThinkingTokens: 31999,
         model: modelOverride?.modelID ?? this.selectedModel,
@@ -664,6 +690,131 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     return this.pendingQuestionSessions.has(requestId)
   }
 
+  // ── Plan approval ───────────────────────────────────────────────
+
+  /** Check if a plan requestId belongs to this implementer */
+  hasPendingPlan(requestId: string): boolean {
+    return this.pendingPlanSessions.has(requestId)
+  }
+
+  /** Check if a session (by hiveSessionId) has a pending plan */
+  hasPendingPlanForSession(hiveSessionId: string): boolean {
+    for (const session of this.sessions.values()) {
+      if (session.hiveSessionId === hiveSessionId && session.pendingPlanApproval) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /** Find a session state by hiveSessionId */
+  findSessionByHiveId(hiveSessionId: string): ClaudeSessionState | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.hiveSessionId === hiveSessionId) {
+        return session
+      }
+    }
+    return undefined
+  }
+
+  /** Find a session state by pending plan requestId */
+  private findSessionByPendingPlanRequestId(requestId: string): ClaudeSessionState | undefined {
+    const sessionKey = this.pendingPlanSessions.get(requestId)
+    if (!sessionKey) return undefined
+    return this.sessions.get(sessionKey)
+  }
+
+  /** Approve a pending plan — unblocks the SDK to continue implementation */
+  async planApprove(
+    _worktreePath: string,
+    hiveSessionId: string,
+    requestId?: string
+  ): Promise<void> {
+    // Prefer requestId routing (stable and specific) when available.
+    // Fall back to hiveSessionId scan for compatibility.
+    let session: ClaudeSessionState | undefined = requestId
+      ? this.findSessionByPendingPlanRequestId(requestId)
+      : undefined
+
+    if (!session) {
+      for (const s of this.sessions.values()) {
+        if (s.hiveSessionId === hiveSessionId && s.pendingPlanApproval) {
+          session = s
+          break
+        }
+      }
+    }
+
+    if (!session || !session.pendingPlanApproval) {
+      throw new Error(`planApprove: no pending plan for session: ${hiveSessionId}`)
+    }
+
+    log.info('planApprove: approving plan', {
+      hiveSessionId,
+      requestId: session.pendingPlanApproval.requestId
+    })
+
+    const resolvedRequestId = session.pendingPlanApproval.requestId
+
+    // Resolve the blocked canUseTool Promise with approval
+    session.pendingPlanApproval.resolve({ approved: true })
+    session.pendingPlanApproval = null
+    this.pendingPlanSessions.delete(resolvedRequestId)
+
+    // Emit plan.resolved so the renderer clears the plan UI
+    this.sendToRenderer('opencode:stream', {
+      type: 'plan.resolved',
+      sessionId: hiveSessionId,
+      data: { approved: true }
+    })
+  }
+
+  /** Reject a pending plan with user feedback — Claude will revise */
+  async planReject(
+    _worktreePath: string,
+    hiveSessionId: string,
+    feedback?: string,
+    requestId?: string
+  ): Promise<void> {
+    // Prefer requestId routing (stable and specific) when available.
+    let session: ClaudeSessionState | undefined = requestId
+      ? this.findSessionByPendingPlanRequestId(requestId)
+      : undefined
+
+    if (!session) {
+      for (const s of this.sessions.values()) {
+        if (s.hiveSessionId === hiveSessionId && s.pendingPlanApproval) {
+          session = s
+          break
+        }
+      }
+    }
+
+    if (!session || !session.pendingPlanApproval) {
+      throw new Error(`planReject: no pending plan for session: ${hiveSessionId}`)
+    }
+
+    log.info('planReject: rejecting plan with feedback', {
+      hiveSessionId,
+      requestId: session.pendingPlanApproval.requestId,
+      hasFeedback: !!feedback
+    })
+
+    const resolvedRequestId = session.pendingPlanApproval.requestId
+
+    // Resolve the blocked canUseTool Promise with rejection + feedback
+    session.pendingPlanApproval.resolve({ approved: false, feedback })
+    session.pendingPlanApproval = null
+    this.pendingPlanSessions.delete(resolvedRequestId)
+
+    // Emit plan.resolved so the renderer clears the plan UI
+    this.sendToRenderer('opencode:stream', {
+      type: 'plan.resolved',
+      sessionId: hiveSessionId,
+      data: { approved: false, feedback }
+    })
+  }
+
   // ── Undo/Redo ────────────────────────────────────────────────────
 
   async undo(
@@ -710,9 +861,103 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   // ── Internal helpers ─────────────────────────────────────────────
 
   /**
+   * Handles ExitPlanMode tool invocation from the SDK.
+   * Blocks execution with a Promise that waits for user approval/rejection
+   * via the plan approval IPC handlers. If approved, allows the tool to proceed
+   * (SDK exits plan mode and continues with implementation). If rejected,
+   * denies the tool with feedback so Claude revises the plan.
+   */
+  private async handleExitPlanMode(
+    session: ClaudeSessionState,
+    input: Record<string, unknown>,
+    options: { signal: AbortSignal; toolUseID: string; [key: string]: unknown }
+  ): Promise<
+    | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
+    | { behavior: 'deny'; message: string }
+  > {
+    const requestId = `plan-${Date.now()}-${randomUUID().slice(0, 8)}`
+    const toolUseID = options.toolUseID
+
+    log.info('canUseTool: ExitPlanMode intercepted', {
+      hiveSessionId: session.hiveSessionId,
+      requestId,
+      toolUseID,
+      inputKeys: Object.keys(input).join(',')
+    })
+
+    // Track this pending plan for IPC routing
+    const sessionKey = this.getSessionKey(session.worktreePath, session.claudeSessionId)
+    this.pendingPlanSessions.set(requestId, sessionKey)
+
+    // Block execution with a Promise that waits for user response
+    const userResponse = await new Promise<{ approved: boolean; feedback?: string }>((resolve) => {
+      session.pendingPlanApproval = { requestId, resolve }
+
+      // Emit plan.ready event to renderer — include plan content from tool input
+      // The renderer reads data.id, data.plan, data.toolUseID
+      const planContent =
+        typeof input.plan === 'string'
+          ? input.plan
+          : input.plan !== undefined
+            ? JSON.stringify(input.plan, null, 2)
+            : ''
+
+      this.sendToRenderer('opencode:stream', {
+        type: 'plan.ready',
+        sessionId: session.hiveSessionId,
+        data: {
+          id: requestId,
+          plan: planContent,
+          toolUseID
+        }
+      })
+
+      log.info('canUseTool: emitted plan.ready, waiting for approval', {
+        requestId,
+        hiveSessionId: session.hiveSessionId
+      })
+
+      // If the session is aborted while waiting, auto-reject and notify renderer
+      const onAbort = (): void => {
+        if (session.pendingPlanApproval?.requestId === requestId) {
+          log.info('canUseTool: session aborted while plan pending, auto-rejecting', { requestId })
+          session.pendingPlanApproval = null
+          this.pendingPlanSessions.delete(requestId)
+          // Notify renderer to clear stale pending plan UI
+          this.sendToRenderer('opencode:stream', {
+            type: 'plan.resolved',
+            sessionId: session.hiveSessionId,
+            data: { approved: false, aborted: true }
+          })
+          resolve({ approved: false })
+        }
+      }
+      options.signal.addEventListener('abort', onAbort, { once: true })
+    })
+
+    // Clean up tracking state
+    session.pendingPlanApproval = null
+    this.pendingPlanSessions.delete(requestId)
+
+    if (userResponse.approved) {
+      log.info('canUseTool: ExitPlanMode approved by user', { requestId })
+      return { behavior: 'allow' as const, updatedInput: input }
+    }
+
+    log.info('canUseTool: ExitPlanMode rejected by user', {
+      requestId,
+      hasFeedback: !!userResponse.feedback
+    })
+    return {
+      behavior: 'deny' as const,
+      message: userResponse.feedback || 'The user rejected the plan. Please revise.'
+    }
+  }
+
+  /**
    * Creates a canUseTool callback for the Claude Agent SDK.
-   * Intercepts AskUserQuestion to block execution and wait for user input,
-   * translating between the SDK format and Hive's opencode event format.
+   * Intercepts AskUserQuestion and ExitPlanMode to block execution and wait
+   * for user input, translating between the SDK format and Hive's event format.
    */
   private createCanUseToolCallback(
     session: ClaudeSessionState
@@ -725,6 +970,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     | { behavior: 'deny'; message: string }
   > {
     return async (toolName, input, options) => {
+      // Handle ExitPlanMode — blocks until user approves or rejects the plan
+      if (toolName === 'ExitPlanMode') {
+        return this.handleExitPlanMode(session, input, options)
+      }
+
       if (toolName !== 'AskUserQuestion') {
         // Auto-allow all non-question tools (normal permissions handled by permissionMode)
         return { behavior: 'allow' as const, updatedInput: input }

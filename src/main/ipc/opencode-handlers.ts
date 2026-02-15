@@ -455,6 +455,79 @@ export function registerOpenCodeHandlers(
     }
   )
 
+  // Approve a pending plan (ExitPlanMode) — unblocks the SDK to implement
+  ipcMain.handle(
+    'opencode:plan:approve',
+    async (
+      _event,
+      {
+        worktreePath,
+        hiveSessionId,
+        requestId
+      }: { worktreePath: string; hiveSessionId: string; requestId?: string }
+    ) => {
+      log.info('IPC: opencode:plan:approve', { hiveSessionId, requestId })
+      try {
+        if (sdkManager) {
+          const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
+          if (
+            (requestId && claudeImpl.hasPendingPlan(requestId)) ||
+            claudeImpl.hasPendingPlanForSession(hiveSessionId)
+          ) {
+            await claudeImpl.planApprove(worktreePath, hiveSessionId, requestId)
+            return { success: true }
+          }
+        }
+        return { success: false, error: 'No pending plan found' }
+      } catch (error) {
+        log.error('IPC: opencode:plan:approve failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Reject a pending plan with user feedback — Claude will revise
+  ipcMain.handle(
+    'opencode:plan:reject',
+    async (
+      _event,
+      {
+        worktreePath,
+        hiveSessionId,
+        feedback,
+        requestId
+      }: { worktreePath: string; hiveSessionId: string; feedback: string; requestId?: string }
+    ) => {
+      log.info('IPC: opencode:plan:reject', {
+        hiveSessionId,
+        requestId,
+        feedbackLength: feedback.length
+      })
+      try {
+        if (sdkManager) {
+          const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
+          if (
+            (requestId && claudeImpl.hasPendingPlan(requestId)) ||
+            claudeImpl.hasPendingPlanForSession(hiveSessionId)
+          ) {
+            await claudeImpl.planReject(worktreePath, hiveSessionId, feedback, requestId)
+            return { success: true }
+          }
+        }
+        return { success: false, error: 'No pending plan found' }
+      } catch (error) {
+        log.error('IPC: opencode:plan:reject failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Reply to a pending permission request
   ipcMain.handle(
     'opencode:permission:reply',
