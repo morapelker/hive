@@ -1,4 +1,5 @@
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 
 /**
  * Native Ghostty terminal backend (macOS only).
@@ -11,8 +12,8 @@ export class GhosttyBackend implements TerminalBackend {
 
   private static readonly HIDDEN_RECT = { x: -10000, y: -10000, w: 1, h: 1 }
 
-  /** Default font size for the embedded terminal (points). */
-  private static readonly DEFAULT_FONT_SIZE = 14
+  /** Fallback font size when the setting is unavailable (points). */
+  private static readonly FALLBACK_FONT_SIZE = 14
 
   private worktreeId: string = ''
   private container: HTMLDivElement | null = null
@@ -70,7 +71,7 @@ export class GhosttyBackend implements TerminalBackend {
         cwd: opts.cwd,
         shell: opts.shell,
         scaleFactor: window.devicePixelRatio || 2.0,
-        fontSize: GhosttyBackend.DEFAULT_FONT_SIZE
+        fontSize: useSettingsStore.getState().ghosttyFontSize || GhosttyBackend.FALLBACK_FONT_SIZE
       })
 
       if (!result.success) {
