@@ -289,6 +289,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [revertMessageID, setRevertMessageID] = useState<string | null>(null)
   const revertDiffRef = useRef<string | null>(null)
 
+  // Runtime capabilities for undo/redo gating
+  const [sessionCapabilities, setSessionCapabilities] = useState<{
+    supportsUndo: boolean
+    supportsRedo: boolean
+  } | null>(null)
+
+  const sessionCapabilitiesRef = useRef(sessionCapabilities)
+  useEffect(() => {
+    sessionCapabilitiesRef.current = sessionCapabilities
+  }, [sessionCapabilities])
+
   const allSlashCommands = useMemo(() => {
     const seen = new Set<string>()
     const ordered = [...BUILT_IN_SLASH_COMMANDS, ...slashCommands]
@@ -296,9 +307,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       const key = command.name.toLowerCase()
       if (seen.has(key)) return false
       seen.add(key)
+      if (key === 'undo' && sessionCapabilities && !sessionCapabilities.supportsUndo) return false
+      if (key === 'redo' && sessionCapabilities && !sessionCapabilities.supportsRedo) return false
       return true
     })
-  }, [slashCommands])
+  }, [slashCommands, sessionCapabilities])
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
@@ -311,6 +324,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [sessionRetry, setSessionRetry] = useState<SessionRetryState | null>(null)
   const [sessionErrorMessage, setSessionErrorMessage] = useState<string | null>(null)
   const [retryTickMs, setRetryTickMs] = useState<number>(Date.now())
+
+  // Fetch runtime capabilities when the opencode session changes
+  useEffect(() => {
+    if (!opencodeSessionId) {
+      setSessionCapabilities(null)
+      return
+    }
+    window.opencodeOps
+      .capabilities(opencodeSessionId)
+      .then((result) => {
+        if (result.success && result.capabilities) {
+          setSessionCapabilities(result.capabilities)
+        }
+      })
+      .catch(() => {})
+  }, [opencodeSessionId])
 
   // Prompt history navigation
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
@@ -2124,6 +2153,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setInputValue(restoredPrompt)
               inputValueRef.current = restoredPrompt
             } else {
+              if (sessionCapabilities && !sessionCapabilities.supportsRedo) {
+                toast.error('Redo is not supported for this session type')
+                return
+              }
               const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
               if (!result.success) {
                 toast.error(result.error || 'Nothing to redo')
@@ -2383,6 +2416,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       opencodeSessionId,
       attachments,
       allSlashCommands,
+      sessionCapabilities,
       refreshMessagesFromOpenCode,
       getModelForRequests
     ]
@@ -2674,6 +2708,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const handleRedo = async (): Promise<void> => {
       if (useSessionStore.getState().activeSessionId !== sessionId) return
       if (!worktreePath || !opencodeSessionId) return
+      if (sessionCapabilitiesRef.current && !sessionCapabilitiesRef.current.supportsRedo) {
+        toast.error('Redo is not supported for this session type')
+        return
+      }
       try {
         const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
         if (!result.success) {

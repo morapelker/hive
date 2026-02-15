@@ -5,6 +5,8 @@ import { updaterService } from './services/updater'
 export interface MenuState {
   hasActiveSession: boolean
   hasActiveWorktree: boolean
+  canUndo?: boolean
+  canRedo?: boolean
 }
 
 let _mainWindow: BrowserWindow | null = null
@@ -261,7 +263,15 @@ export function updateMenuState(state: MenuState): void {
 
   for (const id of sessionItemIds) {
     const item = menu.getMenuItemById(id)
-    if (item) item.enabled = state.hasActiveSession
+    if (!item) continue
+
+    if (id === 'session-undo-turn') {
+      item.enabled = state.canUndo ?? state.hasActiveSession
+    } else if (id === 'session-redo-turn') {
+      item.enabled = state.canRedo ?? state.hasActiveSession
+    } else {
+      item.enabled = state.hasActiveSession
+    }
   }
 
   for (const id of worktreeItemIds) {

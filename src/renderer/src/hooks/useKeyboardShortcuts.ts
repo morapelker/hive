@@ -683,11 +683,39 @@ function useMenuStateUpdater(): void {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
 
+  const opencodeSessionId = useSessionStore((state) => {
+    if (!activeSessionId) return null
+    for (const sessions of state.sessionsByWorktree.values()) {
+      const found = sessions.find((s) => s.id === activeSessionId)
+      if (found) return found.opencode_session_id
+    }
+    return null
+  })
+
   useEffect(() => {
     if (!window.systemOps?.updateMenuState) return
-    window.systemOps.updateMenuState({
+
+    const baseState = {
       hasActiveSession: !!activeSessionId,
       hasActiveWorktree: !!selectedWorktreeId
-    })
-  }, [activeSessionId, selectedWorktreeId])
+    }
+
+    if (!activeSessionId || !opencodeSessionId) {
+      window.systemOps.updateMenuState(baseState)
+      return
+    }
+
+    window.opencodeOps
+      ?.capabilities(opencodeSessionId)
+      .then((result) => {
+        window.systemOps.updateMenuState({
+          ...baseState,
+          canUndo: result.success ? result.capabilities?.supportsUndo : true,
+          canRedo: result.success ? result.capabilities?.supportsRedo : true
+        })
+      })
+      .catch(() => {
+        window.systemOps.updateMenuState(baseState)
+      })
+  }, [activeSessionId, selectedWorktreeId, opencodeSessionId])
 }

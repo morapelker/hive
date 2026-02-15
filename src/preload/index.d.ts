@@ -347,6 +347,8 @@ declare global {
       updateMenuState: (state: {
         hasActiveSession: boolean
         hasActiveWorktree: boolean
+        canUndo?: boolean
+        canRedo?: boolean
       }) => Promise<void>
       onMenuAction: (channel: string, callback: () => void) => () => void
     }

@@ -435,6 +435,8 @@ const systemOps = {
   updateMenuState: (state: {
     hasActiveSession: boolean
     hasActiveWorktree: boolean
+    canUndo?: boolean
+    canRedo?: boolean
   }): Promise<void> => ipcRenderer.invoke('menu:updateState', state),
 
   // Subscribe to menu action events from the application menu (main -> renderer)
