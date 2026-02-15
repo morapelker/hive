@@ -20,6 +20,13 @@ interface ClaudeContentBlock {
   id?: string
   name?: string
   input?: Record<string, unknown>
+  // tool_result fields
+  tool_use_id?: string
+  is_error?: boolean
+  content?: string | { type: string; text?: string }[]
+  // Resolved output/error attached during two-pass correlation
+  _resolvedOutput?: string
+  _resolvedError?: string
   [key: string]: unknown
 }
 
@@ -60,17 +67,24 @@ function translateContentBlock(
     case 'text':
       return typeof block.text === 'string' ? { type: 'text', text: block.text } : null
 
-    case 'tool_use':
-      return {
-        type: 'tool_use',
-        toolUse: {
-          id: block.id ?? `tool-${index}`,
-          name: block.name ?? 'Unknown',
-          input: block.input ?? {},
-          status: 'success',
-          startTime: parseTimestamp(timestamp)
-        }
+    case 'tool_use': {
+      const toolUse: Record<string, unknown> = {
+        id: block.id ?? `tool-${index}`,
+        name: block.name ?? 'Unknown',
+        input: block.input ?? {},
+        status: 'success',
+        startTime: parseTimestamp(timestamp)
       }
+      // output/error may be attached by mergeToolResults() after initial translation
+      if (block._resolvedOutput !== undefined) {
+        toolUse.output = block._resolvedOutput
+      }
+      if (block._resolvedError !== undefined) {
+        toolUse.error = block._resolvedError
+        toolUse.status = 'error'
+      }
+      return { type: 'tool_use', toolUse }
+    }
 
     case 'thinking':
       return typeof block.thinking === 'string' ? { type: 'reasoning', text: block.thinking } : null
@@ -91,6 +105,13 @@ function translateEntry(entry: ClaudeJsonlEntry, index: number): Record<string, 
   const parts = content
     .map((block, i) => translateContentBlock(block, i, entry.timestamp))
     .filter((p): p is Record<string, unknown> => p !== null)
+
+  log.debug('TOOL_LIFECYCLE: translateEntry', {
+    type: entry.type,
+    blockTypes: content.map((b) => b.type),
+    keptParts: parts.length,
+    droppedBlocks: content.length - parts.length
+  })
 
   return {
     id: entry.uuid ?? `entry-${index}`,
@@ -126,18 +147,69 @@ export async function readClaudeTranscript(
   }
 
   const lines = raw.split('\n')
-  const messages: unknown[] = []
 
+  // Pass 1: Parse all JSONL entries
+  const entries: ClaudeJsonlEntry[] = []
   for (const line of lines) {
     const trimmed = line.trim()
     if (!trimmed) continue
-
-    let entry: ClaudeJsonlEntry
     try {
-      entry = JSON.parse(trimmed) as ClaudeJsonlEntry
+      entries.push(JSON.parse(trimmed) as ClaudeJsonlEntry)
     } catch {
       log.debug('Skipping malformed JSONL line', { line: trimmed.slice(0, 100) })
-      continue
+    }
+  }
+
+  // Pass 2: For each user entry with tool_result blocks, merge output into
+  // the preceding assistant entry's tool_use blocks so they survive translation.
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    if (entry.type !== 'user') continue
+    const content = Array.isArray(entry.message?.content) ? entry.message!.content : []
+    const toolResults = content.filter((b) => b.type === 'tool_result')
+    if (toolResults.length === 0) continue
+
+    // Find the preceding assistant entry
+    for (let j = i - 1; j >= 0; j--) {
+      if (entries[j].type !== 'assistant') continue
+      const assistantContent = Array.isArray(entries[j].message?.content)
+        ? entries[j].message!.content!
+        : []
+      if (!Array.isArray(assistantContent)) break
+      for (const tr of toolResults) {
+        const toolUseBlock = (assistantContent as ClaudeContentBlock[]).find(
+          (b) => b.type === 'tool_use' && b.id === tr.tool_use_id
+        )
+        if (!toolUseBlock) continue
+        // Extract text output from tool_result content
+        let output: string | undefined
+        if (typeof tr.content === 'string') {
+          output = tr.content
+        } else if (Array.isArray(tr.content)) {
+          output = (tr.content as { type: string; text?: string }[])
+            .filter((c) => c.type === 'text')
+            .map((c) => c.text ?? '')
+            .join('\n')
+        }
+        if (tr.is_error) {
+          toolUseBlock._resolvedError = output
+        } else {
+          toolUseBlock._resolvedOutput = output
+        }
+      }
+      break
+    }
+  }
+
+  // Pass 3: Translate entries, skipping tool_result-only user messages
+  const messages: unknown[] = []
+  for (const entry of entries) {
+    // Skip user messages that only contain tool_result blocks
+    if (entry.type === 'user') {
+      const content = Array.isArray(entry.message?.content) ? entry.message!.content : []
+      if (content.length > 0 && content.every((b) => b.type === 'tool_result')) {
+        continue
+      }
     }
 
     const translated = translateEntry(entry, messages.length)
@@ -149,6 +221,7 @@ export async function readClaudeTranscript(
   log.info('Read Claude transcript', {
     filePath,
     totalLines: lines.length,
+    parsedEntries: entries.length,
     messageCount: messages.length
   })
 

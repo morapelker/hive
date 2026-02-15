@@ -726,13 +726,26 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
         )
 
+        console.debug('[TOOL_DEBUG] upsertToolUse', {
+          toolId,
+          isNew: existingIndex < 0,
+          existingName: existingIndex >= 0 ? parts[existingIndex].toolUse?.name : undefined,
+          updateName: update.name,
+          updateStatus: update.status,
+          hasOutput: !!update.output
+        })
+
         if (existingIndex >= 0) {
-          // Update existing
+          // Update existing — preserve name if update doesn't provide one
           const existing = parts[existingIndex]
           const updatedParts = [...parts]
           updatedParts[existingIndex] = {
             ...existing,
-            toolUse: { ...existing.toolUse!, ...update }
+            toolUse: {
+              ...existing.toolUse!,
+              ...update,
+              name: update.name || existing.toolUse!.name
+            }
           }
           return updatedParts
         }
@@ -931,8 +944,37 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
       const streamedContentSnapshot = streamingContentRef.current
 
+      console.debug('[TOOL_DEBUG] finalizeResponse START', {
+        streamingPartsCount: streamingPartsRef.current.length,
+        toolParts: streamingPartsRef.current
+          .filter((p) => p.type === 'tool_use')
+          .map((p) => ({
+            id: p.toolUse?.id,
+            name: p.toolUse?.name,
+            status: p.toolUse?.status,
+            hasOutput: !!p.toolUse?.output
+          }))
+      })
+
       try {
         const refreshedMessages = await loadMessages()
+
+        console.debug('[TOOL_DEBUG] finalizeResponse LOADED', {
+          loadedCount: refreshedMessages.length,
+          roles: refreshedMessages.map((m) => m.role),
+          toolInfo: refreshedMessages
+            .filter((m) => m.role === 'assistant')
+            .flatMap((m) =>
+              (m.parts ?? [])
+                .filter((p) => p.type === 'tool_use')
+                .map((p) => ({
+                  id: p.toolUse?.id,
+                  name: p.toolUse?.name,
+                  status: p.toolUse?.status,
+                  hasOutput: !!p.toolUse?.output
+                }))
+            )
+        })
 
         if (
           refreshedMessages.length === 0 &&
@@ -962,6 +1004,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       } finally {
         resetStreamingState()
         setIsSending(false)
+        console.debug('[TOOL_DEBUG] finalizeResponse DONE — streaming state cleared')
       }
     }
 
@@ -1228,8 +1271,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } else if (part.type === 'tool') {
               // Tool part from OpenCode SDK - has callID, tool (name), state
               const toolId = part.callID || part.id || `tool-${Date.now()}`
-              const toolName = part.tool || 'Unknown'
+              const toolName = part.tool || undefined
               const state = part.state || {}
+
+              console.debug('[TOOL_DEBUG] stream event', {
+                toolId,
+                toolName,
+                status: state.status,
+                hasOutput: !!state.output,
+                hasError: !!state.error,
+                hasInput: !!state.input
+              })
 
               const statusMap: Record<string, ToolStatus> = {
                 pending: 'pending',
@@ -1239,7 +1291,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
 
               upsertToolUse(toolId, {
-                name: toolName,
+                ...(toolName ? { name: toolName } : {}),
                 // Only include input when the SDK actually provides it, so we don't
                 // overwrite the initial input with {} on subsequent status updates.
                 ...(state.input ? { input: state.input } : {}),

@@ -44,6 +44,8 @@ export interface ClaudeSessionState {
   query: ClaudeQuery | null
   materialized: boolean
   messages: unknown[]
+  /** Maps tool_use IDs to their tool names for lookup on tool_result completion */
+  toolNames: Map<string, string>
 }
 
 export class ClaudeCodeImplementer implements AgentSdkImplementer {
@@ -85,7 +87,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       checkpoints: new Map(),
       query: null,
       materialized: false,
-      messages: []
+      messages: [],
+      toolNames: new Map()
     }
     this.sessions.set(key, state)
 
@@ -123,7 +126,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       checkpoints: new Map(),
       query: null,
       materialized: true,
-      messages: []
+      messages: [],
+      toolNames: new Map()
     }
     this.sessions.set(key, state)
 
@@ -277,7 +281,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
         // stream_event messages fire per-token — log at debug to avoid spam
         if (msgType === 'stream_event') {
-          this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex)
+          this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex, session.toolNames)
           continue // No materialization/accumulation needed for partials
         }
 
@@ -341,25 +345,94 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         // Accumulate translated messages in-memory for getMessages()
         if (msgType === 'user' || msgType === 'assistant') {
           const sdkMsg = sdkMessage as Record<string, unknown>
-          const translated = translateEntry(
-            {
-              type: msgType,
-              uuid: sdkMsg.uuid as string | undefined,
-              timestamp: new Date().toISOString(),
-              message: sdkMsg.message as
-                | { role?: string; content?: { type: string; [key: string]: unknown }[] | string }
-                | undefined,
-              isSidechain: false
-            },
-            session.messages.length
-          )
-          if (translated) {
-            session.messages.push(translated)
+          const msgContent = (
+            sdkMsg.message as { content?: { type: string; [key: string]: unknown }[] } | undefined
+          )?.content
+          const contentBlockTypes = Array.isArray(msgContent) ? msgContent.map((b) => b.type) : []
+          const isToolResultOnly =
+            msgType === 'user' &&
+            contentBlockTypes.length > 0 &&
+            contentBlockTypes.every((t) => t === 'tool_result')
+
+          log.info('TOOL_LIFECYCLE: accumulate message', {
+            hiveSessionId: session.hiveSessionId,
+            msgType,
+            contentBlockTypes,
+            isToolResultOnly
+          })
+
+          if (isToolResultOnly) {
+            // Instead of creating an empty user message, merge tool_result
+            // output/error into the preceding assistant message's tool_use parts.
+            const toolResults = msgContent as {
+              type: string
+              tool_use_id?: string
+              is_error?: boolean
+              content?: string | { type: string; text?: string }[]
+            }[]
+            // Find the last assistant message
+            const lastAssistant = [...session.messages]
+              .reverse()
+              .find((m) => (m as Record<string, unknown>).role === 'assistant') as
+              | Record<string, unknown>
+              | undefined
+            if (lastAssistant) {
+              const parts = lastAssistant.parts as Record<string, unknown>[] | undefined
+              if (Array.isArray(parts)) {
+                for (const tr of toolResults) {
+                  if (tr.type !== 'tool_result' || !tr.tool_use_id) continue
+                  let output: string | undefined
+                  if (typeof tr.content === 'string') {
+                    output = tr.content
+                  } else if (Array.isArray(tr.content)) {
+                    output = tr.content
+                      .filter((c) => c.type === 'text')
+                      .map((c) => c.text ?? '')
+                      .join('\n')
+                  }
+                  const toolPart = parts.find(
+                    (p) =>
+                      p.type === 'tool_use' &&
+                      (p.toolUse as Record<string, unknown> | undefined)?.id === tr.tool_use_id
+                  )
+                  if (toolPart) {
+                    const tu = toolPart.toolUse as Record<string, unknown>
+                    tu.output = output
+                    tu.error = tr.is_error ? output : undefined
+                    tu.status = tr.is_error ? 'error' : 'success'
+                    log.info('TOOL_LIFECYCLE: merged tool_result into assistant tool_use', {
+                      toolId: tr.tool_use_id,
+                      isError: !!tr.is_error,
+                      hasOutput: !!output
+                    })
+                  }
+                }
+              }
+            }
+          } else {
+            const translated = translateEntry(
+              {
+                type: msgType,
+                uuid: sdkMsg.uuid as string | undefined,
+                timestamp: new Date().toISOString(),
+                message: sdkMsg.message as
+                  | {
+                      role?: string
+                      content?: { type: string; [key: string]: unknown }[] | string
+                    }
+                  | undefined,
+                isSidechain: false
+              },
+              session.messages.length
+            )
+            if (translated) {
+              session.messages.push(translated)
+            }
           }
         }
 
         // Emit normalized event
-        this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex)
+        this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex, session.toolNames)
         messageIndex++
       }
 
@@ -416,10 +489,24 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     // First: check in-memory cache
     const session = this.getSession(worktreePath, agentSessionId)
     if (session && session.messages.length > 0) {
-      log.info('getMessages: returning in-memory messages', {
+      log.info('TOOL_LIFECYCLE: getMessages returning in-memory', {
         agentSessionId,
         count: session.messages.length,
-        roles: session.messages.map((m) => (m as Record<string, unknown>).role).join(',')
+        breakdown: session.messages.map((m) => {
+          const msg = m as Record<string, unknown>
+          const parts = msg.parts as Record<string, unknown>[] | undefined
+          return {
+            role: msg.role,
+            partsCount: parts?.length ?? 0,
+            types: parts?.map((p) => p.type) ?? [],
+            hasToolOutput:
+              parts?.some(
+                (p) =>
+                  p.type === 'tool_use' &&
+                  !!(p.toolUse as Record<string, unknown> | undefined)?.output
+              ) ?? false
+          }
+        })
       })
       return session.messages
     }
@@ -564,7 +651,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   private emitSdkMessage(
     hiveSessionId: string,
     msg: Record<string, unknown>,
-    messageIndex: number
+    messageIndex: number,
+    toolNames?: Map<string, string>
   ): void {
     const msgType = msg.type as string
 
@@ -636,6 +724,16 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             if (blockType === 'tool_use') {
               const toolId = contentBlock.id as string
               const toolName = contentBlock.name as string
+              log.info('TOOL_LIFECYCLE: content_block_start', {
+                hiveSessionId,
+                toolId,
+                toolName,
+                blockIdx
+              })
+              // Remember tool name for later lookup on tool_result
+              if (toolNames) {
+                toolNames.set(toolId, toolName)
+              }
               // Track active tool block for input_json_delta accumulation
               if (!this.activeToolBlocks.has(hiveSessionId)) {
                 this.activeToolBlocks.set(hiveSessionId, new Map())
@@ -673,6 +771,13 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               const tools = this.activeToolBlocks.get(hiveSessionId)!
               const tool = tools.get(blockIdx)
               if (tool) {
+                log.info('TOOL_LIFECYCLE: content_block_stop', {
+                  hiveSessionId,
+                  toolId: tool.id,
+                  toolName: tool.name,
+                  hasInput: !!tool.inputJson,
+                  inputLength: tool.inputJson.length
+                })
                 // Emit tool with accumulated input now that the block is complete
                 let parsedInput: unknown = undefined
                 if (tool.inputJson) {
@@ -830,6 +935,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             if (b.type === 'tool_result') {
               const toolId = b.tool_use_id as string
               const isError = b.is_error as boolean | undefined
+              log.info('TOOL_LIFECYCLE: tool_result received', {
+                hiveSessionId,
+                toolId,
+                isError: !!isError
+              })
               // Extract text content from tool result
               let output: string | undefined
               if (typeof b.content === 'string') {
@@ -840,6 +950,13 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
                   .map((c) => c.text as string)
                   .join('\n')
               }
+              log.info('TOOL_LIFECYCLE: emitting tool_result to renderer', {
+                hiveSessionId,
+                toolId,
+                isError: !!isError,
+                hasOutput: !!output,
+                outputLength: output?.length ?? 0
+              })
               this.sendToRenderer('opencode:stream', {
                 type: 'message.part.updated',
                 sessionId: hiveSessionId,
@@ -847,7 +964,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
                   part: {
                     type: 'tool',
                     callID: toolId,
-                    tool: '',
+                    tool: toolNames?.get(toolId) ?? '',
                     state: {
                       status: isError ? 'error' : 'completed',
                       output: output,
