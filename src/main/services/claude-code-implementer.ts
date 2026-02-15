@@ -226,6 +226,16 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         promptPreview: prompt.slice(0, 100)
       })
 
+      // Hydrate in-memory messages from the transcript so that
+      // getMessages() returns the full history, not just this turn.
+      if (session.messages.length === 0) {
+        const existing = await readClaudeTranscript(session.worktreePath, session.claudeSessionId)
+        session.messages.push(...existing)
+        log.debug('Hydrated session messages from transcript', {
+          count: existing.length
+        })
+      }
+
       // Inject a synthetic user message into session.messages so that
       // getMessages() returns it alongside the assistant response.
       // The SDK does NOT emit a `user` type event — without this,
@@ -888,18 +898,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           contentLength: resultArray?.length ?? 0
         })
 
-        // Emit any final result text as a streaming text part so it renders
-        // immediately (before finalizeResponse reloads the full transcript).
-        if (typeof resultContent === 'string' && resultContent.length > 0) {
-          this.sendToRenderer('opencode:stream', {
-            type: 'message.part.updated',
-            sessionId: hiveSessionId,
-            data: {
-              part: { type: 'text', text: resultContent },
-              delta: resultContent
-            }
-          })
-        }
+        // NOTE: Previously this emitted the result text as message.part.updated,
+        // but that duplicated text already streamed via stream_event deltas.
+        // Removed to fix duplicate message display.
 
         this.sendToRenderer('opencode:stream', {
           type: 'message.updated',

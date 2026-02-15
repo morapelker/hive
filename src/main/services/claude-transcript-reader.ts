@@ -7,10 +7,10 @@ const log = createLogger({ component: 'ClaudeTranscriptReader' })
 
 /**
  * Encode a worktree path the same way Claude CLI does:
- * replace every `/` with `-`.
+ * replace every `/` and `.` with `-`.
  */
 export function encodePath(worktreePath: string): string {
-  return worktreePath.replace(/\//g, '-')
+  return worktreePath.replace(/[/.]/g, '-')
 }
 
 interface ClaudeContentBlock {

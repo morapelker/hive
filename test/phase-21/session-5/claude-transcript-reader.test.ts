@@ -83,6 +83,10 @@ describe('claude-transcript-reader', () => {
     it('handles path without leading slash', () => {
       expect(encodePath('relative/path')).toBe('relative-path')
     })
+
+    it('replaces dots with dashes (dotfiles like .hive-worktrees)', () => {
+      expect(encodePath('/Users/mor/.hive-worktrees/proj')).toBe('-Users-mor--hive-worktrees-proj')
+    })
   })
 
   // 2. JSONL parsing — correct number of messages
