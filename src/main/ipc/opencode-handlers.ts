@@ -20,6 +20,16 @@ export function registerOpenCodeHandlers(
     async (_event, worktreePath: string, hiveSessionId: string) => {
       log.info('IPC: opencode:connect', { worktreePath, hiveSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const session = dbService.getSession(hiveSessionId)
+          if (session?.agent_sdk === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.connect(worktreePath, hiveSessionId)
+            return { success: true, ...result }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.connect(worktreePath, hiveSessionId)
         return { success: true, ...result }
       } catch (error) {
@@ -38,6 +48,16 @@ export function registerOpenCodeHandlers(
     async (_event, worktreePath: string, opencodeSessionId: string, hiveSessionId: string) => {
       log.info('IPC: opencode:reconnect', { worktreePath, opencodeSessionId, hiveSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.reconnect(worktreePath, opencodeSessionId, hiveSessionId)
+            return result
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.reconnect(
           worktreePath,
           opencodeSessionId,
@@ -135,6 +155,16 @@ export function registerOpenCodeHandlers(
     async (_event, worktreePath: string, opencodeSessionId: string) => {
       log.info('IPC: opencode:disconnect', { worktreePath, opencodeSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            await impl.disconnect(worktreePath, opencodeSessionId)
+            return { success: true }
+          }
+        }
+        // Fall through to existing OpenCode path
         await openCodeService.disconnect(worktreePath, opencodeSessionId)
         return { success: true }
       } catch (error) {
@@ -148,27 +178,54 @@ export function registerOpenCodeHandlers(
   )
 
   // Get available models from all configured providers
-  ipcMain.handle('opencode:models', async () => {
-    log.info('IPC: opencode:models')
-    try {
-      const providers = await openCodeService.getAvailableModels()
-      return { success: true, providers }
-    } catch (error) {
-      log.error('IPC: opencode:models failed', { error })
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        providers: {}
+  ipcMain.handle(
+    'opencode:models',
+    async (_event, opts?: { agentSdk?: 'opencode' | 'claude-code' }) => {
+      log.info('IPC: opencode:models', { agentSdk: opts?.agentSdk })
+      try {
+        if (opts?.agentSdk === 'claude-code' && sdkManager) {
+          const impl = sdkManager.getImplementer('claude-code')
+          if (impl) {
+            const providers = await impl.getAvailableModels()
+            return { success: true, providers }
+          }
+        }
+        // Default: OpenCode
+        const providers = await openCodeService.getAvailableModels()
+        return { success: true, providers }
+      } catch (error) {
+        log.error('IPC: opencode:models failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          providers: {}
+        }
       }
     }
-  })
+  )
 
   // Set the selected model
   ipcMain.handle(
     'opencode:setModel',
-    async (_event, model: { providerID: string; modelID: string; variant?: string }) => {
-      log.info('IPC: opencode:setModel', { model })
+    async (
+      _event,
+      model: {
+        providerID: string
+        modelID: string
+        variant?: string
+        agentSdk?: 'opencode' | 'claude-code'
+      }
+    ) => {
+      log.info('IPC: opencode:setModel', { model: model.modelID, agentSdk: model.agentSdk })
       try {
+        if (model.agentSdk === 'claude-code' && sdkManager) {
+          const impl = sdkManager.getImplementer('claude-code')
+          if (impl) {
+            impl.setSelectedModel(model)
+            return { success: true }
+          }
+        }
+        // Default: OpenCode
         openCodeService.setSelectedModel(model)
         return { success: true }
       } catch (error) {
@@ -184,9 +241,27 @@ export function registerOpenCodeHandlers(
   // Get model info (name, context limit)
   ipcMain.handle(
     'opencode:modelInfo',
-    async (_event, { worktreePath, modelId }: { worktreePath: string; modelId: string }) => {
-      log.info('IPC: opencode:modelInfo', { worktreePath, modelId })
+    async (
+      _event,
+      {
+        worktreePath,
+        modelId,
+        agentSdk
+      }: { worktreePath: string; modelId: string; agentSdk?: 'opencode' | 'claude-code' }
+    ) => {
+      log.info('IPC: opencode:modelInfo', { worktreePath, modelId, agentSdk })
       try {
+        if (agentSdk === 'claude-code' && sdkManager) {
+          const impl = sdkManager.getImplementer('claude-code')
+          if (impl) {
+            const model = await impl.getModelInfo(worktreePath, modelId)
+            if (!model) {
+              return { success: false, error: 'Model not found' }
+            }
+            return { success: true, model }
+          }
+        }
+        // Default: OpenCode
         const model = await openCodeService.getModelInfo(worktreePath, modelId)
         if (!model) {
           return { success: false, error: 'Model not found' }

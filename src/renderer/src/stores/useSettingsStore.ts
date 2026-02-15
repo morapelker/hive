@@ -49,6 +49,9 @@ export interface AppSettings {
 
   // Model icons
   showModelIcons: boolean
+
+  // Agent SDK
+  defaultAgentSdk: 'opencode' | 'claude-code'
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -65,7 +68,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   favoriteModels: [],
   customChromeCommand: '',
   modelVariantDefaults: {},
-  showModelIcons: false
+  showModelIcons: false,
+  defaultAgentSdk: 'opencode'
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -127,7 +131,8 @@ function extractSettings(state: SettingsState): AppSettings {
     favoriteModels: state.favoriteModels,
     customChromeCommand: state.customChromeCommand,
     modelVariantDefaults: state.modelVariantDefaults,
-    showModelIcons: state.showModelIcons
+    showModelIcons: state.showModelIcons,
+    defaultAgentSdk: state.defaultAgentSdk
   }
 }
 

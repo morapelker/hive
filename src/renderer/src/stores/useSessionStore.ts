@@ -15,6 +15,7 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
+  agent_sdk: 'opencode' | 'claude-code'
   mode: SessionMode
   model_provider_id: string | null
   model_id: string | null
@@ -200,10 +201,15 @@ export const useSessionStore = create<SessionState>()(
           const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
           const sessionNumber = existingSessions.length + 1
 
+          // Resolve default agent SDK from settings
+          const { useSettingsStore } = await import('./useSettingsStore')
+          const defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+
           const session = await window.db.session.create({
             worktree_id: worktreeId,
             project_id: projectId,
             name: `Session ${sessionNumber}`,
+            agent_sdk: defaultAgentSdk,
             ...(defaultModel
               ? {
                   model_provider_id: defaultModel.providerID,
@@ -569,11 +575,20 @@ export const useSessionStore = create<SessionState>()(
           console.error('Failed to persist session model:', error)
         }
 
-        // Push to OpenCode backend
+        // Push to agent backend (SDK-aware)
         try {
-          await window.opencodeOps.setModel(model)
+          // Find the session's SDK to route correctly
+          let agentSdk: 'opencode' | 'claude-code' = 'opencode'
+          for (const sessions of get().sessionsByWorktree.values()) {
+            const found = sessions.find((s) => s.id === sessionId)
+            if (found?.agent_sdk) {
+              agentSdk = found.agent_sdk
+              break
+            }
+          }
+          await window.opencodeOps.setModel({ ...model, agentSdk })
         } catch (error) {
-          console.error('Failed to push model to OpenCode:', error)
+          console.error('Failed to push model to agent backend:', error)
         }
 
         // Update global last-used model so new worktrees inherit it

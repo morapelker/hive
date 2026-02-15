@@ -9,6 +9,24 @@ import { readClaudeTranscript, translateEntry } from './claude-transcript-reader
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
+const CLAUDE_MODELS = [
+  {
+    id: 'opus',
+    name: 'Claude Opus 4',
+    limit: { context: 200000, output: 32000 }
+  },
+  {
+    id: 'sonnet',
+    name: 'Claude Sonnet 4.5',
+    limit: { context: 200000, output: 16000 }
+  },
+  {
+    id: 'haiku',
+    name: 'Claude Haiku 3.5',
+    limit: { context: 200000, output: 8192 }
+  }
+]
+
 export interface ClaudeQuery {
   interrupt(): Promise<void>
   close(): void
@@ -35,6 +53,13 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   private mainWindow: BrowserWindow | null = null
   private dbService: DatabaseService | null = null
   private sessions = new Map<string, ClaudeSessionState>()
+  private selectedModel: string = 'sonnet'
+  /** Tracks in-flight tool_use content blocks for input_json_delta accumulation.
+   *  Keyed by hiveSessionId → Map<blockIndex, { id, name, inputJson }>. */
+  private activeToolBlocks = new Map<
+    string,
+    Map<number, { id: string; name: string; inputJson: string }>
+  >()
 
   // ── Window binding ───────────────────────────────────────────────
 
@@ -162,7 +187,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
         >,
-    _modelOverride?: { providerID: string; modelID: string; variant?: string }
+    modelOverride?: { providerID: string; modelID: string; variant?: string }
   ): Promise<void> {
     const session = this.getSession(worktreePath, agentSessionId)
     if (!session) {
@@ -170,9 +195,17 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }
 
     this.emitStatus(session.hiveSessionId, 'busy')
+    log.info('Prompt: starting', {
+      worktreePath,
+      agentSessionId,
+      hiveSessionId: session.hiveSessionId,
+      materialized: session.materialized,
+      claudeSessionId: session.claudeSessionId
+    })
 
     try {
       const sdk = await loadClaudeSDK()
+      log.info('Prompt: SDK loaded')
 
       // Build prompt string from message parts
       const prompt =
@@ -184,6 +217,24 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               )
               .join('\n')
 
+      log.info('Prompt: constructed', {
+        promptLength: prompt.length,
+        promptPreview: prompt.slice(0, 100)
+      })
+
+      // Inject a synthetic user message into session.messages so that
+      // getMessages() returns it alongside the assistant response.
+      // The SDK does NOT emit a `user` type event — without this,
+      // loadMessages() on idle would replace state with only the assistant
+      // message, causing the user's message to vanish.
+      session.messages.push({
+        id: `user-${randomUUID()}`,
+        role: 'user',
+        timestamp: new Date().toISOString(),
+        content: prompt,
+        parts: [{ type: 'text', text: prompt, timestamp: new Date().toISOString() }]
+      })
+
       // Fresh AbortController for this prompt turn
       session.abortController = new AbortController()
 
@@ -192,7 +243,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         cwd: session.worktreePath,
         permissionMode: 'default',
         abortController: session.abortController,
-        maxThinkingTokens: 31999
+        maxThinkingTokens: 31999,
+        model: modelOverride?.modelID ?? this.selectedModel,
+        includePartialMessages: true
       }
 
       // If session is materialized (has real SDK ID), add resume
@@ -200,19 +253,47 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         options.resume = session.claudeSessionId
       }
 
+      log.info('Prompt: calling sdk.query()', {
+        model: options.model,
+        resume: !!options.resume,
+        cwd: options.cwd
+      })
+
       const queryData = sdk.query({ prompt, options }) as AsyncIterable<Record<string, unknown>>
       session.query = queryData as unknown as ClaudeQuery
+
+      log.info('Prompt: entering async iteration loop')
 
       let messageIndex = 0
 
       for await (const sdkMessage of queryData) {
         // Break if aborted
-        if (session.abortController?.signal.aborted) break
+        if (session.abortController?.signal.aborted) {
+          log.info('Prompt: aborted, breaking loop')
+          break
+        }
 
         const msgType = sdkMessage.type as string
 
+        // stream_event messages fire per-token — log at debug to avoid spam
+        if (msgType === 'stream_event') {
+          this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex)
+          continue // No materialization/accumulation needed for partials
+        }
+
+        log.info('Prompt: received SDK message', {
+          type: msgType,
+          index: messageIndex,
+          hasSessionId: !!sdkMessage.session_id,
+          hasContent: !!sdkMessage.content,
+          keys: Object.keys(sdkMessage).join(',')
+        })
+
         // Skip init messages
-        if (msgType === 'init') continue
+        if (msgType === 'init') {
+          log.info('Prompt: skipping init message')
+          continue
+        }
 
         // Materialize pending:: to real SDK session ID from first message
         const sdkSessionId = sdkMessage.session_id as string | undefined
@@ -242,6 +323,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               })
             }
           }
+
+          // Notify renderer so it updates its opencodeSessionId state
+          // (otherwise loadMessages() after idle will use the stale pending:: ID)
+          this.sendToRenderer('opencode:stream', {
+            type: 'session.materialized',
+            sessionId: session.hiveSessionId,
+            data: { newSessionId: sdkSessionId }
+          })
         }
 
         // Capture user message UUIDs as checkpoints
@@ -274,10 +363,19 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         messageIndex++
       }
 
+      log.info('Prompt: async iteration loop finished', {
+        totalMessages: messageIndex,
+        aborted: session.abortController?.signal.aborted ?? false
+      })
       this.emitStatus(session.hiveSessionId, 'idle')
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      log.error('Prompt streaming error', { worktreePath, agentSessionId, error: errorMessage })
+      log.error('Prompt streaming error', {
+        worktreePath,
+        agentSessionId,
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined
+      })
 
       this.sendToRenderer('opencode:stream', {
         type: 'session.error',
@@ -318,8 +416,17 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     // First: check in-memory cache
     const session = this.getSession(worktreePath, agentSessionId)
     if (session && session.messages.length > 0) {
+      log.info('getMessages: returning in-memory messages', {
+        agentSessionId,
+        count: session.messages.length,
+        roles: session.messages.map((m) => (m as Record<string, unknown>).role).join(',')
+      })
       return session.messages
     }
+    log.info('getMessages: no in-memory messages, falling back to transcript', {
+      agentSessionId,
+      sessionFound: !!session
+    })
     // Fallback: read from JSONL transcript on disk
     return readClaudeTranscript(worktreePath, agentSessionId)
   }
@@ -327,22 +434,33 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   // ── Models ───────────────────────────────────────────────────────
 
   async getAvailableModels(): Promise<unknown> {
-    throw new Error('ClaudeCodeImplementer.getAvailableModels: not yet implemented (Session 6)')
+    return [
+      {
+        id: 'claude-code',
+        name: 'Claude Code',
+        models: Object.fromEntries(
+          CLAUDE_MODELS.map((m) => [m.id, { id: m.id, name: m.name, limit: m.limit }])
+        )
+      }
+    ]
   }
 
   async getModelInfo(
     _worktreePath: string,
-    _modelId: string
+    modelId: string
   ): Promise<{
     id: string
     name: string
     limit: { context: number; input?: number; output: number }
   } | null> {
-    throw new Error('ClaudeCodeImplementer.getModelInfo: not yet implemented (Session 6)')
+    const model = CLAUDE_MODELS.find((m) => m.id === modelId)
+    if (!model) return null
+    return { id: model.id, name: model.name, limit: model.limit }
   }
 
-  setSelectedModel(_model: { providerID: string; modelID: string; variant?: string }): void {
-    throw new Error('ClaudeCodeImplementer.setSelectedModel: not yet implemented (Session 6)')
+  setSelectedModel(model: { providerID: string; modelID: string; variant?: string }): void {
+    this.selectedModel = model.modelID
+    log.info('Selected model set', { model: model.modelID })
   }
 
   // ── Session info ─────────────────────────────────────────────────
@@ -449,68 +567,362 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     messageIndex: number
   ): void {
     const msgType = msg.type as string
-    const content = msg.content as unknown[] | undefined
+
+    // SDK messages nest content under `msg.message.content` for assistant/user,
+    // and under `msg.result` for result messages (NOT top-level `msg.content`).
+    const innerMessage = msg.message as Record<string, unknown> | undefined
+    const innerContent = innerMessage?.content as unknown[] | undefined
 
     switch (msgType) {
-      case 'assistant': {
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            this.sendToRenderer('opencode:stream', {
-              type: 'message.part.updated',
-              sessionId: hiveSessionId,
-              data: {
-                role: 'assistant',
-                content: block,
-                messageIndex
+      // ── Token-level streaming events (includePartialMessages: true) ──
+      case 'stream_event': {
+        const rawEvent = msg.event as Record<string, unknown> | undefined
+        if (!rawEvent) break
+
+        const eventType = rawEvent.type as string
+        // Route child-session stream events by parent_tool_use_id
+        const childSessionId = (msg.parent_tool_use_id as string) || undefined
+
+        switch (eventType) {
+          case 'content_block_delta': {
+            const delta = rawEvent.delta as Record<string, unknown> | undefined
+            if (!delta) break
+            const deltaType = delta.type as string
+
+            if (deltaType === 'text_delta') {
+              const text = delta.text as string
+              this.sendToRenderer('opencode:stream', {
+                type: 'message.part.updated',
+                sessionId: hiveSessionId,
+                childSessionId,
+                data: {
+                  part: { type: 'text', text },
+                  delta: text
+                }
+              })
+            } else if (deltaType === 'thinking_delta') {
+              const thinking = delta.thinking as string
+              this.sendToRenderer('opencode:stream', {
+                type: 'message.part.updated',
+                sessionId: hiveSessionId,
+                childSessionId,
+                data: {
+                  part: { type: 'reasoning', text: thinking },
+                  delta: thinking
+                }
+              })
+            } else if (deltaType === 'input_json_delta') {
+              // Tool input arrives as incremental JSON chunks.
+              // Accumulate in the active tool block tracker so we can
+              // emit a tool update with input once the block stops.
+              const partialJson = delta.partial_json as string
+              if (partialJson && this.activeToolBlocks.has(hiveSessionId)) {
+                const tools = this.activeToolBlocks.get(hiveSessionId)!
+                const blockIdx = rawEvent.index as number | undefined
+                if (blockIdx !== undefined && tools.has(blockIdx)) {
+                  const tool = tools.get(blockIdx)!
+                  tool.inputJson += partialJson
+                }
               }
-            })
+            }
+            break
+          }
+          case 'content_block_start': {
+            const contentBlock = rawEvent.content_block as Record<string, unknown> | undefined
+            if (!contentBlock) break
+            const blockType = contentBlock.type as string
+            const blockIdx = rawEvent.index as number | undefined
+
+            if (blockType === 'tool_use') {
+              const toolId = contentBlock.id as string
+              const toolName = contentBlock.name as string
+              // Track active tool block for input_json_delta accumulation
+              if (!this.activeToolBlocks.has(hiveSessionId)) {
+                this.activeToolBlocks.set(hiveSessionId, new Map())
+              }
+              if (blockIdx !== undefined) {
+                this.activeToolBlocks.get(hiveSessionId)!.set(blockIdx, {
+                  id: toolId,
+                  name: toolName,
+                  inputJson: ''
+                })
+              }
+              this.sendToRenderer('opencode:stream', {
+                type: 'message.part.updated',
+                sessionId: hiveSessionId,
+                childSessionId,
+                data: {
+                  part: {
+                    type: 'tool',
+                    callID: toolId,
+                    tool: toolName,
+                    state: { status: 'running', input: undefined }
+                  }
+                }
+              })
+            } else if (blockType === 'thinking') {
+              // Start of a thinking/reasoning block — the actual content
+              // arrives via content_block_delta thinking_delta events.
+              // Nothing to emit here; the first delta creates the part.
+            }
+            break
+          }
+          case 'content_block_stop': {
+            const blockIdx = rawEvent.index as number | undefined
+            if (blockIdx !== undefined && this.activeToolBlocks.has(hiveSessionId)) {
+              const tools = this.activeToolBlocks.get(hiveSessionId)!
+              const tool = tools.get(blockIdx)
+              if (tool) {
+                // Emit tool with accumulated input now that the block is complete
+                let parsedInput: unknown = undefined
+                if (tool.inputJson) {
+                  try {
+                    parsedInput = JSON.parse(tool.inputJson)
+                  } catch {
+                    parsedInput = tool.inputJson
+                  }
+                }
+                this.sendToRenderer('opencode:stream', {
+                  type: 'message.part.updated',
+                  sessionId: hiveSessionId,
+                  childSessionId,
+                  data: {
+                    part: {
+                      type: 'tool',
+                      callID: tool.id,
+                      tool: tool.name,
+                      state: { status: 'running', input: parsedInput }
+                    }
+                  }
+                })
+                tools.delete(blockIdx)
+              }
+              if (tools.size === 0) {
+                this.activeToolBlocks.delete(hiveSessionId)
+              }
+            }
+            break
+          }
+          default: {
+            // message_start, message_delta, message_stop — no action needed
+            break
           }
         }
         break
       }
-      case 'result': {
+
+      // ── Complete assistant message (arrives AFTER all stream_events) ──
+      // With includePartialMessages the renderer already accumulated text/tools
+      // via stream_event deltas.  Emit as message.updated for metadata/usage only.
+      case 'assistant': {
+        const usage = innerMessage?.usage as Record<string, unknown> | undefined
+        log.info('emitSdkMessage: assistant (complete)', {
+          hiveSessionId,
+          messageIndex,
+          contentBlocks: Array.isArray(innerContent) ? innerContent.length : 0,
+          hasUsage: !!usage
+        })
         this.sendToRenderer('opencode:stream', {
           type: 'message.updated',
           sessionId: hiveSessionId,
           data: {
             role: 'assistant',
-            content,
-            isError: msg.is_error ?? false,
-            messageIndex
+            messageIndex,
+            // Pass usage/model info so the renderer can extract tokens
+            info: {
+              time: { completed: new Date().toISOString() },
+              usage: usage
+                ? {
+                    input: usage.input_tokens,
+                    output: usage.output_tokens,
+                    cacheRead: usage.cache_read_input_tokens,
+                    cacheCreation: usage.cache_creation_input_tokens
+                  }
+                : undefined,
+              model: innerMessage?.model
+            }
           }
         })
-        break
-      }
-      case 'user': {
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            this.sendToRenderer('opencode:stream', {
-              type: 'message.part.updated',
-              sessionId: hiveSessionId,
-              data: {
-                role: 'user',
-                content: block,
-                messageIndex
-              }
-            })
+
+        // Also emit tool result status updates.  When the complete assistant
+        // message arrives, user-type messages with tool_result content follow.
+        // But the tool_use blocks inside the assistant message carry the final
+        // input which the renderer needs for tool cards.
+        if (Array.isArray(innerContent)) {
+          for (const block of innerContent) {
+            const b = block as Record<string, unknown>
+            if (b.type === 'tool_use') {
+              this.sendToRenderer('opencode:stream', {
+                type: 'message.part.updated',
+                sessionId: hiveSessionId,
+                data: {
+                  part: {
+                    type: 'tool',
+                    callID: b.id as string,
+                    tool: b.name as string,
+                    state: { status: 'running', input: b.input }
+                  }
+                }
+              })
+            }
           }
         }
         break
       }
-      case 'tool_use': {
+
+      case 'result': {
+        // Result content is in msg.result (array of content blocks or text)
+        const resultContent = msg.result as unknown[] | unknown
+        const resultArray = Array.isArray(resultContent) ? resultContent : undefined
+        log.info('emitSdkMessage: result', {
+          hiveSessionId,
+          messageIndex,
+          isError: msg.is_error,
+          resultType: typeof resultContent,
+          isArray: Array.isArray(resultContent),
+          contentLength: resultArray?.length ?? 0
+        })
+
+        // Emit any final result text as a streaming text part so it renders
+        // immediately (before finalizeResponse reloads the full transcript).
+        if (typeof resultContent === 'string' && resultContent.length > 0) {
+          this.sendToRenderer('opencode:stream', {
+            type: 'message.part.updated',
+            sessionId: hiveSessionId,
+            data: {
+              part: { type: 'text', text: resultContent },
+              delta: resultContent
+            }
+          })
+        }
+
         this.sendToRenderer('opencode:stream', {
-          type: 'message.part.updated',
+          type: 'message.updated',
           sessionId: hiveSessionId,
           data: {
-            type: 'tool-use',
-            content: msg,
-            messageIndex
+            role: 'assistant',
+            content: resultArray ?? resultContent,
+            isError: msg.is_error ?? false,
+            messageIndex,
+            // Include cost/usage from result for token tracking
+            info: {
+              time: { completed: new Date().toISOString() },
+              cost: msg.total_cost_usd,
+              usage: msg.usage
+                ? {
+                    input: (msg.usage as Record<string, unknown>).input_tokens,
+                    output: (msg.usage as Record<string, unknown>).output_tokens
+                  }
+                : undefined
+            }
           }
         })
         break
       }
+
+      case 'user': {
+        // User messages are echoes from the SDK; the renderer already has
+        // the user message locally.  However we still emit them so the
+        // renderer can track tool_result content for tool card completion.
+        if (Array.isArray(innerContent)) {
+          for (const block of innerContent) {
+            const b = block as Record<string, unknown>
+            if (b.type === 'tool_result') {
+              const toolId = b.tool_use_id as string
+              const isError = b.is_error as boolean | undefined
+              // Extract text content from tool result
+              let output: string | undefined
+              if (typeof b.content === 'string') {
+                output = b.content
+              } else if (Array.isArray(b.content)) {
+                output = (b.content as Record<string, unknown>[])
+                  .filter((c) => c.type === 'text')
+                  .map((c) => c.text as string)
+                  .join('\n')
+              }
+              this.sendToRenderer('opencode:stream', {
+                type: 'message.part.updated',
+                sessionId: hiveSessionId,
+                data: {
+                  part: {
+                    type: 'tool',
+                    callID: toolId,
+                    tool: '',
+                    state: {
+                      status: isError ? 'error' : 'completed',
+                      output: output,
+                      error: isError ? output : undefined
+                    }
+                  }
+                }
+              })
+            }
+          }
+        }
+        break
+      }
+
+      // ── System messages (compaction, status) ──
+      case 'system': {
+        const subtype = msg.subtype as string | undefined
+        if (subtype === 'compact_boundary') {
+          const meta = msg.compact_metadata as Record<string, unknown> | undefined
+          this.sendToRenderer('opencode:stream', {
+            type: 'message.part.updated',
+            sessionId: hiveSessionId,
+            data: {
+              part: {
+                type: 'compaction',
+                auto: meta?.trigger === 'auto'
+              }
+            }
+          })
+        }
+        break
+      }
+
+      // ── Tool progress heartbeats ──
+      case 'tool_progress': {
+        const toolId = msg.tool_use_id as string
+        const toolName = msg.tool_name as string
+        this.sendToRenderer('opencode:stream', {
+          type: 'message.part.updated',
+          sessionId: hiveSessionId,
+          data: {
+            part: {
+              type: 'tool',
+              callID: toolId,
+              tool: toolName,
+              state: { status: 'running' }
+            }
+          }
+        })
+        break
+      }
+
+      case 'tool_use': {
+        log.info('emitSdkMessage: tool_use', { hiveSessionId, messageIndex })
+        this.sendToRenderer('opencode:stream', {
+          type: 'message.part.updated',
+          sessionId: hiveSessionId,
+          data: {
+            part: {
+              type: 'tool',
+              callID: ((msg as Record<string, unknown>).id as string) || `tool-${Date.now()}`,
+              tool: ((msg as Record<string, unknown>).name as string) || 'unknown',
+              state: { status: 'running', input: (msg as Record<string, unknown>).input }
+            }
+          }
+        })
+        break
+      }
+
       default: {
-        log.debug('Unhandled SDK message type, skipping', { type: msgType })
+        log.warn('emitSdkMessage: unhandled type', {
+          type: msgType,
+          messageIndex,
+          keys: Object.keys(msg).join(',')
+        })
       }
     }
   }

@@ -394,7 +394,7 @@ declare global {
         opencodeSessionId: string
       ) => Promise<{ success: boolean; messages: unknown[]; error?: string }>
       // List available models from all configured providers
-      listModels: () => Promise<{
+      listModels: (opts?: { agentSdk?: 'opencode' | 'claude-code' }) => Promise<{
         success: boolean
         providers: Record<string, unknown>
         error?: string
@@ -404,11 +404,13 @@ declare global {
         providerID: string
         modelID: string
         variant?: string
+        agentSdk?: 'opencode' | 'claude-code'
       }) => Promise<{ success: boolean; error?: string }>
       // Get model info (name, context limit)
       modelInfo: (
         worktreePath: string,
-        modelId: string
+        modelId: string,
+        agentSdk?: 'opencode' | 'claude-code'
       ) => Promise<{
         success: boolean
         model?: { id: string; name: string; limit: { context: number } }

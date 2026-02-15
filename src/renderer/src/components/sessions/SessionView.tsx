@@ -1030,6 +1030,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
+          // Handle session materialization — update the stale pending:: session ID
+          // so subsequent loadMessages() calls use the real SDK session ID.
+          if (event.type === 'session.materialized') {
+            const newId = event.data?.newSessionId as string | undefined
+            if (newId) {
+              setOpencodeSessionId(newId)
+              transcriptSourceRef.current.opencodeSessionId = newId
+              useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
+            }
+            return
+          }
+
           // Handle question events
           if (event.type === 'question.asked') {
             const request = event.data

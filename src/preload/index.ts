@@ -874,29 +874,33 @@ const opencodeOps = {
     ipcRenderer.invoke('opencode:messages', worktreePath, opencodeSessionId),
 
   // List available models from all configured providers
-  listModels: (): Promise<{
+  listModels: (opts?: {
+    agentSdk?: 'opencode' | 'claude-code'
+  }): Promise<{
     success: boolean
     providers: Record<string, unknown>
     error?: string
-  }> => ipcRenderer.invoke('opencode:models'),
+  }> => ipcRenderer.invoke('opencode:models', opts),
 
   // Set the selected model for prompts
   setModel: (model: {
     providerID: string
     modelID: string
     variant?: string
+    agentSdk?: 'opencode' | 'claude-code'
   }): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:setModel', model),
 
   // Get model info (name, context limit)
   modelInfo: (
     worktreePath: string,
-    modelId: string
+    modelId: string,
+    agentSdk?: 'opencode' | 'claude-code'
   ): Promise<{
     success: boolean
     model?: { id: string; name: string; limit: { context: number } }
     error?: string
-  }> => ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId }),
+  }> => ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId, agentSdk }),
 
   // Reply to a pending question from the AI
   questionReply: (

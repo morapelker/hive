@@ -9,8 +9,14 @@ import { toast } from '@/lib/toast'
 
 export function SettingsGeneral(): React.JSX.Element {
   const { setTheme } = useThemeStore()
-  const { autoStartSession, breedType, showModelIcons, updateSetting, resetToDefaults } =
-    useSettingsStore()
+  const {
+    autoStartSession,
+    breedType,
+    showModelIcons,
+    defaultAgentSdk,
+    updateSetting,
+    resetToDefaults
+  } = useSettingsStore()
   const { resetToDefaults: resetShortcuts } = useShortcutStore()
 
   const handleResetAll = (): void => {
@@ -79,6 +85,40 @@ export function SettingsGeneral(): React.JSX.Element {
             )}
           />
         </button>
+      </div>
+
+      {/* Default Agent SDK */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Agent SDK</label>
+        <p className="text-xs text-muted-foreground">
+          Choose which AI backend to use for new sessions
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => updateSetting('defaultAgentSdk', 'opencode')}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              defaultAgentSdk === 'opencode'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="agent-sdk-opencode"
+          >
+            OpenCode
+          </button>
+          <button
+            onClick={() => updateSetting('defaultAgentSdk', 'claude-code')}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              defaultAgentSdk === 'claude-code'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="agent-sdk-claude-code"
+          >
+            Claude Code
+          </button>
+        </div>
       </div>
 
       {/* Branch naming */}
