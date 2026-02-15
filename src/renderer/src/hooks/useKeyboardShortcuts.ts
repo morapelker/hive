@@ -706,8 +706,8 @@ function useMenuStateUpdater(): void {
     }
 
     window.opencodeOps
-      ?.capabilities(opencodeSessionId)
-      .then((result) => {
+      ?.capabilities?.(opencodeSessionId)
+      ?.then((result) => {
         window.systemOps.updateMenuState({
           ...baseState,
           canUndo: result.success ? result.capabilities?.supportsUndo : true,

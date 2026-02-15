@@ -332,13 +332,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       return
     }
     window.opencodeOps
-      .capabilities(opencodeSessionId)
-      .then((result) => {
+      ?.capabilities?.(opencodeSessionId)
+      ?.then((result) => {
         if (result.success && result.capabilities) {
           setSessionCapabilities(result.capabilities)
         }
       })
-      .catch(() => {})
+      ?.catch(() => {})
   }, [opencodeSessionId])
 
   // Prompt history navigation
