@@ -33,6 +33,16 @@ export interface ClaudeQuery {
   return?(value?: void): Promise<IteratorResult<unknown, void>>
   next(...args: unknown[]): Promise<IteratorResult<unknown, void>>
   [Symbol.asyncIterator](): AsyncGenerator<unknown, void>
+  rewindFiles?: (
+    userMessageId: string,
+    options?: { dryRun?: boolean }
+  ) => Promise<{
+    canRewind: boolean
+    error?: string
+    filesChanged?: string[]
+    insertions?: number
+    deletions?: number
+  }>
 }
 
 export interface PendingQuestionState {
@@ -53,6 +63,8 @@ export interface ClaudeSessionState {
   abortController: AbortController | null
   checkpoints: Map<string, number>
   query: ClaudeQuery | null
+  /** Last completed query reference for rewindFiles access */
+  lastQuery: ClaudeQuery | null
   materialized: boolean
   messages: unknown[]
   /** Maps tool_use IDs to their tool names for lookup on tool_result completion */
@@ -61,6 +73,12 @@ export interface ClaudeSessionState {
   pendingQuestion: PendingQuestionState | null
   /** Pending ExitPlanMode awaiting user approval/rejection */
   pendingPlanApproval: PendingPlanApprovalState | null
+  /** Current revert boundary message ID (hive-side), set by undo */
+  revertMessageID: string | null
+  /** SDK UUID of the reverted checkpoint, used for boundary lookups in subsequent undos */
+  revertCheckpointUuid: string | null
+  /** Diff string from last rewindFiles result */
+  revertDiff: string | null
 }
 
 export class ClaudeCodeImplementer implements AgentSdkImplementer {
@@ -105,11 +123,15 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       abortController: new AbortController(),
       checkpoints: new Map(),
       query: null,
+      lastQuery: null,
       materialized: false,
       messages: [],
       toolNames: new Map(),
       pendingQuestion: null,
-      pendingPlanApproval: null
+      pendingPlanApproval: null,
+      revertMessageID: null,
+      revertCheckpointUuid: null,
+      revertDiff: null
     }
     this.sessions.set(key, state)
 
@@ -146,11 +168,15 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       abortController: new AbortController(),
       checkpoints: new Map(),
       query: null,
+      lastQuery: null,
       materialized: true,
       messages: [],
       toolNames: new Map(),
       pendingQuestion: null,
-      pendingPlanApproval: null
+      pendingPlanApproval: null,
+      revertMessageID: null,
+      revertCheckpointUuid: null,
+      revertDiff: null
     }
     this.sessions.set(key, state)
 
@@ -220,6 +246,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     if (!session) {
       throw new Error(`Prompt failed: session not found for ${worktreePath} / ${agentSessionId}`)
     }
+
+    // Clear revert boundary — a new prompt invalidates prior undo state
+    session.revertMessageID = null
+    session.revertCheckpointUuid = null
+    session.revertDiff = null
 
     this.emitStatus(session.hiveSessionId, 'busy')
     log.info('Prompt: starting', {
@@ -298,6 +329,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         maxThinkingTokens: 31999,
         model: modelOverride?.modelID ?? this.selectedModel,
         includePartialMessages: true,
+        enableFileCheckpointing: true,
         canUseTool: this.createCanUseToolCallback(session)
       }
 
@@ -506,6 +538,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       })
       this.emitStatus(session.hiveSessionId, 'idle')
     } finally {
+      session.lastQuery = session.query
       session.query = null
     }
   }
@@ -602,14 +635,17 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   // ── Session info ─────────────────────────────────────────────────
 
   async getSessionInfo(
-    _worktreePath: string,
-    _agentSessionId: string
+    worktreePath: string,
+    agentSessionId: string
   ): Promise<{
     revertMessageID: string | null
     revertDiff: string | null
   }> {
-    // Revert tracking deferred to Session 8 (undo/redo)
-    return { revertMessageID: null, revertDiff: null }
+    const session = this.getSession(worktreePath, agentSessionId)
+    return {
+      revertMessageID: session?.revertMessageID ?? null,
+      revertDiff: session?.revertDiff ?? null
+    }
   }
 
   // ── Human-in-the-loop ────────────────────────────────────────────
@@ -818,11 +854,99 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   // ── Undo/Redo ────────────────────────────────────────────────────
 
   async undo(
-    _worktreePath: string,
-    _agentSessionId: string,
+    worktreePath: string,
+    agentSessionId: string,
     _hiveSessionId: string
-  ): Promise<unknown> {
-    throw new Error('ClaudeCodeImplementer.undo: not yet implemented (Session 8)')
+  ): Promise<{ revertMessageID: string; restoredPrompt: string; revertDiff: string | null }> {
+    const session = this.getSession(worktreePath, agentSessionId)
+    if (!session) {
+      throw new Error(`Undo failed: session not found for ${worktreePath} / ${agentSessionId}`)
+    }
+
+    if (session.checkpoints.size === 0) {
+      throw new Error('Nothing to undo')
+    }
+
+    // Find the current revert boundary's checkpoint index (if any).
+    // Use revertCheckpointUuid (SDK UUID) directly against checkpoints map
+    // to avoid roundabout hive-side ID lookups that can fail when IDs diverge.
+    const currentBoundaryCheckpointIdx = session.revertCheckpointUuid
+      ? (session.checkpoints.get(session.revertCheckpointUuid) ?? null)
+      : null
+
+    // Walk checkpoints in reverse order (by message index, descending)
+    // to find the last user message UUID BEFORE the current revert boundary
+    const sortedCheckpoints = [...session.checkpoints.entries()].sort(
+      ([, idxA], [, idxB]) => idxB - idxA
+    )
+
+    let targetUuid: string | null = null
+    let targetCheckpointIdx: number | null = null
+    for (const [uuid, msgIndex] of sortedCheckpoints) {
+      // Skip checkpoints at or after the current boundary
+      if (currentBoundaryCheckpointIdx !== null && msgIndex >= currentBoundaryCheckpointIdx) {
+        continue
+      }
+      targetUuid = uuid
+      targetCheckpointIdx = msgIndex
+      break
+    }
+
+    if (!targetUuid || targetCheckpointIdx === null) {
+      throw new Error('Nothing to undo')
+    }
+
+    // Get the query object: prefer active query, fall back to lastQuery
+    const queryObj = session.query ?? session.lastQuery
+    if (!queryObj) {
+      throw new Error('Cannot undo: no SDK query available. Send a message first.')
+    }
+    if (!queryObj.rewindFiles) {
+      throw new Error('Cannot undo: SDK query does not support rewindFiles')
+    }
+
+    // Call rewindFiles on the query object (type-safe via ClaudeQuery interface)
+    const result = await queryObj.rewindFiles(targetUuid)
+
+    if (!result.canRewind) {
+      throw new Error(result.error ?? 'Cannot rewind to this point')
+    }
+
+    // Build a diff summary string
+    const diffParts: string[] = []
+    if (result.filesChanged && result.filesChanged.length > 0) {
+      diffParts.push(`${result.filesChanged.length} file(s) changed`)
+    }
+    if (result.insertions) {
+      diffParts.push(`+${result.insertions}`)
+    }
+    if (result.deletions) {
+      diffParts.push(`-${result.deletions}`)
+    }
+    const revertDiff = diffParts.length > 0 ? diffParts.join(', ') : null
+
+    // Extract the user's prompt text from the message matching this UUID
+    const targetMessage = this.findMessageByUuid(session, targetUuid)
+    const restoredPrompt = this.extractPromptFromMessage(targetMessage)
+
+    // Use the hive-side message ID, or fall back to the SDK UUID
+    const revertMessageID = (targetMessage?.id as string) ?? targetUuid
+
+    // Update session revert state
+    session.revertMessageID = revertMessageID
+    session.revertCheckpointUuid = targetUuid
+    session.revertDiff = revertDiff
+
+    log.info('Undo: rewindFiles succeeded', {
+      worktreePath,
+      agentSessionId,
+      targetUuid,
+      targetCheckpointIdx,
+      revertMessageID,
+      filesChanged: result.filesChanged?.length ?? 0
+    })
+
+    return { revertMessageID, restoredPrompt, revertDiff }
   }
 
   async redo(
@@ -830,7 +954,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     _agentSessionId: string,
     _hiveSessionId: string
   ): Promise<unknown> {
-    throw new Error('ClaudeCodeImplementer.redo: not yet implemented (Session 8)')
+    throw new Error('Redo is not supported for Claude Code sessions')
   }
 
   // ── Commands ─────────────────────────────────────────────────────
@@ -1482,6 +1606,42 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         })
       }
     }
+  }
+
+  /**
+   * Extract prompt text from a session message's parts array or content string.
+   */
+  private extractPromptFromMessage(msg: Record<string, unknown> | undefined): string {
+    if (!msg) return ''
+
+    // Try parts array first
+    const parts = msg.parts as Array<Record<string, unknown>> | undefined
+    if (Array.isArray(parts)) {
+      const textParts = parts
+        .filter((p) => p.type === 'text' && typeof p.text === 'string')
+        .map((p) => p.text as string)
+      if (textParts.length > 0) return textParts.join('\n')
+    }
+
+    // Fall back to content string
+    if (typeof msg.content === 'string') return msg.content
+
+    return ''
+  }
+
+  /**
+   * Find a message in session.messages by UUID (checking the `id` field).
+   * Returns the message object or undefined if not found.
+   */
+  private findMessageByUuid(
+    session: ClaudeSessionState,
+    uuid: string
+  ): Record<string, unknown> | undefined {
+    for (const msg of session.messages) {
+      const m = msg as Record<string, unknown>
+      if (m.id === uuid) return m
+    }
+    return undefined
   }
 
   protected getSessionKey(worktreePath: string, claudeSessionId: string): string {
