@@ -1,47 +1,17 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { toast } from '@/lib/toast'
 
 export function useAutoUpdate(): void {
-  const toastId = useRef<string | number | null>(null)
-
   useEffect(() => {
     // Guard: updaterOps may not exist in test environments
     if (!window.updaterOps) return
 
     const cleanups: (() => void)[] = []
 
-    // Update available — download starts automatically in background
-    cleanups.push(
-      window.updaterOps.onUpdateAvailable((data) => {
-        toastId.current = toast.info(
-          `Update v${data.version} found. Downloading in background...`,
-          {
-            duration: 6000
-          }
-        )
-      })
-    )
-
-    // Download progress — update the existing toast
-    cleanups.push(
-      window.updaterOps.onProgress((data) => {
-        const percent = Math.round(data.percent)
-        if (toastId.current != null) {
-          toast.dismiss(toastId.current)
-        }
-        toastId.current = toast.loading(`Downloading update... ${percent}%`, {
-          duration: Infinity
-        })
-      })
-    )
-
-    // Update downloaded — show restart prompt
+    // Update downloaded — show restart prompt (only toast in the update flow)
     cleanups.push(
       window.updaterOps.onUpdateDownloaded((data) => {
-        if (toastId.current != null) {
-          toast.dismiss(toastId.current)
-        }
-        toastId.current = toast.success(`Update v${data.version} ready to install`, {
+        toast.success(`Update v${data.version} ready to install`, {
           duration: Infinity,
           action: {
             label: 'Restart to Update',
@@ -53,17 +23,9 @@ export function useAutoUpdate(): void {
       })
     )
 
-    // No update available — silent (only show if user manually checked)
-    // We don't subscribe to onUpdateNotAvailable for automatic checks
-    // because that would be noisy.
-
     // Error — show error toast
     cleanups.push(
       window.updaterOps.onError((data) => {
-        if (toastId.current != null) {
-          toast.dismiss(toastId.current)
-          toastId.current = null
-        }
         toast.error('Update check failed', {
           description: data.message
         })
