@@ -41,7 +41,7 @@ Napi::Value GhosttyGetVersion(const Napi::CallbackInfo& info) {
 
 // ---------------------------------------------------------------------------
 // ghosttyCreateSurface(windowHandle: Buffer, rect: {x,y,w,h}, opts: {
-//   cwd?: string, shell?: string, scaleFactor: number
+//   cwd?: string, shell?: string, scaleFactor: number, fontSize?: number
 // }) → number (surface ID, 0 on failure)
 // ---------------------------------------------------------------------------
 Napi::Value GhosttyCreateSurface(const Napi::CallbackInfo& info) {
@@ -103,6 +103,11 @@ Napi::Value GhosttyCreateSurface(const Napi::CallbackInfo& info) {
     scaleFactor = opts.Get("scaleFactor").As<Napi::Number>().DoubleValue();
   }
 
+  float fontSize = 0.0f; // 0 = use Ghostty config default
+  if (opts.Has("fontSize") && opts.Get("fontSize").IsNumber()) {
+    fontSize = static_cast<float>(opts.Get("fontSize").As<Napi::Number>().DoubleValue());
+  }
+
   // Create the host NSView
   NSView* hostView = createHostView(window, rect);
   if (!hostView) {
@@ -113,7 +118,7 @@ Napi::Value GhosttyCreateSurface(const Napi::CallbackInfo& info) {
 
   // Create the Ghostty surface on this view
   uint32_t surfaceId = GhosttyBridge::instance().createSurface(
-    hostView, scaleFactor, cwd, shell
+    hostView, scaleFactor, fontSize, cwd, shell
   );
 
   if (surfaceId == 0) {

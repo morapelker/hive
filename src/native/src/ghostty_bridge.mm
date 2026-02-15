@@ -149,6 +149,7 @@ void GhosttyBridge::shutdown() {
 uint32_t GhosttyBridge::createSurface(
   NSView* view,
   double scaleFactor,
+  float fontSize,
   const std::string& cwd,
   const std::string& shell
 ) {
@@ -163,6 +164,9 @@ uint32_t GhosttyBridge::createSurface(
   surfCfg.platform_tag = GHOSTTY_PLATFORM_MACOS;
   surfCfg.platform.macos.nsview = (__bridge void*)view;
   surfCfg.scale_factor = scaleFactor;
+  if (fontSize > 0.0f) {
+    surfCfg.font_size = fontSize;
+  }
 
   if (!cwd.empty()) {
     surfCfg.working_directory = cwd.c_str();

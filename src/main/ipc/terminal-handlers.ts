@@ -165,7 +165,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
       _event,
       worktreeId: string,
       rect: { x: number; y: number; w: number; h: number },
-      opts?: { cwd?: string; shell?: string; scaleFactor?: number }
+      opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
     ) => {
       log.info('IPC: terminal:ghostty:createSurface', { worktreeId, rect })
       return ghosttyService.createSurface(worktreeId, rect, opts || {})

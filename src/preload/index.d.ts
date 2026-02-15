@@ -605,7 +605,7 @@ declare global {
       ghosttyCreateSurface: (
         worktreeId: string,
         rect: { x: number; y: number; w: number; h: number },
-        opts?: { cwd?: string; shell?: string; scaleFactor?: number }
+        opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
       ) => Promise<{ success: boolean; surfaceId?: number; error?: string }>
       ghosttySetFrame: (
         worktreeId: string,

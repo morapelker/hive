@@ -1193,7 +1193,7 @@ const terminalOps = {
   ghosttyCreateSurface: (
     worktreeId: string,
     rect: { x: number; y: number; w: number; h: number },
-    opts?: { cwd?: string; shell?: string; scaleFactor?: number }
+    opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
   ): Promise<{ success: boolean; surfaceId?: number; error?: string }> =>
     ipcRenderer.invoke('terminal:ghostty:createSurface', worktreeId, rect, opts),
 
