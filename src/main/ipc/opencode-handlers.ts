@@ -3,6 +3,7 @@ import { openCodeService } from '../services/opencode-service'
 import { createLogger } from '../services/logger'
 import type { DatabaseService } from '../db/database'
 import type { AgentSdkManager } from '../services/agent-sdk-manager'
+import { ClaudeCodeImplementer } from '../services/claude-code-implementer'
 
 const log = createLogger({ component: 'OpenCodeHandlers' })
 
@@ -406,6 +407,15 @@ export function registerOpenCodeHandlers(
     ) => {
       log.info('IPC: opencode:question:reply', { requestId })
       try {
+        // Route to Claude Code implementer if this is a Claude Code question
+        if (sdkManager) {
+          const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
+          if (claudeImpl.hasPendingQuestion(requestId)) {
+            await claudeImpl.questionReply(requestId, answers, worktreePath)
+            return { success: true }
+          }
+        }
+        // Fall through to OpenCode
         await openCodeService.questionReply(requestId, answers, worktreePath)
         return { success: true }
       } catch (error) {
@@ -424,6 +434,15 @@ export function registerOpenCodeHandlers(
     async (_event, { requestId, worktreePath }: { requestId: string; worktreePath?: string }) => {
       log.info('IPC: opencode:question:reject', { requestId })
       try {
+        // Route to Claude Code implementer if this is a Claude Code question
+        if (sdkManager) {
+          const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
+          if (claudeImpl.hasPendingQuestion(requestId)) {
+            await claudeImpl.questionReject(requestId, worktreePath)
+            return { success: true }
+          }
+        }
+        // Fall through to OpenCode
         await openCodeService.questionReject(requestId, worktreePath)
         return { success: true }
       } catch (error) {

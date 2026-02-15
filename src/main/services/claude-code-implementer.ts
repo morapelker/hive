@@ -35,6 +35,12 @@ export interface ClaudeQuery {
   [Symbol.asyncIterator](): AsyncGenerator<unknown, void>
 }
 
+export interface PendingQuestionState {
+  requestId: string
+  questions: { question: string; header: string }[]
+  resolve: (response: { answers: string[][]; rejected?: boolean }) => void
+}
+
 export interface ClaudeSessionState {
   claudeSessionId: string
   hiveSessionId: string
@@ -46,6 +52,8 @@ export interface ClaudeSessionState {
   messages: unknown[]
   /** Maps tool_use IDs to their tool names for lookup on tool_result completion */
   toolNames: Map<string, string>
+  /** Pending AskUserQuestion awaiting user response */
+  pendingQuestion: PendingQuestionState | null
 }
 
 export class ClaudeCodeImplementer implements AgentSdkImplementer {
@@ -62,6 +70,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     string,
     Map<number, { id: string; name: string; inputJson: string }>
   >()
+  /** Maps pending question requestIds to session keys for IPC routing */
+  private pendingQuestionSessions = new Map<string, string>()
 
   // ── Window binding ───────────────────────────────────────────────
 
@@ -88,7 +98,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       query: null,
       materialized: false,
       messages: [],
-      toolNames: new Map()
+      toolNames: new Map(),
+      pendingQuestion: null
     }
     this.sessions.set(key, state)
 
@@ -127,7 +138,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       query: null,
       materialized: true,
       messages: [],
-      toolNames: new Map()
+      toolNames: new Map(),
+      pendingQuestion: null
     }
     this.sessions.set(key, state)
 
@@ -259,7 +271,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         abortController: session.abortController,
         maxThinkingTokens: 31999,
         model: modelOverride?.modelID ?? this.selectedModel,
-        includePartialMessages: true
+        includePartialMessages: true,
+        canUseTool: this.createCanUseToolCallback(session)
       }
 
       // If session is materialized (has real SDK ID), add resume
@@ -576,15 +589,62 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   // ── Human-in-the-loop ────────────────────────────────────────────
 
   async questionReply(
-    _requestId: string,
-    _answers: string[][],
+    requestId: string,
+    answers: string[][],
     _worktreePath?: string
   ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.questionReply: not yet implemented (Session 7)')
+    const sessionKey = this.pendingQuestionSessions.get(requestId)
+    if (!sessionKey) {
+      throw new Error(`No pending question found for requestId: ${requestId}`)
+    }
+
+    const session = this.sessions.get(sessionKey)
+    if (!session?.pendingQuestion || session.pendingQuestion.requestId !== requestId) {
+      throw new Error(`Session pending question mismatch for requestId: ${requestId}`)
+    }
+
+    log.info('questionReply: resolving pending question', {
+      requestId,
+      hiveSessionId: session.hiveSessionId,
+      answerCount: answers.length
+    })
+
+    // Resolve the blocked canUseTool Promise with the user's answers
+    session.pendingQuestion.resolve({ answers })
+
+    // Emit question.replied so the renderer removes the QuestionPrompt
+    this.sendToRenderer('opencode:stream', {
+      type: 'question.replied',
+      sessionId: session.hiveSessionId,
+      data: { requestId, id: requestId }
+    })
   }
 
-  async questionReject(_requestId: string, _worktreePath?: string): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.questionReject: not yet implemented (Session 7)')
+  async questionReject(requestId: string, _worktreePath?: string): Promise<void> {
+    const sessionKey = this.pendingQuestionSessions.get(requestId)
+    if (!sessionKey) {
+      throw new Error(`No pending question found for requestId: ${requestId}`)
+    }
+
+    const session = this.sessions.get(sessionKey)
+    if (!session?.pendingQuestion || session.pendingQuestion.requestId !== requestId) {
+      throw new Error(`Session pending question mismatch for requestId: ${requestId}`)
+    }
+
+    log.info('questionReject: rejecting pending question', {
+      requestId,
+      hiveSessionId: session.hiveSessionId
+    })
+
+    // Resolve the blocked canUseTool Promise with rejection
+    session.pendingQuestion.resolve({ answers: [], rejected: true })
+
+    // Emit question.rejected so the renderer removes the QuestionPrompt
+    this.sendToRenderer('opencode:stream', {
+      type: 'question.rejected',
+      sessionId: session.hiveSessionId,
+      data: { requestId, id: requestId }
+    })
   }
 
   async permissionReply(
@@ -597,6 +657,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
   async permissionList(_worktreePath?: string): Promise<unknown[]> {
     throw new Error('ClaudeCodeImplementer.permissionList: not yet implemented (Session 7)')
+  }
+
+  /** Check if a question requestId belongs to this implementer */
+  hasPendingQuestion(requestId: string): boolean {
+    return this.pendingQuestionSessions.has(requestId)
   }
 
   // ── Undo/Redo ────────────────────────────────────────────────────
@@ -643,6 +708,130 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   }
 
   // ── Internal helpers ─────────────────────────────────────────────
+
+  /**
+   * Creates a canUseTool callback for the Claude Agent SDK.
+   * Intercepts AskUserQuestion to block execution and wait for user input,
+   * translating between the SDK format and Hive's opencode event format.
+   */
+  private createCanUseToolCallback(
+    session: ClaudeSessionState
+  ): (
+    toolName: string,
+    input: Record<string, unknown>,
+    options: { signal: AbortSignal; toolUseID: string; [key: string]: unknown }
+  ) => Promise<
+    | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
+    | { behavior: 'deny'; message: string }
+  > {
+    return async (toolName, input, options) => {
+      if (toolName !== 'AskUserQuestion') {
+        // Auto-allow all non-question tools (normal permissions handled by permissionMode)
+        return { behavior: 'allow' as const, updatedInput: input }
+      }
+
+      const requestId = `askuser-${Date.now()}-${randomUUID().slice(0, 8)}`
+      const toolUseID = options.toolUseID
+
+      log.info('canUseTool: AskUserQuestion intercepted', {
+        hiveSessionId: session.hiveSessionId,
+        requestId,
+        toolUseID,
+        questionCount: (input.questions as unknown[])?.length ?? 0
+      })
+
+      // Translate SDK AskUserQuestionInput to Hive QuestionRequest format
+      const sdkQuestions = input.questions as Array<{
+        question: string
+        header: string
+        options: Array<{ label: string; description: string }>
+        multiSelect?: boolean
+      }>
+
+      const questionRequest = {
+        id: requestId,
+        sessionID: session.hiveSessionId,
+        questions: sdkQuestions.map((q) => ({
+          question: q.question,
+          header: q.header,
+          options: q.options,
+          multiple: q.multiSelect ?? false,
+          custom: true // SDK says "Other" option is auto-provided by client
+        })),
+        tool: { messageID: `msg-${Date.now()}`, callID: toolUseID }
+      }
+
+      // Track this pending question for IPC routing
+      const sessionKey = this.getSessionKey(session.worktreePath, session.claudeSessionId)
+      this.pendingQuestionSessions.set(requestId, sessionKey)
+
+      // Block execution with a Promise that waits for user response
+      const userResponse = await new Promise<{ answers: string[][]; rejected?: boolean }>(
+        (resolve) => {
+          session.pendingQuestion = {
+            requestId,
+            questions: sdkQuestions.map((q) => ({ question: q.question, header: q.header })),
+            resolve
+          }
+
+          // Emit question.asked event to renderer (matches OpenCode event format)
+          this.sendToRenderer('opencode:stream', {
+            type: 'question.asked',
+            sessionId: session.hiveSessionId,
+            data: questionRequest
+          })
+
+          log.info('canUseTool: emitted question.asked, waiting for response', {
+            requestId,
+            hiveSessionId: session.hiveSessionId
+          })
+
+          // If the session is aborted while waiting, auto-reject
+          const onAbort = (): void => {
+            if (session.pendingQuestion?.requestId === requestId) {
+              log.info('canUseTool: session aborted while question pending, auto-rejecting', {
+                requestId
+              })
+              session.pendingQuestion = null
+              this.pendingQuestionSessions.delete(requestId)
+              resolve({ answers: [], rejected: true })
+            }
+          }
+          options.signal.addEventListener('abort', onAbort, { once: true })
+        }
+      )
+
+      // Clean up tracking state
+      session.pendingQuestion = null
+      this.pendingQuestionSessions.delete(requestId)
+
+      if (userResponse.rejected) {
+        log.info('canUseTool: AskUserQuestion rejected by user', { requestId })
+        return {
+          behavior: 'deny' as const,
+          message: 'The user dismissed the question without answering.'
+        }
+      }
+
+      // Translate Hive string[][] answers back to SDK Record<string, string> format
+      // The SDK expects { answers: { "question text": "selected label(s)" } }
+      const sdkAnswers: Record<string, string> = {}
+      sdkQuestions.forEach((q, i) => {
+        const selected = userResponse.answers[i] || []
+        sdkAnswers[q.question] = selected.join(', ')
+      })
+
+      log.info('canUseTool: AskUserQuestion answered', {
+        requestId,
+        answerCount: Object.keys(sdkAnswers).length
+      })
+
+      return {
+        behavior: 'allow' as const,
+        updatedInput: { ...input, answers: sdkAnswers }
+      }
+    }
+  }
 
   private emitStatus(
     hiveSessionId: string,
