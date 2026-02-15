@@ -555,15 +555,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     savedDraftRef.current = ''
   }, [sessionId])
 
-  // Auto-focus textarea whenever session changes (new session or tab switch)
-  // Focus immediately without waiting for connection — users can type while connecting
+  // Auto-focus textarea whenever session changes or view becomes connected.
+  // The textarea only exists in the DOM when viewState is 'connected',
+  // so we need to re-trigger focus when transitioning from 'connecting' → 'connected'.
   useEffect(() => {
     if (textareaRef.current) {
       requestAnimationFrame(() => {
         textareaRef.current?.focus()
       })
     }
-  }, [sessionId])
+  }, [sessionId, viewState.status])
 
   // Push per-session model to OpenCode on tab switch
   useEffect(() => {
