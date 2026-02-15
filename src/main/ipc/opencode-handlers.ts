@@ -364,6 +364,16 @@ export function registerOpenCodeHandlers(
     async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
       log.info('IPC: opencode:undo', { worktreePath, sessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.undo(worktreePath, sessionId, '')
+            return { success: true, ...(result as Record<string, unknown>) }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.undo(worktreePath, sessionId)
         return { success: true, ...result }
       } catch (error) {
@@ -382,6 +392,16 @@ export function registerOpenCodeHandlers(
     async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
       log.info('IPC: opencode:redo', { worktreePath, sessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.redo(worktreePath, sessionId, '')
+            return { success: true, ...(result as Record<string, unknown>) }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.redo(worktreePath, sessionId)
         return { success: true, ...result }
       } catch (error) {
@@ -393,6 +413,27 @@ export function registerOpenCodeHandlers(
       }
     }
   )
+
+  // Get SDK capabilities for a session
+  ipcMain.handle('opencode:capabilities', async (_event, { sessionId }: { sessionId?: string }) => {
+    try {
+      if (sdkManager && dbService && sessionId) {
+        const sdkId = dbService.getAgentSdkForSession(sessionId)
+        if (sdkId) {
+          return { success: true, capabilities: sdkManager.getCapabilities(sdkId) }
+        }
+      }
+      // Default to opencode capabilities
+      const defaultCaps = sdkManager?.getCapabilities('opencode') ?? null
+      return { success: true, capabilities: defaultCaps }
+    } catch (error) {
+      log.error('IPC: opencode:capabilities failed', { error })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
 
   // Reply to a pending question from the AI
   ipcMain.handle(

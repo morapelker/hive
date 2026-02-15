@@ -1026,6 +1026,24 @@ const opencodeOps = {
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:renameSession', { opencodeSessionId, title, worktreePath }),
 
+  // Get SDK capabilities for the current session
+  capabilities: (
+    opencodeSessionId?: string
+  ): Promise<{
+    success: boolean
+    capabilities?: {
+      supportsUndo: boolean
+      supportsRedo: boolean
+      supportsCommands: boolean
+      supportsPermissionRequests: boolean
+      supportsQuestionPrompts: boolean
+      supportsModelSelection: boolean
+      supportsReconnect: boolean
+      supportsPartialStreaming: boolean
+    }
+    error?: string
+  }> => ipcRenderer.invoke('opencode:capabilities', { sessionId: opencodeSessionId }),
+
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, event: OpenCodeStreamEvent): void => {
