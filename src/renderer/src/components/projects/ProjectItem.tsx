@@ -107,6 +107,7 @@ export function ProjectItem({
   const [editName, setEditName] = useState(project.name)
   const [branchPickerOpen, setBranchPickerOpen] = useState(false)
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
+  const [noCommitsDialogOpen, setNoCommitsDialogOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const isCreatingWorktree = creatingForProjectId === project.id
 
@@ -191,6 +192,13 @@ export function ProjectItem({
     async (e: React.MouseEvent): Promise<void> => {
       e.stopPropagation()
       if (isCreatingWorktree) return
+
+      // Check if repo has any commits before attempting worktree creation
+      const hasCommits = await window.worktreeOps.hasCommits(project.path)
+      if (!hasCommits) {
+        setNoCommitsDialogOpen(true)
+        return
+      }
 
       const result = await createWorktree(project.id, project.path, project.name)
       if (result.success) {
@@ -421,6 +429,21 @@ export function ProjectItem({
             >
               Remove
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* No Commits Dialog */}
+      <AlertDialog open={noCommitsDialogOpen} onOpenChange={setNoCommitsDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Initial Commit Required</AlertDialogTitle>
+            <AlertDialogDescription>
+              Creating a first commit with the initial state is required for adding worktrees.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setNoCommitsDialogOpen(false)}>OK</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

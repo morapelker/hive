@@ -193,6 +193,10 @@ const projectOps = {
 
 // Worktree operations API
 const worktreeOps = {
+  // Check if a repository has any commits
+  hasCommits: (projectPath: string): Promise<boolean> =>
+    ipcRenderer.invoke('worktree:hasCommits', projectPath),
+
   // Create a new worktree
   create: (params: {
     projectId: string

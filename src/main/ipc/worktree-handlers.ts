@@ -32,6 +32,16 @@ export interface SyncWorktreesParams {
 export function registerWorktreeHandlers(): void {
   log.info('Registering worktree handlers')
 
+  // Check if a repository has any commits
+  ipcMain.handle('worktree:hasCommits', async (_event, projectPath: string): Promise<boolean> => {
+    try {
+      const gitService = createGitService(projectPath)
+      return await gitService.hasCommits()
+    } catch {
+      return false
+    }
+  })
+
   // Create a new worktree
   ipcMain.handle(
     'worktree:create',
