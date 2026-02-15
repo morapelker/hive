@@ -182,6 +182,18 @@ export class GitService {
   }
 
   /**
+   * Check if the repository has any commits (i.e., HEAD resolves)
+   */
+  async hasCommits(): Promise<boolean> {
+    try {
+      await this.git.raw(['rev-parse', 'HEAD'])
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Get the default branch (main or master)
    */
   async getDefaultBranch(): Promise<string> {

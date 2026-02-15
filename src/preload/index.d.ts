@@ -253,6 +253,7 @@ declare global {
       getProjectIconPath: (filename: string) => Promise<string | null>
     }
     worktreeOps: {
+      hasCommits: (projectPath: string) => Promise<boolean>
       create: (params: { projectId: string; projectPath: string; projectName: string }) => Promise<{
         success: boolean
         worktree?: Worktree

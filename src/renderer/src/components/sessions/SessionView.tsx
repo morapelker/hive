@@ -2910,7 +2910,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       {activePermission && (
         <div className="px-4 pb-2">
           <div className="max-w-4xl mx-auto">
-            <PermissionPrompt request={activePermission} onReply={handlePermissionReply} />
+            <PermissionPrompt
+              key={activePermission.id}
+              request={activePermission}
+              onReply={handlePermissionReply}
+            />
           </div>
         </div>
       )}
@@ -2920,6 +2924,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         <div className="px-4 pb-2">
           <div className="max-w-4xl mx-auto">
             <QuestionPrompt
+              key={activeQuestion.id}
               request={activeQuestion}
               onReply={handleQuestionReply}
               onReject={handleQuestionReject}
