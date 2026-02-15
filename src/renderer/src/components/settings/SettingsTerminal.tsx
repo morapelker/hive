@@ -21,6 +21,7 @@ const TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
   { id: 'warp', label: 'Warp' },
   { id: 'alacritty', label: 'Alacritty' },
   { id: 'kitty', label: 'kitty' },
+  { id: 'ghostty', label: 'Ghostty' },
   { id: 'custom', label: 'Custom Command' }
 ]
 
@@ -44,8 +45,13 @@ const BACKEND_OPTIONS: {
 ]
 
 export function SettingsTerminal(): React.JSX.Element {
-  const { defaultTerminal, customTerminalCommand, embeddedTerminalBackend, updateSetting } =
-    useSettingsStore()
+  const {
+    defaultTerminal,
+    customTerminalCommand,
+    embeddedTerminalBackend,
+    ghosttyFontSize,
+    updateSetting
+  } = useSettingsStore()
   const [detectedTerminals, setDetectedTerminals] = useState<DetectedTerminal[]>([])
   const [isDetecting, setIsDetecting] = useState(true)
   const [ghosttyAvailable, setGhosttyAvailable] = useState<boolean | null>(null)
@@ -159,13 +165,40 @@ export function SettingsTerminal(): React.JSX.Element {
         </div>
 
         {embeddedTerminalBackend === 'ghostty' && (
-          <div className="flex items-start gap-2 mt-3 p-2.5 rounded-md bg-blue-500/10 border border-blue-500/20 text-xs">
-            <Info className="h-3.5 w-3.5 text-blue-500 shrink-0 mt-0.5" />
-            <p className="text-muted-foreground">
-              Ghostty renders via Metal for native performance. The terminal will restart when
-              switching backends. Font, colors, and cursor style are read from your Ghostty config.
-            </p>
-          </div>
+          <>
+            <div className="flex items-start gap-2 mt-3 p-2.5 rounded-md bg-blue-500/10 border border-blue-500/20 text-xs">
+              <Info className="h-3.5 w-3.5 text-blue-500 shrink-0 mt-0.5" />
+              <p className="text-muted-foreground">
+                Ghostty renders via Metal for native performance. The terminal will restart when
+                switching backends. Colors and cursor style are read from your Ghostty config.
+              </p>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              <label className="text-sm font-medium">Font Size</label>
+              <div className="flex items-center gap-3">
+                <Input
+                  type="number"
+                  min={8}
+                  max={32}
+                  value={ghosttyFontSize}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10)
+                    if (!isNaN(val) && val >= 8 && val <= 32) {
+                      updateSetting('ghosttyFontSize', val)
+                    }
+                  }}
+                  className="w-20 font-mono text-sm"
+                  data-testid="ghostty-font-size"
+                />
+                <span className="text-xs text-muted-foreground">pt (8-32)</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Font size for the embedded Ghostty terminal. Restart the terminal for changes to
+                take effect.
+              </p>
+            </div>
+          </>
         )}
       </div>
 

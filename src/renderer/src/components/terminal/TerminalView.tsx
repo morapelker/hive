@@ -55,6 +55,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   const embeddedTerminalBackend = useSettingsStore(
     (s) => s.embeddedTerminalBackend
   ) as EmbeddedTerminalBackend
+  const ghosttyFontSize = useSettingsStore((s) => s.ghosttyFontSize)
 
   // Expose imperative methods to parent via ref
   useImperativeHandle(
@@ -239,6 +240,33 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       activeBackendTypeRef.current = null
     }
   }, [setupTerminal, embeddedTerminalBackend])
+
+  // Restart the Ghostty terminal when font size changes so the new size takes effect.
+  // We track the previous value so the effect only fires on actual changes, not on mount.
+  const prevGhosttyFontSizeRef = useRef(ghosttyFontSize)
+  useEffect(() => {
+    if (prevGhosttyFontSizeRef.current === ghosttyFontSize) return
+    prevGhosttyFontSizeRef.current = ghosttyFontSize
+
+    if (activeBackendTypeRef.current !== 'ghostty') return
+
+    // Recreate the surface with the new font size
+    const restart = async (): Promise<void> => {
+      if (backendRef.current) {
+        backendRef.current.dispose()
+        backendRef.current = null
+      }
+      initializedRef.current = null
+      activeBackendTypeRef.current = null
+      setTerminalStatus('creating')
+      setExitCode(undefined)
+
+      await destroyTerminal(worktreeId)
+      await restartTerminal(worktreeId, cwd)
+      setupTerminal('ghostty')
+    }
+    restart()
+  }, [ghosttyFontSize, worktreeId, cwd, destroyTerminal, restartTerminal, setupTerminal])
 
   // Focus terminal on click
   const handleClick = useCallback(() => {

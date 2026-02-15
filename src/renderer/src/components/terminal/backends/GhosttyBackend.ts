@@ -1,4 +1,5 @@
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 
 /**
  * Native Ghostty terminal backend (macOS only).
@@ -11,10 +12,14 @@ export class GhosttyBackend implements TerminalBackend {
 
   private static readonly HIDDEN_RECT = { x: -10000, y: -10000, w: 1, h: 1 }
 
+  /** Fallback font size when the setting is unavailable (points). */
+  private static readonly FALLBACK_FONT_SIZE = 14
+
   private worktreeId: string = ''
   private container: HTMLDivElement | null = null
   private resizeObserver: ResizeObserver | null = null
   private mounted = false
+  private syncFrameTimer: ReturnType<typeof requestAnimationFrame> | null = null
 
   mount(container: HTMLDivElement, opts: TerminalOpts, callbacks: TerminalBackendCallbacks): void {
     this.worktreeId = opts.worktreeId
@@ -37,9 +42,10 @@ export class GhosttyBackend implements TerminalBackend {
       }
     })
 
-    // Track container position/size and update the native NSView frame
+    // Track container position/size and update the native NSView frame.
+    // Debounced via requestAnimationFrame to avoid rapid-fire IPC during resizing.
     this.resizeObserver = new ResizeObserver(() => {
-      this.syncFrame()
+      this.debouncedSyncFrame()
     })
     this.resizeObserver.observe(container)
   }
@@ -64,7 +70,8 @@ export class GhosttyBackend implements TerminalBackend {
       const result = await window.terminalOps.ghosttyCreateSurface(this.worktreeId, rect, {
         cwd: opts.cwd,
         shell: opts.shell,
-        scaleFactor: window.devicePixelRatio || 2.0
+        scaleFactor: window.devicePixelRatio || 2.0,
+        fontSize: useSettingsStore.getState().ghosttyFontSize || GhosttyBackend.FALLBACK_FONT_SIZE
       })
 
       if (!result.success) {
@@ -84,6 +91,10 @@ export class GhosttyBackend implements TerminalBackend {
 
   /**
    * Get the container's bounding rect in screen coordinates for the native NSView.
+   *
+   * getBoundingClientRect() returns CSS pixels which are inflated by the Electron
+   * zoom factor (Cmd+/-). The native NSView frame needs AppKit points, so we
+   * divide out the zoom factor to avoid double-scaling that makes fonts giant.
    */
   private getContainerRect(): { x: number; y: number; w: number; h: number } | null {
     if (!this.container) return null
@@ -91,17 +102,47 @@ export class GhosttyBackend implements TerminalBackend {
     const bounds = this.container.getBoundingClientRect()
     if (bounds.width === 0 || bounds.height === 0) return null
 
+    // Compensate for Electron zoom: CSS pixels → AppKit points.
+    // devicePixelRatio includes both display scale and Electron zoom;
+    // the native layer already accounts for display backingScaleFactor,
+    // so we only need to undo the Electron zoom portion.
+    // Electron zoom factor = devicePixelRatio / backingScaleFactor.
+    // Since we can't query backingScaleFactor from the renderer, we use
+    // the fact that screen.deviceXDPI / screen.logicalXDPI is the zoom,
+    // but the simplest reliable approach is:
+    //   zoomFactor = devicePixelRatio / (base DPR without zoom)
+    // On Retina Mac, base DPR is 2.0. On non-Retina, it's 1.0.
+    // However, there's no reliable way to know the "base" DPR from the
+    // renderer alone. Instead, we note that Electron gives us
+    // visualViewport.scale which IS the zoom factor on Electron >= 28.
+    const zoomFactor = window.visualViewport?.scale ?? 1.0
+
     return {
-      x: Math.round(bounds.left),
-      y: Math.round(bounds.top),
-      w: Math.round(bounds.width),
-      h: Math.round(bounds.height)
+      x: Math.round(bounds.left / zoomFactor),
+      y: Math.round(bounds.top / zoomFactor),
+      w: Math.round(bounds.width / zoomFactor),
+      h: Math.round(bounds.height / zoomFactor)
     }
+  }
+
+  /**
+   * Schedule a syncFrame on the next animation frame.
+   * Coalesces rapid ResizeObserver firings into a single update.
+   */
+  private debouncedSyncFrame(): void {
+    if (this.syncFrameTimer !== null) return
+    this.syncFrameTimer = requestAnimationFrame(() => {
+      this.syncFrameTimer = null
+      this.syncFrame()
+    })
   }
 
   /**
    * Sync the native NSView frame with the current container position.
    * Called on resize and scroll events.
+   *
+   * setFrame in the native bridge already calls ghostty_surface_set_size
+   * internally, so we only need the single setFrame call here.
    */
   private syncFrame(): void {
     if (!this.mounted) return
@@ -111,10 +152,6 @@ export class GhosttyBackend implements TerminalBackend {
 
     window.terminalOps.ghosttySetFrame(this.worktreeId, rect).catch(() => {
       // Ignore frame sync errors during teardown
-    })
-
-    window.terminalOps.ghosttySetSize(this.worktreeId, rect.w, rect.h).catch(() => {
-      // Ignore size sync errors during teardown
     })
   }
 
@@ -158,6 +195,12 @@ export class GhosttyBackend implements TerminalBackend {
 
   dispose(): void {
     this.mounted = false
+
+    if (this.syncFrameTimer !== null) {
+      cancelAnimationFrame(this.syncFrameTimer)
+      this.syncFrameTimer = null
+    }
+
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
 

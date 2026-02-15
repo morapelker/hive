@@ -62,9 +62,11 @@ public:
 
   // Create a new terminal surface. The NSView must already exist and be
   // attached to a window. Returns a surface ID > 0 on success, 0 on failure.
+  // fontSize <= 0 means "use Ghostty config default".
   uint32_t createSurface(
     NSView* view,
     double scaleFactor,
+    float fontSize,
     const std::string& cwd,
     const std::string& shell
   );
