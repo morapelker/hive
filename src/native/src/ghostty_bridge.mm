@@ -555,17 +555,30 @@ void GhosttyBridge::readClipboardCallback(
   // We need to find which surface initiated the request — iterate all
   // surfaces and complete on the first one that has a valid handle.
   // In practice, only the focused surface will be requesting clipboard.
-  std::lock_guard<std::mutex> lock(bridge.mutex_);
-  for (auto& [id, surface] : bridge.surfaces_) {
-    if (surface.handle) {
-      ghostty_surface_complete_clipboard_request(
-        surface.handle,
-        utf8,
-        ctx,
-        true  // confirmed — auto-confirm in embedded context
-      );
-      return;
+  //
+  // IMPORTANT: We must release the mutex BEFORE calling
+  // ghostty_surface_complete_clipboard_request, because completing
+  // the request can synchronously trigger Ghostty callbacks (render,
+  // title change, wakeup) that re-enter the bridge and try to acquire
+  // the same mutex — causing a deadlock that freezes the entire app.
+  ghostty_surface_t targetHandle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(bridge.mutex_);
+    for (auto& [id, surface] : bridge.surfaces_) {
+      if (surface.handle) {
+        targetHandle = surface.handle;
+        break;
+      }
     }
+  }
+
+  if (targetHandle) {
+    ghostty_surface_complete_clipboard_request(
+      targetHandle,
+      utf8,
+      ctx,
+      true  // confirmed — auto-confirm in embedded context
+    );
   }
 }
 
@@ -580,19 +593,30 @@ void GhosttyBridge::confirmReadClipboardCallback(
 
   // In the embedded Electron context, we auto-confirm all clipboard reads.
   // The content has already been read; just complete the request.
+  //
+  // Same mutex-release pattern as readClipboardCallback — find the target
+  // surface under the lock, then release before completing the request
+  // to avoid re-entrant deadlocks from Ghostty's synchronous callbacks.
   auto& bridge = GhosttyBridge::instance();
 
-  std::lock_guard<std::mutex> lock(bridge.mutex_);
-  for (auto& [id, surface] : bridge.surfaces_) {
-    if (surface.handle) {
-      ghostty_surface_complete_clipboard_request(
-        surface.handle,
-        content,
-        ctx,
-        true  // confirmed
-      );
-      return;
+  ghostty_surface_t targetHandle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(bridge.mutex_);
+    for (auto& [id, surface] : bridge.surfaces_) {
+      if (surface.handle) {
+        targetHandle = surface.handle;
+        break;
+      }
     }
+  }
+
+  if (targetHandle) {
+    ghostty_surface_complete_clipboard_request(
+      targetHandle,
+      content,
+      ctx,
+      true  // confirmed
+    );
   }
 }
 
