@@ -6,6 +6,54 @@ import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 
+/** Fire-and-forget: run setup script for a worktree, subscribing to output events
+ *  so output is captured even when SetupTab is not mounted. */
+export function fireSetupScript(projectId: string, worktreeId: string, cwd: string): void {
+  const project = useProjectStore.getState().projects.find((p) => p.id === projectId)
+  if (!project?.setup_script) return
+
+  const commands = project.setup_script
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'))
+  if (commands.length === 0) return
+
+  const store = useScriptStore.getState()
+  store.setSetupRunning(worktreeId, true)
+
+  // Subscribe to output events so output is captured regardless of UI state
+  const channel = `script:setup:${worktreeId}`
+  const unsub = window.scriptOps.onOutput(channel, (event) => {
+    const s = useScriptStore.getState()
+    switch (event.type) {
+      case 'command-start':
+        s.appendSetupOutput(worktreeId, `\x00CMD:${event.command}`)
+        break
+      case 'output':
+        if (event.data) s.appendSetupOutput(worktreeId, event.data)
+        break
+      case 'error':
+        s.appendSetupOutput(
+          worktreeId,
+          `\x00ERR:Command failed with exit code ${event.exitCode}: ${event.command}`
+        )
+        s.setSetupError(worktreeId, `Command failed: ${event.command}`)
+        s.setSetupRunning(worktreeId, false)
+        unsub()
+        break
+      case 'done':
+        s.setSetupRunning(worktreeId, false)
+        unsub()
+        break
+    }
+  })
+
+  window.scriptOps.runSetup(commands, cwd, worktreeId).catch(() => {
+    useScriptStore.getState().setSetupRunning(worktreeId, false)
+    unsub()
+  })
+}
+
 // Worktree type matching the database schema
 interface Worktree {
   id: string
@@ -163,22 +211,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       })
 
       // Fire-and-forget: run setup script if configured
-      const project = useProjectStore.getState().projects.find((p) => p.id === projectId)
-      if (project?.setup_script) {
-        const commands = project.setup_script
-          .split('\n')
-          .map((l) => l.trim())
-          .filter((l) => l && !l.startsWith('#'))
-
-        if (commands.length > 0) {
-          const worktreeId = result.worktree!.id
-          const cwd = result.worktree!.path
-          useScriptStore.getState().setSetupRunning(worktreeId, true)
-          window.scriptOps.runSetup(commands, cwd, worktreeId).catch(() => {
-            useScriptStore.getState().setSetupRunning(worktreeId, false)
-          })
-        }
-      }
+      fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
 
       return { success: true }
     } catch (error) {
@@ -447,6 +480,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       if (result.success && result.worktree) {
         // Reload worktrees for the project
         get().loadWorktrees(projectId)
+
+        // Fire-and-forget: run setup script if configured
+        fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
       }
       return result
     } catch (error) {
