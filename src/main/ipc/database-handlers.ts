@@ -188,6 +188,14 @@ export function registerDatabaseHandlers(): void {
     return getDatabase().deleteSession(id)
   })
 
+  ipcMain.handle('db:session:getByConnection', (_event, connectionId: string) => {
+    return getDatabase().getSessionsByConnection(connectionId)
+  })
+
+  ipcMain.handle('db:session:getActiveByConnection', (_event, connectionId: string) => {
+    return getDatabase().getActiveSessionsByConnection(connectionId)
+  })
+
   ipcMain.handle('db:session:search', (_event, options: SessionSearchOptions) => {
     return getDatabase().searchSessions(options)
   })
