@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow, shell } from 'electron'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { readFile } from 'fs/promises'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import {
   createGitService,
@@ -102,6 +103,10 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     async (_event, worktreePath: string): Promise<GitFileStatusResult> => {
       log.info('Getting file statuses', { worktreePath })
       try {
+        // Defense-in-depth: skip git ops for non-git directories (e.g. connection paths)
+        if (!existsSync(join(worktreePath, '.git'))) {
+          return { success: true, files: [] }
+        }
         const gitService = createGitService(worktreePath)
         const result = await gitService.getFileStatuses()
         return result

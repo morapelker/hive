@@ -242,9 +242,9 @@ export function FileTree({
   const handleRefresh = useCallback(() => {
     if (worktreePath) {
       loadFileTree(worktreePath)
-      loadFileStatuses(worktreePath)
+      if (!isConnectionMode) loadFileStatuses(worktreePath)
     }
-  }, [worktreePath, loadFileTree, loadFileStatuses])
+  }, [worktreePath, isConnectionMode, loadFileTree, loadFileStatuses])
 
   const headerElement = !hideHeader ? (
     <FileTreeHeader

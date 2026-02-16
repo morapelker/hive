@@ -79,6 +79,7 @@ interface GitStoreState {
   addToGitignore: (worktreePath: string, pattern: string) => Promise<boolean>
   refreshStatuses: (worktreePath: string) => Promise<void>
   clearStatuses: (worktreePath: string) => void
+  loadStatusesForPaths: (paths: string[]) => Promise<void>
 
   // Remote info actions
   checkRemoteInfo: (worktreeId: string, worktreePath: string) => Promise<void>
@@ -318,6 +319,13 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       newBranchMap.delete(worktreePath)
       return { fileStatusesByWorktree: newFileMap, branchInfoByWorktree: newBranchMap }
     })
+  },
+
+  // Load statuses and branch info for multiple worktree paths simultaneously
+  loadStatusesForPaths: async (paths: string[]) => {
+    await Promise.all(
+      paths.map((path) => Promise.all([get().loadFileStatuses(path), get().loadBranchInfo(path)]))
+    )
   },
 
   // Check remote info for a worktree
