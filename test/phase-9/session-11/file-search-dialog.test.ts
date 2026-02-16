@@ -1,8 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import {
-  flattenTree,
-  scoreMatch
-} from '../../../src/renderer/src/components/file-search/FileSearchDialog'
+import { flattenTree, scoreMatch } from '../../../src/renderer/src/lib/file-search-utils'
 
 describe('Session 11: File Search Dialog', () => {
   describe('flattenTree', () => {

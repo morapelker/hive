@@ -12,8 +12,10 @@ import { AttachmentButton } from './AttachmentButton'
 import { AttachmentPreview } from './AttachmentPreview'
 import type { Attachment } from './AttachmentPreview'
 import { SlashCommandPopover } from './SlashCommandPopover'
+import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
+import { useFileMentions } from '@/hooks/useFileMentions'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
@@ -30,10 +32,14 @@ import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { useWorktreeStore } from '@/stores'
+import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode } from '@/lib/message-send-times'
 import beeIcon from '@/assets/bee.png'
+
+// Stable empty array to avoid creating new references in selectors
+const EMPTY_FILE_TREE: never[] = []
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
@@ -379,9 +385,33 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Child session → subtask index mapping for subagent content routing
   const childToSubtaskIndexRef = useRef<Map<string, number>>(new Map())
 
+  // Cursor position tracking for file mentions
+  const cursorPositionRef = useRef(0)
+  const [cursorPosition, setCursorPosition] = useState(0)
+  const isPastingRef = useRef(false)
+
   // Draft persistence refs
   const inputValueRef = useRef('')
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // File tree for file mentions — keyed by worktree path.
+  // Ensure the tree is loaded when worktreePath is resolved — SessionView cannot
+  // rely on the FileTree sidebar component having already populated the store
+  // (sidebar may be collapsed, on a different tab, or targeting a different worktree).
+  const fileTree = useFileTreeStore((state) =>
+    worktreePath ? (state.fileTreeByWorktree.get(worktreePath) ?? EMPTY_FILE_TREE) : EMPTY_FILE_TREE
+  )
+  useEffect(() => {
+    if (worktreePath && fileTree === EMPTY_FILE_TREE) {
+      useFileTreeStore.getState().loadFileTree(worktreePath)
+    }
+  }, [worktreePath, fileTree])
+
+  // File mentions hook
+  const fileMentions = useFileMentions(inputValue, cursorPosition, fileTree)
+
+  // stripAtMentions setting
+  const stripAtMentions = useSettingsStore((state) => state.stripAtMentions)
 
   // Streaming dedup refs
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
@@ -592,33 +622,38 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [inputValue, sessionId])
 
-  // Set 'answering' status when a question is pending, revert when answered
+  // Set 'answering' status when a question is pending, revert when answered.
+  // Guard: only mutate the store when the status actually needs to change,
+  // to avoid triggering cascading re-renders from no-op updates.
   useEffect(() => {
+    const statusStore = useWorktreeStatusStore.getState()
+    const currentStatus = statusStore.sessionStatuses[sessionId]
     if (activeQuestion && sessionId) {
-      useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'answering')
+      if (currentStatus?.status !== 'answering') {
+        statusStore.setSessionStatus(sessionId, 'answering')
+      }
     } else if (!activeQuestion && sessionId) {
       // Question answered/dismissed — restore status based on session mode
-      const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
       if (currentStatus?.status === 'answering') {
         const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-        useWorktreeStatusStore
-          .getState()
-          .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+        statusStore.setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
       }
     }
   }, [activeQuestion, sessionId])
 
-  // Set 'permission' status when a permission is pending, revert when replied
+  // Set 'permission' status when a permission is pending, revert when replied.
+  // Guard: only mutate the store when the status actually needs to change.
   useEffect(() => {
+    const statusStore = useWorktreeStatusStore.getState()
+    const currentStatus = statusStore.sessionStatuses[sessionId]
     if (activePermission && sessionId) {
-      useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'permission')
+      if (currentStatus?.status !== 'permission') {
+        statusStore.setSessionStatus(sessionId, 'permission')
+      }
     } else if (!activePermission && sessionId) {
-      const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
       if (currentStatus?.status === 'permission') {
         const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-        useWorktreeStatusStore
-          .getState()
-          .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+        statusStore.setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
       }
     }
   }, [activePermission, sessionId])
@@ -2066,7 +2101,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Handle send message
   const handleSend = useCallback(
     async (overrideValue?: string) => {
-      const trimmedValue = (overrideValue ?? inputValue).trim()
+      // Apply mention stripping when sending (unless overrideValue is provided,
+      // e.g. for built-in commands like "Implement")
+      const rawValue = overrideValue ?? fileMentions.getTextForSend(stripAtMentions)
+      const trimmedValue = rawValue.trim()
       if (!trimmedValue) return
 
       if (trimmedValue.startsWith('/')) {
@@ -2172,6 +2210,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
       setInputValue('')
       inputValueRef.current = ''
+      fileMentions.clearMentions()
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       window.db.session.updateDraft(sessionId, null)
 
@@ -2356,7 +2395,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
     },
     [
-      inputValue,
       isStreaming,
       sessionId,
       sessionRecord,
@@ -2366,7 +2404,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       attachments,
       allSlashCommands,
       refreshMessagesFromOpenCode,
-      getModelForRequests
+      getModelForRequests,
+      fileMentions,
+      stripAtMentions
     ]
   )
 
@@ -2416,6 +2456,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // When file mention popover is open, let the popover's capture-phase
+      // listener handle ArrowUp/ArrowDown/Enter/Escape. Do NOT process them here.
+      if (fileMentions.isOpen) {
+        if (
+          e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown' ||
+          e.key === 'Enter' ||
+          e.key === 'Escape'
+        ) {
+          return
+        }
+      }
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         handleSend()
@@ -2496,7 +2549,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         })
       }
     },
-    [handleSend, worktreeId, historyIndex, inputValue]
+    [handleSend, worktreeId, historyIndex, inputValue, fileMentions.isOpen]
   )
 
   // Attachment handlers
@@ -2510,9 +2563,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Slash command handlers
   const handleInputChange = useCallback(
-    (value: string) => {
+    (value: string, newCursorPos?: number) => {
+      const oldValue = inputValueRef.current
       setInputValue(value)
       inputValueRef.current = value
+
+      // Update mention indices for the text change (skip if pasting to avoid
+      // opening the popover for pasted '@' characters)
+      if (!isPastingRef.current) {
+        fileMentions.updateMentions(oldValue, value)
+      }
+      isPastingRef.current = false
+
+      // Track cursor position
+      if (newCursorPos !== undefined) {
+        cursorPositionRef.current = newCursorPos
+        setCursorPosition(newCursorPos)
+      }
 
       // Exit history navigation on manual typing
       if (historyIndex !== null) {
@@ -2531,7 +2598,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         window.db.session.updateDraft(sessionId, value || null)
       }, 3000)
     },
-    [sessionId, historyIndex]
+    [sessionId, historyIndex, fileMentions]
   )
 
   const handleCommandSelect = useCallback((cmd: { name: string; template: string }) => {
@@ -2540,12 +2607,36 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     textareaRef.current?.focus()
   }, [])
 
+  // File mention selection handler
+  const handleFileMentionSelect = useCallback(
+    (file: { name: string; path: string; relativePath: string; extension: string | null }) => {
+      const result = fileMentions.selectFile(file)
+      setInputValue(result.newValue)
+      inputValueRef.current = result.newValue
+      cursorPositionRef.current = result.newCursorPosition
+      setCursorPosition(result.newCursorPosition)
+
+      // Set cursor position on the textarea
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.setSelectionRange(result.newCursorPosition, result.newCursorPosition)
+          textareaRef.current.focus()
+        }
+      })
+    },
+    [fileMentions]
+  )
+
   const handleSlashClose = useCallback(() => {
     setShowSlashCommands(false)
   }, [])
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
+      // Flag paste so handleInputChange skips opening the file mention popover
+      // for any '@' characters introduced by paste
+      isPastingRef.current = true
+
       const items = e.clipboardData?.items
       if (!items) return
       for (const item of Array.from(items)) {
@@ -2949,6 +3040,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             onClose={handleSlashClose}
             visible={showSlashCommands}
           />
+          {/* File mention popover — only when slash commands are not showing */}
+          <FileMentionPopover
+            suggestions={fileMentions.suggestions}
+            selectedIndex={fileMentions.selectedIndex}
+            visible={fileMentions.isOpen && !showSlashCommands}
+            onSelect={handleFileMentionSelect}
+            onClose={fileMentions.dismiss}
+            onNavigate={fileMentions.moveSelection}
+          />
           <div
             className={cn(
               'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
@@ -2969,7 +3069,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             <textarea
               ref={textareaRef}
               value={inputValue}
-              onChange={(e) => handleInputChange(e.target.value)}
+              onChange={(e) => {
+                const pos = e.currentTarget.selectionStart ?? 0
+                handleInputChange(e.target.value, pos)
+              }}
+              onKeyUp={(e) => {
+                const pos = e.currentTarget.selectionStart ?? 0
+                cursorPositionRef.current = pos
+                setCursorPosition(pos)
+              }}
+              onClick={(e) => {
+                const pos = e.currentTarget.selectionStart ?? 0
+                cursorPositionRef.current = pos
+                setCursorPosition(pos)
+              }}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               disabled={!!activePermission}
@@ -2977,6 +3090,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 activePermission ? 'Waiting for permission response...' : 'Type your message...'
               }
               aria-label="Message input"
+              aria-haspopup="listbox"
+              aria-expanded={fileMentions.isOpen && !showSlashCommands}
               className={cn(
                 'w-full resize-none bg-transparent px-3 py-2',
                 'text-sm placeholder:text-muted-foreground',

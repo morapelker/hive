@@ -57,6 +57,9 @@ export interface AppSettings {
 
   // Model icons
   showModelIcons: boolean
+
+  // Chat
+  stripAtMentions: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -74,7 +77,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   favoriteModels: [],
   customChromeCommand: '',
   modelVariantDefaults: {},
-  showModelIcons: false
+  showModelIcons: false,
+  stripAtMentions: true
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -137,7 +141,8 @@ function extractSettings(state: SettingsState): AppSettings {
     favoriteModels: state.favoriteModels,
     customChromeCommand: state.customChromeCommand,
     modelVariantDefaults: state.modelVariantDefaults,
-    showModelIcons: state.showModelIcons
+    showModelIcons: state.showModelIcons,
+    stripAtMentions: state.stripAtMentions
   }
 }
 
@@ -240,7 +245,8 @@ export const useSettingsStore = create<SettingsState>()(
         favoriteModels: state.favoriteModels,
         customChromeCommand: state.customChromeCommand,
         modelVariantDefaults: state.modelVariantDefaults,
-        activeSection: state.activeSection
+        activeSection: state.activeSection,
+        stripAtMentions: state.stripAtMentions
       })
     }
   )
