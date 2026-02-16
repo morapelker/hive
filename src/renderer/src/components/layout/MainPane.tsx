@@ -5,6 +5,7 @@ import { FileViewer } from '@/components/file-viewer'
 import { InlineDiffViewer } from '@/components/diff'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 
 interface MainPaneProps {
@@ -13,6 +14,7 @@ interface MainPaneProps {
 
 export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const selectedWorktreeId = useWorktreeStore((state) => state.selectedWorktreeId)
+  const selectedConnectionId = useConnectionStore((state) => state.selectedConnectionId)
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
   const isLoading = useSessionStore((state) => state.isLoading)
   const activeFilePath = useFileViewerStore((state) => state.activeFilePath)
@@ -33,8 +35,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       return children
     }
 
-    // No worktree selected - show welcome message
-    if (!selectedWorktreeId) {
+    // No worktree or connection selected - show welcome message
+    if (!selectedWorktreeId && !selectedConnectionId) {
       return (
         <div className="flex-1 flex items-center justify-center text-muted-foreground">
           <div className="text-center">
@@ -77,7 +79,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       return <FileViewer filePath={activeFilePath} />
     }
 
-    // Worktree selected but no session - show create session prompt
+    // Worktree or connection selected but no session - show create session prompt
     if (!activeSessionId) {
       return (
         <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -98,7 +100,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       className="flex-1 flex flex-col min-w-0 bg-background overflow-hidden"
       data-testid="main-pane"
     >
-      {selectedWorktreeId && <SessionTabs />}
+      {(selectedWorktreeId || selectedConnectionId) && <SessionTabs />}
       {renderContent()}
     </main>
   )

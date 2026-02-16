@@ -24,6 +24,7 @@ import { useSessionHistoryStore } from '@/stores/useSessionHistoryStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -81,6 +82,13 @@ export function Header(): React.JSX.Element {
     }
     return null
   })()
+
+  // Connection mode detection
+  const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
+  const selectedConnection = useConnectionStore((s) =>
+    s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
+  )
+  const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
 
   const hasConflicts = useGitStore(
     (state) =>
@@ -316,7 +324,15 @@ export function Header(): React.JSX.Element {
       <div className="w-16 flex-shrink-0" />
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <img src={hiveLogo} alt="Hive" className="h-5 w-5 shrink-0 rounded" draggable={false} />
-        {selectedProject ? (
+        {isConnectionMode && selectedConnection ? (
+          <span className="text-sm font-medium truncate" data-testid="header-connection-info">
+            {selectedConnection.name}
+            <span className="text-primary font-normal">
+              {' '}
+              ({selectedConnection.members.map((m) => m.project_name).join(' + ')})
+            </span>
+          </span>
+        ) : selectedProject ? (
           <span className="text-sm font-medium truncate" data-testid="header-project-info">
             {selectedProject.name}
             {selectedWorktree?.branch_name && selectedWorktree.name !== '(no-worktree)' && (
@@ -331,7 +347,7 @@ export function Header(): React.JSX.Element {
       <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <QuickActions />
       </div>
-      {showFixConflictsButton && (
+      {!isConnectionMode && showFixConflictsButton && (
         <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <Button
             size="sm"
@@ -355,7 +371,7 @@ export function Header(): React.JSX.Element {
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        {isGitHub && prState === 'merged' && (
+        {!isConnectionMode && isGitHub && prState === 'merged' && (
           <Button
             size="sm"
             variant="destructive"
@@ -373,7 +389,7 @@ export function Header(): React.JSX.Element {
             {isArchivingWorktree ? 'Archiving...' : 'Archive'}
           </Button>
         )}
-        {isGitHub && prState === 'created' && isCleanTree && (
+        {!isConnectionMode && isGitHub && prState === 'created' && isCleanTree && (
           <Button
             size="sm"
             variant="outline"
@@ -391,7 +407,8 @@ export function Header(): React.JSX.Element {
             {isMergingPR ? 'Merging...' : 'Merge PR'}
           </Button>
         )}
-        {isGitHub &&
+        {!isConnectionMode &&
+          isGitHub &&
           (prState === 'none' ||
             prState === 'creating' ||
             (prState === 'created' && !isCleanTree)) && (
