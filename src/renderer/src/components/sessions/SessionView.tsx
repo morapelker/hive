@@ -1109,12 +1109,26 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
           // Handle session materialization — update the stale pending:: session ID
           // so subsequent loadMessages() calls use the real SDK session ID.
+          // Also handles fork transitions: when the SDK returns a new session ID
+          // after forkSession: true, clear old messages to avoid showing stale
+          // content from the pre-fork branch.
           if (event.type === 'session.materialized') {
             const newId = event.data?.newSessionId as string | undefined
             if (newId) {
+              const wasFork =
+                transcriptSourceRef.current.opencodeSessionId != null &&
+                !transcriptSourceRef.current.opencodeSessionId.startsWith('pending::')
               setOpencodeSessionId(newId)
               transcriptSourceRef.current.opencodeSessionId = newId
               useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
+
+              // On fork, the new session has its own transcript. Clear old
+              // messages so the user only sees the local prompt bubble while
+              // the fork streams. finalizeResponse() will reload from the
+              // new transcript when the stream completes.
+              if (wasFork) {
+                setMessages((prev) => prev.filter((m) => m.id.startsWith('local-')))
+              }
             }
             return
           }
@@ -2249,9 +2263,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       try {
         setSessionRetry(null)
         setSessionErrorMessage(null)
+
+        // When sending after an undo, trim the messages array to remove the
+        // undone tail.  Simply clearing revertMessageID would make visibleMessages
+        // show ALL messages (including the undone ones) for a brief flash before
+        // finalizeResponse() replaces them with the forked transcript.
+        const currentRevertId = revertMessageID
         setRevertMessageID(null)
         revertDiffRef.current = null
-        setMessages((prev) => [...prev, createLocalMessage('user', trimmedValue)])
+        setMessages((prev) => {
+          let base = prev
+          if (currentRevertId) {
+            const boundaryIndex = prev.findIndex((m) => m.id === currentRevertId)
+            if (boundaryIndex !== -1) {
+              base = prev.slice(0, boundaryIndex)
+            }
+          }
+          return [...base, createLocalMessage('user', trimmedValue)]
+        })
 
         // Mark that a new prompt is in flight — prevents finalizeResponse
         // from reordering this message if a previous stream is still completing.
@@ -2417,6 +2446,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       attachments,
       allSlashCommands,
       sessionCapabilities,
+      revertMessageID,
+      isClaudeCode,
       refreshMessagesFromOpenCode,
       getModelForRequests
     ]
