@@ -4,6 +4,7 @@ import { useSpaceStore } from '@/stores'
 import { ResizeHandle } from './ResizeHandle'
 import { FolderGit2 } from 'lucide-react'
 import { ProjectList, AddProjectButton } from '@/components/projects'
+import { ConnectionList } from '@/components/connections'
 import { SpacesTabBar } from '@/components/spaces'
 
 export function LeftSidebar(): React.JSX.Element {
@@ -50,6 +51,7 @@ export function LeftSidebar(): React.JSX.Element {
           <AddProjectButton />
         </div>
         <div className="flex-1 overflow-auto p-2">
+          <ConnectionList />
           <ProjectList onAddProject={handleAddProject} />
         </div>
         <SpacesTabBar />

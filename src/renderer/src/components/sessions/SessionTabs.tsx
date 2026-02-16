@@ -14,6 +14,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useFileViewerStore, type FileViewerTab, type DiffTab } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { cn } from '@/lib/utils'
@@ -369,6 +370,8 @@ export function SessionTabs(): React.JSX.Element | null {
     activeSessionId,
     sessionsByWorktree,
     tabOrderByWorktree,
+    sessionsByConnection,
+    tabOrderByConnection,
     loadSessions,
     createSession,
     closeSession,
@@ -376,7 +379,13 @@ export function SessionTabs(): React.JSX.Element | null {
     reorderTabs,
     updateSessionName,
     closeOtherSessions,
-    closeSessionsToRight
+    closeSessionsToRight,
+    loadConnectionSessions,
+    createConnectionSession,
+    setActiveConnectionSession,
+    reorderConnectionTabs,
+    closeOtherConnectionSessions,
+    closeConnectionSessionsToRight
   } = useSessionStore()
 
   const {
@@ -390,6 +399,10 @@ export function SessionTabs(): React.JSX.Element | null {
 
   const { selectedWorktreeId } = useWorktreeStore()
   const { projects } = useProjectStore()
+  const selectedConnectionId = useConnectionStore((state) => state.selectedConnectionId)
+
+  // Determine whether we are in connection mode or worktree mode
+  const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
 
   // Get the worktree and project info for the selected worktree
   const selectedWorktree = useWorktreeStore((state) => {
@@ -405,12 +418,19 @@ export function SessionTabs(): React.JSX.Element | null {
     ? projects.find((p) => p.id === selectedWorktree.project_id)
     : null
 
-  // Sync active worktree with selected worktree
+  // Sync active worktree with selected worktree (worktree mode only)
   useEffect(() => {
+    if (isConnectionMode) return
     if (selectedWorktreeId !== activeWorktreeId) {
       useSessionStore.getState().setActiveWorktree(selectedWorktreeId)
     }
-  }, [selectedWorktreeId, activeWorktreeId])
+  }, [selectedWorktreeId, activeWorktreeId, isConnectionMode])
+
+  // Sync active connection with selected connection (connection mode only)
+  useEffect(() => {
+    if (!isConnectionMode || !selectedConnectionId) return
+    useSessionStore.getState().setActiveConnection(selectedConnectionId)
+  }, [selectedConnectionId, isConnectionMode])
 
   // Load sessions when worktree changes, then auto-start if the worktree has 0 sessions.
   // Auto-start runs as a direct follow-up to loadSessions (not a separate effect) to
@@ -419,6 +439,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const autoStartedRef = useRef<string | null>(null)
 
   useEffect(() => {
+    if (isConnectionMode) return
     if (!selectedWorktreeId || !project) return
 
     let cancelled = false
@@ -441,7 +462,40 @@ export function SessionTabs(): React.JSX.Element | null {
     return () => {
       cancelled = true
     }
-  }, [selectedWorktreeId, project, loadSessions, autoStartSession, createSession])
+  }, [selectedWorktreeId, project, loadSessions, autoStartSession, createSession, isConnectionMode])
+
+  // Load sessions when connection changes (connection mode)
+  useEffect(() => {
+    if (!isConnectionMode || !selectedConnectionId) return
+
+    let cancelled = false
+
+    void (async () => {
+      await loadConnectionSessions(selectedConnectionId)
+      if (cancelled) return
+
+      // Auto-start a session if auto-start is enabled and no sessions exist
+      if (!autoStartSession) return
+      if (autoStartedRef.current === selectedConnectionId) return
+
+      const sessions =
+        useSessionStore.getState().sessionsByConnection.get(selectedConnectionId) || []
+      if (sessions.length > 0) return
+
+      autoStartedRef.current = selectedConnectionId
+      await createConnectionSession(selectedConnectionId)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    selectedConnectionId,
+    isConnectionMode,
+    loadConnectionSessions,
+    autoStartSession,
+    createConnectionSession
+  ])
 
   // Check for tab overflow and update arrow visibility
   const checkOverflow = useCallback(() => {
@@ -455,15 +509,22 @@ export function SessionTabs(): React.JSX.Element | null {
   useEffect(() => {
     checkOverflow()
     const container = tabsContainerRef.current
-    if (container) {
-      container.addEventListener('scroll', checkOverflow)
-      window.addEventListener('resize', checkOverflow)
-      return () => {
-        container.removeEventListener('scroll', checkOverflow)
-        window.removeEventListener('resize', checkOverflow)
-      }
+    if (!container) return
+
+    container.addEventListener('scroll', checkOverflow)
+    window.addEventListener('resize', checkOverflow)
+    return () => {
+      container.removeEventListener('scroll', checkOverflow)
+      window.removeEventListener('resize', checkOverflow)
     }
-  }, [checkOverflow, sessionsByWorktree, tabOrderByWorktree, openFiles])
+  }, [
+    checkOverflow,
+    sessionsByWorktree,
+    tabOrderByWorktree,
+    sessionsByConnection,
+    tabOrderByConnection,
+    openFiles
+  ])
 
   // Scroll functions
   const scrollLeft = () => {
@@ -482,6 +543,14 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Handle creating a new session
   const handleCreateSession = async () => {
+    if (isConnectionMode && selectedConnectionId) {
+      const result = await createConnectionSession(selectedConnectionId)
+      if (!result.success) {
+        toast.error(result.error || 'Failed to create session')
+      }
+      return
+    }
+
     if (!selectedWorktreeId || !project) return
 
     const result = await createSession(selectedWorktreeId, project.id)
@@ -510,7 +579,11 @@ export function SessionTabs(): React.JSX.Element | null {
   // Handle clicking a session tab - deactivate file tab and clear unread status
   const handleSessionTabClick = (sessionId: string) => {
     setActiveFile(null)
-    setActiveSession(sessionId)
+    if (isConnectionMode) {
+      setActiveConnectionSession(sessionId)
+    } else {
+      setActiveSession(sessionId)
+    }
     useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
   }
 
@@ -553,16 +626,26 @@ export function SessionTabs(): React.JSX.Element | null {
 
   const handleDrop = (e: React.DragEvent, targetSessionId: string) => {
     e.preventDefault()
-    if (!draggedTabId || !selectedWorktreeId || draggedTabId === targetSessionId) {
+    if (!draggedTabId || draggedTabId === targetSessionId) {
       return
     }
 
-    const tabOrder = tabOrderByWorktree.get(selectedWorktreeId) || []
-    const fromIndex = tabOrder.indexOf(draggedTabId)
-    const toIndex = tabOrder.indexOf(targetSessionId)
+    if (isConnectionMode && selectedConnectionId) {
+      const tabOrder = tabOrderByConnection.get(selectedConnectionId) || []
+      const fromIndex = tabOrder.indexOf(draggedTabId)
+      const toIndex = tabOrder.indexOf(targetSessionId)
 
-    if (fromIndex !== -1 && toIndex !== -1) {
-      reorderTabs(selectedWorktreeId, fromIndex, toIndex)
+      if (fromIndex !== -1 && toIndex !== -1) {
+        reorderConnectionTabs(selectedConnectionId, fromIndex, toIndex)
+      }
+    } else if (selectedWorktreeId) {
+      const tabOrder = tabOrderByWorktree.get(selectedWorktreeId) || []
+      const fromIndex = tabOrder.indexOf(draggedTabId)
+      const toIndex = tabOrder.indexOf(targetSessionId)
+
+      if (fromIndex !== -1 && toIndex !== -1) {
+        reorderTabs(selectedWorktreeId, fromIndex, toIndex)
+      }
     }
 
     setDraggedTabId(null)
@@ -574,13 +657,20 @@ export function SessionTabs(): React.JSX.Element | null {
     setDragOverTabId(null)
   }
 
-  // Don't render if no worktree is selected
-  if (!selectedWorktreeId) {
+  // Don't render if nothing is selected
+  if (!selectedWorktreeId && !selectedConnectionId) {
     return null
   }
 
-  const sessions = sessionsByWorktree.get(selectedWorktreeId) || []
-  const tabOrder = tabOrderByWorktree.get(selectedWorktreeId) || []
+  // Resolve scope ID for the active context
+  const scopeId = isConnectionMode ? selectedConnectionId! : selectedWorktreeId!
+
+  const sessions = isConnectionMode
+    ? sessionsByConnection.get(scopeId) || []
+    : sessionsByWorktree.get(scopeId) || []
+  const tabOrder = isConnectionMode
+    ? tabOrderByConnection.get(scopeId) || []
+    : tabOrderByWorktree.get(scopeId) || []
 
   // Get sessions in tab order
   const orderedSessions = tabOrder
@@ -658,9 +748,17 @@ export function SessionTabs(): React.JSX.Element | null {
                 onDragEnd={handleDragEnd}
                 isDragging={draggedTabId === session.id}
                 isDragOver={dragOverTabId === session.id}
-                worktreeId={selectedWorktreeId}
-                onCloseOthers={() => closeOtherSessions(selectedWorktreeId, session.id)}
-                onCloseToRight={() => closeSessionsToRight(selectedWorktreeId, session.id)}
+                worktreeId={scopeId}
+                onCloseOthers={() =>
+                  isConnectionMode
+                    ? closeOtherConnectionSessions(scopeId, session.id)
+                    : closeOtherSessions(scopeId, session.id)
+                }
+                onCloseToRight={() =>
+                  isConnectionMode
+                    ? closeConnectionSessionsToRight(scopeId, session.id)
+                    : closeSessionsToRight(scopeId, session.id)
+                }
               />
             ))}
             {/* File viewer tabs */}

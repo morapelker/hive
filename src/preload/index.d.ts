@@ -1,4 +1,31 @@
 // Database types for renderer
+interface Connection {
+  id: string
+  name: string
+  status: 'active' | 'archived'
+  path: string
+  created_at: string
+  updated_at: string
+}
+
+interface ConnectionMember {
+  id: string
+  connection_id: string
+  worktree_id: string
+  project_id: string
+  symlink_name: string
+  added_at: string
+}
+
+interface ConnectionWithMembers extends Connection {
+  members: (ConnectionMember & {
+    worktree_name: string
+    worktree_branch: string
+    worktree_path: string
+    project_name: string
+  })[]
+}
+
 interface Project {
   id: string
   name: string
@@ -38,6 +65,7 @@ interface Session {
   id: string
   worktree_id: string | null
   project_id: string
+  connection_id: string | null
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
@@ -173,6 +201,7 @@ declare global {
         create: (data: {
           worktree_id: string | null
           project_id: string
+          connection_id?: string | null
           name?: string | null
           opencode_session_id?: string | null
           model_provider_id?: string | null
@@ -201,6 +230,8 @@ declare global {
         search: (options: SessionSearchOptions) => Promise<SessionWithWorktree[]>
         getDraft: (sessionId: string) => Promise<string | null>
         updateDraft: (sessionId: string, draft: string | null) => Promise<void>
+        getByConnection: (connectionId: string) => Promise<Session[]>
+        getActiveByConnection: (connectionId: string) => Promise<Session[]>
       }
       space: {
         list: () => Promise<Space[]>
@@ -844,6 +875,32 @@ declare global {
         callback: (data: { version: string; releaseNotes?: string }) => void
       ) => () => void
       onError: (callback: (data: { message: string }) => void) => () => void
+    }
+    connectionOps: {
+      create: (
+        worktreeIds: string[]
+      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      delete: (connectionId: string) => Promise<{ success: boolean; error?: string }>
+      addMember: (
+        connectionId: string,
+        worktreeId: string
+      ) => Promise<{ success: boolean; member?: ConnectionMember; error?: string }>
+      removeMember: (
+        connectionId: string,
+        worktreeId: string
+      ) => Promise<{ success: boolean; connectionDeleted?: boolean; error?: string }>
+      rename: (connectionId: string, name: string) => Promise<{ success: boolean; error?: string }>
+      getAll: () => Promise<{
+        success: boolean
+        connections?: ConnectionWithMembers[]
+        error?: string
+      }>
+      get: (
+        connectionId: string
+      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      openInTerminal: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
+      openInEditor: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
+      removeWorktreeFromAll: (worktreeId: string) => Promise<{ success: boolean; error?: string }>
     }
   }
 

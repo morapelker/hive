@@ -105,6 +105,7 @@ interface WorktreeState {
     projectPath: string
   ) => Promise<{ success: boolean; error?: string }>
   selectWorktree: (id: string | null) => void
+  selectWorktreeOnly: (id: string | null) => void
   touchWorktree: (id: string) => Promise<void>
   syncWorktrees: (projectId: string, projectPath: string) => Promise<void>
   getWorktreesForProject: (projectId: string) => Worktree[]
@@ -284,6 +285,16 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         return { success: false, error: result.error || 'Failed to archive worktree' }
       }
 
+      // 4. Clean up any connections referencing this worktree
+      try {
+        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        // Reload connections to reflect the change
+        const { useConnectionStore } = await import('./useConnectionStore')
+        await useConnectionStore.getState().loadConnections()
+      } catch {
+        // Non-critical -- log but don't block archive
+      }
+
       // Remove from state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -349,6 +360,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         return { success: false, error: result.error || 'Failed to unbranch worktree' }
       }
 
+      // Clean up any connections referencing this worktree
+      try {
+        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        const { useConnectionStore } = await import('./useConnectionStore')
+        await useConnectionStore.getState().loadConnections()
+      } catch {
+        // Non-critical -- log but don't block unbranch
+      }
+
       // Remove from state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -381,11 +401,26 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     }
   },
 
-  // Select a worktree
+  // Select a worktree (with connection deconfliction)
   selectWorktree: (id: string | null) => {
     set({ selectedWorktreeId: id })
     if (id) {
       // Touch worktree to update last_accessed_at
+      get().touchWorktree(id)
+      // Deconflict: clear any selected connection
+      import('./useConnectionStore').then(({ useConnectionStore }) => {
+        if (useConnectionStore.getState().selectedConnectionId) {
+          useConnectionStore.setState({ selectedConnectionId: null })
+        }
+      })
+    }
+  },
+
+  // Select a worktree without triggering connection deconfliction
+  // Used by connection store to avoid circular deconfliction
+  selectWorktreeOnly: (id: string | null) => {
+    set({ selectedWorktreeId: id })
+    if (id) {
       get().touchWorktree(id)
     }
   },
