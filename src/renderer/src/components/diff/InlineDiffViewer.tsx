@@ -383,7 +383,7 @@ export function InlineDiffViewer({
             <DiffViewer
               diff={diff}
               viewMode={viewMode}
-              className={cn('h-full', viewMode === 'split' && 'min-w-[800px]')}
+              className={cn(viewMode === 'split' && 'min-w-[800px]')}
             />
           )
         )}
