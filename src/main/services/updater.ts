@@ -1,8 +1,23 @@
 import { app, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { createLogger } from './logger'
+import { getDatabase } from '../db'
 
 const log = createLogger({ component: 'AutoUpdater' })
+
+function getUpdateChannel(): 'stable' | 'canary' {
+  try {
+    const db = getDatabase()
+    const raw = db.getSetting('app_settings')
+    if (raw) {
+      const settings = JSON.parse(raw)
+      return settings.updateChannel === 'canary' ? 'canary' : 'stable'
+    }
+  } catch {
+    // DB not ready or setting not found — default to stable
+  }
+  return 'stable'
+}
 
 const CHECK_INTERVAL = 4 * 60 * 60 * 1000 // 4 hours
 const INITIAL_DELAY = 10 * 1000 // 10 seconds
@@ -18,7 +33,11 @@ export const updaterService = {
       return
     }
 
-    log.info('Initializing auto-updater')
+    const channel = getUpdateChannel()
+    autoUpdater.channel = channel === 'canary' ? 'canary' : 'latest'
+    autoUpdater.allowPrerelease = channel === 'canary'
+    autoUpdater.allowDowngrade = true // needed so canary->stable downgrades work
+    log.info('Auto-updater initialized', { channel })
 
     autoUpdater.on('checking-for-update', () => {
       log.info('Checking for update')
@@ -99,5 +118,16 @@ export const updaterService = {
 
   quitAndInstall(): void {
     autoUpdater.quitAndInstall()
+  },
+
+  setChannel(channel: 'stable' | 'canary'): void {
+    autoUpdater.channel = channel === 'canary' ? 'canary' : 'latest'
+    autoUpdater.allowPrerelease = channel === 'canary'
+    log.info('Update channel changed', { channel })
+    this.checkForUpdates()
+  },
+
+  getVersion(): string {
+    return app.getVersion()
   }
 }

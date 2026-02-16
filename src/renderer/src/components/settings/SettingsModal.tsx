@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Settings, Palette, Monitor, Code, Terminal, Keyboard } from 'lucide-react'
+import { Settings, Palette, Monitor, Code, Terminal, Keyboard, Download } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { SettingsAppearance } from './SettingsAppearance'
@@ -7,6 +7,7 @@ import { SettingsGeneral } from './SettingsGeneral'
 import { SettingsEditor } from './SettingsEditor'
 import { SettingsTerminal } from './SettingsTerminal'
 import { SettingsShortcuts } from './SettingsShortcuts'
+import { SettingsUpdates } from './SettingsUpdates'
 import { cn } from '@/lib/utils'
 
 const SECTIONS = [
@@ -14,7 +15,8 @@ const SECTIONS = [
   { id: 'general', label: 'General', icon: Monitor },
   { id: 'editor', label: 'Editor', icon: Code },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
-  { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard }
+  { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
+  { id: 'updates', label: 'Updates', icon: Download }
 ] as const
 
 export function SettingsModal(): React.JSX.Element {
@@ -76,6 +78,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'editor' && <SettingsEditor />}
             {activeSection === 'terminal' && <SettingsTerminal />}
             {activeSection === 'shortcuts' && <SettingsShortcuts />}
+            {activeSection === 'updates' && <SettingsUpdates />}
           </div>
         </div>
       </DialogContent>
