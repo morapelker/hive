@@ -169,6 +169,10 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_connection_members_connection ON connection_members(connection_id);
       CREATE INDEX IF NOT EXISTS idx_connection_members_worktree ON connection_members(worktree_id);
+
+      ALTER TABLE sessions ADD COLUMN connection_id TEXT DEFAULT NULL
+        REFERENCES connections(id) ON DELETE SET NULL;
+
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
     `,
     down: `
