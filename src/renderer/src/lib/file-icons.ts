@@ -152,6 +152,7 @@ export const svgIconMap: Record<string, string> = {
 
   // GraphQL
   '.graphql': graphqlIcon,
+  '.graphqls': graphqlIcon,
   '.gql': graphqlIcon,
 
   // Lua
