@@ -223,10 +223,6 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   stageFile: async (worktreePath: string, relativePath: string) => {
     try {
       const result = await window.gitOps.stageFile(worktreePath, relativePath)
-      if (result.success) {
-        // Refresh statuses after staging
-        await get().loadFileStatuses(worktreePath)
-      }
       return result.success
     } catch (error) {
       console.error('Failed to stage file:', error)
@@ -238,10 +234,6 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   unstageFile: async (worktreePath: string, relativePath: string) => {
     try {
       const result = await window.gitOps.unstageFile(worktreePath, relativePath)
-      if (result.success) {
-        // Refresh statuses after unstaging
-        await get().loadFileStatuses(worktreePath)
-      }
       return result.success
     } catch (error) {
       console.error('Failed to unstage file:', error)
@@ -253,10 +245,6 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   stageAll: async (worktreePath: string) => {
     try {
       const result = await window.gitOps.stageAll(worktreePath)
-      if (result.success) {
-        // Refresh statuses after staging all
-        await get().loadFileStatuses(worktreePath)
-      }
       return result.success
     } catch (error) {
       console.error('Failed to stage all files:', error)
@@ -268,10 +256,6 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   unstageAll: async (worktreePath: string) => {
     try {
       const result = await window.gitOps.unstageAll(worktreePath)
-      if (result.success) {
-        // Refresh statuses after unstaging all
-        await get().loadFileStatuses(worktreePath)
-      }
       return result.success
     } catch (error) {
       console.error('Failed to unstage all files:', error)
@@ -283,10 +267,6 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   discardChanges: async (worktreePath: string, relativePath: string) => {
     try {
       const result = await window.gitOps.discardChanges(worktreePath, relativePath)
-      if (result.success) {
-        // Refresh statuses after discarding
-        await get().loadFileStatuses(worktreePath)
-      }
       return result.success
     } catch (error) {
       console.error('Failed to discard changes:', error)
@@ -298,10 +278,6 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   addToGitignore: async (worktreePath: string, pattern: string) => {
     try {
       const result = await window.gitOps.addToGitignore(worktreePath, pattern)
-      if (result.success) {
-        // Refresh statuses after adding to gitignore
-        await get().loadFileStatuses(worktreePath)
-      }
       return result.success
     } catch (error) {
       console.error('Failed to add to .gitignore:', error)

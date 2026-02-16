@@ -124,7 +124,6 @@ export function FileTree({
   const { getFileStatuses, loadFileStatuses } = useGitStore()
 
   const unsubscribeRef = useRef<(() => void) | null>(null)
-  const gitUnsubscribeRef = useRef<(() => void) | null>(null)
   const currentWorktreeRef = useRef<string | null>(null)
   const parentRef = useRef<HTMLDivElement>(null)
 
@@ -138,10 +137,6 @@ export function FileTree({
       if (unsubscribeRef.current) {
         unsubscribeRef.current()
         unsubscribeRef.current = null
-      }
-      if (gitUnsubscribeRef.current) {
-        gitUnsubscribeRef.current()
-        gitUnsubscribeRef.current = null
       }
     }
 
@@ -157,17 +152,10 @@ export function FileTree({
     startWatching(worktreePath)
 
     // Subscribe to file change events (file tree refresh only;
-    // git status refresh is handled by the main-process worktree watcher)
+    // git status refresh is handled centrally by useWorktreeWatcher)
     unsubscribeRef.current = window.fileTreeOps.onChange((event) => {
       if (event.worktreePath === worktreePath) {
         handleFileChange(worktreePath, event.eventType, event.changedPath, event.relativePath)
-      }
-    })
-
-    // Subscribe to git status change events (to re-render git indicators on file tree nodes)
-    gitUnsubscribeRef.current = window.gitOps.onStatusChanged((event) => {
-      if (event.worktreePath === worktreePath) {
-        loadFileStatuses(worktreePath)
       }
     })
 
@@ -176,10 +164,6 @@ export function FileTree({
       if (unsubscribeRef.current) {
         unsubscribeRef.current()
         unsubscribeRef.current = null
-      }
-      if (gitUnsubscribeRef.current) {
-        gitUnsubscribeRef.current()
-        gitUnsubscribeRef.current = null
       }
     }
   }, [worktreePath, loadFileTree, loadFileStatuses, startWatching, stopWatching, handleFileChange])

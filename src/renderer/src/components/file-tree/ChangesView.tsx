@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, memo } from 'react'
 import {
   AlertTriangle,
   ChevronDown,
@@ -37,10 +37,15 @@ import { GitPushPull } from '@/components/git/GitPushPull'
 
 interface ChangesViewProps {
   worktreePath: string | null
+  isConnectionMode?: boolean
   onFileClick?: (filePath: string) => void
 }
 
-export function ChangesView({ worktreePath, onFileClick }: ChangesViewProps): React.JSX.Element {
+export function ChangesView({
+  worktreePath,
+  isConnectionMode,
+  onFileClick
+}: ChangesViewProps): React.JSX.Element {
   const {
     loadFileStatuses,
     loadBranchInfo,
@@ -59,29 +64,13 @@ export function ChangesView({ worktreePath, onFileClick }: ChangesViewProps): Re
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isReviewing, setIsReviewing] = useState(false)
 
-  // Load initial data
+  // Load initial data (skip for connection folders — no git repo)
   useEffect(() => {
-    if (worktreePath) {
+    if (worktreePath && !isConnectionMode) {
       loadFileStatuses(worktreePath)
       loadBranchInfo(worktreePath)
     }
-  }, [worktreePath, loadFileStatuses, loadBranchInfo])
-
-  // Subscribe to git status changes
-  useEffect(() => {
-    if (!worktreePath) return
-
-    const unsubscribe = window.gitOps.onStatusChanged((event) => {
-      if (event.worktreePath === worktreePath) {
-        loadFileStatuses(worktreePath)
-        loadBranchInfo(worktreePath)
-      }
-    })
-
-    return () => {
-      unsubscribe()
-    }
-  }, [worktreePath, loadFileStatuses, loadBranchInfo])
+  }, [worktreePath, isConnectionMode, loadFileStatuses, loadBranchInfo])
 
   const branchInfo = worktreePath ? branchInfoByWorktree.get(worktreePath) : undefined
 
@@ -310,6 +299,14 @@ export function ChangesView({ worktreePath, onFileClick }: ChangesViewProps): Re
 
   if (!worktreePath) {
     return <div className="p-4 text-sm text-muted-foreground text-center">No worktree selected</div>
+  }
+
+  if (isConnectionMode) {
+    return (
+      <div className="p-4 text-sm text-muted-foreground text-center">
+        Connection folder — not a git repository
+      </div>
+    )
   }
 
   return (
@@ -622,7 +619,7 @@ interface GroupHeaderProps {
   children: React.ReactNode
 }
 
-function GroupHeader({
+const GroupHeader = memo(function GroupHeader({
   title,
   count,
   isCollapsed,
@@ -658,7 +655,7 @@ function GroupHeader({
       {!isCollapsed && <div className="pb-1">{children}</div>}
     </div>
   )
-}
+})
 
 interface FileRowProps {
   file: GitFileStatus
@@ -666,7 +663,11 @@ interface FileRowProps {
   contextMenu: React.ReactNode
 }
 
-function FileRow({ file, onViewDiff, contextMenu }: FileRowProps): React.JSX.Element {
+const FileRow = memo(function FileRow({
+  file,
+  onViewDiff,
+  contextMenu
+}: FileRowProps): React.JSX.Element {
   const fileName = file.relativePath.split('/').pop() || file.relativePath
   const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : null
 
@@ -688,4 +689,4 @@ function FileRow({ file, onViewDiff, contextMenu }: FileRowProps): React.JSX.Ele
       {contextMenu}
     </ContextMenu>
   )
-}
+})
