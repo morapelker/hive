@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef, useEffect } from 'react'
+import { useCallback, useState, useRef } from 'react'
 import {
   AlertCircle,
   Code,
@@ -8,7 +8,6 @@ import {
   Loader2,
   Map,
   MoreHorizontal,
-  Pencil,
   Plus,
   Terminal,
   Trash2
@@ -68,7 +67,6 @@ export function ConnectionItem({
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectConnection = useConnectionStore((s) => s.selectConnection)
   const deleteConnection = useConnectionStore((s) => s.deleteConnection)
-  const renameConnection = useConnectionStore((s) => s.renameConnection)
 
   const connectionStatus = useWorktreeStatusStore((state) =>
     state.getConnectionStatus(connection.id)
@@ -90,32 +88,29 @@ export function ConnectionItem({
               ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
               : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
-  // Inline rename state
-  const [isRenaming, setIsRenaming] = useState(false)
-  const [nameInput, setNameInput] = useState('')
-  const renameInputRef = useRef<HTMLInputElement>(null)
+  // Marquee animation state for overflowing display name
+  const containerRef = useRef<HTMLDivElement>(null)
+  const textRef = useRef<HTMLSpanElement>(null)
+  const [isAnimating, setIsAnimating] = useState(false)
+  const [scrollDistance, setScrollDistance] = useState(0)
+  const [animationDuration, setAnimationDuration] = useState(3)
 
-  useEffect(() => {
-    if (isRenaming && renameInputRef.current) {
-      renameInputRef.current.focus()
-      renameInputRef.current.select()
+  const handleMouseEnter = useCallback((): void => {
+    if (!containerRef.current || !textRef.current) return
+    const containerWidth = containerRef.current.clientWidth
+    const textWidth = textRef.current.scrollWidth
+    if (textWidth > containerWidth) {
+      const distance = -(textWidth - containerWidth)
+      setScrollDistance(distance)
+      // Speed: ~30px per second feels readable
+      setAnimationDuration(Math.max(2, Math.abs(distance) / 30))
+      setIsAnimating(true)
     }
-  }, [isRenaming])
+  }, [])
 
-  const startRename = useCallback((): void => {
-    setNameInput(connection.name)
-    setIsRenaming(true)
-  }, [connection.name])
-
-  const handleRename = useCallback(async (): Promise<void> => {
-    const trimmed = nameInput.trim()
-    if (!trimmed || trimmed === connection.name) {
-      setIsRenaming(false)
-      return
-    }
-    await renameConnection(connection.id, trimmed)
-    setIsRenaming(false)
-  }, [nameInput, connection.id, connection.name, renameConnection])
+  const handleMouseLeave = useCallback((): void => {
+    setIsAnimating(false)
+  }, [])
 
   const handleClick = (): void => {
     selectConnection(connection.id)
@@ -156,17 +151,14 @@ export function ConnectionItem({
     onAddWorktree?.(connection.id)
   }, [onAddWorktree, connection.id])
 
-  // Build the subtitle from unique project names
-  const projectSubtitle = [...new Set(connection.members?.map((m) => m.project_name) || [])].join(
-    ' + '
-  )
+  // Build the display name from unique project names
+  const displayName =
+    [...new Set(connection.members?.map((m) => m.project_name) || [])].join(' + ') ||
+    connection.name ||
+    'Connection'
 
   const menuItems = (
     <>
-      <ContextMenuItem onClick={startRename}>
-        <Pencil className="h-4 w-4 mr-2" />
-        Rename
-      </ContextMenuItem>
       <ContextMenuItem onClick={handleAddWorktree}>
         <Plus className="h-4 w-4 mr-2" />
         Add Worktree
@@ -228,43 +220,33 @@ export function ConnectionItem({
               <Link className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             )}
 
-          {/* Name and subtitle */}
+          {/* Name and status */}
           <div className="flex-1 min-w-0">
-            {isRenaming ? (
-              <input
-                ref={renameInputRef}
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleRename()
-                  if (e.key === 'Escape') setIsRenaming(false)
-                }}
-                onBlur={handleRename}
-                onClick={(e) => e.stopPropagation()}
-                className="bg-background border border-border rounded px-1.5 py-0.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
-                data-testid="connection-rename-input"
-              />
-            ) : (
-              <span className="text-sm truncate block" title={connection.path}>
-                {connection.name}
+            <div
+              className="overflow-hidden"
+              ref={containerRef}
+              onMouseEnter={handleMouseEnter}
+              onMouseLeave={handleMouseLeave}
+            >
+              <span
+                ref={textRef}
+                className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
+                style={
+                  isAnimating
+                    ? ({
+                        '--scroll-distance': `${scrollDistance}px`,
+                        animation: `marquee-scroll ${animationDuration}s linear infinite`
+                      } as React.CSSProperties)
+                    : undefined
+                }
+                title={displayName}
+              >
+                {displayName}
               </span>
-            )}
-            <div className="flex items-center gap-1">
-              <span className={cn('text-[11px]', statusClass)} data-testid="connection-status-text">
-                {displayStatus}
-              </span>
-              {projectSubtitle && (
-                <>
-                  <span className="text-[10px] text-muted-foreground/40">|</span>
-                  <span
-                    className="text-[10px] text-muted-foreground/60 truncate"
-                    title={projectSubtitle}
-                  >
-                    {projectSubtitle}
-                  </span>
-                </>
-              )}
             </div>
+            <span className={cn('text-[11px]', statusClass)} data-testid="connection-status-text">
+              {displayStatus}
+            </span>
           </div>
 
           {/* Unread dot badge */}
@@ -288,10 +270,6 @@ export function ConnectionItem({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-52" align="end">
-              <DropdownMenuItem onClick={startRename}>
-                <Pencil className="h-4 w-4 mr-2" />
-                Rename
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={handleAddWorktree}>
                 <Plus className="h-4 w-4 mr-2" />
                 Add Worktree

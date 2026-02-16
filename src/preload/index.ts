@@ -1341,8 +1341,6 @@ const connectionOps = {
     ipcRenderer.invoke('connection:addMember', { connectionId, worktreeId }),
   removeMember: (connectionId: string, worktreeId: string) =>
     ipcRenderer.invoke('connection:removeMember', { connectionId, worktreeId }),
-  rename: (connectionId: string, name: string) =>
-    ipcRenderer.invoke('connection:rename', { connectionId, name }),
   getAll: () => ipcRenderer.invoke('connection:getAll'),
   get: (connectionId: string) => ipcRenderer.invoke('connection:get', { connectionId }),
   openInTerminal: (connectionPath: string) =>
