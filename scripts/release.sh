@@ -83,7 +83,7 @@ fi
 # ── Generate release notes from merged PRs ───────────────────────
 info "Generating release notes from merged PRs..."
 
-LAST_TAG_DATE=$(git log -1 --format=%aI "v${CURRENT_VERSION}" 2>/dev/null || echo "")
+LAST_TAG_DATE=$(TZ=UTC0 git log -1 --format='%ad' --date=format-local:'%Y-%m-%dT%H:%M:%SZ' "v${CURRENT_VERSION}" 2>/dev/null || echo "")
 
 if [[ -z "$LAST_TAG_DATE" ]]; then
   warn "Could not find tag v${CURRENT_VERSION}. Skipping PR-based release notes."
