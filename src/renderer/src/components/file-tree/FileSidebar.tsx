@@ -68,6 +68,7 @@ export function FileSidebar({
         ) : (
           <FileTree
             worktreePath={worktreePath}
+            isConnectionMode={isConnectionMode}
             onClose={onClose}
             onFileClick={onFileClick}
             hideHeader

@@ -5,6 +5,7 @@ import { useSessionStore } from './useSessionStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
+import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
 
 /** Fire-and-forget: run setup script for a worktree, subscribing to output events
  *  so output is captured even when SetupTab is not mounted. */
@@ -407,12 +408,8 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     if (id) {
       // Touch worktree to update last_accessed_at
       get().touchWorktree(id)
-      // Deconflict: clear any selected connection
-      import('./useConnectionStore').then(({ useConnectionStore }) => {
-        if (useConnectionStore.getState().selectedConnectionId) {
-          useConnectionStore.setState({ selectedConnectionId: null })
-        }
-      })
+      // Deconflict: clear any selected connection synchronously (same tick)
+      clearConnectionSelection()
     }
   },
 
@@ -645,3 +642,6 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     window.db.worktree.appendSessionTitle?.(worktreeId, title)
   }
 }))
+
+// Register the worktree-clear callback so useConnectionStore can call it synchronously
+registerWorktreeClear(() => useWorktreeStore.getState().selectWorktreeOnly(null))

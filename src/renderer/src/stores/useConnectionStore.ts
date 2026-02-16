@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { toast } from '@/lib/toast'
+import { registerConnectionClear, clearWorktreeSelection } from './store-coordination'
 
 // Connection types matching the database schema
 interface ConnectionMemberEnriched {
@@ -80,9 +81,8 @@ export const useConnectionStore = create<ConnectionState>()(
             connections: [...state.connections, connection],
             selectedConnectionId: connection.id
           }))
-          // Deconflict: clear worktree selection
-          const { useWorktreeStore } = await import('./useWorktreeStore')
-          useWorktreeStore.getState().selectWorktreeOnly(null)
+          // Deconflict: clear worktree selection synchronously (same tick)
+          clearWorktreeSelection()
 
           toast.success(`Connection "${connection.name}" created`)
           return connection.id
@@ -170,11 +170,8 @@ export const useConnectionStore = create<ConnectionState>()(
       selectConnection: (id: string | null) => {
         set({ selectedConnectionId: id })
         if (id) {
-          // Deconflict: clear worktree selection without triggering reverse deconfliction
-          // Use dynamic import to avoid circular dependency at module level
-          import('./useWorktreeStore').then(({ useWorktreeStore }) => {
-            useWorktreeStore.getState().selectWorktreeOnly(null)
-          })
+          // Deconflict: clear worktree selection synchronously (same tick)
+          clearWorktreeSelection()
         }
       }
     }),
@@ -187,3 +184,6 @@ export const useConnectionStore = create<ConnectionState>()(
     }
   )
 )
+
+// Register the connection-clear callback so useWorktreeStore can call it synchronously
+registerConnectionClear(() => useConnectionStore.setState({ selectedConnectionId: null }))
