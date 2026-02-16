@@ -59,6 +59,22 @@ export function useWorktreeWatcher(): void {
     previousPathRef.current = worktreePath
   }, [worktreePath])
 
+  // Centralized onStatusChanged subscription — replaces per-component subscriptions
+  // in ChangesView, GitStatusPanel, and FileTree. Uses the debounced refreshStatuses
+  // to batch rapid file-change events.
+  useEffect(() => {
+    const unsubscribe = window.gitOps.onStatusChanged((event) => {
+      const currentPath = previousPathRef.current
+      if (currentPath && event.worktreePath === currentPath) {
+        useGitStore.getState().refreshStatuses(currentPath)
+      }
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [])
+
   useEffect(() => {
     return () => {
       const currentPath = previousPathRef.current

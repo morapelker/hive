@@ -1327,10 +1327,23 @@ export function parseWorktreeForBranch(porcelainOutput: string, branchName: stri
 }
 
 /**
- * Create a GitService instance for a repository
+ * Cache of GitService instances per repo path.
+ * Reusing instances ensures simple-git serializes operations on the same repo,
+ * preventing git lock contention from concurrent processes.
+ */
+const gitServiceCache = new Map<string, GitService>()
+
+/**
+ * Get or create a GitService instance for a repository.
+ * Instances are cached per repoPath so that simple-git's internal task queue
+ * serializes operations on the same repo.
  */
 export function createGitService(repoPath: string): GitService {
-  return new GitService(repoPath)
+  const cached = gitServiceCache.get(repoPath)
+  if (cached) return cached
+  const service = new GitService(repoPath)
+  gitServiceCache.set(repoPath, service)
+  return service
 }
 
 /**

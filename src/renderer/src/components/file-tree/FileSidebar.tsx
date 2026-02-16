@@ -6,6 +6,7 @@ import { ChangesView } from './ChangesView'
 
 interface FileSidebarProps {
   worktreePath: string | null
+  isConnectionMode?: boolean
   onClose: () => void
   onFileClick: (node: { path: string; name: string; isDirectory: boolean }) => void
   className?: string
@@ -13,6 +14,7 @@ interface FileSidebarProps {
 
 export function FileSidebar({
   worktreePath,
+  isConnectionMode,
   onClose,
   onFileClick,
   className
@@ -62,7 +64,7 @@ export function FileSidebar({
 
       <div className="flex-1 overflow-hidden">
         {activeTab === 'changes' ? (
-          <ChangesView worktreePath={worktreePath} />
+          <ChangesView worktreePath={worktreePath} isConnectionMode={isConnectionMode} />
         ) : (
           <FileTree
             worktreePath={worktreePath}

@@ -151,22 +151,6 @@ export function GitStatusPanel({
     }
   }, [worktreePath, loadFileStatuses, loadBranchInfo])
 
-  // Subscribe to git status changes
-  useEffect(() => {
-    if (!worktreePath) return
-
-    const unsubscribe = window.gitOps.onStatusChanged((event) => {
-      if (event.worktreePath === worktreePath) {
-        loadFileStatuses(worktreePath)
-        loadBranchInfo(worktreePath)
-      }
-    })
-
-    return () => {
-      unsubscribe()
-    }
-  }, [worktreePath, loadFileStatuses, loadBranchInfo])
-
   // Get branch info directly from store state
   const branchInfo = worktreePath ? branchInfoByWorktree.get(worktreePath) : undefined
 
