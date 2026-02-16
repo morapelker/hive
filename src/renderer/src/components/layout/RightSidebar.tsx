@@ -77,6 +77,7 @@ export function RightSidebar(): React.JSX.Element {
           >
             <FileSidebar
               worktreePath={selectedWorktreePath}
+              isConnectionMode={isConnectionMode}
               onClose={toggleRightSidebar}
               onFileClick={handleFileClick}
               className="flex-1 min-h-0"

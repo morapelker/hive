@@ -205,9 +205,11 @@ describe('Session 10: Changes View', () => {
   })
 
   describe('Live updates', () => {
-    test('subscribes to git status changes', () => {
-      const content = readFile('ChangesView.tsx')
+    test('git status changes handled centrally by useWorktreeWatcher', () => {
+      const hooksDir = path.join(fileTreeDir, '..', '..', 'hooks')
+      const content = fs.readFileSync(path.join(hooksDir, 'useWorktreeWatcher.ts'), 'utf-8')
       expect(content).toContain('window.gitOps.onStatusChanged')
+      expect(content).toContain('refreshStatuses')
     })
 
     test('loads file statuses on mount', () => {
