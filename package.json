@@ -32,7 +32,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "build:native": "cd src/native && npx node-gyp rebuild",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "release:canary": "bash scripts/release-canary.sh"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^3.0.0",
