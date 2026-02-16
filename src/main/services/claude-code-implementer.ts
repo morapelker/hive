@@ -1,11 +1,14 @@
 import type { BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { readFile, writeFile } from 'fs/promises'
+import { join } from 'path'
+import { homedir } from 'os'
 import { createLogger } from './logger'
 import { loadClaudeSDK } from './claude-sdk-loader'
 import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
 import type { DatabaseService } from '../db/database'
-import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
+import { readClaudeTranscript, translateEntry, encodePath } from './claude-transcript-reader'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -90,6 +93,9 @@ export interface ClaudeSessionState {
   revertDiff: string | null
   /** One-shot checkpoint UUID used with resumeSessionAt on the next prompt */
   resumeSessionAt: string | null
+  /** Deferred JSONL truncation target: drop this UUID and everything after it
+   *  before the next sdk.query() call.  Set during undo(), consumed in prompt(). */
+  pendingJsonlTruncateUuid: string | null
 }
 
 export class ClaudeCodeImplementer implements AgentSdkImplementer {
@@ -144,7 +150,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       revertMessageID: null,
       revertCheckpointUuid: null,
       revertDiff: null,
-      resumeSessionAt: null
+      resumeSessionAt: null,
+      pendingJsonlTruncateUuid: null
     }
     this.sessions.set(key, state)
 
@@ -191,7 +198,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       revertMessageID: null,
       revertCheckpointUuid: null,
       revertDiff: null,
-      resumeSessionAt: null
+      resumeSessionAt: null,
+      pendingJsonlTruncateUuid: null
     }
     this.sessions.set(key, state)
 
@@ -364,6 +372,20 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         options.resumeSessionAt = pendingResumeSessionAt
       }
 
+      // ── Deferred JSONL truncation after undo ──────────────────────
+      // During undo(), the SDK's rewindWithResumedQuery appends junk
+      // entries to the JSONL (empty user messages, queue-operations).
+      // We can't truncate during undo because the SDK may still be
+      // flushing async writes.  Here, the SDK is idle — safe to clean.
+      if (session.pendingJsonlTruncateUuid) {
+        await this.truncateJsonlTranscript(
+          worktreePath,
+          session.claudeSessionId,
+          session.pendingJsonlTruncateUuid
+        )
+        session.pendingJsonlTruncateUuid = null
+      }
+
       log.info('Prompt: calling sdk.query()', {
         model: options.model,
         resume: !!options.resume,
@@ -460,23 +482,38 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             contentBlockTypes.length > 0 &&
             contentBlockTypes.every((t) => t === 'tool_result')
 
-          // Capture checkpoints only from actual user prompts.
+          // Capture checkpoints only from actual user prompts on the
+          // main conversation thread (not subagent messages).
           // tool_result-only user messages carry UUIDs but do not represent
           // stable rewind points for file checkpointing.
-          if (msgType === 'user' && sdkMessage.uuid && !isToolResultOnly) {
+          // Subagent messages have parent_tool_use_id set — their UUIDs live
+          // in a separate JSONL file and would cause resumeSessionAt to fail.
+          const isSubagentMessage = !!(sdkMessage as Record<string, unknown>).parent_tool_use_id
+          if (msgType === 'user' && sdkMessage.uuid && !isToolResultOnly && !isSubagentMessage) {
             const checkpointUuid = sdkMessage.uuid as string
             const isFirstSeenCheckpoint = !session.checkpoints.has(checkpointUuid)
             if (isFirstSeenCheckpoint) {
               session.checkpointCounter += 1
               session.checkpoints.set(checkpointUuid, session.checkpointCounter)
+              log.info('Checkpoint captured', {
+                uuid: checkpointUuid,
+                counter: session.checkpointCounter,
+                totalCheckpoints: session.checkpoints.size
+              })
             }
+          } else if (msgType === 'user' && sdkMessage.uuid && isSubagentMessage) {
+            log.debug('Skipping subagent user message for checkpoint', {
+              uuid: (sdkMessage.uuid as string).slice(0, 12),
+              parentToolUseId: (sdkMessage as Record<string, unknown>).parent_tool_use_id
+            })
           }
 
           log.info('TOOL_LIFECYCLE: accumulate message', {
             hiveSessionId: session.hiveSessionId,
             msgType,
             contentBlockTypes,
-            isToolResultOnly
+            isToolResultOnly,
+            isSubagentMessage
           })
 
           if (isToolResultOnly) {
@@ -938,8 +975,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       ? (session.checkpoints.get(session.revertCheckpointUuid) ?? null)
       : null
 
-    // Walk checkpoints in reverse order (by message index, descending)
-    // to find the last user message UUID BEFORE the current revert boundary
+    // Walk checkpoints in reverse order (by checkpoint counter, descending)
+    // to find the last user message UUID BEFORE the current revert boundary.
+    // After finding the undo target, also locate the checkpoint immediately
+    // before it — that becomes the resumeSessionAt for the next prompt().
     const sortedCheckpoints = [...session.checkpoints.entries()].sort(
       ([, idxA], [, idxB]) => idxB - idxA
     )
@@ -947,6 +986,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     let targetUuid: string | null = null
     let targetCheckpointIdx: number | null = null
     let targetMessage: Record<string, unknown> | undefined
+    let previousCheckpointUuid: string | null = null
+    let foundTarget = false
     for (const [uuid, msgIndex] of sortedCheckpoints) {
       // Skip checkpoints at or after the current boundary
       if (currentBoundaryCheckpointIdx !== null && msgIndex >= currentBoundaryCheckpointIdx) {
@@ -961,10 +1002,16 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         continue
       }
 
-      targetUuid = uuid
-      targetCheckpointIdx = msgIndex
-      targetMessage = candidateMessage
-      break
+      if (!foundTarget) {
+        targetUuid = uuid
+        targetCheckpointIdx = msgIndex
+        targetMessage = candidateMessage
+        foundTarget = true
+      } else {
+        // This is the checkpoint BEFORE the target — the one we keep.
+        previousCheckpointUuid = uuid
+        break
+      }
     }
 
     if (!targetUuid || targetCheckpointIdx === null || !targetMessage) {
@@ -995,11 +1042,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       // We cannot restore files for this UUID, but we can still continue the
       // session from this checkpoint on the next prompt.
       usedConversationOnlyFallback = true
-      session.resumeSessionAt = targetUuid
       log.info('Undo: falling back to conversation-only checkpoint boundary', {
         worktreePath,
         agentSessionId,
-        targetUuid
+        targetUuid,
+        previousCheckpointUuid
       })
     }
 
@@ -1059,12 +1106,36 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       }
     }
 
-    // Set resumeSessionAt so the next prompt() resumes the SDK conversation
-    // from the rewind point rather than from the end of the (now-reverted)
-    // conversation.  Without this, the SDK would replay all old messages
-    // including the reverted ones, causing the conversation context to be
-    // wrong after undo.
-    session.resumeSessionAt = targetUuid
+    // Set resumeSessionAt for the next prompt().
+    //
+    // IMPORTANT: --resume-session-at UUID truncates the JSONL transcript to
+    // include messages up to and including the UUID (slice(0, idx+1)).
+    // That means the prompt text at that UUID is still part of the replayed
+    // conversation.  To *exclude* targetUuid's prompt (the turn we want to
+    // undo), we must resume at the checkpoint BEFORE it so the replayed
+    // history ends just before the undone turn.
+    //
+    // When undoing the very first prompt (no previous checkpoint exists),
+    // we de-materialize the session so the next prompt() starts a completely
+    // fresh SDK conversation instead of resuming the old one.
+    if (previousCheckpointUuid) {
+      session.resumeSessionAt = previousCheckpointUuid
+    } else {
+      // Undoing the very first prompt — nothing before it to resume to.
+      // Clear materialisation so the next prompt() starts a fresh session.
+      session.resumeSessionAt = null
+      session.materialized = false
+      log.info('Undo: de-materialized session (undoing first prompt)', {
+        oldClaudeSessionId: session.claudeSessionId
+      })
+    }
+
+    // Defer JSONL truncation to the next prompt() call.  During undo,
+    // the SDK's rewindWithResumedQuery may still be flushing async file
+    // writes to the JSONL — truncating now races with those writes.
+    // By deferring to prompt() time, the SDK is guaranteed to be idle
+    // and we can safely clean the file without a race condition.
+    session.pendingJsonlTruncateUuid = targetUuid
 
     log.info('Undo: rewindFiles succeeded', {
       worktreePath,
@@ -1072,7 +1143,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       targetUuid,
       targetCheckpointIdx,
       revertMessageID,
-      resumeSessionAt: targetUuid,
+      resumeSessionAt: previousCheckpointUuid ?? '(fresh session)',
+      previousCheckpointUuid,
       messagesRemaining: session.messages.length,
       checkpointsRemaining: session.checkpoints.size,
       filesChanged: rewindResult?.filesChanged?.length ?? 0
@@ -1750,6 +1822,115 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     return message.toLowerCase().includes('no file checkpoint found')
   }
 
+  /**
+   * Resolve the on-disk JSONL transcript path for a Claude session.
+   */
+  private getJsonlPath(worktreePath: string, sessionId: string): string {
+    const encoded = encodePath(worktreePath)
+    return join(homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`)
+  }
+
+  /**
+   * Truncate the Claude CLI JSONL transcript file after an undo operation.
+   *
+   * Removes the user message with `targetUuid` and everything after it,
+   * plus any stale empty-text-block user entries left by prior undos.
+   * Non-message entries (queue-operation, file-history-snapshot, progress)
+   * that appear *before* the target are preserved.
+   *
+   * This prevents the "cache_control cannot be set for empty text blocks"
+   * API error that occurs when the SDK replays stale empty-text entries.
+   */
+  private async truncateJsonlTranscript(
+    worktreePath: string,
+    sessionId: string,
+    targetUuid: string
+  ): Promise<void> {
+    const filePath = this.getJsonlPath(worktreePath, sessionId)
+
+    let raw: string
+    try {
+      raw = await readFile(filePath, 'utf-8')
+    } catch {
+      log.debug('JSONL transcript not found for truncation, skipping', { filePath })
+      return
+    }
+
+    const lines = raw.split('\n')
+    const kept: string[] = []
+    let foundTarget = false
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+
+      let entry: Record<string, unknown>
+      try {
+        entry = JSON.parse(trimmed)
+      } catch {
+        kept.push(trimmed)
+        continue
+      }
+
+      const entryType = entry.type as string
+
+      // Once we find the target user UUID, drop it and everything after
+      if (!foundTarget && entryType === 'user' && entry.uuid === targetUuid) {
+        foundTarget = true
+        continue
+      }
+
+      if (foundTarget) {
+        continue
+      }
+
+      // Filter out user entries whose content is entirely empty text blocks
+      // (left behind by prior rewindWithResumedQuery calls)
+      if (entryType === 'user') {
+        const msg = entry.message as { content?: unknown[] } | undefined
+        const content = Array.isArray(msg?.content) ? msg!.content : []
+        const hasOnlyEmptyText =
+          content.length > 0 &&
+          (content as Array<{ type?: string; text?: string }>).every(
+            (b) => b.type === 'text' && (!b.text || b.text === '')
+          )
+        if (hasOnlyEmptyText) {
+          continue
+        }
+      }
+
+      kept.push(trimmed)
+    }
+
+    const truncatedContent = kept.length > 0 ? kept.join('\n') + '\n' : ''
+
+    try {
+      await writeFile(filePath, truncatedContent, 'utf-8')
+      log.info('Truncated JSONL transcript after undo', {
+        filePath,
+        originalLines: lines.filter((l) => l.trim()).length,
+        keptLines: kept.length,
+        targetUuid
+      })
+    } catch (err) {
+      log.error(
+        'Failed to truncate JSONL transcript',
+        err instanceof Error ? err : new Error(String(err)),
+        { filePath }
+      )
+    }
+  }
+
+  /**
+   * Resume the session solely to get access to `rewindFiles()`, then
+   * immediately close the query.
+   *
+   * NOTE: The resumed query with `prompt: ''` causes the SDK to append
+   * junk entries (empty user messages, queue-operations, etc.) to the
+   * JSONL transcript.  These are cleaned up by `truncateJsonlTranscript`
+   * which runs at the start of the next `prompt()` call — at which point
+   * the SDK is idle and there is no race condition with file writes.
+   */
   private async rewindWithResumedQuery(
     session: ClaudeSessionState,
     targetUuid: string
