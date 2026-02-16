@@ -1,5 +1,5 @@
 import { useCallback, memo, useMemo } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Link } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from './FileIcon'
 import { GitStatusIndicator, type GitStatusCode } from './GitStatusIndicator'
@@ -12,6 +12,7 @@ interface FileTreeNode {
   path: string
   relativePath: string
   isDirectory: boolean
+  isSymlink?: boolean
   extension: string | null
   children?: FileTreeNode[]
 }
@@ -133,7 +134,7 @@ export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
       role="treeitem"
       aria-expanded={node.isDirectory ? isExpanded : undefined}
       aria-selected={false}
-      aria-label={`${node.isDirectory ? 'Folder' : 'File'}: ${node.name}${gitStatus ? `, ${gitStatus.staged ? 'staged' : 'modified'}` : ''}`}
+      aria-label={`${node.isSymlink ? 'Symlinked ' : ''}${node.isDirectory ? 'Folder' : 'File'}: ${node.name}${gitStatus ? `, ${gitStatus.staged ? 'staged' : 'modified'}` : ''}`}
     >
       {/* Expand/collapse chevron for directories */}
       {node.isDirectory ? (
@@ -154,8 +155,16 @@ export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
         extension={node.extension}
         isDirectory={node.isDirectory}
         isExpanded={isExpanded}
-        className="mr-1.5"
+        className={node.isSymlink ? 'mr-0.5' : 'mr-1.5'}
       />
+
+      {/* Symlink indicator */}
+      {node.isSymlink && (
+        <Link
+          className="h-2.5 w-2.5 flex-shrink-0 mr-1 text-muted-foreground opacity-60"
+          aria-hidden="true"
+        />
+      )}
 
       {/* File/folder name */}
       <span

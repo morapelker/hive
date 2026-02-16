@@ -10,7 +10,8 @@ export default defineWorkspace([
       exclude: [
         'test/session-3/**/*.test.ts',
         'test/phase-9/session-2/**/*.test.ts',
-        'test/phase-9/session-5/**/*.test.ts'
+        'test/phase-9/session-5/**/*.test.ts',
+        'test/phase-9/session-13/**/*.test.ts'
       ]
     }
   },
@@ -21,7 +22,8 @@ export default defineWorkspace([
       include: [
         'test/session-3/**/*.test.ts',
         'test/phase-9/session-2/**/*.test.ts',
-        'test/phase-9/session-5/**/*.test.ts'
+        'test/phase-9/session-5/**/*.test.ts',
+        'test/phase-9/session-13/**/*.test.ts'
       ],
       globals: true
     }
