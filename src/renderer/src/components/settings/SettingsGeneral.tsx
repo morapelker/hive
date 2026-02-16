@@ -89,9 +89,10 @@ export function SettingsGeneral(): React.JSX.Element {
 
       {/* Default Agent SDK */}
       <div className="space-y-2">
-        <label className="text-sm font-medium">Agent SDK</label>
+        <label className="text-sm font-medium">AI Provider</label>
         <p className="text-xs text-muted-foreground">
-          Choose which AI backend to use for new sessions
+          Choose which AI coding agent to use for new sessions. Existing sessions keep their
+          original provider.
         </p>
         <div className="flex gap-2">
           <button

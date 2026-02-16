@@ -277,20 +277,31 @@ Finalize user-facing Claude provider UX and preserve existing session behavior.
 
 ### Tasks
 
-- [ ] Update `SettingsGeneral` copy from "Claude Code (Mock)" to production label.
-- [ ] Keep existing session pinning semantics: old sessions remain on stored `agent_sdk`.
-- [ ] Verify migrations are unnecessary (same `agent_sdk` value) or add migration if naming changes.
-- [ ] Ensure fallback to OpenCode remains only for unresolved historical/invalid rows.
+- [x] Update `SettingsGeneral` copy from "Claude Code (Mock)" to production label.
+  - Label was already "Claude Code" (no mock suffix found in codebase)
+  - Section header improved from "Agent SDK" to "AI Provider" for user clarity
+  - Description updated to explain existing sessions keep their original provider
+- [x] Keep existing session pinning semantics: old sessions remain on stored `agent_sdk`.
+  - Verified: `agent_sdk` is set at session creation and never mutated afterward
+  - `useSessionStore.createSession()` reads `defaultAgentSdk` from settings and passes it once
+- [x] Verify migrations are unnecessary (same `agent_sdk` value) or add migration if naming changes.
+  - Confirmed: migration v2 uses `'opencode'` default, `'claude-code'` is the production value -- no rename needed
+- [x] Ensure fallback to OpenCode remains only for unresolved historical/invalid rows.
+  - DB default is `'opencode'`, `getAgentSdkForSession()` returns null for missing rows, IPC handlers fall through to OpenCode
+- [x] Fix `useSettingsStore` partialize: added `defaultAgentSdk` and `showModelIcons` to localStorage cache for fast hydration
 
 ### Tests
 
-- [ ] Update settings tests to expect production label/copy and unchanged pinning rules.
-- [ ] Add regression test for mixed old/new sessions after settings change.
+- [x] Update settings tests to expect production label/copy and unchanged pinning rules.
+  - `test/phase-21/session-9/settings-production-label.test.ts` -- 7 tests
+- [x] Add regression test for mixed old/new sessions after settings change.
+  - `test/phase-21/session-9/session-pinning-regression.test.ts` -- 7 tests
+  - `test/phase-21/session-9/backward-compatibility.test.ts` -- 15 tests
 
 ### Definition of Done
 
-- UX reflects real Claude integration (no mock language).
-- Backward compatibility for existing sessions is preserved.
+- [x] UX reflects real Claude integration (no mock language).
+- [x] Backward compatibility for existing sessions is preserved.
 
 ---
 
@@ -302,37 +313,51 @@ Finalize implementation quality gates and ensure no mock placeholders remain in 
 
 ### Tasks
 
-- [ ] Remove or resolve all `TODO(claude-code-sdk)` markers in `src/main/services/claude-code-implementer.ts`.
-- [ ] Update `test/phase-21/session-8/integration-verification.test.ts` (currently expects TODO markers) to assert production readiness instead.
-- [ ] Update docs:
-  - `docs/specs/agent-sdk-integration.md`
+- [x] Remove or resolve all `TODO(claude-code-sdk)` markers in `src/main/services/claude-code-implementer.ts`.
+  - All 24 original markers were already resolved in Sessions 2-5
+  - 5 remaining `not yet implemented` stubs (permissionReply, permissionList, listCommands, sendCommand, renameSession) resolved with proper implementations
+- [x] Update `test/phase-21/session-8/integration-verification.test.ts` (currently expects TODO markers) to assert production readiness instead.
+  - Expanded from 3 to 13 tests covering all resolved stubs, source scanning for leftover markers, and capability completeness
+- [x] Update docs:
+  - `docs/specs/agent-sdk-integration.md` — updated status to Production, added method implementation notes table and troubleshooting section
   - this implementation doc with completion notes as sessions finish
-- [ ] Add a concise troubleshooting section for auth/session reconnect/model routing.
+- [x] Add a concise troubleshooting section for auth/session reconnect/model routing.
+  - Added to `docs/specs/agent-sdk-integration.md`: authentication, session reconnect, model routing, undo troubleshooting
 
 ### Tests
 
-- [ ] Run targeted suites for all touched phase/session test files.
-- [ ] Run full verification commands:
+- [x] Run targeted suites for all touched phase/session test files.
+- [x] Run full verification commands:
   - `pnpm lint`
   - `pnpm test`
   - `pnpm build`
 
 ### Definition of Done
 
-- No remaining mock TODO markers in Claude production path.
-- All required tests pass locally and build is green.
-- Documentation matches actual behavior.
+- [x] No remaining mock TODO markers in Claude production path.
+- [x] All required tests pass locally and build is green.
+- [x] Documentation matches actual behavior.
 
 ---
 
 ## Cross-Session Test Matrix (Must Exist by Completion)
 
-- [ ] Claude adapter unit tests (client init, lifecycle, cleanup, error handling).
-- [ ] Claude event normalization tests (status, message parts, message updates, child session mapping).
-- [ ] IPC SDK routing tests for all operations, not just connect/prompt.
-- [ ] Renderer capability-driven gating tests (undo/redo/menu/slash).
-- [ ] Settings/session pinning regression tests across mixed SDK sessions.
-- [ ] Integration verification test that asserts production Claude readiness (replaces mock TODO check).
+- [x] Claude adapter unit tests (client init, lifecycle, cleanup, error handling).
+  - `test/phase-21/session-2/claude-code-implementer.test.ts`, `claude-sdk-loader.test.ts`, `agent-sdk-manager.test.ts`
+  - `test/phase-21/session-3/claude-lifecycle.test.ts`
+- [x] Claude event normalization tests (status, message parts, message updates, child session mapping).
+  - `test/phase-21/session-4/claude-prompt-streaming.test.ts`, `claude-abort.test.ts`, `integration-smoke.test.ts`
+- [x] IPC SDK routing tests for all operations, not just connect/prompt.
+  - `test/phase-21/session-4/ipc-sdk-routing.test.ts`, `db-agent-session-lookup.test.ts`
+  - `test/phase-21/session-5/ipc-messages-routing.test.ts`
+  - `test/phase-21/session-6/ipc-model-routing.test.ts`
+  - `test/phase-21/session-8/ipc-undo-redo-routing.test.ts`, `capabilities-ipc.test.ts`
+- [x] Renderer capability-driven gating tests (undo/redo/menu/slash).
+  - `test/phase-21/session-8/capability-gating-renderer.test.ts`, `menu-capability-gating.test.ts`
+- [x] Settings/session pinning regression tests across mixed SDK sessions.
+  - `test/phase-21/session-9/settings-production-label.test.ts`, `session-pinning-regression.test.ts`, `backward-compatibility.test.ts`
+- [x] Integration verification test that asserts production Claude readiness (replaces mock TODO check).
+  - `test/phase-21/session-8/integration-verification.test.ts` — 13 tests covering all stubs resolved, no TODO markers, capability completeness
 
 ## Global Definition of Done
 

@@ -234,6 +234,8 @@ export const useSettingsStore = create<SettingsState>()(
         favoriteModels: state.favoriteModels,
         customChromeCommand: state.customChromeCommand,
         modelVariantDefaults: state.modelVariantDefaults,
+        showModelIcons: state.showModelIcons,
+        defaultAgentSdk: state.defaultAgentSdk,
         activeSection: state.activeSection
       })
     }

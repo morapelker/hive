@@ -828,15 +828,22 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   }
 
   async permissionReply(
-    _requestId: string,
+    requestId: string,
     _decision: 'once' | 'always' | 'reject',
     _worktreePath?: string
   ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.permissionReply: not yet implemented (Session 7)')
+    // Claude Code handles permissions inline via the canUseTool callback
+    // during prompt() streaming. There are no separate pending permission
+    // requests to reply to — canUseTool auto-allows all non-question tools.
+    log.warn('permissionReply: no-op for Claude Code (permissions handled via canUseTool)', {
+      requestId
+    })
   }
 
   async permissionList(_worktreePath?: string): Promise<unknown[]> {
-    throw new Error('ClaudeCodeImplementer.permissionList: not yet implemented (Session 7)')
+    // Claude Code handles permissions inline via canUseTool during prompt()
+    // streaming. There is no separate permission queue to list.
+    return []
   }
 
   /** Check if a question requestId belongs to this implementer */
@@ -1184,26 +1191,63 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   // ── Commands ─────────────────────────────────────────────────────
 
   async listCommands(_worktreePath: string): Promise<unknown[]> {
-    throw new Error('ClaudeCodeImplementer.listCommands: not yet implemented (Session 7)')
+    // The Claude SDK exposes slash commands via Query.supportedCommands(),
+    // but that requires an active query transport. Since commands are
+    // fetched on-demand outside of active streaming, we return an empty
+    // list. The renderer's command palette will still work — unknown
+    // commands are sent as regular prompts which the SDK CLI parses.
+    return []
   }
 
   async sendCommand(
-    _worktreePath: string,
-    _agentSessionId: string,
-    _command: string,
-    _args?: string
+    worktreePath: string,
+    agentSessionId: string,
+    command: string,
+    args?: string
   ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.sendCommand: not yet implemented (Session 7)')
+    // Translate slash command into a prompt message. The Claude CLI
+    // subprocess parses slash command prefixes from prompt text.
+    const prompt = args ? `/${command} ${args}` : `/${command}`
+    log.info('sendCommand: dispatching as prompt', {
+      worktreePath,
+      agentSessionId,
+      command,
+      hasArgs: !!args
+    })
+    await this.prompt(worktreePath, agentSessionId, prompt)
   }
 
   // ── Session management ───────────────────────────────────────────
 
-  async renameSession(
-    _worktreePath: string,
-    _agentSessionId: string,
-    _name: string
-  ): Promise<void> {
-    throw new Error('ClaudeCodeImplementer.renameSession: not yet implemented (Session 9)')
+  async renameSession(_worktreePath: string, agentSessionId: string, name: string): Promise<void> {
+    // The Claude SDK has no session rename API. Session titles are stored
+    // in Hive's local DB only. Find the session and update via dbService.
+    if (!this.dbService) {
+      log.warn('renameSession: no dbService available', { agentSessionId })
+      return
+    }
+
+    // Find the hive session ID from our session map
+    let hiveSessionId: string | null = null
+    for (const session of this.sessions.values()) {
+      if (session.claudeSessionId === agentSessionId) {
+        hiveSessionId = session.hiveSessionId
+        break
+      }
+    }
+
+    if (!hiveSessionId) {
+      log.warn('renameSession: session not found in active map', { agentSessionId })
+      return
+    }
+
+    try {
+      this.dbService.updateSession(hiveSessionId, { name })
+      log.info('renameSession: updated title in DB', { hiveSessionId, name })
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      log.error('renameSession: failed to update title', error, { hiveSessionId })
+    }
   }
 
   // ── Internal helpers ─────────────────────────────────────────────

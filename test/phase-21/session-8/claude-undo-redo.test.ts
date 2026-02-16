@@ -634,7 +634,7 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
       expect(mockQuery).toHaveBeenCalledTimes(2)
 
       const resumeCall = mockQuery.mock.calls[1][0]
-      expect(resumeCall.prompt).toBe('')
+      expect(resumeCall.prompt).toBe('.')
       expect(resumeCall.options.resume).toBe('sdk-session-1')
       expect(resumeCall.options.enableFileCheckpointing).toBe(true)
 

@@ -4,10 +4,10 @@
 
 ## Supported SDKs
 
-| SDK         | Package                          | Status      |
-| ----------- | -------------------------------- | ----------- |
-| OpenCode    | `@opencode-ai/sdk`               | Production  |
-| Claude Code | `@anthropic-ai/claude-agent-sdk` | In progress |
+| SDK         | Package                          | Status     |
+| ----------- | -------------------------------- | ---------- |
+| OpenCode    | `@opencode-ai/sdk`               | Production |
+| Claude Code | `@anthropic-ai/claude-agent-sdk` | Production |
 
 ## Architecture
 
@@ -126,6 +126,76 @@ requires implementers to provide:
 - **Commands:** listCommands, sendCommand
 - **Session management:** renameSession
 - **Window binding:** setMainWindow (for event forwarding)
+
+## Method Implementation Notes
+
+| Method               | Claude Code Behavior                                                                |
+| -------------------- | ----------------------------------------------------------------------------------- |
+| `connect`            | Creates deferred session state (`pending::` ID, materialized on first prompt)       |
+| `reconnect`          | Restores session state from DB; session resumes on next prompt via `options.resume` |
+| `disconnect`         | Closes active query, aborts controller, removes session from map                    |
+| `prompt`             | Calls `sdk.query()` with streaming; maps SDK events to Hive format                  |
+| `abort`              | Aborts controller + calls `query.interrupt()`                                       |
+| `getMessages`        | Returns in-memory messages or falls back to JSONL transcript reader                 |
+| `getAvailableModels` | Returns static catalog (opus, sonnet, haiku)                                        |
+| `getModelInfo`       | Looks up model in static catalog                                                    |
+| `setSelectedModel`   | Stores model ID for next prompt                                                     |
+| `getSessionInfo`     | Returns current revert boundary state from session                                  |
+| `questionReply`      | Resolves pending `canUseTool` Promise for `AskUserQuestion`                         |
+| `questionReject`     | Resolves pending `canUseTool` Promise with rejection                                |
+| `permissionReply`    | No-op (permissions handled inline via `canUseTool` auto-allow)                      |
+| `permissionList`     | Returns `[]` (no separate permission queue)                                         |
+| `undo`               | Uses `Query.rewindFiles()` + fork/resumeSessionAt for next prompt                   |
+| `redo`               | Throws unsupported error (`supportsRedo: false`)                                    |
+| `listCommands`       | Returns `[]` (SDK commands require active query transport)                          |
+| `sendCommand`        | Translates to `/<command> <args>` prompt and delegates to `prompt()`                |
+| `renameSession`      | Updates session name in Hive's local DB (SDK has no rename API)                     |
+
+## Troubleshooting
+
+### Authentication Failures
+
+**Symptom:** Claude sessions fail on first prompt with authentication error.
+
+**Resolution:**
+
+1. Run `claude login` in your terminal to authenticate the Claude CLI
+2. Verify credentials exist: `ls ~/.claude/`
+3. Restart Hive after authenticating
+
+### Session Reconnect Failures
+
+**Symptom:** Previously active Claude session shows as disconnected after app restart.
+
+**Resolution:**
+
+- Session reconnect is deferred until the next prompt. The session state is restored from the
+  DB `opencode_session_id` column and the SDK resumes via `options.resume` on the next `query()` call.
+- If the SDK session has expired or the transcript file was deleted, the session will fail to
+  resume. Create a new session in that case.
+
+### Model Routing
+
+**Symptom:** Wrong model used for Claude session, or model selection doesn't apply.
+
+**Resolution:**
+
+- Claude model selection is per-implementer (stored in `ClaudeCodeImplementer.selectedModel`).
+- The model is passed to `sdk.query()` via `options.model` on each prompt.
+- Supported model IDs: `opus`, `sonnet`, `haiku`.
+- Model override can also be passed per-prompt via the `modelOverride` parameter.
+
+### Undo Not Working
+
+**Symptom:** Undo throws "Nothing to undo" even after multiple prompts.
+
+**Resolution:**
+
+- Undo requires file checkpoints to be captured. Checkpoints are recorded from SDK `user` messages
+  that have a `uuid` and are not tool-result-only or subagent messages.
+- Ensure `enableFileCheckpointing: true` and `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`
+  environment variable are set (both are set by default in the implementer).
+- After undo, the next prompt will fork the conversation via `forkSession: true`.
 
 ## Risks and Mitigations
 
