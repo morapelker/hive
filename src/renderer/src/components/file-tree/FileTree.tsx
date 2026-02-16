@@ -35,6 +35,7 @@ interface FlatNode {
 
 interface FileTreeProps {
   worktreePath: string | null
+  isConnectionMode?: boolean
   onClose?: () => void
   onFileClick?: (node: FileTreeNode) => void
   className?: string
@@ -99,6 +100,7 @@ const ROW_HEIGHT = 24
 
 export function FileTree({
   worktreePath,
+  isConnectionMode,
   onClose,
   onFileClick,
   className,
@@ -145,8 +147,8 @@ export function FileTree({
     // Load file tree
     loadFileTree(worktreePath)
 
-    // Load git statuses
-    loadFileStatuses(worktreePath)
+    // Load git statuses (skip for connection paths — no .git directory)
+    if (!isConnectionMode) loadFileStatuses(worktreePath)
 
     // Start watching
     startWatching(worktreePath)
@@ -166,7 +168,15 @@ export function FileTree({
         unsubscribeRef.current = null
       }
     }
-  }, [worktreePath, loadFileTree, loadFileStatuses, startWatching, stopWatching, handleFileChange])
+  }, [
+    worktreePath,
+    isConnectionMode,
+    loadFileTree,
+    loadFileStatuses,
+    startWatching,
+    stopWatching,
+    handleFileChange
+  ])
 
   // Cleanup watching on unmount
   useEffect(() => {

@@ -121,9 +121,11 @@ export async function scanDirectory(
       }
 
       if (isDir) {
-        // Lazy loading: only get children for first level initially
-        const children =
-          currentDepth < 1
+        // Don't eagerly recurse into symlinked directories — they may be
+        // large external repos (e.g. connection members). Treat as lazy-load.
+        const children = isSymlink
+          ? undefined
+          : currentDepth < 1
             ? await scanDirectory(entryPath, rootPath, maxDepth, currentDepth + 1)
             : undefined
 
@@ -361,6 +363,7 @@ export function registerFileTreeHandlers(window: BrowserWindow): void {
           persistent: true,
           ignoreInitial: true,
           depth: 10,
+          followSymlinks: false,
           awaitWriteFinish: {
             stabilityThreshold: 100,
             pollInterval: 50
