@@ -14,7 +14,8 @@ import {
   Loader2,
   Trash2,
   EyeOff,
-  FileDiff
+  FileDiff,
+  Link
 } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import {
@@ -30,25 +31,35 @@ import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { FileIcon } from './FileIcon'
 import { GitStatusIndicator } from './GitStatusIndicator'
 import { GitCommitForm } from '@/components/git/GitCommitForm'
 import { GitPushPull } from '@/components/git/GitPushPull'
 
+interface ConnectionMemberInfo {
+  worktree_path: string
+  project_name: string
+  worktree_branch: string
+}
+
 interface ChangesViewProps {
   worktreePath: string | null
   isConnectionMode?: boolean
+  connectionMembers?: ConnectionMemberInfo[]
   onFileClick?: (filePath: string) => void
 }
 
 export function ChangesView({
   worktreePath,
   isConnectionMode,
+  connectionMembers,
   onFileClick
 }: ChangesViewProps): React.JSX.Element {
   const {
     loadFileStatuses,
     loadBranchInfo,
+    loadStatusesForPaths,
     stageFile,
     unstageFile,
     stageAll,
@@ -233,6 +244,95 @@ export function ChangesView({
     [worktreePath, onFileClick]
   )
 
+  // ── Connection mode: load statuses for all member worktrees ──
+  useEffect(() => {
+    if (isConnectionMode && connectionMembers && connectionMembers.length > 0) {
+      const paths = connectionMembers.map((m) => m.worktree_path)
+      loadStatusesForPaths(paths)
+    }
+  }, [isConnectionMode, connectionMembers, loadStatusesForPaths])
+
+  // ── Connection mode: per-member change data ──
+  const memberChangesData = useMemo(() => {
+    if (!isConnectionMode || !connectionMembers) return []
+    return connectionMembers.map((member) => {
+      const files = fileStatusesByWorktree.get(member.worktree_path) || []
+      const branchInfo_ = branchInfoByWorktree.get(member.worktree_path)
+      const conflicted = files.filter((f) => f.status === 'C')
+      const staged = files.filter((f) => f.staged && f.status !== 'C')
+      const modified = files.filter((f) => !f.staged && f.status !== '?' && f.status !== 'C')
+      const untracked = files.filter((f) => f.status === '?')
+      return {
+        ...member,
+        branchInfo: branchInfo_,
+        files,
+        conflicted,
+        staged,
+        modified,
+        untracked,
+        totalChanges: files.length
+      }
+    })
+  }, [isConnectionMode, connectionMembers, fileStatusesByWorktree, branchInfoByWorktree])
+
+  const connectionSummary = useMemo(() => {
+    if (!memberChangesData.length) return { totalFiles: 0, reposWithChanges: 0 }
+    const totalFiles = memberChangesData.reduce((sum, m) => sum + m.totalChanges, 0)
+    const reposWithChanges = memberChangesData.filter((m) => m.totalChanges > 0).length
+    return { totalFiles, reposWithChanges }
+  }, [memberChangesData])
+
+  const [collapsedMembers, setCollapsedMembers] = useState<Set<string>>(new Set())
+
+  const toggleMember = useCallback((path: string) => {
+    setCollapsedMembers((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) {
+        next.delete(path)
+      } else {
+        next.add(path)
+      }
+      return next
+    })
+  }, [])
+
+  const handleConnectionRefresh = useCallback(async () => {
+    if (!connectionMembers) return
+    setIsRefreshing(true)
+    try {
+      const paths = connectionMembers.map((m) => m.worktree_path)
+      await loadStatusesForPaths(paths)
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [connectionMembers, loadStatusesForPaths])
+
+  const handleConnectionViewDiff = useCallback(
+    (file: GitFileStatus, memberWorktreePath: string) => {
+      if (!memberWorktreePath) return
+      const isNewFile = file.status === '?' || file.status === 'A'
+      if (isNewFile) {
+        const fullPath = `${memberWorktreePath}/${file.relativePath}`
+        const fileName = file.relativePath.split('/').pop() || file.relativePath
+        const contextId = useConnectionStore.getState().selectedConnectionId
+        if (contextId) {
+          useFileViewerStore.getState().openFile(fullPath, fileName, contextId)
+        }
+      } else {
+        useFileViewerStore.getState().setActiveDiff({
+          worktreePath: memberWorktreePath,
+          filePath: file.relativePath,
+          fileName: file.relativePath.split('/').pop() || file.relativePath,
+          staged: file.staged,
+          isUntracked: file.status === '?',
+          isNewFile: false
+        })
+      }
+      onFileClick?.(file.relativePath)
+    },
+    [onFileClick]
+  )
+
   const handleReview = useCallback(async () => {
     if (!worktreePath) return
     setIsReviewing(true)
@@ -295,7 +395,7 @@ export function ChangesView({
     } finally {
       setIsReviewing(false)
     }
-  }, [worktreePath, stagedFiles, modifiedFiles, untrackedFiles, branchInfo])
+  }, [worktreePath, stagedFiles, modifiedFiles, untrackedFiles, conflictedFiles, branchInfo])
 
   if (!worktreePath) {
     return <div className="p-4 text-sm text-muted-foreground text-center">No worktree selected</div>
@@ -303,8 +403,94 @@ export function ChangesView({
 
   if (isConnectionMode) {
     return (
-      <div className="p-4 text-sm text-muted-foreground text-center">
-        Connection folder — not a git repository
+      <div className="flex flex-col h-full" data-testid="connection-changes-view">
+        {/* Summary header */}
+        <div className="flex items-center justify-between px-2 py-1.5 bg-muted/30 border-b border-border">
+          <div className="flex items-center gap-1.5 text-xs">
+            <Link className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="font-medium">
+              {connectionSummary.totalFiles === 0
+                ? 'No changes'
+                : `${connectionSummary.totalFiles} file${connectionSummary.totalFiles === 1 ? '' : 's'} across ${connectionSummary.reposWithChanges} repo${connectionSummary.reposWithChanges === 1 ? '' : 's'}`}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn('h-5 w-5', isRefreshing && 'animate-spin')}
+            onClick={handleConnectionRefresh}
+            disabled={isRefreshing}
+            title="Refresh all"
+          >
+            <RefreshCw className="h-3 w-3" />
+          </Button>
+        </div>
+
+        {/* Per-member sections */}
+        <div className="flex-1 overflow-y-auto">
+          {memberChangesData.map((member) => {
+            const isCollapsed = collapsedMembers.has(member.worktree_path)
+            const hasNoChanges = member.totalChanges === 0
+
+            return (
+              <div key={member.worktree_path} className="border-b border-border last:border-b-0">
+                {/* Member header */}
+                <button
+                  type="button"
+                  className="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-accent/50"
+                  onClick={() => toggleMember(member.worktree_path)}
+                >
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    {isCollapsed || hasNoChanges ? (
+                      <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="font-medium truncate">{member.project_name}</span>
+                    <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <span className="text-muted-foreground truncate">
+                      {member.branchInfo?.name || member.worktree_branch || '...'}
+                    </span>
+                    {member.branchInfo?.ahead ? (
+                      <span className="flex items-center gap-0.5 text-muted-foreground">
+                        <ArrowUp className="h-3 w-3" />
+                        {member.branchInfo.ahead}
+                      </span>
+                    ) : null}
+                    {member.branchInfo?.behind ? (
+                      <span className="flex items-center gap-0.5 text-muted-foreground">
+                        <ArrowDown className="h-3 w-3" />
+                        {member.branchInfo.behind}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {hasNoChanges ? (
+                      <span className="text-muted-foreground text-[10px]">clean</span>
+                    ) : (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-muted">
+                        {member.totalChanges}
+                      </span>
+                    )}
+                  </span>
+                </button>
+
+                {/* Member content (file groups) */}
+                {!isCollapsed && !hasNoChanges && (
+                  <MemberChanges
+                    member={member}
+                    onStageFile={(path, rel) => stageFile(path, rel)}
+                    onUnstageFile={(path, rel) => unstageFile(path, rel)}
+                    onStageAll={(path) => stageAll(path)}
+                    onUnstageAll={(path) => unstageAll(path)}
+                    onDiscardChanges={(path, rel) => discardChanges(path, rel)}
+                    onViewDiff={handleConnectionViewDiff}
+                  />
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
     )
   }
@@ -688,5 +874,180 @@ const FileRow = memo(function FileRow({
       </ContextMenuTrigger>
       {contextMenu}
     </ContextMenu>
+  )
+})
+
+/* ---- Connection mode sub-component ---- */
+
+interface MemberChangesData {
+  worktree_path: string
+  project_name: string
+  branchInfo?: { name: string; tracking: string | null; ahead: number; behind: number }
+  conflicted: GitFileStatus[]
+  staged: GitFileStatus[]
+  modified: GitFileStatus[]
+  untracked: GitFileStatus[]
+}
+
+interface MemberChangesProps {
+  member: MemberChangesData
+  onStageFile: (worktreePath: string, relativePath: string) => Promise<boolean>
+  onUnstageFile: (worktreePath: string, relativePath: string) => Promise<boolean>
+  onStageAll: (worktreePath: string) => Promise<boolean>
+  onUnstageAll: (worktreePath: string) => Promise<boolean>
+  onDiscardChanges: (worktreePath: string, relativePath: string) => Promise<boolean>
+  onViewDiff: (file: GitFileStatus, worktreePath: string) => void
+}
+
+const MemberChanges = memo(function MemberChanges({
+  member,
+  onStageFile,
+  onUnstageFile,
+  onStageAll,
+  onUnstageAll,
+  onDiscardChanges,
+  onViewDiff
+}: MemberChangesProps): React.JSX.Element {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+
+  const toggleGroup = useCallback((group: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(group)) {
+        next.delete(group)
+      } else {
+        next.add(group)
+      }
+      return next
+    })
+  }, [])
+
+  const handleViewDiff = useCallback(
+    (file: GitFileStatus) => onViewDiff(file, member.worktree_path),
+    [onViewDiff, member.worktree_path]
+  )
+
+  const wp = member.worktree_path
+
+  return (
+    <div className="pl-3 pb-1">
+      {/* Staged */}
+      {member.staged.length > 0 && (
+        <GroupHeader
+          title="Staged Changes"
+          count={member.staged.length}
+          isCollapsed={collapsed.has('staged')}
+          onToggle={() => toggleGroup('staged')}
+          action={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 px-1.5 text-[10px]"
+              onClick={() => onUnstageAll(wp)}
+              title="Unstage all"
+            >
+              <Minus className="h-3 w-3 mr-0.5" />
+              Unstage
+            </Button>
+          }
+        >
+          {member.staged.map((file) => (
+            <FileRow
+              key={`staged-${file.relativePath}`}
+              file={file}
+              onViewDiff={handleViewDiff}
+              contextMenu={
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => onUnstageFile(wp, file.relativePath)}>
+                    <Minus className="h-3.5 w-3.5 mr-2" />
+                    Unstage
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              }
+            />
+          ))}
+        </GroupHeader>
+      )}
+
+      {/* Modified */}
+      {member.modified.length > 0 && (
+        <GroupHeader
+          title="Changes"
+          count={member.modified.length}
+          isCollapsed={collapsed.has('modified')}
+          onToggle={() => toggleGroup('modified')}
+          action={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 px-1.5 text-[10px]"
+              onClick={() => onStageAll(wp)}
+              title="Stage all"
+            >
+              <Plus className="h-3 w-3 mr-0.5" />
+              Stage
+            </Button>
+          }
+        >
+          {member.modified.map((file) => (
+            <FileRow
+              key={`modified-${file.relativePath}`}
+              file={file}
+              onViewDiff={handleViewDiff}
+              contextMenu={
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => onStageFile(wp, file.relativePath)}>
+                    <Plus className="h-3.5 w-3.5 mr-2" />
+                    Stage
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    onClick={() => onDiscardChanges(wp, file.relativePath)}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Undo2 className="h-3.5 w-3.5 mr-2" />
+                    Discard Changes
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              }
+            />
+          ))}
+        </GroupHeader>
+      )}
+
+      {/* Untracked */}
+      {member.untracked.length > 0 && (
+        <GroupHeader
+          title="Untracked"
+          count={member.untracked.length}
+          isCollapsed={collapsed.has('untracked')}
+          onToggle={() => toggleGroup('untracked')}
+        >
+          {member.untracked.map((file) => (
+            <FileRow
+              key={`untracked-${file.relativePath}`}
+              file={file}
+              onViewDiff={handleViewDiff}
+              contextMenu={
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => onStageFile(wp, file.relativePath)}>
+                    <Plus className="h-3.5 w-3.5 mr-2" />
+                    Stage
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              }
+            />
+          ))}
+        </GroupHeader>
+      )}
+
+      {/* Commit form when staged changes exist */}
+      {member.staged.length > 0 && (
+        <GitCommitForm worktreePath={wp} hasConflicts={member.conflicted.length > 0} />
+      )}
+
+      {/* Push/Pull controls */}
+      <GitPushPull worktreePath={wp} />
+    </div>
   )
 })
