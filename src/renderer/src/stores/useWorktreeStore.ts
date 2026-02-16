@@ -252,6 +252,16 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         return { success: false, error: result.error || 'Failed to archive worktree' }
       }
 
+      // 4. Clean up any connections referencing this worktree
+      try {
+        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        // Reload connections to reflect the change
+        const { useConnectionStore } = await import('./useConnectionStore')
+        await useConnectionStore.getState().loadConnections()
+      } catch {
+        // Non-critical -- log but don't block archive
+      }
+
       // Remove from state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -315,6 +325,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       if (!result.success) {
         return { success: false, error: result.error || 'Failed to unbranch worktree' }
+      }
+
+      // Clean up any connections referencing this worktree
+      try {
+        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        const { useConnectionStore } = await import('./useConnectionStore')
+        await useConnectionStore.getState().loadConnections()
+      } catch {
+        // Non-critical -- log but don't block unbranch
       }
 
       // Remove from state

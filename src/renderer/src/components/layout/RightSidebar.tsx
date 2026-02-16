@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FileSidebar } from '@/components/file-tree'
@@ -12,9 +13,19 @@ export function RightSidebar(): React.JSX.Element {
     useLayoutStore()
 
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
+  const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
+  const selectedConnection = useConnectionStore((s) =>
+    s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
+  )
+  const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
 
   // Get the selected worktree path by searching all projects' worktrees
   const selectedWorktreePath = useMemo(() => {
+    // In connection mode, use the connection's folder path
+    if (isConnectionMode && selectedConnection?.path) {
+      return selectedConnection.path
+    }
+
     if (!selectedWorktreeId) return null
 
     // Search through all projects' worktrees to find the selected one
@@ -25,7 +36,7 @@ export function RightSidebar(): React.JSX.Element {
       }
     }
     return null
-  }, [selectedWorktreeId, worktreesByProject])
+  }, [selectedWorktreeId, worktreesByProject, isConnectionMode, selectedConnection?.path])
 
   const handleResize = (delta: number): void => {
     setRightSidebarWidth(rightSidebarWidth + delta)
@@ -33,8 +44,9 @@ export function RightSidebar(): React.JSX.Element {
 
   const handleFileClick = (node: { path: string; name: string; isDirectory: boolean }): void => {
     // Open file in the file viewer tab
-    if (!node.isDirectory && selectedWorktreeId) {
-      useFileViewerStore.getState().openFile(node.path, node.name, selectedWorktreeId)
+    const contextId = selectedWorktreeId || selectedConnectionId
+    if (!node.isDirectory && contextId) {
+      useFileViewerStore.getState().openFile(node.path, node.name, contextId)
     }
   }
 
