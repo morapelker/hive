@@ -41,7 +41,6 @@ interface ConnectionState {
   deleteConnection: (connectionId: string) => Promise<void>
   addMember: (connectionId: string, worktreeId: string) => Promise<void>
   removeMember: (connectionId: string, worktreeId: string) => Promise<void>
-  renameConnection: (connectionId: string, name: string) => Promise<void>
   selectConnection: (id: string | null) => void
 }
 
@@ -165,24 +164,6 @@ export const useConnectionStore = create<ConnectionState>()(
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           toast.error(`Failed to remove member: ${message}`)
-        }
-      },
-
-      renameConnection: async (connectionId: string, name: string) => {
-        try {
-          const result = await window.connectionOps.rename(connectionId, name)
-          if (!result.success) {
-            toast.error(result.error || 'Failed to rename connection')
-            return
-          }
-          set((state) => ({
-            connections: state.connections.map((c) =>
-              c.id === connectionId ? { ...c, name, updated_at: new Date().toISOString() } : c
-            )
-          }))
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          toast.error(`Failed to rename connection: ${message}`)
         }
       },
 

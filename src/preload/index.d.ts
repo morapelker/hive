@@ -889,7 +889,6 @@ declare global {
         connectionId: string,
         worktreeId: string
       ) => Promise<{ success: boolean; connectionDeleted?: boolean; error?: string }>
-      rename: (connectionId: string, name: string) => Promise<{ success: boolean; error?: string }>
       getAll: () => Promise<{
         success: boolean
         connections?: ConnectionWithMembers[]

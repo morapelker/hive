@@ -1,19 +1,17 @@
 import { ipcMain, shell } from 'electron'
+import { randomUUID } from 'crypto'
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
 import { join } from 'path'
 import { createLogger } from '../services'
-import { selectUniqueBreedName, type BreedType } from '../services/breed-names'
 import {
   createConnectionDir,
   createSymlink,
   removeSymlink,
   deleteConnectionDir,
   generateAgentsMd,
-  deriveSymlinkName,
-  renameConnectionDir,
-  getConnectionsBaseDir
+  deriveSymlinkName
 } from '../services/connection-service'
 import { getDatabase } from '../db'
 import type { ConnectionWithMembers } from '../db/types'
@@ -21,19 +19,11 @@ import type { ConnectionWithMembers } from '../db/types'
 const log = createLogger({ component: 'ConnectionHandlers' })
 
 /**
- * Read the breed type preference from app settings.
+ * Derive a display name for a connection from its member project names.
  */
-function getBreedType(): BreedType {
-  try {
-    const settingsJson = getDatabase().getSetting('app_settings')
-    if (settingsJson) {
-      const settings = JSON.parse(settingsJson)
-      if (settings.breedType === 'cats') return 'cats'
-    }
-  } catch {
-    // Fall back to dogs
-  }
-  return 'dogs'
+function deriveConnectionName(connection: ConnectionWithMembers): string {
+  const projectNames = [...new Set(connection.members.map((m) => m.project_name))]
+  return projectNames.join(' + ') || 'Connection'
 }
 
 /**
@@ -68,17 +58,12 @@ export function registerConnectionHandlers(): void {
       try {
         const db = getDatabase()
 
-        // Generate a unique breed name for the connection
-        const existingConnections = db.getAllConnections()
-        const existingNames = new Set(existingConnections.map((c) => c.name))
-        const breedType = getBreedType()
-        const name = selectUniqueBreedName(existingNames, breedType)
+        // Use a short random ID for the directory name (avoids filesystem issues with special chars)
+        const dirName = randomUUID().slice(0, 8)
+        const dirPath = createConnectionDir(dirName)
 
-        // Create the filesystem directory
-        const dirPath = createConnectionDir(name)
-
-        // Create the DB connection record
-        const connection = db.createConnection({ name, path: dirPath })
+        // Create the DB connection record with placeholder name
+        const connection = db.createConnection({ name: dirName, path: dirPath })
 
         // For each worktree, look up its data, derive symlink name, create symlink + member
         const existingSymlinkNames: string[] = []
@@ -110,14 +95,22 @@ export function registerConnectionHandlers(): void {
           })
         }
 
-        // Fetch the enriched connection (with joined member data)
+        // Derive the display name from member project names and update the DB
         const enriched = db.getConnection(connection.id)
         if (enriched) {
+          const derivedName = deriveConnectionName(enriched)
+          db.updateConnection(connection.id, { name: derivedName })
           generateAgentsMd(dirPath, buildAgentsMdMembers(enriched))
         }
 
-        log.info('Connection created', { id: connection.id, name, memberCount: worktreeIds.length })
-        return { success: true, connection: enriched ?? undefined }
+        // Re-fetch to get the final state with derived name
+        const final = db.getConnection(connection.id)
+        log.info('Connection created', {
+          id: connection.id,
+          name: final?.name,
+          memberCount: worktreeIds.length
+        })
+        return { success: true, connection: final ?? undefined }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         log.error('Connection creation failed', error instanceof Error ? error : new Error(message))
@@ -202,9 +195,11 @@ export function registerConnectionHandlers(): void {
           symlink_name: symlinkName
         })
 
-        // Regenerate AGENTS.md with the updated member list
+        // Re-derive connection name and regenerate AGENTS.md
         const updated = db.getConnection(connectionId)
         if (updated) {
+          const derivedName = deriveConnectionName(updated)
+          db.updateConnection(connectionId, { name: derivedName })
           generateAgentsMd(updated.path, buildAgentsMdMembers(updated))
         }
 
@@ -269,7 +264,9 @@ export function registerConnectionHandlers(): void {
           return { success: true, connectionDeleted: true }
         }
 
-        // Regenerate AGENTS.md with remaining members
+        // Re-derive connection name and regenerate AGENTS.md with remaining members
+        const derivedName = deriveConnectionName(remaining)
+        db.updateConnection(connectionId, { name: derivedName })
         generateAgentsMd(remaining.path, buildAgentsMdMembers(remaining))
 
         log.info('Member removed from connection', { connectionId, worktreeId })
@@ -277,44 +274,6 @@ export function registerConnectionHandlers(): void {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         log.error('Remove member failed', error instanceof Error ? error : new Error(message))
-        return { success: false, error: message }
-      }
-    }
-  )
-
-  // Rename a connection (folder on disk + DB record)
-  ipcMain.handle(
-    'connection:rename',
-    async (
-      _event,
-      { connectionId, name }: { connectionId: string; name: string }
-    ): Promise<{ success: boolean; error?: string }> => {
-      log.info('Renaming connection', { connectionId, name })
-      try {
-        const db = getDatabase()
-        const connection = db.getConnection(connectionId)
-        if (!connection) {
-          return { success: false, error: 'Connection not found' }
-        }
-
-        // Compute the new path
-        const newPath = join(getConnectionsBaseDir(), name)
-
-        // Rename the directory on disk
-        renameConnectionDir(connection.path, newPath)
-
-        // Update DB with new name and path
-        db.updateConnection(connectionId, { name, path: newPath })
-
-        log.info('Connection renamed', {
-          connectionId,
-          oldName: connection.name,
-          newName: name
-        })
-        return { success: true }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        log.error('Connection rename failed', error instanceof Error ? error : new Error(message))
         return { success: false, error: message }
       }
     }
@@ -507,7 +466,9 @@ export function registerConnectionHandlers(): void {
               connectionId: membership.connection_id
             })
           } else {
-            // Regenerate AGENTS.md for remaining members
+            // Re-derive connection name and regenerate AGENTS.md for remaining members
+            const derivedName = deriveConnectionName(remaining)
+            db.updateConnection(membership.connection_id, { name: derivedName })
             generateAgentsMd(remaining.path, buildAgentsMdMembers(remaining))
           }
         }
