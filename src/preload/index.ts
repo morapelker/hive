@@ -71,6 +71,7 @@ const db = {
     create: (data: {
       worktree_id: string | null
       project_id: string
+      connection_id?: string | null
       name?: string | null
       opencode_session_id?: string | null
       model_provider_id?: string | null
@@ -108,7 +109,11 @@ const db = {
     }) => ipcRenderer.invoke('db:session:search', options),
     getDraft: (sessionId: string) => ipcRenderer.invoke('db:session:getDraft', sessionId),
     updateDraft: (sessionId: string, draft: string | null) =>
-      ipcRenderer.invoke('db:session:updateDraft', sessionId, draft)
+      ipcRenderer.invoke('db:session:updateDraft', sessionId, draft),
+    getByConnection: (connectionId: string) =>
+      ipcRenderer.invoke('db:session:getByConnection', connectionId),
+    getActiveByConnection: (connectionId: string) =>
+      ipcRenderer.invoke('db:session:getActiveByConnection', connectionId)
   },
 
   // Spaces
@@ -1327,6 +1332,26 @@ const updaterOps = {
   }
 }
 
+// Connection operations API
+const connectionOps = {
+  create: (worktreeIds: string[]) => ipcRenderer.invoke('connection:create', { worktreeIds }),
+  delete: (connectionId: string) => ipcRenderer.invoke('connection:delete', { connectionId }),
+  addMember: (connectionId: string, worktreeId: string) =>
+    ipcRenderer.invoke('connection:addMember', { connectionId, worktreeId }),
+  removeMember: (connectionId: string, worktreeId: string) =>
+    ipcRenderer.invoke('connection:removeMember', { connectionId, worktreeId }),
+  rename: (connectionId: string, name: string) =>
+    ipcRenderer.invoke('connection:rename', { connectionId, name }),
+  getAll: () => ipcRenderer.invoke('connection:getAll'),
+  get: (connectionId: string) => ipcRenderer.invoke('connection:get', { connectionId }),
+  openInTerminal: (connectionPath: string) =>
+    ipcRenderer.invoke('connection:openInTerminal', { connectionPath }),
+  openInEditor: (connectionPath: string) =>
+    ipcRenderer.invoke('connection:openInEditor', { connectionPath }),
+  removeWorktreeFromAll: (worktreeId: string) =>
+    ipcRenderer.invoke('connection:removeWorktreeFromAll', { worktreeId })
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -1345,6 +1370,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('scriptOps', scriptOps)
     contextBridge.exposeInMainWorld('terminalOps', terminalOps)
     contextBridge.exposeInMainWorld('updaterOps', updaterOps)
+    contextBridge.exposeInMainWorld('connectionOps', connectionOps)
   } catch (error) {
     console.error(error)
   }
@@ -1375,4 +1401,6 @@ if (process.contextIsolated) {
   window.terminalOps = terminalOps
   // @ts-expect-error (define in dts)
   window.updaterOps = updaterOps
+  // @ts-expect-error (define in dts)
+  window.connectionOps = connectionOps
 }

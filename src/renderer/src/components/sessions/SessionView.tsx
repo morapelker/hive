@@ -129,6 +129,7 @@ interface DbSession {
   id: string
   worktree_id: string | null
   project_id: string
+  connection_id: string | null
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
@@ -324,6 +325,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       const found = sessions.find((session) => session.id === sessionId)
       if (found) return found
     }
+    for (const sessions of state.sessionsByConnection.values()) {
+      const found = sessions.find((session) => session.id === sessionId)
+      if (found) return found
+    }
     return null
   })
   const globalModel = useSettingsStore((state) => state.selectedModel)
@@ -416,6 +421,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const getModelForRequests = useCallback((): SelectedModel | undefined => {
     const state = useSessionStore.getState()
     for (const sessions of state.sessionsByWorktree.values()) {
+      const found = sessions.find((session) => session.id === sessionId)
+      if (found?.model_provider_id && found.model_id) {
+        return {
+          providerID: found.model_provider_id,
+          modelID: found.model_id,
+          variant: found.model_variant ?? undefined
+        }
+      }
+    }
+    for (const sessions of state.sessionsByConnection.values()) {
       const found = sessions.find((session) => session.id === sessionId)
       if (found?.model_provider_id && found.model_id) {
         return {
@@ -1482,6 +1497,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             wtPath = worktree.path
             setWorktreePath(wtPath)
             transcriptSourceRef.current.worktreePath = wtPath
+          }
+        } else if (session.connection_id) {
+          // Connection session: resolve the connection folder path
+          try {
+            const connResult = await window.connectionOps.get(session.connection_id)
+            if (connResult.success && connResult.connection) {
+              wtPath = connResult.connection.path
+              setWorktreePath(wtPath)
+              transcriptSourceRef.current.worktreePath = wtPath
+            }
+          } catch {
+            console.warn('Failed to resolve connection path for session')
           }
         }
 
