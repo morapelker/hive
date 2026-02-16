@@ -36,13 +36,21 @@ export interface ClaudeQuery {
   rewindFiles?: (
     userMessageId: string,
     options?: { dryRun?: boolean }
-  ) => Promise<{
+  ) => Promise<void | {
     canRewind: boolean
     error?: string
     filesChanged?: string[]
     insertions?: number
     deletions?: number
   }>
+}
+
+interface RewindFilesResult {
+  canRewind?: boolean
+  error?: string
+  filesChanged?: string[]
+  insertions?: number
+  deletions?: number
 }
 
 export interface PendingQuestionState {
@@ -61,6 +69,7 @@ export interface ClaudeSessionState {
   hiveSessionId: string
   worktreePath: string
   abortController: AbortController | null
+  checkpointCounter: number
   checkpoints: Map<string, number>
   query: ClaudeQuery | null
   /** Last completed query reference for rewindFiles access */
@@ -79,6 +88,8 @@ export interface ClaudeSessionState {
   revertCheckpointUuid: string | null
   /** Diff string from last rewindFiles result */
   revertDiff: string | null
+  /** One-shot checkpoint UUID used with resumeSessionAt on the next prompt */
+  resumeSessionAt: string | null
 }
 
 export class ClaudeCodeImplementer implements AgentSdkImplementer {
@@ -121,6 +132,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       hiveSessionId,
       worktreePath,
       abortController: new AbortController(),
+      checkpointCounter: 0,
       checkpoints: new Map(),
       query: null,
       lastQuery: null,
@@ -131,7 +143,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       pendingPlanApproval: null,
       revertMessageID: null,
       revertCheckpointUuid: null,
-      revertDiff: null
+      revertDiff: null,
+      resumeSessionAt: null
     }
     this.sessions.set(key, state)
 
@@ -166,6 +179,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       hiveSessionId,
       worktreePath,
       abortController: new AbortController(),
+      checkpointCounter: 0,
       checkpoints: new Map(),
       query: null,
       lastQuery: null,
@@ -176,7 +190,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       pendingPlanApproval: null,
       revertMessageID: null,
       revertCheckpointUuid: null,
-      revertDiff: null
+      revertDiff: null,
+      resumeSessionAt: null
     }
     this.sessions.set(key, state)
 
@@ -330,6 +345,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         model: modelOverride?.modelID ?? this.selectedModel,
         includePartialMessages: true,
         enableFileCheckpointing: true,
+        extraArgs: { 'replay-user-messages': null },
+        env: {
+          ...process.env,
+          CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
+        },
         canUseTool: this.createCanUseToolCallback(session)
       }
 
@@ -338,13 +358,23 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         options.resume = session.claudeSessionId
       }
 
+      // One-shot conversation boundary after a conversation-only undo fallback.
+      const pendingResumeSessionAt = session.resumeSessionAt
+      if (pendingResumeSessionAt) {
+        options.resumeSessionAt = pendingResumeSessionAt
+      }
+
       log.info('Prompt: calling sdk.query()', {
         model: options.model,
         resume: !!options.resume,
+        resumeSessionAt: typeof options.resumeSessionAt === 'string',
         cwd: options.cwd
       })
 
       const queryData = sdk.query({ prompt, options }) as AsyncIterable<Record<string, unknown>>
+      if (pendingResumeSessionAt) {
+        session.resumeSessionAt = null
+      }
       session.query = queryData as unknown as ClaudeQuery
 
       log.info('Prompt: entering async iteration loop')
@@ -402,9 +432,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
                 newAgentSessionId: sdkSessionId
               })
             } catch (err) {
-              log.error('Failed to update opencode_session_id in DB', {
-                hiveSessionId: session.hiveSessionId,
-                error: err instanceof Error ? err.message : String(err)
+              const error = err instanceof Error ? err : new Error(String(err))
+              log.error('Failed to update opencode_session_id in DB', error, {
+                hiveSessionId: session.hiveSessionId
               })
             }
           }
@@ -418,11 +448,6 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           })
         }
 
-        // Capture user message UUIDs as checkpoints
-        if (msgType === 'user' && sdkMessage.uuid) {
-          session.checkpoints.set(sdkMessage.uuid as string, messageIndex)
-        }
-
         // Accumulate translated messages in-memory for getMessages()
         if (msgType === 'user' || msgType === 'assistant') {
           const sdkMsg = sdkMessage as Record<string, unknown>
@@ -434,6 +459,18 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             msgType === 'user' &&
             contentBlockTypes.length > 0 &&
             contentBlockTypes.every((t) => t === 'tool_result')
+
+          // Capture checkpoints only from actual user prompts.
+          // tool_result-only user messages carry UUIDs but do not represent
+          // stable rewind points for file checkpointing.
+          if (msgType === 'user' && sdkMessage.uuid && !isToolResultOnly) {
+            const checkpointUuid = sdkMessage.uuid as string
+            const isFirstSeenCheckpoint = !session.checkpoints.has(checkpointUuid)
+            if (isFirstSeenCheckpoint) {
+              session.checkpointCounter += 1
+              session.checkpoints.set(checkpointUuid, session.checkpointCounter)
+            }
+          }
 
           log.info('TOOL_LIFECYCLE: accumulate message', {
             hiveSessionId: session.hiveSessionId,
@@ -507,7 +544,31 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               session.messages.length
             )
             if (translated) {
-              session.messages.push(translated)
+              const isUserMessage = msgType === 'user'
+              const translatedContent = (translated as Record<string, unknown>).content
+              let optimisticIndex = -1
+
+              if (isUserMessage && typeof translatedContent === 'string') {
+                for (let i = session.messages.length - 1; i >= 0; i--) {
+                  const candidate = session.messages[i] as Record<string, unknown>
+                  if (
+                    candidate.role === 'user' &&
+                    typeof candidate.id === 'string' &&
+                    candidate.id.startsWith('user-') &&
+                    typeof candidate.content === 'string' &&
+                    candidate.content === translatedContent
+                  ) {
+                    optimisticIndex = i
+                    break
+                  }
+                }
+              }
+
+              if (optimisticIndex >= 0) {
+                session.messages[optimisticIndex] = translated
+              } else {
+                session.messages.push(translated)
+              }
             }
           }
         }
@@ -524,12 +585,15 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       this.emitStatus(session.hiveSessionId, 'idle')
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      log.error('Prompt streaming error', {
-        worktreePath,
-        agentSessionId,
-        error: errorMessage,
-        stack: error instanceof Error ? error.stack : undefined
-      })
+      log.error(
+        'Prompt streaming error',
+        error instanceof Error ? error : new Error(errorMessage),
+        {
+          worktreePath,
+          agentSessionId,
+          error: errorMessage
+        }
+      )
 
       this.sendToRenderer('opencode:stream', {
         type: 'session.error',
@@ -882,51 +946,83 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
     let targetUuid: string | null = null
     let targetCheckpointIdx: number | null = null
+    let targetMessage: Record<string, unknown> | undefined
     for (const [uuid, msgIndex] of sortedCheckpoints) {
       // Skip checkpoints at or after the current boundary
       if (currentBoundaryCheckpointIdx !== null && msgIndex >= currentBoundaryCheckpointIdx) {
         continue
       }
+
+      // Ignore UUIDs that don't map to a real rendered user message.
+      // This filters out tool_result-only user messages that can carry UUIDs
+      // but are not reliable file rewind checkpoints.
+      const candidateMessage = this.findMessageByUuid(session, uuid)
+      if (!candidateMessage || candidateMessage.role !== 'user') {
+        continue
+      }
+
       targetUuid = uuid
       targetCheckpointIdx = msgIndex
+      targetMessage = candidateMessage
       break
     }
 
-    if (!targetUuid || targetCheckpointIdx === null) {
+    if (!targetUuid || targetCheckpointIdx === null || !targetMessage) {
       throw new Error('Nothing to undo')
     }
 
-    // Get the query object: prefer active query, fall back to lastQuery
-    const queryObj = session.query ?? session.lastQuery
-    if (!queryObj) {
-      throw new Error('Cannot undo: no SDK query available. Send a message first.')
-    }
-    if (!queryObj.rewindFiles) {
-      throw new Error('Cannot undo: SDK query does not support rewindFiles')
+    let rawRewindResult: void | RewindFilesResult | undefined
+    let usedConversationOnlyFallback = false
+
+    try {
+      // During an active stream, rewind on the live query transport.
+      if (session.query) {
+        if (!session.query.rewindFiles) {
+          throw new Error('Cannot undo: SDK query does not support rewindFiles')
+        }
+        rawRewindResult = await session.query.rewindFiles(targetUuid)
+      } else {
+        // After stream completion, the previous transport is closed.
+        // Resume with an empty prompt and rewind on the new query.
+        rawRewindResult = await this.rewindWithResumedQuery(session, targetUuid)
+      }
+    } catch (error) {
+      if (!this.isNoFileCheckpointFoundError(error)) {
+        throw error
+      }
+
+      // Fallback path: conversation-only rewind boundary.
+      // We cannot restore files for this UUID, but we can still continue the
+      // session from this checkpoint on the next prompt.
+      usedConversationOnlyFallback = true
+      session.resumeSessionAt = targetUuid
+      log.info('Undo: falling back to conversation-only checkpoint boundary', {
+        worktreePath,
+        agentSessionId,
+        targetUuid
+      })
     }
 
-    // Call rewindFiles on the query object (type-safe via ClaudeQuery interface)
-    const result = await queryObj.rewindFiles(targetUuid)
-
-    if (!result.canRewind) {
-      throw new Error(result.error ?? 'Cannot rewind to this point')
+    const rewindResult = usedConversationOnlyFallback
+      ? null
+      : this.normalizeRewindResult(rawRewindResult)
+    if (rewindResult?.canRewind === false) {
+      throw new Error(rewindResult.error ?? 'Cannot rewind to this point')
     }
 
     // Build a diff summary string
     const diffParts: string[] = []
-    if (result.filesChanged && result.filesChanged.length > 0) {
-      diffParts.push(`${result.filesChanged.length} file(s) changed`)
+    if (rewindResult?.filesChanged && rewindResult.filesChanged.length > 0) {
+      diffParts.push(`${rewindResult.filesChanged.length} file(s) changed`)
     }
-    if (result.insertions) {
-      diffParts.push(`+${result.insertions}`)
+    if (rewindResult?.insertions) {
+      diffParts.push(`+${rewindResult.insertions}`)
     }
-    if (result.deletions) {
-      diffParts.push(`-${result.deletions}`)
+    if (rewindResult?.deletions) {
+      diffParts.push(`-${rewindResult.deletions}`)
     }
     const revertDiff = diffParts.length > 0 ? diffParts.join(', ') : null
 
-    // Extract the user's prompt text from the message matching this UUID
-    const targetMessage = this.findMessageByUuid(session, targetUuid)
     const restoredPrompt = this.extractPromptFromMessage(targetMessage)
 
     // Use the hive-side message ID, or fall back to the SDK UUID
@@ -937,13 +1033,49 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     session.revertCheckpointUuid = targetUuid
     session.revertDiff = revertDiff
 
+    // Truncate in-memory messages to remove everything at and after the
+    // revert boundary.  Without this, getMessages() returns stale reverted
+    // messages, and the next prompt() appends new messages onto a polluted
+    // array.  The renderer's visibleMessages filter only hides them in the
+    // UI layer — other consumers (loadMessages IPC, transcript hydration)
+    // would still see the stale entries.
+    const revertIdx = session.messages.findIndex(
+      (m) => (m as Record<string, unknown>).id === revertMessageID
+    )
+    if (revertIdx >= 0) {
+      const removed = session.messages.splice(revertIdx)
+      log.info('Undo: truncated in-memory messages', {
+        revertIdx,
+        removedCount: removed.length,
+        remainingCount: session.messages.length
+      })
+    }
+
+    // Remove checkpoints at or after the target so subsequent undo calls
+    // don't walk into now-deleted messages.
+    for (const [uuid, idx] of session.checkpoints) {
+      if (idx >= (targetCheckpointIdx as number)) {
+        session.checkpoints.delete(uuid)
+      }
+    }
+
+    // Set resumeSessionAt so the next prompt() resumes the SDK conversation
+    // from the rewind point rather than from the end of the (now-reverted)
+    // conversation.  Without this, the SDK would replay all old messages
+    // including the reverted ones, causing the conversation context to be
+    // wrong after undo.
+    session.resumeSessionAt = targetUuid
+
     log.info('Undo: rewindFiles succeeded', {
       worktreePath,
       agentSessionId,
       targetUuid,
       targetCheckpointIdx,
       revertMessageID,
-      filesChanged: result.filesChanged?.length ?? 0
+      resumeSessionAt: targetUuid,
+      messagesRemaining: session.messages.length,
+      checkpointsRemaining: session.checkpoints.size,
+      filesChanged: rewindResult?.filesChanged?.length ?? 0
     })
 
     return { revertMessageID, restoredPrompt, revertDiff }
@@ -1606,6 +1738,73 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         })
       }
     }
+  }
+
+  private normalizeRewindResult(result: void | RewindFilesResult): RewindFilesResult | null {
+    if (!result || typeof result !== 'object') return null
+    return result
+  }
+
+  private isNoFileCheckpointFoundError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return message.toLowerCase().includes('no file checkpoint found')
+  }
+
+  private async rewindWithResumedQuery(
+    session: ClaudeSessionState,
+    targetUuid: string
+  ): Promise<void | RewindFilesResult> {
+    const sdk = await loadClaudeSDK()
+
+    const rewindQueryRaw = sdk.query({
+      prompt: '',
+      options: {
+        cwd: session.worktreePath,
+        resume: session.claudeSessionId,
+        includePartialMessages: true,
+        enableFileCheckpointing: true,
+        extraArgs: { 'replay-user-messages': null },
+        env: {
+          ...process.env,
+          CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
+        },
+        canUseTool: this.createCanUseToolCallback(session)
+      }
+    })
+
+    if (
+      !rewindQueryRaw ||
+      typeof (rewindQueryRaw as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] !==
+        'function'
+    ) {
+      throw new Error('Cannot undo: failed to resume session for rewinding')
+    }
+
+    const rewindQuery = rewindQueryRaw as AsyncIterable<Record<string, unknown>>
+    const queryObj = rewindQueryRaw as unknown as ClaudeQuery
+    if (!queryObj.rewindFiles) {
+      throw new Error('Cannot undo: SDK query does not support rewindFiles')
+    }
+
+    let result: void | RewindFilesResult | undefined
+    let gotMessage = false
+    try {
+      for await (const _message of rewindQuery) {
+        gotMessage = true
+        result = await queryObj.rewindFiles(targetUuid)
+        break
+      }
+    } finally {
+      if (queryObj.return) {
+        await queryObj.return().catch(() => {})
+      }
+    }
+
+    if (!gotMessage) {
+      throw new Error('Cannot undo: failed to resume session for rewinding')
+    }
+
+    return result
   }
 
   /**

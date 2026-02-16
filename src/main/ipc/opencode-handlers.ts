@@ -377,10 +377,11 @@ export function registerOpenCodeHandlers(
         const result = await openCodeService.undo(worktreePath, sessionId)
         return { success: true, ...result }
       } catch (error) {
-        log.error('IPC: opencode:undo failed', { error })
+        const err = error instanceof Error ? error : new Error(String(error))
+        log.error('IPC: opencode:undo failed', err)
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
+          error: err.message
         }
       }
     }
@@ -405,10 +406,11 @@ export function registerOpenCodeHandlers(
         const result = await openCodeService.redo(worktreePath, sessionId)
         return { success: true, ...result }
       } catch (error) {
-        log.error('IPC: opencode:redo failed', { error })
+        const err = error instanceof Error ? error : new Error(String(error))
+        log.error('IPC: opencode:redo failed', err)
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
+          error: err.message
         }
       }
     }

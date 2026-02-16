@@ -90,6 +90,7 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockQuery.mockReset()
     impl = new ClaudeCodeImplementer()
     sessions = (impl as any).sessions
     mockWindow = createMockWindow()
@@ -146,18 +147,31 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
       deletions: 5
     })
 
-    const iter = createMockQueryIterator(sdkMessages, {
+    const promptIter = createMockQueryIterator(sdkMessages, {
       rewindFiles: rewindFilesMock
     })
-    mockQuery.mockReturnValue(iter)
+    mockQuery
+      .mockImplementationOnce(() => promptIter)
+      .mockImplementation(() =>
+        createMockQueryIterator(
+          [
+            {
+              type: 'system',
+              subtype: 'init',
+              session_id: 'sdk-session-1'
+            }
+          ],
+          { rewindFiles: rewindFilesMock }
+        )
+      )
 
-    await impl.prompt('/proj', sessionId, 'initial prompt')
+    await impl.prompt('/proj', sessionId, userPrompts[0] ?? 'initial prompt')
 
     // After prompt, session is materialized as 'sdk-session-1'
     const key = (impl as any).getSessionKey('/proj', 'sdk-session-1')
     const session = sessions.get(key)!
 
-    return { session, sessionId: 'sdk-session-1', rewindFilesMock, iter }
+    return { session, sessionId: 'sdk-session-1', rewindFilesMock, iter: promptIter }
   }
 
   // ── Task 1: enableFileCheckpointing ─────────────────────────────────
@@ -183,12 +197,29 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1)
       const callArgs = mockQuery.mock.calls[0][0]
       expect(callArgs.options.enableFileCheckpointing).toBe(true)
+      expect(callArgs.options.extraArgs).toEqual({ 'replay-user-messages': null })
+      expect(callArgs.options.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe('1')
     })
   })
 
   // ── Task 2b: undo() ─────────────────────────────────────────────────
 
   describe('undo()', () => {
+    it('replaces optimistic local user message with SDK user UUID', async () => {
+      const { session } = await setupSessionWithCheckpoints({
+        userUuids: ['uuid-user-1'],
+        userPrompts: ['first prompt']
+      })
+
+      const userMessages = session.messages.filter(
+        (m) => (m as { role?: string }).role === 'user'
+      ) as Array<{ id?: string; content?: string }>
+
+      expect(userMessages).toHaveLength(1)
+      expect(userMessages[0].id).toBe('uuid-user-1')
+      expect(userMessages[0].content).toBe('first prompt')
+    })
+
     it('calls rewindFiles with the correct user message UUID', async () => {
       const { rewindFilesMock } = await setupSessionWithCheckpoints()
 
@@ -286,6 +317,140 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
       expect(result2.revertMessageID).not.toBe(result3.revertMessageID)
     })
 
+    it('targets the latest checkpoint across multiple prompt calls', async () => {
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+
+      const prompt1 = createMockQueryIterator([
+        {
+          type: 'assistant',
+          session_id: 'sdk-session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'first response' }]
+          }
+        },
+        {
+          type: 'user',
+          session_id: 'sdk-session-1',
+          uuid: 'uuid-1',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'prompt one' }]
+          }
+        }
+      ])
+
+      const prompt2 = createMockQueryIterator([
+        {
+          type: 'user',
+          session_id: 'sdk-session-1',
+          uuid: 'uuid-2',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'prompt two' }]
+          }
+        }
+      ])
+
+      const prompt3 = createMockQueryIterator([
+        {
+          type: 'user',
+          session_id: 'sdk-session-1',
+          uuid: 'uuid-3',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'prompt three' }]
+          }
+        }
+      ])
+
+      const resumeRewindFilesMock = vi.fn().mockResolvedValue({ canRewind: true })
+      const resumeIter = createMockQueryIterator(
+        [
+          {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'sdk-session-1'
+          }
+        ],
+        { rewindFiles: resumeRewindFilesMock }
+      )
+
+      mockQuery
+        .mockReturnValueOnce(prompt1)
+        .mockReturnValueOnce(prompt2)
+        .mockReturnValueOnce(prompt3)
+        .mockReturnValueOnce(resumeIter)
+
+      await impl.prompt('/proj', sessionId, 'prompt one')
+      await impl.prompt('/proj', 'sdk-session-1', 'prompt two')
+      await impl.prompt('/proj', 'sdk-session-1', 'prompt three')
+
+      await impl.undo('/proj', 'sdk-session-1', 'hive-1')
+
+      expect(resumeRewindFilesMock).toHaveBeenCalledWith('uuid-3')
+    })
+
+    it('captures first-seen checkpoint even when SDK marks message as replay', async () => {
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+
+      const prompt1 = createMockQueryIterator([
+        {
+          type: 'assistant',
+          session_id: 'sdk-session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'first response' }]
+          }
+        },
+        {
+          type: 'user',
+          session_id: 'sdk-session-1',
+          uuid: 'uuid-1',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'prompt one' }]
+          }
+        }
+      ])
+
+      const prompt2 = createMockQueryIterator([
+        {
+          type: 'user',
+          session_id: 'sdk-session-1',
+          uuid: 'uuid-2',
+          isReplay: true,
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'prompt two' }]
+          }
+        }
+      ])
+
+      const resumeRewindFilesMock = vi.fn().mockResolvedValue({ canRewind: true })
+      const resumeIter = createMockQueryIterator(
+        [
+          {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'sdk-session-1'
+          }
+        ],
+        { rewindFiles: resumeRewindFilesMock }
+      )
+
+      mockQuery
+        .mockReturnValueOnce(prompt1)
+        .mockReturnValueOnce(prompt2)
+        .mockReturnValueOnce(resumeIter)
+
+      await impl.prompt('/proj', sessionId, 'prompt one')
+      await impl.prompt('/proj', 'sdk-session-1', 'prompt two')
+      await impl.undo('/proj', 'sdk-session-1', 'hive-1')
+
+      expect(resumeRewindFilesMock).toHaveBeenCalledWith('uuid-2')
+    })
+
     it('throws after exhausting all undo checkpoints', async () => {
       await setupSessionWithCheckpoints({
         userUuids: ['uuid-only'],
@@ -305,43 +470,45 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
       )
     })
 
-    it('throws when no query reference is available', async () => {
+    it('throws when it cannot create a resumed query for rewinding', async () => {
       await impl.reconnect('/proj', 'orphan-session', 'hive-1')
       const key = (impl as any).getSessionKey('/proj', 'orphan-session')
       const session = sessions.get(key)!
       // Manually add a checkpoint so we pass the "no checkpoints" check
       session.checkpoints.set('some-uuid', 0)
       session.messages.push({
-        id: 'msg-0',
+        id: 'some-uuid',
         role: 'user',
         content: 'test',
         parts: [{ type: 'text', text: 'test' }]
       })
-      // query and lastQuery are both null (default)
+      // No mock query configured, so resume should fail.
 
       await expect(impl.undo('/proj', 'orphan-session', 'hive-1')).rejects.toThrow(
-        /no SDK query available/i
+        /failed to resume session for rewinding/i
       )
     })
 
-    it('throws when query does not support rewindFiles', async () => {
+    it('throws when resumed query does not support rewindFiles', async () => {
       await impl.reconnect('/proj', 'no-rewind-session', 'hive-1')
       const key = (impl as any).getSessionKey('/proj', 'no-rewind-session')
       const session = sessions.get(key)!
       session.checkpoints.set('some-uuid', 0)
       session.messages.push({
-        id: 'msg-0',
+        id: 'some-uuid',
         role: 'user',
         content: 'test',
         parts: [{ type: 'text', text: 'test' }]
       })
-      // Set lastQuery WITHOUT rewindFiles to test the type-safe check
-      session.lastQuery = {
-        interrupt: vi.fn(),
-        close: vi.fn(),
-        next: vi.fn(),
-        [Symbol.asyncIterator]: vi.fn()
-      } as any
+      const noRewindIter = createMockQueryIterator([
+        {
+          type: 'system',
+          subtype: 'init',
+          session_id: 'no-rewind-session'
+        }
+      ])
+      delete (noRewindIter as { rewindFiles?: unknown }).rewindFiles
+      mockQuery.mockReturnValue(noRewindIter)
 
       await expect(impl.undo('/proj', 'no-rewind-session', 'hive-1')).rejects.toThrow(
         /does not support rewindFiles/i
@@ -385,6 +552,252 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
 
       const result = await impl.undo('/proj', 'sdk-session-1', 'hive-1')
       expect(result.revertDiff).toBeNull()
+    })
+
+    it('resumes with an empty prompt and rewinds on a new query when stream is complete', async () => {
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+
+      const promptRewindFilesMock = vi.fn().mockResolvedValue({
+        canRewind: true,
+        filesChanged: ['src/a.ts'],
+        insertions: 1,
+        deletions: 1
+      })
+      const promptIter = createMockQueryIterator(
+        [
+          {
+            type: 'assistant',
+            session_id: 'sdk-session-1',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Response 1' }]
+            }
+          },
+          {
+            type: 'user',
+            session_id: 'sdk-session-1',
+            uuid: 'uuid-user-1',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'first prompt' }]
+            }
+          },
+          {
+            type: 'assistant',
+            session_id: 'sdk-session-1',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Response 2' }]
+            }
+          }
+        ],
+        {
+          rewindFiles: promptRewindFilesMock
+        }
+      )
+
+      const resumeRewindFilesMock = vi.fn().mockResolvedValue({
+        canRewind: true,
+        filesChanged: ['src/b.ts'],
+        insertions: 2,
+        deletions: 1
+      })
+      const resumeIter = createMockQueryIterator(
+        [
+          {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'sdk-session-1'
+          }
+        ],
+        { rewindFiles: resumeRewindFilesMock }
+      )
+
+      mockQuery.mockReturnValueOnce(promptIter).mockReturnValueOnce(resumeIter)
+
+      await impl.prompt('/proj', sessionId, 'initial prompt')
+
+      await impl.undo('/proj', 'sdk-session-1', 'hive-1')
+
+      expect(mockQuery).toHaveBeenCalledTimes(2)
+
+      const resumeCall = mockQuery.mock.calls[1][0]
+      expect(resumeCall.prompt).toBe('')
+      expect(resumeCall.options.resume).toBe('sdk-session-1')
+      expect(resumeCall.options.enableFileCheckpointing).toBe(true)
+
+      expect(promptRewindFilesMock).not.toHaveBeenCalled()
+      expect(resumeRewindFilesMock).toHaveBeenCalledWith('uuid-user-1')
+    })
+
+    it('accepts void rewindFiles return values', async () => {
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+
+      const promptIter = createMockQueryIterator([
+        {
+          type: 'assistant',
+          session_id: 'sdk-session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Response 1' }]
+          }
+        },
+        {
+          type: 'user',
+          session_id: 'sdk-session-1',
+          uuid: 'uuid-user-1',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'first prompt' }]
+          }
+        }
+      ])
+
+      const resumeRewindFilesMock = vi.fn().mockResolvedValue(undefined)
+      const resumeIter = createMockQueryIterator(
+        [
+          {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'sdk-session-1'
+          }
+        ],
+        { rewindFiles: resumeRewindFilesMock }
+      )
+
+      mockQuery.mockReturnValueOnce(promptIter).mockReturnValueOnce(resumeIter)
+
+      await impl.prompt('/proj', sessionId, 'initial prompt')
+
+      const result = await impl.undo('/proj', 'sdk-session-1', 'hive-1')
+      expect(resumeRewindFilesMock).toHaveBeenCalledWith('uuid-user-1')
+      expect(result.revertDiff).toBeNull()
+    })
+
+    it('skips tool_result-only user UUIDs when selecting undo checkpoint', async () => {
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+
+      const promptIter = createMockQueryIterator([
+        {
+          type: 'assistant',
+          session_id: 'sdk-session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Response 1' }]
+          }
+        },
+        {
+          type: 'user',
+          session_id: 'sdk-session-1',
+          uuid: 'uuid-user-prompt',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'real prompt' }]
+          }
+        },
+        {
+          type: 'assistant',
+          session_id: 'sdk-session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: { filePath: 'a.ts' } }]
+          }
+        },
+        {
+          type: 'user',
+          session_id: 'sdk-session-1',
+          uuid: 'uuid-tool-result',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }]
+          }
+        }
+      ])
+
+      const resumeRewindFilesMock = vi.fn().mockResolvedValue({ canRewind: true })
+      const resumeIter = createMockQueryIterator(
+        [
+          {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'sdk-session-1'
+          }
+        ],
+        { rewindFiles: resumeRewindFilesMock }
+      )
+
+      mockQuery.mockReturnValueOnce(promptIter).mockReturnValueOnce(resumeIter)
+
+      await impl.prompt('/proj', sessionId, 'initial prompt')
+      await impl.undo('/proj', 'sdk-session-1', 'hive-1')
+
+      expect(resumeRewindFilesMock).toHaveBeenCalledWith('uuid-user-prompt')
+    })
+
+    it('falls back to conversation-only undo when no file checkpoint exists for selected UUID', async () => {
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+
+      const promptIter = createMockQueryIterator([
+        {
+          type: 'assistant',
+          session_id: 'sdk-session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Response 1' }]
+          }
+        },
+        {
+          type: 'user',
+          session_id: 'sdk-session-1',
+          uuid: 'uuid-user-1',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'first prompt' }]
+          }
+        }
+      ])
+
+      const resumeIter = createMockQueryIterator(
+        [
+          {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'sdk-session-1'
+          }
+        ],
+        {
+          rewindFiles: vi
+            .fn()
+            .mockRejectedValue(new Error('No file checkpoint found for this message.'))
+        }
+      )
+
+      const postUndoPromptIter = createMockQueryIterator([
+        {
+          type: 'assistant',
+          session_id: 'sdk-session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'post undo response' }]
+          }
+        }
+      ])
+
+      mockQuery
+        .mockReturnValueOnce(promptIter)
+        .mockReturnValueOnce(resumeIter)
+        .mockReturnValueOnce(postUndoPromptIter)
+
+      await impl.prompt('/proj', sessionId, 'initial prompt')
+
+      const undoResult = await impl.undo('/proj', 'sdk-session-1', 'hive-1')
+      expect(undoResult.revertMessageID).toBe('uuid-user-1')
+      expect(undoResult.revertDiff).toBeNull()
+
+      await impl.prompt('/proj', 'sdk-session-1', 'follow-up prompt')
+
+      const followUpCall = mockQuery.mock.calls[2][0]
+      expect(followUpCall.options.resumeSessionAt).toBe('uuid-user-1')
     })
   })
 
@@ -479,16 +892,30 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
       expect(session.lastQuery).not.toBeNull()
     })
 
-    it('uses lastQuery for undo when no active query', async () => {
-      const { session, rewindFilesMock } = await setupSessionWithCheckpoints()
+    it('creates a resumed query for undo when no active query', async () => {
+      const { session } = await setupSessionWithCheckpoints()
+
+      const resumeRewindFilesMock = vi.fn().mockResolvedValue({ canRewind: true })
+      const resumeIter = createMockQueryIterator(
+        [
+          {
+            type: 'system',
+            subtype: 'init',
+            session_id: 'sdk-session-1'
+          }
+        ],
+        { rewindFiles: resumeRewindFilesMock }
+      )
+      mockQuery.mockReturnValueOnce(resumeIter)
 
       // Verify query is null (prompt completed) but lastQuery exists
       expect(session.query).toBeNull()
       expect(session.lastQuery).not.toBeNull()
 
-      // undo should succeed using lastQuery
+      // undo should succeed using a resumed query
       await impl.undo('/proj', 'sdk-session-1', 'hive-1')
-      expect(rewindFilesMock).toHaveBeenCalled()
+      expect(mockQuery).toHaveBeenCalledTimes(2)
+      expect(resumeRewindFilesMock).toHaveBeenCalled()
     })
   })
 })
