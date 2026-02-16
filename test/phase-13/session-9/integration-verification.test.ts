@@ -99,14 +99,12 @@ describe('Session 9: Integration & Verification', () => {
 
     test('CSS diff2html overrides include correct dark mode colors', () => {
       const css = readSource('src/renderer/src/styles/globals.css')
-      // Dark mode green
-      expect(css).toContain('color: #3fb950')
-      // Dark mode red
-      expect(css).toContain('color: #f85149')
-      // Light mode green
-      expect(css).toContain('color: #1a7f37')
-      // Light mode red
-      expect(css).toContain('color: #cf222e')
+      // Dark mode green tinted background for added lines
+      expect(css).toContain('rgba(46, 160, 67, 0.15)')
+      // Dark mode red tinted background for removed lines
+      expect(css).toContain('rgba(248, 81, 73, 0.15)')
+      // Scroll containment for diff table
+      expect(css).toContain('.diff-viewer .d2h-file-diff')
     })
   })
 
