@@ -80,6 +80,62 @@ if [[ "$NEW_VERSION" == "$CURRENT_VERSION" ]]; then
   fatal "New version is the same as current version."
 fi
 
+# ── Generate release notes from merged PRs ───────────────────────
+info "Generating release notes from merged PRs..."
+
+LAST_TAG_DATE=$(git log -1 --format=%aI "v${CURRENT_VERSION}" 2>/dev/null || echo "")
+
+if [[ -z "$LAST_TAG_DATE" ]]; then
+  warn "Could not find tag v${CURRENT_VERSION}. Skipping PR-based release notes."
+  RELEASE_NOTES=""
+else
+  RELEASE_NOTES=$(gh pr list --repo "$REPO" --state merged --limit 50 \
+    --json number,title,body,mergedAt,author \
+    --jq "[.[] | select(.mergedAt > \"${LAST_TAG_DATE}\")]" | node -e "
+const prs = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'))
+if (!prs.length) {
+  process.exit(0)
+}
+
+const lines = ['## What\\'s Changed', '']
+for (const pr of prs) {
+  lines.push('### ' + pr.title + ' (#' + pr.number + ')')
+  const body = pr.body || ''
+  // Extract the Summary section if present
+  const summaryMatch = body.match(/## Summary\\s*\\n([\\s\\S]*?)(?=\\n## |$)/)
+  if (summaryMatch) {
+    lines.push(summaryMatch[1].trim())
+  } else if (body.trim()) {
+    // No Summary heading — use the full body, capped at 500 chars
+    const trimmed = body.trim()
+    lines.push(trimmed.length > 500 ? trimmed.slice(0, 500) + '...' : trimmed)
+  }
+  lines.push('')
+}
+console.log(lines.join('\\n'))
+" 2>/dev/null || echo "")
+fi
+
+if [[ -n "$RELEASE_NOTES" ]]; then
+  ok "Found release notes from PRs"
+  echo ""
+  echo -e "${CYAN}── Release notes preview ──────────────────────────${NC}"
+  echo "$RELEASE_NOTES"
+  echo -e "${CYAN}───────────────────────────────────────────────────${NC}"
+  echo ""
+  read -rp "Edit release notes in \$EDITOR before publishing? [y/N] " edit_notes
+  if [[ "$edit_notes" =~ ^[Yy]$ ]]; then
+    NOTES_TMPFILE=$(mktemp "${TMPDIR:-/tmp}/hive-release-notes.XXXXXX")
+    echo "$RELEASE_NOTES" > "$NOTES_TMPFILE"
+    ${EDITOR:-vim} "$NOTES_TMPFILE"
+    RELEASE_NOTES=$(cat "$NOTES_TMPFILE")
+    rm -f "$NOTES_TMPFILE"
+    ok "Release notes updated"
+  fi
+else
+  warn "No merged PRs found since v${CURRENT_VERSION}. Release will have no notes."
+fi
+
 # Confirm
 echo ""
 info "Will release: ${YELLOW}v${CURRENT_VERSION}${NC} → ${GREEN}v${NEW_VERSION}${NC}"
@@ -159,10 +215,15 @@ pnpm exec electron-builder --mac --publish always
 
 ok "Assets uploaded to GitHub Releases"
 
-# Un-draft the release so it becomes public
+# Un-draft the release and attach release notes
 info "Publishing release (removing draft status)..."
-gh release edit "v${NEW_VERSION}" --repo "$REPO" --draft=false
-ok "Release published"
+if [[ -n "$RELEASE_NOTES" ]]; then
+  gh release edit "v${NEW_VERSION}" --repo "$REPO" --draft=false --notes "$RELEASE_NOTES"
+  ok "Release published with PR-based release notes"
+else
+  gh release edit "v${NEW_VERSION}" --repo "$REPO" --draft=false
+  ok "Release published (no release notes)"
+fi
 info "Release URL: https://github.com/${REPO}/releases/tag/v${NEW_VERSION}"
 
 # ── Phase 5: Update Homebrew cask ─────────────────────────────────
