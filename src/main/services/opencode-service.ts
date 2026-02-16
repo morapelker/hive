@@ -1037,11 +1037,12 @@ class OpenCodeService {
     if (event.properties) {
       if (event.properties.part?.sessionID) {
         sessionId = event.properties.part.sessionID
+      } else if (event.properties.info?.sessionID) {
+        // message.updated uses properties.info (a Message object with `sessionID`)
+        sessionId = event.properties.info.sessionID
       } else if (event.properties.info?.id) {
         // session.created/updated/deleted use properties.info (a Session object with `id`)
         sessionId = event.properties.info.id
-      } else if (event.properties.info?.sessionID) {
-        sessionId = event.properties.info.sessionID
       } else if (event.properties.sessionID) {
         sessionId = event.properties.sessionID
       }
