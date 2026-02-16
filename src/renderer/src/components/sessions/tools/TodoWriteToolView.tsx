@@ -6,8 +6,7 @@ import {
   Circle,
   CircleCheck,
   CircleDot,
-  CircleX,
-  ListTodo
+  CircleX
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './types'
@@ -54,14 +53,6 @@ export function TodoWriteToolView({ input, error }: ToolViewProps) {
   const todoInput = input as unknown as TodoInput
   const todos = useMemo(() => todoInput?.todos || [], [todoInput?.todos])
 
-  const counts = useMemo(() => {
-    const c = { completed: 0, in_progress: 0, pending: 0, cancelled: 0, total: todos.length }
-    for (const t of todos) {
-      if (t.status in c) c[t.status as keyof typeof c]++
-    }
-    return c
-  }, [todos])
-
   if (todos.length === 0) {
     return (
       <div data-testid="todowrite-tool-view" className="text-xs text-muted-foreground">
@@ -80,20 +71,6 @@ export function TodoWriteToolView({ input, error }: ToolViewProps) {
           </div>
         </div>
       )}
-
-      {/* Summary bar */}
-      <div className="flex items-center gap-2 mb-2 text-[11px] text-muted-foreground">
-        <ListTodo className="h-3.5 w-3.5 shrink-0" />
-        <span>
-          {counts.completed}/{counts.total} completed
-        </span>
-        {counts.in_progress > 0 && (
-          <span className="text-blue-500">{counts.in_progress} in progress</span>
-        )}
-        {counts.cancelled > 0 && (
-          <span className="text-muted-foreground/50">{counts.cancelled} cancelled</span>
-        )}
-      </div>
 
       {/* Todo list */}
       <div className="space-y-0.5">

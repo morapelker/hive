@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow, shell } from 'electron'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { readFile } from 'fs/promises'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import {
   createGitService,
@@ -102,6 +103,10 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     async (_event, worktreePath: string): Promise<GitFileStatusResult> => {
       log.info('Getting file statuses', { worktreePath })
       try {
+        // Defense-in-depth: skip git ops for non-git directories (e.g. connection paths)
+        if (!existsSync(join(worktreePath, '.git'))) {
+          return { success: true, files: [] }
+        }
         const gitService = createGitService(worktreePath)
         const result = await gitService.getFileStatuses()
         return result
@@ -126,11 +131,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const gitService = createGitService(worktreePath)
         const result = await gitService.stageFile(filePath)
 
-        // Emit status change event
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
-
         return result
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
@@ -151,11 +151,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       try {
         const gitService = createGitService(worktreePath)
         const result = await gitService.unstageFile(filePath)
-
-        // Emit status change event
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
 
         return result
       } catch (error) {
@@ -178,11 +173,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const gitService = createGitService(worktreePath)
         const result = await gitService.discardChanges(filePath)
 
-        // Emit status change event
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
-
         return result
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
@@ -204,11 +194,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       try {
         const gitService = createGitService(worktreePath)
         const result = await gitService.addToGitignore(pattern)
-
-        // Emit status change event
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
 
         return result
       } catch (error) {
@@ -293,11 +278,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const gitService = createGitService(worktreePath)
         const result = await gitService.stageAll()
 
-        // Emit status change event
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
-
         return result
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
@@ -320,11 +300,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const gitService = createGitService(worktreePath)
         const result = await gitService.unstageAll()
 
-        // Emit status change event
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
-
         return result
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
@@ -346,11 +321,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       try {
         const gitService = createGitService(worktreePath)
         const result = await gitService.commit(message)
-
-        // Emit status change event
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
 
         return result
       } catch (error) {
@@ -378,11 +348,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const gitService = createGitService(worktreePath)
         const result = await gitService.push(remote, branch, force)
 
-        // Emit status change event to update ahead/behind counts
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
-
         return result
       } catch (error) {
         const errMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -409,11 +374,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const gitService = createGitService(worktreePath)
         const result = await gitService.pull(remote, branch, rebase)
 
-        // Emit status change event
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
-
         return result
       } catch (error) {
         const errMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -433,11 +393,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       try {
         const gitService = createGitService(worktreePath)
         const result = await gitService.merge(sourceBranch)
-
-        // Emit status change event after merge
-        if (result.success && mainWindow) {
-          mainWindow.webContents.send('git:statusChanged', { worktreePath })
-        }
 
         return result
       } catch (error) {

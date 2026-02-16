@@ -139,5 +139,48 @@ describe('Session 8: Copy on Hover', () => {
       render(<MessageRenderer message={message} />)
       expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
     })
+
+    test('renders fork button for assistant messages', () => {
+      const onFork = vi.fn()
+      const message = {
+        id: 'assistant-msg-1',
+        role: 'assistant' as const,
+        content: 'Assistant response',
+        timestamp: new Date().toISOString()
+      }
+
+      render(<MessageRenderer message={message} onForkAssistantMessage={onFork} />)
+
+      expect(screen.getByTestId('fork-message-button')).toBeInTheDocument()
+    })
+
+    test('does not render fork button for user messages', () => {
+      const onFork = vi.fn()
+      const message = {
+        id: 'user-msg-1',
+        role: 'user' as const,
+        content: 'User message',
+        timestamp: new Date().toISOString()
+      }
+
+      render(<MessageRenderer message={message} onForkAssistantMessage={onFork} />)
+
+      expect(screen.queryByTestId('fork-message-button')).not.toBeInTheDocument()
+    })
+
+    test('calls fork callback with message when clicking fork button', () => {
+      const onFork = vi.fn()
+      const message = {
+        id: 'assistant-msg-2',
+        role: 'assistant' as const,
+        content: 'Assistant response',
+        timestamp: new Date().toISOString()
+      }
+
+      render(<MessageRenderer message={message} onForkAssistantMessage={onFork} />)
+
+      fireEvent.click(screen.getByTestId('fork-message-button'))
+      expect(onFork).toHaveBeenCalledWith(message)
+    })
   })
 })

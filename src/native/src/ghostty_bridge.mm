@@ -149,6 +149,7 @@ void GhosttyBridge::shutdown() {
 uint32_t GhosttyBridge::createSurface(
   NSView* view,
   double scaleFactor,
+  float fontSize,
   const std::string& cwd,
   const std::string& shell
 ) {
@@ -163,6 +164,9 @@ uint32_t GhosttyBridge::createSurface(
   surfCfg.platform_tag = GHOSTTY_PLATFORM_MACOS;
   surfCfg.platform.macos.nsview = (__bridge void*)view;
   surfCfg.scale_factor = scaleFactor;
+  if (fontSize > 0.0f) {
+    surfCfg.font_size = fontSize;
+  }
 
   if (!cwd.empty()) {
     surfCfg.working_directory = cwd.c_str();
@@ -192,20 +196,25 @@ uint32_t GhosttyBridge::createSurface(
 }
 
 void GhosttyBridge::setFrame(uint32_t surfaceId, double x, double y, double w, double h) {
-  std::lock_guard<std::mutex> lock(mutex_);
-
-  auto it = surfaces_.find(surfaceId);
-  if (it == surfaces_.end()) return;
+  ghostty_surface_t handle = nullptr;
+  NSView* view = nil;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end()) return;
+    handle = it->second.handle;
+    view = it->second.view;
+  }
 
   ViewRect rect = { x, y, w, h };
-  setHostViewFrame(it->second.view, rect);
+  setHostViewFrame(view, rect);
 
   // Also update the Ghostty surface size
-  if (it->second.handle) {
-    const double scale = viewScaleFactor(it->second.view);
-    ghostty_surface_set_content_scale(it->second.handle, scale, scale);
+  if (handle) {
+    const double scale = viewScaleFactor(view);
+    ghostty_surface_set_content_scale(handle, scale, scale);
     ghostty_surface_set_size(
-      it->second.handle,
+      handle,
       clampPixelSize(w * scale),
       clampPixelSize(h * scale)
     );
@@ -213,24 +222,32 @@ void GhosttyBridge::setFrame(uint32_t surfaceId, double x, double y, double w, d
 }
 
 void GhosttyBridge::setContentScale(uint32_t surfaceId, double scaleX, double scaleY) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  ghostty_surface_t handle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return;
+    handle = it->second.handle;
+  }
 
-  auto it = surfaces_.find(surfaceId);
-  if (it == surfaces_.end() || !it->second.handle) return;
-
-  ghostty_surface_set_content_scale(it->second.handle, scaleX, scaleY);
+  ghostty_surface_set_content_scale(handle, scaleX, scaleY);
 }
 
 void GhosttyBridge::setSize(uint32_t surfaceId, uint32_t width, uint32_t height) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  ghostty_surface_t handle = nullptr;
+  NSView* view = nil;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return;
+    handle = it->second.handle;
+    view = it->second.view;
+  }
 
-  auto it = surfaces_.find(surfaceId);
-  if (it == surfaces_.end() || !it->second.handle) return;
-
-  const double scale = viewScaleFactor(it->second.view);
-  ghostty_surface_set_content_scale(it->second.handle, scale, scale);
+  const double scale = viewScaleFactor(view);
+  ghostty_surface_set_content_scale(handle, scale, scale);
   ghostty_surface_set_size(
-    it->second.handle,
+    handle,
     clampPixelSize(static_cast<double>(width) * scale),
     clampPixelSize(static_cast<double>(height) * scale)
   );
@@ -246,10 +263,17 @@ bool GhosttyBridge::keyEvent(
   uint32_t unshiftedCodepoint,
   bool composing
 ) {
-  std::lock_guard<std::mutex> lock(mutex_);
-
-  auto it = surfaces_.find(surfaceId);
-  if (it == surfaces_.end() || !it->second.handle) return false;
+  // Look up the surface handle under the lock, then release BEFORE calling
+  // ghostty_surface_key. Key events (e.g. Cmd+V paste) can synchronously
+  // trigger callbacks like readClipboardCallback that re-enter the bridge
+  // and try to acquire the same mutex — causing a deadlock.
+  ghostty_surface_t handle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return false;
+    handle = it->second.handle;
+  }
 
   ghostty_input_key_s keyInput = {};
   keyInput.action = action;
@@ -260,7 +284,7 @@ bool GhosttyBridge::keyEvent(
   keyInput.unshifted_codepoint = unshiftedCodepoint;
   keyInput.composing = composing;
 
-  return ghostty_surface_key(it->second.handle, keyInput);
+  return ghostty_surface_key(handle, keyInput);
 }
 
 void GhosttyBridge::mouseButton(
@@ -269,31 +293,40 @@ void GhosttyBridge::mouseButton(
   ghostty_input_mouse_button_e button,
   ghostty_input_mods_e mods
 ) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  ghostty_surface_t handle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return;
+    handle = it->second.handle;
+  }
 
-  auto it = surfaces_.find(surfaceId);
-  if (it == surfaces_.end() || !it->second.handle) return;
-
-  ghostty_surface_mouse_button(it->second.handle, state, button, mods);
+  ghostty_surface_mouse_button(handle, state, button, mods);
 }
 
 void GhosttyBridge::mousePos(uint32_t surfaceId, double x, double y, ghostty_input_mods_e mods) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  ghostty_surface_t handle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return;
+    handle = it->second.handle;
+  }
 
-  auto it = surfaces_.find(surfaceId);
-  if (it == surfaces_.end() || !it->second.handle) return;
-
-  ghostty_surface_mouse_pos(it->second.handle, x, y, mods);
+  ghostty_surface_mouse_pos(handle, x, y, mods);
 }
 
 void GhosttyBridge::mouseScroll(uint32_t surfaceId, double dx, double dy, int scrollMods) {
-  std::lock_guard<std::mutex> lock(mutex_);
-
-  auto it = surfaces_.find(surfaceId);
-  if (it == surfaces_.end() || !it->second.handle) return;
+  ghostty_surface_t handle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return;
+    handle = it->second.handle;
+  }
 
   ghostty_surface_mouse_scroll(
-    it->second.handle, dx, dy,
+    handle, dx, dy,
     static_cast<ghostty_input_scroll_mods_t>(scrollMods)
   );
 }
@@ -322,21 +355,27 @@ void GhosttyBridge::setFocus(uint32_t surfaceId, bool focused) {
 }
 
 void GhosttyBridge::setSurfaceFocus(uint32_t surfaceId, bool focused) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  ghostty_surface_t handle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return;
+    handle = it->second.handle;
+  }
 
-  auto it = surfaces_.find(surfaceId);
-  if (it == surfaces_.end() || !it->second.handle) return;
-
-  ghostty_surface_set_focus(it->second.handle, focused);
+  ghostty_surface_set_focus(handle, focused);
 }
 
 void GhosttyBridge::requestClose(uint32_t surfaceId) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  ghostty_surface_t handle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return;
+    handle = it->second.handle;
+  }
 
-  auto it = surfaces_.find(surfaceId);
-  if (it == surfaces_.end() || !it->second.handle) return;
-
-  ghostty_surface_request_close(it->second.handle);
+  ghostty_surface_request_close(handle);
 }
 
 void GhosttyBridge::destroySurface(uint32_t surfaceId) {
@@ -555,17 +594,30 @@ void GhosttyBridge::readClipboardCallback(
   // We need to find which surface initiated the request — iterate all
   // surfaces and complete on the first one that has a valid handle.
   // In practice, only the focused surface will be requesting clipboard.
-  std::lock_guard<std::mutex> lock(bridge.mutex_);
-  for (auto& [id, surface] : bridge.surfaces_) {
-    if (surface.handle) {
-      ghostty_surface_complete_clipboard_request(
-        surface.handle,
-        utf8,
-        ctx,
-        true  // confirmed — auto-confirm in embedded context
-      );
-      return;
+  //
+  // IMPORTANT: We must release the mutex BEFORE calling
+  // ghostty_surface_complete_clipboard_request, because completing
+  // the request can synchronously trigger Ghostty callbacks (render,
+  // title change, wakeup) that re-enter the bridge and try to acquire
+  // the same mutex — causing a deadlock that freezes the entire app.
+  ghostty_surface_t targetHandle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(bridge.mutex_);
+    for (auto& [id, surface] : bridge.surfaces_) {
+      if (surface.handle) {
+        targetHandle = surface.handle;
+        break;
+      }
     }
+  }
+
+  if (targetHandle) {
+    ghostty_surface_complete_clipboard_request(
+      targetHandle,
+      utf8,
+      ctx,
+      true  // confirmed — auto-confirm in embedded context
+    );
   }
 }
 
@@ -580,19 +632,30 @@ void GhosttyBridge::confirmReadClipboardCallback(
 
   // In the embedded Electron context, we auto-confirm all clipboard reads.
   // The content has already been read; just complete the request.
+  //
+  // Same mutex-release pattern as readClipboardCallback — find the target
+  // surface under the lock, then release before completing the request
+  // to avoid re-entrant deadlocks from Ghostty's synchronous callbacks.
   auto& bridge = GhosttyBridge::instance();
 
-  std::lock_guard<std::mutex> lock(bridge.mutex_);
-  for (auto& [id, surface] : bridge.surfaces_) {
-    if (surface.handle) {
-      ghostty_surface_complete_clipboard_request(
-        surface.handle,
-        content,
-        ctx,
-        true  // confirmed
-      );
-      return;
+  ghostty_surface_t targetHandle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(bridge.mutex_);
+    for (auto& [id, surface] : bridge.surfaces_) {
+      if (surface.handle) {
+        targetHandle = surface.handle;
+        break;
+      }
     }
+  }
+
+  if (targetHandle) {
+    ghostty_surface_complete_clipboard_request(
+      targetHandle,
+      content,
+      ctx,
+      true  // confirmed
+    );
   }
 }
 

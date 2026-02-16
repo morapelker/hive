@@ -33,6 +33,7 @@ interface WorktreeStatusState {
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
   getWorktreeStatus: (worktreeId: string) => SessionStatusType | null
+  getConnectionStatus: (connectionId: string) => SessionStatusType | null
   getWorktreeCompletedEntry: (worktreeId: string) => SessionStatusEntry | null
   setLastMessageTime: (worktreeId: string, timestamp: number) => void
   getLastMessageTime: (worktreeId: string) => number | null
@@ -120,6 +121,46 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     // Derive plan_ready from the mode the user last sent a message in.
     // If the last message was sent in plan mode and the session completed,
     // show "Plan ready". Otherwise show normal "Ready".
+    if (hasCompleted) {
+      const completedInPlan = sessions.some(
+        (s) => sessionStatuses[s.id]?.status === 'completed' && lastSendMode.get(s.id) === 'plan'
+      )
+      return completedInPlan ? 'plan_ready' : 'completed'
+    }
+
+    return latestUnread ? 'unread' : null
+  },
+
+  getConnectionStatus: (connectionId: string): SessionStatusType | null => {
+    const { sessionStatuses } = get()
+    const sessionStore = useSessionStore.getState()
+    const sessions = sessionStore.sessionsByConnection.get(connectionId) || []
+    const sessionIds = sessions.map((s) => s.id)
+
+    let hasPlanning = false
+    let hasWorking = false
+    let hasCompleted = false
+    let latestUnread: SessionStatusEntry | null = null
+
+    for (const id of sessionIds) {
+      const entry = sessionStatuses[id]
+      if (!entry) continue
+
+      if (entry.status === 'answering' || entry.status === 'permission') return entry.status
+      if (entry.status === 'planning') hasPlanning = true
+      if (entry.status === 'working') hasWorking = true
+      if (entry.status === 'completed') hasCompleted = true
+
+      if (entry.status === 'unread') {
+        if (!latestUnread || entry.timestamp > latestUnread.timestamp) {
+          latestUnread = entry
+        }
+      }
+    }
+
+    if (hasPlanning) return 'planning'
+    if (hasWorking) return 'working'
+
     if (hasCompleted) {
       const completedInPlan = sessions.some(
         (s) => sessionStatuses[s.id]?.status === 'completed' && lastSendMode.get(s.id) === 'plan'

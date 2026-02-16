@@ -91,10 +91,10 @@ describe('Session 12: Worktree Drag Reorder', () => {
     })
 
     const result = useWorktreeStore.getState().getWorktreesForProject(projectId)
-    expect(result.map((w) => w.id)).toEqual(['def', 'c', 'a', 'b'])
+    expect(result.map((w) => w.id)).toEqual(['c', 'a', 'b', 'def'])
   })
 
-  test('default worktree stays first regardless of custom order', () => {
+  test('default worktree stays last regardless of custom order', () => {
     const projectId = 'proj1'
     const wtDefault = makeWorktree('def', projectId, true)
     const wtA = makeWorktree('a', projectId)
@@ -106,8 +106,8 @@ describe('Session 12: Worktree Drag Reorder', () => {
     })
 
     const result = useWorktreeStore.getState().getWorktreesForProject(projectId)
-    expect(result[0].id).toBe('def')
-    expect(result[0].is_default).toBe(true)
+    expect(result[result.length - 1].id).toBe('def')
+    expect(result[result.length - 1].is_default).toBe(true)
   })
 
   test('new worktrees appear at end of custom order', () => {
@@ -124,7 +124,7 @@ describe('Session 12: Worktree Drag Reorder', () => {
     })
 
     const result = useWorktreeStore.getState().getWorktreesForProject(projectId)
-    expect(result.map((w) => w.id)).toEqual(['def', 'b', 'a', 'new'])
+    expect(result.map((w) => w.id)).toEqual(['b', 'a', 'new', 'def'])
   })
 
   test('removing a worktree does not break ordering of remaining ones', () => {
@@ -185,6 +185,6 @@ describe('Session 12: Worktree Drag Reorder', () => {
     })
 
     const result = useWorktreeStore.getState().getWorktreesForProject(projectId)
-    expect(result.map((w) => w.id)).toEqual(['def', 'a'])
+    expect(result.map((w) => w.id)).toEqual(['a', 'def'])
   })
 })

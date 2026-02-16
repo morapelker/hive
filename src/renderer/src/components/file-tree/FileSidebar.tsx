@@ -4,8 +4,16 @@ import { cn } from '@/lib/utils'
 import { FileTree } from './FileTree'
 import { ChangesView } from './ChangesView'
 
+interface ConnectionMemberInfo {
+  worktree_path: string
+  project_name: string
+  worktree_branch: string
+}
+
 interface FileSidebarProps {
   worktreePath: string | null
+  isConnectionMode?: boolean
+  connectionMembers?: ConnectionMemberInfo[]
   onClose: () => void
   onFileClick: (node: { path: string; name: string; isDirectory: boolean }) => void
   className?: string
@@ -13,6 +21,8 @@ interface FileSidebarProps {
 
 export function FileSidebar({
   worktreePath,
+  isConnectionMode,
+  connectionMembers,
   onClose,
   onFileClick,
   className
@@ -62,10 +72,15 @@ export function FileSidebar({
 
       <div className="flex-1 overflow-hidden">
         {activeTab === 'changes' ? (
-          <ChangesView worktreePath={worktreePath} />
+          <ChangesView
+            worktreePath={worktreePath}
+            isConnectionMode={isConnectionMode}
+            connectionMembers={connectionMembers}
+          />
         ) : (
           <FileTree
             worktreePath={worktreePath}
+            isConnectionMode={isConnectionMode}
             onClose={onClose}
             onFileClick={onFileClick}
             hideHeader

@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 3
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -145,7 +145,49 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 2,
     name: 'add_agent_sdk_column',
-    up: `ALTER TABLE sessions ADD COLUMN agent_sdk TEXT NOT NULL DEFAULT 'opencode';`,
+    up: `-- NOTE: ALTER TABLE for agent_sdk is handled idempotently by
+         -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 3,
+    name: 'add_connections',
+    up: `
+      CREATE TABLE IF NOT EXISTS connections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS connection_members (
+        id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        worktree_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        symlink_name TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE,
+        FOREIGN KEY (worktree_id) REFERENCES worktrees(id) ON DELETE CASCADE,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_connection_members_connection ON connection_members(connection_id);
+      CREATE INDEX IF NOT EXISTS idx_connection_members_worktree ON connection_members(worktree_id);
+
+      -- NOTE: ALTER TABLE for connection_id is handled idempotently by
+      -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.
+
+      CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_sessions_connection;
+      DROP INDEX IF EXISTS idx_connection_members_worktree;
+      DROP INDEX IF EXISTS idx_connection_members_connection;
+      DROP TABLE IF EXISTS connection_members;
+      DROP TABLE IF EXISTS connections;
+    `
   }
 ]

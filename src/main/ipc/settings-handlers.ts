@@ -131,6 +131,11 @@ function detectTerminals(): DetectedApp[] {
             id: 'kitty',
             name: 'kitty',
             commands: ['/Applications/kitty.app', '/usr/local/bin/kitty']
+          },
+          {
+            id: 'ghostty',
+            name: 'Ghostty',
+            commands: ['/Applications/Ghostty.app', '/usr/local/bin/ghostty']
           }
         ]
       : currentPlatform === 'win32'
@@ -284,6 +289,9 @@ export function registerSettingsHandlers(): void {
               break
             case 'kitty':
               spawn('kitty', ['--directory', worktreePath], { detached: true, stdio: 'ignore' })
+              break
+            case 'ghostty':
+              spawn('open', ['-a', 'Ghostty', worktreePath], { detached: true })
               break
             default:
               spawn('open', ['-a', 'Terminal', worktreePath], { detached: true })

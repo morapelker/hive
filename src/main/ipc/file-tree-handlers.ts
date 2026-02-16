@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import * as chokidar from 'chokidar'
-import { promises as fs, existsSync, statSync } from 'fs'
+import { Dirent, promises as fs, existsSync, statSync } from 'fs'
 import { join, extname, relative } from 'path'
 import { createLogger } from '../services/logger'
 
@@ -12,8 +12,27 @@ export interface FileTreeNode {
   path: string
   relativePath: string
   isDirectory: boolean
+  isSymlink?: boolean
   extension: string | null
   children?: FileTreeNode[]
+}
+
+/**
+ * Determine whether a directory entry is a directory, following symlinks.
+ * `Dirent.isDirectory()` returns false for symlinks even when the target is a directory,
+ * so we need to `fs.stat` the resolved path for symlink entries.
+ */
+async function isDirectoryEntry(entry: Dirent, entryPath: string): Promise<boolean> {
+  if (entry.isDirectory()) return true
+  if (entry.isSymbolicLink()) {
+    try {
+      const stat = await fs.stat(entryPath) // fs.stat follows symlinks
+      return stat.isDirectory()
+    } catch {
+      return false // Broken symlink -- treat as file
+    }
+  }
+  return false
 }
 
 // Ignore patterns for file watching
@@ -73,29 +92,40 @@ export async function scanDirectory(
     const entries = await fs.readdir(dirPath, { withFileTypes: true })
     const nodes: FileTreeNode[] = []
 
+    // Pre-resolve symlink targets so sorting and classification are correct
+    const resolved = await Promise.all(
+      entries.map(async (entry) => {
+        const entryPath = join(dirPath, entry.name)
+        const isSymlink = entry.isSymbolicLink()
+        const isDir = await isDirectoryEntry(entry, entryPath)
+        return { entry, entryPath, isDir, isSymlink }
+      })
+    )
+
     // Sort entries: directories first, then files, both alphabetically
-    const sortedEntries = entries.sort((a, b) => {
-      if (a.isDirectory() && !b.isDirectory()) return -1
-      if (!a.isDirectory() && b.isDirectory()) return 1
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    const sorted = resolved.sort((a, b) => {
+      if (a.isDir && !b.isDir) return -1
+      if (!a.isDir && b.isDir) return 1
+      return a.entry.name.localeCompare(b.entry.name, undefined, { sensitivity: 'base' })
     })
 
-    for (const entry of sortedEntries) {
-      const entryPath = join(dirPath, entry.name)
+    for (const { entry, entryPath, isDir, isSymlink } of sorted) {
       const relativePath = relative(rootPath, entryPath)
 
       // Skip ignored directories and files
-      if (entry.isDirectory() && IGNORE_DIRS.has(entry.name)) {
+      if (isDir && IGNORE_DIRS.has(entry.name)) {
         continue
       }
-      if (!entry.isDirectory() && IGNORE_FILES.has(entry.name)) {
+      if (!isDir && IGNORE_FILES.has(entry.name)) {
         continue
       }
 
-      if (entry.isDirectory()) {
-        // Lazy loading: only get children for first level initially
-        const children =
-          currentDepth < 1
+      if (isDir) {
+        // Don't eagerly recurse into symlinked directories — they may be
+        // large external repos (e.g. connection members). Treat as lazy-load.
+        const children = isSymlink
+          ? undefined
+          : currentDepth < 1
             ? await scanDirectory(entryPath, rootPath, maxDepth, currentDepth + 1)
             : undefined
 
@@ -104,6 +134,7 @@ export async function scanDirectory(
           path: entryPath,
           relativePath,
           isDirectory: true,
+          ...(isSymlink && { isSymlink: true }),
           extension: null,
           children
         })
@@ -113,6 +144,7 @@ export async function scanDirectory(
           path: entryPath,
           relativePath,
           isDirectory: false,
+          ...(isSymlink && { isSymlink: true }),
           extension: extname(entry.name).toLowerCase() || null
         })
       }
@@ -140,28 +172,38 @@ export async function scanSingleDirectory(
     const entries = await fs.readdir(dirPath, { withFileTypes: true })
     const nodes: FileTreeNode[] = []
 
-    const sortedEntries = entries.sort((a, b) => {
-      if (a.isDirectory() && !b.isDirectory()) return -1
-      if (!a.isDirectory() && b.isDirectory()) return 1
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    // Pre-resolve symlink targets so sorting and classification are correct
+    const resolved = await Promise.all(
+      entries.map(async (entry) => {
+        const entryPath = join(dirPath, entry.name)
+        const isSymlink = entry.isSymbolicLink()
+        const isDir = await isDirectoryEntry(entry, entryPath)
+        return { entry, entryPath, isDir, isSymlink }
+      })
+    )
+
+    const sorted = resolved.sort((a, b) => {
+      if (a.isDir && !b.isDir) return -1
+      if (!a.isDir && b.isDir) return 1
+      return a.entry.name.localeCompare(b.entry.name, undefined, { sensitivity: 'base' })
     })
 
-    for (const entry of sortedEntries) {
-      const entryPath = join(dirPath, entry.name)
+    for (const { entry, entryPath, isDir, isSymlink } of sorted) {
       const relativePath = relative(rootPath, entryPath)
 
-      if (entry.isDirectory() && IGNORE_DIRS.has(entry.name)) {
+      if (isDir && IGNORE_DIRS.has(entry.name)) {
         continue
       }
-      if (!entry.isDirectory() && IGNORE_FILES.has(entry.name)) {
+      if (!isDir && IGNORE_FILES.has(entry.name)) {
         continue
       }
-      if (entry.isDirectory()) {
+      if (isDir) {
         nodes.push({
           name: entry.name,
           path: entryPath,
           relativePath,
           isDirectory: true,
+          ...(isSymlink && { isSymlink: true }),
           extension: null,
           children: undefined // Will be loaded lazily
         })
@@ -171,6 +213,7 @@ export async function scanSingleDirectory(
           path: entryPath,
           relativePath,
           isDirectory: false,
+          ...(isSymlink && { isSymlink: true }),
           extension: extname(entry.name).toLowerCase() || null
         })
       }
@@ -320,6 +363,7 @@ export function registerFileTreeHandlers(window: BrowserWindow): void {
           persistent: true,
           ignoreInitial: true,
           depth: 10,
+          followSymlinks: false,
           awaitWriteFinish: {
             stabilityThreshold: 100,
             pollInterval: 50

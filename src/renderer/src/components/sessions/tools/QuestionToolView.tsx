@@ -51,6 +51,8 @@ export function QuestionToolView({ input, output, error }: ToolViewProps) {
           const answer = answerMap.get(q.question)
           const answerLabels = answer ? answer.split(', ') : []
 
+          const options = q.options || []
+
           return (
             <div key={i}>
               {/* Question header */}
@@ -66,7 +68,7 @@ export function QuestionToolView({ input, output, error }: ToolViewProps) {
 
               {/* Options as compact pills */}
               <div className="flex flex-wrap gap-1">
-                {q.options.map((opt) => {
+                {options.map((opt) => {
                   const isSelected = answerLabels.includes(opt.label)
                   return (
                     <span
@@ -83,10 +85,10 @@ export function QuestionToolView({ input, output, error }: ToolViewProps) {
                   )
                 })}
                 {/* Show custom answer if it doesn't match any option */}
-                {answer && answerLabels.some((a) => !q.options.find((o) => o.label === a)) && (
+                {answer && answerLabels.some((a) => !options.find((o) => o.label === a)) && (
                   <span className="inline-flex items-center gap-1 text-[11px] rounded-md px-2 py-0.5 bg-blue-500/15 text-blue-400 font-medium">
                     <Check className="h-2.5 w-2.5" />
-                    {answerLabels.find((a) => !q.options.find((o) => o.label === a))}
+                    {answerLabels.find((a) => !options.find((o) => o.label === a))}
                   </span>
                 )}
               </div>

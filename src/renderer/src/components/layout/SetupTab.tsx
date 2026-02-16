@@ -4,7 +4,7 @@ import { RotateCcw, Loader2, CheckCircle2, XCircle, Settings } from 'lucide-reac
 import { Button } from '@/components/ui/button'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useWorktreeStore, fireSetupScript } from '@/stores/useWorktreeStore'
 
 interface SetupTabProps {
   worktreeId: string | null
@@ -12,7 +12,6 @@ interface SetupTabProps {
 
 export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
   const outputRef = useRef<HTMLDivElement>(null)
-  const unsubRef = useRef<(() => void) | null>(null)
 
   const scriptState = useScriptStore((s) => (worktreeId ? s.scriptStates[worktreeId] : null))
 
@@ -21,9 +20,6 @@ export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
   const setupRunning = scriptState?.setupRunning ?? false
   const setupError = scriptState?.setupError ?? null
 
-  const { appendSetupOutput, setSetupRunning, setSetupError, clearSetupOutput } =
-    useScriptStore.getState()
-
   // Auto-scroll to bottom on new output
   useEffect(() => {
     if (outputRef.current) {
@@ -31,99 +27,28 @@ export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
     }
   }, [setupOutput])
 
-  // Subscribe to IPC events for this worktree
-  useEffect(() => {
-    if (!worktreeId) return
-
-    const channel = `script:setup:${worktreeId}`
-
-    // Clean up previous subscription
-    if (unsubRef.current) {
-      unsubRef.current()
-      unsubRef.current = null
-    }
-
-    const unsub = window.scriptOps.onOutput(channel, (event) => {
-      switch (event.type) {
-        case 'command-start':
-          appendSetupOutput(worktreeId, `\x00CMD:${event.command}`)
-          break
-        case 'output':
-          if (event.data) {
-            appendSetupOutput(worktreeId, event.data)
-          }
-          break
-        case 'error':
-          appendSetupOutput(
-            worktreeId,
-            `\x00ERR:Command failed with exit code ${event.exitCode}: ${event.command}`
-          )
-          setSetupError(worktreeId, `Command failed: ${event.command}`)
-          setSetupRunning(worktreeId, false)
-          break
-        case 'done':
-          setSetupRunning(worktreeId, false)
-          break
-      }
-    })
-
-    unsubRef.current = unsub
-
-    return () => {
-      unsub()
-      unsubRef.current = null
-    }
-  }, [worktreeId, appendSetupOutput, setSetupRunning, setSetupError])
-
-  const getProject = useCallback(() => {
+  const getProjectAndWorktree = useCallback(() => {
     if (!worktreeId) return null
     const worktrees = useWorktreeStore.getState().worktreesByProject
     for (const [projectId, wts] of worktrees) {
-      if (wts.some((w) => w.id === worktreeId)) {
-        return useProjectStore.getState().projects.find((p) => p.id === projectId) ?? null
+      const wt = wts.find((w) => w.id === worktreeId)
+      if (wt) {
+        const project = useProjectStore.getState().projects.find((p) => p.id === projectId)
+        return project ? { project, worktree: wt } : null
       }
     }
     return null
   }, [worktreeId])
 
-  const getWorktreePath = useCallback(() => {
-    if (!worktreeId) return null
-    const worktrees = useWorktreeStore.getState().worktreesByProject
-    for (const [, wts] of worktrees) {
-      const wt = wts.find((w) => w.id === worktreeId)
-      if (wt) return wt.path
-    }
-    return null
-  }, [worktreeId])
-
-  const handleRerunSetup = useCallback(async () => {
+  const handleRerunSetup = useCallback(() => {
     if (!worktreeId || setupRunning) return
 
-    const project = getProject()
-    if (!project?.setup_script) return
+    const info = getProjectAndWorktree()
+    if (!info?.project?.setup_script) return
 
-    const cwd = getWorktreePath()
-    if (!cwd) return
-
-    clearSetupOutput(worktreeId)
-    setSetupError(worktreeId, null)
-    setSetupRunning(worktreeId, true)
-
-    const commands = project.setup_script
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('#'))
-
-    await window.scriptOps.runSetup(commands, cwd, worktreeId)
-  }, [
-    worktreeId,
-    setupRunning,
-    getProject,
-    getWorktreePath,
-    clearSetupOutput,
-    setSetupError,
-    setSetupRunning
-  ])
+    useScriptStore.getState().clearSetupOutput(worktreeId)
+    fireSetupScript(info.project.id, worktreeId, info.worktree.path)
+  }, [worktreeId, setupRunning, getProjectAndWorktree])
 
   if (!worktreeId) {
     return (
@@ -133,8 +58,8 @@ export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
     )
   }
 
-  const project = getProject()
-  const hasSetupScript = !!project?.setup_script
+  const info = getProjectAndWorktree()
+  const hasSetupScript = !!info?.project?.setup_script
 
   // Determine status
   const isComplete = !setupRunning && setupOutput.length > 0 && !setupError
@@ -157,7 +82,7 @@ export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  if (project) useProjectStore.getState().openProjectSettings(project.id)
+                  if (info?.project) useProjectStore.getState().openProjectSettings(info.project.id)
                 }}
               >
                 <Settings className="h-4 w-4 mr-2" />

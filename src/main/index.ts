@@ -21,7 +21,8 @@ import {
   cleanupScripts,
   registerTerminalHandlers,
   cleanupTerminals,
-  registerUpdaterHandlers
+  registerUpdaterHandlers,
+  registerConnectionHandlers
 } from './ipc'
 import { buildMenu, updateMenuState } from './menu'
 import type { MenuState } from './menu'
@@ -308,6 +309,7 @@ app.whenReady().then(() => {
   registerSystemHandlers()
   registerSettingsHandlers()
   registerFileHandlers()
+  registerConnectionHandlers()
 
   // Register response logging handlers only when --log is active
   if (isLogMode) {

@@ -51,6 +51,9 @@ export interface TerminalBackend {
   /** Update the terminal theme at runtime (re-reads CSS variables) */
   updateTheme?(): void
 
+  /** Toggle backend visibility while keeping session state alive */
+  setVisible?(visible: boolean): void
+
   /** Search within terminal output */
   searchOpen?(): void
   searchClose?(): void

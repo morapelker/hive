@@ -646,6 +646,31 @@ export function registerOpenCodeHandlers(
     }
   )
 
+  // Fork an existing OpenCode session at an optional message boundary
+  ipcMain.handle(
+    'opencode:fork',
+    async (
+      _event,
+      {
+        worktreePath,
+        sessionId,
+        messageId
+      }: { worktreePath: string; sessionId: string; messageId?: string }
+    ) => {
+      log.info('IPC: opencode:fork', { worktreePath, sessionId, messageId })
+      try {
+        const result = await openCodeService.forkSession(worktreePath, sessionId, messageId)
+        return { success: true, ...result }
+      } catch (error) {
+        log.error('IPC: opencode:fork failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Get messages from an OpenCode session
   ipcMain.handle(
     'opencode:messages',

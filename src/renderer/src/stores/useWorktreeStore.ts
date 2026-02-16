@@ -5,6 +5,55 @@ import { useSessionStore } from './useSessionStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
+import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
+
+/** Fire-and-forget: run setup script for a worktree, subscribing to output events
+ *  so output is captured even when SetupTab is not mounted. */
+export function fireSetupScript(projectId: string, worktreeId: string, cwd: string): void {
+  const project = useProjectStore.getState().projects.find((p) => p.id === projectId)
+  if (!project?.setup_script) return
+
+  const commands = project.setup_script
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'))
+  if (commands.length === 0) return
+
+  const store = useScriptStore.getState()
+  store.setSetupRunning(worktreeId, true)
+
+  // Subscribe to output events so output is captured regardless of UI state
+  const channel = `script:setup:${worktreeId}`
+  const unsub = window.scriptOps.onOutput(channel, (event) => {
+    const s = useScriptStore.getState()
+    switch (event.type) {
+      case 'command-start':
+        s.appendSetupOutput(worktreeId, `\x00CMD:${event.command}`)
+        break
+      case 'output':
+        if (event.data) s.appendSetupOutput(worktreeId, event.data)
+        break
+      case 'error':
+        s.appendSetupOutput(
+          worktreeId,
+          `\x00ERR:Command failed with exit code ${event.exitCode}: ${event.command}`
+        )
+        s.setSetupError(worktreeId, `Command failed: ${event.command}`)
+        s.setSetupRunning(worktreeId, false)
+        unsub()
+        break
+      case 'done':
+        s.setSetupRunning(worktreeId, false)
+        unsub()
+        break
+    }
+  })
+
+  window.scriptOps.runSetup(commands, cwd, worktreeId).catch(() => {
+    useScriptStore.getState().setSetupRunning(worktreeId, false)
+    unsub()
+  })
+}
 
 // Worktree type matching the database schema
 interface Worktree {
@@ -57,6 +106,7 @@ interface WorktreeState {
     projectPath: string
   ) => Promise<{ success: boolean; error?: string }>
   selectWorktree: (id: string | null) => void
+  selectWorktreeOnly: (id: string | null) => void
   touchWorktree: (id: string) => Promise<void>
   syncWorktrees: (projectId: string, projectPath: string) => Promise<void>
   getWorktreesForProject: (projectId: string) => Worktree[]
@@ -108,10 +158,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const worktrees = await window.db.worktree.getActiveByProject(projectId)
-      // Sort: default worktrees first, then by last_accessed_at descending
+      // Sort: non-default worktrees by last_accessed_at descending, default worktree last
       const sortedWorktrees = worktrees.sort((a, b) => {
-        if (a.is_default && !b.is_default) return -1
-        if (!a.is_default && b.is_default) return 1
+        if (a.is_default && !b.is_default) return 1
+        if (!a.is_default && b.is_default) return -1
         return new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
       })
       set((state) => {
@@ -163,22 +213,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       })
 
       // Fire-and-forget: run setup script if configured
-      const project = useProjectStore.getState().projects.find((p) => p.id === projectId)
-      if (project?.setup_script) {
-        const commands = project.setup_script
-          .split('\n')
-          .map((l) => l.trim())
-          .filter((l) => l && !l.startsWith('#'))
-
-        if (commands.length > 0) {
-          const worktreeId = result.worktree!.id
-          const cwd = result.worktree!.path
-          useScriptStore.getState().setSetupRunning(worktreeId, true)
-          window.scriptOps.runSetup(commands, cwd, worktreeId).catch(() => {
-            useScriptStore.getState().setSetupRunning(worktreeId, false)
-          })
-        }
-      }
+      fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
 
       return { success: true }
     } catch (error) {
@@ -251,6 +286,16 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         return { success: false, error: result.error || 'Failed to archive worktree' }
       }
 
+      // 4. Clean up any connections referencing this worktree
+      try {
+        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        // Reload connections to reflect the change
+        const { useConnectionStore } = await import('./useConnectionStore')
+        await useConnectionStore.getState().loadConnections()
+      } catch {
+        // Non-critical -- log but don't block archive
+      }
+
       // Remove from state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -316,6 +361,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         return { success: false, error: result.error || 'Failed to unbranch worktree' }
       }
 
+      // Clean up any connections referencing this worktree
+      try {
+        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        const { useConnectionStore } = await import('./useConnectionStore')
+        await useConnectionStore.getState().loadConnections()
+      } catch {
+        // Non-critical -- log but don't block unbranch
+      }
+
       // Remove from state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -348,11 +402,22 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     }
   },
 
-  // Select a worktree
+  // Select a worktree (with connection deconfliction)
   selectWorktree: (id: string | null) => {
     set({ selectedWorktreeId: id })
     if (id) {
       // Touch worktree to update last_accessed_at
+      get().touchWorktree(id)
+      // Deconflict: clear any selected connection synchronously (same tick)
+      clearConnectionSelection()
+    }
+  },
+
+  // Select a worktree without triggering connection deconfliction
+  // Used by connection store to avoid circular deconfliction
+  selectWorktreeOnly: (id: string | null) => {
+    set({ selectedWorktreeId: id })
+    if (id) {
       get().touchWorktree(id)
     }
   },
@@ -393,13 +458,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Get worktrees for a specific project (applies custom order if available)
   getWorktreesForProject: (projectId: string) => {
     const worktrees = get().worktreesByProject.get(projectId) || []
-    const customOrder = get().worktreeOrderByProject.get(projectId)
 
-    if (!customOrder || customOrder.length === 0) return worktrees
-
-    // Separate default worktree (always first) from non-default
+    // Separate default worktree (always last) from non-default
     const defaultWorktree = worktrees.find((w) => w.is_default)
     const nonDefault = worktrees.filter((w) => !w.is_default)
+
+    const customOrder = get().worktreeOrderByProject.get(projectId)
+    if (!customOrder || customOrder.length === 0) {
+      return defaultWorktree ? [...nonDefault, defaultWorktree] : nonDefault
+    }
 
     // Sort non-default worktrees by custom order; unordered ones go at end
     const ordered: typeof nonDefault = []
@@ -412,7 +479,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       if (!customOrder.includes(wt.id)) ordered.push(wt)
     }
 
-    return defaultWorktree ? [defaultWorktree, ...ordered] : ordered
+    return defaultWorktree ? [...ordered, defaultWorktree] : ordered
   },
 
   // Get the default worktree for a project
@@ -445,6 +512,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       if (result.success && result.worktree) {
         // Reload worktrees for the project
         get().loadWorktrees(projectId)
+
+        // Fire-and-forget: run setup script if configured
+        fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
       }
       return result
     } catch (error) {
@@ -572,3 +642,6 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     window.db.worktree.appendSessionTitle?.(worktreeId, title)
   }
 }))
+
+// Register the worktree-clear callback so useConnectionStore can call it synchronously
+registerWorktreeClear(() => useWorktreeStore.getState().selectWorktreeOnly(null))

@@ -24,7 +24,12 @@ import type {
   Space,
   SpaceCreate,
   SpaceUpdate,
-  ProjectSpaceAssignment
+  ProjectSpaceAssignment,
+  Connection,
+  ConnectionCreate,
+  ConnectionMember,
+  ConnectionMemberCreate,
+  ConnectionWithMembers
 } from './types'
 
 export class DatabaseService {
@@ -101,10 +106,81 @@ export class DatabaseService {
 
     for (const migration of MIGRATIONS) {
       if (migration.version > version) {
-        db.exec(migration.up)
+        try {
+          db.exec(migration.up)
+        } catch (err) {
+          // Log but don't crash -- partial migrations (e.g. duplicate column)
+          // are handled by the idempotent repair step below.
+          console.error(
+            `[db] Migration v${migration.version} (${migration.name}) failed:`,
+            err instanceof Error ? err.message : String(err)
+          )
+        }
         this.setSetting('schema_version', migration.version.toString())
       }
     }
+
+    // Post-migration repair: idempotently ensure all expected tables/columns
+    // exist. This handles partial migrations, merge conflicts, or version
+    // skew between worktree builds.
+    this.ensureConnectionTables()
+  }
+
+  /**
+   * Idempotently add a column to a table. No-op if column already exists.
+   * Safe to call repeatedly (e.g. after merges that replay migrations).
+   */
+  private safeAddColumn(table: string, column: string, definition: string): void {
+    const db = this.getDb()
+    const columns = db.pragma(`table_info(${table})`) as { name: string }[]
+    if (!columns.some((c) => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
+  }
+
+  /**
+   * Idempotently ensure connection-related tables and columns exist.
+   * Safe to run multiple times -- uses IF NOT EXISTS and checks column presence.
+   */
+  private ensureConnectionTables(): void {
+    const db = this.getDb()
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS connections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS connection_members (
+        id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        worktree_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        symlink_name TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE,
+        FOREIGN KEY (worktree_id) REFERENCES worktrees(id) ON DELETE CASCADE,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_connection_members_connection ON connection_members(connection_id);
+      CREATE INDEX IF NOT EXISTS idx_connection_members_worktree ON connection_members(worktree_id);
+    `)
+
+    this.safeAddColumn(
+      'sessions',
+      'connection_id',
+      'TEXT DEFAULT NULL REFERENCES connections(id) ON DELETE SET NULL'
+    )
+    this.safeAddColumn('sessions', 'agent_sdk', "TEXT NOT NULL DEFAULT 'opencode'")
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
+    `)
   }
 
   // Settings operations
@@ -248,6 +324,10 @@ export class DatabaseService {
       updates.push('language = ?')
       values.push(data.language)
     }
+    if (data.custom_icon !== undefined) {
+      updates.push('custom_icon = ?')
+      values.push(data.custom_icon)
+    }
     if (data.setup_script !== undefined) {
       updates.push('setup_script = ?')
       values.push(data.setup_script)
@@ -343,7 +423,7 @@ export class DatabaseService {
     const db = this.getDb()
     const rows = db
       .prepare(
-        'SELECT * FROM worktrees WHERE project_id = ? ORDER BY is_default DESC, last_accessed_at DESC'
+        'SELECT * FROM worktrees WHERE project_id = ? ORDER BY is_default ASC, last_accessed_at DESC'
       )
       .all(projectId) as Record<string, unknown>[]
     return rows.map((row) => this.mapWorktreeRow(row))
@@ -353,7 +433,7 @@ export class DatabaseService {
     const db = this.getDb()
     const rows = db
       .prepare(
-        "SELECT * FROM worktrees WHERE project_id = ? AND status = 'active' ORDER BY is_default DESC, last_accessed_at DESC"
+        "SELECT * FROM worktrees WHERE project_id = ? AND status = 'active' ORDER BY is_default ASC, last_accessed_at DESC"
       )
       .all(projectId) as Record<string, unknown>[]
     return rows.map((row) => this.mapWorktreeRow(row))
@@ -469,6 +549,7 @@ export class DatabaseService {
       id: randomUUID(),
       worktree_id: data.worktree_id,
       project_id: data.project_id,
+      connection_id: data.connection_id ?? null,
       name: data.name ?? null,
       status: 'active',
       opencode_session_id: data.opencode_session_id ?? null,
@@ -483,12 +564,13 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, name, status, opencode_session_id, agent_sdk, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, agent_sdk, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
       session.project_id,
+      session.connection_id,
       session.name,
       session.status,
       session.opencode_session_id,
@@ -816,6 +898,171 @@ export class DatabaseService {
     const db = this.getDb()
     const result = db.prepare('DELETE FROM session_messages WHERE id = ?').run(id)
     return result.changes > 0
+  }
+
+  // Connection operations
+  createConnection(data: ConnectionCreate): Connection {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    const connection: Connection = {
+      id: randomUUID(),
+      name: data.name,
+      path: data.path,
+      status: 'active',
+      created_at: now,
+      updated_at: now
+    }
+
+    db.prepare(
+      `INSERT INTO connections (id, name, path, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      connection.id,
+      connection.name,
+      connection.path,
+      connection.status,
+      connection.created_at,
+      connection.updated_at
+    )
+
+    return connection
+  }
+
+  getConnection(id: string): ConnectionWithMembers | null {
+    const db = this.getDb()
+    const row = db.prepare('SELECT * FROM connections WHERE id = ?').get(id) as
+      | Connection
+      | undefined
+    if (!row) return null
+
+    const members = db
+      .prepare(
+        `SELECT cm.*, w.name as worktree_name, w.branch_name as worktree_branch,
+                w.path as worktree_path, p.name as project_name
+         FROM connection_members cm
+         JOIN worktrees w ON cm.worktree_id = w.id
+         JOIN projects p ON cm.project_id = p.id
+         WHERE cm.connection_id = ?
+         ORDER BY cm.added_at ASC`
+      )
+      .all(id) as ConnectionWithMembers['members']
+
+    return { ...row, members }
+  }
+
+  getAllConnections(): ConnectionWithMembers[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare("SELECT * FROM connections WHERE status = 'active' ORDER BY updated_at DESC")
+      .all() as Connection[]
+
+    return rows.map((row) => {
+      const members = db
+        .prepare(
+          `SELECT cm.*, w.name as worktree_name, w.branch_name as worktree_branch,
+                  w.path as worktree_path, p.name as project_name
+           FROM connection_members cm
+           JOIN worktrees w ON cm.worktree_id = w.id
+           JOIN projects p ON cm.project_id = p.id
+           WHERE cm.connection_id = ?
+           ORDER BY cm.added_at ASC`
+        )
+        .all(row.id) as ConnectionWithMembers['members']
+      return { ...row, members }
+    })
+  }
+
+  updateConnection(id: string, data: Partial<Connection>): Connection | null {
+    const db = this.getDb()
+    const existing = db.prepare('SELECT * FROM connections WHERE id = ?').get(id) as
+      | Connection
+      | undefined
+    if (!existing) return null
+
+    const updates: string[] = ['updated_at = ?']
+    const values: (string | null)[] = [new Date().toISOString()]
+
+    if (data.name !== undefined) {
+      updates.push('name = ?')
+      values.push(data.name)
+    }
+    if (data.path !== undefined) {
+      updates.push('path = ?')
+      values.push(data.path)
+    }
+    if (data.status !== undefined) {
+      updates.push('status = ?')
+      values.push(data.status)
+    }
+
+    values.push(id)
+    db.prepare(`UPDATE connections SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+
+    return db.prepare('SELECT * FROM connections WHERE id = ?').get(id) as Connection
+  }
+
+  deleteConnection(id: string): boolean {
+    const db = this.getDb()
+    const result = db.prepare('DELETE FROM connections WHERE id = ?').run(id)
+    return result.changes > 0
+  }
+
+  createConnectionMember(data: ConnectionMemberCreate): ConnectionMember {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    const member: ConnectionMember = {
+      id: randomUUID(),
+      connection_id: data.connection_id,
+      worktree_id: data.worktree_id,
+      project_id: data.project_id,
+      symlink_name: data.symlink_name,
+      added_at: now
+    }
+
+    db.prepare(
+      `INSERT INTO connection_members (id, connection_id, worktree_id, project_id, symlink_name, added_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      member.id,
+      member.connection_id,
+      member.worktree_id,
+      member.project_id,
+      member.symlink_name,
+      member.added_at
+    )
+
+    return member
+  }
+
+  deleteConnectionMember(connectionId: string, worktreeId: string): boolean {
+    const db = this.getDb()
+    const result = db
+      .prepare('DELETE FROM connection_members WHERE connection_id = ? AND worktree_id = ?')
+      .run(connectionId, worktreeId)
+    return result.changes > 0
+  }
+
+  getConnectionMembersByWorktree(worktreeId: string): ConnectionMember[] {
+    const db = this.getDb()
+    return db
+      .prepare('SELECT * FROM connection_members WHERE worktree_id = ?')
+      .all(worktreeId) as ConnectionMember[]
+  }
+
+  getActiveSessionsByConnection(connectionId: string): Session[] {
+    const db = this.getDb()
+    return db
+      .prepare(
+        "SELECT * FROM sessions WHERE connection_id = ? AND status = 'active' ORDER BY updated_at DESC"
+      )
+      .all(connectionId) as Session[]
+  }
+
+  getSessionsByConnection(connectionId: string): Session[] {
+    const db = this.getDb()
+    return db
+      .prepare('SELECT * FROM sessions WHERE connection_id = ? ORDER BY updated_at DESC')
+      .all(connectionId) as Session[]
   }
 
   // Space operations

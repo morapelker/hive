@@ -3,6 +3,7 @@ import {
   AlertCircle,
   GitBranch,
   Folder,
+  Link,
   Loader2,
   Map,
   MoreHorizontal,
@@ -38,6 +39,7 @@ import { formatRelativeTime } from '@/lib/format-utils'
 import { PulseAnimation } from './PulseAnimation'
 import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
+import { ConnectDialog } from '@/components/connections'
 
 interface Worktree {
   id: string
@@ -109,6 +111,9 @@ export function WorktreeItem({
             : worktreeStatus === 'plan_ready'
               ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
               : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+
+  // Connect dialog state
+  const [connectDialogOpen, setConnectDialogOpen] = useState(false)
 
   // Archive confirmation state
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
@@ -410,6 +415,11 @@ export function WorktreeItem({
                 <Copy className="h-4 w-4 mr-2" />
                 Copy Path
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setConnectDialogOpen(true)}>
+                <Link className="h-4 w-4 mr-2" />
+                Connect to...
+              </DropdownMenuItem>
               {!worktree.is_default && (
                 <>
                   <DropdownMenuItem onClick={startBranchRename}>
@@ -449,6 +459,12 @@ export function WorktreeItem({
         onConfirm={handleArchiveConfirm}
       />
 
+      <ConnectDialog
+        sourceWorktreeId={worktree.id}
+        open={connectDialogOpen}
+        onOpenChange={setConnectDialogOpen}
+      />
+
       {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">
         <ContextMenuItem onClick={handleOpenInTerminal}>
@@ -466,6 +482,11 @@ export function WorktreeItem({
         <ContextMenuItem onClick={handleCopyPath}>
           <Copy className="h-4 w-4 mr-2" />
           Copy Path
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onClick={() => setConnectDialogOpen(true)}>
+          <Link className="h-4 w-4 mr-2" />
+          Connect to...
         </ContextMenuItem>
         {!worktree.is_default && (
           <>

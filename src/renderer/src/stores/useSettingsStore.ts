@@ -6,7 +6,14 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 // ==========================================
 
 export type EditorOption = 'vscode' | 'cursor' | 'sublime' | 'webstorm' | 'zed' | 'custom'
-export type TerminalOption = 'terminal' | 'iterm' | 'warp' | 'alacritty' | 'kitty' | 'custom'
+export type TerminalOption =
+  | 'terminal'
+  | 'iterm'
+  | 'warp'
+  | 'alacritty'
+  | 'kitty'
+  | 'ghostty'
+  | 'custom'
 export type EmbeddedTerminalBackend = 'xterm' | 'ghostty'
 
 export interface SelectedModel {
@@ -30,6 +37,7 @@ export interface AppSettings {
   defaultTerminal: TerminalOption
   customTerminalCommand: string
   embeddedTerminalBackend: EmbeddedTerminalBackend
+  ghosttyFontSize: number
   ghosttyPromotionDismissed: boolean
 
   // Model
@@ -52,6 +60,9 @@ export interface AppSettings {
 
   // Agent SDK
   defaultAgentSdk: 'opencode' | 'claude-code'
+
+  // Chat
+  stripAtMentions: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -62,6 +73,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultTerminal: 'terminal',
   customTerminalCommand: '',
   embeddedTerminalBackend: 'xterm',
+  ghosttyFontSize: 14,
   ghosttyPromotionDismissed: false,
   selectedModel: null,
   lastOpenAction: null,
@@ -69,7 +81,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   customChromeCommand: '',
   modelVariantDefaults: {},
   showModelIcons: false,
-  defaultAgentSdk: 'opencode'
+  defaultAgentSdk: 'opencode',
+  stripAtMentions: true
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -125,6 +138,7 @@ function extractSettings(state: SettingsState): AppSettings {
     defaultTerminal: state.defaultTerminal,
     customTerminalCommand: state.customTerminalCommand,
     embeddedTerminalBackend: state.embeddedTerminalBackend,
+    ghosttyFontSize: state.ghosttyFontSize,
     ghosttyPromotionDismissed: state.ghosttyPromotionDismissed,
     selectedModel: state.selectedModel,
     lastOpenAction: state.lastOpenAction,
@@ -132,7 +146,8 @@ function extractSettings(state: SettingsState): AppSettings {
     customChromeCommand: state.customChromeCommand,
     modelVariantDefaults: state.modelVariantDefaults,
     showModelIcons: state.showModelIcons,
-    defaultAgentSdk: state.defaultAgentSdk
+    defaultAgentSdk: state.defaultAgentSdk,
+    stripAtMentions: state.stripAtMentions
   }
 }
 
@@ -228,6 +243,7 @@ export const useSettingsStore = create<SettingsState>()(
         defaultTerminal: state.defaultTerminal,
         customTerminalCommand: state.customTerminalCommand,
         embeddedTerminalBackend: state.embeddedTerminalBackend,
+        ghosttyFontSize: state.ghosttyFontSize,
         ghosttyPromotionDismissed: state.ghosttyPromotionDismissed,
         selectedModel: state.selectedModel,
         lastOpenAction: state.lastOpenAction,
@@ -236,7 +252,8 @@ export const useSettingsStore = create<SettingsState>()(
         modelVariantDefaults: state.modelVariantDefaults,
         showModelIcons: state.showModelIcons,
         defaultAgentSdk: state.defaultAgentSdk,
-        activeSection: state.activeSection
+        activeSection: state.activeSection,
+        stripAtMentions: state.stripAtMentions
       })
     }
   )

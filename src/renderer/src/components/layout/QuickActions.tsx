@@ -2,6 +2,7 @@ import { Copy, Check, FolderOpen, GitBranch } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 
 function CursorIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -36,8 +37,14 @@ function GhosttyIcon({ className }: { className?: string }): React.JSX.Element {
 
 export function QuickActions(): React.JSX.Element | null {
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
+  const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
+  const selectedConnection = useConnectionStore((s) =>
+    s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
+  )
   const [copied, setCopied] = useState(false)
   const [branchCopied, setBranchCopied] = useState(false)
+
+  const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
 
   const selectedWorktree = (() => {
     if (!selectedWorktreeId) return null
@@ -48,19 +55,22 @@ export function QuickActions(): React.JSX.Element | null {
     return null
   })()
 
-  const worktreePath = selectedWorktree?.path ?? null
+  // Use connection path when in connection mode, otherwise worktree path
+  const activePath = isConnectionMode
+    ? (selectedConnection?.path ?? null)
+    : (selectedWorktree?.path ?? null)
   const branchName =
-    selectedWorktree?.branch_name && selectedWorktree.name !== '(no-worktree)'
+    !isConnectionMode && selectedWorktree?.branch_name && selectedWorktree.name !== '(no-worktree)'
       ? selectedWorktree.branch_name
       : null
-  const disabled = !worktreePath
+  const disabled = !activePath
 
   const handleAction = useCallback(
     async (actionId: string) => {
-      if (!worktreePath) return
+      if (!activePath) return
       try {
         if (actionId === 'copy-path') {
-          await window.projectOps.copyToClipboard(worktreePath)
+          await window.projectOps.copyToClipboard(activePath)
           setCopied(true)
           setTimeout(() => setCopied(false), 1500)
         } else if (actionId === 'copy-branch') {
@@ -69,15 +79,15 @@ export function QuickActions(): React.JSX.Element | null {
           setBranchCopied(true)
           setTimeout(() => setBranchCopied(false), 1500)
         } else if (actionId === 'finder') {
-          await window.projectOps.showInFolder(worktreePath)
+          await window.projectOps.showInFolder(activePath)
         } else {
-          await window.systemOps.openInApp(actionId, worktreePath)
+          await window.systemOps.openInApp(actionId, activePath)
         }
       } catch (error) {
         console.error('Quick action failed:', error)
       }
     },
-    [worktreePath, branchName]
+    [activePath, branchName]
   )
 
   return (

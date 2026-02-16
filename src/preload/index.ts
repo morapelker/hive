@@ -71,6 +71,7 @@ const db = {
     create: (data: {
       worktree_id: string | null
       project_id: string
+      connection_id?: string | null
       name?: string | null
       opencode_session_id?: string | null
       agent_sdk?: 'opencode' | 'claude-code'
@@ -110,7 +111,11 @@ const db = {
     }) => ipcRenderer.invoke('db:session:search', options),
     getDraft: (sessionId: string) => ipcRenderer.invoke('db:session:getDraft', sessionId),
     updateDraft: (sessionId: string, draft: string | null) =>
-      ipcRenderer.invoke('db:session:updateDraft', sessionId, draft)
+      ipcRenderer.invoke('db:session:updateDraft', sessionId, draft),
+    getByConnection: (connectionId: string) =>
+      ipcRenderer.invoke('db:session:getByConnection', connectionId),
+    getActiveByConnection: (connectionId: string) =>
+      ipcRenderer.invoke('db:session:getActiveByConnection', connectionId)
   },
 
   // Spaces
@@ -195,6 +200,10 @@ const projectOps = {
 
 // Worktree operations API
 const worktreeOps = {
+  // Check if a repository has any commits
+  hasCommits: (projectPath: string): Promise<boolean> =>
+    ipcRenderer.invoke('worktree:hasCommits', projectPath),
+
   // Create a new worktree
   create: (params: {
     projectId: string
@@ -484,6 +493,7 @@ export interface FileTreeNode {
   path: string
   relativePath: string
   isDirectory: boolean
+  isSymlink?: boolean
   extension: string | null
   children?: FileTreeNode[]
 }
@@ -1046,6 +1056,18 @@ const opencodeOps = {
     error?: string
   }> => ipcRenderer.invoke('opencode:capabilities', { sessionId: opencodeSessionId }),
 
+  // Fork an existing session at an optional message boundary
+  fork: (
+    worktreePath: string,
+    opencodeSessionId: string,
+    messageId?: string
+  ): Promise<{ success: boolean; sessionId?: string; error?: string }> =>
+    ipcRenderer.invoke('opencode:fork', {
+      worktreePath,
+      sessionId: opencodeSessionId,
+      messageId
+    }),
+
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, event: OpenCodeStreamEvent): void => {
@@ -1225,7 +1247,7 @@ const terminalOps = {
   ghosttyCreateSurface: (
     worktreeId: string,
     rect: { x: number; y: number; w: number; h: number },
-    opts?: { cwd?: string; shell?: string; scaleFactor?: number }
+    opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
   ): Promise<{ success: boolean; surfaceId?: number; error?: string }> =>
     ipcRenderer.invoke('terminal:ghostty:createSurface', worktreeId, rect, opts),
 
@@ -1359,6 +1381,24 @@ const updaterOps = {
   }
 }
 
+// Connection operations API
+const connectionOps = {
+  create: (worktreeIds: string[]) => ipcRenderer.invoke('connection:create', { worktreeIds }),
+  delete: (connectionId: string) => ipcRenderer.invoke('connection:delete', { connectionId }),
+  addMember: (connectionId: string, worktreeId: string) =>
+    ipcRenderer.invoke('connection:addMember', { connectionId, worktreeId }),
+  removeMember: (connectionId: string, worktreeId: string) =>
+    ipcRenderer.invoke('connection:removeMember', { connectionId, worktreeId }),
+  getAll: () => ipcRenderer.invoke('connection:getAll'),
+  get: (connectionId: string) => ipcRenderer.invoke('connection:get', { connectionId }),
+  openInTerminal: (connectionPath: string) =>
+    ipcRenderer.invoke('connection:openInTerminal', { connectionPath }),
+  openInEditor: (connectionPath: string) =>
+    ipcRenderer.invoke('connection:openInEditor', { connectionPath }),
+  removeWorktreeFromAll: (worktreeId: string) =>
+    ipcRenderer.invoke('connection:removeWorktreeFromAll', { worktreeId })
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -1377,6 +1417,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('scriptOps', scriptOps)
     contextBridge.exposeInMainWorld('terminalOps', terminalOps)
     contextBridge.exposeInMainWorld('updaterOps', updaterOps)
+    contextBridge.exposeInMainWorld('connectionOps', connectionOps)
   } catch (error) {
     console.error(error)
   }
@@ -1407,4 +1448,6 @@ if (process.contextIsolated) {
   window.terminalOps = terminalOps
   // @ts-expect-error (define in dts)
   window.updaterOps = updaterOps
+  // @ts-expect-error (define in dts)
+  window.connectionOps = connectionOps
 }

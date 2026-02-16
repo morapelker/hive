@@ -7,6 +7,7 @@ interface FileTreeNode {
   path: string
   relativePath: string
   isDirectory: boolean
+  isSymlink?: boolean
   extension: string | null
   children?: FileTreeNode[]
 }

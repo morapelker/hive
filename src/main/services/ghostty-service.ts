@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import { createLogger } from './logger'
 
@@ -11,7 +11,7 @@ interface GhosttyAddon {
   ghosttyCreateSurface(
     windowHandle: Buffer,
     rect: { x: number; y: number; w: number; h: number },
-    opts: { cwd?: string; shell?: string; scaleFactor: number }
+    opts: { cwd?: string; shell?: string; scaleFactor: number; fontSize?: number }
   ): number
   ghosttySetFrame(surfaceId: number, rect: { x: number; y: number; w: number; h: number }): void
   ghosttySetSize(surfaceId: number, width: number, height: number): void
@@ -56,6 +56,7 @@ export interface GhosttyCreateSurfaceOpts {
   cwd?: string
   shell?: string
   scaleFactor?: number
+  fontSize?: number
 }
 
 // Surface tracking for worktree association
@@ -210,12 +211,18 @@ class GhosttyService {
 
     try {
       const windowHandle = this.mainWindow.getNativeWindowHandle()
-      const scaleFactor = opts.scaleFactor ?? this.mainWindow.webContents.getZoomFactor() * 2.0
+      // Use the display's native scale factor, NOT the Electron zoom factor.
+      // Electron's getZoomFactor() reflects Cmd+/- zoom which inflates CSS pixel
+      // values but does NOT change the actual display DPI — mixing them in
+      // caused Ghostty to render with an incorrect scale, producing giant fonts.
+      const display = screen.getDisplayMatching(this.mainWindow.getBounds())
+      const scaleFactor = opts.scaleFactor ?? display.scaleFactor
 
       const surfaceId = this.addon.ghosttyCreateSurface(windowHandle, rect, {
         cwd: opts.cwd,
         shell: opts.shell,
-        scaleFactor
+        scaleFactor,
+        fontSize: opts.fontSize
       })
 
       if (surfaceId === 0) {

@@ -12,8 +12,10 @@ import { AttachmentButton } from './AttachmentButton'
 import { AttachmentPreview } from './AttachmentPreview'
 import type { Attachment } from './AttachmentPreview'
 import { SlashCommandPopover } from './SlashCommandPopover'
+import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
+import { useFileMentions } from '@/hooks/useFileMentions'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
@@ -30,10 +32,14 @@ import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { useWorktreeStore } from '@/stores'
+import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode } from '@/lib/message-send-times'
 import beeIcon from '@/assets/bee.png'
+
+// Stable empty array to avoid creating new references in selectors
+const EMPTY_FILE_TREE: never[] = []
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
@@ -129,6 +135,7 @@ interface DbSession {
   id: string
   worktree_id: string | null
   project_id: string
+  connection_id: string | null
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
@@ -287,6 +294,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([])
   const [showSlashCommands, setShowSlashCommands] = useState(false)
   const [revertMessageID, setRevertMessageID] = useState<string | null>(null)
+  const [forkingMessageId, setForkingMessageId] = useState<string | null>(null)
   const revertDiffRef = useRef<string | null>(null)
 
   // Runtime capabilities for undo/redo gating
@@ -352,6 +360,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       const found = sessions.find((session) => session.id === sessionId)
       if (found) return found
     }
+    for (const sessions of state.sessionsByConnection.values()) {
+      const found = sessions.find((session) => session.id === sessionId)
+      if (found) return found
+    }
     return null
   })
   const globalModel = useSettingsStore((state) => state.selectedModel)
@@ -412,9 +424,33 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Child session → subtask index mapping for subagent content routing
   const childToSubtaskIndexRef = useRef<Map<string, number>>(new Map())
 
+  // Cursor position tracking for file mentions
+  const cursorPositionRef = useRef(0)
+  const [cursorPosition, setCursorPosition] = useState(0)
+  const isPastingRef = useRef(false)
+
   // Draft persistence refs
   const inputValueRef = useRef('')
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // File tree for file mentions — keyed by worktree path.
+  // Ensure the tree is loaded when worktreePath is resolved — SessionView cannot
+  // rely on the FileTree sidebar component having already populated the store
+  // (sidebar may be collapsed, on a different tab, or targeting a different worktree).
+  const fileTree = useFileTreeStore((state) =>
+    worktreePath ? (state.fileTreeByWorktree.get(worktreePath) ?? EMPTY_FILE_TREE) : EMPTY_FILE_TREE
+  )
+  useEffect(() => {
+    if (worktreePath && fileTree === EMPTY_FILE_TREE) {
+      useFileTreeStore.getState().loadFileTree(worktreePath)
+    }
+  }, [worktreePath, fileTree])
+
+  // File mentions hook
+  const fileMentions = useFileMentions(inputValue, cursorPosition, fileTree)
+
+  // stripAtMentions setting
+  const stripAtMentions = useSettingsStore((state) => state.stripAtMentions)
 
   // Streaming dedup refs
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
@@ -449,6 +485,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const getModelForRequests = useCallback((): SelectedModel | undefined => {
     const state = useSessionStore.getState()
     for (const sessions of state.sessionsByWorktree.values()) {
+      const found = sessions.find((session) => session.id === sessionId)
+      if (found?.model_provider_id && found.model_id) {
+        return {
+          providerID: found.model_provider_id,
+          modelID: found.model_id,
+          variant: found.model_variant ?? undefined
+        }
+      }
+    }
+    for (const sessions of state.sessionsByConnection.values()) {
       const found = sessions.find((session) => session.id === sessionId)
       if (found?.model_provider_id && found.model_id) {
         return {
@@ -588,15 +634,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     savedDraftRef.current = ''
   }, [sessionId])
 
-  // Auto-focus textarea whenever session changes (new session or tab switch)
-  // Focus immediately without waiting for connection — users can type while connecting
+  // Auto-focus textarea whenever session changes or view becomes connected.
+  // The textarea only exists in the DOM when viewState is 'connected',
+  // so we need to re-trigger focus when transitioning from 'connecting' → 'connected'.
   useEffect(() => {
     if (textareaRef.current) {
       requestAnimationFrame(() => {
         textareaRef.current?.focus()
       })
     }
-  }, [sessionId])
+  }, [sessionId, viewState.status])
 
   // Push per-session model to OpenCode on tab switch
   useEffect(() => {
@@ -624,33 +671,38 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [inputValue, sessionId])
 
-  // Set 'answering' status when a question is pending, revert when answered
+  // Set 'answering' status when a question is pending, revert when answered.
+  // Guard: only mutate the store when the status actually needs to change,
+  // to avoid triggering cascading re-renders from no-op updates.
   useEffect(() => {
+    const statusStore = useWorktreeStatusStore.getState()
+    const currentStatus = statusStore.sessionStatuses[sessionId]
     if (activeQuestion && sessionId) {
-      useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'answering')
+      if (currentStatus?.status !== 'answering') {
+        statusStore.setSessionStatus(sessionId, 'answering')
+      }
     } else if (!activeQuestion && sessionId) {
       // Question answered/dismissed — restore status based on session mode
-      const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
       if (currentStatus?.status === 'answering') {
         const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-        useWorktreeStatusStore
-          .getState()
-          .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+        statusStore.setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
       }
     }
   }, [activeQuestion, sessionId])
 
-  // Set 'permission' status when a permission is pending, revert when replied
+  // Set 'permission' status when a permission is pending, revert when replied.
+  // Guard: only mutate the store when the status actually needs to change.
   useEffect(() => {
+    const statusStore = useWorktreeStatusStore.getState()
+    const currentStatus = statusStore.sessionStatuses[sessionId]
     if (activePermission && sessionId) {
-      useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'permission')
+      if (currentStatus?.status !== 'permission') {
+        statusStore.setSessionStatus(sessionId, 'permission')
+      }
     } else if (!activePermission && sessionId) {
-      const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
       if (currentStatus?.status === 'permission') {
         const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-        useWorktreeStatusStore
-          .getState()
-          .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+        statusStore.setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
       }
     }
   }, [activePermission, sessionId])
@@ -1618,6 +1670,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             setWorktreePath(wtPath)
             transcriptSourceRef.current.worktreePath = wtPath
           }
+        } else if (session.connection_id) {
+          // Connection session: resolve the connection folder path
+          try {
+            const connResult = await window.connectionOps.get(session.connection_id)
+            if (connResult.success && connResult.connection) {
+              wtPath = connResult.connection.path
+              setWorktreePath(wtPath)
+              transcriptSourceRef.current.worktreePath = wtPath
+            }
+          } catch {
+            console.warn('Failed to resolve connection path for session')
+          }
         }
 
         const existingOpcSessionId = session.opencode_session_id
@@ -2124,10 +2188,87 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     return true
   }, [worktreePath, opencodeSessionId])
 
+  const handleForkFromAssistantMessage = useCallback(
+    async (message: OpenCodeMessage) => {
+      if (forkingMessageId) return
+
+      if (!worktreePath || !opencodeSessionId) {
+        toast.error('Session is not ready to fork yet')
+        return
+      }
+
+      const sourceSession = sessionRecord ?? (await window.db.session.get(sessionId))
+      if (!sourceSession) {
+        toast.error('Session is not ready to fork yet')
+        return
+      }
+
+      const targetWorktreeId = worktreeId ?? sourceSession.worktree_id
+      if (!targetWorktreeId) {
+        toast.error('Session has no worktree to fork into')
+        return
+      }
+
+      const messageIndex = messages.findIndex((candidate) => candidate.id === message.id)
+      if (messageIndex === -1) {
+        toast.error('Could not locate the selected message')
+        return
+      }
+
+      const cutoffMessage = messages
+        .slice(messageIndex + 1)
+        .find((candidate) => !candidate.id.startsWith('local-'))
+
+      setForkingMessageId(message.id)
+
+      try {
+        const forkResult = await window.opencodeOps.fork(
+          worktreePath,
+          opencodeSessionId,
+          cutoffMessage?.id
+        )
+
+        if (!forkResult.success || !forkResult.sessionId) {
+          throw new Error(forkResult.error || 'Failed to fork session')
+        }
+
+        const fallbackForkName = sourceSession.name ? `${sourceSession.name} (fork)` : null
+        const forkedSession = await window.db.session.create({
+          worktree_id: targetWorktreeId,
+          project_id: sourceSession.project_id,
+          name: fallbackForkName,
+          opencode_session_id: forkResult.sessionId,
+          model_provider_id: sourceSession.model_provider_id,
+          model_id: sourceSession.model_id,
+          model_variant: sourceSession.model_variant
+        })
+
+        await useSessionStore.getState().loadSessions(targetWorktreeId, sourceSession.project_id)
+        useSessionStore.getState().setActiveSession(forkedSession.id)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to fork session')
+      } finally {
+        setForkingMessageId(null)
+      }
+    },
+    [
+      forkingMessageId,
+      messages,
+      opencodeSessionId,
+      sessionId,
+      sessionRecord,
+      worktreeId,
+      worktreePath
+    ]
+  )
+
   // Handle send message
   const handleSend = useCallback(
     async (overrideValue?: string) => {
-      const trimmedValue = (overrideValue ?? inputValue).trim()
+      // Apply mention stripping when sending (unless overrideValue is provided,
+      // e.g. for built-in commands like "Implement")
+      const rawValue = overrideValue ?? fileMentions.getTextForSend(stripAtMentions)
+      const trimmedValue = rawValue.trim()
       if (!trimmedValue) return
 
       if (trimmedValue.startsWith('/')) {
@@ -2237,6 +2378,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
       setInputValue('')
       inputValueRef.current = ''
+      fileMentions.clearMentions()
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       window.db.session.updateDraft(sessionId, null)
 
@@ -2436,7 +2578,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
     },
     [
-      inputValue,
       isStreaming,
       sessionId,
       sessionRecord,
@@ -2449,7 +2590,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       revertMessageID,
       isClaudeCode,
       refreshMessagesFromOpenCode,
-      getModelForRequests
+      getModelForRequests,
+      fileMentions,
+      stripAtMentions
     ]
   )
 
@@ -2526,6 +2669,38 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     [sessionId, worktreePath, pendingPlan]
   )
 
+  const handlePlanReadyHandoff = useCallback(async () => {
+    const lastAssistantMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.content.trim().length > 0)
+
+    if (!lastAssistantMessage) {
+      toast.error('No assistant plan message to hand off')
+      return
+    }
+
+    const currentWorktreeId = worktreeId
+    const currentProjectId = sessionRecord?.project_id
+    if (!currentWorktreeId || !currentProjectId) {
+      toast.error('Could not start handoff session')
+      return
+    }
+
+    const handoffPrompt = `Implement the following plan\n${lastAssistantMessage.content}`
+
+    const sessionStore = useSessionStore.getState()
+    const result = await sessionStore.createSession(currentWorktreeId, currentProjectId)
+    if (!result.success || !result.session) {
+      toast.error('Failed to create handoff session')
+      return
+    }
+
+    const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+    sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+    sessionStore.setActiveSession(result.session.id)
+    await setModePromise
+  }, [messages, worktreeId, sessionRecord?.project_id])
+
   // Abort streaming
   const handleAbort = useCallback(async () => {
     if (!worktreePath || !opencodeSessionId) return
@@ -2535,6 +2710,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // When file mention popover is open, let the popover's capture-phase
+      // listener handle ArrowUp/ArrowDown/Enter/Escape. Do NOT process them here.
+      if (fileMentions.isOpen) {
+        if (
+          e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown' ||
+          e.key === 'Enter' ||
+          e.key === 'Escape'
+        ) {
+          return
+        }
+      }
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         // When a plan is pending, sending text rejects the plan with feedback
@@ -2623,7 +2811,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         })
       }
     },
-    [handleSend, handlePlanReject, sessionId, worktreeId, historyIndex, inputValue]
+    [
+      handleSend,
+      handlePlanReject,
+      sessionId,
+      worktreeId,
+      historyIndex,
+      inputValue,
+      fileMentions.isOpen
+    ]
   )
 
   // Attachment handlers
@@ -2637,9 +2833,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Slash command handlers
   const handleInputChange = useCallback(
-    (value: string) => {
+    (value: string, newCursorPos?: number) => {
+      const oldValue = inputValueRef.current
       setInputValue(value)
       inputValueRef.current = value
+
+      // Update mention indices for the text change (skip if pasting to avoid
+      // opening the popover for pasted '@' characters)
+      if (!isPastingRef.current) {
+        fileMentions.updateMentions(oldValue, value)
+      }
+      isPastingRef.current = false
+
+      // Track cursor position
+      if (newCursorPos !== undefined) {
+        cursorPositionRef.current = newCursorPos
+        setCursorPosition(newCursorPos)
+      }
 
       // Exit history navigation on manual typing
       if (historyIndex !== null) {
@@ -2658,7 +2868,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         window.db.session.updateDraft(sessionId, value || null)
       }, 3000)
     },
-    [sessionId, historyIndex]
+    [sessionId, historyIndex, fileMentions]
   )
 
   const handleCommandSelect = useCallback((cmd: { name: string; template: string }) => {
@@ -2667,12 +2877,36 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     textareaRef.current?.focus()
   }, [])
 
+  // File mention selection handler
+  const handleFileMentionSelect = useCallback(
+    (file: { name: string; path: string; relativePath: string; extension: string | null }) => {
+      const result = fileMentions.selectFile(file)
+      setInputValue(result.newValue)
+      inputValueRef.current = result.newValue
+      cursorPositionRef.current = result.newCursorPosition
+      setCursorPosition(result.newCursorPosition)
+
+      // Set cursor position on the textarea
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.setSelectionRange(result.newCursorPosition, result.newCursorPosition)
+          textareaRef.current.focus()
+        }
+      })
+    },
+    [fileMentions]
+  )
+
   const handleSlashClose = useCallback(() => {
     setShowSlashCommands(false)
   }, [])
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
+      // Flag paste so handleInputChange skips opening the file mention popover
+      // for any '@' characters introduced by paste
+      isPastingRef.current = true
+
       const items = e.clipboardData?.items
       if (!items) return
       for (const item of Array.from(items)) {
@@ -2907,7 +3141,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           ) : (
             <div className="py-4">
               {visibleMessages.map((message) => (
-                <MessageRenderer key={message.id} message={message} cwd={worktreePath} />
+                <MessageRenderer
+                  key={message.id}
+                  message={message}
+                  cwd={worktreePath}
+                  onForkAssistantMessage={handleForkFromAssistantMessage}
+                  forkDisabled={forkingMessageId !== null && forkingMessageId !== message.id}
+                  isForking={forkingMessageId === message.id}
+                />
               ))}
               {/* Revert banner — shows when messages have been undone */}
               {revertMessageID && revertedUserCount > 0 && (
@@ -2979,6 +3220,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   }}
                   isStreaming={isStreaming}
                   cwd={worktreePath}
+                  onForkAssistantMessage={handleForkFromAssistantMessage}
+                  forkDisabled={true}
                 />
               )}
               {/* Typing indicator — shows while busy unless the blinking cursor is visible */}
@@ -3032,9 +3275,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           )}
         </div>
         <PlanReadyImplementFab
-          onClick={() => {
-            void handlePlanReadyImplement()
-          }}
+          onImplement={handlePlanReadyImplement}
+          onHandoff={handlePlanReadyHandoff}
           visible={showPlanReadyImplementFab}
         />
         {/* Scroll-to-bottom FAB */}
@@ -3049,7 +3291,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       {activePermission && (
         <div className="px-4 pb-2">
           <div className="max-w-4xl mx-auto">
-            <PermissionPrompt request={activePermission} onReply={handlePermissionReply} />
+            <PermissionPrompt
+              key={activePermission.id}
+              request={activePermission}
+              onReply={handlePermissionReply}
+            />
           </div>
         </div>
       )}
@@ -3059,6 +3305,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         <div className="px-4 pb-2">
           <div className="max-w-4xl mx-auto">
             <QuestionPrompt
+              key={activeQuestion.id}
               request={activeQuestion}
               onReply={handleQuestionReply}
               onReject={handleQuestionReject}
@@ -3083,6 +3330,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             onClose={handleSlashClose}
             visible={showSlashCommands}
           />
+          {/* File mention popover — only when slash commands are not showing */}
+          <FileMentionPopover
+            suggestions={fileMentions.suggestions}
+            selectedIndex={fileMentions.selectedIndex}
+            visible={fileMentions.isOpen && !showSlashCommands}
+            onSelect={handleFileMentionSelect}
+            onClose={fileMentions.dismiss}
+            onNavigate={fileMentions.moveSelection}
+          />
           <div
             className={cn(
               'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
@@ -3103,7 +3359,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             <textarea
               ref={textareaRef}
               value={inputValue}
-              onChange={(e) => handleInputChange(e.target.value)}
+              onChange={(e) => {
+                const pos = e.currentTarget.selectionStart ?? 0
+                handleInputChange(e.target.value, pos)
+              }}
+              onKeyUp={(e) => {
+                const pos = e.currentTarget.selectionStart ?? 0
+                cursorPositionRef.current = pos
+                setCursorPosition(pos)
+              }}
+              onClick={(e) => {
+                const pos = e.currentTarget.selectionStart ?? 0
+                cursorPositionRef.current = pos
+                setCursorPosition(pos)
+              }}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               disabled={!!activePermission}
@@ -3115,6 +3384,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                     : 'Type your message...'
               }
               aria-label="Message input"
+              aria-haspopup="listbox"
+              aria-expanded={fileMentions.isOpen && !showSlashCommands}
               className={cn(
                 'w-full resize-none bg-transparent px-3 py-2',
                 'text-sm placeholder:text-muted-foreground',

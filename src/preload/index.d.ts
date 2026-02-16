@@ -1,4 +1,31 @@
 // Database types for renderer
+interface Connection {
+  id: string
+  name: string
+  status: 'active' | 'archived'
+  path: string
+  created_at: string
+  updated_at: string
+}
+
+interface ConnectionMember {
+  id: string
+  connection_id: string
+  worktree_id: string
+  project_id: string
+  symlink_name: string
+  added_at: string
+}
+
+interface ConnectionWithMembers extends Connection {
+  members: (ConnectionMember & {
+    worktree_name: string
+    worktree_branch: string
+    worktree_path: string
+    project_name: string
+  })[]
+}
+
 interface Project {
   id: string
   name: string
@@ -38,6 +65,7 @@ interface Session {
   id: string
   worktree_id: string | null
   project_id: string
+  connection_id: string | null
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
@@ -174,6 +202,7 @@ declare global {
         create: (data: {
           worktree_id: string | null
           project_id: string
+          connection_id?: string | null
           name?: string | null
           opencode_session_id?: string | null
           agent_sdk?: 'opencode' | 'claude-code'
@@ -204,6 +233,8 @@ declare global {
         search: (options: SessionSearchOptions) => Promise<SessionWithWorktree[]>
         getDraft: (sessionId: string) => Promise<string | null>
         updateDraft: (sessionId: string, draft: string | null) => Promise<void>
+        getByConnection: (connectionId: string) => Promise<Session[]>
+        getActiveByConnection: (connectionId: string) => Promise<Session[]>
       }
       space: {
         list: () => Promise<Space[]>
@@ -256,6 +287,7 @@ declare global {
       getProjectIconPath: (filename: string) => Promise<string | null>
     }
     worktreeOps: {
+      hasCommits: (projectPath: string) => Promise<boolean>
       create: (params: { projectId: string; projectPath: string; projectName: string }) => Promise<{
         success: boolean
         worktree?: Worktree
@@ -512,6 +544,12 @@ declare global {
         }
         error?: string
       }>
+      // Fork an existing session at an optional message boundary
+      fork: (
+        worktreePath: string,
+        opencodeSessionId: string,
+        messageId?: string
+      ) => Promise<{ success: boolean; sessionId?: string; error?: string }>
       // Subscribe to streaming events
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
     }
@@ -633,7 +671,7 @@ declare global {
       ghosttyCreateSurface: (
         worktreeId: string,
         rect: { x: number; y: number; w: number; h: number },
-        opts?: { cwd?: string; shell?: string; scaleFactor?: number }
+        opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
       ) => Promise<{ success: boolean; surfaceId?: number; error?: string }>
       ghosttySetFrame: (
         worktreeId: string,
@@ -873,6 +911,31 @@ declare global {
       ) => () => void
       onError: (callback: (data: { message: string }) => void) => () => void
     }
+    connectionOps: {
+      create: (
+        worktreeIds: string[]
+      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      delete: (connectionId: string) => Promise<{ success: boolean; error?: string }>
+      addMember: (
+        connectionId: string,
+        worktreeId: string
+      ) => Promise<{ success: boolean; member?: ConnectionMember; error?: string }>
+      removeMember: (
+        connectionId: string,
+        worktreeId: string
+      ) => Promise<{ success: boolean; connectionDeleted?: boolean; error?: string }>
+      getAll: () => Promise<{
+        success: boolean
+        connections?: ConnectionWithMembers[]
+        error?: string
+      }>
+      get: (
+        connectionId: string
+      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      openInTerminal: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
+      openInEditor: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
+      removeWorktreeFromAll: (worktreeId: string) => Promise<{ success: boolean; error?: string }>
+    }
   }
 
   interface GitDiffStatFile {
@@ -943,6 +1006,7 @@ declare global {
     path: string
     relativePath: string
     isDirectory: boolean
+    isSymlink?: boolean
     extension: string | null
     children?: FileTreeNode[]
   }

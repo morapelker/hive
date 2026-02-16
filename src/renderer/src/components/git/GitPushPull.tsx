@@ -264,6 +264,11 @@ export function GitPushPull({
         toast.success(`Merged ${mergeBranch} successfully`)
         // Refresh file statuses and branch info after merge
         await refreshStatuses(worktreePath)
+        // Refresh branch list so Archive/Delete decision has current isCheckedOut data
+        const branchResult = await window.gitOps.listBranchesWithStatus(worktreePath)
+        if (branchResult.success) {
+          setBranches(branchResult.branches)
+        }
         // Re-check if the merged branch is now up-to-date
         setMergedCheckVersion((v) => v + 1)
       } else {

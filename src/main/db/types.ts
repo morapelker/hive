@@ -82,6 +82,7 @@ export interface Session {
   id: string
   worktree_id: string | null
   project_id: string
+  connection_id: string | null
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
@@ -98,6 +99,7 @@ export interface Session {
 export interface SessionCreate {
   worktree_id: string | null
   project_id: string
+  connection_id?: string | null
   name?: string | null
   opencode_session_id?: string | null
   agent_sdk?: 'opencode' | 'claude-code'
@@ -190,6 +192,52 @@ export interface SpaceUpdate {
 export interface ProjectSpaceAssignment {
   project_id: string
   space_id: string
+}
+
+// Connection types
+export interface Connection {
+  id: string
+  name: string
+  path: string
+  status: 'active' | 'archived'
+  created_at: string
+  updated_at: string
+}
+
+export interface ConnectionCreate {
+  name: string
+  path: string
+}
+
+export interface ConnectionUpdate {
+  name?: string
+  path?: string
+  status?: 'active' | 'archived'
+}
+
+export interface ConnectionMember {
+  id: string
+  connection_id: string
+  worktree_id: string
+  project_id: string
+  symlink_name: string
+  added_at: string
+}
+
+export interface ConnectionMemberCreate {
+  connection_id: string
+  worktree_id: string
+  project_id: string
+  symlink_name: string
+}
+
+export interface ConnectionWithMembers extends Connection {
+  members: (ConnectionMember & {
+    worktree_name: string
+    worktree_branch: string
+    worktree_path: string
+    project_name: string
+  })[]
 }
 
 // Database response types for queries

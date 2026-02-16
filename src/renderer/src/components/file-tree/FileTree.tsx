@@ -14,6 +14,7 @@ interface FileTreeNode {
   path: string
   relativePath: string
   isDirectory: boolean
+  isSymlink?: boolean
   extension: string | null
   children?: FileTreeNode[]
 }
@@ -34,6 +35,7 @@ interface FlatNode {
 
 interface FileTreeProps {
   worktreePath: string | null
+  isConnectionMode?: boolean
   onClose?: () => void
   onFileClick?: (node: FileTreeNode) => void
   className?: string
@@ -98,6 +100,7 @@ const ROW_HEIGHT = 24
 
 export function FileTree({
   worktreePath,
+  isConnectionMode,
   onClose,
   onFileClick,
   className,
@@ -123,7 +126,6 @@ export function FileTree({
   const { getFileStatuses, loadFileStatuses } = useGitStore()
 
   const unsubscribeRef = useRef<(() => void) | null>(null)
-  const gitUnsubscribeRef = useRef<(() => void) | null>(null)
   const currentWorktreeRef = useRef<string | null>(null)
   const parentRef = useRef<HTMLDivElement>(null)
 
@@ -138,10 +140,6 @@ export function FileTree({
         unsubscribeRef.current()
         unsubscribeRef.current = null
       }
-      if (gitUnsubscribeRef.current) {
-        gitUnsubscribeRef.current()
-        gitUnsubscribeRef.current = null
-      }
     }
 
     currentWorktreeRef.current = worktreePath
@@ -149,24 +147,17 @@ export function FileTree({
     // Load file tree
     loadFileTree(worktreePath)
 
-    // Load git statuses
-    loadFileStatuses(worktreePath)
+    // Load git statuses (skip for connection paths — no .git directory)
+    if (!isConnectionMode) loadFileStatuses(worktreePath)
 
     // Start watching
     startWatching(worktreePath)
 
     // Subscribe to file change events (file tree refresh only;
-    // git status refresh is handled by the main-process worktree watcher)
+    // git status refresh is handled centrally by useWorktreeWatcher)
     unsubscribeRef.current = window.fileTreeOps.onChange((event) => {
       if (event.worktreePath === worktreePath) {
         handleFileChange(worktreePath, event.eventType, event.changedPath, event.relativePath)
-      }
-    })
-
-    // Subscribe to git status change events (to re-render git indicators on file tree nodes)
-    gitUnsubscribeRef.current = window.gitOps.onStatusChanged((event) => {
-      if (event.worktreePath === worktreePath) {
-        loadFileStatuses(worktreePath)
       }
     })
 
@@ -176,12 +167,16 @@ export function FileTree({
         unsubscribeRef.current()
         unsubscribeRef.current = null
       }
-      if (gitUnsubscribeRef.current) {
-        gitUnsubscribeRef.current()
-        gitUnsubscribeRef.current = null
-      }
     }
-  }, [worktreePath, loadFileTree, loadFileStatuses, startWatching, stopWatching, handleFileChange])
+  }, [
+    worktreePath,
+    isConnectionMode,
+    loadFileTree,
+    loadFileStatuses,
+    startWatching,
+    stopWatching,
+    handleFileChange
+  ])
 
   // Cleanup watching on unmount
   useEffect(() => {
@@ -247,9 +242,9 @@ export function FileTree({
   const handleRefresh = useCallback(() => {
     if (worktreePath) {
       loadFileTree(worktreePath)
-      loadFileStatuses(worktreePath)
+      if (!isConnectionMode) loadFileStatuses(worktreePath)
     }
-  }, [worktreePath, loadFileTree, loadFileStatuses])
+  }, [worktreePath, isConnectionMode, loadFileTree, loadFileStatuses])
 
   const headerElement = !hideHeader ? (
     <FileTreeHeader

@@ -14,6 +14,7 @@ export function SettingsGeneral(): React.JSX.Element {
     breedType,
     showModelIcons,
     defaultAgentSdk,
+    stripAtMentions,
     updateSetting,
     resetToDefaults
   } = useSettingsStore()
@@ -120,6 +121,33 @@ export function SettingsGeneral(): React.JSX.Element {
             Claude Code
           </button>
         </div>
+      </div>
+
+      {/* Strip @ from file mentions */}
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-sm font-medium">Strip @ from file mentions</label>
+          <p className="text-xs text-muted-foreground">
+            Remove the @ symbol from file references inserted via the file picker before sending
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={stripAtMentions}
+          onClick={() => updateSetting('stripAtMentions', !stripAtMentions)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            stripAtMentions ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="strip-at-mentions-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
+              stripAtMentions ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
       </div>
 
       {/* Branch naming */}
