@@ -79,6 +79,14 @@ CANARY_NUM=$(( ${LATEST_CANARY:-0} + 1 ))
 NEW_VERSION="${BASE_VERSION}-canary.${CANARY_NUM}"
 SHORT_SHA=$(git rev-parse --short HEAD)
 
+# Validate computed versions
+if ! [[ "$BASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  fatal "Invalid base version: '${BASE_VERSION}'. Expected semver like 1.0.18"
+fi
+if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9]+$ ]]; then
+  fatal "Invalid canary version: '${NEW_VERSION}'. Expected format like 1.0.18-canary.1"
+fi
+
 info "Base version: ${YELLOW}v${BASE_VERSION}${NC}"
 info "Next canary:  ${GREEN}v${NEW_VERSION}${NC}"
 info "Branch:       ${CYAN}${CURRENT_BRANCH}${NC} (${SHORT_SHA})"
