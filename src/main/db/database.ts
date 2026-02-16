@@ -306,6 +306,10 @@ export class DatabaseService {
       updates.push('language = ?')
       values.push(data.language)
     }
+    if (data.custom_icon !== undefined) {
+      updates.push('custom_icon = ?')
+      values.push(data.custom_icon)
+    }
     if (data.setup_script !== undefined) {
       updates.push('setup_script = ?')
       values.push(data.setup_script)
