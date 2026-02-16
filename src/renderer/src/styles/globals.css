@@ -275,3 +275,15 @@
 .diff-viewer .d2h-file-side-diff {
   width: 50%;
 }
+
+/* Marquee scroll animation for overflow text on hover */
+@keyframes marquee-scroll {
+  0%,
+  20% {
+    transform: translateX(0);
+  }
+  80%,
+  100% {
+    transform: translateX(var(--scroll-distance));
+  }
+}
