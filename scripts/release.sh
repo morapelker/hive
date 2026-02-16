@@ -68,13 +68,16 @@ info "Current version: ${YELLOW}v${CURRENT_VERSION}${NC}"
 
 # Prompt for new version with suggested default
 if [[ -n "$SUGGESTED_VERSION" ]]; then
-  read -rp "Enter new version [${SUGGESTED_VERSION}]: " NEW_VERSION
+  read -rp "Enter new version number (without 'v' prefix) [${SUGGESTED_VERSION}]: " NEW_VERSION
   NEW_VERSION="${NEW_VERSION:-$SUGGESTED_VERSION}"
 else
-  read -rp "Enter new version (without 'v' prefix): " NEW_VERSION
+  read -rp "Enter new version number (without 'v' prefix, e.g. 1.0.18): " NEW_VERSION
 fi
 if [[ -z "$NEW_VERSION" ]]; then
   fatal "No version provided."
+fi
+if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  fatal "Invalid version format: '${NEW_VERSION}'. Expected semver like 1.0.18"
 fi
 if [[ "$NEW_VERSION" == "$CURRENT_VERSION" ]]; then
   fatal "New version is the same as current version."

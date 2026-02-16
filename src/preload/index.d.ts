@@ -893,6 +893,8 @@ declare global {
       checkForUpdate: () => Promise<void>
       downloadUpdate: () => Promise<void>
       installUpdate: () => Promise<void>
+      setChannel: (channel: string) => Promise<void>
+      getVersion: () => Promise<string>
       onChecking: (callback: () => void) => () => void
       onUpdateAvailable: (
         callback: (data: { version: string; releaseNotes?: string; releaseDate?: string }) => void

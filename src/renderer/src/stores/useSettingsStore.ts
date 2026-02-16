@@ -63,6 +63,9 @@ export interface AppSettings {
 
   // Chat
   stripAtMentions: boolean
+
+  // Updates
+  updateChannel: 'stable' | 'canary'
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -82,7 +85,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   modelVariantDefaults: {},
   showModelIcons: false,
   defaultAgentSdk: 'opencode',
-  stripAtMentions: true
+  stripAtMentions: true,
+  updateChannel: 'stable'
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -147,7 +151,8 @@ function extractSettings(state: SettingsState): AppSettings {
     modelVariantDefaults: state.modelVariantDefaults,
     showModelIcons: state.showModelIcons,
     defaultAgentSdk: state.defaultAgentSdk,
-    stripAtMentions: state.stripAtMentions
+    stripAtMentions: state.stripAtMentions,
+    updateChannel: state.updateChannel
   }
 }
 
@@ -177,6 +182,10 @@ export const useSettingsStore = create<SettingsState>()(
         // Persist to database
         const settings = extractSettings({ ...get(), [key]: value } as SettingsState)
         saveToDatabase(settings)
+        // Notify main process of channel change
+        if (key === 'updateChannel' && window.updaterOps?.setChannel) {
+          window.updaterOps.setChannel(value as string)
+        }
       },
 
       setSelectedModel: async (model: SelectedModel) => {
@@ -253,7 +262,8 @@ export const useSettingsStore = create<SettingsState>()(
         showModelIcons: state.showModelIcons,
         defaultAgentSdk: state.defaultAgentSdk,
         activeSection: state.activeSection,
-        stripAtMentions: state.stripAtMentions
+        stripAtMentions: state.stripAtMentions,
+        updateChannel: state.updateChannel
       })
     }
   )

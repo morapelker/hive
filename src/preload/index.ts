@@ -1299,6 +1299,8 @@ const updaterOps = {
   checkForUpdate: (): Promise<void> => ipcRenderer.invoke('updater:check'),
   downloadUpdate: (): Promise<void> => ipcRenderer.invoke('updater:download'),
   installUpdate: (): Promise<void> => ipcRenderer.invoke('updater:install'),
+  setChannel: (channel: string): Promise<void> => ipcRenderer.invoke('updater:setChannel', channel),
+  getVersion: (): Promise<string> => ipcRenderer.invoke('updater:getVersion'),
 
   onChecking: (callback: () => void): (() => void) => {
     const handler = (): void => {

@@ -68,6 +68,9 @@ importers:
       fix-path:
         specifier: ^4.0.0
         version: 4.0.0
+      highlight.js:
+        specifier: ^11.11.1
+        version: 11.11.1
       lucide-react:
         specifier: ^0.468.0
         version: 0.468.0(react@19.2.4)
@@ -9799,8 +9802,7 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
-  highlight.js@11.11.1:
-    optional: true
+  highlight.js@11.11.1: {}
 
   highlightjs-vue@1.0.0: {}
 

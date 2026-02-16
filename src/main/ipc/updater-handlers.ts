@@ -13,4 +13,12 @@ export function registerUpdaterHandlers(): void {
   ipcMain.handle('updater:install', () => {
     updaterService.quitAndInstall()
   })
+
+  ipcMain.handle('updater:setChannel', (_event, channel: string) => {
+    updaterService.setChannel(channel as 'stable' | 'canary')
+  })
+
+  ipcMain.handle('updater:getVersion', () => {
+    return updaterService.getVersion()
+  })
 }

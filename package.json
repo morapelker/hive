@@ -1,6 +1,6 @@
 {
   "name": "hive",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "Electron app for managing git projects and worktrees with OpenCode AI sessions",
   "main": "./out/main/index.js",
   "author": "",
@@ -32,7 +32,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "build:native": "cd src/native && npx node-gyp rebuild",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "release:canary": "bash scripts/release-canary.sh"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.42",
@@ -55,6 +56,7 @@
     "diff2html": "^3.4.56",
     "electron-updater": "^6.7.3",
     "fix-path": "^4.0.0",
+    "highlight.js": "^11.11.1",
     "lucide-react": "^0.468.0",
     "node-addon-api": "^8.5.0",
     "node-pty": "^1.1.0",

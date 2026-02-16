@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import 'diff2html/bundles/css/diff2html.min.css';
+@import 'highlight.js/styles/github-dark-dimmed.css';
 @import './xterm.css';
 
 @theme inline {
@@ -191,6 +192,12 @@
   color: var(--destructive);
 }
 
+/* Scroll containment — prevent diff table from overflowing */
+.diff-viewer .d2h-file-diff {
+  overflow: hidden;
+  position: relative;
+}
+
 /* Dark mode overrides for diff2html — uses theme-aware CSS custom properties */
 .dark .diff-viewer .d2h-wrapper {
   background-color: transparent;
@@ -217,34 +224,37 @@
   border-color: hsl(var(--border));
 }
 
-/* Dark mode — added lines: dark green text on green background */
+/* Dark mode — added lines: green tinted background (text color from syntax highlighting) */
 .dark .diff-viewer .d2h-ins {
   background-color: rgba(46, 160, 67, 0.15);
 }
 
 .dark .diff-viewer .d2h-ins .d2h-code-line-ctn {
   background-color: rgba(46, 160, 67, 0.15);
-  color: #3fb950;
 }
 
-/* Dark mode — removed lines: dark red text on red background */
+/* Dark mode — removed lines: red tinted background (text color from syntax highlighting) */
 .dark .diff-viewer .d2h-del {
   background-color: rgba(248, 81, 73, 0.15);
 }
 
 .dark .diff-viewer .d2h-del .d2h-code-line-ctn {
   background-color: rgba(248, 81, 73, 0.15);
-  color: #f85149;
 }
 
-/* Light mode — added lines: dark green text */
-.diff-viewer .d2h-ins .d2h-code-line-ctn {
-  color: #1a7f37;
+/* Dark mode — word-level inline diff highlights (<ins>/<del> within code lines).
+   diff2html defaults to bright light-mode colors (#97f295 / #ffb6ba) because
+   our .dark class doesn't match its built-in .d2h-dark-color-scheme. Override. */
+.dark .diff-viewer .d2h-code-line ins,
+.dark .diff-viewer .d2h-code-side-line ins {
+  background-color: rgba(46, 160, 67, 0.3);
+  border-radius: 0.2em;
 }
 
-/* Light mode — removed lines: dark red text */
-.diff-viewer .d2h-del .d2h-code-line-ctn {
-  color: #cf222e;
+.dark .diff-viewer .d2h-code-line del,
+.dark .diff-viewer .d2h-code-side-line del {
+  background-color: rgba(248, 81, 73, 0.3);
+  border-radius: 0.2em;
 }
 
 .dark .diff-viewer .d2h-info {
@@ -274,6 +284,69 @@
 /* Split view specific adjustments */
 .diff-viewer .d2h-file-side-diff {
   width: 50%;
+}
+
+/* Scope highlight.js styles to only apply inside diff viewer */
+.diff-viewer .d2h-code-line-ctn.hljs {
+  background: transparent;
+  padding: 0;
+}
+
+/*
+ * Fix syntax highlighting contrast on diff backgrounds.
+ * Some hljs token colors clash with the green/red diff tints:
+ *   - Red keywords (#f47067) disappear on red deletion backgrounds
+ *   - Green entity tags (#8ddb8c) disappear on green addition backgrounds
+ *   - Orange built-ins (#f69d50) have low contrast on red backgrounds
+ * We override only the clashing tokens on each diff line type, shifting
+ * them to a higher-contrast color while keeping full syntax highlighting
+ * on context lines.
+ */
+
+/* --- Added lines (green background): neutralize green-ish tokens --- */
+.dark .diff-viewer .d2h-ins .d2h-code-line-ctn .hljs-name,
+.dark .diff-viewer .d2h-ins .d2h-code-line-ctn .hljs-selector-tag,
+.dark .diff-viewer .d2h-ins .d2h-code-line-ctn .hljs-selector-pseudo,
+.dark .diff-viewer .d2h-ins .d2h-code-line-ctn .hljs-quote {
+  /* green #8ddb8c -> light cyan, still visible on green bg */
+  color: #6cb6ff;
+}
+
+.dark .diff-viewer .d2h-ins .d2h-code-line-ctn .hljs-addition {
+  color: #adbac7;
+  background-color: transparent;
+}
+
+/* --- Deleted lines (red background): neutralize red/orange tokens --- */
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-doctag,
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-keyword,
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-meta .hljs-keyword,
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-template-tag,
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-template-variable,
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-type,
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-variable.language_ {
+  /* red #f47067 -> light pink, readable on red bg */
+  color: #ffb4a8;
+}
+
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-built_in,
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-symbol {
+  /* orange #f69d50 -> light peach, readable on red bg */
+  color: #f0c999;
+}
+
+.dark .diff-viewer .d2h-del .d2h-code-line-ctn .hljs-deletion {
+  color: #adbac7;
+  background-color: transparent;
+}
+
+/* --- Light mode: same clashes apply with lighter backgrounds --- */
+.diff-viewer .d2h-ins .d2h-code-line-ctn .hljs-addition {
+  background-color: transparent;
+}
+
+.diff-viewer .d2h-del .d2h-code-line-ctn .hljs-deletion {
+  background-color: transparent;
 }
 
 /* Marquee scroll animation for overflow text on hover */
