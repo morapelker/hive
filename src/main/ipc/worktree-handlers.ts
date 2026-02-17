@@ -241,7 +241,7 @@ export function registerWorktreeHandlers(): void {
 
           // Sync branch name if it was renamed outside of Hive
           const gitBranch = gitBranchByPath.get(dbWorktree.path)
-          if (gitBranch && gitBranch !== dbWorktree.branch_name) {
+          if (gitBranch && gitBranch !== dbWorktree.branch_name && !dbWorktree.branch_renamed) {
             log.info('Branch renamed externally, updating DB', {
               worktreeId: dbWorktree.id,
               oldBranch: dbWorktree.branch_name,
