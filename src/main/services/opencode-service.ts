@@ -3,8 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createLogger } from './logger'
 import { notificationService } from './notification-service'
 import { getDatabase } from '../db'
-import { ALL_BREED_NAMES, LEGACY_CITY_NAMES } from './breed-names'
-import { canonicalizeBranchName, createGitService } from './git-service'
+import { autoRenameWorktreeBranch } from './git-service'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -1116,85 +1115,84 @@ class OpenCodeService {
           if (!isPlaceholderTitle) {
             db.updateSession(hiveSessionId, { name: sessionTitle })
           }
+          // Auto-rename branch for the session's direct worktree
           const worktree = db.getWorktreeBySessionId(hiveSessionId)
           if (worktree && !worktree.branch_renamed && !isPlaceholderTitle) {
-            const currentBranchName = worktree.branch_name.toLowerCase()
-            const isAutoName =
-              ALL_BREED_NAMES.some(
-                (b) =>
-                  b === currentBranchName || new RegExp(`^${b}-(?:v)?\\d+$`).test(currentBranchName)
-              ) ||
-              LEGACY_CITY_NAMES.some(
-                (c) =>
-                  c === currentBranchName || new RegExp(`^${c}-(?:v)?\\d+$`).test(currentBranchName)
-              )
-            if (isAutoName) {
-              const baseBranch = canonicalizeBranchName(sessionTitle)
-              if (baseBranch && baseBranch !== worktree.branch_name.toLowerCase()) {
-                try {
-                  const gitService = createGitService(worktree.path)
+            try {
+              const result = await autoRenameWorktreeBranch({
+                worktreeId: worktree.id,
+                worktreePath: worktree.path,
+                currentBranchName: worktree.branch_name,
+                sessionTitle,
+                db
+              })
+              if (result.renamed) {
+                this.sendToRenderer('worktree:branchRenamed', {
+                  worktreeId: worktree.id,
+                  newBranch: result.newBranch
+                })
+                log.info('Auto-renamed branch from session title', {
+                  worktreeId: worktree.id,
+                  oldBranch: worktree.branch_name,
+                  newBranch: result.newBranch
+                })
+              } else if (result.error) {
+                log.warn('Failed to auto-rename branch', { error: result.error })
+              } else if (result.skipped) {
+                log.debug('Skipped auto-rename', { reason: result.skipped })
+              }
+            } catch (err) {
+              db.updateWorktree(worktree.id, { branch_renamed: 1 })
+              log.warn('Failed to auto-rename branch', { err })
+            }
+          }
 
-                  // Find an available branch name, appending -2, -3, etc. if needed
-                  let targetBranch = baseBranch
-                  const exists = await gitService.branchExists(targetBranch)
-                  if (exists) {
-                    let suffix = 2
-                    const maxSuffix = 9999
-                    while (suffix <= maxSuffix) {
-                      const candidate = `${baseBranch}-${suffix}`
-                      if (!(await gitService.branchExists(candidate))) {
-                        targetBranch = candidate
-                        break
-                      }
-                      suffix += 1
-                    }
+          // Auto-rename branches for all connection member worktrees
+          if (!isPlaceholderTitle) {
+            const session = db.getSession(hiveSessionId)
+            if (session?.connection_id) {
+              const connection = db.getConnection(session.connection_id)
+              if (connection) {
+                for (const member of connection.members) {
+                  // Skip if already handled as the direct worktree above
+                  if (worktree && member.worktree_id === worktree.id) continue
 
-                    if (suffix > maxSuffix) {
-                      // All suffixes taken — give up but stop retrying
-                      db.updateWorktree(worktree.id, { branch_renamed: 1 })
-                      log.warn('Auto-rename: all branch name variants taken', {
-                        baseBranch,
-                        worktreeId: worktree.id
-                      })
-                      // fall through without renaming
-                      targetBranch = ''
-                    }
-                  }
+                  try {
+                    const memberWorktree = db.getWorktree(member.worktree_id)
+                    if (!memberWorktree || memberWorktree.branch_renamed) continue
 
-                  if (targetBranch) {
-                    const renameResult = await gitService.renameBranch(
-                      worktree.path,
-                      worktree.branch_name,
-                      targetBranch
-                    )
-                    if (renameResult.success) {
-                      db.updateWorktree(worktree.id, {
-                        name: targetBranch,
-                        branch_name: targetBranch,
-                        branch_renamed: 1
-                      })
-                      // Notify renderer to update the sidebar
+                    const result = await autoRenameWorktreeBranch({
+                      worktreeId: memberWorktree.id,
+                      worktreePath: memberWorktree.path,
+                      currentBranchName: memberWorktree.branch_name,
+                      sessionTitle,
+                      db
+                    })
+                    if (result.renamed) {
                       this.sendToRenderer('worktree:branchRenamed', {
-                        worktreeId: worktree.id,
-                        newBranch: targetBranch
+                        worktreeId: memberWorktree.id,
+                        newBranch: result.newBranch
                       })
-                      log.info('Auto-renamed branch from city name', {
-                        worktreeId: worktree.id,
-                        oldBranch: worktree.branch_name,
-                        newBranch: targetBranch
+                      log.info('Auto-renamed connection member branch', {
+                        connectionId: session.connection_id,
+                        worktreeId: memberWorktree.id,
+                        oldBranch: memberWorktree.branch_name,
+                        newBranch: result.newBranch
                       })
-                    } else {
-                      // Hard failure (e.g. permissions) — stop retrying
-                      db.updateWorktree(worktree.id, { branch_renamed: 1 })
-                      log.warn('Failed to auto-rename branch', {
-                        error: renameResult.error
+                    } else if (result.error) {
+                      log.warn('Failed to auto-rename connection member branch', {
+                        connectionId: session.connection_id,
+                        worktreeId: memberWorktree.id,
+                        error: result.error
                       })
                     }
+                  } catch (err) {
+                    log.warn('Error renaming connection member branch', {
+                      connectionId: session.connection_id,
+                      worktreeId: member.worktree_id,
+                      err
+                    })
                   }
-                } catch (err) {
-                  // Unexpected error — stop retrying
-                  db.updateWorktree(worktree.id, { branch_renamed: 1 })
-                  log.warn('Failed to auto-rename branch', { err })
                 }
               }
             }
