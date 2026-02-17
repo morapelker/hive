@@ -17,15 +17,18 @@ function toNumber(value: unknown): number {
 }
 
 /**
- * Extract token info from a parsed OpenCode message JSON object.
- * Checks both top-level `tokens` and nested `info.tokens` paths,
- * since the format varies between DB-stored messages and streaming events.
+ * Extract token info from a parsed message JSON object.
+ * Checks multiple paths to handle format differences between SDKs:
+ *   - OpenCode: `tokens` / `info.tokens` with `cacheRead`, `cacheWrite`
+ *   - Claude Code: `usage` / `info.usage` with `cacheRead`, `cacheCreation`
  * Returns null if no tokens are present or all values are zero.
  */
 export function extractTokens(messageData: Record<string, unknown>): TokenInfo | null {
-  // Check both top-level and nested under info (OpenCode uses both formats)
   const info = asRecord(messageData.info)
-  const tokens = asRecord(messageData.tokens ?? info?.tokens)
+  // OpenCode uses `tokens`/`info.tokens`; Claude Code uses `usage`/`info.usage`
+  const tokens = asRecord(
+    messageData.tokens ?? info?.tokens ?? messageData.usage ?? info?.usage
+  )
   if (!tokens) return null
 
   const cache = asRecord(tokens.cache)
@@ -36,7 +39,13 @@ export function extractTokens(messageData: Record<string, unknown>): TokenInfo |
     cacheRead:
       toNumber(tokens.cacheRead) || toNumber(tokens.cache_read) || toNumber(cache?.read) || 0,
     cacheWrite:
-      toNumber(tokens.cacheWrite) || toNumber(tokens.cache_write) || toNumber(cache?.write) || 0
+      toNumber(tokens.cacheWrite) ||
+      toNumber(tokens.cache_write) ||
+      toNumber(cache?.write) ||
+      // Claude Code SDK uses "cacheCreation" instead of "cacheWrite"
+      toNumber(tokens.cacheCreation) ||
+      toNumber(tokens.cache_creation) ||
+      0
   }
 
   const total =
@@ -74,6 +83,46 @@ export function extractModelRef(messageData: Record<string, unknown>): SessionMo
   }
 
   return { providerID, modelID }
+}
+
+export interface ModelUsageEntry {
+  modelName: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+  costUSD: number
+  contextWindow: number
+}
+
+/**
+ * Extract per-model usage from result message's modelUsage field.
+ * The SDK result message includes a `modelUsage` map keyed by model name,
+ * each with token counts and `contextWindow` (the model's context limit).
+ * Returns null if no modelUsage is present.
+ */
+export function extractModelUsage(
+  messageData: Record<string, unknown>
+): ModelUsageEntry[] | null {
+  const info = asRecord(messageData.info)
+  const modelUsage = asRecord(messageData.modelUsage ?? info?.modelUsage)
+  if (!modelUsage) return null
+
+  const entries: ModelUsageEntry[] = []
+  for (const [modelName, value] of Object.entries(modelUsage)) {
+    const usage = asRecord(value)
+    if (!usage) continue
+    entries.push({
+      modelName,
+      inputTokens: toNumber(usage.inputTokens),
+      outputTokens: toNumber(usage.outputTokens),
+      cacheReadInputTokens: toNumber(usage.cacheReadInputTokens),
+      cacheCreationInputTokens: toNumber(usage.cacheCreationInputTokens),
+      costUSD: toNumber(usage.costUSD),
+      contextWindow: toNumber(usage.contextWindow)
+    })
+  }
+  return entries.length > 0 ? entries : null
 }
 
 /**

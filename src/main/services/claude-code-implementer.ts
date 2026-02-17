@@ -550,6 +550,19 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             data: {}
           })
 
+          // Send Claude model limits so the renderer can populate contextStore
+          this.sendToRenderer('opencode:stream', {
+            type: 'session.model_limits',
+            sessionId: session.hiveSessionId,
+            data: {
+              models: CLAUDE_MODELS.map((m) => ({
+                modelID: m.id,
+                providerID: 'anthropic',
+                contextLimit: m.limit.context
+              }))
+            }
+          })
+
           continue
         }
 
@@ -2013,9 +2026,12 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               usage: msg.usage
                 ? {
                     input: (msg.usage as Record<string, unknown>).input_tokens,
-                    output: (msg.usage as Record<string, unknown>).output_tokens
+                    output: (msg.usage as Record<string, unknown>).output_tokens,
+                    cacheRead: (msg.usage as Record<string, unknown>).cache_read_input_tokens,
+                    cacheCreation: (msg.usage as Record<string, unknown>).cache_creation_input_tokens
                   }
-                : undefined
+                : undefined,
+              modelUsage: msg.modelUsage
             }
           }
         })

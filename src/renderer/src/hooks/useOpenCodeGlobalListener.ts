@@ -5,7 +5,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useContextStore } from '@/stores/useContextStore'
-import { extractTokens, extractCost, extractModelRef } from '@/lib/token-utils'
+import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '@/lib/token-utils'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes } from '@/lib/message-send-times'
 
@@ -37,6 +37,24 @@ export function useOpenCodeGlobalListener(): void {
           const sessionId = event.sessionId
           const activeId = useSessionStore.getState().activeSessionId
 
+          // Handle model limits from Claude Code session init
+          if (event.type === 'session.model_limits') {
+            const models = event.data?.models as
+              | Array<{ modelID: string; providerID: string; contextLimit: number }>
+              | undefined
+            if (models) {
+              for (const m of models) {
+                if (m.contextLimit > 0) {
+                  useContextStore.getState().setModelLimit(m.modelID, m.contextLimit, m.providerID)
+                  // Also store as wildcard so the limit is found regardless
+                  // of the session's providerID (e.g. "claude-code" vs "anthropic")
+                  useContextStore.getState().setModelLimit(m.modelID, m.contextLimit)
+                }
+              }
+            }
+            return
+          }
+
           // Handle message.updated for background sessions — extract title + tokens
           if (event.type === 'message.updated' && sessionId !== activeId) {
             const sessionTitle = event.data?.info?.title || event.data?.title
@@ -61,6 +79,17 @@ export function useOpenCodeGlobalListener(): void {
                 const cost = extractCost(data)
                 if (cost > 0) {
                   useContextStore.getState().addSessionCost(sessionId, cost)
+                }
+                // Extract per-model usage (from SDK result messages) to update context limits
+                const modelUsageEntries = extractModelUsage(data)
+                if (modelUsageEntries) {
+                  for (const entry of modelUsageEntries) {
+                    if (entry.contextWindow > 0) {
+                      useContextStore
+                        .getState()
+                        .setModelLimit(entry.modelName, entry.contextWindow)
+                    }
+                  }
                 }
               }
             }
