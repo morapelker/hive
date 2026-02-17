@@ -3,7 +3,8 @@ import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
 import { createGitService, createLogger } from '../services'
-import { ALL_BREED_NAMES, LEGACY_CITY_NAMES, type BreedType } from '../services/breed-names'
+import { type BreedType } from '../services/breed-names'
+import { isAutoNamedBranch } from '../services/git-service'
 import { scriptRunner } from '../services/script-runner'
 import { assignPort, releasePort } from '../services/port-registry'
 import { getDatabase } from '../db'
@@ -251,13 +252,7 @@ export function registerWorktreeHandlers(): void {
             // the old branch name OR is a city placeholder name (never meaningfully customized).
             const nameMatchesBranch = dbWorktree.name === dbWorktree.branch_name
             const worktreeName = dbWorktree.name.toLowerCase()
-            const isAutoName =
-              ALL_BREED_NAMES.some(
-                (b) => b === worktreeName || new RegExp(`^${b}-(?:v)?\\d+$`).test(worktreeName)
-              ) ||
-              LEGACY_CITY_NAMES.some(
-                (c) => c === worktreeName || new RegExp(`^${c}-(?:v)?\\d+$`).test(worktreeName)
-              )
+            const isAutoName = isAutoNamedBranch(worktreeName)
             const shouldUpdateName = nameMatchesBranch || isAutoName
             db.updateWorktree(dbWorktree.id, {
               branch_name: gitBranch,

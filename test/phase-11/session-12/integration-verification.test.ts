@@ -39,17 +39,17 @@ describe('Session 12: Integration & Verification', () => {
       // Title persistence
       expect(content).toContain('db.updateSession(hiveSessionId, { name: sessionTitle })')
 
-      // Auto-rename logic follows title persistence
+      // Auto-rename logic follows title persistence (now delegated to shared helper)
       const titlePersistIdx = content.indexOf(
         'db.updateSession(hiveSessionId, { name: sessionTitle })'
       )
-      const autoRenameIdx = content.indexOf('Auto-rename branch if still an auto-generated name')
+      const autoRenameIdx = content.indexOf('Auto-rename branch for the session')
       expect(autoRenameIdx).toBeGreaterThan(titlePersistIdx)
     })
 
-    test('auto-rename uses canonicalizeBranchName on the server title', () => {
+    test('auto-rename uses autoRenameWorktreeBranch helper', () => {
       const content = readSrc('main', 'services', 'opencode-service.ts')
-      expect(content).toContain('canonicalizeBranchName(sessionTitle)')
+      expect(content).toContain('autoRenameWorktreeBranch')
     })
 
     test('renderer receives both title update and branch rename events', () => {
@@ -87,19 +87,21 @@ describe('Session 12: Integration & Verification', () => {
       expect(content).toContain('!worktree.branch_renamed')
     })
 
-    test('auto-rename checks auto-generated name before proceeding', () => {
-      const content = readSrc('main', 'services', 'opencode-service.ts')
+    test('auto-rename checks auto-generated name via shared helper', () => {
+      // Auto-name detection now lives in isAutoNamedBranch in git-service.ts
+      const content = readSrc('main', 'services', 'git-service.ts')
+      expect(content).toContain('isAutoNamedBranch')
       expect(content).toContain('ALL_BREED_NAMES.some')
     })
 
     test('once branch_renamed=1 after manual rename, auto-rename skips', () => {
-      // Verify the control flow: branch_renamed check comes before rename attempt
+      // Verify the control flow: branch_renamed check comes before autoRenameWorktreeBranch call
       const content = readSrc('main', 'services', 'opencode-service.ts')
       const autoRenameBlock = content.slice(
-        content.indexOf('Auto-rename branch if still an auto-generated name')
+        content.indexOf('Auto-rename branch for the session')
       )
       const flagCheckIdx = autoRenameBlock.indexOf('!worktree.branch_renamed')
-      const renameCallIdx = autoRenameBlock.indexOf('gitService.renameBranch(')
+      const renameCallIdx = autoRenameBlock.indexOf('autoRenameWorktreeBranch')
       expect(flagCheckIdx).toBeGreaterThan(-1)
       expect(renameCallIdx).toBeGreaterThan(flagCheckIdx)
     })
