@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Ansi from 'ansi-to-react'
 import { Play, Square, RotateCcw, Loader2, Trash2, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { useScriptStore } from '@/stores/useScriptStore'
+import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { getOrCreateBuffer, TRUNCATION_MARKER } from '@/lib/output-ring-buffer'
@@ -15,7 +15,6 @@ const emptyOutput: string[] = []
 
 export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
   const outputRef = useRef<HTMLDivElement>(null)
-  const unsubRef = useRef<(() => void) | null>(null)
 
   // Subscribe to version counter (triggers re-render on each append)
   const runOutputVersion = useScriptStore((s) =>
@@ -35,7 +34,7 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
 
   const [assignedPort, setAssignedPort] = useState<number | null>(null)
 
-  const { appendRunOutput, setRunRunning, setRunPid, clearRunOutput } = useScriptStore.getState()
+  const { clearRunOutput } = useScriptStore.getState()
 
   // Auto-scroll to bottom on new output
   useEffect(() => {
@@ -43,48 +42,6 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
       outputRef.current.scrollTop = outputRef.current.scrollHeight
     }
   }, [runOutputVersion])
-
-  // Subscribe to IPC events for this worktree
-  useEffect(() => {
-    if (!worktreeId) return
-
-    const channel = `script:run:${worktreeId}`
-
-    // Clean up previous subscription
-    if (unsubRef.current) {
-      unsubRef.current()
-      unsubRef.current = null
-    }
-
-    const unsub = window.scriptOps.onOutput(channel, (event) => {
-      switch (event.type) {
-        case 'command-start':
-          appendRunOutput(worktreeId, `\x00CMD:${event.command}`)
-          break
-        case 'output':
-          if (event.data) {
-            appendRunOutput(worktreeId, event.data)
-          }
-          break
-        case 'error':
-          appendRunOutput(worktreeId, `\x00ERR:Process exited with code ${event.exitCode}`)
-          setRunRunning(worktreeId, false)
-          setRunPid(worktreeId, null)
-          break
-        case 'done':
-          setRunRunning(worktreeId, false)
-          setRunPid(worktreeId, null)
-          break
-      }
-    })
-
-    unsubRef.current = unsub
-
-    return () => {
-      unsub()
-      unsubRef.current = null
-    }
-  }, [worktreeId, appendRunOutput, setRunRunning, setRunPid])
 
   const getProject = useCallback(() => {
     if (!worktreeId) return null
@@ -117,7 +74,7 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
     window.scriptOps.getPort(cwd).then(({ port }) => setAssignedPort(port))
   }, [worktreeId, getWorktreePath])
 
-  const handleRun = useCallback(async () => {
+  const handleRun = useCallback(() => {
     if (!worktreeId || runRunning) return
 
     const project = getProject()
@@ -126,36 +83,18 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
     const cwd = getWorktreePath()
     if (!cwd) return
 
-    clearRunOutput(worktreeId)
-    setRunRunning(worktreeId, true)
-
     const commands = project.run_script
       .split('\n')
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith('#'))
 
-    const result = await window.scriptOps.runProject(commands, cwd, worktreeId)
-    if (result.success && result.pid) {
-      setRunPid(worktreeId, result.pid)
-    } else {
-      setRunRunning(worktreeId, false)
-    }
-  }, [
-    worktreeId,
-    runRunning,
-    getProject,
-    getWorktreePath,
-    clearRunOutput,
-    setRunRunning,
-    setRunPid
-  ])
+    fireRunScript(worktreeId, commands, cwd)
+  }, [worktreeId, runRunning, getProject, getWorktreePath])
 
   const handleStop = useCallback(async () => {
     if (!worktreeId) return
-    await window.scriptOps.kill(worktreeId)
-    setRunRunning(worktreeId, false)
-    setRunPid(worktreeId, null)
-  }, [worktreeId, setRunRunning, setRunPid])
+    await killRunScript(worktreeId)
+  }, [worktreeId])
 
   const handleRestart = useCallback(async () => {
     if (!worktreeId) return

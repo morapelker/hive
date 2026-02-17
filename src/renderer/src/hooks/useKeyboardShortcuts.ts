@@ -10,7 +10,7 @@ import {
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { useScriptStore } from '@/stores/useScriptStore'
+import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { toast } from '@/lib/toast'
@@ -59,24 +59,11 @@ function handleRunProject(): void {
 
   if (scriptState.runRunning) {
     // Stop current run (Cmd/Ctrl+R acts as a start/stop toggle)
-    window.scriptOps.kill(worktreeId).then(() => {
-      useScriptStore.getState().setRunRunning(worktreeId, false)
-      useScriptStore.getState().setRunPid(worktreeId, null)
-    })
+    killRunScript(worktreeId)
   } else {
     // Start fresh
-    useScriptStore.getState().clearRunOutput(worktreeId)
-    useScriptStore.getState().setRunRunning(worktreeId, true)
-
     const commands = parseCommands(runScript)
-
-    window.scriptOps.runProject(commands, worktreePath, worktreeId).then((result) => {
-      if (result.success && result.pid) {
-        useScriptStore.getState().setRunPid(worktreeId, result.pid)
-      } else {
-        useScriptStore.getState().setRunRunning(worktreeId, false)
-      }
-    })
+    fireRunScript(worktreeId, commands, worktreePath)
   }
 }
 
