@@ -364,6 +364,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         model: modelOverride?.modelID ?? this.selectedModel,
         includePartialMessages: true,
         enableFileCheckpointing: true,
+        settingSources: ['user', 'project', 'local'],
         extraArgs: { 'replay-user-messages': null },
         env: {
           ...process.env,
@@ -431,9 +432,13 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           keys: Object.keys(sdkMessage).join(',')
         })
 
-        // Skip init messages
+        // Log init messages (includes MCP server connection status)
         if (msgType === 'init') {
-          log.info('Prompt: skipping init message')
+          const initMsg = sdkMessage as Record<string, unknown>
+          log.info('Prompt: init message received', {
+            mcpServers: initMsg.mcp_servers,
+            model: initMsg.model
+          })
           continue
         }
 
