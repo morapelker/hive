@@ -614,8 +614,22 @@ export function registerWorktreeHandlers(): void {
     ) => {
       log.info('IPC: worktree:createFromBranch', { projectName, branchName })
       try {
+        // Read breed type preference from settings
+        let breedType: BreedType = 'dogs'
+        try {
+          const settingsJson = getDatabase().getSetting('app_settings')
+          if (settingsJson) {
+            const settings = JSON.parse(settingsJson)
+            if (settings.breedType === 'cats') {
+              breedType = 'cats'
+            }
+          }
+        } catch {
+          // Fall back to dogs
+        }
+
         const gitService = createGitService(projectPath)
-        const result = await gitService.createWorktreeFromBranch(projectName, branchName)
+        const result = await gitService.createWorktreeFromBranch(projectName, branchName, breedType)
         if (!result.success || !result.path) {
           return { success: false, error: result.error || 'Failed to create worktree from branch' }
         }
