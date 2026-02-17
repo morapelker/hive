@@ -91,6 +91,77 @@ info "Base version: ${YELLOW}v${BASE_VERSION}${NC}"
 info "Next canary:  ${GREEN}v${NEW_VERSION}${NC}"
 info "Branch:       ${CYAN}${CURRENT_BRANCH}${NC} (${SHORT_SHA})"
 
+# ── Generate release notes from merged PRs ───────────────────────
+info "Generating release notes from merged PRs..."
+
+# Use the most recent canary tag if one exists, otherwise fall back to the stable tag
+PREV_CANARY_TAG=$(git tag -l "v${BASE_VERSION}-canary.*" | sort -t. -k4 -n | tail -1)
+if [[ -n "$PREV_CANARY_TAG" ]]; then
+  REFERENCE_TAG="$PREV_CANARY_TAG"
+  info "Using previous canary tag as reference: ${YELLOW}${REFERENCE_TAG}${NC}"
+else
+  REFERENCE_TAG="v${BASE_VERSION}"
+  info "No previous canary tags found, using stable tag: ${YELLOW}${REFERENCE_TAG}${NC}"
+fi
+
+LAST_TAG_DATE=$(TZ=UTC0 git log -1 --format='%ad' --date=format-local:'%Y-%m-%dT%H:%M:%SZ' "$REFERENCE_TAG" 2>/dev/null || echo "")
+
+if [[ -z "$LAST_TAG_DATE" ]]; then
+  warn "Could not find tag ${REFERENCE_TAG}. Skipping PR-based release notes."
+  RELEASE_NOTES=""
+else
+  RELEASE_NOTES=$(gh pr list --repo "$REPO" --state merged --limit 50 \
+    --json number,title,body,mergedAt,author \
+    --jq "[.[] | select(.mergedAt > \"${LAST_TAG_DATE}\")]" | node -e "
+const prs = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'))
+if (!prs.length) {
+  process.exit(0)
+}
+
+const lines = ['## What\\'s Changed', '']
+for (const pr of prs) {
+  lines.push('### ' + pr.title + ' (#' + pr.number + ')')
+  const body = pr.body || ''
+  // Extract the Summary section if present
+  const summaryMatch = body.match(/## Summary\\s*\\n([\\s\\S]*?)(?=\\n## |$)/)
+  if (summaryMatch) {
+    lines.push(summaryMatch[1].trim())
+  } else if (body.trim()) {
+    // No Summary heading — use the full body, capped at 500 chars
+    const trimmed = body.trim()
+    lines.push(trimmed.length > 500 ? trimmed.slice(0, 500) + '...' : trimmed)
+  }
+  lines.push('')
+}
+console.log(lines.join('\\n'))
+" 2>/dev/null || echo "")
+fi
+
+if [[ -n "$RELEASE_NOTES" ]]; then
+  # Prepend canary header
+  RELEASE_NOTES="**Canary build** from branch \`${CURRENT_BRANCH}\` (${SHORT_SHA})
+
+${RELEASE_NOTES}"
+  ok "Found release notes from PRs"
+  echo ""
+  echo -e "${CYAN}── Release notes preview ──────────────────────────${NC}"
+  echo "$RELEASE_NOTES"
+  echo -e "${CYAN}───────────────────────────────────────────────────${NC}"
+  echo ""
+  read -rp "Edit release notes in \$EDITOR before publishing? [y/N] " edit_notes
+  if [[ "$edit_notes" =~ ^[Yy]$ ]]; then
+    NOTES_TMPFILE=$(mktemp "${TMPDIR:-/tmp}/hive-canary-release-notes.XXXXXX")
+    echo "$RELEASE_NOTES" > "$NOTES_TMPFILE"
+    ${EDITOR:-vim} "$NOTES_TMPFILE"
+    RELEASE_NOTES=$(cat "$NOTES_TMPFILE")
+    rm -f "$NOTES_TMPFILE"
+    ok "Release notes updated"
+  fi
+else
+  RELEASE_NOTES="Canary build from branch ${CURRENT_BRANCH} (${SHORT_SHA})"
+  warn "No merged PRs found since ${REFERENCE_TAG}. Using default canary notes."
+fi
+
 # Confirm
 echo ""
 info "This will:"
@@ -198,7 +269,6 @@ else
   ok "Assets uploaded to GitHub Releases"
 
   # Mark as prerelease and attach notes
-  RELEASE_NOTES="Canary build from branch ${CURRENT_BRANCH} (${SHORT_SHA})"
   info "Publishing release as prerelease..."
   gh release edit "v${NEW_VERSION}" --repo "$REPO" --prerelease --draft=false --notes "$RELEASE_NOTES"
   ok "Release published as prerelease"
