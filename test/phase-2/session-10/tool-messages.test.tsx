@@ -324,7 +324,7 @@ describe('Session 10: Tool Message Rendering', () => {
       expect(compactTools).toHaveLength(2)
     })
 
-    test('Two consecutive tool calls render compact cards without grouping', () => {
+    test('Two consecutive tool calls render as individual cards', () => {
       const parts: StreamingPart[] = [
         {
           type: 'tool_use',
@@ -352,9 +352,7 @@ describe('Session 10: Tool Message Rendering', () => {
 
       render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
-      expect(screen.getByTestId('tool-call-inline-group')).toBeInTheDocument()
-      expect(screen.queryByTestId('tool-call-group')).not.toBeInTheDocument()
-      // Both Read and Edit are file tools → compact layout (no my-0 class on compact cards)
+      // Both Read and Edit are file tools → compact layout, rendered individually
       const compactTools = screen.getAllByTestId('compact-file-tool')
       expect(compactTools).toHaveLength(2)
     })
@@ -388,15 +386,14 @@ describe('Session 10: Tool Message Rendering', () => {
 
       render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
-      expect(screen.getByTestId('tool-call-inline-group')).toBeInTheDocument()
-      // Both Read and Edit are file tools → compact layout
+      // Both Read and Edit are file tools → compact layout, rendered individually
       const compactTools = screen.getAllByTestId('compact-file-tool')
       expect(compactTools).toHaveLength(2)
       // No markdown paragraph should render for whitespace-only text parts.
       expect(screen.getByTestId('message-assistant').querySelectorAll('p').length).toBe(0)
     })
 
-    test('Zero-width text between consecutive tool calls does not break compact grouping', () => {
+    test('Zero-width text between consecutive tool calls does not create visual gaps', () => {
       const parts: StreamingPart[] = [
         {
           type: 'tool_use',
@@ -425,8 +422,7 @@ describe('Session 10: Tool Message Rendering', () => {
 
       render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
-      expect(screen.getByTestId('tool-call-inline-group')).toBeInTheDocument()
-      // Both Read and Edit are file tools → compact layout
+      // Both Read and Edit are file tools → compact layout, rendered individually
       expect(screen.getAllByTestId('compact-file-tool')).toHaveLength(2)
       expect(screen.getByTestId('message-assistant').querySelectorAll('p').length).toBe(0)
     })
@@ -494,7 +490,7 @@ describe('Session 10: Tool Message Rendering', () => {
       expect(assistantCanvas.className.split(/\s+/)).toContain('py-5')
     })
 
-    test('AssistantCanvas collapses 3+ consecutive tool calls into compact group', () => {
+    test('3+ consecutive tool calls render as individual cards without grouping', () => {
       const parts: StreamingPart[] = [
         { type: 'text', text: 'Running tools...' },
         {
@@ -540,14 +536,12 @@ describe('Session 10: Tool Message Rendering', () => {
         />
       )
 
-      expect(screen.getByTestId('tool-call-group')).toBeInTheDocument()
-      // Collapsed by default — neither compact-file-tool nor tool-card should be visible
-      expect(screen.queryByTestId('compact-file-tool')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('tool-card')).not.toBeInTheDocument()
+      // All 3 tools rendered individually (Read + Read + Edit = 3 compact file tools)
+      const compactTools = screen.getAllByTestId('compact-file-tool')
+      expect(compactTools).toHaveLength(3)
     })
 
-    test('Tool call group expands to show individual tool cards', async () => {
-      const user = userEvent.setup()
+    test('Mixed tool types render as individual cards', () => {
       const parts: StreamingPart[] = [
         {
           type: 'tool_use',
@@ -585,8 +579,7 @@ describe('Session 10: Tool Message Rendering', () => {
 
       render(<AssistantCanvas content="" timestamp={new Date().toISOString()} parts={parts} />)
 
-      await user.click(screen.getByTestId('tool-call-group-header'))
-      // After expanding: 2 Read (compact-file-tool) + 1 Bash (tool-card)
+      // 2 Read (compact-file-tool) + 1 Bash (tool-card), all rendered individually
       const fileTools = screen.getAllByTestId('compact-file-tool')
       const cardTools = screen.getAllByTestId('tool-card')
       expect(fileTools.length + cardTools.length).toBe(3)
@@ -732,7 +725,7 @@ describe('Session 10: Tool Message Rendering', () => {
 
   describe('Tool Icons', () => {
     test('Different tool types get different icons', () => {
-      const FILE_TOOLS = new Set(['Read', 'Write', 'Edit'])
+      const FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep'])
       const toolNames = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']
 
       for (const name of toolNames) {
@@ -782,7 +775,8 @@ describe('Session 10: Tool Message Rendering', () => {
       const elapsed = performance.now() - start
 
       expect(elapsed).toBeLessThan(50)
-      expect(screen.getByTestId('tool-call-group')).toBeInTheDocument()
+      // All 10 tools rendered as individual compact file tools
+      expect(screen.getAllByTestId('compact-file-tool')).toHaveLength(10)
     })
   })
 })
