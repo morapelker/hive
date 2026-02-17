@@ -86,7 +86,9 @@ export function ConnectionItem({
             ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
             : connectionStatus === 'plan_ready'
               ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
-              : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+              : connectionStatus === 'completed'
+                ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
+                : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
   // Marquee animation state for overflowing display name
   const containerRef = useRef<HTMLDivElement>(null)

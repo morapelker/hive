@@ -72,7 +72,8 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
     const updates: Record<string, null> = {}
     for (const s of sessions) {
-      if (sessionStatuses[s.id]?.status === 'unread') {
+      const st = sessionStatuses[s.id]?.status
+      if (st === 'unread' || st === 'completed') {
         updates[s.id] = null
       }
     }
