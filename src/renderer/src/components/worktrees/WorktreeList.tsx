@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useWorktreeStore } from '@/stores'
+import { useSidebarBranchWatcher } from '@/hooks/useSidebarBranchWatcher'
 import { WorktreeItem } from './WorktreeItem'
 
 interface Project {
@@ -17,6 +18,10 @@ export function WorktreeList({ project }: WorktreeListProps): React.JSX.Element 
     useWorktreeStore()
 
   const worktrees = getWorktreesForProject(project.id)
+
+  // Watch all worktree paths for branch changes (lightweight HEAD-only watchers)
+  const worktreePaths = useMemo(() => worktrees.map((w) => w.path), [worktrees])
+  useSidebarBranchWatcher(worktreePaths)
 
   // Drag state
   const [draggedWorktreeId, setDraggedWorktreeId] = useState<string | null>(null)

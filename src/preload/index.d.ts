@@ -769,6 +769,18 @@ declare global {
         success: boolean
         error?: string
       }>
+      // Start watching a worktree's .git/HEAD for branch changes (lightweight, sidebar use)
+      watchBranch: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Stop watching a worktree's branch
+      unwatchBranch: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Subscribe to branch change events (lightweight, from branch-watcher)
+      onBranchChanged: (callback: (event: { worktreePath: string }) => void) => () => void
       // Get branch info (name, tracking, ahead/behind)
       getBranchInfo: (worktreePath: string) => Promise<{
         success: boolean

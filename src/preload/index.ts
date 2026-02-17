@@ -667,6 +667,33 @@ const gitOps = {
     error?: string
   }> => ipcRenderer.invoke('git:unwatchWorktree', worktreePath),
 
+  // Start watching a worktree's .git/HEAD for branch changes (lightweight, sidebar use)
+  watchBranch: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:watchBranch', worktreePath),
+
+  // Stop watching a worktree's branch
+  unwatchBranch: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:unwatchBranch', worktreePath),
+
+  // Subscribe to branch change events (lightweight, from branch-watcher)
+  onBranchChanged: (callback: (event: { worktreePath: string }) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, event: { worktreePath: string }): void => {
+      callback(event)
+    }
+    ipcRenderer.on('git:branchChanged', handler)
+    return () => {
+      ipcRenderer.removeListener('git:branchChanged', handler)
+    }
+  },
+
   // Get branch info (name, tracking, ahead/behind)
   getBranchInfo: (
     worktreePath: string
