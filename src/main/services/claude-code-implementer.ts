@@ -176,12 +176,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     const existing = this.sessions.get(key)
     if (existing) {
       existing.hiveSessionId = hiveSessionId
+      const sessionStatus = existing.query ? 'busy' : 'idle'
       log.info('Reconnect: session already registered, updated hiveSessionId', {
         worktreePath,
         agentSessionId,
-        hiveSessionId
+        hiveSessionId,
+        sessionStatus
       })
-      return { success: true, sessionStatus: 'idle', revertMessageID: null }
+      return { success: true, sessionStatus, revertMessageID: existing.revertMessageID ?? null }
     }
 
     const state: ClaudeSessionState = {
