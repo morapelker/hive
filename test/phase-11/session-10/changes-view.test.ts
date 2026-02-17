@@ -239,11 +239,16 @@ describe('Session 10: Changes View', () => {
   })
 
   describe('AI review integration', () => {
-    test('has review changes with AI button', () => {
-      const content = readFile('ChangesView.tsx')
-      expect(content).toContain('handleReview')
-      expect(content).toContain('Review changes with AI')
-      expect(content).toContain('FileSearch')
+    test('review button has moved to Header', () => {
+      const changesContent = readFile('ChangesView.tsx')
+      expect(changesContent).not.toContain('handleReview')
+      expect(changesContent).not.toContain('FileSearch')
+
+      const layoutDir = path.resolve(__dirname, '..', '..', '..', 'src', 'renderer', 'src', 'components', 'layout')
+      const headerContent = fs.readFileSync(path.join(layoutDir, 'Header.tsx'), 'utf-8')
+      expect(headerContent).toContain('handleReview')
+      expect(headerContent).toContain('Review branch changes with AI')
+      expect(headerContent).toContain('FileSearch')
     })
   })
 

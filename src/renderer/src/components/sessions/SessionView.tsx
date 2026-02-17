@@ -1946,7 +1946,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           const pendingMsg = useSessionStore.getState().consumePendingMessage(sessionId)
           if (!pendingMsg) return
           try {
+            // Mirror handleSend: set streaming/sending state BEFORE the prompt call
+            // so the UI shows the correct state and finalizeResponse behaves correctly.
+            hasFinalizedCurrentResponseRef.current = false
+            setIsSending(true)
+
             setMessages((prev) => [...prev, createLocalMessage('user', pendingMsg)])
+
+            // Mark that a new prompt is in flight — prevents finalizeResponse
+            // from reordering this message if a previous stream is still completing.
+            newPromptPendingRef.current = true
+
             // Start completion timer for auto-sent pending prompts (e.g. PR creation)
             messageSendTimes.set(sessionId, Date.now())
             // Set worktree status based on session mode
@@ -1957,12 +1967,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             // Apply mode prefix for OpenCode sessions (Claude Code uses native plan mode)
             const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
+            const promptMessage = modePrefix + pendingMsg
+            // Store the full prompt so the stream handler can detect SDK echoes
+            lastSentPromptRef.current = promptMessage
             const model = getModelForRequests()
-            // Send to OpenCode
-            await window.opencodeOps.prompt(path, opcId, modePrefix + pendingMsg, model)
+            // Send as parts array (matching handleSend format) for consistent SDK handling
+            const parts: Array<{ type: 'text'; text: string }> = [
+              { type: 'text' as const, text: promptMessage }
+            ]
+            const result = await window.opencodeOps.prompt(path, opcId, parts, model)
+            if (!result.success) {
+              console.error('Failed to send pending message:', result.error)
+              toast.error('Failed to send review prompt')
+              setIsSending(false)
+            }
           } catch (err) {
             console.error('Failed to send pending message:', err)
             toast.error('Failed to send review prompt')
+            setIsSending(false)
           }
         }
 

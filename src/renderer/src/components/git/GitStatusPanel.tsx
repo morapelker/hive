@@ -9,7 +9,6 @@ import {
   Plus,
   Minus,
   FileDiff,
-  FileSearch,
   Loader2,
   AlertTriangle
 } from 'lucide-react'
@@ -140,7 +139,6 @@ export function GitStatusPanel({
   const branchInfoByWorktree = useGitStore((state) => state.branchInfoByWorktree)
 
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [isReviewing, setIsReviewing] = useState(false)
   const [isFixingConflicts, setIsFixingConflicts] = useState(false)
 
   // Load initial data
@@ -258,74 +256,6 @@ export function GitStatusPanel({
     [worktreePath]
   )
 
-  const handleReview = useCallback(async () => {
-    if (!worktreePath) return
-    setIsReviewing(true)
-    try {
-      // 1. Get worktree and project info
-      const worktreeStore = useWorktreeStore.getState()
-      const selectedWorktreeId = worktreeStore.selectedWorktreeId
-      if (!selectedWorktreeId) {
-        toast.error('No worktree selected')
-        return
-      }
-
-      let projectId = ''
-      for (const [projId, worktrees] of worktreeStore.worktreesByProject) {
-        if (worktrees.some((w) => w.id === selectedWorktreeId)) {
-          projectId = projId
-          break
-        }
-      }
-      if (!projectId) {
-        toast.error('Could not find project for worktree')
-        return
-      }
-
-      // 2. Build file list from current git status
-      const allFiles = [...stagedFiles, ...modifiedFiles, ...untrackedFiles]
-      const fileList = allFiles.map((f) => `- ${f.status}  ${f.relativePath}`).join('\n')
-
-      // 3. Get branch name for session name
-      const branchName = branchInfo?.name || 'unknown'
-
-      // 4. Build review prompt from app's prompts/review.md
-      let reviewTemplate = ''
-      try {
-        const result = await window.fileOps.readPrompt('review.md')
-        if (result.success && result.content) {
-          reviewTemplate = result.content
-        }
-      } catch {
-        // readPrompt failed
-      }
-
-      const prompt = reviewTemplate
-        ? `${reviewTemplate}\n\n---\n\nChanged files:\n${fileList}`
-        : `Please review the following uncommitted changes in this worktree (branch: ${branchName}):\n\nChanged files:\n${fileList}\n\nFocus on: bugs, logic errors, and code quality.`
-
-      // 5. Create session
-      const sessionStore = useSessionStore.getState()
-      const result = await sessionStore.createSession(selectedWorktreeId, projectId)
-      if (!result.success || !result.session) {
-        toast.error('Failed to create review session')
-        return
-      }
-
-      // 6. Update session name and set to plan mode
-      await sessionStore.updateSessionName(result.session.id, `Code Review — ${branchName}`)
-      await sessionStore.setSessionMode(result.session.id, 'plan')
-
-      // 7. Store pending message for SessionView to pick up after connecting
-      sessionStore.setPendingMessage(result.session.id, prompt)
-    } catch (error) {
-      console.error('Failed to start code review:', error)
-      toast.error('Failed to start code review')
-    } finally {
-      setIsReviewing(false)
-    }
-  }, [worktreePath, stagedFiles, modifiedFiles, untrackedFiles, branchInfo])
-
   const hasConflicts = conflictedFiles.length > 0
 
   const handleFixConflicts = useCallback(async () => {
@@ -438,21 +368,6 @@ export function GitStatusPanel({
               CONFLICTS
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5"
-            onClick={handleReview}
-            disabled={!hasChanges || isReviewing}
-            title="Review changes with AI"
-            data-testid="git-review-button"
-          >
-            {isReviewing ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <FileSearch className="h-3 w-3" />
-            )}
-          </Button>
           <Button
             variant="ghost"
             size="icon"
