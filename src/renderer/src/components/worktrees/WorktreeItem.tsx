@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -31,7 +32,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { useWorktreeStore, useProjectStore } from '@/stores'
+import { useWorktreeStore, useProjectStore, useConnectionStore } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -40,7 +41,6 @@ import { formatRelativeTime } from '@/lib/format-utils'
 import { PulseAnimation } from './PulseAnimation'
 import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
-import { ConnectDialog } from '@/components/connections'
 
 interface Worktree {
   id: string
@@ -92,6 +92,17 @@ export function WorktreeItem({
   const displayName = liveBranch?.name ?? worktree.name
   const isSelected = selectedWorktreeId === worktree.id
 
+  // Connection mode state
+  const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
+  const connectionModeSourceId = useConnectionStore((s) => s.connectionModeSourceWorktreeId)
+  const connectionModeSelectedIds = useConnectionStore((s) => s.connectionModeSelectedIds)
+  const toggleConnectionModeWorktree = useConnectionStore((s) => s.toggleConnectionModeWorktree)
+  const enterConnectionMode = useConnectionStore((s) => s.enterConnectionMode)
+
+  const isInConnectionMode = connectionModeActive
+  const isSource = connectionModeSourceId === worktree.id
+  const isChecked = connectionModeSelectedIds.has(worktree.id)
+
   // Auto-refresh relative time every 60 seconds
   const [, setTick] = useState(0)
   useEffect(() => {
@@ -116,9 +127,6 @@ export function WorktreeItem({
               : worktreeStatus === 'completed'
                 ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
                 : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
-
-  // Connect dialog state
-  const [connectDialogOpen, setConnectDialogOpen] = useState(false)
 
   // Archive confirmation state
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
@@ -184,6 +192,10 @@ export function WorktreeItem({
   }, [branchNameInput, worktree.id, worktree.path, worktree.branch_name])
 
   const handleClick = (): void => {
+    if (isInConnectionMode) {
+      toggleConnectionModeWorktree(worktree.id)
+      return
+    }
     selectWorktree(worktree.id)
     selectProject(worktree.project_id)
     useWorktreeStatusStore.getState().clearWorktreeUnread(worktree.id)
@@ -294,6 +306,66 @@ export function WorktreeItem({
     }
   }, [worktree])
 
+  // --- Connection mode rendering (simplified, no menus) ---
+  if (isInConnectionMode) {
+    return (
+      <>
+        <div
+          className={cn(
+            'group flex items-center gap-1.5 pl-8 pr-1 py-1 rounded-md cursor-pointer transition-colors',
+            isChecked ? 'bg-accent/30' : 'hover:bg-accent/50',
+            isSource && isChecked && 'bg-accent/20',
+            isArchiving && 'opacity-50 pointer-events-none'
+          )}
+          onClick={handleClick}
+          data-testid={`worktree-item-${worktree.id}`}
+        >
+          {/* Checkbox instead of status icons */}
+          <Checkbox
+            checked={isChecked}
+            onCheckedChange={() => toggleConnectionModeWorktree(worktree.id)}
+            disabled={isSource}
+            className={cn('h-3.5 w-3.5 shrink-0', isSource && 'opacity-70')}
+            onClick={(e) => e.stopPropagation()}
+            data-testid={`connection-mode-checkbox-${worktree.id}`}
+          />
+
+          {/* Worktree Name + Status Line */}
+          <div className="flex-1 min-w-0">
+            <span className="text-sm truncate block" title={worktree.path}>
+              {displayName}
+            </span>
+            <div className="flex items-center pr-1">
+              <ModelIcon worktreeId={worktree.id} className="h-2.5 w-2.5 mr-1 shrink-0" />
+              <span className={cn('text-[11px]', statusClass)} data-testid="worktree-status-text">
+                {displayStatus}
+              </span>
+              <span className="flex-1" />
+              {lastMessageTime && (
+                <span
+                  className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0"
+                  title={new Date(lastMessageTime).toLocaleString()}
+                  data-testid="worktree-last-message-time"
+                >
+                  {formatRelativeTime(lastMessageTime)}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <ArchiveConfirmDialog
+          open={archiveConfirmOpen}
+          worktreeName={worktree.name}
+          files={archiveConfirmFiles}
+          onCancel={handleArchiveCancel}
+          onConfirm={handleArchiveConfirm}
+        />
+      </>
+    )
+  }
+
+  // --- Normal rendering (with menus, drag, etc.) ---
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -421,7 +493,7 @@ export function WorktreeItem({
                 Copy Path
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setConnectDialogOpen(true)}>
+              <DropdownMenuItem onClick={() => enterConnectionMode(worktree.id)}>
                 <Link className="h-4 w-4 mr-2" />
                 Connect to...
               </DropdownMenuItem>
@@ -464,12 +536,6 @@ export function WorktreeItem({
         onConfirm={handleArchiveConfirm}
       />
 
-      <ConnectDialog
-        sourceWorktreeId={worktree.id}
-        open={connectDialogOpen}
-        onOpenChange={setConnectDialogOpen}
-      />
-
       {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">
         <ContextMenuItem onClick={handleOpenInTerminal}>
@@ -489,7 +555,7 @@ export function WorktreeItem({
           Copy Path
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onClick={() => setConnectDialogOpen(true)}>
+        <ContextMenuItem onClick={() => enterConnectionMode(worktree.id)}>
           <Link className="h-4 w-4 mr-2" />
           Connect to...
         </ContextMenuItem>

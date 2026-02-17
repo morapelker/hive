@@ -52,6 +52,7 @@ interface ProjectState {
   ) => Promise<boolean>
   selectProject: (id: string | null) => void
   toggleProjectExpanded: (id: string) => void
+  expandAllProjects: () => void
   setEditingProject: (id: string | null) => void
   touchProject: (id: string) => Promise<void>
   refreshLanguage: (projectId: string) => Promise<void>
@@ -235,6 +236,11 @@ export const useProjectStore = create<ProjectState>()(
           }
           return { expandedProjectIds: newExpandedIds }
         })
+      },
+
+      // Expand all projects (used by connection mode)
+      expandAllProjects: () => {
+        set({ expandedProjectIds: new Set(get().projects.map((p) => p.id)) })
       },
 
       // Set project being edited
