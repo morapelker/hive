@@ -1000,13 +1000,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         })
       }
 
-      const lastMessage = loadedMessages[loadedMessages.length - 1]
-      if (lastMessage?.role === 'assistant') {
-        const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-        if (currentStatus?.status !== 'working' && currentStatus?.status !== 'completed') {
-          useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-        }
-      }
+      // NOTE: Do not clear session status here. Status decisions are the
+      // responsibility of authoritative sources: the reconnect handler,
+      // SSE event handlers, and the global listener.
 
       return loadedMessages
     }
@@ -1928,12 +1924,26 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 .getState()
                 .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             } else if (reconnectResult.sessionStatus === 'idle') {
-              // Session actually finished — clear any stale busy indicators
               setIsStreaming(false)
               setIsSending(false)
               setSessionRetry(null)
               setSessionErrorMessage(null)
-              useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+              // If the session was previously busy, the agent finished while we
+              // were away — show a completion badge instead of clearing to "Ready".
+              if (
+                storedStatus?.status === 'working' ||
+                storedStatus?.status === 'planning'
+              ) {
+                const sendTime = messageSendTimes.get(sessionId)
+                const durationMs = sendTime ? Date.now() - sendTime : 0
+                const word =
+                  COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+                useWorktreeStatusStore
+                  .getState()
+                  .setSessionStatus(sessionId, 'completed', { word, durationMs })
+              } else {
+                useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+              }
             } else if (reconnectResult.sessionStatus === 'retry') {
               setIsStreaming(true)
               setIsSending(true)
