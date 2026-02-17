@@ -113,7 +113,9 @@ export function WorktreeItem({
             ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
             : worktreeStatus === 'plan_ready'
               ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
-              : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+              : worktreeStatus === 'completed'
+                ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
+                : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
   // Connect dialog state
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
