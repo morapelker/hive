@@ -38,7 +38,8 @@ const db = {
     ) => ipcRenderer.invoke('db:project:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('db:project:delete', id),
     touch: (id: string) => ipcRenderer.invoke('db:project:touch', id),
-    reorder: (orderedIds: string[]) => ipcRenderer.invoke('db:project:reorder', orderedIds)
+    reorder: (orderedIds: string[]) => ipcRenderer.invoke('db:project:reorder', orderedIds),
+    sortByLastMessage: () => ipcRenderer.invoke('db:project:sortByLastMessage')
   },
 
   // Worktrees

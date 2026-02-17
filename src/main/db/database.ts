@@ -300,6 +300,22 @@ export class DatabaseService {
     tx()
   }
 
+  getProjectIdsSortedByLastMessage(): string[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        `SELECT p.id
+         FROM projects p
+         LEFT JOIN worktrees w ON w.project_id = p.id
+         GROUP BY p.id
+         ORDER BY
+           CASE WHEN MAX(w.last_message_at) IS NULL THEN 1 ELSE 0 END ASC,
+           MAX(w.last_message_at) DESC`
+      )
+      .all() as { id: string }[]
+    return rows.map((r) => r.id)
+  }
+
   updateProject(id: string, data: ProjectUpdate): Project | null {
     const db = this.getDb()
     const existing = this.getProject(id)
