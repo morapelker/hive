@@ -1,7 +1,7 @@
 import fixPath from 'fix-path'
 import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
-import { spawn, exec } from 'child_process'
+import { spawn, exec, execFileSync } from 'child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
@@ -268,6 +268,33 @@ function registerSystemHandlers(): void {
         error: error instanceof Error ? error.message : 'Failed to open in app'
       }
     }
+  })
+
+  // Detect which agent SDKs are installed on the system (first-launch setup)
+  ipcMain.handle('system:detectAgentSdks', () => {
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which'
+    const check = (binary: string): boolean => {
+      try {
+        const result = execFileSync(whichCmd, [binary], {
+          encoding: 'utf-8',
+          timeout: 5000,
+          env: process.env
+        }).trim()
+        const resolved = result.split('\n')[0].trim()
+        return !!resolved && existsSync(resolved)
+      } catch {
+        return false
+      }
+    }
+    return {
+      opencode: check('opencode'),
+      claude: check('claude')
+    }
+  })
+
+  // Quit the app (needed for macOS where window.close() doesn't quit)
+  ipcMain.handle('system:quitApp', () => {
+    app.quit()
   })
 }
 
