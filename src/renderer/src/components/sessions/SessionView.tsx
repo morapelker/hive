@@ -2800,13 +2800,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           }
           return
         }
+
+        // Transition the ExitPlanMode tool card to "rejected" state with feedback
+        updateStreamingPartsRef((parts) =>
+          parts.map((p) =>
+            p.type === 'tool_use' && p.toolUse?.id === pendingBeforeAction.toolUseID
+              ? { ...p, toolUse: { ...p.toolUse!, status: 'error' as const, error: feedback } }
+              : p
+          )
+        )
+        immediateFlush()
       } catch (err) {
         toast.error(`Plan reject error: ${err instanceof Error ? err.message : String(err)}`)
         useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
         useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
       }
     },
-    [sessionId, worktreePath, pendingPlan]
+    [sessionId, worktreePath, pendingPlan, updateStreamingPartsRef, immediateFlush]
   )
 
   const handlePlanReadyHandoff = useCallback(async () => {

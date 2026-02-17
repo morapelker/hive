@@ -469,14 +469,21 @@ function CollapsedContent({
   // ExitPlanMode — plan review tool
   if (lowerName === 'exitplanmode') {
     const isAccepted = toolUse.status === 'success'
+    const isRejected = toolUse.status === 'error'
+    const badgeText = isAccepted ? 'accepted' : isRejected ? 'rejected' : 'review'
     return (
       <>
-        <span className="text-emerald-500 shrink-0">
+        <span className={cn(isRejected ? 'text-red-500' : 'text-emerald-500', 'shrink-0')}>
           <ClipboardCheck className="h-3.5 w-3.5" />
         </span>
         <span className="font-medium text-foreground shrink-0">Plan</span>
-        <span className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 rounded px-1 py-0.5 font-medium shrink-0">
-          {isAccepted ? 'accepted' : 'review'}
+        <span className={cn(
+          'text-[10px] rounded px-1 py-0.5 font-medium shrink-0',
+          isRejected
+            ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+            : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+        )}>
+          {badgeText}
         </span>
       </>
     )
@@ -722,9 +729,10 @@ export const ToolCard = memo(function ToolCard({
     )
   }
 
-  // ExitPlanMode: always-expanded plan card with fake user message on acceptance
+  // ExitPlanMode: always-expanded plan card with fake user message on acceptance/rejection
   if (isExitPlanMode) {
     const planAccepted = toolUse.status === 'success'
+    const planRejected = toolUse.status === 'error'
     return (
       <>
         <div
@@ -732,7 +740,7 @@ export const ToolCard = memo(function ToolCard({
             compact
               ? 'my-0 rounded-md border border-l-2 text-xs'
               : 'my-1 rounded-md border border-l-2 text-xs',
-            toolUse.status === 'error'
+            planRejected
               ? 'border-red-500/30 bg-red-500/5'
               : 'border-border bg-primary/[0.04]'
           )}
@@ -783,6 +791,14 @@ export const ToolCard = memo(function ToolCard({
           <div className="flex justify-end px-6 py-4" data-testid="plan-accepted-message">
             <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-primary/10 text-foreground">
               <p className="text-sm whitespace-pre-wrap leading-relaxed">Implement the plan</p>
+            </div>
+          </div>
+        )}
+        {/* Fake user message after plan rejection with feedback */}
+        {planRejected && toolUse.error && (
+          <div className="flex justify-end px-6 py-4" data-testid="plan-rejected-message">
+            <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-primary/10 text-foreground">
+              <p className="text-sm whitespace-pre-wrap leading-relaxed">{toolUse.error}</p>
             </div>
           </div>
         )}
