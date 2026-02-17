@@ -35,6 +35,9 @@ const mockGitOps = {
   openInEditor: vi.fn().mockResolvedValue({ success: true }),
   showInFinder: vi.fn().mockResolvedValue({ success: true }),
   onStatusChanged: vi.fn().mockReturnValue(() => {}),
+  watchBranch: vi.fn().mockResolvedValue({ success: true }),
+  unwatchBranch: vi.fn().mockResolvedValue({ success: true }),
+  onBranchChanged: vi.fn().mockReturnValue(() => {}),
   getFileContent: vi.fn().mockResolvedValue({ success: true, content: '' }),
   getRemoteUrl: vi.fn().mockResolvedValue({ success: true, url: null, remote: null })
 }

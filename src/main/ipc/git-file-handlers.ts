@@ -25,6 +25,12 @@ import {
   unwatchWorktree,
   cleanupWorktreeWatchers
 } from '../services/worktree-watcher'
+import {
+  initBranchWatcher,
+  watchBranch,
+  unwatchBranch,
+  cleanupBranchWatchers
+} from '../services/branch-watcher'
 
 const execAsync = promisify(exec)
 
@@ -54,8 +60,9 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
   mainWindow = window
   log.info('Registering git file handlers')
 
-  // Initialize the worktree watcher service with the main window reference
+  // Initialize watcher services with the main window reference
   initWorktreeWatcher(window)
+  initBranchWatcher(window)
 
   // Start watching a worktree for git changes (filesystem + .git metadata)
   ipcMain.handle(
@@ -89,6 +96,44 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const message = error instanceof Error ? error.message : 'Unknown error'
         log.error(
           'Failed to stop worktree watcher',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Start watching a worktree's .git/HEAD for branch changes (lightweight, sidebar use)
+  ipcMain.handle(
+    'git:watchBranch',
+    async (_event, worktreePath: string): Promise<GitOperationResult> => {
+      try {
+        await watchBranch(worktreePath)
+        return { success: true }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to start branch watcher',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Stop watching a worktree's branch
+  ipcMain.handle(
+    'git:unwatchBranch',
+    async (_event, worktreePath: string): Promise<GitOperationResult> => {
+      try {
+        await unwatchBranch(worktreePath)
+        return { success: true }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to stop branch watcher',
           error instanceof Error ? error : new Error(message),
           { worktreePath }
         )
@@ -602,8 +647,8 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
   )
 }
 
-// Re-export cleanup function for app quit handler
-export { cleanupWorktreeWatchers }
+// Re-export cleanup functions for app quit handler
+export { cleanupWorktreeWatchers, cleanupBranchWatchers }
 
 // Export types for use in preload
 export type {
