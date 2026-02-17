@@ -293,15 +293,31 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       const sdk = await loadClaudeSDK()
       log.info('Prompt: SDK loaded')
 
-      // Build prompt string from message parts
-      const prompt =
-        typeof message === 'string'
-          ? message
-          : message
-              .map((part) =>
-                part.type === 'text' ? part.text : `[file: ${part.filename ?? part.url}]`
-              )
-              .join('\n')
+      // Build prompt: use structured content blocks when file attachments are present,
+      // otherwise use a plain string (preserving the existing fast path).
+      const hasFiles = this.hasFileAttachments(message)
+
+      let prompt: string
+      let contentBlocks: Array<Record<string, unknown>> | null = null
+
+      if (typeof message === 'string') {
+        prompt = message
+      } else if (!hasFiles) {
+        // No file attachments — flatten to string (existing behavior)
+        prompt = message
+          .filter((part) => part.type === 'text')
+          .map((part) => (part as { type: 'text'; text: string }).text)
+          .join('\n')
+      } else {
+        // Has file attachments — build structured content blocks for the SDK
+        contentBlocks = this.buildAnthropicContentBlocks(message)
+        // Also build a text-only prompt string for logging and the synthetic user message
+        prompt = message
+          .map((part) =>
+            part.type === 'text' ? part.text : `[attachment: ${part.filename ?? 'file'}]`
+          )
+          .join('\n')
+      }
 
       log.info('Prompt: constructed', {
         promptLength: prompt.length,
@@ -329,12 +345,34 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       // The SDK does NOT emit a `user` type event — without this,
       // loadMessages() on idle would replace state with only the assistant
       // message, causing the user's message to vanish.
+      const syntheticTimestamp = new Date().toISOString()
+      const syntheticParts: Array<Record<string, unknown>> = []
+
+      if (typeof message === 'string' || !hasFiles) {
+        syntheticParts.push({ type: 'text', text: prompt, timestamp: syntheticTimestamp })
+      } else {
+        // Include both text and file parts so the renderer can display attachments
+        for (const part of message) {
+          if (part.type === 'text') {
+            syntheticParts.push({ type: 'text', text: part.text, timestamp: syntheticTimestamp })
+          } else {
+            syntheticParts.push({
+              type: 'file',
+              mime: part.mime,
+              url: part.url,
+              filename: part.filename,
+              timestamp: syntheticTimestamp
+            })
+          }
+        }
+      }
+
       session.messages.push({
         id: `user-${randomUUID()}`,
         role: 'user',
-        timestamp: new Date().toISOString(),
+        timestamp: syntheticTimestamp,
         content: prompt,
-        parts: [{ type: 'text', text: prompt, timestamp: new Date().toISOString() }]
+        parts: syntheticParts
       })
 
       // Fresh AbortController for this prompt turn
@@ -397,10 +435,20 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         resume: !!options.resume,
         forkSession: !!options.forkSession,
         resumeSessionAt: options.resumeSessionAt ?? null,
-        cwd: options.cwd
+        cwd: options.cwd,
+        hasFileAttachments: !!contentBlocks
       })
 
-      const queryData = sdk.query({ prompt, options }) as AsyncIterable<Record<string, unknown>>
+      // When file attachments are present, use AsyncIterable<SDKUserMessage> prompt path
+      // with proper Anthropic content blocks (base64 images/documents);
+      // otherwise use the plain string path (preserves all existing behavior).
+      const sdkPrompt = contentBlocks
+        ? this.createUserMessageIterable(contentBlocks, session.claudeSessionId)
+        : prompt
+
+      const queryData = sdk.query({ prompt: sdkPrompt, options }) as AsyncIterable<
+        Record<string, unknown>
+      >
       session.pendingFork = false
       session.query = queryData as unknown as ClaudeQuery
 
@@ -2025,6 +2073,127 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       this.mainWindow.webContents.send(channel, data)
     } else {
       log.warn('Cannot send to renderer: window not available')
+    }
+  }
+
+  // ── File attachment helpers ──────────────────────────────────────
+
+  /**
+   * Returns true if the message array contains at least one file part (image/PDF).
+   */
+  private hasFileAttachments(
+    message:
+      | string
+      | Array<
+          | { type: 'text'; text: string }
+          | { type: 'file'; mime: string; url: string; filename?: string }
+        >
+  ): boolean {
+    if (typeof message === 'string') return false
+    return message.some((part) => part.type === 'file')
+  }
+
+  /**
+   * Parse a data URL into its media type and raw base64 data.
+   * Input format: "data:<mime>;base64,<data>"
+   * Returns { mediaType, data } or null if the URL is not a valid data URL.
+   */
+  private parseDataUrl(url: string): { mediaType: string; data: string } | null {
+    const match = url.match(/^data:([^;]+);base64,(.+)$/)
+    if (!match) return null
+    return { mediaType: match[1], data: match[2] }
+  }
+
+  /**
+   * Convert Hive message parts into Anthropic API content blocks.
+   * - Text parts → { type: 'text', text }
+   * - Image files (image/*) → { type: 'image', source: { type: 'base64', media_type, data } }
+   * - PDF files (application/pdf) → { type: 'document', source: { type: 'base64', media_type, data } }
+   * - Unrecognized file types → text placeholder fallback
+   */
+  private buildAnthropicContentBlocks(
+    message: Array<
+      | { type: 'text'; text: string }
+      | { type: 'file'; mime: string; url: string; filename?: string }
+    >
+  ): Array<Record<string, unknown>> {
+    const blocks: Array<Record<string, unknown>> = []
+
+    for (const part of message) {
+      if (part.type === 'text') {
+        if (part.text.trim()) {
+          blocks.push({ type: 'text', text: part.text })
+        }
+        continue
+      }
+
+      // part.type === 'file'
+      const parsed = this.parseDataUrl(part.url)
+      if (!parsed) {
+        // Fallback for non-data URLs: include as text placeholder
+        blocks.push({ type: 'text', text: `[file: ${part.filename ?? part.url}]` })
+        continue
+      }
+
+      const { mediaType, data } = parsed
+
+      if (mediaType.startsWith('image/')) {
+        blocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mediaType,
+            data
+          }
+        })
+      } else if (mediaType === 'application/pdf') {
+        blocks.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: mediaType,
+            data
+          }
+        })
+      } else {
+        // Unsupported file type fallback
+        blocks.push({ type: 'text', text: `[file: ${part.filename ?? 'attachment'}]` })
+      }
+    }
+
+    return blocks
+  }
+
+  /**
+   * Create an AsyncIterable that yields a single SDKUserMessage with the given content blocks.
+   * Used when the prompt contains file attachments that need structured content blocks
+   * instead of a plain text string.
+   */
+  private createUserMessageIterable(
+    contentBlocks: Array<Record<string, unknown>>,
+    sessionId: string
+  ): AsyncIterable<Record<string, unknown>> {
+    const message = {
+      type: 'user' as const,
+      message: {
+        role: 'user' as const,
+        content: contentBlocks
+      },
+      parent_tool_use_id: null,
+      session_id: sessionId
+    }
+
+    return {
+      [Symbol.asyncIterator]() {
+        let done = false
+        return {
+          async next() {
+            if (done) return { value: undefined, done: true as const }
+            done = true
+            return { value: message, done: false as const }
+          }
+        }
+      }
     }
   }
 }
