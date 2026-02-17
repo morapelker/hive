@@ -47,6 +47,10 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
       const found = sessions.find((s) => s.id === sessionId)
       if (found) return found
     }
+    for (const sessions of state.sessionsByConnection.values()) {
+      const found = sessions.find((s) => s.id === sessionId)
+      if (found) return found
+    }
     return null
   })
   const agentSdk = session?.agent_sdk ?? 'opencode'

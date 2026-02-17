@@ -949,14 +949,16 @@ export const useSessionStore = create<SessionState>()(
 
           const projectId = result.connection.members[0].project_id
 
-          // Determine default model from global setting
+          // Determine default model and agent SDK from global settings
           let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
+          let defaultAgentSdk: 'opencode' | 'claude-code' = 'opencode'
           try {
             const { useSettingsStore } = await import('./useSettingsStore')
             const globalModel = useSettingsStore.getState().selectedModel
             if (globalModel) {
               defaultModel = globalModel
             }
+            defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
           } catch {
             /* non-critical */
           }
@@ -969,6 +971,7 @@ export const useSessionStore = create<SessionState>()(
             project_id: projectId,
             connection_id: connectionId,
             name: `Session ${sessionNumber}`,
+            agent_sdk: defaultAgentSdk,
             ...(defaultModel
               ? {
                   model_provider_id: defaultModel.providerID,
