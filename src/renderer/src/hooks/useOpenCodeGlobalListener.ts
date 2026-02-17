@@ -161,6 +161,9 @@ export function useOpenCodeGlobalListener(): void {
 
           // Background session became busy again — restore working/planning status
           if (status?.type === 'busy') {
+            // Don't overwrite plan_ready — session is blocked waiting for plan approval
+            if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
             if (sessionId !== activeId) {
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
               useWorktreeStatusStore
@@ -171,6 +174,9 @@ export function useOpenCodeGlobalListener(): void {
           }
 
           if (status?.type !== 'idle') return
+
+          // Don't overwrite plan_ready — session is blocked waiting for plan approval
+          if (useSessionStore.getState().getPendingPlan(sessionId)) return
 
           // Active session is handled by SessionView.
           if (sessionId === activeId) return

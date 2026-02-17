@@ -974,6 +974,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
       }
 
+      // If there's a pending plan, override ExitPlanMode tool status to 'pending'
+      // so the tool card shows as awaiting approval (transcript reports 'completed').
+      const pendingPlanForLoad = useSessionStore.getState().getPendingPlan(sessionId)
+      if (pendingPlanForLoad?.toolUseID) {
+        for (const msg of loadedMessages) {
+          if (msg.parts) {
+            for (const part of msg.parts) {
+              if (
+                part.type === 'tool_use' &&
+                part.toolUse?.id === pendingPlanForLoad.toolUseID
+              ) {
+                part.toolUse.status = 'pending'
+              }
+            }
+          }
+        }
+      }
+
       if (loadedFromOpenCode) {
         // Guard: don't replace existing messages with an empty transcript.
         // This prevents a race where getMessages returns before the SDK has
@@ -1276,7 +1294,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                           ...p,
                           toolUse: {
                             ...p.toolUse!,
-                            input: { ...p.toolUse!.input, plan: planText }
+                            input: { ...p.toolUse!.input, plan: planText },
+                            status: 'pending' as const
                           }
                         }
                       : p
@@ -1635,6 +1654,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             if (event.childSessionId) return
 
             if (status.type === 'busy') {
+              // Don't overwrite plan_ready — session is blocked waiting for plan approval
+              if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
               // Session became active (again) — restart streaming state.
               // If we previously finalized on idle, reset so the next idle
               // can finalize the new response.
@@ -1651,6 +1673,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 .getState()
                 .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             } else if (status.type === 'idle') {
+              // Don't overwrite plan_ready — session is blocked waiting for plan approval
+              if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
               // Session is done — flush and finalize immediately
               setSessionRetry(null)
               setSessionErrorMessage(null)
@@ -1974,35 +1999,46 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Part B: Authoritative status from OpenCode SDK.
             // Corrects Part A if the session finished while we were away,
             // or confirms busy if the store was accurate.
+            // Don't overwrite plan_ready — session is blocked waiting for plan approval.
+            const hasPendingPlanOnReconnect = useSessionStore
+              .getState()
+              .getPendingPlan(sessionId)
             if (reconnectResult.sessionStatus === 'busy') {
-              setSessionRetry(null)
-              setSessionErrorMessage(null)
-              setIsStreaming(true)
-              setIsSending(true)
-              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-              useWorktreeStatusStore
-                .getState()
-                .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
-            } else if (reconnectResult.sessionStatus === 'idle') {
-              setIsStreaming(false)
-              setIsSending(false)
-              setSessionRetry(null)
-              setSessionErrorMessage(null)
-              // If the session was previously busy, the agent finished while we
-              // were away — show a completion badge instead of clearing to "Ready".
-              if (
-                storedStatus?.status === 'working' ||
-                storedStatus?.status === 'planning'
-              ) {
-                const sendTime = messageSendTimes.get(sessionId)
-                const durationMs = sendTime ? Date.now() - sendTime : 0
-                const word =
-                  COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+              if (!hasPendingPlanOnReconnect) {
+                setSessionRetry(null)
+                setSessionErrorMessage(null)
+                setIsStreaming(true)
+                setIsSending(true)
+                const currentMode = useSessionStore.getState().getSessionMode(sessionId)
                 useWorktreeStatusStore
                   .getState()
-                  .setSessionStatus(sessionId, 'completed', { word, durationMs })
-              } else {
-                useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+                  .setSessionStatus(
+                    sessionId,
+                    currentMode === 'plan' ? 'planning' : 'working'
+                  )
+              }
+            } else if (reconnectResult.sessionStatus === 'idle') {
+              if (!hasPendingPlanOnReconnect) {
+                setIsStreaming(false)
+                setIsSending(false)
+                setSessionRetry(null)
+                setSessionErrorMessage(null)
+                // If the session was previously busy, the agent finished while we
+                // were away — show a completion badge instead of clearing to "Ready".
+                if (
+                  storedStatus?.status === 'working' ||
+                  storedStatus?.status === 'planning'
+                ) {
+                  const sendTime = messageSendTimes.get(sessionId)
+                  const durationMs = sendTime ? Date.now() - sendTime : 0
+                  const word =
+                    COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+                  useWorktreeStatusStore
+                    .getState()
+                    .setSessionStatus(sessionId, 'completed', { word, durationMs })
+                } else {
+                  useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+                }
               }
             } else if (reconnectResult.sessionStatus === 'retry') {
               setIsStreaming(true)
@@ -2696,6 +2732,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
         await useSessionStore.getState().setSessionMode(sessionId, 'build')
         lastSendMode.set(sessionId, 'build')
+
+        // Transition the ExitPlanMode tool card to "accepted" state
+        updateStreamingPartsRef((parts) =>
+          parts.map((p) =>
+            p.type === 'tool_use' && p.toolUse?.id === pendingBeforeAction.toolUseID
+              ? { ...p, toolUse: { ...p.toolUse!, status: 'success' as const } }
+              : p
+          )
+        )
+        immediateFlush()
       } catch (err) {
         toast.error(`Plan approve error: ${err instanceof Error ? err.message : String(err)}`)
         useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
@@ -2708,7 +2754,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     await useSessionStore.getState().setSessionMode(sessionId, 'build')
     lastSendMode.set(sessionId, 'build')
     await handleSend('Implement')
-  }, [sessionId, handleSend, worktreePath, pendingPlan, isClaudeCode])
+  }, [sessionId, handleSend, worktreePath, pendingPlan, isClaudeCode, updateStreamingPartsRef, immediateFlush])
 
   const handlePlanReject = useCallback(
     async (feedback: string) => {
@@ -2803,6 +2849,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           void handlePlanReject(inputValue.trim())
           setInputValue('')
           inputValueRef.current = ''
+          if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+          window.db.session.updateDraft(sessionId, null)
           return
         }
         handleSend()
@@ -3500,7 +3548,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                       // When a plan is pending and there's text, send as feedback (reject)
                       if (pendingPlan && inputValue.trim()) {
                         void handlePlanReject(inputValue.trim())
-                        handleInputChange('')
+                        setInputValue('')
+                        inputValueRef.current = ''
+                        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+                        window.db.session.updateDraft(sessionId, null)
                         return
                       }
                       void handleSend()
