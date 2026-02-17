@@ -1225,9 +1225,45 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             }
             const requestId = data?.id || data?.requestId
             if (requestId) {
+              let planText = data.plan ?? ''
+
+              // If backend didn't provide plan content, extract from preceding streaming text
+              if (!planText && data.toolUseID) {
+                const parts = streamingPartsRef.current
+                const toolIdx = parts.findIndex(
+                  (p) => p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+                )
+                if (toolIdx > 0) {
+                  for (let i = toolIdx - 1; i >= 0; i--) {
+                    if (parts[i].type === 'text' && parts[i].text) {
+                      planText = parts[i].text!
+                      break
+                    }
+                  }
+                }
+              }
+
+              // Inject plan content into the ExitPlanMode tool_use input for rendering
+              if (planText && data.toolUseID) {
+                updateStreamingPartsRef((parts) =>
+                  parts.map((p) =>
+                    p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+                      ? {
+                          ...p,
+                          toolUse: {
+                            ...p.toolUse!,
+                            input: { ...p.toolUse!.input, plan: planText }
+                          }
+                        }
+                      : p
+                  )
+                )
+                immediateFlush()
+              }
+
               useSessionStore.getState().setPendingPlan(sessionId, {
                 requestId,
-                planContent: data.plan ?? '',
+                planContent: planText,
                 toolUseID: data.toolUseID ?? ''
               })
               useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
@@ -2635,6 +2671,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           return
         }
         await useSessionStore.getState().setSessionMode(sessionId, 'build')
+        lastSendMode.set(sessionId, 'build')
       } catch (err) {
         toast.error(`Plan approve error: ${err instanceof Error ? err.message : String(err)}`)
         useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
@@ -2645,6 +2682,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     // OpenCode sessions: legacy non-blocking behavior.
     await useSessionStore.getState().setSessionMode(sessionId, 'build')
+    lastSendMode.set(sessionId, 'build')
     await handleSend('Implement')
   }, [sessionId, handleSend, worktreePath, pendingPlan, isClaudeCode])
 
@@ -3254,18 +3292,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               {queuedMessages.map((msg) => (
                 <QueuedMessageBubble key={msg.id} content={msg.content} />
               ))}
-              {/* Pending plan preview as the last assistant message */}
-              {pendingPlan && (
-                <MessageRenderer
-                  message={{
-                    id: `pending-plan-${pendingPlan.requestId}`,
-                    role: 'assistant',
-                    content: pendingPlan.planContent || 'No plan content available in tool input.',
-                    timestamp: new Date().toISOString()
-                  }}
-                  cwd={worktreePath}
-                />
-              )}
+              {/* Plan content is now rendered inside the ExitPlanMode tool card */}
               {/* Completion badge — shows after streaming finishes */}
               {completionEntry && !isSending && (
                 <div

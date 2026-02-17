@@ -132,6 +132,44 @@ function ToolCallGroup({
   )
 }
 
+/** Push a batch of collected tool uses into renderedParts using the appropriate layout */
+function renderToolGroup(
+  renderedParts: React.JSX.Element[],
+  toolUses: ToolUseInfo[],
+  startIndex: number,
+  cwd?: string | null,
+  forceCompactTools = false
+): void {
+  if (toolUses.length >= TOOL_GROUP_THRESHOLD) {
+    renderedParts.push(
+      <ToolCallGroup key={`tool-group-${startIndex}`} toolUses={toolUses} cwd={cwd} />
+    )
+  } else if (toolUses.length > 1) {
+    renderedParts.push(
+      <div
+        key={`tool-inline-group-${startIndex}`}
+        className="my-0.5 flex flex-col gap-2"
+        data-testid="tool-call-inline-group"
+      >
+        {toolUses.map((toolUse) => (
+          <ToolCard key={`tool-${toolUse.id}`} toolUse={toolUse} cwd={cwd} compact={true} />
+        ))}
+      </div>
+    )
+  } else {
+    toolUses.forEach((toolUse) => {
+      renderedParts.push(
+        <ToolCard
+          key={`tool-${toolUse.id}`}
+          toolUse={toolUse}
+          cwd={cwd}
+          compact={forceCompactTools || toolUses.length > 1}
+        />
+      )
+    })
+  }
+}
+
 /** Render interleaved parts (text + tool cards) */
 function renderParts(
   parts: StreamingPart[],
@@ -173,6 +211,30 @@ function renderParts(
         const currentPart = parts[index]
         if (currentPart.type === 'tool_use') {
           if (currentPart.toolUse) {
+            // ExitPlanMode must never be grouped — flush any collected tools, then render standalone
+            if (currentPart.toolUse.name.toLowerCase() === 'exitplanmode') {
+              if (toolUses.length > 0) {
+                renderToolGroup(renderedParts, toolUses, startIndex, cwd, forceCompactTools)
+              }
+              renderedParts.push(
+                <ToolCard
+                  key={`tool-${currentPart.toolUse.id}`}
+                  toolUse={currentPart.toolUse}
+                  cwd={cwd}
+                  compact={false}
+                />
+              )
+              index += 1
+              // Skip any trailing whitespace-only text parts before continuing
+              while (
+                index < parts.length &&
+                parts[index].type === 'text' &&
+                !hasMeaningfulText(parts[index].text)
+              ) {
+                index += 1
+              }
+              break
+            }
             toolUses.push(currentPart.toolUse)
           }
           index += 1
@@ -185,33 +247,8 @@ function renderParts(
         break
       }
 
-      if (toolUses.length >= TOOL_GROUP_THRESHOLD) {
-        renderedParts.push(
-          <ToolCallGroup key={`tool-group-${startIndex}`} toolUses={toolUses} cwd={cwd} />
-        )
-      } else if (toolUses.length > 1) {
-        renderedParts.push(
-          <div
-            key={`tool-inline-group-${startIndex}`}
-            className="my-0.5 flex flex-col gap-2"
-            data-testid="tool-call-inline-group"
-          >
-            {toolUses.map((toolUse) => (
-              <ToolCard key={`tool-${toolUse.id}`} toolUse={toolUse} cwd={cwd} compact={true} />
-            ))}
-          </div>
-        )
-      } else {
-        toolUses.forEach((toolUse) => {
-          renderedParts.push(
-            <ToolCard
-              key={`tool-${toolUse.id}`}
-              toolUse={toolUse}
-              cwd={cwd}
-              compact={forceCompactTools || toolUses.length > 1}
-            />
-          )
-        })
+      if (toolUses.length > 0) {
+        renderToolGroup(renderedParts, toolUses, startIndex, cwd, forceCompactTools)
       }
       continue
     }
