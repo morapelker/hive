@@ -9,7 +9,7 @@ export function UpdateProgressToast({
   version,
   percent
 }: UpdateProgressToastProps): React.JSX.Element {
-  const rounded = Math.round(percent)
+  const rounded = Math.min(100, Math.max(0, Math.round(percent)))
 
   return (
     <div className="flex w-[356px] flex-col gap-2.5 rounded-xl border border-border bg-background p-4 shadow-xl">
