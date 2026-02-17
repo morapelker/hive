@@ -308,6 +308,11 @@ export function ProjectItem({
                 size="icon"
                 className={cn('h-5 w-5 p-0 cursor-pointer', 'hover:bg-accent')}
                 onClick={handleCreateWorktree}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setBranchPickerOpen(true)
+                }}
                 disabled={isCreatingWorktree}
               >
                 {isCreatingWorktree ? (
