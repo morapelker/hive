@@ -2,7 +2,7 @@ import simpleGit, { SimpleGit, BranchSummary } from 'simple-git'
 import { app } from 'electron'
 import { join, basename, dirname } from 'path'
 import { existsSync, mkdirSync, rmSync, cpSync } from 'fs'
-import { selectUniqueBreedName, type BreedType } from './breed-names'
+import { selectUniqueBreedName, ALL_BREED_NAMES, LEGACY_CITY_NAMES, type BreedType } from './breed-names'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'GitService' })
@@ -1304,6 +1304,102 @@ export function canonicalizeBranchName(title: string): string {
     .replace(/^-+|-+$/g, '') // strip leading/trailing dashes
     .slice(0, 50) // truncate
     .replace(/-+$/, '') // strip trailing dashes after truncation
+}
+
+/**
+ * Check if a branch name is an auto-generated name (breed or legacy city name).
+ * Matches exact names and suffixed variants like `golden-retriever-2` or `tokyo-v3`.
+ */
+export function isAutoNamedBranch(branchName: string): boolean {
+  const lower = branchName.toLowerCase()
+  return (
+    ALL_BREED_NAMES.some(
+      (b) => b === lower || new RegExp(`^${b}-(?:v)?\\d+$`).test(lower)
+    ) ||
+    LEGACY_CITY_NAMES.some(
+      (c) => c === lower || new RegExp(`^${c}-(?:v)?\\d+$`).test(lower)
+    )
+  )
+}
+
+// ── Auto-rename helper ──────────────────────────────────────────
+
+export interface AutoRenameParams {
+  worktreeId: string
+  worktreePath: string
+  currentBranchName: string
+  sessionTitle: string
+  /** Minimal DB interface — only needs updateWorktree */
+  db: {
+    updateWorktree(
+      id: string,
+      data: { name?: string; branch_name?: string; branch_renamed?: number }
+    ): unknown
+  }
+}
+
+export interface AutoRenameResult {
+  renamed: boolean
+  newBranch?: string
+  error?: string
+  skipped?: 'not-auto-named' | 'same-name' | 'all-variants-taken' | 'empty-canonical'
+}
+
+/**
+ * Attempt to rename a worktree's auto-named branch to a canonicalized session title.
+ * Handles collision suffixing (-2, -3, ...) and sets `branch_renamed: 1` on
+ * both success and hard failure to prevent re-attempts.
+ */
+export async function autoRenameWorktreeBranch(
+  params: AutoRenameParams
+): Promise<AutoRenameResult> {
+  const { worktreeId, worktreePath, currentBranchName, sessionTitle, db } = params
+
+  if (!isAutoNamedBranch(currentBranchName)) {
+    return { renamed: false, skipped: 'not-auto-named' }
+  }
+
+  const baseBranch = canonicalizeBranchName(sessionTitle)
+  if (!baseBranch) {
+    return { renamed: false, skipped: 'empty-canonical' }
+  }
+  if (baseBranch === currentBranchName.toLowerCase()) {
+    return { renamed: false, skipped: 'same-name' }
+  }
+
+  const gitService = createGitService(worktreePath)
+
+  // Find an available branch name, appending -2, -3, etc. if needed
+  let targetBranch = baseBranch
+  if (await gitService.branchExists(targetBranch)) {
+    let suffix = 2
+    const maxSuffix = 9999
+    while (suffix <= maxSuffix) {
+      const candidate = `${baseBranch}-${suffix}`
+      if (!(await gitService.branchExists(candidate))) {
+        targetBranch = candidate
+        break
+      }
+      suffix += 1
+    }
+    if (suffix > maxSuffix) {
+      db.updateWorktree(worktreeId, { branch_renamed: 1 })
+      return { renamed: false, skipped: 'all-variants-taken' }
+    }
+  }
+
+  const renameResult = await gitService.renameBranch(worktreePath, currentBranchName, targetBranch)
+  if (renameResult.success) {
+    db.updateWorktree(worktreeId, {
+      name: targetBranch,
+      branch_name: targetBranch,
+      branch_renamed: 1
+    })
+    return { renamed: true, newBranch: targetBranch }
+  } else {
+    db.updateWorktree(worktreeId, { branch_renamed: 1 })
+    return { renamed: false, error: renameResult.error }
+  }
 }
 
 /**

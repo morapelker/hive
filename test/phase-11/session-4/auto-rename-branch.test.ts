@@ -36,15 +36,14 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       )
       const content = fs.readFileSync(servicePath, 'utf-8')
 
-      // Verify auto-rename logic is present
-      expect(content).toContain('Auto-rename branch if still an auto-generated name')
+      // Verify auto-rename logic is present (now delegated to shared helper)
+      expect(content).toContain('Auto-rename branch for the session')
       expect(content).toContain('getWorktreeBySessionId')
-      expect(content).toContain('ALL_BREED_NAMES.some')
-      expect(content).toContain('canonicalizeBranchName')
+      expect(content).toContain('autoRenameWorktreeBranch')
       expect(content).toContain("'worktree:branchRenamed'")
     })
 
-    test('imports ALL_BREED_NAMES, LEGACY_CITY_NAMES and canonicalizeBranchName', () => {
+    test('imports autoRenameWorktreeBranch from git-service', () => {
       const servicePath = path.join(
         __dirname,
         '..',
@@ -58,10 +57,7 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       const content = fs.readFileSync(servicePath, 'utf-8')
 
       expect(content).toContain(
-        "import { ALL_BREED_NAMES, LEGACY_CITY_NAMES } from './breed-names'"
-      )
-      expect(content).toContain(
-        "import { canonicalizeBranchName, createGitService } from './git-service'"
+        "import { autoRenameWorktreeBranch } from './git-service'"
       )
     })
 
@@ -118,7 +114,8 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
     })
 
     test('deduplicates branch name with -2, -3 suffix when target exists', () => {
-      const servicePath = path.join(
+      // Collision logic now lives in the shared autoRenameWorktreeBranch helper in git-service.ts
+      const gitServicePath = path.join(
         __dirname,
         '..',
         '..',
@@ -126,9 +123,9 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
         'src',
         'main',
         'services',
-        'opencode-service.ts'
+        'git-service.ts'
       )
-      const content = fs.readFileSync(servicePath, 'utf-8')
+      const content = fs.readFileSync(gitServicePath, 'utf-8')
 
       // Must check if branch exists before renaming
       expect(content).toContain('branchExists(targetBranch)')
@@ -140,7 +137,8 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
     })
 
     test('sets branch_renamed=1 on failure to stop retrying', () => {
-      const servicePath = path.join(
+      // Failure handling now lives in autoRenameWorktreeBranch in git-service.ts
+      const gitServicePath = path.join(
         __dirname,
         '..',
         '..',
@@ -148,25 +146,18 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
         'src',
         'main',
         'services',
-        'opencode-service.ts'
+        'git-service.ts'
       )
-      const content = fs.readFileSync(servicePath, 'utf-8')
+      const content = fs.readFileSync(gitServicePath, 'utf-8')
 
-      // On all-suffixes-taken failure
-      expect(content).toContain('all branch name variants taken')
-      // On hard rename failure (git error)
-      expect(content).toContain('Hard failure')
-      // On unexpected error
-      expect(content).toContain('Unexpected error')
-      // All three paths must set branch_renamed: 1
-      // Count occurrences of branch_renamed: 1 in the auto-rename block
-      const autoRenameBlock = content.slice(
-        content.indexOf('Auto-rename branch if still an auto-generated name'),
-        content.indexOf('Only persist events from the parent session')
+      // The helper sets branch_renamed: 1 on both success and failure
+      const helperBlock = content.slice(
+        content.indexOf('autoRenameWorktreeBranch'),
+        content.indexOf('Parse `git worktree list --porcelain`')
       )
-      const flagSetCount = (autoRenameBlock.match(/branch_renamed: 1/g) || []).length
-      // At least 3: success path, all-taken path, hard-failure path (+ catch block)
-      expect(flagSetCount).toBeGreaterThanOrEqual(3)
+      const flagSetCount = (helperBlock.match(/branch_renamed: 1/g) || []).length
+      // At least 2: all-taken path, hard-failure path (success path also sets it)
+      expect(flagSetCount).toBeGreaterThanOrEqual(2)
     })
   })
 

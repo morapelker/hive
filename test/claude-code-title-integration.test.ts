@@ -27,33 +27,10 @@ vi.mock('../src/main/services/claude-transcript-reader', () => ({
   translateEntry: vi.fn()
 }))
 
-const mockBranchExists = vi.fn()
-const mockRenameBranch = vi.fn()
+const mockAutoRenameWorktreeBranch = vi.fn()
 vi.mock('../src/main/services/git-service', () => ({
-  canonicalizeBranchName: (title: string) =>
-    title
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 3)
-      .join(' ')
-      .toLowerCase()
-      .replace(/[\s_]+/g, '-')
-      .replace(/[^a-z0-9\-/.]/g, '')
-      .replace(/-{2,}/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 50)
-      .replace(/-+$/, ''),
-  createGitService: () => ({
-    branchExists: mockBranchExists,
-    renameBranch: mockRenameBranch
-  })
+  autoRenameWorktreeBranch: (...args: any[]) => mockAutoRenameWorktreeBranch(...args)
 }))
-
-vi.mock('../src/main/services/breed-names', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/main/services/breed-names')>()
-  return actual
-})
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -166,20 +143,19 @@ describe('handleTitleGeneration', () => {
       branch_renamed: 0,
       path: '/path/to/worktree'
     })
-    mockBranchExists.mockResolvedValue(false)
-    mockRenameBranch.mockResolvedValue({ success: true })
+    mockAutoRenameWorktreeBranch.mockResolvedValue({
+      renamed: true,
+      newBranch: 'fix-auth-refresh'
+    })
 
     await (impl as any).handleTitleGeneration(session, 'Fix the auth refresh bug')
 
-    expect(mockRenameBranch).toHaveBeenCalledWith(
-      '/path/to/worktree',
-      'labrador',
-      'fix-auth-refresh'
-    )
-    expect(mockDb.updateWorktree).toHaveBeenCalledWith('wt-1', {
-      name: 'fix-auth-refresh',
-      branch_name: 'fix-auth-refresh',
-      branch_renamed: 1
+    expect(mockAutoRenameWorktreeBranch).toHaveBeenCalledWith({
+      worktreeId: 'wt-1',
+      worktreePath: '/path/to/worktree',
+      currentBranchName: 'labrador',
+      sessionTitle: 'Fix auth refresh',
+      db: mockDb
     })
     expect(mockWindow.webContents.send).toHaveBeenCalledWith('worktree:branchRenamed', {
       worktreeId: 'wt-1',
@@ -195,12 +171,20 @@ describe('handleTitleGeneration', () => {
       branch_renamed: 0,
       path: '/path/to/worktree'
     })
-    mockBranchExists.mockResolvedValue(false)
-    mockRenameBranch.mockResolvedValue({ success: true })
+    mockAutoRenameWorktreeBranch.mockResolvedValue({
+      renamed: true,
+      newBranch: 'add-new-feature'
+    })
 
     await (impl as any).handleTitleGeneration(session, 'Add a new feature')
 
-    expect(mockRenameBranch).toHaveBeenCalledWith('/path/to/worktree', 'tokyo', 'add-new-feature')
+    expect(mockAutoRenameWorktreeBranch).toHaveBeenCalledWith({
+      worktreeId: 'wt-2',
+      worktreePath: '/path/to/worktree',
+      currentBranchName: 'tokyo',
+      sessionTitle: 'Add new feature',
+      db: mockDb
+    })
   })
 
   // ── Branch rename skipped ────────────────────────────────────────
@@ -216,7 +200,7 @@ describe('handleTitleGeneration', () => {
 
     await (impl as any).handleTitleGeneration(session, 'Fix something')
 
-    expect(mockRenameBranch).not.toHaveBeenCalled()
+    expect(mockAutoRenameWorktreeBranch).not.toHaveBeenCalled()
   })
 
   it('skips branch rename when branch name is not auto-generated', async () => {
@@ -227,10 +211,15 @@ describe('handleTitleGeneration', () => {
       branch_renamed: 0,
       path: '/path/to/worktree'
     })
+    mockAutoRenameWorktreeBranch.mockResolvedValue({
+      renamed: false,
+      skipped: 'not-auto-named'
+    })
 
     await (impl as any).handleTitleGeneration(session, 'Fix something')
 
-    expect(mockRenameBranch).not.toHaveBeenCalled()
+    // autoRenameWorktreeBranch is called but returns skipped
+    expect(mockAutoRenameWorktreeBranch).toHaveBeenCalled()
   })
 
   // ── Branch name suffix ───────────────────────────────────────────
@@ -243,19 +232,19 @@ describe('handleTitleGeneration', () => {
       branch_renamed: 0,
       path: '/path/to/worktree'
     })
-    // Base name exists, but -2 is available
-    mockBranchExists
-      .mockResolvedValueOnce(true) // 'fix-auth-refresh' exists
-      .mockResolvedValueOnce(false) // 'fix-auth-refresh-2' available
-    mockRenameBranch.mockResolvedValue({ success: true })
+    // autoRenameWorktreeBranch handles collision suffixing internally
+    mockAutoRenameWorktreeBranch.mockResolvedValue({
+      renamed: true,
+      newBranch: 'fix-auth-refresh-2'
+    })
 
     await (impl as any).handleTitleGeneration(session, 'Fix the auth refresh bug')
 
-    expect(mockRenameBranch).toHaveBeenCalledWith(
-      '/path/to/worktree',
-      'golden-retriever',
-      'fix-auth-refresh-2'
-    )
+    expect(mockAutoRenameWorktreeBranch).toHaveBeenCalled()
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('worktree:branchRenamed', {
+      worktreeId: 'wt-1',
+      newBranch: 'fix-auth-refresh-2'
+    })
   })
 
   // ── Graceful degradation ─────────────────────────────────────────
@@ -301,7 +290,7 @@ describe('handleTitleGeneration', () => {
 
   // ── Branch rename failure handling ───────────────────────────────
 
-  it('sets branch_renamed=1 when renameBranch fails', async () => {
+  it('handles renameBranch failure gracefully', async () => {
     mockGenerateSessionTitle.mockResolvedValue('Fix something')
     mockDb.getWorktreeBySessionId.mockReturnValue({
       id: 'wt-1',
@@ -309,15 +298,18 @@ describe('handleTitleGeneration', () => {
       branch_renamed: 0,
       path: '/path/to/worktree'
     })
-    mockBranchExists.mockResolvedValue(false)
-    mockRenameBranch.mockResolvedValue({ success: false, error: 'Permission denied' })
+    // autoRenameWorktreeBranch sets branch_renamed=1 internally on failure
+    mockAutoRenameWorktreeBranch.mockResolvedValue({
+      renamed: false,
+      error: 'Permission denied'
+    })
 
     await (impl as any).handleTitleGeneration(session, 'Fix something')
 
-    expect(mockDb.updateWorktree).toHaveBeenCalledWith('wt-1', { branch_renamed: 1 })
+    expect(mockAutoRenameWorktreeBranch).toHaveBeenCalled()
   })
 
-  it('sets branch_renamed=1 when git service throws', async () => {
+  it('sets branch_renamed=1 when autoRenameWorktreeBranch throws', async () => {
     mockGenerateSessionTitle.mockResolvedValue('Fix something')
     mockDb.getWorktreeBySessionId.mockReturnValue({
       id: 'wt-1',
@@ -325,10 +317,11 @@ describe('handleTitleGeneration', () => {
       branch_renamed: 0,
       path: '/path/to/worktree'
     })
-    mockBranchExists.mockRejectedValue(new Error('Git error'))
+    mockAutoRenameWorktreeBranch.mockRejectedValue(new Error('Git error'))
 
     await (impl as any).handleTitleGeneration(session, 'Fix something')
 
+    // handleTitleGeneration catches the error and sets branch_renamed=1
     expect(mockDb.updateWorktree).toHaveBeenCalledWith('wt-1', { branch_renamed: 1 })
   })
 })
