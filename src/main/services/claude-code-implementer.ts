@@ -13,17 +13,17 @@ const log = createLogger({ component: 'ClaudeCodeImplementer' })
 const CLAUDE_MODELS = [
   {
     id: 'opus',
-    name: 'Claude Opus 4',
+    name: 'Opus 4.6',
     limit: { context: 200000, output: 32000 }
   },
   {
     id: 'sonnet',
-    name: 'Claude Sonnet 4.5',
+    name: 'Sonnet 4.5',
     limit: { context: 200000, output: 16000 }
   },
   {
     id: 'haiku',
-    name: 'Claude Haiku 3.5',
+    name: 'Haiku 4.5',
     limit: { context: 200000, output: 8192 }
   }
 ]
