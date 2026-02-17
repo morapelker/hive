@@ -456,6 +456,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       session.pendingFork = false
       session.query = queryData as unknown as ClaudeQuery
 
+      // Capture whether this prompt was an explicit fork request (undo+resend).
+      // Used to send an authoritative wasFork flag in session.materialized so the
+      // renderer doesn't have to guess based on the old session ID format.
+      const wasForkRequest = !!options.forkSession
+
       log.info('Prompt: entering async iteration loop')
 
       let messageIndex = 0
@@ -543,11 +548,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           }
 
           // Notify renderer so it updates its opencodeSessionId state
-          // (otherwise loadMessages() after idle will use the stale pending:: ID)
+          // (otherwise loadMessages() after idle will use the stale pending:: ID).
+          // Include wasFork so the renderer knows whether to clear old messages.
+          // wasFork is true ONLY for explicit fork requests (undo+resend), not
+          // for normal SDK session ID changes during resume.
           this.sendToRenderer('opencode:stream', {
             type: 'session.materialized',
             sessionId: session.hiveSessionId,
-            data: { newSessionId: sdkSessionId }
+            data: { newSessionId: sdkSessionId, wasFork: !wasPending && wasForkRequest }
           })
 
           // Fire-and-forget: generate a title for brand-new sessions only.
@@ -787,7 +795,17 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       sessionFound: !!session
     })
     // Fallback: read from JSONL transcript on disk
-    return readClaudeTranscript(worktreePath, agentSessionId)
+    const transcript = await readClaudeTranscript(worktreePath, agentSessionId)
+    // Warm the in-memory cache so future calls (and prompt() hydration)
+    // don't re-read from disk and always have the latest state.
+    if (session && transcript.length > 0) {
+      session.messages = [...transcript]
+      log.info('getMessages: warmed in-memory cache from transcript', {
+        agentSessionId,
+        count: transcript.length
+      })
+    }
+    return transcript
   }
 
   // ── Models ───────────────────────────────────────────────────────

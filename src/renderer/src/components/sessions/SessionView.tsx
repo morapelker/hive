@@ -1163,9 +1163,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           if (event.type === 'session.materialized') {
             const newId = event.data?.newSessionId as string | undefined
             if (newId) {
-              const wasFork =
-                transcriptSourceRef.current.opencodeSessionId != null &&
-                !transcriptSourceRef.current.opencodeSessionId.startsWith('pending::')
+              // Use the authoritative wasFork flag from the backend instead of
+              // guessing based on the old session ID format. The backend knows
+              // whether this is initial materialization (pending:: → real ID),
+              // an actual fork (undo+resend with forkSession: true), or just an
+              // SDK session ID change during normal resume. Only true forks
+              // should clear messages. Defaults to false (safe — no clearing)
+              // if the backend doesn't send the flag.
+              const wasFork = event.data?.wasFork === true
               setOpencodeSessionId(newId)
               transcriptSourceRef.current.opencodeSessionId = newId
               useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
@@ -3097,6 +3102,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   useEffect(() => {
     if (messages.length === 0) return
+    // Defense-in-depth: don't overwrite the cache with a degraded state.
+    // If the only messages are local-* (optimistic user messages not yet
+    // confirmed by the server), the transcript hasn't been loaded yet.
+    // Overwriting now would destroy the good cache that loadMessages()
+    // uses as a fallback when the backend returns empty.
+    const hasServerMessages = messages.some((m) => !m.id.startsWith('local-'))
+    if (!hasServerMessages) return
     writeTranscriptCache(sessionId, messages)
   }, [sessionId, messages])
 
