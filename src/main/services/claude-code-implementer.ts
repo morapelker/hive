@@ -102,6 +102,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
   private mainWindow: BrowserWindow | null = null
   private dbService: DatabaseService | null = null
+  private claudeBinaryPath: string | null = null
   private sessions = new Map<string, ClaudeSessionState>()
   private selectedModel: string = 'sonnet'
   /** Tracks in-flight tool_use content blocks for input_json_delta accumulation.
@@ -123,6 +124,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
   setDatabaseService(db: DatabaseService): void {
     this.dbService = db
+  }
+
+  setClaudeBinaryPath(path: string | null): void {
+    this.claudeBinaryPath = path
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────
@@ -362,7 +367,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           ...process.env,
           CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
         },
-        canUseTool: this.createCanUseToolCallback(session)
+        canUseTool: this.createCanUseToolCallback(session),
+        ...(this.claudeBinaryPath ? { pathToClaudeCodeExecutable: this.claudeBinaryPath } : {})
       }
 
       // If session is materialized (has real SDK ID), add resume
@@ -1922,7 +1928,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         env: {
           ...process.env,
           CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
-        }
+        },
+        ...(this.claudeBinaryPath ? { pathToClaudeCodeExecutable: this.claudeBinaryPath } : {})
       }
     })
 

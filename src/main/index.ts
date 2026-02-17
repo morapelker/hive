@@ -32,6 +32,7 @@ import { notificationService } from './services/notification-service'
 import { updaterService } from './services/updater'
 import { ClaudeCodeImplementer } from './services/claude-code-implementer'
 import { AgentSdkManager } from './services/agent-sdk-manager'
+import { resolveClaudeBinaryPath } from './services/claude-binary-resolver'
 import type { AgentSdkImplementer } from './services/agent-sdk-types'
 
 const log = createLogger({ component: 'Main' })
@@ -288,7 +289,14 @@ app.whenReady().then(() => {
   // Must run before any child process spawning (opencode, scripts).
   fixPath()
 
-  log.info('App starting', { version: app.getVersion(), platform: process.platform })
+  // Resolve system-wide Claude binary (must run after fixPath)
+  const claudeBinaryPath = resolveClaudeBinaryPath()
+
+  log.info('App starting', {
+    version: app.getVersion(),
+    platform: process.platform,
+    claudeBinary: claudeBinaryPath ?? 'not found'
+  })
 
   if (isLogMode) {
     log.info('Response logging enabled via --log flag')
@@ -335,6 +343,7 @@ app.whenReady().then(() => {
     // The placeholder just satisfies AgentSdkManager's constructor signature
     const claudeImpl = new ClaudeCodeImplementer()
     claudeImpl.setDatabaseService(getDatabase())
+    claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
     const openCodePlaceholder = {
       id: 'opencode' as const,
       capabilities: {
