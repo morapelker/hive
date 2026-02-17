@@ -36,6 +36,12 @@ interface ConnectionState {
   // UI State
   selectedConnectionId: string | null
 
+  // Connection Mode (inline sidebar selection)
+  connectionModeActive: boolean
+  connectionModeSourceWorktreeId: string | null
+  connectionModeSelectedIds: Set<string>
+  connectionModeSubmitting: boolean
+
   // Actions
   loadConnections: () => Promise<void>
   createConnection: (worktreeIds: string[]) => Promise<string | null>
@@ -44,6 +50,12 @@ interface ConnectionState {
   removeMember: (connectionId: string, worktreeId: string) => Promise<void>
   updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<void>
   selectConnection: (id: string | null) => void
+
+  // Connection Mode Actions
+  enterConnectionMode: (sourceWorktreeId: string) => void
+  exitConnectionMode: () => void
+  toggleConnectionModeWorktree: (worktreeId: string) => void
+  finalizeConnection: () => Promise<void>
 }
 
 export const useConnectionStore = create<ConnectionState>()(
@@ -54,6 +66,12 @@ export const useConnectionStore = create<ConnectionState>()(
       isLoading: false,
       error: null,
       selectedConnectionId: null,
+
+      // Connection mode initial state
+      connectionModeActive: false,
+      connectionModeSourceWorktreeId: null,
+      connectionModeSelectedIds: new Set<string>(),
+      connectionModeSubmitting: false,
 
       loadConnections: async () => {
         set({ isLoading: true, error: null })
@@ -215,6 +233,56 @@ export const useConnectionStore = create<ConnectionState>()(
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           toast.error(`Failed to update connection: ${message}`)
+        }
+      },
+
+      enterConnectionMode: (sourceWorktreeId: string) => {
+        set({
+          connectionModeActive: true,
+          connectionModeSourceWorktreeId: sourceWorktreeId,
+          connectionModeSelectedIds: new Set([sourceWorktreeId]),
+          connectionModeSubmitting: false
+        })
+      },
+
+      exitConnectionMode: () => {
+        set({
+          connectionModeActive: false,
+          connectionModeSourceWorktreeId: null,
+          connectionModeSelectedIds: new Set<string>(),
+          connectionModeSubmitting: false
+        })
+      },
+
+      toggleConnectionModeWorktree: (worktreeId: string) => {
+        const { connectionModeSourceWorktreeId, connectionModeSelectedIds } = get()
+        // Source worktree cannot be unchecked
+        if (worktreeId === connectionModeSourceWorktreeId) return
+
+        const next = new Set(connectionModeSelectedIds)
+        if (next.has(worktreeId)) {
+          next.delete(worktreeId)
+        } else {
+          next.add(worktreeId)
+        }
+        set({ connectionModeSelectedIds: next })
+      },
+
+      finalizeConnection: async () => {
+        const { connectionModeSelectedIds, createConnection } = get()
+        if (connectionModeSelectedIds.size < 2) return
+
+        set({ connectionModeSubmitting: true })
+        try {
+          const worktreeIds = Array.from(connectionModeSelectedIds)
+          const connectionId = await createConnection(worktreeIds)
+          if (connectionId) {
+            get().exitConnectionMode()
+          } else {
+            set({ connectionModeSubmitting: false })
+          }
+        } catch {
+          set({ connectionModeSubmitting: false })
         }
       },
 

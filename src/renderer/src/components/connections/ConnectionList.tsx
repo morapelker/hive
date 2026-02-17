@@ -25,7 +25,9 @@ export function ConnectionList(): React.JSX.Element | null {
     setManageConnectionId(null)
   }, [])
 
-  if (connections.length === 0) {
+  const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
+
+  if (connections.length === 0 || connectionModeActive) {
     return null
   }
 

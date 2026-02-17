@@ -37,7 +37,7 @@ import {
   ContextMenuSubContent,
   ContextMenuCheckboxItem
 } from '@/components/ui/context-menu'
-import { useProjectStore, useWorktreeStore, useSpaceStore } from '@/stores'
+import { useProjectStore, useWorktreeStore, useSpaceStore, useConnectionStore } from '@/stores'
 import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
@@ -101,6 +101,8 @@ export function ProjectItem({
   const projectSpaceMap = useSpaceStore((s) => s.projectSpaceMap)
   const assignProjectToSpace = useSpaceStore((s) => s.assignProjectToSpace)
   const removeProjectFromSpace = useSpaceStore((s) => s.removeProjectFromSpace)
+
+  const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
 
   const projectSpaceIds = projectSpaceMap[project.id] ?? []
 
@@ -241,11 +243,11 @@ export function ProjectItem({
               isDragging && 'opacity-50',
               isDragOver && 'border-t-2 border-primary'
             )}
-            draggable={!!onDragStart && !isEditing}
-            onDragStart={onDragStart}
-            onDragOver={onDragOver}
-            onDrop={onDrop}
-            onDragEnd={onDragEnd}
+            draggable={!!onDragStart && !isEditing && !connectionModeActive}
+            onDragStart={connectionModeActive ? undefined : onDragStart}
+            onDragOver={connectionModeActive ? undefined : onDragOver}
+            onDrop={connectionModeActive ? undefined : onDrop}
+            onDragEnd={connectionModeActive ? undefined : onDragEnd}
             onClick={handleClick}
             data-testid={`project-item-${project.id}`}
           >
@@ -301,8 +303,8 @@ export function ProjectItem({
               </div>
             )}
 
-            {/* Create Worktree Button */}
-            {!isEditing && (
+            {/* Create Worktree Button (hidden in connection mode) */}
+            {!isEditing && !connectionModeActive && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -325,7 +327,7 @@ export function ProjectItem({
           </div>
         </ContextMenuTrigger>
 
-        <ContextMenuContent className="w-48">
+        {!connectionModeActive && <ContextMenuContent className="w-48">
           <ContextMenuItem onClick={handleStartEdit}>
             <Pencil className="h-4 w-4 mr-2" />
             Edit Name
@@ -395,7 +397,7 @@ export function ProjectItem({
             <Trash2 className="h-4 w-4 mr-2" />
             Remove from Hive
           </ContextMenuItem>
-        </ContextMenuContent>
+        </ContextMenuContent>}
       </ContextMenu>
 
       {/* Worktree List - shown when project is expanded */}
