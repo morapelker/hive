@@ -7,6 +7,13 @@ import { useWorktreeStore } from './useWorktreeStore'
 // Session mode type
 export type SessionMode = 'build' | 'plan'
 
+// Pending plan approval state (from ExitPlanMode blocking tool)
+export interface PendingPlan {
+  requestId: string
+  planContent: string
+  toolUseID: string
+}
+
 // Session type matching the database schema
 interface Session {
   id: string
@@ -16,6 +23,7 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
+  agent_sdk: 'opencode' | 'claude-code'
   mode: SessionMode
   model_provider_id: string | null
   model_id: string | null
@@ -34,6 +42,8 @@ interface SessionState {
   modeBySession: Map<string, SessionMode>
   // Pending initial messages - keyed by session ID (e.g., code review prompts)
   pendingMessages: Map<string, string>
+  // Pending plan approvals - keyed by session ID (from ExitPlanMode blocking tool)
+  pendingPlans: Map<string, PendingPlan>
   isLoading: boolean
   error: string | null
 
@@ -75,6 +85,10 @@ interface SessionState {
   consumePendingMessage: (sessionId: string) => string | null
   closeOtherSessions: (worktreeId: string, keepSessionId: string) => Promise<void>
   closeSessionsToRight: (worktreeId: string, fromSessionId: string) => Promise<void>
+  // Plan approval
+  setPendingPlan: (sessionId: string, plan: PendingPlan) => void
+  clearPendingPlan: (sessionId: string) => void
+  getPendingPlan: (sessionId: string) => PendingPlan | null
 
   // Connection session actions
   loadConnectionSessions: (connectionId: string) => Promise<void>
@@ -116,6 +130,7 @@ export const useSessionStore = create<SessionState>()(
       tabOrderByWorktree: new Map(),
       modeBySession: new Map(),
       pendingMessages: new Map(),
+      pendingPlans: new Map(),
       isLoading: false,
       error: null,
       activeSessionId: null,
@@ -244,10 +259,15 @@ export const useSessionStore = create<SessionState>()(
           const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
           const sessionNumber = existingSessions.length + 1
 
+          // Resolve default agent SDK from settings
+          const { useSettingsStore } = await import('./useSettingsStore')
+          const defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+
           const session = await window.db.session.create({
             worktree_id: worktreeId,
             project_id: projectId,
             name: `Session ${sessionNumber}`,
+            agent_sdk: defaultAgentSdk,
             ...(defaultModel
               ? {
                   model_provider_id: defaultModel.providerID,
@@ -699,11 +719,20 @@ export const useSessionStore = create<SessionState>()(
           console.error('Failed to persist session model:', error)
         }
 
-        // Push to OpenCode backend
+        // Push to agent backend (SDK-aware)
         try {
-          await window.opencodeOps.setModel(model)
+          // Find the session's SDK to route correctly
+          let agentSdk: 'opencode' | 'claude-code' = 'opencode'
+          for (const sessions of get().sessionsByWorktree.values()) {
+            const found = sessions.find((s) => s.id === sessionId)
+            if (found?.agent_sdk) {
+              agentSdk = found.agent_sdk
+              break
+            }
+          }
+          await window.opencodeOps.setModel({ ...model, agentSdk })
         } catch (error) {
-          console.error('Failed to push model to OpenCode:', error)
+          console.error('Failed to push model to agent backend:', error)
         }
 
         // Update global last-used model so new worktrees inherit it
@@ -813,6 +842,27 @@ export const useSessionStore = create<SessionState>()(
         }
       },
 
+      // Plan approval state management
+      setPendingPlan: (sessionId: string, plan: PendingPlan) => {
+        set((state) => {
+          const newMap = new Map(state.pendingPlans)
+          newMap.set(sessionId, plan)
+          return { pendingPlans: newMap }
+        })
+      },
+
+      clearPendingPlan: (sessionId: string) => {
+        set((state) => {
+          const newMap = new Map(state.pendingPlans)
+          newMap.delete(sessionId)
+          return { pendingPlans: newMap }
+        })
+      },
+
+      getPendingPlan: (sessionId: string): PendingPlan | null => {
+        return get().pendingPlans.get(sessionId) ?? null
+      },
+
       // ─── Connection session actions ──────────────────────────────────────
 
       // Load active sessions for a connection
@@ -899,14 +949,16 @@ export const useSessionStore = create<SessionState>()(
 
           const projectId = result.connection.members[0].project_id
 
-          // Determine default model from global setting
+          // Determine default model and agent SDK from global settings
           let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
+          let defaultAgentSdk: 'opencode' | 'claude-code' = 'opencode'
           try {
             const { useSettingsStore } = await import('./useSettingsStore')
             const globalModel = useSettingsStore.getState().selectedModel
             if (globalModel) {
               defaultModel = globalModel
             }
+            defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
           } catch {
             /* non-critical */
           }
@@ -919,6 +971,7 @@ export const useSessionStore = create<SessionState>()(
             project_id: projectId,
             connection_id: connectionId,
             name: `Session ${sessionNumber}`,
+            agent_sdk: defaultAgentSdk,
             ...(defaultModel
               ? {
                   model_provider_id: defaultModel.providerID,

@@ -10,7 +10,7 @@ import {
   createSymlink,
   removeSymlink,
   deleteConnectionDir,
-  generateAgentsMd,
+  generateConnectionInstructions,
   deriveSymlinkName
 } from '../services/connection-service'
 import { getDatabase } from '../db'
@@ -100,7 +100,7 @@ export function registerConnectionHandlers(): void {
         if (enriched) {
           const derivedName = deriveConnectionName(enriched)
           db.updateConnection(connection.id, { name: derivedName })
-          generateAgentsMd(dirPath, buildAgentsMdMembers(enriched))
+          generateConnectionInstructions(dirPath, buildAgentsMdMembers(enriched))
         }
 
         // Re-fetch to get the final state with derived name
@@ -200,7 +200,7 @@ export function registerConnectionHandlers(): void {
         if (updated) {
           const derivedName = deriveConnectionName(updated)
           db.updateConnection(connectionId, { name: derivedName })
-          generateAgentsMd(updated.path, buildAgentsMdMembers(updated))
+          generateConnectionInstructions(updated.path, buildAgentsMdMembers(updated))
         }
 
         log.info('Member added to connection', {
@@ -267,7 +267,7 @@ export function registerConnectionHandlers(): void {
         // Re-derive connection name and regenerate AGENTS.md with remaining members
         const derivedName = deriveConnectionName(remaining)
         db.updateConnection(connectionId, { name: derivedName })
-        generateAgentsMd(remaining.path, buildAgentsMdMembers(remaining))
+        generateConnectionInstructions(remaining.path, buildAgentsMdMembers(remaining))
 
         log.info('Member removed from connection', { connectionId, worktreeId })
         return { success: true, connectionDeleted: false }
@@ -469,7 +469,7 @@ export function registerConnectionHandlers(): void {
             // Re-derive connection name and regenerate AGENTS.md for remaining members
             const derivedName = deriveConnectionName(remaining)
             db.updateConnection(membership.connection_id, { name: derivedName })
-            generateAgentsMd(remaining.path, buildAgentsMdMembers(remaining))
+            generateConnectionInstructions(remaining.path, buildAgentsMdMembers(remaining))
           }
         }
 

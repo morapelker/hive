@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { useProjectStore } from './useProjectStore'
-import { useScriptStore } from './useScriptStore'
+import { useScriptStore, killRunScript } from './useScriptStore'
 import { useSessionStore } from './useSessionStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import type { SelectedModel } from './useSettingsStore'
@@ -250,8 +250,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       const scriptState = useScriptStore.getState().scriptStates[worktreeId]
       if (scriptState?.runRunning) {
         try {
-          await window.scriptOps.kill(worktreeId)
-          useScriptStore.getState().setRunRunning(worktreeId, false)
+          await killRunScript(worktreeId)
         } catch {
           // Log but don't block archive — process may have already exited
         }

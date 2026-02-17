@@ -58,6 +58,12 @@ export interface AppSettings {
   // Model icons
   showModelIcons: boolean
 
+  // Agent SDK
+  defaultAgentSdk: 'opencode' | 'claude-code'
+
+  // Setup
+  initialSetupComplete: boolean
+
   // Chat
   stripAtMentions: boolean
 
@@ -81,8 +87,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   customChromeCommand: '',
   modelVariantDefaults: {},
   showModelIcons: false,
+  defaultAgentSdk: 'opencode',
   stripAtMentions: true,
-  updateChannel: 'stable'
+  updateChannel: 'stable',
+  initialSetupComplete: false
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -146,8 +154,10 @@ function extractSettings(state: SettingsState): AppSettings {
     customChromeCommand: state.customChromeCommand,
     modelVariantDefaults: state.modelVariantDefaults,
     showModelIcons: state.showModelIcons,
+    defaultAgentSdk: state.defaultAgentSdk,
     stripAtMentions: state.stripAtMentions,
-    updateChannel: state.updateChannel
+    updateChannel: state.updateChannel,
+    initialSetupComplete: state.initialSetupComplete
   }
 }
 
@@ -229,7 +239,12 @@ export const useSettingsStore = create<SettingsState>()(
       loadFromDatabase: async () => {
         const dbSettings = await loadSettingsFromDatabase()
         if (dbSettings) {
-          set({ ...dbSettings, isLoading: false })
+          set({
+            ...dbSettings,
+            // Existing users upgrading: if field missing, they've already set up
+            initialSetupComplete: dbSettings.initialSetupComplete ?? true,
+            isLoading: false
+          })
         } else {
           set({ isLoading: false })
           await saveToDatabase(extractSettings(get()))
@@ -254,9 +269,12 @@ export const useSettingsStore = create<SettingsState>()(
         favoriteModels: state.favoriteModels,
         customChromeCommand: state.customChromeCommand,
         modelVariantDefaults: state.modelVariantDefaults,
+        showModelIcons: state.showModelIcons,
+        defaultAgentSdk: state.defaultAgentSdk,
         activeSection: state.activeSection,
         stripAtMentions: state.stripAtMentions,
-        updateChannel: state.updateChannel
+        updateChannel: state.updateChannel,
+        initialSetupComplete: state.initialSetupComplete
       })
     }
   )

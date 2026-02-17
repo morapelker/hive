@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 3
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -144,6 +144,13 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 2,
+    name: 'add_agent_sdk_column',
+    up: `-- NOTE: ALTER TABLE for agent_sdk is handled idempotently by
+         -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 3,
     name: 'add_connections',
     up: `
       CREATE TABLE IF NOT EXISTS connections (
@@ -170,8 +177,8 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_connection_members_connection ON connection_members(connection_id);
       CREATE INDEX IF NOT EXISTS idx_connection_members_worktree ON connection_members(worktree_id);
 
-      ALTER TABLE sessions ADD COLUMN connection_id TEXT DEFAULT NULL
-        REFERENCES connections(id) ON DELETE SET NULL;
+      -- NOTE: ALTER TABLE for connection_id is handled idempotently by
+      -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.
 
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
     `,
@@ -179,7 +186,7 @@ export const MIGRATIONS: Migration[] = [
       DROP INDEX IF EXISTS idx_sessions_connection;
       DROP INDEX IF EXISTS idx_connection_members_worktree;
       DROP INDEX IF EXISTS idx_connection_members_connection;
-      DROP TABLE IF EXISTS connection_member;
+      DROP TABLE IF EXISTS connection_members;
       DROP TABLE IF EXISTS connections;
     `
   }

@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
 
+// Module-level: active IPC subscriptions for run scripts, keyed by worktreeId.
+// Keeps listeners alive regardless of which worktree the UI is showing.
+const runSubscriptions = new Map<string, () => void>()
+
 interface ScriptState {
   setupOutput: string[]
   setupRunning: boolean
@@ -166,3 +170,73 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
     return get().scriptStates[worktreeId] || createDefaultScriptState()
   }
 }))
+
+/** Fire-and-forget: run project script for a worktree, subscribing to output events
+ *  so output is captured even when RunTab is showing a different worktree. */
+export function fireRunScript(worktreeId: string, commands: string[], cwd: string): void {
+  const store = useScriptStore.getState()
+  store.clearRunOutput(worktreeId)
+  store.setRunRunning(worktreeId, true)
+
+  // Tear down any existing subscription for this worktree (e.g. restart scenario)
+  runSubscriptions.get(worktreeId)?.()
+
+  const channel = `script:run:${worktreeId}`
+  const unsub = window.scriptOps.onOutput(channel, (event) => {
+    const s = useScriptStore.getState()
+    switch (event.type) {
+      case 'command-start':
+        s.appendRunOutput(worktreeId, `\x00CMD:${event.command}`)
+        break
+      case 'output':
+        if (event.data) s.appendRunOutput(worktreeId, event.data)
+        break
+      case 'error':
+        s.appendRunOutput(
+          worktreeId,
+          `\x00ERR:Process exited with code ${event.exitCode}`
+        )
+        s.setRunRunning(worktreeId, false)
+        s.setRunPid(worktreeId, null)
+        runSubscriptions.delete(worktreeId)
+        unsub()
+        break
+      case 'done':
+        s.setRunRunning(worktreeId, false)
+        s.setRunPid(worktreeId, null)
+        runSubscriptions.delete(worktreeId)
+        unsub()
+        break
+    }
+  })
+
+  runSubscriptions.set(worktreeId, unsub)
+
+  window.scriptOps.runProject(commands, cwd, worktreeId).then((result) => {
+    if (result.success && result.pid) {
+      useScriptStore.getState().setRunPid(worktreeId, result.pid)
+    } else {
+      useScriptStore.getState().setRunRunning(worktreeId, false)
+      // Clean up subscription if start failed
+      const sub = runSubscriptions.get(worktreeId)
+      if (sub) {
+        sub()
+        runSubscriptions.delete(worktreeId)
+      }
+    }
+  })
+}
+
+/** Kill a running project script and clean up its IPC subscription. */
+export async function killRunScript(worktreeId: string): Promise<void> {
+  await window.scriptOps.kill(worktreeId)
+  useScriptStore.getState().setRunRunning(worktreeId, false)
+  useScriptStore.getState().setRunPid(worktreeId, null)
+  // The 'done'/'error' event callback will also try to clean up,
+  // but we do it here too for immediate teardown on explicit kill.
+  const sub = runSubscriptions.get(worktreeId)
+  if (sub) {
+    sub()
+    runSubscriptions.delete(worktreeId)
+  }
+}

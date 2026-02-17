@@ -47,8 +47,13 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
       const found = sessions.find((s) => s.id === sessionId)
       if (found) return found
     }
+    for (const sessions of state.sessionsByConnection.values()) {
+      const found = sessions.find((s) => s.id === sessionId)
+      if (found) return found
+    }
     return null
   })
+  const agentSdk = session?.agent_sdk ?? 'opencode'
   const globalModel = useSettingsStore((state) => state.selectedModel)
   const sessionModel =
     session?.model_id && session.model_provider_id
@@ -74,7 +79,7 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
 
     async function loadModels(): Promise<void> {
       try {
-        const result = await window.opencodeOps.listModels()
+        const result = await window.opencodeOps.listModels({ agentSdk })
         if (!mounted) return
 
         if (result.success && result.providers) {
@@ -92,7 +97,7 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
     return () => {
       mounted = false
     }
-  }, [])
+  }, [agentSdk])
 
   // Parse the providers response into a structured format
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

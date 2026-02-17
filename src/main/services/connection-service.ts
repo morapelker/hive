@@ -81,30 +81,41 @@ interface AgentsMdMember {
   worktreePath: string
 }
 
-export function generateAgentsMd(connectionPath: string, members: AgentsMdMember[]): void {
+export function generateConnectionInstructions(
+  connectionPath: string,
+  members: AgentsMdMember[]
+): void {
   const sections = members.map(
     (m) => `### ${m.symlinkName}/
 - **Project:** ${m.projectName}
 - **Branch:** ${m.branchName}
-- **Path:** ${m.worktreePath}`
+- **Real path:** ${m.worktreePath}`
   )
 
   const content = `# Connected Worktrees
 
-This workspace contains symlinked worktrees from multiple projects.
-Each subdirectory is a separate git repository.
+This workspace contains **symlinked** worktrees from multiple projects.
+Each subdirectory is a symlink pointing to a real git repository on disk.
+
+## IMPORTANT — Symlink Safety
+
+- **Every subdirectory here is a symlink** to a real project. Edits you make here directly modify the original project files.
+- **ONLY work on files inside this directory (\`${connectionPath}\`).** Do not navigate to or edit files using the real paths listed below.
+- **Do NOT create commits, run git operations, or push changes** unless the user explicitly asks you to.
+- Treat this workspace as a read/write view into the linked projects — not as your own repo to manage.
 
 ## Projects
 
 ${sections.join('\n\n')}
-
-## Working in this workspace
-
-- Each subdirectory is a fully independent git repo
-- Make commits in each subdirectory separately
-- Changes in one project do not affect the other
 `
 
   writeFileSync(join(connectionPath, 'AGENTS.md'), content, 'utf-8')
-  log.info('Generated AGENTS.md', { path: connectionPath, memberCount: members.length })
+  writeFileSync(join(connectionPath, 'CLAUDE.md'), content, 'utf-8')
+  log.info('Generated AGENTS.md and CLAUDE.md', {
+    path: connectionPath,
+    memberCount: members.length
+  })
 }
+
+/** @deprecated Use generateConnectionInstructions instead */
+export const generateAgentsMd = generateConnectionInstructions

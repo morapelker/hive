@@ -13,6 +13,7 @@ export function SettingsGeneral(): React.JSX.Element {
     autoStartSession,
     breedType,
     showModelIcons,
+    defaultAgentSdk,
     stripAtMentions,
     updateSetting,
     resetToDefaults
@@ -85,6 +86,41 @@ export function SettingsGeneral(): React.JSX.Element {
             )}
           />
         </button>
+      </div>
+
+      {/* Default Agent SDK */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium">AI Provider</label>
+        <p className="text-xs text-muted-foreground">
+          Choose which AI coding agent to use for new sessions. Existing sessions keep their
+          original provider.
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => updateSetting('defaultAgentSdk', 'opencode')}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              defaultAgentSdk === 'opencode'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="agent-sdk-opencode"
+          >
+            OpenCode
+          </button>
+          <button
+            onClick={() => updateSetting('defaultAgentSdk', 'claude-code')}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              defaultAgentSdk === 'claude-code'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="agent-sdk-claude-code"
+          >
+            Claude Code
+          </button>
+        </div>
       </div>
 
       {/* Strip @ from file mentions */}

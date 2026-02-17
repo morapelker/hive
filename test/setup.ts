@@ -35,6 +35,9 @@ const mockGitOps = {
   openInEditor: vi.fn().mockResolvedValue({ success: true }),
   showInFinder: vi.fn().mockResolvedValue({ success: true }),
   onStatusChanged: vi.fn().mockReturnValue(() => {}),
+  watchBranch: vi.fn().mockResolvedValue({ success: true }),
+  unwatchBranch: vi.fn().mockResolvedValue({ success: true }),
+  onBranchChanged: vi.fn().mockReturnValue(() => {}),
   getFileContent: vi.fn().mockResolvedValue({ success: true, content: '' }),
   getRemoteUrl: vi.fn().mockResolvedValue({ success: true, url: null, remote: null })
 }
@@ -61,5 +64,29 @@ if (!window.fileTreeOps) {
   Object.defineProperty(window, 'fileTreeOps', {
     writable: true,
     value: mockFileTreeOps
+  })
+}
+
+// Mock systemOps for components that use system operations
+if (!window.systemOps) {
+  Object.defineProperty(window, 'systemOps', {
+    writable: true,
+    configurable: true,
+    value: {
+      getLogDir: vi.fn().mockResolvedValue('/tmp/logs'),
+      getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
+      getAppPaths: vi.fn().mockResolvedValue({ userData: '/tmp', home: '/tmp', logs: '/tmp' }),
+      isLogMode: vi.fn().mockResolvedValue(false),
+      detectAgentSdks: vi.fn().mockResolvedValue({ opencode: true, claude: true }),
+      quitApp: vi.fn().mockResolvedValue(undefined),
+      openInApp: vi.fn().mockResolvedValue({ success: true }),
+      openInChrome: vi.fn().mockResolvedValue({ success: true }),
+      onNewSessionShortcut: vi.fn().mockReturnValue(() => {}),
+      onCloseSessionShortcut: vi.fn().mockReturnValue(() => {}),
+      onFileSearchShortcut: vi.fn().mockReturnValue(() => {}),
+      onNotificationNavigate: vi.fn().mockReturnValue(() => {}),
+      onWindowFocused: vi.fn().mockReturnValue(() => {}),
+      updateMenuState: vi.fn().mockResolvedValue(undefined)
+    }
   })
 }

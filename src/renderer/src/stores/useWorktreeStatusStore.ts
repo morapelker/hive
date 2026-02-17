@@ -72,7 +72,8 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
     const updates: Record<string, null> = {}
     for (const s of sessions) {
-      if (sessionStatuses[s.id]?.status === 'unread') {
+      const st = sessionStatuses[s.id]?.status
+      if (st === 'unread' || st === 'completed') {
         updates[s.id] = null
       }
     }
@@ -93,6 +94,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
     let hasPlanning = false
     let hasWorking = false
+    let hasPlanReady = false
     let hasCompleted = false
     let latestUnread: SessionStatusEntry | null = null
 
@@ -104,6 +106,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       if (entry.status === 'answering' || entry.status === 'permission') return entry.status
       if (entry.status === 'planning') hasPlanning = true
       if (entry.status === 'working') hasWorking = true
+      if (entry.status === 'plan_ready') hasPlanReady = true
       if (entry.status === 'completed') hasCompleted = true
 
       // Track the latest unread
@@ -114,9 +117,10 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       }
     }
 
-    // Priority: answering > planning > working > completed/plan_ready > unread > null
+    // Priority: answering > planning > working > plan_ready > completed > unread > null
     if (hasPlanning) return 'planning'
     if (hasWorking) return 'working'
+    if (hasPlanReady) return 'plan_ready'
 
     // Derive plan_ready from the mode the user last sent a message in.
     // If the last message was sent in plan mode and the session completed,
@@ -139,6 +143,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
     let hasPlanning = false
     let hasWorking = false
+    let hasPlanReady = false
     let hasCompleted = false
     let latestUnread: SessionStatusEntry | null = null
 
@@ -149,6 +154,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       if (entry.status === 'answering' || entry.status === 'permission') return entry.status
       if (entry.status === 'planning') hasPlanning = true
       if (entry.status === 'working') hasWorking = true
+      if (entry.status === 'plan_ready') hasPlanReady = true
       if (entry.status === 'completed') hasCompleted = true
 
       if (entry.status === 'unread') {
@@ -160,6 +166,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
     if (hasPlanning) return 'planning'
     if (hasWorking) return 'working'
+    if (hasPlanReady) return 'plan_ready'
 
     if (hasCompleted) {
       const completedInPlan = sessions.some(

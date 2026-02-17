@@ -9,7 +9,8 @@ import {
   GitPullRequest,
   GitMerge,
   Archive,
-  ChevronDown
+  ChevronDown,
+  FileSearch
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -104,6 +105,10 @@ export function Header(): React.JSX.Element {
     selectedWorktreeId ? state.prTargetBranch.get(selectedWorktreeId) : undefined
   )
   const setPrTargetBranch = useGitStore((state) => state.setPrTargetBranch)
+  const reviewTargetBranch = useGitStore((state) =>
+    selectedWorktreeId ? state.reviewTargetBranch.get(selectedWorktreeId) : undefined
+  )
+  const setReviewTargetBranch = useGitStore((state) => state.setReviewTargetBranch)
   const branchInfoByWorktree = useGitStore((state) => state.branchInfoByWorktree)
   const branchInfo = selectedWorktree?.path
     ? branchInfoByWorktree.get(selectedWorktree.path)
@@ -172,12 +177,13 @@ export function Header(): React.JSX.Element {
     }
   }, [conflictFixFlow, conflictFixSessionStatus])
 
-  // Load remote branches for the PR target dropdown
+  // Load remote branches for the PR target and review target dropdowns
   const [remoteBranches, setRemoteBranches] = useState<{ name: string }[]>([])
   const [isMergingPR, setIsMergingPR] = useState(false)
   const [isArchivingWorktree, setIsArchivingWorktree] = useState(false)
+
   useEffect(() => {
-    if (!isGitHub || !selectedWorktree?.path) {
+    if (!selectedWorktree?.path) {
       setRemoteBranches([])
       return
     }
@@ -186,7 +192,7 @@ export function Header(): React.JSX.Element {
         setRemoteBranches(result.branches.filter((b: { isRemote: boolean }) => b.isRemote))
       }
     })
-  }, [isGitHub, selectedWorktree?.path])
+  }, [selectedWorktree?.path])
 
   const handleCreatePR = useCallback(async () => {
     if (!selectedWorktree?.path) return
@@ -237,6 +243,70 @@ export function Header(): React.JSX.Element {
       targetBranch
     })
   }, [selectedWorktree?.path, selectedWorktreeId, prTargetBranch, branchInfo])
+
+  const handleReview = useCallback(async () => {
+    if (!selectedWorktree?.path) return
+
+    const wtId = selectedWorktreeId
+    if (!wtId) {
+      toast.error('No worktree selected')
+      return
+    }
+
+    let projectId = ''
+    const worktreeStore = useWorktreeStore.getState()
+    for (const [projId, wts] of worktreeStore.worktreesByProject) {
+      if (wts.some((w) => w.id === wtId)) {
+        projectId = projId
+        break
+      }
+    }
+    if (!projectId) {
+      toast.error('Could not find project for worktree')
+      return
+    }
+
+    const targetBranch = reviewTargetBranch || branchInfo?.tracking || 'origin/main'
+    const branchName = branchInfo?.name || 'unknown'
+
+    let reviewTemplate = ''
+    try {
+      const tmpl = await window.fileOps.readPrompt('review.md')
+      if (tmpl.success && tmpl.content) {
+        reviewTemplate = tmpl.content
+      }
+    } catch {
+      // readPrompt failed, use fallback
+    }
+
+    const prompt = reviewTemplate
+      ? [
+          reviewTemplate,
+          '',
+          '---',
+          '',
+          `Compare the current branch (${branchName}) against ${targetBranch}.`,
+          `Use \`git diff ${targetBranch}...HEAD\` to see all changes.`
+        ].join('\n')
+      : [
+          `Please review the changes on branch "${branchName}" compared to ${targetBranch}.`,
+          `Use \`git diff ${targetBranch}...HEAD\` to get the full diff.`,
+          'Focus on: bugs, logic errors, and code quality.'
+        ].join('\n')
+
+    const sessionStore = useSessionStore.getState()
+    const result = await sessionStore.createSession(wtId, projectId)
+    if (!result.success || !result.session) {
+      toast.error('Failed to create review session')
+      return
+    }
+
+    await sessionStore.updateSessionName(
+      result.session.id,
+      `Code Review — ${branchName} vs ${targetBranch}`
+    )
+    sessionStore.setPendingMessage(result.session.id, prompt)
+  }, [selectedWorktree?.path, selectedWorktreeId, reviewTargetBranch, branchInfo])
 
   const handleMergePR = useCallback(async () => {
     if (!selectedWorktree?.path || !selectedWorktreeId) return
@@ -406,6 +476,53 @@ export function Header(): React.JSX.Element {
             )}
             {isMergingPR ? 'Merging...' : 'Merge PR'}
           </Button>
+        )}
+        {!isConnectionMode && selectedWorktree && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={handleReview}
+              disabled={isOperating}
+              title="Review branch changes with AI"
+              data-testid="review-button"
+            >
+              <FileSearch className="h-3.5 w-3.5 mr-1" />
+              Review
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-xs text-muted-foreground px-2 h-7"
+                  data-testid="review-target-branch-trigger"
+                >
+                  vs {reviewTargetBranch || branchInfo?.tracking || 'origin/main'}
+                  <ChevronDown className="h-3 w-3 ml-1" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-60 overflow-y-auto">
+                {remoteBranches.length === 0 ? (
+                  <DropdownMenuItem disabled>No remote branches</DropdownMenuItem>
+                ) : (
+                  remoteBranches.map((branch) => (
+                    <DropdownMenuItem
+                      key={branch.name}
+                      onClick={() =>
+                        selectedWorktreeId &&
+                        setReviewTargetBranch(selectedWorktreeId, branch.name)
+                      }
+                      data-testid={`review-target-branch-${branch.name}`}
+                    >
+                      {branch.name}
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
         )}
         {!isConnectionMode &&
           isGitHub &&

@@ -1,6 +1,5 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
-import React from 'react'
+import { cleanup } from '@testing-library/react'
 
 // ---------------------------------------------------------------------------
 // Mock setup
@@ -119,65 +118,6 @@ describe('Session 4: Code Review', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // GitStatusPanel Review button tests
-  // ---------------------------------------------------------------------------
-  describe('GitStatusPanel Review Button', () => {
-    test('Review button rendered when changes exist', async () => {
-      // Return files from getFileStatuses
-      mockGitOps.getFileStatuses.mockResolvedValue({
-        success: true,
-        files: [
-          { path: '/path/App.tsx', relativePath: 'App.tsx', status: 'M', staged: false }
-        ]
-      })
-
-      const { GitStatusPanel } = await import(
-        '../../../src/renderer/src/components/git/GitStatusPanel'
-      )
-
-      render(React.createElement(GitStatusPanel, { worktreePath: '/path/to/worktree' }))
-
-      await waitFor(() => {
-        const reviewButton = screen.getByTestId('git-review-button')
-        expect(reviewButton).toBeTruthy()
-        expect(reviewButton).not.toBeDisabled()
-      })
-    })
-
-    test('Review button disabled when no changes', async () => {
-      // Return empty files
-      mockGitOps.getFileStatuses.mockResolvedValue({
-        success: true,
-        files: []
-      })
-
-      const { GitStatusPanel } = await import(
-        '../../../src/renderer/src/components/git/GitStatusPanel'
-      )
-
-      render(React.createElement(GitStatusPanel, { worktreePath: '/path/to/worktree' }))
-
-      await waitFor(() => {
-        const reviewButton = screen.getByTestId('git-review-button')
-        expect(reviewButton).toBeDisabled()
-      })
-    })
-
-    test('Review button not rendered when no worktree path', async () => {
-      const { GitStatusPanel } = await import(
-        '../../../src/renderer/src/components/git/GitStatusPanel'
-      )
-
-      const { container } = render(
-        React.createElement(GitStatusPanel, { worktreePath: null })
-      )
-
-      // Component returns null when no worktreePath
-      expect(container.innerHTML).toBe('')
-    })
-  })
-
-  // ---------------------------------------------------------------------------
   // Session store pending messages tests
   // ---------------------------------------------------------------------------
   describe('Session store pending messages', () => {
@@ -216,45 +156,40 @@ describe('Session 4: Code Review', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Review prompt construction tests
+  // Review prompt construction tests (branch comparison)
   // ---------------------------------------------------------------------------
   describe('Review prompt construction', () => {
-    test('prompt includes changed file list', () => {
-      const files = [
-        { status: 'M', relativePath: 'src/App.tsx' },
-        { status: 'A', relativePath: 'src/New.tsx' },
-        { status: '?', relativePath: 'src/util.ts' }
-      ]
-
-      const fileList = files
-        .map(f => `- ${f.status}  ${f.relativePath}`)
-        .join('\n')
-
-      expect(fileList).toContain('- M  src/App.tsx')
-      expect(fileList).toContain('- A  src/New.tsx')
-      expect(fileList).toContain('- ?  src/util.ts')
-    })
-
-    test('default prompt includes focus areas', () => {
+    test('default prompt includes branch comparison and focus areas', () => {
       const branchName = 'feature-auth'
-      const fileList = '- M  src/App.tsx'
-      const prompt = `Please review the following uncommitted changes in this worktree (branch: ${branchName}):\n\nChanged files:\n${fileList}\n\nFocus on:\n- Bugs and logic errors\n- Code quality issues\n- Security concerns\n- Performance issues\n\nProvide specific, actionable feedback for each issue found.`
+      const targetBranch = 'origin/main'
+      const prompt = [
+        `Please review the changes on branch "${branchName}" compared to ${targetBranch}.`,
+        `Use \`git diff ${targetBranch}...HEAD\` to get the full diff.`,
+        'Focus on: bugs, logic errors, and code quality.'
+      ].join('\n')
 
-      expect(prompt).toContain('Bugs and logic errors')
-      expect(prompt).toContain('Code quality issues')
-      expect(prompt).toContain('Security concerns')
-      expect(prompt).toContain('Performance issues')
       expect(prompt).toContain('feature-auth')
-      expect(prompt).toContain('src/App.tsx')
+      expect(prompt).toContain('origin/main')
+      expect(prompt).toContain('git diff origin/main...HEAD')
+      expect(prompt).toContain('bugs, logic errors, and code quality')
     })
 
-    test('prompt with template uses template content', () => {
+    test('prompt with template appends branch comparison', () => {
       const template = '## Custom Review\nPlease review carefully.'
-      const fileList = '- M  src/App.tsx'
-      const prompt = `${template}\n\n---\n\nPlease review the following uncommitted changes in this worktree:\n\nChanged files:\n${fileList}\n\nFocus on: bugs, logic errors, and code quality.`
+      const branchName = 'feature-auth'
+      const targetBranch = 'origin/main'
+      const prompt = [
+        template,
+        '',
+        '---',
+        '',
+        `Compare the current branch (${branchName}) against ${targetBranch}.`,
+        `Use \`git diff ${targetBranch}...HEAD\` to see all changes.`
+      ].join('\n')
 
       expect(prompt).toContain('Custom Review')
-      expect(prompt).toContain('src/App.tsx')
+      expect(prompt).toContain('git diff origin/main...HEAD')
+      expect(prompt).toContain('feature-auth')
     })
   })
 
@@ -262,16 +197,50 @@ describe('Session 4: Code Review', () => {
   // Session creation for review tests
   // ---------------------------------------------------------------------------
   describe('Session creation for review', () => {
-    test('session name follows "Code Review — {branch}" pattern', () => {
+    test('session name follows "Code Review — {branch} vs {target}" pattern', () => {
       const branchName = 'feature-auth'
-      const sessionName = `Code Review — ${branchName}`
-      expect(sessionName).toBe('Code Review — feature-auth')
+      const targetBranch = 'origin/main'
+      const sessionName = `Code Review — ${branchName} vs ${targetBranch}`
+      expect(sessionName).toBe('Code Review — feature-auth vs origin/main')
     })
 
     test('session name handles unknown branch', () => {
       const branchName = 'unknown'
-      const sessionName = `Code Review — ${branchName}`
-      expect(sessionName).toBe('Code Review — unknown')
+      const targetBranch = 'origin/main'
+      const sessionName = `Code Review — ${branchName} vs ${targetBranch}`
+      expect(sessionName).toBe('Code Review — unknown vs origin/main')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Review target branch store tests
+  // ---------------------------------------------------------------------------
+  describe('Review target branch store', () => {
+    test('setReviewTargetBranch stores branch for worktree', async () => {
+      const { useGitStore } = await import(
+        '../../../src/renderer/src/stores/useGitStore'
+      )
+
+      useGitStore.getState().setReviewTargetBranch('wt-1', 'origin/develop')
+      expect(useGitStore.getState().reviewTargetBranch.get('wt-1')).toBe('origin/develop')
+    })
+
+    test('setReviewTargetBranch updates existing branch', async () => {
+      const { useGitStore } = await import(
+        '../../../src/renderer/src/stores/useGitStore'
+      )
+
+      useGitStore.getState().setReviewTargetBranch('wt-1', 'origin/develop')
+      useGitStore.getState().setReviewTargetBranch('wt-1', 'origin/main')
+      expect(useGitStore.getState().reviewTargetBranch.get('wt-1')).toBe('origin/main')
+    })
+
+    test('reviewTargetBranch returns undefined for unknown worktree', async () => {
+      const { useGitStore } = await import(
+        '../../../src/renderer/src/stores/useGitStore'
+      )
+
+      expect(useGitStore.getState().reviewTargetBranch.get('nonexistent')).toBeUndefined()
     })
   })
 })

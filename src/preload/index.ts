@@ -75,6 +75,7 @@ const db = {
       connection_id?: string | null
       name?: string | null
       opencode_session_id?: string | null
+      agent_sdk?: 'opencode' | 'claude-code'
       model_provider_id?: string | null
       model_id?: string | null
       model_variant?: string | null
@@ -91,6 +92,7 @@ const db = {
         name?: string | null
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
+        agent_sdk?: 'opencode' | 'claude-code'
         mode?: 'build' | 'plan'
         model_provider_id?: string | null
         model_id?: string | null
@@ -371,6 +373,13 @@ const systemOps = {
   // Check if response logging is enabled (--log flag)
   isLogMode: (): Promise<boolean> => ipcRenderer.invoke('system:isLogMode'),
 
+  // Detect which agent SDKs (opencode, claude) are installed on the system
+  detectAgentSdks: (): Promise<{ opencode: boolean; claude: boolean }> =>
+    ipcRenderer.invoke('system:detectAgentSdks'),
+
+  // Quit the app (needed for macOS where window.close() doesn't quit)
+  quitApp: (): Promise<void> => ipcRenderer.invoke('system:quitApp'),
+
   // Open a path in an external app (Cursor, Ghostty) or copy to clipboard
   openInApp: (appName: string, path: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('system:openInApp', appName, path),
@@ -443,6 +452,8 @@ const systemOps = {
   updateMenuState: (state: {
     hasActiveSession: boolean
     hasActiveWorktree: boolean
+    canUndo?: boolean
+    canRedo?: boolean
   }): Promise<void> => ipcRenderer.invoke('menu:updateState', state),
 
   // Subscribe to menu action events from the application menu (main -> renderer)
@@ -662,6 +673,33 @@ const gitOps = {
     success: boolean
     error?: string
   }> => ipcRenderer.invoke('git:unwatchWorktree', worktreePath),
+
+  // Start watching a worktree's .git/HEAD for branch changes (lightweight, sidebar use)
+  watchBranch: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:watchBranch', worktreePath),
+
+  // Stop watching a worktree's branch
+  unwatchBranch: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:unwatchBranch', worktreePath),
+
+  // Subscribe to branch change events (lightweight, from branch-watcher)
+  onBranchChanged: (callback: (event: { worktreePath: string }) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, event: { worktreePath: string }): void => {
+      callback(event)
+    }
+    ipcRenderer.on('git:branchChanged', handler)
+    return () => {
+      ipcRenderer.removeListener('git:branchChanged', handler)
+    }
+  },
 
   // Get branch info (name, tracking, ahead/behind)
   getBranchInfo: (
@@ -883,29 +921,33 @@ const opencodeOps = {
     ipcRenderer.invoke('opencode:messages', worktreePath, opencodeSessionId),
 
   // List available models from all configured providers
-  listModels: (): Promise<{
+  listModels: (opts?: {
+    agentSdk?: 'opencode' | 'claude-code'
+  }): Promise<{
     success: boolean
     providers: Record<string, unknown>
     error?: string
-  }> => ipcRenderer.invoke('opencode:models'),
+  }> => ipcRenderer.invoke('opencode:models', opts),
 
   // Set the selected model for prompts
   setModel: (model: {
     providerID: string
     modelID: string
     variant?: string
+    agentSdk?: 'opencode' | 'claude-code'
   }): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:setModel', model),
 
   // Get model info (name, context limit)
   modelInfo: (
     worktreePath: string,
-    modelId: string
+    modelId: string,
+    agentSdk?: 'opencode' | 'claude-code'
   ): Promise<{
     success: boolean
     model?: { id: string; name: string; limit: { context: number } }
     error?: string
-  }> => ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId }),
+  }> => ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId, agentSdk }),
 
   // Reply to a pending question from the AI
   questionReply: (
@@ -921,6 +963,28 @@ const opencodeOps = {
     worktreePath?: string
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:question:reject', { requestId, worktreePath }),
+
+  // Approve a pending plan (ExitPlanMode) — unblocks the SDK to implement
+  planApprove: (
+    worktreePath: string,
+    hiveSessionId: string,
+    requestId?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:plan:approve', { worktreePath, hiveSessionId, requestId }),
+
+  // Reject a pending plan with user feedback — Claude will revise
+  planReject: (
+    worktreePath: string,
+    hiveSessionId: string,
+    feedback: string,
+    requestId?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:plan:reject', {
+      worktreePath,
+      hiveSessionId,
+      feedback,
+      requestId
+    }),
 
   // Reply to a pending permission request (allow once, allow always, or reject)
   permissionReply: (
@@ -985,7 +1049,8 @@ const opencodeOps = {
 
   // List available slash commands from the SDK
   commands: (
-    worktreePath: string
+    worktreePath: string,
+    sessionId?: string
   ): Promise<{
     success: boolean
     commands: Array<{
@@ -999,7 +1064,7 @@ const opencodeOps = {
       hints?: string[]
     }>
     error?: string
-  }> => ipcRenderer.invoke('opencode:commands', { worktreePath }),
+  }> => ipcRenderer.invoke('opencode:commands', { worktreePath, sessionId }),
 
   // Rename a session's title via the OpenCode PATCH API
   renameSession: (
@@ -1008,6 +1073,24 @@ const opencodeOps = {
     worktreePath?: string
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:renameSession', { opencodeSessionId, title, worktreePath }),
+
+  // Get SDK capabilities for the current session
+  capabilities: (
+    opencodeSessionId?: string
+  ): Promise<{
+    success: boolean
+    capabilities?: {
+      supportsUndo: boolean
+      supportsRedo: boolean
+      supportsCommands: boolean
+      supportsPermissionRequests: boolean
+      supportsQuestionPrompts: boolean
+      supportsModelSelection: boolean
+      supportsReconnect: boolean
+      supportsPartialStreaming: boolean
+    }
+    error?: string
+  }> => ipcRenderer.invoke('opencode:capabilities', { sessionId: opencodeSessionId }),
 
   // Fork an existing session at an optional message boundary
   fork: (

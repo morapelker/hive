@@ -8,7 +8,7 @@ import {
   Loader2,
   Map,
   MoreHorizontal,
-  Plus,
+  Settings2,
   Terminal,
   Trash2
 } from 'lucide-react'
@@ -57,12 +57,12 @@ interface Connection {
 
 interface ConnectionItemProps {
   connection: Connection
-  onAddWorktree?: (connectionId: string) => void
+  onManageWorktrees?: (connectionId: string) => void
 }
 
 export function ConnectionItem({
   connection,
-  onAddWorktree
+  onManageWorktrees
 }: ConnectionItemProps): React.JSX.Element {
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectConnection = useConnectionStore((s) => s.selectConnection)
@@ -86,7 +86,9 @@ export function ConnectionItem({
             ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
             : connectionStatus === 'plan_ready'
               ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
-              : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+              : connectionStatus === 'completed'
+                ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
+                : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
   // Marquee animation state for overflowing display name
   const containerRef = useRef<HTMLDivElement>(null)
@@ -147,9 +149,9 @@ export function ConnectionItem({
     await deleteConnection(connection.id)
   }, [deleteConnection, connection.id])
 
-  const handleAddWorktree = useCallback((): void => {
-    onAddWorktree?.(connection.id)
-  }, [onAddWorktree, connection.id])
+  const handleManageWorktrees = useCallback((): void => {
+    onManageWorktrees?.(connection.id)
+  }, [onManageWorktrees, connection.id])
 
   // Build the display name from unique project names
   const displayName =
@@ -159,9 +161,9 @@ export function ConnectionItem({
 
   const menuItems = (
     <>
-      <ContextMenuItem onClick={handleAddWorktree}>
-        <Plus className="h-4 w-4 mr-2" />
-        Add Worktree
+      <ContextMenuItem onClick={handleManageWorktrees}>
+        <Settings2 className="h-4 w-4 mr-2" />
+        Connection Worktrees
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem onClick={handleOpenInTerminal}>
@@ -270,9 +272,9 @@ export function ConnectionItem({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-52" align="end">
-              <DropdownMenuItem onClick={handleAddWorktree}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Worktree
+              <DropdownMenuItem onClick={handleManageWorktrees}>
+                <Settings2 className="h-4 w-4 mr-2" />
+                Connection Worktrees
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleOpenInTerminal}>

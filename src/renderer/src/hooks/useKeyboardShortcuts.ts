@@ -10,7 +10,7 @@ import {
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { useScriptStore } from '@/stores/useScriptStore'
+import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { toast } from '@/lib/toast'
@@ -59,24 +59,11 @@ function handleRunProject(): void {
 
   if (scriptState.runRunning) {
     // Stop current run (Cmd/Ctrl+R acts as a start/stop toggle)
-    window.scriptOps.kill(worktreeId).then(() => {
-      useScriptStore.getState().setRunRunning(worktreeId, false)
-      useScriptStore.getState().setRunPid(worktreeId, null)
-    })
+    killRunScript(worktreeId)
   } else {
     // Start fresh
-    useScriptStore.getState().clearRunOutput(worktreeId)
-    useScriptStore.getState().setRunRunning(worktreeId, true)
-
     const commands = parseCommands(runScript)
-
-    window.scriptOps.runProject(commands, worktreePath, worktreeId).then((result) => {
-      if (result.success && result.pid) {
-        useScriptStore.getState().setRunPid(worktreeId, result.pid)
-      } else {
-        useScriptStore.getState().setRunRunning(worktreeId, false)
-      }
-    })
+    fireRunScript(worktreeId, commands, worktreePath)
   }
 }
 
@@ -683,11 +670,39 @@ function useMenuStateUpdater(): void {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
 
+  const opencodeSessionId = useSessionStore((state) => {
+    if (!activeSessionId) return null
+    for (const sessions of state.sessionsByWorktree.values()) {
+      const found = sessions.find((s) => s.id === activeSessionId)
+      if (found) return found.opencode_session_id
+    }
+    return null
+  })
+
   useEffect(() => {
     if (!window.systemOps?.updateMenuState) return
-    window.systemOps.updateMenuState({
+
+    const baseState = {
       hasActiveSession: !!activeSessionId,
       hasActiveWorktree: !!selectedWorktreeId
-    })
-  }, [activeSessionId, selectedWorktreeId])
+    }
+
+    if (!activeSessionId || !opencodeSessionId) {
+      window.systemOps.updateMenuState(baseState)
+      return
+    }
+
+    window.opencodeOps
+      ?.capabilities?.(opencodeSessionId)
+      ?.then((result) => {
+        window.systemOps.updateMenuState({
+          ...baseState,
+          canUndo: result.success ? result.capabilities?.supportsUndo : true,
+          canRedo: result.success ? result.capabilities?.supportsRedo : true
+        })
+      })
+      .catch(() => {
+        window.systemOps.updateMenuState(baseState)
+      })
+  }, [activeSessionId, selectedWorktreeId, opencodeSessionId])
 }

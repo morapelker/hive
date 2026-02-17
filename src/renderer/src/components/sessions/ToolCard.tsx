@@ -16,7 +16,8 @@ import {
   Clock,
   Plus,
   Minus,
-  Zap
+  Zap,
+  ClipboardCheck
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './tools/types'
@@ -30,6 +31,7 @@ import { TodoWriteToolView } from './tools/TodoWriteToolView'
 import { TaskToolView } from './tools/TaskToolView'
 import { QuestionToolView } from './tools/QuestionToolView'
 import { SkillToolView } from './tools/SkillToolView'
+import { ExitPlanModeToolView } from './tools/ExitPlanModeToolView'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
 
@@ -89,6 +91,9 @@ function getToolIcon(name: string): React.JSX.Element {
   }
   if (lowerName.includes('skill')) {
     return <Zap className={iconClass} />
+  }
+  if (lowerName === 'exitplanmode') {
+    return <ClipboardCheck className={iconClass} />
   }
   // Default
   return <Terminal className={iconClass} />
@@ -210,7 +215,9 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   TodoWrite: TodoWriteToolView,
   todowrite: TodoWriteToolView,
   Skill: SkillToolView,
-  mcp_skill: SkillToolView
+  mcp_skill: SkillToolView,
+  ExitPlanMode: ExitPlanModeToolView,
+  exitplanmode: ExitPlanModeToolView
 }
 
 /** Resolve a tool name to its rich renderer, falling back to FallbackToolView */
@@ -238,6 +245,7 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (lower === 'task') return TaskToolView
   if (lower.includes('question')) return QuestionToolView
   if (lower.includes('skill')) return SkillToolView
+  if (lower === 'exitplanmode') return ExitPlanModeToolView
   // Fallback
   return FallbackToolView
 }
@@ -458,6 +466,29 @@ function CollapsedContent({
     )
   }
 
+  // ExitPlanMode — plan review tool
+  if (lowerName === 'exitplanmode') {
+    const isAccepted = toolUse.status === 'success'
+    const isRejected = toolUse.status === 'error'
+    const badgeText = isAccepted ? 'accepted' : isRejected ? 'rejected' : 'review'
+    return (
+      <>
+        <span className={cn(isRejected ? 'text-red-500' : 'text-emerald-500', 'shrink-0')}>
+          <ClipboardCheck className="h-3.5 w-3.5" />
+        </span>
+        <span className="font-medium text-foreground shrink-0">Plan</span>
+        <span className={cn(
+          'text-[10px] rounded px-1 py-0.5 font-medium shrink-0',
+          isRejected
+            ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+            : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+        )}>
+          {badgeText}
+        </span>
+      </>
+    )
+  }
+
   // Default fallback
   const label = getToolLabel(name, input, cwd)
   return (
@@ -628,6 +659,10 @@ export const ToolCard = memo(function ToolCard({
   }, [toolUse.startTime, toolUse.endTime])
 
   const hasOutput = !!(toolUse.output || toolUse.error)
+  const isExitPlanMode = toolUse.name.toLowerCase() === 'exitplanmode'
+  const hasPlanInput =
+    isExitPlanMode && typeof toolUse.input?.plan === 'string' && toolUse.input.plan.length > 0
+  const hasDetail = hasOutput || hasPlanInput
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
@@ -694,6 +729,83 @@ export const ToolCard = memo(function ToolCard({
     )
   }
 
+  // ExitPlanMode: always-expanded plan card with fake user message on acceptance/rejection
+  if (isExitPlanMode) {
+    const planAccepted = toolUse.status === 'success'
+    const planRejected = toolUse.status === 'error'
+    return (
+      <>
+        <div
+          className={cn(
+            compact
+              ? 'my-0 rounded-md border border-l-2 text-xs'
+              : 'my-1 rounded-md border border-l-2 text-xs',
+            planRejected
+              ? 'border-red-500/30 bg-red-500/5'
+              : 'border-border bg-primary/[0.04]'
+          )}
+          style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
+          data-testid="tool-card"
+          data-tool-name={toolUse.name}
+          data-tool-status={toolUse.status}
+        >
+          {/* Header */}
+          <div
+            className={cn(
+              'flex items-center gap-1.5 w-full text-left',
+              compact ? 'px-2 py-1.5' : 'px-2.5 py-1.5'
+            )}
+            data-testid="tool-card-header"
+          >
+            <CollapsedContent toolUse={toolUse} cwd={cwd} />
+            <span className="flex-1" />
+            {duration && (
+              <span
+                className="text-muted-foreground shrink-0 flex items-center gap-1"
+                data-testid="tool-duration"
+              >
+                <Clock className="h-3 w-3" />
+                {duration}
+              </span>
+            )}
+            <StatusIndicator status={toolUse.status} />
+          </div>
+          {/* Always-visible plan content */}
+          {hasPlanInput && (
+            <div
+              className={cn('border-t border-border', compact ? 'px-3 py-2.5' : 'px-4 py-3')}
+              data-testid="tool-output"
+            >
+              <Renderer
+                name={toolUse.name}
+                input={toolUse.input}
+                output={toolUse.output}
+                error={toolUse.error}
+                status={toolUse.status}
+              />
+            </div>
+          )}
+        </div>
+        {/* Fake user message after plan acceptance */}
+        {planAccepted && (
+          <div className="flex justify-end px-6 py-4" data-testid="plan-accepted-message">
+            <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-primary/10 text-foreground">
+              <p className="text-sm whitespace-pre-wrap leading-relaxed">Implement the plan</p>
+            </div>
+          </div>
+        )}
+        {/* Fake user message after plan rejection with feedback */}
+        {planRejected && toolUse.error && (
+          <div className="flex justify-end px-6 py-4" data-testid="plan-rejected-message">
+            <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-primary/10 text-foreground">
+              <p className="text-sm whitespace-pre-wrap leading-relaxed">{toolUse.error}</p>
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }
+
   return (
     <div
       className={cn(
@@ -701,24 +813,28 @@ export const ToolCard = memo(function ToolCard({
           ? 'my-0 rounded-md border border-l-2 text-xs'
           : 'my-1 rounded-md border border-l-2 text-xs',
         toolUse.status === 'running' && 'animate-pulse',
-        toolUse.status === 'error' ? 'border-red-500/30 bg-red-500/5' : 'border-border bg-muted/30'
+        toolUse.status === 'error'
+          ? 'border-red-500/30 bg-red-500/5'
+          : 'border-border bg-muted/30'
       )}
-      style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
+      style={{
+        borderLeftColor: getLeftBorderColor(toolUse.status)
+      }}
       data-testid="tool-card"
       data-tool-name={toolUse.name}
       data-tool-status={toolUse.status}
     >
       {/* Header - always visible */}
       <button
-        onClick={() => hasOutput && setIsExpanded(!isExpanded)}
+        onClick={() => hasDetail && setIsExpanded(!isExpanded)}
         className={cn(
           compact
             ? 'flex items-center gap-1.5 w-full px-2 py-1.5 text-left'
             : 'flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left',
-          hasOutput && 'cursor-pointer hover:bg-muted/50 transition-colors'
+          hasDetail && 'cursor-pointer hover:bg-muted/50 transition-colors'
         )}
-        disabled={!hasOutput}
-        aria-expanded={hasOutput ? isExpanded : undefined}
+        disabled={!hasDetail}
+        aria-expanded={hasDetail ? isExpanded : undefined}
         data-testid="tool-card-header"
       >
         {/* Tool-specific collapsed content */}
@@ -742,7 +858,7 @@ export const ToolCard = memo(function ToolCard({
         <StatusIndicator status={toolUse.status} />
 
         {/* Expand/Collapse affordance */}
-        {hasOutput && (
+        {hasDetail && (
           <span className="ml-1 inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {isExpanded ? 'Hide' : 'View'}
             <ChevronDown
@@ -759,7 +875,7 @@ export const ToolCard = memo(function ToolCard({
       <div
         className={cn(
           'transition-all duration-150 overflow-hidden',
-          isExpanded && hasOutput ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+          isExpanded && hasDetail ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
         )}
         data-testid="tool-output"
       >

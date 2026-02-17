@@ -1,6 +1,4 @@
-import { useMemo, useState } from 'react'
-import { ChevronDown } from 'lucide-react'
-import { ToolCard, type ToolUseInfo } from './ToolCard'
+import { ToolCard } from './ToolCard'
 import { StreamingCursor } from './StreamingCursor'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { SubtaskCard } from './SubtaskCard'
@@ -19,8 +17,6 @@ interface AssistantCanvasProps {
   cwd?: string | null
 }
 
-const TOOL_GROUP_THRESHOLD = 3
-
 function hasMeaningfulText(text: string | undefined): boolean {
   if (!text) return false
   // Treat zero-width separators as whitespace so invisible deltas don't create "text" spacing blocks.
@@ -36,100 +32,6 @@ function hasToolParts(parts: StreamingPart[] | undefined): boolean {
     }
   }
   return false
-}
-
-function formatToolSummary(toolUses: ToolUseInfo[]): string {
-  const counts = new Map<string, number>()
-  for (const toolUse of toolUses) {
-    const name = toolUse.name.trim() || 'Tool'
-    counts.set(name, (counts.get(name) ?? 0) + 1)
-  }
-  const summary = Array.from(counts.entries())
-    .slice(0, 3)
-    .map(([name, count]) => `${count} ${name}`)
-    .join(', ')
-  return summary || `${toolUses.length} tool calls`
-}
-
-function groupStatus(toolUses: ToolUseInfo[]): 'pending' | 'running' | 'success' | 'error' {
-  if (toolUses.some((toolUse) => toolUse.status === 'error')) return 'error'
-  if (toolUses.some((toolUse) => toolUse.status === 'running')) return 'running'
-  if (toolUses.some((toolUse) => toolUse.status === 'pending')) return 'pending'
-  return 'success'
-}
-
-function statusChipClass(status: 'pending' | 'running' | 'success' | 'error'): string {
-  switch (status) {
-    case 'pending':
-      return 'border-muted-foreground/20 text-muted-foreground'
-    case 'running':
-      return 'border-blue-500/30 text-blue-500'
-    case 'success':
-      return 'border-green-500/30 text-green-500'
-    case 'error':
-      return 'border-red-500/30 text-red-500'
-  }
-}
-
-function statusChipLabel(status: 'pending' | 'running' | 'success' | 'error'): string {
-  switch (status) {
-    case 'pending':
-      return 'Pending'
-    case 'running':
-      return 'Running'
-    case 'success':
-      return 'Done'
-    case 'error':
-      return 'Error'
-  }
-}
-
-function ToolCallGroup({
-  toolUses,
-  cwd
-}: {
-  toolUses: ToolUseInfo[]
-  cwd?: string | null
-}): React.JSX.Element {
-  const [isExpanded, setIsExpanded] = useState(false)
-  const status = useMemo(() => groupStatus(toolUses), [toolUses])
-  const summary = useMemo(() => formatToolSummary(toolUses), [toolUses])
-
-  return (
-    <div
-      className="my-1 overflow-hidden rounded-md border border-border/60 bg-muted/20"
-      data-testid="tool-call-group"
-    >
-      <button
-        type="button"
-        onClick={() => setIsExpanded((expanded) => !expanded)}
-        className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-muted/35 transition-colors"
-        aria-expanded={isExpanded}
-        data-testid="tool-call-group-header"
-      >
-        <ChevronDown
-          className={cn(
-            'h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-150',
-            !isExpanded && '-rotate-90'
-          )}
-        />
-        <span className="text-xs font-medium text-foreground">{toolUses.length} tool calls</span>
-        <span className="min-w-0 truncate text-[11px] text-muted-foreground">{summary}</span>
-        <span className="flex-1" />
-        <span className={cn('rounded border px-1.5 py-0.5 text-[10px]', statusChipClass(status))}>
-          {statusChipLabel(status)}
-        </span>
-      </button>
-
-      {isExpanded && (
-        <div className="border-t border-border/70 px-1.5 py-1">
-          {toolUses.map((toolUse) => (
-            <ToolCard key={`tool-${toolUse.id}`} toolUse={toolUse} cwd={cwd} compact={true} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
 }
 
 /** Render interleaved parts (text + tool cards) */
@@ -166,53 +68,17 @@ function renderParts(
     }
 
     if (part.type === 'tool_use') {
-      const startIndex = index
-      const toolUses: ToolUseInfo[] = []
-
-      while (index < parts.length) {
-        const currentPart = parts[index]
-        if (currentPart.type === 'tool_use') {
-          if (currentPart.toolUse) {
-            toolUses.push(currentPart.toolUse)
-          }
-          index += 1
-          continue
-        }
-        if (currentPart.type === 'text' && !hasMeaningfulText(currentPart.text)) {
-          index += 1
-          continue
-        }
-        break
-      }
-
-      if (toolUses.length >= TOOL_GROUP_THRESHOLD) {
+      if (part.toolUse) {
         renderedParts.push(
-          <ToolCallGroup key={`tool-group-${startIndex}`} toolUses={toolUses} cwd={cwd} />
+          <ToolCard
+            key={`tool-${part.toolUse.id}`}
+            toolUse={part.toolUse}
+            cwd={cwd}
+            compact={forceCompactTools}
+          />
         )
-      } else if (toolUses.length > 1) {
-        renderedParts.push(
-          <div
-            key={`tool-inline-group-${startIndex}`}
-            className="my-0.5 flex flex-col gap-2"
-            data-testid="tool-call-inline-group"
-          >
-            {toolUses.map((toolUse) => (
-              <ToolCard key={`tool-${toolUse.id}`} toolUse={toolUse} cwd={cwd} compact={true} />
-            ))}
-          </div>
-        )
-      } else {
-        toolUses.forEach((toolUse) => {
-          renderedParts.push(
-            <ToolCard
-              key={`tool-${toolUse.id}`}
-              toolUse={toolUse}
-              cwd={cwd}
-              compact={forceCompactTools || toolUses.length > 1}
-            />
-          )
-        })
       }
+      index += 1
       continue
     }
 

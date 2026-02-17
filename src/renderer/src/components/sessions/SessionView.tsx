@@ -24,7 +24,8 @@ import {
   extractTokens,
   extractCost,
   extractModelRef,
-  extractSelectedModel
+  extractSelectedModel,
+  extractModelUsage
 } from '@/lib/token-utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { SelectedModel } from '@/stores/useSettingsStore'
@@ -297,6 +298,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [forkingMessageId, setForkingMessageId] = useState<string | null>(null)
   const revertDiffRef = useRef<string | null>(null)
 
+  // Runtime capabilities for undo/redo gating
+  const [sessionCapabilities, setSessionCapabilities] = useState<{
+    supportsUndo: boolean
+    supportsRedo: boolean
+  } | null>(null)
+
+  const sessionCapabilitiesRef = useRef(sessionCapabilities)
+  useEffect(() => {
+    sessionCapabilitiesRef.current = sessionCapabilities
+  }, [sessionCapabilities])
+
   const allSlashCommands = useMemo(() => {
     const seen = new Set<string>()
     const ordered = [...BUILT_IN_SLASH_COMMANDS, ...slashCommands]
@@ -304,9 +316,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       const key = command.name.toLowerCase()
       if (seen.has(key)) return false
       seen.add(key)
+      if (key === 'undo' && sessionCapabilities && !sessionCapabilities.supportsUndo) return false
+      if (key === 'redo' && sessionCapabilities && !sessionCapabilities.supportsRedo) return false
       return true
     })
-  }, [slashCommands])
+  }, [slashCommands, sessionCapabilities])
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
@@ -319,6 +333,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [sessionRetry, setSessionRetry] = useState<SessionRetryState | null>(null)
   const [sessionErrorMessage, setSessionErrorMessage] = useState<string | null>(null)
   const [retryTickMs, setRetryTickMs] = useState<number>(Date.now())
+
+  // Fetch runtime capabilities when the opencode session changes
+  useEffect(() => {
+    if (!opencodeSessionId) {
+      setSessionCapabilities(null)
+      return
+    }
+    window.opencodeOps
+      ?.capabilities?.(opencodeSessionId)
+      ?.then((result) => {
+        if (result.success && result.capabilities) {
+          setSessionCapabilities(result.capabilities)
+        }
+      })
+      ?.catch(() => {})
+  }, [opencodeSessionId])
 
   // Prompt history navigation
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
@@ -348,10 +378,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       : globalModel
   const currentModelId = effectiveModel?.modelID ?? 'claude-opus-4-5-20251101'
   const currentProviderId = effectiveModel?.providerID ?? 'anthropic'
+  // Claude Code SDK uses native plan mode (ExitPlanMode) — skip PLAN_MODE_PREFIX
+  const isClaudeCode = sessionRecord?.agent_sdk === 'claude-code'
 
   // Active question prompt from AI
   const activeQuestion = useQuestionStore((s) => s.getActiveQuestion(sessionId))
   const activePermission = usePermissionStore((s) => s.getActivePermission(sessionId))
+
+  // Pending plan approval (ExitPlanMode blocking tool)
+  const pendingPlan = useSessionStore((s) => s.pendingPlans.get(sessionId) ?? null)
 
   // Completion badge — reactive subscription to this session's status entry
   const completionEntry = useWorktreeStatusStore((state) => {
@@ -778,13 +813,26 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
         )
 
+        console.debug('[TOOL_DEBUG] upsertToolUse', {
+          toolId,
+          isNew: existingIndex < 0,
+          existingName: existingIndex >= 0 ? parts[existingIndex].toolUse?.name : undefined,
+          updateName: update.name,
+          updateStatus: update.status,
+          hasOutput: !!update.output
+        })
+
         if (existingIndex >= 0) {
-          // Update existing
+          // Update existing — preserve name if update doesn't provide one
           const existing = parts[existingIndex]
           const updatedParts = [...parts]
           updatedParts[existingIndex] = {
             ...existing,
-            toolUse: { ...existing.toolUse!, ...update }
+            toolUse: {
+              ...existing.toolUse!,
+              ...update,
+              name: update.name || existing.toolUse!.name
+            }
           }
           return updatedParts
         }
@@ -927,6 +975,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
       }
 
+      // If there's a pending plan, override ExitPlanMode tool status to 'pending'
+      // so the tool card shows as awaiting approval (transcript reports 'completed').
+      const pendingPlanForLoad = useSessionStore.getState().getPendingPlan(sessionId)
+      if (pendingPlanForLoad?.toolUseID) {
+        for (const msg of loadedMessages) {
+          if (msg.parts) {
+            for (const part of msg.parts) {
+              if (
+                part.type === 'tool_use' &&
+                part.toolUse?.id === pendingPlanForLoad.toolUseID
+              ) {
+                part.toolUse.status = 'pending'
+              }
+            }
+          }
+        }
+      }
+
       if (loadedFromOpenCode) {
         // Guard: don't replace existing messages with an empty transcript.
         // This prevents a race where getMessages returns before the SDK has
@@ -953,13 +1019,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         })
       }
 
-      const lastMessage = loadedMessages[loadedMessages.length - 1]
-      if (lastMessage?.role === 'assistant') {
-        const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-        if (currentStatus?.status !== 'working' && currentStatus?.status !== 'completed') {
-          useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-        }
-      }
+      // NOTE: Do not clear session status here. Status decisions are the
+      // responsibility of authoritative sources: the reconnect handler,
+      // SSE event handlers, and the global listener.
 
       return loadedMessages
     }
@@ -983,8 +1045,37 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
       const streamedContentSnapshot = streamingContentRef.current
 
+      console.debug('[TOOL_DEBUG] finalizeResponse START', {
+        streamingPartsCount: streamingPartsRef.current.length,
+        toolParts: streamingPartsRef.current
+          .filter((p) => p.type === 'tool_use')
+          .map((p) => ({
+            id: p.toolUse?.id,
+            name: p.toolUse?.name,
+            status: p.toolUse?.status,
+            hasOutput: !!p.toolUse?.output
+          }))
+      })
+
       try {
         const refreshedMessages = await loadMessages()
+
+        console.debug('[TOOL_DEBUG] finalizeResponse LOADED', {
+          loadedCount: refreshedMessages.length,
+          roles: refreshedMessages.map((m) => m.role),
+          toolInfo: refreshedMessages
+            .filter((m) => m.role === 'assistant')
+            .flatMap((m) =>
+              (m.parts ?? [])
+                .filter((p) => p.type === 'tool_use')
+                .map((p) => ({
+                  id: p.toolUse?.id,
+                  name: p.toolUse?.name,
+                  status: p.toolUse?.status,
+                  hasOutput: !!p.toolUse?.output
+                }))
+            )
+        })
 
         if (
           refreshedMessages.length === 0 &&
@@ -1014,6 +1105,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       } finally {
         resetStreamingState()
         setIsSending(false)
+        console.debug('[TOOL_DEBUG] finalizeResponse DONE — streaming state cleared')
       }
     }
 
@@ -1082,6 +1174,56 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
+          // Handle session materialization — update the stale pending:: session ID
+          // so subsequent loadMessages() calls use the real SDK session ID.
+          // Also handles fork transitions: when the SDK returns a new session ID
+          // after forkSession: true, clear old messages to avoid showing stale
+          // content from the pre-fork branch.
+          if (event.type === 'session.materialized') {
+            const newId = event.data?.newSessionId as string | undefined
+            if (newId) {
+              // Use the authoritative wasFork flag from the backend instead of
+              // guessing based on the old session ID format. The backend knows
+              // whether this is initial materialization (pending:: → real ID),
+              // an actual fork (undo+resend with forkSession: true), or just an
+              // SDK session ID change during normal resume. Only true forks
+              // should clear messages. Defaults to false (safe — no clearing)
+              // if the backend doesn't send the flag.
+              const wasFork = event.data?.wasFork === true
+              setOpencodeSessionId(newId)
+              transcriptSourceRef.current.opencodeSessionId = newId
+              useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
+
+              // On fork, the new session has its own transcript. Clear old
+              // messages so the user only sees the local prompt bubble while
+              // the fork streams. finalizeResponse() will reload from the
+              // new transcript when the stream completes.
+              if (wasFork) {
+                setMessages((prev) => prev.filter((m) => m.id.startsWith('local-')))
+              }
+            }
+            return
+          }
+
+          // Handle commands_available — re-fetch slash commands after SDK init
+          if (event.type === 'session.commands_available') {
+            const wtPath = transcriptSourceRef.current.worktreePath
+            const opcSid = transcriptSourceRef.current.opencodeSessionId
+            if (wtPath) {
+              window.opencodeOps
+                .commands(wtPath, opcSid ?? undefined)
+                .then((result) => {
+                  if (result.success && result.commands) {
+                    setSlashCommands(result.commands)
+                  }
+                })
+                .catch(() => {
+                  // Silently ignore — commands will be fetched on next prompt cycle
+                })
+            }
+            return
+          }
+
           // Handle question events
           if (event.type === 'question.asked') {
             const request = event.data
@@ -1113,6 +1255,68 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             if (requestId) {
               usePermissionStore.getState().removePermission(sessionId, requestId)
             }
+            return
+          }
+
+          // Handle plan events (ExitPlanMode blocking tool)
+          if (event.type === 'plan.ready') {
+            const data = event.data as {
+              id?: string
+              requestId?: string
+              plan?: string
+              toolUseID?: string
+            }
+            const requestId = data?.id || data?.requestId
+            if (requestId) {
+              let planText = data.plan ?? ''
+
+              // If backend didn't provide plan content, extract from preceding streaming text
+              if (!planText && data.toolUseID) {
+                const parts = streamingPartsRef.current
+                const toolIdx = parts.findIndex(
+                  (p) => p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+                )
+                if (toolIdx > 0) {
+                  for (let i = toolIdx - 1; i >= 0; i--) {
+                    if (parts[i].type === 'text' && parts[i].text) {
+                      planText = parts[i].text!
+                      break
+                    }
+                  }
+                }
+              }
+
+              // Inject plan content into the ExitPlanMode tool_use input for rendering
+              if (planText && data.toolUseID) {
+                updateStreamingPartsRef((parts) =>
+                  parts.map((p) =>
+                    p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+                      ? {
+                          ...p,
+                          toolUse: {
+                            ...p.toolUse!,
+                            input: { ...p.toolUse!.input, plan: planText },
+                            status: 'pending' as const
+                          }
+                        }
+                      : p
+                  )
+                )
+                immediateFlush()
+              }
+
+              useSessionStore.getState().setPendingPlan(sessionId, {
+                requestId,
+                planContent: planText,
+                toolUseID: data.toolUseID ?? ''
+              })
+              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+            }
+            return
+          }
+
+          if (event.type === 'plan.resolved') {
+            useSessionStore.getState().clearPendingPlan(sessionId)
             return
           }
 
@@ -1268,8 +1472,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } else if (part.type === 'tool') {
               // Tool part from OpenCode SDK - has callID, tool (name), state
               const toolId = part.callID || part.id || `tool-${Date.now()}`
-              const toolName = part.tool || 'Unknown'
+              const toolName = part.tool || undefined
               const state = part.state || {}
+
+              console.debug('[TOOL_DEBUG] stream event', {
+                toolId,
+                toolName,
+                status: state.status,
+                hasOutput: !!state.output,
+                hasError: !!state.error,
+                hasInput: !!state.input
+              })
 
               const statusMap: Record<string, ToolStatus> = {
                 pending: 'pending',
@@ -1279,7 +1492,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
 
               upsertToolUse(toolId, {
-                name: toolName,
+                ...(toolName ? { name: toolName } : {}),
                 // Only include input when the SDK actually provides it, so we don't
                 // overwrite the initial input with {} on subsequent status updates.
                 ...(state.input ? { input: state.input } : {}),
@@ -1403,6 +1616,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 if (cost > 0) {
                   useContextStore.getState().addSessionCost(sessionId, cost)
                 }
+                // Extract per-model usage (from SDK result messages) to update context limits
+                const modelUsageEntries = extractModelUsage(data)
+                if (modelUsageEntries) {
+                  for (const entry of modelUsageEntries) {
+                    if (entry.contextWindow > 0) {
+                      useContextStore.getState().setModelLimit(entry.modelName, entry.contextWindow)
+                    }
+                  }
+                }
               }
             }
           } else if (event.type === 'session.idle') {
@@ -1442,6 +1664,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             if (event.childSessionId) return
 
             if (status.type === 'busy') {
+              // Don't overwrite plan_ready — session is blocked waiting for plan approval
+              if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
               // Session became active (again) — restart streaming state.
               // If we previously finalized on idle, reset so the next idle
               // can finalize the new response.
@@ -1458,6 +1683,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 .getState()
                 .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             } else if (status.type === 'idle') {
+              // Don't overwrite plan_ready — session is blocked waiting for plan approval
+              if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
               // Session is done — flush and finalize immediately
               setSessionRetry(null)
               setSessionErrorMessage(null)
@@ -1645,6 +1873,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
         // 4. Connect to OpenCode
 
+        // For Claude Code sessions, set known model limits immediately so the
+        // ContextIndicator shows the 200k limit without waiting for the first
+        // SDK init message.  The init message will also emit session.model_limits
+        // to confirm, but this avoids a flash of "limit unavailable".
+        if (sessionRecord?.agent_sdk === 'claude-code') {
+          const claudeModels = [
+            { id: 'opus', context: 200000 },
+            { id: 'sonnet', context: 200000 },
+            { id: 'haiku', context: 200000 }
+          ]
+          for (const m of claudeModels) {
+            // Store without providerID (wildcard "*") so the limit is found
+            // regardless of whether the session uses providerID "claude-code"
+            // or "anthropic".
+            useContextStore.getState().setModelLimit(m.id, m.context)
+          }
+        }
+
         // Fetch context limits for all provider/model combinations (fire-and-forget).
         // This avoids model-id collisions across providers and lets context usage use
         // the exact model that produced the latest assistant message.
@@ -1691,9 +1937,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
 
         // Fetch slash commands (fire-and-forget)
-        const fetchCommands = (path: string): void => {
+        const fetchCommands = (path: string, opcSessionId?: string): void => {
           window.opencodeOps
-            .commands(path)
+            .commands(path, opcSessionId)
             .then((result) => {
               if (result.success && result.commands) {
                 setSlashCommands(result.commands)
@@ -1728,7 +1974,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           const pendingMsg = useSessionStore.getState().consumePendingMessage(sessionId)
           if (!pendingMsg) return
           try {
+            // Mirror handleSend: set streaming/sending state BEFORE the prompt call
+            // so the UI shows the correct state and finalizeResponse behaves correctly.
+            hasFinalizedCurrentResponseRef.current = false
+            setIsSending(true)
+
             setMessages((prev) => [...prev, createLocalMessage('user', pendingMsg)])
+
+            // Mark that a new prompt is in flight — prevents finalizeResponse
+            // from reordering this message if a previous stream is still completing.
+            newPromptPendingRef.current = true
+
             // Start completion timer for auto-sent pending prompts (e.g. PR creation)
             messageSendTimes.set(sessionId, Date.now())
             // Set worktree status based on session mode
@@ -1737,14 +1993,26 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             useWorktreeStatusStore
               .getState()
               .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
-            // Apply mode prefix (e.g., plan mode for code reviews)
-            const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
+            // Apply mode prefix for OpenCode sessions (Claude Code uses native plan mode)
+            const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
+            const promptMessage = modePrefix + pendingMsg
+            // Store the full prompt so the stream handler can detect SDK echoes
+            lastSentPromptRef.current = promptMessage
             const model = getModelForRequests()
-            // Send to OpenCode
-            await window.opencodeOps.prompt(path, opcId, modePrefix + pendingMsg, model)
+            // Send as parts array (matching handleSend format) for consistent SDK handling
+            const parts: Array<{ type: 'text'; text: string }> = [
+              { type: 'text' as const, text: promptMessage }
+            ]
+            const result = await window.opencodeOps.prompt(path, opcId, parts, model)
+            if (!result.success) {
+              console.error('Failed to send pending message:', result.error)
+              toast.error('Failed to send review prompt')
+              setIsSending(false)
+            }
           } catch (err) {
             console.error('Failed to send pending message:', err)
             toast.error('Failed to send review prompt')
+            setIsSending(false)
           }
         }
 
@@ -1765,7 +2033,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setRevertMessageID(reconnectResult.revertMessageID)
             }
             fetchModelLimits()
-            fetchCommands(wtPath)
+            fetchCommands(wtPath, existingOpcSessionId)
             hydratePermissions(wtPath)
             // Create response log file if logging is enabled
             if (isLogModeRef.current) {
@@ -1781,22 +2049,47 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Part B: Authoritative status from OpenCode SDK.
             // Corrects Part A if the session finished while we were away,
             // or confirms busy if the store was accurate.
+            // Don't overwrite plan_ready — session is blocked waiting for plan approval.
+            const hasPendingPlanOnReconnect = useSessionStore
+              .getState()
+              .getPendingPlan(sessionId)
             if (reconnectResult.sessionStatus === 'busy') {
-              setSessionRetry(null)
-              setSessionErrorMessage(null)
-              setIsStreaming(true)
-              setIsSending(true)
-              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-              useWorktreeStatusStore
-                .getState()
-                .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+              if (!hasPendingPlanOnReconnect) {
+                setSessionRetry(null)
+                setSessionErrorMessage(null)
+                setIsStreaming(true)
+                setIsSending(true)
+                const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+                useWorktreeStatusStore
+                  .getState()
+                  .setSessionStatus(
+                    sessionId,
+                    currentMode === 'plan' ? 'planning' : 'working'
+                  )
+              }
             } else if (reconnectResult.sessionStatus === 'idle') {
-              // Session actually finished — clear any stale busy indicators
-              setIsStreaming(false)
-              setIsSending(false)
-              setSessionRetry(null)
-              setSessionErrorMessage(null)
-              useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+              if (!hasPendingPlanOnReconnect) {
+                setIsStreaming(false)
+                setIsSending(false)
+                setSessionRetry(null)
+                setSessionErrorMessage(null)
+                // If the session was previously busy, the agent finished while we
+                // were away — show a completion badge instead of clearing to "Ready".
+                if (
+                  storedStatus?.status === 'working' ||
+                  storedStatus?.status === 'planning'
+                ) {
+                  const sendTime = messageSendTimes.get(sessionId)
+                  const durationMs = sendTime ? Date.now() - sendTime : 0
+                  const word =
+                    COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+                  useWorktreeStatusStore
+                    .getState()
+                    .setSessionStatus(sessionId, 'completed', { word, durationMs })
+                } else {
+                  useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+                }
+              }
             } else if (reconnectResult.sessionStatus === 'retry') {
               setIsStreaming(true)
               setIsSending(true)
@@ -1820,7 +2113,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
           setRevertMessageID(null)
           fetchModelLimits()
-          fetchCommands(wtPath)
+          fetchCommands(wtPath, connectResult.sessionId)
           hydratePermissions(wtPath)
           // Persist only for first-time session connections.
           // If reconnect to an existing OpenCode session failed and we had to
@@ -2171,6 +2464,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setInputValue(restoredPrompt)
               inputValueRef.current = restoredPrompt
             } else {
+              if (sessionCapabilities && !sessionCapabilities.supportsRedo) {
+                toast.error('Redo is not supported for this session type')
+                return
+              }
               const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
               if (!result.success) {
                 toast.error(result.error || 'Nothing to redo')
@@ -2264,9 +2561,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       try {
         setSessionRetry(null)
         setSessionErrorMessage(null)
+
+        // When sending after an undo, trim the messages array to remove the
+        // undone tail.  Simply clearing revertMessageID would make visibleMessages
+        // show ALL messages (including the undone ones) for a brief flash before
+        // finalizeResponse() replaces them with the forked transcript.
+        const currentRevertId = revertMessageID
         setRevertMessageID(null)
         revertDiffRef.current = null
-        setMessages((prev) => [...prev, createLocalMessage('user', trimmedValue)])
+        setMessages((prev) => {
+          let base = prev
+          if (currentRevertId) {
+            const boundaryIndex = prev.findIndex((m) => m.id === currentRevertId)
+            if (boundaryIndex !== -1) {
+              base = prev.slice(0, boundaryIndex)
+            }
+          }
+          return [...base, createLocalMessage('user', trimmedValue)]
+        })
 
         // Mark that a new prompt is in flight — prevents finalizeResponse
         // from reordering this message if a previous stream is still completing.
@@ -2347,7 +2659,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } else {
               // Unknown command — send as regular prompt (SDK may handle it)
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-              const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
+              const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
               const promptMessage = modePrefix + trimmedValue
               lastSentPromptRef.current = promptMessage
               const parts: MessagePart[] = [
@@ -2375,7 +2687,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           } else {
             // Regular prompt — existing code (with mode prefix, attachments, etc.)
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-            const modePrefix = currentMode === 'plan' ? PLAN_MODE_PREFIX : ''
+            const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
             const promptMessage = modePrefix + trimmedValue
             // Store the full prompt so the stream handler can detect SDK echoes
             // of the user message (the SDK often re-emits the prompt without a
@@ -2430,6 +2742,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       opencodeSessionId,
       attachments,
       allSlashCommands,
+      sessionCapabilities,
+      revertMessageID,
+      isClaudeCode,
       refreshMessagesFromOpenCode,
       getModelForRequests,
       fileMentions,
@@ -2438,9 +2753,112 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   )
 
   const handlePlanReadyImplement = useCallback(async () => {
+    // Claude Code sessions must resolve a real pending ExitPlanMode request.
+    if (isClaudeCode) {
+      if (!worktreePath || !pendingPlan) {
+        toast.error('No pending plan approval found')
+        return
+      }
+
+      const pendingBeforeAction = pendingPlan
+      useSessionStore.getState().clearPendingPlan(sessionId)
+      useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+
+      try {
+        // Approve first (unblocks the SDK), then update frontend state.
+        const result = await window.opencodeOps.planApprove(
+          worktreePath,
+          sessionId,
+          pendingBeforeAction.requestId
+        )
+        if (!result.success) {
+          toast.error(`Plan approve failed: ${result.error ?? 'unknown'}`)
+          // Avoid stale FAB loops if backend no longer has a pending request.
+          if (!(result.error ?? '').toLowerCase().includes('no pending plan')) {
+            useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
+            useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+          }
+          return
+        }
+        await useSessionStore.getState().setSessionMode(sessionId, 'build')
+        lastSendMode.set(sessionId, 'build')
+
+        // The SDK resumes within the same prompt cycle after plan approval —
+        // it won't emit a new session.status:busy event. Set status explicitly.
+        useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+        setIsStreaming(true)
+        setIsSending(true)
+
+        // Transition the ExitPlanMode tool card to "accepted" state
+        updateStreamingPartsRef((parts) =>
+          parts.map((p) =>
+            p.type === 'tool_use' && p.toolUse?.id === pendingBeforeAction.toolUseID
+              ? { ...p, toolUse: { ...p.toolUse!, status: 'success' as const } }
+              : p
+          )
+        )
+        immediateFlush()
+      } catch (err) {
+        toast.error(`Plan approve error: ${err instanceof Error ? err.message : String(err)}`)
+        useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
+        useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+      }
+      return
+    }
+
+    // OpenCode sessions: legacy non-blocking behavior.
     await useSessionStore.getState().setSessionMode(sessionId, 'build')
+    lastSendMode.set(sessionId, 'build')
     await handleSend('Implement')
-  }, [sessionId, handleSend])
+  }, [sessionId, handleSend, worktreePath, pendingPlan, isClaudeCode, updateStreamingPartsRef, immediateFlush])
+
+  const handlePlanReject = useCallback(
+    async (feedback: string) => {
+      if (!worktreePath || !pendingPlan) return
+      const pendingBeforeAction = pendingPlan
+      useSessionStore.getState().clearPendingPlan(sessionId)
+      useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+      try {
+        // Reject first (unblocks the SDK with feedback), then clear frontend state
+        const result = await window.opencodeOps.planReject(
+          worktreePath,
+          sessionId,
+          feedback,
+          pendingBeforeAction.requestId
+        )
+        if (!result.success) {
+          toast.error(`Plan reject failed: ${result.error ?? 'unknown'}`)
+          if (!(result.error ?? '').toLowerCase().includes('no pending plan')) {
+            useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
+            useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+          }
+          return
+        }
+
+        // Transition the ExitPlanMode tool card to "rejected" state with feedback
+        updateStreamingPartsRef((parts) =>
+          parts.map((p) =>
+            p.type === 'tool_use' && p.toolUse?.id === pendingBeforeAction.toolUseID
+              ? { ...p, toolUse: { ...p.toolUse!, status: 'error' as const, error: feedback } }
+              : p
+          )
+        )
+        immediateFlush()
+
+        // The SDK resumes within the same prompt cycle after rejection —
+        // it won't emit a new session.status:busy event. Restore status explicitly.
+        const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+        useWorktreeStatusStore
+          .getState()
+          .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+      } catch (err) {
+        toast.error(`Plan reject error: ${err instanceof Error ? err.message : String(err)}`)
+        useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
+        useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+      }
+    },
+    [sessionId, worktreePath, pendingPlan, updateStreamingPartsRef, immediateFlush]
+  )
 
   const handlePlanReadyHandoff = useCallback(async () => {
     const lastAssistantMessage = [...messages]
@@ -2498,6 +2916,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
+        // When a plan is pending, sending text rejects the plan with feedback
+        const plan = useSessionStore.getState().pendingPlans.get(sessionId)
+        if (plan && inputValue.trim()) {
+          void handlePlanReject(inputValue.trim())
+          setInputValue('')
+          inputValueRef.current = ''
+          if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+          window.db.session.updateDraft(sessionId, null)
+          return
+        }
         handleSend()
         return
       }
@@ -2576,7 +3004,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         })
       }
     },
-    [handleSend, worktreeId, historyIndex, inputValue, fileMentions.isOpen]
+    [
+      handleSend,
+      handlePlanReject,
+      sessionId,
+      worktreeId,
+      historyIndex,
+      inputValue,
+      fileMentions.isOpen
+    ]
   )
 
   // Attachment handlers
@@ -2730,6 +3166,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const handleRedo = async (): Promise<void> => {
       if (useSessionStore.getState().activeSessionId !== sessionId) return
       if (!worktreePath || !opencodeSessionId) return
+      if (sessionCapabilitiesRef.current && !sessionCapabilitiesRef.current.supportsRedo) {
+        toast.error('Redo is not supported for this session type')
+        return
+      }
       try {
         const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
         if (!result.success) {
@@ -2802,6 +3242,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   useEffect(() => {
     if (messages.length === 0) return
+    // Defense-in-depth: don't overwrite the cache with a degraded state.
+    // If the only messages are local-* (optimistic user messages not yet
+    // confirmed by the server), the transcript hasn't been loaded yet.
+    // Overwriting now would destroy the good cache that loadMessages()
+    // uses as a fallback when the backend returns empty.
+    const hasServerMessages = messages.some((m) => !m.id.startsWith('local-'))
+    if (!hasServerMessages) return
     writeTranscriptCache(sessionId, messages)
   }, [sessionId, messages])
 
@@ -2819,8 +3266,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         (streamingParts[streamingParts.length - 1].type === 'text' ||
           streamingParts[streamingParts.length - 1].type === 'tool_use')))
 
-  const showPlanReadyImplementFab =
-    lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming
+  // Show the floating Implement FAB when:
+  // 1. Claude Code sessions: ExitPlanMode is pending approval.
+  // 2. OpenCode sessions: legacy non-blocking plan mode completed.
+  const showPlanReadyImplementFab = isClaudeCode
+    ? !!pendingPlan
+    : lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming && !pendingPlan
 
   const retrySecondsRemaining = useMemo(() => {
     if (!sessionRetry?.next) return null
@@ -2993,6 +3444,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               {queuedMessages.map((msg) => (
                 <QueuedMessageBubble key={msg.id} content={msg.content} />
               ))}
+              {/* Plan content is now rendered inside the ExitPlanMode tool card */}
               {/* Completion badge — shows after streaming finishes */}
               {completionEntry && !isSending && (
                 <div
@@ -3114,7 +3566,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               onPaste={handlePaste}
               disabled={!!activePermission}
               placeholder={
-                activePermission ? 'Waiting for permission response...' : 'Type your message...'
+                activePermission
+                  ? 'Waiting for permission response...'
+                  : pendingPlan
+                    ? 'Send feedback to revise the plan...'
+                    : 'Type your message...'
               }
               aria-label="Message input"
               aria-haspopup="listbox"
@@ -3130,7 +3586,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               data-testid="message-input"
             />
 
-            {/* Bottom row: model selector + context indicator + hint text + send button */}
+            {/* Bottom row: model selector + context indicator + hint text + send/implement buttons */}
             <div className="flex items-center justify-between px-3 pb-2.5">
               <div className="flex items-center gap-2">
                 <ModelSelector sessionId={sessionId} />
@@ -3141,40 +3597,65 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   providerId={currentProviderId}
                 />
                 <span className="text-xs text-muted-foreground">
-                  Enter to send, Shift+Enter for new line
+                  {pendingPlan
+                    ? 'Enter to send feedback to revise the plan'
+                    : 'Enter to send, Shift+Enter for new line'}
                 </span>
               </div>
-              {isStreaming && !inputValue.trim() ? (
-                <Button
-                  onClick={handleAbort}
-                  size="sm"
-                  variant="destructive"
-                  className="h-7 w-7 p-0"
-                  aria-label="Stop streaming"
-                  title="Stop streaming"
-                  data-testid="stop-button"
-                >
-                  <Square className="h-3 w-3" />
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => {
-                    void handleSend()
-                  }}
-                  disabled={!inputValue.trim() || !!activePermission}
-                  size="sm"
-                  className="h-7 w-7 p-0"
-                  aria-label={isStreaming ? 'Queue message' : 'Send message'}
-                  title={isStreaming ? 'Queue message' : 'Send message'}
-                  data-testid="send-button"
-                >
-                  {isStreaming ? (
-                    <ListPlus className="h-3.5 w-3.5" />
-                  ) : (
-                    <Send className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-              )}
+              <div className="flex items-center gap-1.5">
+                {isStreaming && !inputValue.trim() ? (
+                  <Button
+                    onClick={handleAbort}
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 w-7 p-0"
+                    aria-label="Stop streaming"
+                    title="Stop streaming"
+                    data-testid="stop-button"
+                  >
+                    <Square className="h-3 w-3" />
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => {
+                      // When a plan is pending and there's text, send as feedback (reject)
+                      if (pendingPlan && inputValue.trim()) {
+                        void handlePlanReject(inputValue.trim())
+                        setInputValue('')
+                        inputValueRef.current = ''
+                        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+                        window.db.session.updateDraft(sessionId, null)
+                        return
+                      }
+                      void handleSend()
+                    }}
+                    disabled={!inputValue.trim() || !!activePermission}
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    aria-label={
+                      pendingPlan && inputValue.trim()
+                        ? 'Send feedback'
+                        : isStreaming
+                          ? 'Queue message'
+                          : 'Send message'
+                    }
+                    title={
+                      pendingPlan && inputValue.trim()
+                        ? 'Send feedback to revise the plan'
+                        : isStreaming
+                          ? 'Queue message'
+                          : 'Send message'
+                    }
+                    data-testid="send-button"
+                  >
+                    {isStreaming ? (
+                      <ListPlus className="h-3.5 w-3.5" />
+                    ) : (
+                      <Send className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </div>

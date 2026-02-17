@@ -3,34 +3,27 @@ import { ChevronRight, Link } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useConnectionStore } from '@/stores'
 import { ConnectionItem } from './ConnectionItem'
-import { ConnectDialog } from './ConnectDialog'
+import { ManageConnectionWorktreesDialog } from './ManageConnectionWorktreesDialog'
 
 export function ConnectionList(): React.JSX.Element | null {
   const connections = useConnectionStore((s) => s.connections)
   const loadConnections = useConnectionStore((s) => s.loadConnections)
   const [isCollapsed, setIsCollapsed] = useState(false)
 
-  // State for adding a worktree to an existing connection via ConnectDialog
-  // We need a source worktree from the connection's first member to open the dialog
-  const [addToConnectionId, setAddToConnectionId] = useState<string | null>(null)
+  // State for managing worktrees of an existing connection
+  const [manageConnectionId, setManageConnectionId] = useState<string | null>(null)
 
   useEffect(() => {
     loadConnections()
   }, [loadConnections])
 
-  const handleAddWorktree = useCallback((connectionId: string) => {
-    setAddToConnectionId(connectionId)
+  const handleManageWorktrees = useCallback((connectionId: string) => {
+    setManageConnectionId(connectionId)
   }, [])
 
-  const handleCloseAddDialog = useCallback(() => {
-    setAddToConnectionId(null)
+  const handleCloseManageDialog = useCallback(() => {
+    setManageConnectionId(null)
   }, [])
-
-  // Find the first member's worktree id for the ConnectDialog source
-  const addToConnection = addToConnectionId
-    ? connections.find((c) => c.id === addToConnectionId)
-    : null
-  const addDialogSourceWorktreeId = addToConnection?.members?.[0]?.worktree_id ?? null
 
   if (connections.length === 0) {
     return null
@@ -57,19 +50,19 @@ export function ConnectionList(): React.JSX.Element | null {
             <ConnectionItem
               key={connection.id}
               connection={connection}
-              onAddWorktree={handleAddWorktree}
+              onManageWorktrees={handleManageWorktrees}
             />
           ))}
         </div>
       )}
 
-      {/* ConnectDialog for "Add Worktree" from context menu */}
-      {addDialogSourceWorktreeId && (
-        <ConnectDialog
-          sourceWorktreeId={addDialogSourceWorktreeId}
-          open={!!addToConnectionId}
+      {/* Manage connection worktrees dialog */}
+      {manageConnectionId && (
+        <ManageConnectionWorktreesDialog
+          connectionId={manageConnectionId}
+          open={!!manageConnectionId}
           onOpenChange={(open) => {
-            if (!open) handleCloseAddDialog()
+            if (!open) handleCloseManageDialog()
           }}
         />
       )}

@@ -5,7 +5,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useContextStore } from '@/stores/useContextStore'
-import { extractTokens, extractCost, extractModelRef } from '@/lib/token-utils'
+import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '@/lib/token-utils'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes } from '@/lib/message-send-times'
 
@@ -37,6 +37,24 @@ export function useOpenCodeGlobalListener(): void {
           const sessionId = event.sessionId
           const activeId = useSessionStore.getState().activeSessionId
 
+          // Handle model limits from Claude Code session init
+          if (event.type === 'session.model_limits') {
+            const models = event.data?.models as
+              | Array<{ modelID: string; providerID: string; contextLimit: number }>
+              | undefined
+            if (models) {
+              for (const m of models) {
+                if (m.contextLimit > 0) {
+                  useContextStore.getState().setModelLimit(m.modelID, m.contextLimit, m.providerID)
+                  // Also store as wildcard so the limit is found regardless
+                  // of the session's providerID (e.g. "claude-code" vs "anthropic")
+                  useContextStore.getState().setModelLimit(m.modelID, m.contextLimit)
+                }
+              }
+            }
+            return
+          }
+
           // Handle message.updated for background sessions — extract title + tokens
           if (event.type === 'message.updated' && sessionId !== activeId) {
             const sessionTitle = event.data?.info?.title || event.data?.title
@@ -61,6 +79,17 @@ export function useOpenCodeGlobalListener(): void {
                 const cost = extractCost(data)
                 if (cost > 0) {
                   useContextStore.getState().addSessionCost(sessionId, cost)
+                }
+                // Extract per-model usage (from SDK result messages) to update context limits
+                const modelUsageEntries = extractModelUsage(data)
+                if (modelUsageEntries) {
+                  for (const entry of modelUsageEntries) {
+                    if (entry.contextWindow > 0) {
+                      useContextStore
+                        .getState()
+                        .setModelLimit(entry.modelName, entry.contextWindow)
+                    }
+                  }
                 }
               }
             }
@@ -127,6 +156,33 @@ export function useOpenCodeGlobalListener(): void {
             return
           }
 
+          // Handle plan approval events globally so pending state survives tab switches.
+          if (event.type === 'plan.ready') {
+            const data = event.data as
+              | { id?: string; requestId?: string; plan?: string; toolUseID?: string }
+              | undefined
+            const requestId = data?.id || data?.requestId
+            if (requestId) {
+              useSessionStore.getState().setPendingPlan(sessionId, {
+                requestId,
+                planContent: data?.plan ?? '',
+                toolUseID: data?.toolUseID ?? ''
+              })
+              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+            }
+            return
+          }
+
+          if (event.type === 'plan.resolved') {
+            useSessionStore.getState().clearPendingPlan(sessionId)
+            // If session is no longer busy/planning, clear stale plan_ready badge.
+            const current = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+            if (current?.status === 'plan_ready') {
+              useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+            }
+            return
+          }
+
           // Use session.status (not deprecated session.idle) as the authoritative signal
           if (event.type !== 'session.status') return
 
@@ -134,6 +190,9 @@ export function useOpenCodeGlobalListener(): void {
 
           // Background session became busy again — restore working/planning status
           if (status?.type === 'busy') {
+            // Don't overwrite plan_ready — session is blocked waiting for plan approval
+            if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
             if (sessionId !== activeId) {
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
               useWorktreeStatusStore
@@ -144,6 +203,9 @@ export function useOpenCodeGlobalListener(): void {
           }
 
           if (status?.type !== 'idle') return
+
+          // Don't overwrite plan_ready — session is blocked waiting for plan approval
+          if (useSessionStore.getState().getPendingPlan(sessionId)) return
 
           // Active session is handled by SessionView.
           if (sessionId === activeId) return

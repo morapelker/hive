@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { useWorktreeStore, useProjectStore } from '@/stores'
+import { useGitStore } from '@/stores/useGitStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
@@ -87,6 +88,8 @@ export function WorktreeItem({
     (state) => state.lastMessageTimeByWorktree[worktree.id] ?? null
   )
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktree.id]?.runRunning ?? false)
+  const liveBranch = useGitStore((s) => s.branchInfoByWorktree.get(worktree.path))
+  const displayName = liveBranch?.name ?? worktree.name
   const isSelected = selectedWorktreeId === worktree.id
 
   // Auto-refresh relative time every 60 seconds
@@ -110,7 +113,9 @@ export function WorktreeItem({
             ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
             : worktreeStatus === 'plan_ready'
               ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
-              : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+              : worktreeStatus === 'completed'
+                ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
+                : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
   // Connect dialog state
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
@@ -357,7 +362,7 @@ export function WorktreeItem({
               />
             ) : (
               <span className="text-sm truncate block" title={worktree.path}>
-                {worktree.name}
+                {displayName}
               </span>
             )}
             <div className="flex items-center pr-1">

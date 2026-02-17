@@ -9,6 +9,13 @@ This document defines the execution plan to replace the current Claude mock prov
 - Several IPC and renderer paths still default to `opencode` behavior for non-session-scoped operations.
 - UI still labels Claude as mock and contains hardcoded capability assumptions.
 
+## Reference Project
+
+An example project demonstrating Claude SDK usage is available at:
+`/Users/mor/Documents/dev/mochi-2/mochi-claude-sdk`
+
+Use this as a reference when implementing SDK integration (client init, streaming, tools, sessions, etc.).
+
 ## Planning Rules
 
 - Every session is scoped to one testable milestone.
@@ -42,11 +49,16 @@ Lock all integration decisions that materially affect implementation shape.
 ### Tests
 
 - [x] Add a contract test file that validates the capability map and identifier format assumptions used by Claude adapter construction.
+  - `test/phase-21/session-1/agent-sdk-contract.test.ts` — 12 tests, all passing
 
 ### Definition of Done
 
-- Integration decisions are documented in `docs/specs/agent-sdk-integration.md`.
-- No implementation ambiguity remains for auth, capabilities, or session resume.
+- [x] Integration decisions are documented in `docs/specs/agent-sdk-integration.md`.
+- [x] No implementation ambiguity remains for auth, capabilities, or session resume.
+- [x] `AgentSdkImplementer` interface defined in `src/main/services/agent-sdk-types.ts`.
+- [x] `agent_sdk` column added via migration v2 in `src/main/db/schema.ts`.
+- [x] `@anthropic-ai/claude-agent-sdk@^0.2.42` installed.
+- [x] `pnpm lint`, `pnpm test` (contract tests), and `pnpm build` all pass.
 
 ---
 
@@ -58,20 +70,20 @@ Create the real Claude SDK client wrapper and replace mock-only internals with a
 
 ### Tasks
 
-- [ ] Add Claude SDK dependency and typed wrapper module(s) in `src/main/services/`.
-- [ ] Introduce explicit adapter layer in `src/main/services/claude-code-implementer.ts` for:
+- [x] Add Claude SDK dependency and typed wrapper module(s) in `src/main/services/`.
+- [x] Introduce explicit adapter layer in `src/main/services/claude-code-implementer.ts` for:
   - client init
   - session lifecycle calls
   - event subscription lifecycle
   - model lookup
-- [ ] Replace mock transcript directory logic (`~/.hive/claude-code-mock/transcripts`) with SDK-backed reads/writes.
-- [ ] Replace mock maps/timers with runtime state needed only for active subscriptions and cancellation.
-- [ ] Keep structured logging parity with `opencode-service`.
+- [x] Replace mock transcript directory logic (`~/.hive/claude-code-mock/transcripts`) with SDK-backed reads/writes.
+- [x] Replace mock maps/timers with runtime state needed only for active subscriptions and cancellation.
+- [x] Keep structured logging parity with `opencode-service`.
 
 ### Tests
 
-- [ ] Add unit tests for adapter initialization and failure handling with mocked SDK client.
-- [ ] Add unit tests for cleanup behavior (client/session/subscription disposal).
+- [x] Add unit tests for adapter initialization and failure handling with mocked SDK client.
+- [x] Add unit tests for cleanup behavior (client/session/subscription disposal).
 
 ### Definition of Done
 
@@ -88,20 +100,21 @@ Make Claude session creation and resume fully real and restart-safe.
 
 ### Tasks
 
-- [ ] Implement `connect` with real SDK session creation and stable mapping to Hive session ID.
-- [ ] Implement `reconnect` using persisted agent session ID from DB + worktree path.
-- [ ] Implement `disconnect` and `cleanup` to close SDK resources and detach subscriptions safely.
-- [ ] Ensure reconnect behavior remains correct after app restart with persisted DB session rows.
+- [x] Implement `connect` with real SDK session creation and stable mapping to Hive session ID.
+- [x] Implement `reconnect` using persisted agent session ID from DB + worktree path.
+- [x] Implement `disconnect` and `cleanup` to close SDK resources and detach subscriptions safely.
+- [x] Ensure reconnect behavior remains correct after app restart with persisted DB session rows.
 
 ### Tests
 
-- [ ] Add lifecycle tests for connect -> disconnect -> reconnect using mocked SDK responses.
-- [ ] Add integration-style main-process tests for persisted session ID resume path.
+- [x] Add lifecycle tests for connect -> disconnect -> reconnect using mocked SDK responses.
+  - `test/phase-21/session-3/claude-lifecycle.test.ts` — 32 tests, all passing
+- [x] Add integration-style main-process tests for persisted session ID resume path.
 
 ### Definition of Done
 
-- Claude sessions reconnect successfully after simulated app restart.
-- No leaked subscriptions/timers/handles after disconnect or global cleanup.
+- [x] Claude sessions reconnect successfully after simulated app restart.
+- [x] No leaked subscriptions/timers/handles after disconnect or global cleanup.
 
 ---
 
@@ -113,25 +126,30 @@ Stream real Claude responses into renderer using Hive's normalized event contrac
 
 ### Tasks
 
-- [ ] Replace mock chunk streaming in `prompt` with SDK streaming API.
-- [ ] Map Claude SDK events into normalized `opencode:stream` payload shape:
+- [x] Replace mock chunk streaming in `prompt` with SDK streaming API.
+- [x] Map Claude SDK events into normalized `opencode:stream` payload shape:
   - `type`
   - `sessionId` (Hive session ID)
   - `data`
   - optional `childSessionId`
   - optional `statusPayload` for `session.status`
-- [ ] Implement `abort` via real SDK cancellation/abort APIs.
-- [ ] Ensure child/subtask events are forwarded in format compatible with `SessionView` and `useOpenCodeGlobalListener`.
+- [x] Implement `abort` via real SDK cancellation/abort APIs.
+- [x] Ensure child/subtask events are forwarded in format compatible with `SessionView` and `useOpenCodeGlobalListener`.
 
 ### Tests
 
-- [ ] Replace mock streaming tests with SDK-event-mapping tests in `test/phase-21/session-3` (or new phase folder).
-- [ ] Add abort tests verifying stream termination and final idle status semantics.
+- [x] Replace mock streaming tests with SDK-event-mapping tests in `test/phase-21/session-4/`.
+  - `test/phase-21/session-4/claude-prompt-streaming.test.ts` — 13 tests
+  - `test/phase-21/session-4/claude-abort.test.ts` — 6 tests
+  - `test/phase-21/session-4/db-agent-session-lookup.test.ts` — 3 tests
+  - `test/phase-21/session-4/ipc-sdk-routing.test.ts` — 5 tests
+  - `test/phase-21/session-4/integration-smoke.test.ts` — 5 tests
+- [x] Add abort tests verifying stream termination and final idle status semantics.
 
 ### Definition of Done
 
-- Claude prompt path emits real normalized stream events consumed by existing renderer logic.
-- Abort stops active stream and returns session to idle state consistently.
+- [x] Claude prompt path emits real normalized stream events consumed by existing renderer logic.
+- [x] Abort stops active stream and returns session to idle state consistently.
 
 ---
 
@@ -143,19 +161,29 @@ Back `getMessages` and `getSessionInfo` with real Claude SDK sources.
 
 ### Tasks
 
-- [ ] Implement `getMessages` against Claude history/message APIs.
-- [ ] Implement `getSessionInfo` with real revert metadata (`revertMessageID`, `revertDiff`) or explicit null behavior when unavailable.
-- [ ] Ensure transcript ordering and message IDs are stable for renderer undo/revert boundary logic.
+- [x] Implement `getMessages` against Claude history/message APIs.
+  - Primary: JSONL transcript reader (`claude-transcript-reader.ts`) reads `~/.claude/projects/` on-disk transcripts
+  - Secondary: In-memory accumulation during `prompt()` streaming for fast access
+  - Messages translated to OpenCode-compatible format for existing renderer mapper
+- [x] Implement `getSessionInfo` with real revert metadata (`revertMessageID`, `revertDiff`) or explicit null behavior when unavailable.
+  - Returns `{ revertMessageID: null, revertDiff: null }` — revert tracking deferred to Session 8
+- [x] Ensure transcript ordering and message IDs are stable for renderer undo/revert boundary logic.
+  - UUIDs from Claude transcripts used as message IDs; timestamp-based ordering preserved
+- [x] Add SDK-aware routing to `opencode:messages` and `opencode:sessionInfo` IPC handlers.
 
 ### Tests
 
-- [ ] Add unit tests for transcript normalization and ordering guarantees.
-- [ ] Add tests for revert metadata behavior across supported/unsupported Claude capabilities.
+- [x] Add unit tests for transcript normalization and ordering guarantees.
+  - `test/phase-21/session-5/claude-transcript-reader.test.ts` — 24 tests
+  - `test/phase-21/session-5/claude-getmessages.test.ts` — 5 tests
+- [x] Add tests for revert metadata behavior across supported/unsupported Claude capabilities.
+  - `test/phase-21/session-5/claude-getsessioninfo.test.ts` — 3 tests
+  - `test/phase-21/session-5/ipc-messages-routing.test.ts` — 5 tests
 
 ### Definition of Done
 
-- Message reload paths in `SessionView` work unchanged with Claude transcript output.
-- Revert boundary UI does not break due to provider-specific ID formats.
+- [x] Message reload paths in `SessionView` work unchanged with Claude transcript output.
+- [x] Revert boundary UI does not break due to provider-specific ID formats.
 
 ---
 
@@ -249,20 +277,31 @@ Finalize user-facing Claude provider UX and preserve existing session behavior.
 
 ### Tasks
 
-- [ ] Update `SettingsGeneral` copy from "Claude Code (Mock)" to production label.
-- [ ] Keep existing session pinning semantics: old sessions remain on stored `agent_sdk`.
-- [ ] Verify migrations are unnecessary (same `agent_sdk` value) or add migration if naming changes.
-- [ ] Ensure fallback to OpenCode remains only for unresolved historical/invalid rows.
+- [x] Update `SettingsGeneral` copy from "Claude Code (Mock)" to production label.
+  - Label was already "Claude Code" (no mock suffix found in codebase)
+  - Section header improved from "Agent SDK" to "AI Provider" for user clarity
+  - Description updated to explain existing sessions keep their original provider
+- [x] Keep existing session pinning semantics: old sessions remain on stored `agent_sdk`.
+  - Verified: `agent_sdk` is set at session creation and never mutated afterward
+  - `useSessionStore.createSession()` reads `defaultAgentSdk` from settings and passes it once
+- [x] Verify migrations are unnecessary (same `agent_sdk` value) or add migration if naming changes.
+  - Confirmed: migration v2 uses `'opencode'` default, `'claude-code'` is the production value -- no rename needed
+- [x] Ensure fallback to OpenCode remains only for unresolved historical/invalid rows.
+  - DB default is `'opencode'`, `getAgentSdkForSession()` returns null for missing rows, IPC handlers fall through to OpenCode
+- [x] Fix `useSettingsStore` partialize: added `defaultAgentSdk` and `showModelIcons` to localStorage cache for fast hydration
 
 ### Tests
 
-- [ ] Update settings tests to expect production label/copy and unchanged pinning rules.
-- [ ] Add regression test for mixed old/new sessions after settings change.
+- [x] Update settings tests to expect production label/copy and unchanged pinning rules.
+  - `test/phase-21/session-9/settings-production-label.test.ts` -- 7 tests
+- [x] Add regression test for mixed old/new sessions after settings change.
+  - `test/phase-21/session-9/session-pinning-regression.test.ts` -- 7 tests
+  - `test/phase-21/session-9/backward-compatibility.test.ts` -- 15 tests
 
 ### Definition of Done
 
-- UX reflects real Claude integration (no mock language).
-- Backward compatibility for existing sessions is preserved.
+- [x] UX reflects real Claude integration (no mock language).
+- [x] Backward compatibility for existing sessions is preserved.
 
 ---
 
@@ -274,37 +313,51 @@ Finalize implementation quality gates and ensure no mock placeholders remain in 
 
 ### Tasks
 
-- [ ] Remove or resolve all `TODO(claude-code-sdk)` markers in `src/main/services/claude-code-implementer.ts`.
-- [ ] Update `test/phase-21/session-8/integration-verification.test.ts` (currently expects TODO markers) to assert production readiness instead.
-- [ ] Update docs:
-  - `docs/specs/agent-sdk-integration.md`
+- [x] Remove or resolve all `TODO(claude-code-sdk)` markers in `src/main/services/claude-code-implementer.ts`.
+  - All 24 original markers were already resolved in Sessions 2-5
+  - 5 remaining `not yet implemented` stubs (permissionReply, permissionList, listCommands, sendCommand, renameSession) resolved with proper implementations
+- [x] Update `test/phase-21/session-8/integration-verification.test.ts` (currently expects TODO markers) to assert production readiness instead.
+  - Expanded from 3 to 13 tests covering all resolved stubs, source scanning for leftover markers, and capability completeness
+- [x] Update docs:
+  - `docs/specs/agent-sdk-integration.md` — updated status to Production, added method implementation notes table and troubleshooting section
   - this implementation doc with completion notes as sessions finish
-- [ ] Add a concise troubleshooting section for auth/session reconnect/model routing.
+- [x] Add a concise troubleshooting section for auth/session reconnect/model routing.
+  - Added to `docs/specs/agent-sdk-integration.md`: authentication, session reconnect, model routing, undo troubleshooting
 
 ### Tests
 
-- [ ] Run targeted suites for all touched phase/session test files.
-- [ ] Run full verification commands:
+- [x] Run targeted suites for all touched phase/session test files.
+- [x] Run full verification commands:
   - `pnpm lint`
   - `pnpm test`
   - `pnpm build`
 
 ### Definition of Done
 
-- No remaining mock TODO markers in Claude production path.
-- All required tests pass locally and build is green.
-- Documentation matches actual behavior.
+- [x] No remaining mock TODO markers in Claude production path.
+- [x] All required tests pass locally and build is green.
+- [x] Documentation matches actual behavior.
 
 ---
 
 ## Cross-Session Test Matrix (Must Exist by Completion)
 
-- [ ] Claude adapter unit tests (client init, lifecycle, cleanup, error handling).
-- [ ] Claude event normalization tests (status, message parts, message updates, child session mapping).
-- [ ] IPC SDK routing tests for all operations, not just connect/prompt.
-- [ ] Renderer capability-driven gating tests (undo/redo/menu/slash).
-- [ ] Settings/session pinning regression tests across mixed SDK sessions.
-- [ ] Integration verification test that asserts production Claude readiness (replaces mock TODO check).
+- [x] Claude adapter unit tests (client init, lifecycle, cleanup, error handling).
+  - `test/phase-21/session-2/claude-code-implementer.test.ts`, `claude-sdk-loader.test.ts`, `agent-sdk-manager.test.ts`
+  - `test/phase-21/session-3/claude-lifecycle.test.ts`
+- [x] Claude event normalization tests (status, message parts, message updates, child session mapping).
+  - `test/phase-21/session-4/claude-prompt-streaming.test.ts`, `claude-abort.test.ts`, `integration-smoke.test.ts`
+- [x] IPC SDK routing tests for all operations, not just connect/prompt.
+  - `test/phase-21/session-4/ipc-sdk-routing.test.ts`, `db-agent-session-lookup.test.ts`
+  - `test/phase-21/session-5/ipc-messages-routing.test.ts`
+  - `test/phase-21/session-6/ipc-model-routing.test.ts`
+  - `test/phase-21/session-8/ipc-undo-redo-routing.test.ts`, `capabilities-ipc.test.ts`
+- [x] Renderer capability-driven gating tests (undo/redo/menu/slash).
+  - `test/phase-21/session-8/capability-gating-renderer.test.ts`, `menu-capability-gating.test.ts`
+- [x] Settings/session pinning regression tests across mixed SDK sessions.
+  - `test/phase-21/session-9/settings-production-label.test.ts`, `session-pinning-regression.test.ts`, `backward-compatibility.test.ts`
+- [x] Integration verification test that asserts production Claude readiness (replaces mock TODO check).
+  - `test/phase-21/session-8/integration-verification.test.ts` — 13 tests covering all stubs resolved, no TODO markers, capability completeness
 
 ## Global Definition of Done
 

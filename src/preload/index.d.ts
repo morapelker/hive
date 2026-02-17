@@ -69,6 +69,7 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
+  agent_sdk: 'opencode' | 'claude-code'
   mode: 'build' | 'plan'
   model_provider_id: string | null
   model_id: string | null
@@ -205,6 +206,7 @@ declare global {
           connection_id?: string | null
           name?: string | null
           opencode_session_id?: string | null
+          agent_sdk?: 'opencode' | 'claude-code'
           model_provider_id?: string | null
           model_id?: string | null
           model_variant?: string | null
@@ -219,6 +221,7 @@ declare global {
             name?: string | null
             status?: 'active' | 'completed' | 'error'
             opencode_session_id?: string | null
+            agent_sdk?: 'opencode' | 'claude-code'
             mode?: 'build' | 'plan'
             model_provider_id?: string | null
             model_id?: string | null
@@ -362,6 +365,8 @@ declare global {
         logs: string
       }>
       isLogMode: () => Promise<boolean>
+      detectAgentSdks: () => Promise<{ opencode: boolean; claude: boolean }>
+      quitApp: () => Promise<void>
       openInApp: (appName: string, path: string) => Promise<{ success: boolean; error?: string }>
       openInChrome: (
         url: string,
@@ -377,6 +382,8 @@ declare global {
       updateMenuState: (state: {
         hasActiveSession: boolean
         hasActiveWorktree: boolean
+        canUndo?: boolean
+        canRedo?: boolean
       }) => Promise<void>
       onMenuAction: (channel: string, callback: () => void) => () => void
     }
@@ -424,7 +431,7 @@ declare global {
         opencodeSessionId: string
       ) => Promise<{ success: boolean; messages: unknown[]; error?: string }>
       // List available models from all configured providers
-      listModels: () => Promise<{
+      listModels: (opts?: { agentSdk?: 'opencode' | 'claude-code' }) => Promise<{
         success: boolean
         providers: Record<string, unknown>
         error?: string
@@ -434,11 +441,13 @@ declare global {
         providerID: string
         modelID: string
         variant?: string
+        agentSdk?: 'opencode' | 'claude-code'
       }) => Promise<{ success: boolean; error?: string }>
       // Get model info (name, context limit)
       modelInfo: (
         worktreePath: string,
-        modelId: string
+        modelId: string,
+        agentSdk?: 'opencode' | 'claude-code'
       ) => Promise<{
         success: boolean
         model?: { id: string; name: string; limit: { context: number } }
@@ -454,6 +463,19 @@ declare global {
       questionReject: (
         requestId: string,
         worktreePath?: string
+      ) => Promise<{ success: boolean; error?: string }>
+      // Approve a pending plan (ExitPlanMode) — unblocks the SDK to implement
+      planApprove: (
+        worktreePath: string,
+        hiveSessionId: string,
+        requestId?: string
+      ) => Promise<{ success: boolean; error?: string }>
+      // Reject a pending plan with user feedback — Claude will revise
+      planReject: (
+        worktreePath: string,
+        hiveSessionId: string,
+        feedback: string,
+        requestId?: string
       ) => Promise<{ success: boolean; error?: string }>
       // Reply to a pending permission request (allow once, allow always, or reject)
       permissionReply: (
@@ -502,7 +524,8 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>
       // List available slash commands from the SDK
       commands: (
-        worktreePath: string
+        worktreePath: string,
+        sessionId?: string
       ) => Promise<{ success: boolean; commands: OpenCodeCommand[]; error?: string }>
       // Rename a session's title via the OpenCode PATCH API
       renameSession: (
@@ -510,6 +533,21 @@ declare global {
         title: string,
         worktreePath?: string
       ) => Promise<{ success: boolean; error?: string }>
+      // Get SDK capabilities for the current session
+      capabilities: (opencodeSessionId?: string) => Promise<{
+        success: boolean
+        capabilities?: {
+          supportsUndo: boolean
+          supportsRedo: boolean
+          supportsCommands: boolean
+          supportsPermissionRequests: boolean
+          supportsQuestionPrompts: boolean
+          supportsModelSelection: boolean
+          supportsReconnect: boolean
+          supportsPartialStreaming: boolean
+        }
+        error?: string
+      }>
       // Fork an existing session at an optional message boundary
       fork: (
         worktreePath: string,
@@ -734,6 +772,18 @@ declare global {
         success: boolean
         error?: string
       }>
+      // Start watching a worktree's .git/HEAD for branch changes (lightweight, sidebar use)
+      watchBranch: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Stop watching a worktree's branch
+      unwatchBranch: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Subscribe to branch change events (lightweight, from branch-watcher)
+      onBranchChanged: (callback: (event: { worktreePath: string }) => void) => () => void
       // Get branch info (name, tracking, ahead/behind)
       getBranchInfo: (worktreePath: string) => Promise<{
         success: boolean

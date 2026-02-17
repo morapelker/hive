@@ -106,15 +106,36 @@ export class DatabaseService {
 
     for (const migration of MIGRATIONS) {
       if (migration.version > version) {
-        db.exec(migration.up)
+        try {
+          db.exec(migration.up)
+        } catch (err) {
+          // Log but don't crash -- partial migrations (e.g. duplicate column)
+          // are handled by the idempotent repair step below.
+          console.error(
+            `[db] Migration v${migration.version} (${migration.name}) failed:`,
+            err instanceof Error ? err.message : String(err)
+          )
+        }
         this.setSetting('schema_version', migration.version.toString())
       }
     }
 
-    // Post-migration repair: ensure v2 tables exist even if version was already set.
-    // This handles the case where another worktree's build set the version without
-    // the tables existing (e.g. different code at that version).
+    // Post-migration repair: idempotently ensure all expected tables/columns
+    // exist. This handles partial migrations, merge conflicts, or version
+    // skew between worktree builds.
     this.ensureConnectionTables()
+  }
+
+  /**
+   * Idempotently add a column to a table. No-op if column already exists.
+   * Safe to call repeatedly (e.g. after merges that replay migrations).
+   */
+  private safeAddColumn(table: string, column: string, definition: string): void {
+    const db = this.getDb()
+    const columns = db.pragma(`table_info(${table})`) as { name: string }[]
+    if (!columns.some((c) => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
   }
 
   /**
@@ -150,15 +171,12 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_connection_members_worktree ON connection_members(worktree_id);
     `)
 
-    // Add connection_id to sessions if it doesn't exist yet
-    const columns = db.pragma('table_info(sessions)') as { name: string }[]
-    const hasConnectionId = columns.some((c) => c.name === 'connection_id')
-    if (!hasConnectionId) {
-      db.exec(`
-        ALTER TABLE sessions ADD COLUMN connection_id TEXT DEFAULT NULL
-          REFERENCES connections(id) ON DELETE SET NULL;
-      `)
-    }
+    this.safeAddColumn(
+      'sessions',
+      'connection_id',
+      'TEXT DEFAULT NULL REFERENCES connections(id) ON DELETE SET NULL'
+    )
+    this.safeAddColumn('sessions', 'agent_sdk', "TEXT NOT NULL DEFAULT 'opencode'")
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
@@ -551,6 +569,7 @@ export class DatabaseService {
       name: data.name ?? null,
       status: 'active',
       opencode_session_id: data.opencode_session_id ?? null,
+      agent_sdk: data.agent_sdk ?? 'opencode',
       mode: 'build',
       model_provider_id: data.model_provider_id ?? null,
       model_id: data.model_id ?? null,
@@ -561,8 +580,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, agent_sdk, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -571,6 +590,7 @@ export class DatabaseService {
       session.name,
       session.status,
       session.opencode_session_id,
+      session.agent_sdk,
       session.mode,
       session.model_provider_id,
       session.model_id,
@@ -587,6 +607,14 @@ export class DatabaseService {
     const db = this.getDb()
     const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Session | undefined
     return row ?? null
+  }
+
+  getAgentSdkForSession(agentSessionId: string): 'opencode' | 'claude-code' | null {
+    const db = this.getDb()
+    const row = db
+      .prepare('SELECT agent_sdk FROM sessions WHERE opencode_session_id = ? LIMIT 1')
+      .get(agentSessionId) as { agent_sdk: 'opencode' | 'claude-code' } | undefined
+    return row?.agent_sdk ?? null
   }
 
   getSessionsByWorktree(worktreeId: string): Session[] {
@@ -631,6 +659,10 @@ export class DatabaseService {
     if (data.opencode_session_id !== undefined) {
       updates.push('opencode_session_id = ?')
       values.push(data.opencode_session_id)
+    }
+    if (data.agent_sdk !== undefined) {
+      updates.push('agent_sdk = ?')
+      values.push(data.agent_sdk)
     }
     if (data.mode !== undefined) {
       updates.push('mode = ?')

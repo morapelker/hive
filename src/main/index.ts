@@ -1,7 +1,7 @@
 import fixPath from 'fix-path'
 import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
-import { spawn, exec } from 'child_process'
+import { spawn, exec, execFileSync } from 'child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
@@ -15,6 +15,7 @@ import {
   cleanupFileTreeWatchers,
   registerGitFileHandlers,
   cleanupWorktreeWatchers,
+  cleanupBranchWatchers,
   registerSettingsHandlers,
   registerFileHandlers,
   registerScriptHandlers,
@@ -30,6 +31,10 @@ import { createLogger, getLogDir } from './services/logger'
 import { createResponseLog, appendResponseLog } from './services/response-logger'
 import { notificationService } from './services/notification-service'
 import { updaterService } from './services/updater'
+import { ClaudeCodeImplementer } from './services/claude-code-implementer'
+import { AgentSdkManager } from './services/agent-sdk-manager'
+import { resolveClaudeBinaryPath } from './services/claude-binary-resolver'
+import type { AgentSdkImplementer } from './services/agent-sdk-types'
 
 const log = createLogger({ component: 'Main' })
 
@@ -264,6 +269,33 @@ function registerSystemHandlers(): void {
       }
     }
   })
+
+  // Detect which agent SDKs are installed on the system (first-launch setup)
+  ipcMain.handle('system:detectAgentSdks', () => {
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which'
+    const check = (binary: string): boolean => {
+      try {
+        const result = execFileSync(whichCmd, [binary], {
+          encoding: 'utf-8',
+          timeout: 5000,
+          env: process.env
+        }).trim()
+        const resolved = result.split('\n')[0].trim()
+        return !!resolved && existsSync(resolved)
+      } catch {
+        return false
+      }
+    }
+    return {
+      opencode: check('opencode'),
+      claude: check('claude')
+    }
+  })
+
+  // Quit the app (needed for macOS where window.close() doesn't quit)
+  ipcMain.handle('system:quitApp', () => {
+    app.quit()
+  })
 }
 
 // Register response logging IPC handlers (only when --log is active)
@@ -285,7 +317,14 @@ app.whenReady().then(() => {
   // Must run before any child process spawning (opencode, scripts).
   fixPath()
 
-  log.info('App starting', { version: app.getVersion(), platform: process.platform })
+  // Resolve system-wide Claude binary (must run after fixPath)
+  const claudeBinaryPath = resolveClaudeBinaryPath()
+
+  log.info('App starting', {
+    version: app.getVersion(),
+    platform: process.platform,
+    claudeBinary: claudeBinaryPath ?? 'not found'
+  })
 
   if (isLogMode) {
     log.info('Response logging enabled via --log flag')
@@ -327,8 +366,53 @@ app.whenReady().then(() => {
       updateMenuState(state)
     })
 
+    // Create SDK manager for multi-provider dispatch
+    // OpenCode sessions still route through openCodeService directly (fallback path in handlers)
+    // The placeholder just satisfies AgentSdkManager's constructor signature
+    const claudeImpl = new ClaudeCodeImplementer()
+    claudeImpl.setDatabaseService(getDatabase())
+    claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
+    const openCodePlaceholder = {
+      id: 'opencode' as const,
+      capabilities: {
+        supportsUndo: true,
+        supportsRedo: true,
+        supportsCommands: true,
+        supportsPermissionRequests: true,
+        supportsQuestionPrompts: true,
+        supportsModelSelection: true,
+        supportsReconnect: true,
+        supportsPartialStreaming: true
+      },
+      connect: async () => ({ sessionId: '' }),
+      reconnect: async () => ({ success: false }),
+      disconnect: async () => {},
+      cleanup: async () => {},
+      prompt: async () => {},
+      abort: async () => false,
+      getMessages: async () => [],
+      getAvailableModels: async () => ({}),
+      getModelInfo: async () => null,
+      setSelectedModel: () => {},
+      getSessionInfo: async () => ({ revertMessageID: null, revertDiff: null }),
+      questionReply: async () => {},
+      questionReject: async () => {},
+      permissionReply: async () => {},
+      permissionList: async () => [],
+      undo: async () => ({}),
+      redo: async () => ({}),
+      listCommands: async () => [],
+      sendCommand: async () => {},
+      renameSession: async () => {},
+      setMainWindow: () => {}
+    } satisfies AgentSdkImplementer
+    const sdkManager = new AgentSdkManager(openCodePlaceholder, claudeImpl)
+    sdkManager.setMainWindow(mainWindow)
+
+    const databaseService = getDatabase()
+
     log.info('Registering OpenCode handlers')
-    registerOpenCodeHandlers(mainWindow)
+    registerOpenCodeHandlers(mainWindow, sdkManager, databaseService)
     log.info('Registering FileTree handlers')
     registerFileTreeHandlers(mainWindow)
     log.info('Registering GitFile handlers')
@@ -372,6 +456,8 @@ app.on('will-quit', async () => {
   await cleanupFileTreeWatchers()
   // Cleanup worktree watchers (git status monitoring)
   await cleanupWorktreeWatchers()
+  // Cleanup branch watchers (sidebar branch names)
+  await cleanupBranchWatchers()
   // Cleanup OpenCode connections
   await cleanupOpenCode()
   // Close database

@@ -1,10 +1,17 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { openCodeService } from '../services/opencode-service'
 import { createLogger } from '../services/logger'
+import type { DatabaseService } from '../db/database'
+import type { AgentSdkManager } from '../services/agent-sdk-manager'
+import { ClaudeCodeImplementer } from '../services/claude-code-implementer'
 
 const log = createLogger({ component: 'OpenCodeHandlers' })
 
-export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
+export function registerOpenCodeHandlers(
+  mainWindow: BrowserWindow,
+  sdkManager?: AgentSdkManager,
+  dbService?: DatabaseService
+): void {
   // Set the main window for event forwarding
   openCodeService.setMainWindow(mainWindow)
 
@@ -14,6 +21,16 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, worktreePath: string, hiveSessionId: string) => {
       log.info('IPC: opencode:connect', { worktreePath, hiveSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const session = dbService.getSession(hiveSessionId)
+          if (session?.agent_sdk === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.connect(worktreePath, hiveSessionId)
+            return { success: true, ...result }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.connect(worktreePath, hiveSessionId)
         return { success: true, ...result }
       } catch (error) {
@@ -32,6 +49,16 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, worktreePath: string, opencodeSessionId: string, hiveSessionId: string) => {
       log.info('IPC: opencode:reconnect', { worktreePath, opencodeSessionId, hiveSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.reconnect(worktreePath, opencodeSessionId, hiveSessionId)
+            return result
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.reconnect(
           worktreePath,
           opencodeSessionId,
@@ -102,6 +129,16 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
       model
     })
     try {
+      // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+      if (sdkManager && dbService) {
+        const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+        if (sdkId === 'claude-code') {
+          const impl = sdkManager.getImplementer('claude-code')
+          await impl.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
+          return { success: true }
+        }
+      }
+      // Fall through to existing OpenCode path
       await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
       return { success: true }
     } catch (error) {
@@ -119,6 +156,16 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, worktreePath: string, opencodeSessionId: string) => {
       log.info('IPC: opencode:disconnect', { worktreePath, opencodeSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            await impl.disconnect(worktreePath, opencodeSessionId)
+            return { success: true }
+          }
+        }
+        // Fall through to existing OpenCode path
         await openCodeService.disconnect(worktreePath, opencodeSessionId)
         return { success: true }
       } catch (error) {
@@ -132,27 +179,54 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
   )
 
   // Get available models from all configured providers
-  ipcMain.handle('opencode:models', async () => {
-    log.info('IPC: opencode:models')
-    try {
-      const providers = await openCodeService.getAvailableModels()
-      return { success: true, providers }
-    } catch (error) {
-      log.error('IPC: opencode:models failed', { error })
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        providers: {}
+  ipcMain.handle(
+    'opencode:models',
+    async (_event, opts?: { agentSdk?: 'opencode' | 'claude-code' }) => {
+      log.info('IPC: opencode:models', { agentSdk: opts?.agentSdk })
+      try {
+        if (opts?.agentSdk === 'claude-code' && sdkManager) {
+          const impl = sdkManager.getImplementer('claude-code')
+          if (impl) {
+            const providers = await impl.getAvailableModels()
+            return { success: true, providers }
+          }
+        }
+        // Default: OpenCode
+        const providers = await openCodeService.getAvailableModels()
+        return { success: true, providers }
+      } catch (error) {
+        log.error('IPC: opencode:models failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          providers: {}
+        }
       }
     }
-  })
+  )
 
   // Set the selected model
   ipcMain.handle(
     'opencode:setModel',
-    async (_event, model: { providerID: string; modelID: string; variant?: string }) => {
-      log.info('IPC: opencode:setModel', { model })
+    async (
+      _event,
+      model: {
+        providerID: string
+        modelID: string
+        variant?: string
+        agentSdk?: 'opencode' | 'claude-code'
+      }
+    ) => {
+      log.info('IPC: opencode:setModel', { model: model.modelID, agentSdk: model.agentSdk })
       try {
+        if (model.agentSdk === 'claude-code' && sdkManager) {
+          const impl = sdkManager.getImplementer('claude-code')
+          if (impl) {
+            impl.setSelectedModel(model)
+            return { success: true }
+          }
+        }
+        // Default: OpenCode
         openCodeService.setSelectedModel(model)
         return { success: true }
       } catch (error) {
@@ -168,9 +242,27 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
   // Get model info (name, context limit)
   ipcMain.handle(
     'opencode:modelInfo',
-    async (_event, { worktreePath, modelId }: { worktreePath: string; modelId: string }) => {
-      log.info('IPC: opencode:modelInfo', { worktreePath, modelId })
+    async (
+      _event,
+      {
+        worktreePath,
+        modelId,
+        agentSdk
+      }: { worktreePath: string; modelId: string; agentSdk?: 'opencode' | 'claude-code' }
+    ) => {
+      log.info('IPC: opencode:modelInfo', { worktreePath, modelId, agentSdk })
       try {
+        if (agentSdk === 'claude-code' && sdkManager) {
+          const impl = sdkManager.getImplementer('claude-code')
+          if (impl) {
+            const model = await impl.getModelInfo(worktreePath, modelId)
+            if (!model) {
+              return { success: false, error: 'Model not found' }
+            }
+            return { success: true, model }
+          }
+        }
+        // Default: OpenCode
         const model = await openCodeService.getModelInfo(worktreePath, modelId)
         if (!model) {
           return { success: false, error: 'Model not found' }
@@ -192,6 +284,16 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
       log.info('IPC: opencode:sessionInfo', { worktreePath, sessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.getSessionInfo(worktreePath, sessionId)
+            return { success: true, ...result }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.getSessionInfo(worktreePath, sessionId)
         return { success: true, ...result }
       } catch (error) {
@@ -207,9 +309,22 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
   // List available slash commands
   ipcMain.handle(
     'opencode:commands',
-    async (_event, { worktreePath }: { worktreePath: string }) => {
-      log.info('IPC: opencode:commands', { worktreePath })
+    async (
+      _event,
+      { worktreePath, sessionId }: { worktreePath: string; sessionId?: string }
+    ) => {
+      log.info('IPC: opencode:commands', { worktreePath, sessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService && sessionId) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const commands = await impl.listCommands(worktreePath)
+            return { success: true, commands }
+          }
+        }
+        // Fall through to existing OpenCode path
         const commands = await openCodeService.listCommands(worktreePath)
         return { success: true, commands }
       } catch (error) {
@@ -244,6 +359,18 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     ) => {
       log.info('IPC: opencode:command', { worktreePath, sessionId, command, args, model })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            // Note: model param intentionally not passed — Claude Code uses
+            // its own model selection mechanism via setSelectedModel()
+            await impl.sendCommand(worktreePath, sessionId, command, args)
+            return { success: true }
+          }
+        }
+        // Fall through to existing OpenCode path
         await openCodeService.sendCommand(worktreePath, sessionId, command, args, model)
         return { success: true }
       } catch (error) {
@@ -262,13 +389,24 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
       log.info('IPC: opencode:undo', { worktreePath, sessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.undo(worktreePath, sessionId, '')
+            return { success: true, ...(result as Record<string, unknown>) }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.undo(worktreePath, sessionId)
         return { success: true, ...result }
       } catch (error) {
-        log.error('IPC: opencode:undo failed', { error })
+        const err = error instanceof Error ? error : new Error(String(error))
+        log.error('IPC: opencode:undo failed', err)
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
+          error: err.message
         }
       }
     }
@@ -280,17 +418,49 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, { worktreePath, sessionId }: { worktreePath: string; sessionId: string }) => {
       log.info('IPC: opencode:redo', { worktreePath, sessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.redo(worktreePath, sessionId, '')
+            return { success: true, ...(result as Record<string, unknown>) }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.redo(worktreePath, sessionId)
         return { success: true, ...result }
       } catch (error) {
-        log.error('IPC: opencode:redo failed', { error })
+        const err = error instanceof Error ? error : new Error(String(error))
+        log.error('IPC: opencode:redo failed', err)
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
+          error: err.message
         }
       }
     }
   )
+
+  // Get SDK capabilities for a session
+  ipcMain.handle('opencode:capabilities', async (_event, { sessionId }: { sessionId?: string }) => {
+    try {
+      if (sdkManager && dbService && sessionId) {
+        const sdkId = dbService.getAgentSdkForSession(sessionId)
+        if (sdkId) {
+          return { success: true, capabilities: sdkManager.getCapabilities(sdkId) }
+        }
+      }
+      // Default to opencode capabilities
+      const defaultCaps = sdkManager?.getCapabilities('opencode') ?? null
+      return { success: true, capabilities: defaultCaps }
+    } catch (error) {
+      log.error('IPC: opencode:capabilities failed', { error })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
 
   // Reply to a pending question from the AI
   ipcMain.handle(
@@ -305,6 +475,15 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     ) => {
       log.info('IPC: opencode:question:reply', { requestId })
       try {
+        // Route to Claude Code implementer if this is a Claude Code question
+        if (sdkManager) {
+          const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
+          if (claudeImpl.hasPendingQuestion(requestId)) {
+            await claudeImpl.questionReply(requestId, answers, worktreePath)
+            return { success: true }
+          }
+        }
+        // Fall through to OpenCode
         await openCodeService.questionReply(requestId, answers, worktreePath)
         return { success: true }
       } catch (error) {
@@ -323,10 +502,92 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, { requestId, worktreePath }: { requestId: string; worktreePath?: string }) => {
       log.info('IPC: opencode:question:reject', { requestId })
       try {
+        // Route to Claude Code implementer if this is a Claude Code question
+        if (sdkManager) {
+          const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
+          if (claudeImpl.hasPendingQuestion(requestId)) {
+            await claudeImpl.questionReject(requestId, worktreePath)
+            return { success: true }
+          }
+        }
+        // Fall through to OpenCode
         await openCodeService.questionReject(requestId, worktreePath)
         return { success: true }
       } catch (error) {
         log.error('IPC: opencode:question:reject failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Approve a pending plan (ExitPlanMode) — unblocks the SDK to implement
+  ipcMain.handle(
+    'opencode:plan:approve',
+    async (
+      _event,
+      {
+        worktreePath,
+        hiveSessionId,
+        requestId
+      }: { worktreePath: string; hiveSessionId: string; requestId?: string }
+    ) => {
+      log.info('IPC: opencode:plan:approve', { hiveSessionId, requestId })
+      try {
+        if (sdkManager) {
+          const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
+          if (
+            (requestId && claudeImpl.hasPendingPlan(requestId)) ||
+            claudeImpl.hasPendingPlanForSession(hiveSessionId)
+          ) {
+            await claudeImpl.planApprove(worktreePath, hiveSessionId, requestId)
+            return { success: true }
+          }
+        }
+        return { success: false, error: 'No pending plan found' }
+      } catch (error) {
+        log.error('IPC: opencode:plan:approve failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Reject a pending plan with user feedback — Claude will revise
+  ipcMain.handle(
+    'opencode:plan:reject',
+    async (
+      _event,
+      {
+        worktreePath,
+        hiveSessionId,
+        feedback,
+        requestId
+      }: { worktreePath: string; hiveSessionId: string; feedback: string; requestId?: string }
+    ) => {
+      log.info('IPC: opencode:plan:reject', {
+        hiveSessionId,
+        requestId,
+        feedbackLength: feedback.length
+      })
+      try {
+        if (sdkManager) {
+          const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
+          if (
+            (requestId && claudeImpl.hasPendingPlan(requestId)) ||
+            claudeImpl.hasPendingPlanForSession(hiveSessionId)
+          ) {
+            await claudeImpl.planReject(worktreePath, hiveSessionId, feedback, requestId)
+            return { success: true }
+          }
+        }
+        return { success: false, error: 'No pending plan found' }
+      } catch (error) {
+        log.error('IPC: opencode:plan:reject failed', { error })
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -441,6 +702,16 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, worktreePath: string, opencodeSessionId: string) => {
       log.info('IPC: opencode:messages', { worktreePath, opencodeSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const messages = await impl.getMessages(worktreePath, opencodeSessionId)
+            return { success: true, messages }
+          }
+        }
+        // Fall through to existing OpenCode path
         const messages = await openCodeService.getMessages(worktreePath, opencodeSessionId)
         return { success: true, messages }
       } catch (error) {
@@ -460,6 +731,16 @@ export function registerOpenCodeHandlers(mainWindow: BrowserWindow): void {
     async (_event, worktreePath: string, opencodeSessionId: string) => {
       log.info('IPC: opencode:abort', { worktreePath, opencodeSessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const result = await impl.abort(worktreePath, opencodeSessionId)
+            return { success: result }
+          }
+        }
+        // Fall through to existing OpenCode path
         const result = await openCodeService.abort(worktreePath, opencodeSessionId)
         return { success: result }
       } catch (error) {

@@ -207,6 +207,19 @@ beforeEach(() => {
       permissionReply: vi.fn().mockResolvedValue({ success: true }),
       permissionList: vi.fn().mockResolvedValue({ success: true, permissions: [] }),
       commands: vi.fn().mockResolvedValue({ success: true, commands: [] }),
+      capabilities: vi.fn().mockResolvedValue({
+        success: true,
+        capabilities: {
+          supportsUndo: true,
+          supportsRedo: true,
+          supportsCommands: true,
+          supportsPermissionRequests: true,
+          supportsQuestionPrompts: true,
+          supportsModelSelection: true,
+          supportsReconnect: true,
+          supportsPartialStreaming: true
+        }
+      }),
       onStream: vi.fn().mockImplementation(() => () => {})
     },
     writable: true,

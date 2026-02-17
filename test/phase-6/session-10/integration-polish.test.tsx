@@ -640,7 +640,7 @@ describe('Session 10: Integration & Polish', () => {
       expect(screen.getByText('Context compacted')).toBeTruthy()
     })
 
-    test('Tool group collapses 3+ consecutive tools', () => {
+    test('3+ consecutive tools render as individual cards', () => {
       const makeTool = (id: string, name: string): StreamingPart => ({
         type: 'tool_use',
         toolUse: {
@@ -662,9 +662,10 @@ describe('Session 10: Integration & Polish', () => {
 
       render(<AssistantCanvas content="" timestamp="" parts={parts} />)
 
-      // 3 tools should be grouped
-      expect(screen.getByTestId('tool-call-group')).toBeTruthy()
-      expect(screen.getByText('3 tool calls')).toBeTruthy()
+      // All 3 tools rendered individually (Read = compact-file-tool, Grep = tool-card)
+      const fileTools = screen.queryAllByTestId('compact-file-tool')
+      const cardTools = screen.queryAllByTestId('tool-card')
+      expect(fileTools.length + cardTools.length).toBe(3)
     })
   })
 

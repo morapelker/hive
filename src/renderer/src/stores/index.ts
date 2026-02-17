@@ -2,7 +2,7 @@ export { useLayoutStore, LAYOUT_CONSTRAINTS, type BottomPanelTab } from './useLa
 export { useThemeStore } from './useThemeStore'
 export { useProjectStore } from './useProjectStore'
 export { useWorktreeStore } from './useWorktreeStore'
-export { useSessionStore, type SessionMode } from './useSessionStore'
+export { useSessionStore, type SessionMode, type PendingPlan } from './useSessionStore'
 export {
   useSessionHistoryStore,
   type SessionWithWorktree,
