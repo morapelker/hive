@@ -42,12 +42,13 @@ interface ConnectionState {
   deleteConnection: (connectionId: string) => Promise<void>
   addMember: (connectionId: string, worktreeId: string) => Promise<void>
   removeMember: (connectionId: string, worktreeId: string) => Promise<void>
+  updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<void>
   selectConnection: (id: string | null) => void
 }
 
 export const useConnectionStore = create<ConnectionState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       // Initial state
       connections: [],
       isLoading: false,
@@ -164,6 +165,56 @@ export const useConnectionStore = create<ConnectionState>()(
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           toast.error(`Failed to remove member: ${message}`)
+        }
+      },
+
+      updateConnectionMembers: async (connectionId: string, desiredWorktreeIds: string[]) => {
+        const currentConnection = get().connections.find((c) => c.id === connectionId)
+        if (!currentConnection) {
+          toast.error('Connection not found')
+          return
+        }
+
+        const currentIds = new Set(currentConnection.members.map((m) => m.worktree_id))
+        const desiredSet = new Set(desiredWorktreeIds)
+
+        const toAdd = desiredWorktreeIds.filter((id) => !currentIds.has(id))
+        const toRemove = Array.from(currentIds).filter((id) => !desiredSet.has(id))
+
+        if (toAdd.length === 0 && toRemove.length === 0) {
+          return
+        }
+
+        try {
+          // Add new members first (to avoid transiently having 0 members)
+          for (const id of toAdd) {
+            const addResult = await window.connectionOps.addMember(connectionId, id)
+            if (!addResult.success) {
+              toast.error(`Failed to add member: ${addResult.error || 'Unknown error'}`)
+              return
+            }
+          }
+          // Remove departing members
+          for (const id of toRemove) {
+            const removeResult = await window.connectionOps.removeMember(connectionId, id)
+            if (!removeResult.success) {
+              toast.error(`Failed to remove member: ${removeResult.error || 'Unknown error'}`)
+              return
+            }
+          }
+          // Reload the connection to get final state
+          const result = await window.connectionOps.get(connectionId)
+          if (result.success && result.connection) {
+            set((state) => ({
+              connections: state.connections.map((c) =>
+                c.id === connectionId ? result.connection! : c
+              )
+            }))
+          }
+          toast.success('Connection updated')
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          toast.error(`Failed to update connection: ${message}`)
         }
       },
 
