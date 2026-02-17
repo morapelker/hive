@@ -151,9 +151,9 @@ function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string
     }
   }
 
-  // Show skill name
+  // Show skill name — Skill tool uses `skill` param, not `name`
   if (lowerName.includes('skill')) {
-    const skillName = (input.name || '') as string
+    const skillName = (input.skill || input.name || '') as string
     return skillName || 'unknown'
   }
 
@@ -416,9 +416,9 @@ function CollapsedContent({
     )
   }
 
-  // Skill
+  // Skill — Skill tool uses `skill` param, not `name`
   if (lowerName === 'skill' || lowerName === 'mcp_skill' || lowerName.includes('skill')) {
-    const skillName = (input.name as string) || 'unknown'
+    const skillName = (input.skill as string) || (input.name as string) || 'unknown'
     return (
       <>
         <Zap className="h-3.5 w-3.5 text-amber-400 shrink-0" />
@@ -562,7 +562,9 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
     '') as string
   const shortPath = shortenPath(filePath, cwd)
   const label = isSkill ? 'Skill' : getFileToolLabel(toolUse.name)
-  const detail = isSkill ? (toolUse.input.name as string) || 'unknown' : shortPath
+  const detail = isSkill
+    ? (toolUse.input.skill as string) || (toolUse.input.name as string) || 'unknown'
+    : shortPath
   const isRunning = toolUse.status === 'pending' || toolUse.status === 'running'
   const isError = toolUse.status === 'error'
   const hasOutput = !!(toolUse.output || toolUse.error)
