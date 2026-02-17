@@ -31,6 +31,7 @@ import { TodoWriteToolView } from './tools/TodoWriteToolView'
 import { TaskToolView } from './tools/TaskToolView'
 import { QuestionToolView } from './tools/QuestionToolView'
 import { SkillToolView } from './tools/SkillToolView'
+import { ExitPlanModeToolView } from './tools/ExitPlanModeToolView'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
 
@@ -214,7 +215,9 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   TodoWrite: TodoWriteToolView,
   todowrite: TodoWriteToolView,
   Skill: SkillToolView,
-  mcp_skill: SkillToolView
+  mcp_skill: SkillToolView,
+  ExitPlanMode: ExitPlanModeToolView,
+  exitplanmode: ExitPlanModeToolView
 }
 
 /** Resolve a tool name to its rich renderer, falling back to FallbackToolView */
@@ -242,6 +245,7 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (lower === 'task') return TaskToolView
   if (lower.includes('question')) return QuestionToolView
   if (lower.includes('skill')) return SkillToolView
+  if (lower === 'exitplanmode') return ExitPlanModeToolView
   // Fallback
   return FallbackToolView
 }
@@ -464,14 +468,15 @@ function CollapsedContent({
 
   // ExitPlanMode — plan review tool
   if (lowerName === 'exitplanmode') {
+    const isAccepted = toolUse.status === 'success'
     return (
       <>
         <span className="text-emerald-500 shrink-0">
           <ClipboardCheck className="h-3.5 w-3.5" />
         </span>
-        <span className="font-medium text-foreground shrink-0">Plan Ready</span>
+        <span className="font-medium text-foreground shrink-0">Plan</span>
         <span className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 rounded px-1 py-0.5 font-medium shrink-0">
-          review
+          {isAccepted ? 'accepted' : 'review'}
         </span>
       </>
     )
@@ -717,24 +722,87 @@ export const ToolCard = memo(function ToolCard({
     )
   }
 
+  // ExitPlanMode: always-expanded plan card with fake user message on acceptance
+  if (isExitPlanMode) {
+    const planAccepted = toolUse.status === 'success'
+    return (
+      <>
+        <div
+          className={cn(
+            compact
+              ? 'my-0 rounded-md border border-l-2 text-xs'
+              : 'my-1 rounded-md border border-l-2 text-xs',
+            toolUse.status === 'error'
+              ? 'border-red-500/30 bg-red-500/5'
+              : 'border-border bg-primary/[0.04]'
+          )}
+          style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
+          data-testid="tool-card"
+          data-tool-name={toolUse.name}
+          data-tool-status={toolUse.status}
+        >
+          {/* Header */}
+          <div
+            className={cn(
+              'flex items-center gap-1.5 w-full text-left',
+              compact ? 'px-2 py-1.5' : 'px-2.5 py-1.5'
+            )}
+            data-testid="tool-card-header"
+          >
+            <CollapsedContent toolUse={toolUse} cwd={cwd} />
+            <span className="flex-1" />
+            {duration && (
+              <span
+                className="text-muted-foreground shrink-0 flex items-center gap-1"
+                data-testid="tool-duration"
+              >
+                <Clock className="h-3 w-3" />
+                {duration}
+              </span>
+            )}
+            <StatusIndicator status={toolUse.status} />
+          </div>
+          {/* Always-visible plan content */}
+          {hasPlanInput && (
+            <div
+              className={cn('border-t border-border', compact ? 'px-3 py-2.5' : 'px-4 py-3')}
+              data-testid="tool-output"
+            >
+              <Renderer
+                name={toolUse.name}
+                input={toolUse.input}
+                output={toolUse.output}
+                error={toolUse.error}
+                status={toolUse.status}
+              />
+            </div>
+          )}
+        </div>
+        {/* Fake user message after plan acceptance */}
+        {planAccepted && (
+          <div className="flex justify-end px-6 py-4" data-testid="plan-accepted-message">
+            <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-primary/10 text-foreground">
+              <p className="text-sm whitespace-pre-wrap leading-relaxed">Implement the plan</p>
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }
+
   return (
     <div
       className={cn(
         compact
           ? 'my-0 rounded-md border border-l-2 text-xs'
           : 'my-1 rounded-md border border-l-2 text-xs',
-        toolUse.status === 'running' && !isExitPlanMode && 'animate-pulse',
-        isExitPlanMode && toolUse.status === 'running'
-          ? 'border-emerald-500/30 bg-emerald-500/5'
-          : toolUse.status === 'error'
-            ? 'border-red-500/30 bg-red-500/5'
-            : 'border-border bg-muted/30'
+        toolUse.status === 'running' && 'animate-pulse',
+        toolUse.status === 'error'
+          ? 'border-red-500/30 bg-red-500/5'
+          : 'border-border bg-muted/30'
       )}
       style={{
-        borderLeftColor:
-          isExitPlanMode && toolUse.status === 'running'
-            ? '#10b981'
-            : getLeftBorderColor(toolUse.status)
+        borderLeftColor: getLeftBorderColor(toolUse.status)
       }}
       data-testid="tool-card"
       data-tool-name={toolUse.name}
