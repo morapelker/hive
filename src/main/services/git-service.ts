@@ -271,8 +271,8 @@ export class GitService {
       const projectWorktreesDir = this.ensureWorktreesDir(projectName)
       const worktreePath = join(projectWorktreesDir, breedName)
 
-      // Get the default branch to branch from
-      const defaultBranch = await this.getDefaultBranch()
+      // Branch from whatever is checked out at the root of the repository
+      const defaultBranch = await this.getCurrentBranch()
 
       // Create the worktree with a new branch
       await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, defaultBranch])
@@ -1079,7 +1079,8 @@ export class GitService {
    */
   async createWorktreeFromBranch(
     projectName: string,
-    branchName: string
+    branchName: string,
+    breedType: BreedType = 'dogs'
   ): Promise<CreateWorktreeResult> {
     try {
       // Check if branch is already checked out
@@ -1096,18 +1097,22 @@ export class GitService {
         }
       }
 
-      // Not checked out — create worktree using existing branch
-      const dirName = branchName
-        .replace(/[/\\]/g, '-')
-        .replace(/[^a-zA-Z0-9-]/g, '')
-        .toLowerCase()
+      // Get existing branches to avoid name collisions
+      const existingBranches = await this.getAllBranches()
+      const existingWorktrees = await this.listWorktrees()
+      const existingWorktreeBranches = existingWorktrees.map((w) => w.branch)
+      const existingNames = new Set([...existingBranches, ...existingWorktreeBranches])
+
+      // Select a unique breed name
+      const breedName = selectUniqueBreedName(existingNames, breedType)
 
       const projectWorktreesDir = this.ensureWorktreesDir(projectName)
-      const worktreePath = join(projectWorktreesDir, dirName)
+      const worktreePath = join(projectWorktreesDir, breedName)
 
-      await this.git.raw(['worktree', 'add', worktreePath, branchName])
+      // Create a new breed-named branch derived from the selected branch
+      await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, branchName])
 
-      return { success: true, path: worktreePath, branchName, name: dirName }
+      return { success: true, path: worktreePath, branchName: breedName, name: breedName }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       log.error(
