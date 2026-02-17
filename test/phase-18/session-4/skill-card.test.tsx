@@ -113,7 +113,7 @@ describe('Session 4: Skill Card UI', () => {
       const toolUse: ToolUseInfo = {
         id: 'tool-1',
         name: 'mcp_skill',
-        input: { name: 'test-driven-development' },
+        input: { skill: 'test-driven-development' },
         status: 'success',
         output: '<skill_content name="tdd">TDD content</skill_content>',
         startTime: Date.now(),
@@ -126,11 +126,11 @@ describe('Session 4: Skill Card UI', () => {
       expect(compact).toHaveAttribute('data-tool-name', 'mcp_skill')
     })
 
-    test('Skill tool collapsed header shows skill name', () => {
+    test('Skill tool collapsed header shows skill name from skill param', () => {
       const toolUse: ToolUseInfo = {
         id: 'tool-1',
         name: 'Skill',
-        input: { name: 'executing-plans' },
+        input: { skill: 'superpowers:executing-plans' },
         status: 'success',
         output: 'some output',
         startTime: Date.now(),
@@ -139,7 +139,7 @@ describe('Session 4: Skill Card UI', () => {
 
       render(<ToolCard toolUse={toolUse} />)
       expect(screen.getByText('Skill')).toBeInTheDocument()
-      expect(screen.getByText('executing-plans')).toBeInTheDocument()
+      expect(screen.getByText('superpowers:executing-plans')).toBeInTheDocument()
     })
 
     test('Skill tool collapsed header shows "unknown" when no name', () => {
@@ -162,7 +162,7 @@ describe('Session 4: Skill Card UI', () => {
       const toolUse: ToolUseInfo = {
         id: 'tool-1',
         name: 'mcp_skill',
-        input: { name: 'brainstorming' },
+        input: { skill: 'brainstorming' },
         status: 'success',
         output: '<skill_content name="brainstorming">## Brainstorming Guide</skill_content>',
         startTime: Date.now(),
