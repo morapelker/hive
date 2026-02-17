@@ -522,7 +522,8 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>
       // List available slash commands from the SDK
       commands: (
-        worktreePath: string
+        worktreePath: string,
+        sessionId?: string
       ) => Promise<{ success: boolean; commands: OpenCodeCommand[]; error?: string }>
       // Rename a session's title via the OpenCode PATCH API
       renameSession: (

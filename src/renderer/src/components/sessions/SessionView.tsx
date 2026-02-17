@@ -1186,6 +1186,25 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
+          // Handle commands_available — re-fetch slash commands after SDK init
+          if (event.type === 'session.commands_available') {
+            const wtPath = transcriptSourceRef.current.worktreePath
+            const opcSid = transcriptSourceRef.current.opencodeSessionId
+            if (wtPath) {
+              window.opencodeOps
+                .commands(wtPath, opcSid ?? undefined)
+                .then((result) => {
+                  if (result.success && result.commands) {
+                    setSlashCommands(result.commands)
+                  }
+                })
+                .catch(() => {
+                  // Silently ignore — commands will be fetched on next prompt cycle
+                })
+            }
+            return
+          }
+
           // Handle question events
           if (event.type === 'question.asked') {
             const request = event.data
@@ -1865,9 +1884,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
 
         // Fetch slash commands (fire-and-forget)
-        const fetchCommands = (path: string): void => {
+        const fetchCommands = (path: string, opcSessionId?: string): void => {
           window.opencodeOps
-            .commands(path)
+            .commands(path, opcSessionId)
             .then((result) => {
               if (result.success && result.commands) {
                 setSlashCommands(result.commands)
@@ -1939,7 +1958,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setRevertMessageID(reconnectResult.revertMessageID)
             }
             fetchModelLimits()
-            fetchCommands(wtPath)
+            fetchCommands(wtPath, existingOpcSessionId)
             hydratePermissions(wtPath)
             // Create response log file if logging is enabled
             if (isLogModeRef.current) {
@@ -2008,7 +2027,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
           setRevertMessageID(null)
           fetchModelLimits()
-          fetchCommands(wtPath)
+          fetchCommands(wtPath, connectResult.sessionId)
           hydratePermissions(wtPath)
           // Persist only for first-time session connections.
           // If reconnect to an existing OpenCode session failed and we had to

@@ -1042,7 +1042,8 @@ const opencodeOps = {
 
   // List available slash commands from the SDK
   commands: (
-    worktreePath: string
+    worktreePath: string,
+    sessionId?: string
   ): Promise<{
     success: boolean
     commands: Array<{
@@ -1056,7 +1057,7 @@ const opencodeOps = {
       hints?: string[]
     }>
     error?: string
-  }> => ipcRenderer.invoke('opencode:commands', { worktreePath }),
+  }> => ipcRenderer.invoke('opencode:commands', { worktreePath, sessionId }),
 
   // Rename a session's title via the OpenCode PATCH API
   renameSession: (
