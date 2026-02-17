@@ -56,6 +56,7 @@ interface ProjectState {
   touchProject: (id: string) => Promise<void>
   refreshLanguage: (projectId: string) => Promise<void>
   reorderProjects: (fromIndex: number, toIndex: number) => void
+  sortProjectsByLastMessage: () => Promise<void>
   openProjectSettings: (projectId: string) => void
   closeProjectSettings: () => void
 }
@@ -297,6 +298,29 @@ export const useProjectStore = create<ProjectState>()(
 
           return { projects }
         })
+      },
+
+      // Sort projects by last AI message activity (newest first, NULLs last)
+      sortProjectsByLastMessage: async () => {
+        try {
+          const orderedIds = await window.db.project.sortByLastMessage()
+          await window.db.project.reorder(orderedIds)
+
+          set((state) => {
+            const projectMap = new Map(state.projects.map((p) => [p.id, p]))
+            const reordered = orderedIds
+              .map((id) => projectMap.get(id))
+              .filter((p): p is Project => p !== undefined)
+
+            // Include any projects not in orderedIds (defensive)
+            const reorderedIds = new Set(orderedIds)
+            const missing = state.projects.filter((p) => !reorderedIds.has(p.id))
+
+            return { projects: [...reordered, ...missing] }
+          })
+        } catch {
+          // Ignore sort errors
+        }
       },
 
       // Open project settings dialog globally
