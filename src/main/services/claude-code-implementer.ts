@@ -7,6 +7,9 @@ import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-type
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
 import type { DatabaseService } from '../db/database'
 import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
+import { generateSessionTitle } from './claude-session-title'
+import { ALL_BREED_NAMES, LEGACY_CITY_NAMES } from './breed-names'
+import { canonicalizeBranchName, createGitService } from './git-service'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -546,6 +549,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             sessionId: session.hiveSessionId,
             data: { newSessionId: sdkSessionId }
           })
+
+          // Fire-and-forget: generate a title for brand-new sessions only.
+          // wasPending is only true on initial materialization, not forks.
+          if (wasPending) {
+            this.handleTitleGeneration(session, prompt).catch(() => {
+              // Swallowed — handleTitleGeneration already logs internally
+            })
+          }
         }
 
         // Accumulate translated messages in-memory for getMessages()
@@ -1308,6 +1319,120 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err))
       log.error('renameSession: failed to update title', error, { hiveSessionId })
+    }
+  }
+
+  // ── Title generation ────────────────────────────────────────────
+
+  /**
+   * Asynchronously generate a session title via Agent SDK with Haiku.
+   * On success: updates DB, notifies renderer, and auto-renames branch if applicable.
+   * Fire-and-forget — errors are logged and swallowed.
+   */
+  private async handleTitleGeneration(
+    session: ClaudeSessionState,
+    userMessage: string
+  ): Promise<void> {
+    try {
+      const title = await generateSessionTitle(userMessage, this.claudeBinaryPath)
+      if (!title) return
+
+      // 1. Update session name in DB
+      if (this.dbService) {
+        this.dbService.updateSession(session.hiveSessionId, { name: title })
+        log.info('handleTitleGeneration: updated DB', {
+          hiveSessionId: session.hiveSessionId,
+          title
+        })
+      }
+
+      // 2. Notify renderer with session.updated event (same format as OpenCode)
+      // The renderer's SessionView.tsx and useOpenCodeGlobalListener.ts both
+      // read: event.data?.info?.title || event.data?.title
+      this.sendToRenderer('opencode:stream', {
+        type: 'session.updated',
+        sessionId: session.hiveSessionId,
+        data: {
+          title,
+          info: { title }
+        }
+      })
+
+      // 3. Auto-rename branch (mirrors opencode-service.ts lines 1119-1200)
+      if (!this.dbService) return
+      const worktree = this.dbService.getWorktreeBySessionId(session.hiveSessionId)
+      if (!worktree || worktree.branch_renamed) return
+
+      const currentBranchName = worktree.branch_name.toLowerCase()
+      const isAutoName =
+        ALL_BREED_NAMES.some(
+          (b) =>
+            b === currentBranchName || new RegExp(`^${b}-(?:v)?\\d+$`).test(currentBranchName)
+        ) ||
+        LEGACY_CITY_NAMES.some(
+          (c) =>
+            c === currentBranchName || new RegExp(`^${c}-(?:v)?\\d+$`).test(currentBranchName)
+        )
+
+      if (!isAutoName) return
+
+      const baseBranch = canonicalizeBranchName(title)
+      if (!baseBranch || baseBranch === currentBranchName) return
+
+      try {
+        const gitService = createGitService(worktree.path)
+        let targetBranch = baseBranch
+        if (await gitService.branchExists(targetBranch)) {
+          let suffix = 2
+          const maxSuffix = 9999
+          while (suffix <= maxSuffix) {
+            const candidate = `${baseBranch}-${suffix}`
+            if (!(await gitService.branchExists(candidate))) {
+              targetBranch = candidate
+              break
+            }
+            suffix += 1
+          }
+          if (suffix > maxSuffix) {
+            this.dbService.updateWorktree(worktree.id, { branch_renamed: 1 })
+            log.warn('handleTitleGeneration: all branch name variants taken', { baseBranch })
+            return
+          }
+        }
+
+        const renameResult = await gitService.renameBranch(
+          worktree.path,
+          worktree.branch_name,
+          targetBranch
+        )
+        if (renameResult.success) {
+          this.dbService.updateWorktree(worktree.id, {
+            name: targetBranch,
+            branch_name: targetBranch,
+            branch_renamed: 1
+          })
+          this.sendToRenderer('worktree:branchRenamed', {
+            worktreeId: worktree.id,
+            newBranch: targetBranch
+          })
+          log.info('handleTitleGeneration: auto-renamed branch', {
+            oldBranch: worktree.branch_name,
+            newBranch: targetBranch
+          })
+        } else {
+          this.dbService.updateWorktree(worktree.id, { branch_renamed: 1 })
+          log.warn('handleTitleGeneration: rename failed', { error: renameResult.error })
+        }
+      } catch (err) {
+        if (this.dbService) {
+          this.dbService.updateWorktree(worktree.id, { branch_renamed: 1 })
+        }
+        log.warn('handleTitleGeneration: branch rename error', { err })
+      }
+    } catch (err) {
+      log.warn('handleTitleGeneration: unexpected error', {
+        error: err instanceof Error ? err.message : String(err)
+      })
     }
   }
 
