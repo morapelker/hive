@@ -309,9 +309,22 @@ export function registerOpenCodeHandlers(
   // List available slash commands
   ipcMain.handle(
     'opencode:commands',
-    async (_event, { worktreePath }: { worktreePath: string }) => {
-      log.info('IPC: opencode:commands', { worktreePath })
+    async (
+      _event,
+      { worktreePath, sessionId }: { worktreePath: string; sessionId?: string }
+    ) => {
+      log.info('IPC: opencode:commands', { worktreePath, sessionId })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService && sessionId) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            const commands = await impl.listCommands(worktreePath)
+            return { success: true, commands }
+          }
+        }
+        // Fall through to existing OpenCode path
         const commands = await openCodeService.listCommands(worktreePath)
         return { success: true, commands }
       } catch (error) {
@@ -346,6 +359,18 @@ export function registerOpenCodeHandlers(
     ) => {
       log.info('IPC: opencode:command', { worktreePath, sessionId, command, args, model })
       try {
+        // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = sdkManager.getImplementer('claude-code')
+            // Note: model param intentionally not passed — Claude Code uses
+            // its own model selection mechanism via setSelectedModel()
+            await impl.sendCommand(worktreePath, sessionId, command, args)
+            return { success: true }
+          }
+        }
+        // Fall through to existing OpenCode path
         await openCodeService.sendCommand(worktreePath, sessionId, command, args, model)
         return { success: true }
       } catch (error) {

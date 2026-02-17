@@ -47,6 +47,9 @@ export interface ClaudeQuery {
     insertions?: number
     deletions?: number
   }>
+  supportedCommands?: () => Promise<
+    Array<{ name: string; description: string; argumentHint: string }>
+  >
 }
 
 interface RewindFilesResult {
@@ -118,6 +121,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   private pendingQuestionSessions = new Map<string, string>()
   /** Maps pending plan approval requestIds to session keys for IPC routing */
   private pendingPlanSessions = new Map<string, string>()
+  /** Caches slash commands per worktree path, populated from SDK init messages */
+  private cachedSlashCommands = new Map<
+    string,
+    Array<{ name: string; description: string; argumentHint: string }>
+  >()
 
   // ── Window binding ───────────────────────────────────────────────
 
@@ -238,6 +246,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }
 
     this.sessions.delete(key)
+    // Clear cached slash commands so a fresh session doesn't show stale entries
+    this.cachedSlashCommands.delete(worktreePath)
     log.info('Disconnected', { worktreePath, agentSessionId })
   }
 
@@ -258,6 +268,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       }
     }
     this.sessions.clear()
+    this.cachedSlashCommands.clear()
   }
 
   // ── Messaging ────────────────────────────────────────────────────
@@ -483,13 +494,57 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           keys: Object.keys(sdkMessage).join(',')
         })
 
-        // Log init messages (includes MCP server connection status)
+        // Log init messages (includes MCP server connection status) and cache slash commands
         if (msgType === 'init') {
           const initMsg = sdkMessage as Record<string, unknown>
           log.info('Prompt: init message received', {
             mcpServers: initMsg.mcp_servers,
-            model: initMsg.model
+            model: initMsg.model,
+            slashCommands: initMsg.slash_commands
           })
+
+          // Phase 1: Cache command names from init message as minimal entries
+          const initSlashCommandNames = initMsg.slash_commands as string[] | undefined
+          if (initSlashCommandNames && Array.isArray(initSlashCommandNames)) {
+            const minimal = initSlashCommandNames
+              .filter((name): name is string => typeof name === 'string')
+              .map((name) => ({
+                name,
+                description: '',
+                argumentHint: ''
+              }))
+            this.cachedSlashCommands.set(worktreePath, minimal)
+            log.info('Prompt: cached slash command names from init', {
+              count: minimal.length
+            })
+          }
+
+          // Phase 2: Enrich with full metadata via supportedCommands() (fire-and-forget)
+          if (session.query?.supportedCommands) {
+            session.query
+              .supportedCommands()
+              .then((cmds) => {
+                if (cmds?.length) {
+                  this.cachedSlashCommands.set(worktreePath, cmds)
+                  log.info('Prompt: cached full slash commands from supportedCommands()', {
+                    count: cmds.length
+                  })
+                }
+              })
+              .catch((err) => {
+                log.warn('Prompt: supportedCommands() failed, using init names', {
+                  error: err instanceof Error ? err.message : String(err)
+                })
+              })
+          }
+
+          // Notify renderer that commands are now available for fetching
+          this.sendToRenderer('opencode:stream', {
+            type: 'session.commands_available',
+            sessionId: session.hiveSessionId,
+            data: {}
+          })
+
           continue
         }
 
@@ -1262,13 +1317,19 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
   // ── Commands ─────────────────────────────────────────────────────
 
-  async listCommands(_worktreePath: string): Promise<unknown[]> {
-    // The Claude SDK exposes slash commands via Query.supportedCommands(),
-    // but that requires an active query transport. Since commands are
-    // fetched on-demand outside of active streaming, we return an empty
-    // list. The renderer's command palette will still work — unknown
-    // commands are sent as regular prompts which the SDK CLI parses.
-    return []
+  async listCommands(worktreePath: string): Promise<unknown[]> {
+    const cached = this.cachedSlashCommands.get(worktreePath)
+    if (!cached?.length) {
+      log.info('listCommands: no cached commands', { worktreePath })
+      return []
+    }
+
+    // Map SDK SlashCommand format to Hive's expected command format
+    return cached.map((cmd) => ({
+      name: cmd.name,
+      description: cmd.description || undefined,
+      template: `/${cmd.name}${cmd.argumentHint ? ' ' + cmd.argumentHint : ''}`
+    }))
   }
 
   async sendCommand(
