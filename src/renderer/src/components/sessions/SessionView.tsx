@@ -2755,6 +2755,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         await useSessionStore.getState().setSessionMode(sessionId, 'build')
         lastSendMode.set(sessionId, 'build')
 
+        // The SDK resumes within the same prompt cycle after plan approval —
+        // it won't emit a new session.status:busy event. Set status explicitly.
+        useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+        setIsStreaming(true)
+        setIsSending(true)
+
         // Transition the ExitPlanMode tool card to "accepted" state
         updateStreamingPartsRef((parts) =>
           parts.map((p) =>
@@ -2800,6 +2806,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           }
           return
         }
+        // The SDK resumes within the same prompt cycle after rejection —
+        // it won't emit a new session.status:busy event. Restore status explicitly.
+        const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+        useWorktreeStatusStore
+          .getState()
+          .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
       } catch (err) {
         toast.error(`Plan reject error: ${err instanceof Error ? err.message : String(err)}`)
         useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)
