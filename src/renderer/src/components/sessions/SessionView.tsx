@@ -24,7 +24,8 @@ import {
   extractTokens,
   extractCost,
   extractModelRef,
-  extractSelectedModel
+  extractSelectedModel,
+  extractModelUsage
 } from '@/lib/token-utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { SelectedModel } from '@/stores/useSettingsStore'
@@ -1615,6 +1616,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 if (cost > 0) {
                   useContextStore.getState().addSessionCost(sessionId, cost)
                 }
+                // Extract per-model usage (from SDK result messages) to update context limits
+                const modelUsageEntries = extractModelUsage(data)
+                if (modelUsageEntries) {
+                  for (const entry of modelUsageEntries) {
+                    if (entry.contextWindow > 0) {
+                      useContextStore.getState().setModelLimit(entry.modelName, entry.contextWindow)
+                    }
+                  }
+                }
               }
             }
           } else if (event.type === 'session.idle') {
@@ -1862,6 +1872,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
 
         // 4. Connect to OpenCode
+
+        // For Claude Code sessions, set known model limits immediately so the
+        // ContextIndicator shows the 200k limit without waiting for the first
+        // SDK init message.  The init message will also emit session.model_limits
+        // to confirm, but this avoids a flash of "limit unavailable".
+        if (sessionRecord?.agent_sdk === 'claude-code') {
+          const claudeModels = [
+            { id: 'opus', context: 200000 },
+            { id: 'sonnet', context: 200000 },
+            { id: 'haiku', context: 200000 }
+          ]
+          for (const m of claudeModels) {
+            // Store without providerID (wildcard "*") so the limit is found
+            // regardless of whether the session uses providerID "claude-code"
+            // or "anthropic".
+            useContextStore.getState().setModelLimit(m.id, m.context)
+          }
+        }
 
         // Fetch context limits for all provider/model combinations (fire-and-forget).
         // This avoids model-id collisions across providers and lets context usage use
