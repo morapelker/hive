@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useSessionStore } from './useSessionStore'
+import { useConnectionStore } from './useConnectionStore'
 import { lastSendMode } from '@/lib/message-send-times'
 
 export type SessionStatusType =
@@ -37,6 +38,26 @@ interface WorktreeStatusState {
   getWorktreeCompletedEntry: (worktreeId: string) => SessionStatusEntry | null
   setLastMessageTime: (worktreeId: string, timestamp: number) => void
   getLastMessageTime: (worktreeId: string) => number | null
+}
+
+// Priority ranking for status aggregation (higher number = higher priority)
+const STATUS_PRIORITY: Record<SessionStatusType, number> = {
+  answering: 7,
+  permission: 6,
+  planning: 5,
+  working: 4,
+  plan_ready: 3,
+  completed: 2,
+  unread: 1
+}
+
+function higherPriority(
+  a: SessionStatusType | null,
+  b: SessionStatusType | null
+): SessionStatusType | null {
+  if (!a) return b
+  if (!b) return a
+  return STATUS_PRIORITY[a] >= STATUS_PRIORITY[b] ? a : b
 }
 
 export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => ({
@@ -87,7 +108,25 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
   getWorktreeStatus: (worktreeId: string): SessionStatusType | null => {
     const { sessionStatuses } = get()
-    // Get all sessions for this worktree from the session store
+
+    // ── Connection status (takes priority over worktree's own sessions) ──
+    const connections = useConnectionStore.getState().connections
+    const parentConnectionIds = connections
+      .filter((c) => c.members.some((m) => m.worktree_id === worktreeId))
+      .map((c) => c.id)
+
+    if (parentConnectionIds.length > 0) {
+      let bestConnectionStatus: SessionStatusType | null = null
+      for (const connId of parentConnectionIds) {
+        const connStatus = get().getConnectionStatus(connId)
+        if (connStatus) {
+          bestConnectionStatus = higherPriority(bestConnectionStatus, connStatus)
+        }
+      }
+      if (bestConnectionStatus !== null) return bestConnectionStatus
+    }
+
+    // ── Worktree's own session status (fallback) ──
     const sessionStore = useSessionStore.getState()
     const sessions = sessionStore.sessionsByWorktree.get(worktreeId) || []
     const sessionIds = sessions.map((s) => s.id)
