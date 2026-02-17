@@ -10,8 +10,6 @@ import {
   GitBranch,
   ArrowUp,
   ArrowDown,
-  FileSearch,
-  Loader2,
   Trash2,
   EyeOff,
   FileDiff,
@@ -29,7 +27,6 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { useSessionStore } from '@/stores/useSessionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { FileIcon } from './FileIcon'
@@ -73,7 +70,6 @@ export function ChangesView({
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [isReviewing, setIsReviewing] = useState(false)
 
   // Load initial data (skip for connection folders — no git repo)
   useEffect(() => {
@@ -333,70 +329,6 @@ export function ChangesView({
     [onFileClick]
   )
 
-  const handleReview = useCallback(async () => {
-    if (!worktreePath) return
-    setIsReviewing(true)
-    try {
-      const worktreeStore = useWorktreeStore.getState()
-      const selectedWorktreeId = worktreeStore.selectedWorktreeId
-      if (!selectedWorktreeId) {
-        toast.error('No worktree selected')
-        return
-      }
-
-      let projectId = ''
-      for (const [projId, worktrees] of worktreeStore.worktreesByProject) {
-        if (worktrees.some((w) => w.id === selectedWorktreeId)) {
-          projectId = projId
-          break
-        }
-      }
-      if (!projectId) {
-        toast.error('Could not find project for worktree')
-        return
-      }
-
-      const allChangedFiles = [
-        ...conflictedFiles,
-        ...stagedFiles,
-        ...modifiedFiles,
-        ...untrackedFiles
-      ]
-      const fileList = allChangedFiles.map((f) => `- ${f.status}  ${f.relativePath}`).join('\n')
-      const branchName = branchInfo?.name || 'unknown'
-
-      let reviewTemplate = ''
-      try {
-        const result = await window.fileOps.readPrompt('review.md')
-        if (result.success && result.content) {
-          reviewTemplate = result.content
-        }
-      } catch {
-        // readPrompt failed
-      }
-
-      const prompt = reviewTemplate
-        ? `${reviewTemplate}\n\n---\n\nChanged files:\n${fileList}`
-        : `Please review the following uncommitted changes in this worktree (branch: ${branchName}):\n\nChanged files:\n${fileList}\n\nFocus on: bugs, logic errors, and code quality.`
-
-      const sessionStore = useSessionStore.getState()
-      const result = await sessionStore.createSession(selectedWorktreeId, projectId)
-      if (!result.success || !result.session) {
-        toast.error('Failed to create review session')
-        return
-      }
-
-      await sessionStore.updateSessionName(result.session.id, `Code Review — ${branchName}`)
-      await sessionStore.setSessionMode(result.session.id, 'plan')
-      sessionStore.setPendingMessage(result.session.id, prompt)
-    } catch (error) {
-      console.error('Failed to start code review:', error)
-      toast.error('Failed to start code review')
-    } finally {
-      setIsReviewing(false)
-    }
-  }, [worktreePath, stagedFiles, modifiedFiles, untrackedFiles, conflictedFiles, branchInfo])
-
   if (!worktreePath) {
     return <div className="p-4 text-sm text-muted-foreground text-center">No worktree selected</div>
   }
@@ -528,21 +460,6 @@ export function ChangesView({
           )}
         </div>
         <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5"
-            onClick={handleReview}
-            disabled={!hasChanges || isReviewing}
-            title="Review changes with AI"
-            data-testid="changes-review-button"
-          >
-            {isReviewing ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <FileSearch className="h-3 w-3" />
-            )}
-          </Button>
           <Button
             variant="ghost"
             size="icon"
