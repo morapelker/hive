@@ -163,6 +163,7 @@ declare global {
         delete: (id: string) => Promise<boolean>
         touch: (id: string) => Promise<boolean>
         reorder: (orderedIds: string[]) => Promise<boolean>
+        sortByLastMessage: () => Promise<string[]>
       }
       worktree: {
         create: (data: {

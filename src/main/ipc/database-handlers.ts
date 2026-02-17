@@ -83,6 +83,10 @@ export function registerDatabaseHandlers(): void {
     return true
   })
 
+  ipcMain.handle('db:project:sortByLastMessage', () => {
+    return getDatabase().getProjectIdsSortedByLastMessage()
+  })
+
   // Worktrees
   ipcMain.handle('db:worktree:create', (_event, data: WorktreeCreate) => {
     return getDatabase().createWorktree(data)

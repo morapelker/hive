@@ -3,7 +3,7 @@ import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useSpaceStore } from '@/stores'
 import { ResizeHandle } from './ResizeHandle'
 import { FolderGit2 } from 'lucide-react'
-import { ProjectList, AddProjectButton } from '@/components/projects'
+import { ProjectList, AddProjectButton, SortProjectsButton } from '@/components/projects'
 import { ConnectionList } from '@/components/connections'
 import { SpacesTabBar } from '@/components/spaces'
 
@@ -48,7 +48,10 @@ export function LeftSidebar(): React.JSX.Element {
             <FolderGit2 className="h-4 w-4" />
             <span>Projects</span>
           </div>
-          <AddProjectButton />
+          <div className="flex items-center gap-1">
+            <SortProjectsButton />
+            <AddProjectButton />
+          </div>
         </div>
         <div className="flex-1 overflow-auto p-2">
           <ConnectionList />
