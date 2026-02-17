@@ -1458,12 +1458,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       const currentBranchName = worktree.branch_name.toLowerCase()
       const isAutoName =
         ALL_BREED_NAMES.some(
-          (b) =>
-            b === currentBranchName || new RegExp(`^${b}-(?:v)?\\d+$`).test(currentBranchName)
+          (b) => b === currentBranchName || new RegExp(`^${b}-(?:v)?\\d+$`).test(currentBranchName)
         ) ||
         LEGACY_CITY_NAMES.some(
-          (c) =>
-            c === currentBranchName || new RegExp(`^${c}-(?:v)?\\d+$`).test(currentBranchName)
+          (c) => c === currentBranchName || new RegExp(`^${c}-(?:v)?\\d+$`).test(currentBranchName)
         )
 
       if (!isAutoName) return
@@ -1774,6 +1772,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     toolNames?: Map<string, string>
   ): void {
     const msgType = msg.type as string
+    const childSessionId = (msg.parent_tool_use_id as string) || undefined
 
     // SDK messages nest content under `msg.message.content` for assistant/user,
     // and under `msg.result` for result messages (NOT top-level `msg.content`).
@@ -1787,8 +1786,6 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         if (!rawEvent) break
 
         const eventType = rawEvent.type as string
-        // Route child-session stream events by parent_tool_use_id
-        const childSessionId = (msg.parent_tool_use_id as string) || undefined
 
         switch (eventType) {
           case 'content_block_delta': {
@@ -1949,6 +1946,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         this.sendToRenderer('opencode:stream', {
           type: 'message.updated',
           sessionId: hiveSessionId,
+          childSessionId,
           data: {
             role: 'assistant',
             messageIndex,
@@ -1979,6 +1977,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               this.sendToRenderer('opencode:stream', {
                 type: 'message.part.updated',
                 sessionId: hiveSessionId,
+                childSessionId,
                 data: {
                   part: {
                     type: 'tool',
@@ -2014,6 +2013,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         this.sendToRenderer('opencode:stream', {
           type: 'message.updated',
           sessionId: hiveSessionId,
+          childSessionId,
           data: {
             role: 'assistant',
             content: resultArray ?? resultContent,
@@ -2028,7 +2028,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
                     input: (msg.usage as Record<string, unknown>).input_tokens,
                     output: (msg.usage as Record<string, unknown>).output_tokens,
                     cacheRead: (msg.usage as Record<string, unknown>).cache_read_input_tokens,
-                    cacheCreation: (msg.usage as Record<string, unknown>).cache_creation_input_tokens
+                    cacheCreation: (msg.usage as Record<string, unknown>)
+                      .cache_creation_input_tokens
                   }
                 : undefined,
               modelUsage: msg.modelUsage
@@ -2073,6 +2074,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               this.sendToRenderer('opencode:stream', {
                 type: 'message.part.updated',
                 sessionId: hiveSessionId,
+                childSessionId,
                 data: {
                   part: {
                     type: 'tool',
@@ -2100,6 +2102,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           this.sendToRenderer('opencode:stream', {
             type: 'message.part.updated',
             sessionId: hiveSessionId,
+            childSessionId,
             data: {
               part: {
                 type: 'compaction',
@@ -2118,6 +2121,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         this.sendToRenderer('opencode:stream', {
           type: 'message.part.updated',
           sessionId: hiveSessionId,
+          childSessionId,
           data: {
             part: {
               type: 'tool',
@@ -2135,6 +2139,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         this.sendToRenderer('opencode:stream', {
           type: 'message.part.updated',
           sessionId: hiveSessionId,
+          childSessionId,
           data: {
             part: {
               type: 'tool',

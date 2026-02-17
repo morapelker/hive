@@ -57,6 +57,12 @@ export function useOpenCodeGlobalListener(): void {
 
           // Handle message.updated for background sessions — extract title + tokens
           if (event.type === 'message.updated' && sessionId !== activeId) {
+            // Child/subagent message.updated events are metadata for nested work;
+            // do not use them for parent context/cost snapshots.
+            if (event.childSessionId) {
+              return
+            }
+
             const sessionTitle = event.data?.info?.title || event.data?.title
             // Skip OpenCode default placeholder titles like "New session - 2026-02-12T21:33:03.013Z"
             const isOpenCodeDefault = /^New session\s*-?\s*\d{4}-\d{2}-\d{2}/i.test(
@@ -85,9 +91,7 @@ export function useOpenCodeGlobalListener(): void {
                 if (modelUsageEntries) {
                   for (const entry of modelUsageEntries) {
                     if (entry.contextWindow > 0) {
-                      useContextStore
-                        .getState()
-                        .setModelLimit(entry.modelName, entry.contextWindow)
+                      useContextStore.getState().setModelLimit(entry.modelName, entry.contextWindow)
                     }
                   }
                 }

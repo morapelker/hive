@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest'
 import { renderHook, cleanup } from '@testing-library/react'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
+import { extractTokens, extractCost, extractModelRef } from '@/lib/token-utils'
 
 /**
  * Session 4: Global Listener Busy Handling — Tests
@@ -56,11 +57,16 @@ vi.mock('@/stores/useQuestionStore', () => ({
 }))
 
 // Mock useContextStore (imported by the listener)
+const setSessionTokensSpy = vi.fn()
+const addSessionCostSpy = vi.fn()
+const setModelLimitSpy = vi.fn()
+
 vi.mock('@/stores/useContextStore', () => ({
   useContextStore: {
     getState: () => ({
-      setSessionTokens: vi.fn(),
-      addSessionCost: vi.fn()
+      setSessionTokens: setSessionTokensSpy,
+      addSessionCost: addSessionCostSpy,
+      setModelLimit: setModelLimitSpy
     })
   }
 }))
@@ -69,8 +75,13 @@ vi.mock('@/stores/useContextStore', () => ({
 vi.mock('@/lib/token-utils', () => ({
   extractTokens: vi.fn(() => null),
   extractCost: vi.fn(() => 0),
-  extractModelRef: vi.fn(() => null)
+  extractModelRef: vi.fn(() => null),
+  extractModelUsage: vi.fn(() => null)
 }))
+
+const extractTokensMock = vi.mocked(extractTokens)
+const extractCostMock = vi.mocked(extractCost)
+const extractModelRefMock = vi.mocked(extractModelRef)
 
 // Spies for stores we want to verify
 const setSessionStatusSpy = vi.fn()
@@ -85,6 +96,7 @@ vi.mock('@/stores/useSessionStore', () => ({
     getState: () => ({
       activeSessionId: 'session-A',
       getSessionMode: getSessionModeSpy,
+      getPendingPlan: vi.fn(() => null),
       updateSessionName: updateSessionNameSpy,
       sessionsByWorktree: new Map([['wt-1', [{ id: 'session-B' }]]])
     })
@@ -108,6 +120,9 @@ describe('Session 4: Global Listener Busy Handling', () => {
     streamCallback = null
     // Default mode is 'build'
     getSessionModeSpy.mockReturnValue('build')
+    extractTokensMock.mockReturnValue(null)
+    extractCostMock.mockReturnValue(0)
+    extractModelRefMock.mockReturnValue(null)
   })
 
   afterEach(() => {
@@ -247,5 +262,30 @@ describe('Session 4: Global Listener Busy Handling', () => {
     })
 
     expect(setLastMessageTimeSpy).not.toHaveBeenCalled()
+  })
+
+  test('message.updated from child session does not update context tokens', () => {
+    const cb = mountListenerAndGetCallback()
+
+    extractTokensMock.mockReturnValue({
+      input: 500,
+      output: 200,
+      reasoning: 50,
+      cacheRead: 0,
+      cacheWrite: 0
+    })
+
+    cb({
+      type: 'message.updated',
+      sessionId: 'session-B',
+      childSessionId: 'tool-subtask-1',
+      data: {
+        role: 'assistant',
+        info: { time: { completed: '2026-02-17T12:00:00.000Z' } }
+      }
+    })
+
+    expect(setSessionTokensSpy).not.toHaveBeenCalled()
+    expect(addSessionCostSpy).not.toHaveBeenCalled()
   })
 })
