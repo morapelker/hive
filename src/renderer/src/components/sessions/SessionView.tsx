@@ -1578,6 +1578,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 ...parts,
                 { type: 'compaction' as const, compactionAuto: part.auto === true }
               ])
+              // Reset stale token snapshot — compaction truncates the context window.
+              // The next assistant message.updated will carry accurate post-compaction tokens.
+              // Use clearSessionTokenSnapshot (not resetSessionTokens) to preserve
+              // the accumulated cost and model identity for the session.
+              useContextStore.getState().clearSessionTokenSnapshot(sessionId)
               immediateFlush()
               setIsStreaming(true)
             }
