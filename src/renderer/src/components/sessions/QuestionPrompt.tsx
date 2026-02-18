@@ -132,20 +132,8 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
         <MessageCircleQuestion className="h-4 w-4 text-blue-400 shrink-0" />
-        <button
-          onClick={handleDismiss}
-          disabled={sending}
-          className="ml-auto text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-          aria-label="Dismiss"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-
-      <div className="px-3 py-2.5">
-        {/* Multi-question tabs */}
-        {isMultiQuestion && (
-          <div className="flex gap-1 mb-3" data-testid="question-tabs">
+        {isMultiQuestion ? (
+          <div className="flex gap-1 flex-1 min-w-0" data-testid="question-tabs">
             {request.questions.map((q, i) => (
               <button
                 key={i}
@@ -161,12 +149,28 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
                 )}
               >
                 {q.header}
-                {answers[i]?.length > 0 && <Check className="h-3 w-3 ml-1 inline text-green-500" />}
+                {answers[i]?.length > 0 && (
+                  <Check className="h-3 w-3 ml-1 inline text-green-500" />
+                )}
               </button>
             ))}
           </div>
+        ) : (
+          <span className="text-sm font-medium text-foreground truncate flex-1">
+            {currentQuestion.header}
+          </span>
         )}
+        <button
+          onClick={handleDismiss}
+          disabled={sending}
+          className="ml-auto text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 shrink-0"
+          aria-label="Dismiss"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
+      <div className="px-3 py-2.5">
         {/* Question text */}
         <p className="text-sm text-foreground mb-3">{currentQuestion.question}</p>
 
