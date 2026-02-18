@@ -16,6 +16,7 @@ import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { useFileMentions } from '@/hooks/useFileMentions'
+import type { FlatFile } from '@/lib/file-search-utils'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
@@ -40,7 +41,7 @@ import { messageSendTimes, lastSendMode } from '@/lib/message-send-times'
 import beeIcon from '@/assets/bee.png'
 
 // Stable empty array to avoid creating new references in selectors
-const EMPTY_FILE_TREE: never[] = []
+const EMPTY_FILE_INDEX: FlatFile[] = []
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
@@ -434,21 +435,22 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const inputValueRef = useRef('')
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // File tree for file mentions — keyed by worktree path.
-  // Ensure the tree is loaded when worktreePath is resolved — SessionView cannot
+  // Flat file index for file mentions and search — keyed by worktree path.
+  // Uses git ls-files for a complete, gitignore-respecting file list.
+  // Ensure the index is loaded when worktreePath is resolved — SessionView cannot
   // rely on the FileTree sidebar component having already populated the store
   // (sidebar may be collapsed, on a different tab, or targeting a different worktree).
-  const fileTree = useFileTreeStore((state) =>
-    worktreePath ? (state.fileTreeByWorktree.get(worktreePath) ?? EMPTY_FILE_TREE) : EMPTY_FILE_TREE
+  const fileIndex = useFileTreeStore((state) =>
+    worktreePath ? (state.fileIndexByWorktree.get(worktreePath) ?? EMPTY_FILE_INDEX) : EMPTY_FILE_INDEX
   )
   useEffect(() => {
-    if (worktreePath && fileTree === EMPTY_FILE_TREE) {
-      useFileTreeStore.getState().loadFileTree(worktreePath)
+    if (worktreePath && fileIndex === EMPTY_FILE_INDEX) {
+      useFileTreeStore.getState().loadFileIndex(worktreePath)
     }
-  }, [worktreePath, fileTree])
+  }, [worktreePath, fileIndex])
 
   // File mentions hook
-  const fileMentions = useFileMentions(inputValue, cursorPosition, fileTree)
+  const fileMentions = useFileMentions(inputValue, cursorPosition, fileIndex)
 
   // stripAtMentions setting
   const stripAtMentions = useSettingsStore((state) => state.stripAtMentions)

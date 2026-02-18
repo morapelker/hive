@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import type { FlatFile } from '@/lib/file-search-utils'
 
 // File tree node structure matching main process
 interface FileTreeNode {
@@ -18,12 +19,17 @@ interface FileTreeState {
   isLoading: boolean
   error: string | null
 
+  // Flat file index for search (@ mentions, Cmd+D) - keyed by worktree path
+  fileIndexByWorktree: Map<string, FlatFile[]>
+  fileIndexLoadingByWorktree: Map<string, boolean>
+
   // UI State - keyed by worktree path
   expandedPathsByWorktree: Map<string, Set<string>>
   filterByWorktree: Map<string, string>
 
   // Actions
   loadFileTree: (worktreePath: string) => Promise<void>
+  loadFileIndex: (worktreePath: string) => Promise<void>
   loadChildren: (worktreePath: string, dirPath: string) => Promise<void>
   setExpanded: (worktreePath: string, paths: Set<string>) => void
   toggleExpanded: (worktreePath: string, path: string) => void
@@ -62,6 +68,9 @@ const deserializeExpandedPaths = (data: [string, string[]][]): Map<string, Set<s
   return map
 }
 
+// Module-level map for onChange unsubscribe functions (not serializable, so outside persist store)
+const watchUnsubscribers = new Map<string, () => void>()
+
 export const useFileTreeStore = create<FileTreeState>()(
   persist(
     (set, get) => ({
@@ -69,6 +78,8 @@ export const useFileTreeStore = create<FileTreeState>()(
       fileTreeByWorktree: new Map(),
       isLoading: false,
       error: null,
+      fileIndexByWorktree: new Map(),
+      fileIndexLoadingByWorktree: new Map(),
       expandedPathsByWorktree: new Map(),
       filterByWorktree: new Map(),
 
@@ -94,6 +105,37 @@ export const useFileTreeStore = create<FileTreeState>()(
           set({
             error: error instanceof Error ? error.message : 'Failed to load file tree',
             isLoading: false
+          })
+        }
+      },
+
+      // Load full flat file index for a worktree (for search / @ mentions)
+      loadFileIndex: async (worktreePath: string) => {
+        // Prevent duplicate concurrent loads
+        if (get().fileIndexLoadingByWorktree.get(worktreePath)) return
+
+        set((state) => {
+          const newMap = new Map(state.fileIndexLoadingByWorktree)
+          newMap.set(worktreePath, true)
+          return { fileIndexLoadingByWorktree: newMap }
+        })
+
+        try {
+          const result = await window.fileTreeOps.scanFlat(worktreePath)
+          set((state) => {
+            const indexMap = new Map(state.fileIndexByWorktree)
+            const loadingMap = new Map(state.fileIndexLoadingByWorktree)
+            if (result.success && result.files) {
+              indexMap.set(worktreePath, result.files)
+            }
+            loadingMap.set(worktreePath, false)
+            return { fileIndexByWorktree: indexMap, fileIndexLoadingByWorktree: loadingMap }
+          })
+        } catch {
+          set((state) => {
+            const loadingMap = new Map(state.fileIndexLoadingByWorktree)
+            loadingMap.set(worktreePath, false)
+            return { fileIndexLoadingByWorktree: loadingMap }
           })
         }
       },
@@ -222,18 +264,40 @@ export const useFileTreeStore = create<FileTreeState>()(
         await get().loadFileTree(worktreePath)
       },
 
-      // Start watching for file changes
+      // Start watching for file changes + subscribe to onChange events
       startWatching: async (worktreePath: string) => {
         try {
+          // Guard against duplicate subscriptions
+          if (watchUnsubscribers.has(worktreePath)) return
+
           await window.fileTreeOps.watch(worktreePath)
+
+          // Subscribe to change events and route to handleFileChange
+          const unsubscribe = window.fileTreeOps.onChange((event) => {
+            if (event.worktreePath === worktreePath) {
+              get().handleFileChange(
+                worktreePath,
+                event.eventType,
+                event.changedPath,
+                event.relativePath
+              )
+            }
+          })
+          watchUnsubscribers.set(worktreePath, unsubscribe)
         } catch (error) {
           console.error('Failed to start file watching:', error)
         }
       },
 
-      // Stop watching for file changes
+      // Stop watching for file changes + unsubscribe onChange events
       stopWatching: async (worktreePath: string) => {
         try {
+          const unsubscribe = watchUnsubscribers.get(worktreePath)
+          if (unsubscribe) {
+            unsubscribe()
+            watchUnsubscribers.delete(worktreePath)
+          }
+
           await window.fileTreeOps.unwatch(worktreePath)
         } catch (error) {
           console.error('Failed to stop file watching:', error)
@@ -243,13 +307,44 @@ export const useFileTreeStore = create<FileTreeState>()(
       // Handle file change event from watcher
       handleFileChange: async (
         worktreePath: string,
-        _eventType: string,
-        _changedPath: string,
-        _relativePath: string
+        eventType: string,
+        changedPath: string,
+        relativePath: string
       ) => {
-        // For now, just refresh the entire tree
-        // In the future, we could be smarter about updating just the changed part
+        // Refresh the tree display (shallow scan)
         await get().refreshFileTree(worktreePath)
+
+        // Incrementally update the flat file index
+        set((state) => {
+          const currentIndex = state.fileIndexByWorktree.get(worktreePath)
+          if (!currentIndex) return state // No index loaded yet
+
+          const newMap = new Map(state.fileIndexByWorktree)
+
+          if (eventType === 'add') {
+            const name = relativePath.split('/').pop() || relativePath
+            const dotIdx = name.lastIndexOf('.')
+            const extension = dotIdx > 0 ? name.substring(dotIdx).toLowerCase() : null
+            newMap.set(worktreePath, [
+              ...currentIndex,
+              { name, path: changedPath, relativePath, extension }
+            ])
+          } else if (eventType === 'unlink') {
+            newMap.set(
+              worktreePath,
+              currentIndex.filter((f) => f.path !== changedPath)
+            )
+          } else if (eventType === 'unlinkDir') {
+            const prefix = changedPath + '/'
+            newMap.set(
+              worktreePath,
+              currentIndex.filter((f) => !f.path.startsWith(prefix))
+            )
+          }
+          // 'addDir' and 'change' events do not affect the flat file index
+
+          return { fileIndexByWorktree: newMap }
+        })
       }
     }),
     {

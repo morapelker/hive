@@ -506,6 +506,14 @@ export interface FileTreeNode {
   children?: FileTreeNode[]
 }
 
+// Flat file entry for search index (no tree structure)
+export interface FlatFile {
+  name: string
+  path: string
+  relativePath: string
+  extension: string | null
+}
+
 // File tree change event type
 export interface FileTreeChangeEvent {
   worktreePath: string
@@ -545,6 +553,15 @@ const fileTreeOps = {
     tree?: FileTreeNode[]
     error?: string
   }> => ipcRenderer.invoke('file-tree:scan', dirPath),
+
+  // Scan a directory and return a flat list of all files (via git ls-files)
+  scanFlat: (
+    dirPath: string
+  ): Promise<{
+    success: boolean
+    files?: FlatFile[]
+    error?: string
+  }> => ipcRenderer.invoke('file-tree:scan-flat', dirPath),
 
   // Lazy load children for a directory
   loadChildren: (

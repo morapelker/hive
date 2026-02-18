@@ -5,55 +5,13 @@ import {
   applyStripping,
   type FileMention
 } from '../../src/renderer/src/hooks/useFileMentions'
-import type { FileTreeNode } from '../../src/renderer/src/lib/file-search-utils'
+import type { FlatFile } from '../../src/renderer/src/lib/file-search-utils'
 
-const sampleTree: FileTreeNode[] = [
-  {
-    name: 'src',
-    path: '/project/src',
-    relativePath: 'src',
-    isDirectory: true,
-    extension: null,
-    children: [
-      {
-        name: 'utils',
-        path: '/project/src/utils',
-        relativePath: 'src/utils',
-        isDirectory: true,
-        extension: null,
-        children: [
-          {
-            name: 'helpers.ts',
-            path: '/project/src/utils/helpers.ts',
-            relativePath: 'src/utils/helpers.ts',
-            isDirectory: false,
-            extension: '.ts'
-          }
-        ]
-      },
-      {
-        name: 'index.ts',
-        path: '/project/src/index.ts',
-        relativePath: 'src/index.ts',
-        isDirectory: false,
-        extension: '.ts'
-      },
-      {
-        name: 'app.tsx',
-        path: '/project/src/app.tsx',
-        relativePath: 'src/app.tsx',
-        isDirectory: false,
-        extension: '.tsx'
-      }
-    ]
-  },
-  {
-    name: 'README.md',
-    path: '/project/README.md',
-    relativePath: 'README.md',
-    isDirectory: false,
-    extension: '.md'
-  }
+const sampleFiles: FlatFile[] = [
+  { name: 'helpers.ts', path: '/project/src/utils/helpers.ts', relativePath: 'src/utils/helpers.ts', extension: '.ts' },
+  { name: 'index.ts', path: '/project/src/index.ts', relativePath: 'src/index.ts', extension: '.ts' },
+  { name: 'app.tsx', path: '/project/src/app.tsx', relativePath: 'src/app.tsx', extension: '.tsx' },
+  { name: 'README.md', path: '/project/README.md', relativePath: 'README.md', extension: '.md' }
 ]
 
 describe('Session 3: Mention Tracking', () => {
@@ -61,7 +19,7 @@ describe('Session 3: Mention Tracking', () => {
     test('typing text BEFORE a mention shifts its indices forward', () => {
       // Start: select a file to create a mention
       const { result, rerender } = renderHook(
-        ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+        ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
         { initialProps: { input: '@help', cursor: 5 } }
       )
 
@@ -96,7 +54,7 @@ describe('Session 3: Mention Tracking', () => {
 
     test('typing text AFTER a mention does not change its indices', () => {
       const { result, rerender } = renderHook(
-        ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+        ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
         { initialProps: { input: '@help', cursor: 5 } }
       )
 
@@ -126,7 +84,7 @@ describe('Session 3: Mention Tracking', () => {
     test('deleting text BEFORE a mention shifts its indices backward', () => {
       // Start with 'Hello @help'
       const { result, rerender } = renderHook(
-        ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+        ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
         { initialProps: { input: 'Hello @help', cursor: 11 } }
       )
 
@@ -155,7 +113,7 @@ describe('Session 3: Mention Tracking', () => {
 
     test('editing text INSIDE a mention removes it from tracking', () => {
       const { result, rerender } = renderHook(
-        ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+        ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
         { initialProps: { input: '@help', cursor: 5 } }
       )
 
@@ -183,7 +141,7 @@ describe('Session 3: Mention Tracking', () => {
     test('multiple mentions adjust independently', () => {
       // Build up two mentions manually
       const { result, rerender } = renderHook(
-        ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+        ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
         { initialProps: { input: '@help', cursor: 5 } }
       )
 
@@ -288,7 +246,7 @@ describe('Session 3: Mention Tracking', () => {
   describe('getTextForSend', () => {
     test('with stripAtMentions=true, strips tracked mentions', () => {
       const { result, rerender } = renderHook(
-        ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+        ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
         { initialProps: { input: '@help', cursor: 5 } }
       )
 
@@ -307,7 +265,7 @@ describe('Session 3: Mention Tracking', () => {
 
     test('with stripAtMentions=false, returns text unchanged', () => {
       const { result, rerender } = renderHook(
-        ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+        ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
         { initialProps: { input: '@help', cursor: 5 } }
       )
 
