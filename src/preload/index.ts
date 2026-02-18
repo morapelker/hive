@@ -852,7 +852,21 @@ const gitOps = {
     worktreePath: string,
     branchName: string
   ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('git:deleteBranch', worktreePath, branchName)
+    ipcRenderer.invoke('git:deleteBranch', worktreePath, branchName),
+
+  // List open pull requests from GitHub via gh CLI
+  listPRs: (
+    projectPath: string
+  ): Promise<{
+    success: boolean
+    prs: Array<{
+      number: number
+      title: string
+      author: string
+      headRefName: string
+    }>
+    error?: string
+  }> => ipcRenderer.invoke('git:listPRs', { projectPath })
 }
 
 const opencodeOps = {

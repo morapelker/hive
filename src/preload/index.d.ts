@@ -904,6 +904,17 @@ declare global {
         worktreePath: string,
         branchName: string
       ) => Promise<{ success: boolean; error?: string }>
+      // List open pull requests from GitHub via gh CLI
+      listPRs: (projectPath: string) => Promise<{
+        success: boolean
+        prs: Array<{
+          number: number
+          title: string
+          author: string
+          headRefName: string
+        }>
+        error?: string
+      }>
     }
     updaterOps: {
       checkForUpdate: () => Promise<void>
