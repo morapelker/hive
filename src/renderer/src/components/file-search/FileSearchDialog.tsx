@@ -6,11 +6,11 @@ import { useFileTreeStore } from '@/stores'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores'
 import { FileIcon } from '@/components/file-tree/FileIcon'
-import { flattenTree, scoreMatch } from '@/lib/file-search-utils'
-import type { FileTreeNode } from '@/lib/file-search-utils'
+import { scoreMatch } from '@/lib/file-search-utils'
+import type { FlatFile } from '@/lib/file-search-utils'
 
 const MAX_RESULTS = 50
-const EMPTY_TREE: FileTreeNode[] = []
+const EMPTY_INDEX: FlatFile[] = []
 
 export function FileSearchDialog() {
   const { isOpen, searchQuery, selectedIndex, close, setSearchQuery, setSelectedIndex } =
@@ -30,24 +30,21 @@ export function FileSearchDialog() {
     return null
   }, [selectedWorktreeId, worktreesByProject])
 
-  // Get file tree for current worktree
-  const fileTree = useFileTreeStore(
+  // Get flat file index for current worktree (full recursive, gitignore-aware)
+  const allFiles = useFileTreeStore(
     (state) =>
-      (selectedWorktreePath ? state.fileTreeByWorktree.get(selectedWorktreePath) : undefined) ??
-      EMPTY_TREE
+      (selectedWorktreePath ? state.fileIndexByWorktree.get(selectedWorktreePath) : undefined) ??
+      EMPTY_INDEX
   )
 
-  // Flatten the file tree into a searchable list
-  const allFiles = useMemo(() => flattenTree(fileTree), [fileTree])
+  const loadFileIndex = useFileTreeStore((state) => state.loadFileIndex)
 
-  const loadFileTree = useFileTreeStore((state) => state.loadFileTree)
-
-  // Load file tree on open if not already loaded
+  // Load file index on open if not already loaded
   useEffect(() => {
-    if (isOpen && selectedWorktreePath && fileTree === EMPTY_TREE) {
-      loadFileTree(selectedWorktreePath)
+    if (isOpen && selectedWorktreePath && allFiles === EMPTY_INDEX) {
+      loadFileIndex(selectedWorktreePath)
     }
-  }, [isOpen, selectedWorktreePath, fileTree, loadFileTree])
+  }, [isOpen, selectedWorktreePath, allFiles, loadFileIndex])
 
   // Filter and score files based on search query
   const filteredFiles = useMemo(() => {

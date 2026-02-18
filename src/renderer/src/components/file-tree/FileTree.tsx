@@ -119,13 +119,11 @@ export function FileTree({
     collapseAll,
     setFilter,
     startWatching,
-    stopWatching,
-    handleFileChange
+    stopWatching
   } = useFileTreeStore()
 
   const { getFileStatuses, loadFileStatuses } = useGitStore()
 
-  const unsubscribeRef = useRef<(() => void) | null>(null)
   const currentWorktreeRef = useRef<string | null>(null)
   const parentRef = useRef<HTMLDivElement>(null)
 
@@ -136,10 +134,6 @@ export function FileTree({
     // If switching worktrees, stop watching the previous one
     if (currentWorktreeRef.current && currentWorktreeRef.current !== worktreePath) {
       stopWatching(currentWorktreeRef.current)
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current()
-        unsubscribeRef.current = null
-      }
     }
 
     currentWorktreeRef.current = worktreePath
@@ -150,32 +144,15 @@ export function FileTree({
     // Load git statuses (skip for connection paths — no .git directory)
     if (!isConnectionMode) loadFileStatuses(worktreePath)
 
-    // Start watching
+    // Start watching (store handles onChange subscription internally)
     startWatching(worktreePath)
-
-    // Subscribe to file change events (file tree refresh only;
-    // git status refresh is handled centrally by useWorktreeWatcher)
-    unsubscribeRef.current = window.fileTreeOps.onChange((event) => {
-      if (event.worktreePath === worktreePath) {
-        handleFileChange(worktreePath, event.eventType, event.changedPath, event.relativePath)
-      }
-    })
-
-    return () => {
-      // Cleanup on unmount or worktree change
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current()
-        unsubscribeRef.current = null
-      }
-    }
   }, [
     worktreePath,
     isConnectionMode,
     loadFileTree,
     loadFileStatuses,
     startWatching,
-    stopWatching,
-    handleFileChange
+    stopWatching
   ])
 
   // Cleanup watching on unmount

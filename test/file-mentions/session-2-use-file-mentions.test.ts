@@ -1,114 +1,54 @@
 import { describe, test, expect } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useFileMentions } from '../../src/renderer/src/hooks/useFileMentions'
-import type { FileTreeNode } from '../../src/renderer/src/lib/file-search-utils'
+import type { FlatFile } from '../../src/renderer/src/lib/file-search-utils'
 
-const sampleTree: FileTreeNode[] = [
-  {
-    name: 'src',
-    path: '/project/src',
-    relativePath: 'src',
-    isDirectory: true,
-    extension: null,
-    children: [
-      {
-        name: 'utils',
-        path: '/project/src/utils',
-        relativePath: 'src/utils',
-        isDirectory: true,
-        extension: null,
-        children: [
-          {
-            name: 'helpers.ts',
-            path: '/project/src/utils/helpers.ts',
-            relativePath: 'src/utils/helpers.ts',
-            isDirectory: false,
-            extension: '.ts'
-          },
-          {
-            name: 'format.ts',
-            path: '/project/src/utils/format.ts',
-            relativePath: 'src/utils/format.ts',
-            isDirectory: false,
-            extension: '.ts'
-          }
-        ]
-      },
-      {
-        name: 'index.ts',
-        path: '/project/src/index.ts',
-        relativePath: 'src/index.ts',
-        isDirectory: false,
-        extension: '.ts'
-      },
-      {
-        name: 'app.tsx',
-        path: '/project/src/app.tsx',
-        relativePath: 'src/app.tsx',
-        isDirectory: false,
-        extension: '.tsx'
-      }
-    ]
-  },
-  {
-    name: 'README.md',
-    path: '/project/README.md',
-    relativePath: 'README.md',
-    isDirectory: false,
-    extension: '.md'
-  },
-  {
-    name: 'package.json',
-    path: '/project/package.json',
-    relativePath: 'package.json',
-    isDirectory: false,
-    extension: '.json'
-  },
-  {
-    name: 'tsconfig.json',
-    path: '/project/tsconfig.json',
-    relativePath: 'tsconfig.json',
-    isDirectory: false,
-    extension: '.json'
-  }
+const sampleFiles: FlatFile[] = [
+  { name: 'helpers.ts', path: '/project/src/utils/helpers.ts', relativePath: 'src/utils/helpers.ts', extension: '.ts' },
+  { name: 'format.ts', path: '/project/src/utils/format.ts', relativePath: 'src/utils/format.ts', extension: '.ts' },
+  { name: 'index.ts', path: '/project/src/index.ts', relativePath: 'src/index.ts', extension: '.ts' },
+  { name: 'app.tsx', path: '/project/src/app.tsx', relativePath: 'src/app.tsx', extension: '.tsx' },
+  { name: 'README.md', path: '/project/README.md', relativePath: 'README.md', extension: '.md' },
+  { name: 'package.json', path: '/project/package.json', relativePath: 'package.json', extension: '.json' },
+  { name: 'tsconfig.json', path: '/project/tsconfig.json', relativePath: 'tsconfig.json', extension: '.json' }
 ]
 
 describe('Session 2: useFileMentions Hook', () => {
   describe('Trigger detection', () => {
     test("'@' at position 0 opens popover", () => {
-      const { result } = renderHook(() => useFileMentions('@', 1, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@', 1, sampleFiles))
       expect(result.current.isOpen).toBe(true)
     })
 
     test("' @' (space then @) opens popover", () => {
-      const { result } = renderHook(() => useFileMentions('hello @', 7, sampleTree))
+      const { result } = renderHook(() => useFileMentions('hello @', 7, sampleFiles))
       expect(result.current.isOpen).toBe(true)
     })
 
     test("'\\n@' (newline then @) opens popover", () => {
-      const { result } = renderHook(() => useFileMentions('hello\n@', 7, sampleTree))
+      const { result } = renderHook(() => useFileMentions('hello\n@', 7, sampleFiles))
       expect(result.current.isOpen).toBe(true)
     })
 
     test("'user@' (mid-word) does NOT open popover", () => {
-      const { result } = renderHook(() => useFileMentions('user@', 5, sampleTree))
+      const { result } = renderHook(() => useFileMentions('user@', 5, sampleFiles))
       expect(result.current.isOpen).toBe(false)
     })
 
     test("'a@b' does NOT open popover", () => {
-      const { result } = renderHook(() => useFileMentions('a@b', 3, sampleTree))
+      const { result } = renderHook(() => useFileMentions('a@b', 3, sampleFiles))
       expect(result.current.isOpen).toBe(false)
     })
 
     test("'@' followed by space closes popover", () => {
-      const { result } = renderHook(() => useFileMentions('@ ', 2, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@ ', 2, sampleFiles))
       expect(result.current.isOpen).toBe(false)
     })
   })
 
   describe('Filtering', () => {
     test('empty query returns first 5 files alphabetically', () => {
-      const { result } = renderHook(() => useFileMentions('@', 1, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@', 1, sampleFiles))
 
       expect(result.current.isOpen).toBe(true)
       expect(result.current.suggestions.length).toBeLessThanOrEqual(5)
@@ -120,7 +60,7 @@ describe('Session 2: useFileMentions Hook', () => {
     })
 
     test("query 'help' matches 'helpers.ts' with filename-contains score", () => {
-      const { result } = renderHook(() => useFileMentions('@help', 5, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@help', 5, sampleFiles))
 
       expect(result.current.isOpen).toBe(true)
       expect(result.current.suggestions.length).toBeGreaterThan(0)
@@ -128,7 +68,7 @@ describe('Session 2: useFileMentions Hook', () => {
     })
 
     test("query 'src/u' matches 'src/utils/helpers.ts' with path-contains score", () => {
-      const { result } = renderHook(() => useFileMentions('@src/u', 6, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@src/u', 6, sampleFiles))
 
       expect(result.current.isOpen).toBe(true)
       const paths = result.current.suggestions.map((s) => s.relativePath)
@@ -136,7 +76,7 @@ describe('Session 2: useFileMentions Hook', () => {
     })
 
     test('exact filename match scores highest', () => {
-      const { result } = renderHook(() => useFileMentions('@helpers.ts', 11, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@helpers.ts', 11, sampleFiles))
 
       expect(result.current.isOpen).toBe(true)
       expect(result.current.suggestions[0].name).toBe('helpers.ts')
@@ -144,7 +84,7 @@ describe('Session 2: useFileMentions Hook', () => {
 
     test('max 5 results returned', () => {
       // Even with a query that matches everything via subsequence
-      const { result } = renderHook(() => useFileMentions('@', 1, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@', 1, sampleFiles))
 
       expect(result.current.suggestions.length).toBeLessThanOrEqual(5)
     })
@@ -152,7 +92,7 @@ describe('Session 2: useFileMentions Hook', () => {
 
   describe('Selection', () => {
     test("selectFile replaces '@que' with '@src/utils/helpers.ts ' and returns correct mention", () => {
-      const { result } = renderHook(() => useFileMentions('@help', 5, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@help', 5, sampleFiles))
 
       const file = result.current.suggestions.find((s) => s.name === 'helpers.ts')!
       expect(file).toBeDefined()
@@ -167,7 +107,7 @@ describe('Session 2: useFileMentions Hook', () => {
     })
 
     test('selectFile appends trailing space after path', () => {
-      const { result } = renderHook(() => useFileMentions('@help', 5, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@help', 5, sampleFiles))
 
       const file = result.current.suggestions.find((s) => s.name === 'helpers.ts')!
 
@@ -180,7 +120,7 @@ describe('Session 2: useFileMentions Hook', () => {
     })
 
     test('mention has correct startIndex and endIndex', () => {
-      const { result } = renderHook(() => useFileMentions('check @help', 11, sampleTree))
+      const { result } = renderHook(() => useFileMentions('check @help', 11, sampleFiles))
 
       const file = result.current.suggestions.find((s) => s.name === 'helpers.ts')!
 
@@ -206,7 +146,7 @@ describe('Session 2: useFileMentions Hook', () => {
 
   describe('Navigation', () => {
     test("moveSelection('down') increments selectedIndex", () => {
-      const { result } = renderHook(() => useFileMentions('@', 1, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@', 1, sampleFiles))
 
       expect(result.current.selectedIndex).toBe(0)
       act(() => {
@@ -216,7 +156,7 @@ describe('Session 2: useFileMentions Hook', () => {
     })
 
     test("moveSelection('down') wraps from last to 0", () => {
-      const { result } = renderHook(() => useFileMentions('@', 1, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@', 1, sampleFiles))
 
       const count = result.current.suggestions.length
       // Move to last index
@@ -235,7 +175,7 @@ describe('Session 2: useFileMentions Hook', () => {
     })
 
     test("moveSelection('up') wraps from 0 to last", () => {
-      const { result } = renderHook(() => useFileMentions('@', 1, sampleTree))
+      const { result } = renderHook(() => useFileMentions('@', 1, sampleFiles))
 
       const count = result.current.suggestions.length
       expect(result.current.selectedIndex).toBe(0)
@@ -248,7 +188,7 @@ describe('Session 2: useFileMentions Hook', () => {
 
     test('selectedIndex resets to 0 when query changes', () => {
       const { result, rerender } = renderHook(
-        ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+        ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
         { initialProps: { input: '@', cursor: 1 } }
       )
 

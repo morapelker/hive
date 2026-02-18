@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useFileMentions, applyStripping } from '../../src/renderer/src/hooks/useFileMentions'
-import type { FileTreeNode } from '../../src/renderer/src/lib/file-search-utils'
+import type { FlatFile } from '../../src/renderer/src/lib/file-search-utils'
 
 /**
  * Session 5 Integration Tests
@@ -14,89 +14,35 @@ import type { FileTreeNode } from '../../src/renderer/src/lib/file-search-utils'
  * that all pieces work together correctly.
  */
 
-const sampleTree: FileTreeNode[] = [
-  {
-    name: 'src',
-    path: '/project/src',
-    relativePath: 'src',
-    isDirectory: true,
-    extension: null,
-    children: [
-      {
-        name: 'utils',
-        path: '/project/src/utils',
-        relativePath: 'src/utils',
-        isDirectory: true,
-        extension: null,
-        children: [
-          {
-            name: 'helpers.ts',
-            path: '/project/src/utils/helpers.ts',
-            relativePath: 'src/utils/helpers.ts',
-            isDirectory: false,
-            extension: '.ts'
-          },
-          {
-            name: 'format.ts',
-            path: '/project/src/utils/format.ts',
-            relativePath: 'src/utils/format.ts',
-            isDirectory: false,
-            extension: '.ts'
-          }
-        ]
-      },
-      {
-        name: 'index.ts',
-        path: '/project/src/index.ts',
-        relativePath: 'src/index.ts',
-        isDirectory: false,
-        extension: '.ts'
-      },
-      {
-        name: 'app.tsx',
-        path: '/project/src/app.tsx',
-        relativePath: 'src/app.tsx',
-        isDirectory: false,
-        extension: '.tsx'
-      }
-    ]
-  },
-  {
-    name: 'README.md',
-    path: '/project/README.md',
-    relativePath: 'README.md',
-    isDirectory: false,
-    extension: '.md'
-  },
-  {
-    name: 'package.json',
-    path: '/project/package.json',
-    relativePath: 'package.json',
-    isDirectory: false,
-    extension: '.json'
-  }
+const sampleFiles: FlatFile[] = [
+  { name: 'helpers.ts', path: '/project/src/utils/helpers.ts', relativePath: 'src/utils/helpers.ts', extension: '.ts' },
+  { name: 'format.ts', path: '/project/src/utils/format.ts', relativePath: 'src/utils/format.ts', extension: '.ts' },
+  { name: 'index.ts', path: '/project/src/index.ts', relativePath: 'src/index.ts', extension: '.ts' },
+  { name: 'app.tsx', path: '/project/src/app.tsx', relativePath: 'src/app.tsx', extension: '.tsx' },
+  { name: 'README.md', path: '/project/README.md', relativePath: 'README.md', extension: '.md' },
+  { name: 'package.json', path: '/project/package.json', relativePath: 'package.json', extension: '.json' }
 ]
 
 describe('Session 5: Integration', () => {
   test("typing '@' at position 0 opens file mention popover", () => {
-    const { result } = renderHook(() => useFileMentions('@', 1, sampleTree))
+    const { result } = renderHook(() => useFileMentions('@', 1, sampleFiles))
     expect(result.current.isOpen).toBe(true)
     expect(result.current.suggestions.length).toBeGreaterThan(0)
   })
 
   test("typing '@' after space opens file mention popover", () => {
-    const { result } = renderHook(() => useFileMentions('Check @', 7, sampleTree))
+    const { result } = renderHook(() => useFileMentions('Check @', 7, sampleFiles))
     expect(result.current.isOpen).toBe(true)
     expect(result.current.suggestions.length).toBeGreaterThan(0)
   })
 
   test("typing '@' mid-word does NOT open popover", () => {
-    const { result } = renderHook(() => useFileMentions('user@test', 9, sampleTree))
+    const { result } = renderHook(() => useFileMentions('user@test', 9, sampleFiles))
     expect(result.current.isOpen).toBe(false)
   })
 
   test("selecting a file inserts '@relativePath ' into input", () => {
-    const { result } = renderHook(() => useFileMentions('@help', 5, sampleTree))
+    const { result } = renderHook(() => useFileMentions('@help', 5, sampleFiles))
 
     const file = result.current.suggestions.find((s) => s.name === 'helpers.ts')!
     expect(file).toBeDefined()
@@ -113,7 +59,7 @@ describe('Session 5: Integration', () => {
 
   test("selecting a file then sending with strip ON sends without '@'", () => {
     const { result, rerender } = renderHook(
-      ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+      ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
       { initialProps: { input: '@help', cursor: 5 } }
     )
 
@@ -134,7 +80,7 @@ describe('Session 5: Integration', () => {
 
   test("selecting a file then sending with strip OFF sends with '@'", () => {
     const { result, rerender } = renderHook(
-      ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+      ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
       { initialProps: { input: '@help', cursor: 5 } }
     )
 
@@ -156,7 +102,7 @@ describe('Session 5: Integration', () => {
     // When input starts with '/', the slash command popover should show.
     // The file mention popover has a `visible` prop that includes `!showSlashCommands`.
     // Here we verify the hook itself: '/' at position 0 does NOT trigger '@' detection.
-    const { result } = renderHook(() => useFileMentions('/command @file', 14, sampleTree))
+    const { result } = renderHook(() => useFileMentions('/command @file', 14, sampleFiles))
     // The '@file' after a slash command is valid (preceded by space), but in SessionView
     // the popover would be hidden by `!showSlashCommands`. The hook itself still detects it.
     // The key integration point is that SessionView passes `visible={fileMentions.isOpen && !showSlashCommands}`
@@ -169,7 +115,7 @@ describe('Session 5: Integration', () => {
   })
 
   test('ArrowUp/Down navigate file suggestions when popover is open (not prompt history)', () => {
-    const { result } = renderHook(() => useFileMentions('@', 1, sampleTree))
+    const { result } = renderHook(() => useFileMentions('@', 1, sampleFiles))
 
     // Popover is open
     expect(result.current.isOpen).toBe(true)
@@ -195,7 +141,7 @@ describe('Session 5: Integration', () => {
   })
 
   test('Escape closes popover without side effects', () => {
-    const { result } = renderHook(() => useFileMentions('@help', 5, sampleTree))
+    const { result } = renderHook(() => useFileMentions('@help', 5, sampleFiles))
 
     expect(result.current.isOpen).toBe(true)
 
@@ -211,7 +157,7 @@ describe('Session 5: Integration', () => {
 
   test('multiple mentions in one message all get stripped correctly', () => {
     const { result, rerender } = renderHook(
-      ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+      ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
       { initialProps: { input: '@help', cursor: 5 } }
     )
 
@@ -255,7 +201,7 @@ describe('Session 5: Integration', () => {
 
   test("editing a mention's text removes it from tracking", () => {
     const { result, rerender } = renderHook(
-      ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+      ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
       { initialProps: { input: '@help', cursor: 5 } }
     )
 
@@ -285,7 +231,7 @@ describe('Session 5: Integration', () => {
 
   test('clearMentions resets tracked mentions after send', () => {
     const { result, rerender } = renderHook(
-      ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+      ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
       { initialProps: { input: '@help', cursor: 5 } }
     )
 
@@ -309,7 +255,7 @@ describe('Session 5: Integration', () => {
   test('mixed tracked and untracked @ symbols: only tracked ones get stripped', () => {
     // Simulate: user selects helpers.ts via popover, then types '@manual' by hand
     const { result, rerender } = renderHook(
-      ({ input, cursor }) => useFileMentions(input, cursor, sampleTree),
+      ({ input, cursor }) => useFileMentions(input, cursor, sampleFiles),
       { initialProps: { input: '@help', cursor: 5 } }
     )
 

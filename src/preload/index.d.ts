@@ -564,6 +564,12 @@ declare global {
         tree?: FileTreeNode[]
         error?: string
       }>
+      // Scan a directory and return a flat list of all files (via git ls-files)
+      scanFlat: (dirPath: string) => Promise<{
+        success: boolean
+        files?: FlatFile[]
+        error?: string
+      }>
       // Lazy load children for a directory
       loadChildren: (
         dirPath: string,
@@ -1038,6 +1044,14 @@ declare global {
     isSymlink?: boolean
     extension: string | null
     children?: FileTreeNode[]
+  }
+
+  // Flat file entry for search index (no tree structure)
+  interface FlatFile {
+    name: string
+    path: string
+    relativePath: string
+    extension: string | null
   }
 
   // File tree change event type
