@@ -46,7 +46,9 @@ export function ContextIndicator({
         modelLimits[getModelLimitKey(model.modelID)])
       : undefined
 
-    const u = t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite
+    // Context window = total prompt tokens (input + cached).
+    // Output and reasoning are generated tokens — they don't occupy the context window.
+    const u = t.input + t.cacheRead + t.cacheWrite
     const pct = typeof lim === 'number' && lim > 0 ? Math.round((u / lim) * 100) : null
     return { used: u, limit: lim, percent: pct, tokens: t }
   }, [tokenInfo, sessionModel, modelId, providerId, modelLimits])
@@ -73,9 +75,9 @@ export function ContextIndicator({
             </div>
           </div>
         </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={8} className="max-w-[240px]">
+        <TooltipContent side="top" sideOffset={8} className="max-w-[260px]">
           <div className="space-y-1.5">
-            <div className="font-medium">Context Usage</div>
+            <div className="font-medium">Context Window</div>
             {typeof limit === 'number' ? (
               <div>
                 {formatNumber(used)} / {formatNumber(limit)} tokens ({percent ?? 0}%)
@@ -85,11 +87,16 @@ export function ContextIndicator({
             )}
             <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-80">
               <div>Input: {formatNumber(tokens.input)}</div>
-              <div>Output: {formatNumber(tokens.output)}</div>
-              <div>Reasoning: {formatNumber(tokens.reasoning)}</div>
               <div>Cache read: {formatNumber(tokens.cacheRead)}</div>
               <div>Cache write: {formatNumber(tokens.cacheWrite)}</div>
             </div>
+            {(tokens.output > 0 || tokens.reasoning > 0) && (
+              <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-60">
+                <div className="opacity-100 text-[10px]">Generated (not in context)</div>
+                {tokens.output > 0 && <div>Output: {formatNumber(tokens.output)}</div>}
+                {tokens.reasoning > 0 && <div>Reasoning: {formatNumber(tokens.reasoning)}</div>}
+              </div>
+            )}
             {cost > 0 && (
               <div className="border-t border-background/20 pt-1.5">
                 <div>Session cost: ${cost.toFixed(4)}</div>
