@@ -39,6 +39,7 @@ interface ContextState {
   addSessionCost: (sessionId: string, cost: number) => void
   setSessionCost: (sessionId: string, cost: number) => void
   resetSessionTokens: (sessionId: string) => void
+  clearSessionTokenSnapshot: (sessionId: string) => void
   setModelLimit: (modelId: string, limit: number, providerID?: string) => void
   // Derived
   getContextUsage: (
@@ -107,6 +108,14 @@ export const useContextStore = create<ContextState>()((set, get) => ({
         modelBySession: restModel,
         costBySession: restCost
       }
+    })
+  },
+
+  clearSessionTokenSnapshot: (sessionId: string) => {
+    set((state) => {
+      const { [sessionId]: _removed, ...rest } = state.tokensBySession
+      void _removed
+      return { tokensBySession: rest }
     })
   },
 

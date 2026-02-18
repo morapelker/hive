@@ -680,7 +680,16 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             isSubagentMessage
           })
 
-          if (isToolResultOnly) {
+          // Skip subagent messages from accumulation — they belong to the child
+          // session's transcript and should not appear in the main conversation.
+          // The renderer routes subagent content into SubtaskCards via childSessionId
+          // on stream events; the in-memory cache must not include them either.
+          if (isSubagentMessage) {
+            log.debug('Skipping subagent message from session.messages accumulation', {
+              msgType,
+              parentToolUseId: (sdkMessage as Record<string, unknown>).parent_tool_use_id
+            })
+          } else if (isToolResultOnly) {
             // Instead of creating an empty user message, merge tool_result
             // output/error into the preceding assistant message's tool_use parts.
             const toolResults = msgContent as {

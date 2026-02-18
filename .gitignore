@@ -50,3 +50,6 @@ vendor/
 *.cert
 *.crt
 *.pfx
+
+# Local debug/playground scripts
+scripts/

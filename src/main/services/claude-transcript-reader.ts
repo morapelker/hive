@@ -201,9 +201,16 @@ export async function readClaudeTranscript(
     }
   }
 
-  // Pass 3: Translate entries, skipping tool_result-only user messages
+  // Pass 3: Translate entries, skipping tool_result-only and subagent messages
   const messages: unknown[] = []
   for (const entry of entries) {
+    // Skip subagent messages — they have parent_tool_use_id set and belong
+    // to child session transcripts, not the main conversation.
+    const rawEntry = entry as Record<string, unknown>
+    if (rawEntry.parent_tool_use_id) {
+      continue
+    }
+
     // Skip user messages that only contain tool_result blocks
     if (entry.type === 'user') {
       const content = Array.isArray(entry.message?.content) ? entry.message!.content : []
