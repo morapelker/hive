@@ -35,10 +35,30 @@ vi.mock('@/stores/useWorktreeStore', () => ({
   )
 }))
 
+// Mock settings store state - use let so tests can override
+let mockSettingsStoreState: {
+  defaultTerminal: string
+  customTerminalCommand: string
+} = {
+  defaultTerminal: 'ghostty',
+  customTerminalCommand: ''
+}
+
+vi.mock('@/stores/useSettingsStore', () => ({
+  useSettingsStore: Object.assign(
+    (selector?: (s: unknown) => unknown) =>
+      selector ? selector(mockSettingsStoreState) : mockSettingsStoreState,
+    {
+      getState: () => mockSettingsStoreState
+    }
+  )
+}))
+
 // Mock window APIs
 const mockCopyToClipboard = vi.fn().mockResolvedValue(undefined)
 const mockShowInFolder = vi.fn().mockResolvedValue(undefined)
 const mockOpenInApp = vi.fn().mockResolvedValue({ success: true })
+const mockOpenWithTerminal = vi.fn().mockResolvedValue({ success: true })
 
 Object.defineProperty(window, 'projectOps', {
   writable: true,
@@ -52,6 +72,13 @@ Object.defineProperty(window, 'systemOps', {
   writable: true,
   value: {
     openInApp: mockOpenInApp
+  }
+})
+
+Object.defineProperty(window, 'settingsOps', {
+  writable: true,
+  value: {
+    openWithTerminal: mockOpenWithTerminal
   }
 })
 
@@ -79,12 +106,17 @@ describe('Session 6: Quick Action Buttons', () => {
         ]
       ])
     }
+    // Reset settings to defaults
+    mockSettingsStoreState = {
+      defaultTerminal: 'ghostty',
+      customTerminalCommand: ''
+    }
   })
 
   test('renders four individual buttons', () => {
     render(<QuickActions />)
     expect(screen.getByTestId('quick-action-cursor')).toBeInTheDocument()
-    expect(screen.getByTestId('quick-action-ghostty')).toBeInTheDocument()
+    expect(screen.getByTestId('quick-action-terminal')).toBeInTheDocument()
     expect(screen.getByTestId('quick-action-copy-path')).toBeInTheDocument()
     expect(screen.getByTestId('quick-action-finder')).toBeInTheDocument()
   })
@@ -99,9 +131,18 @@ describe('Session 6: Quick Action Buttons', () => {
     expect(screen.getByText('Cursor')).toBeInTheDocument()
   })
 
-  test('Ghostty button shows label', () => {
+  test('Terminal button shows label based on defaultTerminal setting', () => {
     render(<QuickActions />)
     expect(screen.getByText('Ghostty')).toBeInTheDocument()
+  })
+
+  test('Terminal button shows Warp when defaultTerminal is warp', () => {
+    mockSettingsStoreState = {
+      defaultTerminal: 'warp',
+      customTerminalCommand: ''
+    }
+    render(<QuickActions />)
+    expect(screen.getByText('Warp')).toBeInTheDocument()
   })
 
   test('Cursor button calls openInApp with cursor', async () => {
@@ -111,11 +152,30 @@ describe('Session 6: Quick Action Buttons', () => {
     expect(mockOpenInApp).toHaveBeenCalledWith('cursor', '/Users/test/my-project')
   })
 
-  test('Ghostty button calls openInApp with ghostty', async () => {
+  test('Terminal button calls openWithTerminal with configured terminal', async () => {
     const user = userEvent.setup()
     render(<QuickActions />)
-    await user.click(screen.getByTestId('quick-action-ghostty'))
-    expect(mockOpenInApp).toHaveBeenCalledWith('ghostty', '/Users/test/my-project')
+    await user.click(screen.getByTestId('quick-action-terminal'))
+    expect(mockOpenWithTerminal).toHaveBeenCalledWith(
+      '/Users/test/my-project',
+      'ghostty',
+      undefined
+    )
+  })
+
+  test('Terminal button calls openWithTerminal with warp when configured', async () => {
+    mockSettingsStoreState = {
+      defaultTerminal: 'warp',
+      customTerminalCommand: ''
+    }
+    const user = userEvent.setup()
+    render(<QuickActions />)
+    await user.click(screen.getByTestId('quick-action-terminal'))
+    expect(mockOpenWithTerminal).toHaveBeenCalledWith(
+      '/Users/test/my-project',
+      'warp',
+      undefined
+    )
   })
 
   test('Copy Path calls copyToClipboard', async () => {
@@ -140,7 +200,7 @@ describe('Session 6: Quick Action Buttons', () => {
 
     render(<QuickActions />)
     expect(screen.getByTestId('quick-action-cursor')).toBeDisabled()
-    expect(screen.getByTestId('quick-action-ghostty')).toBeDisabled()
+    expect(screen.getByTestId('quick-action-terminal')).toBeDisabled()
     expect(screen.getByTestId('quick-action-copy-path')).toBeDisabled()
     expect(screen.getByTestId('quick-action-finder')).toBeDisabled()
   })

@@ -1,8 +1,9 @@
-import { Copy, Check, FolderOpen, GitBranch } from 'lucide-react'
+import { Copy, Check, FolderOpen, GitBranch, Terminal } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useSettingsStore, type TerminalOption } from '@/stores/useSettingsStore'
 
 function CursorIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -35,12 +36,49 @@ function GhosttyIcon({ className }: { className?: string }): React.JSX.Element {
   )
 }
 
+function WarpIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+      <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.568 8.16a.554.554 0 0 1-.554.553h-5.46l-2.14 6.574a.554.554 0 0 1-1.054-.343l2.278-6.998a.554.554 0 0 1 .527-.382h5.849c.306 0 .554.29.554.596zm-4.283 7.68a.554.554 0 0 1-.527.382H6.91a.554.554 0 0 1 0-1.107h5.46l2.14-6.574a.554.554 0 0 1 1.054.343l-2.278 6.998z" />
+    </svg>
+  )
+}
+
+const TERMINAL_LABELS: Record<TerminalOption, string> = {
+  terminal: 'Terminal',
+  iterm: 'iTerm',
+  warp: 'Warp',
+  alacritty: 'Alacritty',
+  kitty: 'Kitty',
+  ghostty: 'Ghostty',
+  custom: 'Terminal'
+}
+
+function TerminalIcon({
+  terminal,
+  className
+}: {
+  terminal: TerminalOption
+  className?: string
+}): React.JSX.Element {
+  switch (terminal) {
+    case 'ghostty':
+      return <GhosttyIcon className={className} />
+    case 'warp':
+      return <WarpIcon className={className} />
+    default:
+      return <Terminal className={className} />
+  }
+}
+
 export function QuickActions(): React.JSX.Element | null {
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectedConnection = useConnectionStore((s) =>
     s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
   )
+  const defaultTerminal = useSettingsStore((s) => s.defaultTerminal)
+  const customTerminalCommand = useSettingsStore((s) => s.customTerminalCommand)
   const [copied, setCopied] = useState(false)
   const [branchCopied, setBranchCopied] = useState(false)
 
@@ -65,6 +103,8 @@ export function QuickActions(): React.JSX.Element | null {
       : null
   const disabled = !activePath
 
+  const terminalLabel = TERMINAL_LABELS[defaultTerminal]
+
   const handleAction = useCallback(
     async (actionId: string) => {
       if (!activePath) return
@@ -80,6 +120,12 @@ export function QuickActions(): React.JSX.Element | null {
           setTimeout(() => setBranchCopied(false), 1500)
         } else if (actionId === 'finder') {
           await window.projectOps.showInFolder(activePath)
+        } else if (actionId === 'terminal') {
+          await window.settingsOps.openWithTerminal(
+            activePath,
+            defaultTerminal,
+            defaultTerminal === 'custom' ? customTerminalCommand : undefined
+          )
         } else {
           await window.systemOps.openInApp(actionId, activePath)
         }
@@ -87,7 +133,7 @@ export function QuickActions(): React.JSX.Element | null {
         console.error('Quick action failed:', error)
       }
     },
-    [activePath, branchName]
+    [activePath, branchName, defaultTerminal, customTerminalCommand]
   )
 
   return (
@@ -109,12 +155,12 @@ export function QuickActions(): React.JSX.Element | null {
         size="sm"
         className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
         disabled={disabled}
-        onClick={() => handleAction('ghostty')}
-        title="Open in Ghostty"
-        data-testid="quick-action-ghostty"
+        onClick={() => handleAction('terminal')}
+        title={`Open in ${terminalLabel}`}
+        data-testid="quick-action-terminal"
       >
-        <GhosttyIcon className="h-3.5 w-3.5" />
-        <span>Ghostty</span>
+        <TerminalIcon terminal={defaultTerminal} className="h-3.5 w-3.5" />
+        <span>{terminalLabel}</span>
       </Button>
       <Button
         variant="ghost"

@@ -236,7 +236,7 @@ describe('Session 9: Integration & Verification', () => {
     test('has four individual buttons with data-testid attributes', () => {
       const source = readSource('src/renderer/src/components/layout/QuickActions.tsx')
       expect(source).toContain('data-testid="quick-action-cursor"')
-      expect(source).toContain('data-testid="quick-action-ghostty"')
+      expect(source).toContain('data-testid="quick-action-terminal"')
       expect(source).toContain('data-testid="quick-action-copy-path"')
       expect(source).toContain('data-testid="quick-action-finder"')
     })
@@ -249,10 +249,10 @@ describe('Session 9: Integration & Verification', () => {
       expect(source).not.toContain('ChevronDown')
     })
 
-    test('Cursor and Ghostty buttons have labels', () => {
+    test('Cursor button has label and terminal label is dynamic', () => {
       const source = readSource('src/renderer/src/components/layout/QuickActions.tsx')
       expect(source).toContain('<span>Cursor</span>')
-      expect(source).toContain('<span>Ghostty</span>')
+      expect(source).toContain('<span>{terminalLabel}</span>')
     })
 
     test('Copy Path shows check icon after copying', () => {
@@ -266,7 +266,7 @@ describe('Session 9: Integration & Verification', () => {
     test('buttons are disabled when no worktree path', () => {
       const source = readSource('src/renderer/src/components/layout/QuickActions.tsx')
       expect(source).toContain('disabled={disabled}')
-      expect(source).toContain('const disabled = !worktreePath')
+      expect(source).toContain('const disabled = !activePath')
     })
   })
 
