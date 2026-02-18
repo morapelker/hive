@@ -44,8 +44,8 @@ describe('Session 1: File Search Bug Fix', () => {
     })
   })
 
-  test('loads file tree when dialog opens with empty tree', () => {
-    const loadFileTree = vi.fn().mockResolvedValue(undefined)
+  test('loads file index when dialog opens with empty index', () => {
+    const loadFileIndex = vi.fn().mockResolvedValue(undefined)
 
     // Set up worktree store with a selected worktree
     useWorktreeStore.setState({
@@ -70,10 +70,10 @@ describe('Session 1: File Search Bug Fix', () => {
       ])
     })
 
-    // File tree store has no data for this worktree (empty tree)
+    // File tree store has no index for this worktree
     useFileTreeStore.setState({
-      fileTreeByWorktree: new Map(),
-      loadFileTree
+      fileIndexByWorktree: new Map(),
+      loadFileIndex
     })
 
     // Open the dialog
@@ -81,11 +81,11 @@ describe('Session 1: File Search Bug Fix', () => {
 
     render(<FileSearchDialog />)
 
-    expect(loadFileTree).toHaveBeenCalledWith('/test/worktree')
+    expect(loadFileIndex).toHaveBeenCalledWith('/test/worktree')
   })
 
-  test('does not reload file tree when already loaded', () => {
-    const loadFileTree = vi.fn().mockResolvedValue(undefined)
+  test('does not reload file index when already loaded', () => {
+    const loadFileIndex = vi.fn().mockResolvedValue(undefined)
 
     useWorktreeStore.setState({
       selectedWorktreeId: 'wt-1',
@@ -109,30 +109,29 @@ describe('Session 1: File Search Bug Fix', () => {
       ])
     })
 
-    // File tree store already has data for this worktree
-    const populatedTree = [
+    // File tree store already has index data for this worktree
+    const populatedIndex = [
       {
         name: 'index.ts',
         path: '/test/worktree/index.ts',
         relativePath: 'index.ts',
-        isDirectory: false,
         extension: '.ts'
       }
     ]
     useFileTreeStore.setState({
-      fileTreeByWorktree: new Map([['/test/worktree', populatedTree]]),
-      loadFileTree
+      fileIndexByWorktree: new Map([['/test/worktree', populatedIndex]]),
+      loadFileIndex
     })
 
     useFileSearchStore.setState({ isOpen: true })
 
     render(<FileSearchDialog />)
 
-    expect(loadFileTree).not.toHaveBeenCalled()
+    expect(loadFileIndex).not.toHaveBeenCalled()
   })
 
   test('does not load when dialog is closed', () => {
-    const loadFileTree = vi.fn().mockResolvedValue(undefined)
+    const loadFileIndex = vi.fn().mockResolvedValue(undefined)
 
     useWorktreeStore.setState({
       selectedWorktreeId: 'wt-1',
@@ -157,8 +156,8 @@ describe('Session 1: File Search Bug Fix', () => {
     })
 
     useFileTreeStore.setState({
-      fileTreeByWorktree: new Map(),
-      loadFileTree
+      fileIndexByWorktree: new Map(),
+      loadFileIndex
     })
 
     // Dialog is closed
@@ -166,6 +165,6 @@ describe('Session 1: File Search Bug Fix', () => {
 
     render(<FileSearchDialog />)
 
-    expect(loadFileTree).not.toHaveBeenCalled()
+    expect(loadFileIndex).not.toHaveBeenCalled()
   })
 })

@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { flattenTree, scoreMatch, type FlatFile, type FileTreeNode } from '@/lib/file-search-utils'
+import { scoreMatch, type FlatFile } from '@/lib/file-search-utils'
 
 export interface FileMention {
   relativePath: string
@@ -92,14 +92,11 @@ function filterSuggestions(flatFiles: FlatFile[], query: string): FlatFile[] {
 export function useFileMentions(
   inputValue: string,
   cursorPosition: number,
-  fileTree: FileTreeNode[]
+  flatFiles: FlatFile[]
 ) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [mentions, setMentions] = useState<FileMention[]>([])
   const prevQueryRef = useRef('')
-
-  // Memoize flat file list — only recompute when fileTree reference changes
-  const flatFiles = useMemo(() => flattenTree(fileTree), [fileTree])
 
   // Detect trigger
   const trigger = useMemo(

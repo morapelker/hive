@@ -1,7 +1,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import * as chokidar from 'chokidar'
+import simpleGit from 'simple-git'
 import { Dirent, promises as fs, existsSync, statSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { join, basename, extname, relative } from 'path'
 import { createLogger } from '../services/logger'
 
 const log = createLogger({ component: 'FileTreeHandlers' })
@@ -230,6 +231,31 @@ export async function scanSingleDirectory(
   }
 }
 
+// Flat file entry for search index (no tree structure)
+export interface FlatFileEntry {
+  name: string
+  path: string
+  relativePath: string
+  extension: string | null
+}
+
+/**
+ * Get all project files as a flat list using git ls-files.
+ * Returns tracked + untracked-non-ignored files, respecting .gitignore.
+ */
+export async function scanFlat(dirPath: string): Promise<FlatFileEntry[]> {
+  const git = simpleGit(dirPath)
+  const raw = await git.raw(['ls-files', '--cached', '--others', '--exclude-standard'])
+  const lines = raw.trim().split('\n').filter(Boolean)
+
+  return lines.map((relativePath) => ({
+    name: basename(relativePath),
+    path: join(dirPath, relativePath),
+    relativePath,
+    extension: extname(relativePath).toLowerCase() || null
+  }))
+}
+
 /**
  * Emit debounced file tree change event to renderer
  */
@@ -298,6 +324,54 @@ export function registerFileTreeHandlers(window: BrowserWindow): void {
         log.error('Failed to scan directory', error instanceof Error ? error : new Error(message), {
           dirPath
         })
+        return {
+          success: false,
+          error: message
+        }
+      }
+    }
+  )
+
+  // Scan a directory and return a flat list of all files via git ls-files
+  ipcMain.handle(
+    'file-tree:scan-flat',
+    async (
+      _event,
+      dirPath: string
+    ): Promise<{
+      success: boolean
+      files?: FlatFileEntry[]
+      error?: string
+    }> => {
+      log.info('Scanning directory flat', { dirPath })
+      try {
+        if (!existsSync(dirPath)) {
+          return {
+            success: false,
+            error: 'Directory does not exist'
+          }
+        }
+
+        const stat = statSync(dirPath)
+        if (!stat.isDirectory()) {
+          return {
+            success: false,
+            error: 'Path is not a directory'
+          }
+        }
+
+        const files = await scanFlat(dirPath)
+        return {
+          success: true,
+          files
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to scan directory flat',
+          error instanceof Error ? error : new Error(message),
+          { dirPath }
+        )
         return {
           success: false,
           error: message
