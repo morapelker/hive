@@ -645,6 +645,70 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       }
     }
   )
+
+  // List open pull requests via gh CLI
+  ipcMain.handle(
+    'git:listPRs',
+    async (
+      _event,
+      { projectPath }: { projectPath: string }
+    ): Promise<{
+      success: boolean
+      prs: Array<{
+        number: number
+        title: string
+        author: string
+        headRefName: string
+      }>
+      error?: string
+    }> => {
+      log.info('Listing PRs via gh CLI', { projectPath })
+      try {
+        // Fetch latest remote refs so PR branches are available for worktree creation
+        await execAsync('git fetch origin', { cwd: projectPath })
+
+        const { stdout } = await execAsync(
+          'gh pr list --json number,title,author,headRefName --state open --limit 100',
+          { cwd: projectPath }
+        )
+        const raw = JSON.parse(stdout) as Array<{
+          number: number
+          title: string
+          author: { login: string }
+          headRefName: string
+        }>
+        const prs = raw.map((pr) => ({
+          number: pr.number,
+          title: pr.title,
+          author: pr.author.login,
+          headRefName: pr.headRefName
+        }))
+        return { success: true, prs }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error(
+          'Failed to list PRs',
+          error instanceof Error ? error : new Error(message),
+          { projectPath }
+        )
+
+        if (message.includes('gh: command not found') || message.includes('not found')) {
+          return { success: false, prs: [], error: 'GitHub CLI (gh) is not installed' }
+        }
+        if (message.includes('not a git repository')) {
+          return { success: false, prs: [], error: 'Not a git repository' }
+        }
+        if (message.includes('Could not resolve to a Repository')) {
+          return {
+            success: false,
+            prs: [],
+            error: 'Not a GitHub repository or not authenticated with gh'
+          }
+        }
+        return { success: false, prs: [], error: message }
+      }
+    }
+  )
 }
 
 // Re-export cleanup functions for app quit handler
