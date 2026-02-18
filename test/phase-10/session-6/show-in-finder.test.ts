@@ -20,7 +20,7 @@ describe('Session 6: Show in Finder', () => {
     })
 
     test('all expected quick action types exist', () => {
-      const actions: QuickActionType[] = ['cursor', 'ghostty', 'copy-path', 'finder']
+      const actions: QuickActionType[] = ['cursor', 'terminal', 'copy-path', 'finder']
       expect(actions).toHaveLength(4)
       expect(actions).toContain('finder')
     })
@@ -33,7 +33,7 @@ describe('Session 6: Show in Finder', () => {
       const finderAction: QuickActionType = 'finder'
       expect(finderAction).toBe('finder')
       // Verify all 4 action types are valid
-      const allActions: QuickActionType[] = ['cursor', 'ghostty', 'copy-path', 'finder']
+      const allActions: QuickActionType[] = ['cursor', 'terminal', 'copy-path', 'finder']
       expect(allActions).toHaveLength(4)
     })
   })
@@ -56,7 +56,7 @@ describe('Session 6: Show in Finder', () => {
     })
 
     test('lastOpenAction can cycle between all action types', () => {
-      const types: QuickActionType[] = ['cursor', 'ghostty', 'copy-path', 'finder']
+      const types: QuickActionType[] = ['cursor', 'terminal', 'copy-path', 'finder']
       for (const type of types) {
         useSettingsStore.getState().updateSetting('lastOpenAction', type)
         expect(useSettingsStore.getState().lastOpenAction).toBe(type)
@@ -88,9 +88,10 @@ describe('Session 6: Show in Finder', () => {
       expect(copyToClipboard).not.toHaveBeenCalled()
     })
 
-    test('non-finder actions still route to openInApp', async () => {
+    test('non-finder actions still route correctly', async () => {
       const showInFolder = vi.fn()
       const openInApp = vi.fn()
+      const openWithTerminal = vi.fn()
       const copyToClipboard = vi.fn()
       const worktreePath = '/path/to/worktree'
 
@@ -99,6 +100,8 @@ describe('Session 6: Show in Finder', () => {
           await copyToClipboard(worktreePath)
         } else if (actionId === 'finder') {
           await showInFolder(worktreePath)
+        } else if (actionId === 'terminal') {
+          await openWithTerminal(worktreePath, 'ghostty')
         } else {
           await openInApp(actionId, worktreePath)
         }
@@ -108,8 +111,8 @@ describe('Session 6: Show in Finder', () => {
       expect(openInApp).toHaveBeenCalledWith('cursor', '/path/to/worktree')
       expect(showInFolder).not.toHaveBeenCalled()
 
-      await executeAction('ghostty')
-      expect(openInApp).toHaveBeenCalledWith('ghostty', '/path/to/worktree')
+      await executeAction('terminal')
+      expect(openWithTerminal).toHaveBeenCalledWith('/path/to/worktree', 'ghostty')
     })
 
     test('copy-path action still routes to copyToClipboard', async () => {

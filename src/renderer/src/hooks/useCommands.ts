@@ -5,7 +5,8 @@ import {
   useSessionStore,
   useThemeStore,
   useSessionHistoryStore,
-  useLayoutStore
+  useLayoutStore,
+  useSettingsStore
 } from '@/stores'
 import { THEME_PRESETS } from '@/lib/themes'
 import { useGitStore } from '@/stores/useGitStore'
@@ -308,7 +309,12 @@ export function useCommands() {
             return
           }
           try {
-            await window.worktreeOps.openInTerminal(worktreePath)
+            const { defaultTerminal, customTerminalCommand } = useSettingsStore.getState()
+            await window.settingsOps.openWithTerminal(
+              worktreePath,
+              defaultTerminal,
+              defaultTerminal === 'custom' ? customTerminalCommand : undefined
+            )
             toast.success('Opened in terminal')
           } catch {
             toast.error('Failed to open in terminal')

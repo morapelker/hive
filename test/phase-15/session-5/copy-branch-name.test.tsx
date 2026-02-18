@@ -214,7 +214,7 @@ describe('Session 5: Copy Branch Name', () => {
     render(<QuickActions />)
 
     expect(screen.getByTestId('quick-action-cursor')).toBeInTheDocument()
-    expect(screen.getByTestId('quick-action-ghostty')).toBeInTheDocument()
+    expect(screen.getByTestId('quick-action-terminal')).toBeInTheDocument()
     expect(screen.getByTestId('quick-action-copy-path')).toBeInTheDocument()
     expect(screen.getByTestId('quick-action-finder')).toBeInTheDocument()
     expect(screen.getByTestId('quick-action-copy-branch')).toBeInTheDocument()
