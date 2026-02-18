@@ -104,10 +104,11 @@ describe('Session 3: Context Indicator', () => {
       })
 
       const usage = useContextStore.getState().getContextUsage('session-1', 'claude-opus')
-      // used = input + output + reasoning + cacheRead + cacheWrite = 80000 + 15000 + 5000 + 1000 + 500 = 101500
-      expect(usage.used).toBe(101500)
+      // Context window = input + cacheRead + cacheWrite = 80000 + 1000 + 500 = 81500
+      // (output and reasoning excluded — they don't occupy the context window)
+      expect(usage.used).toBe(81500)
       expect(usage.limit).toBe(200000)
-      expect(usage.percent).toBe(51)
+      expect(usage.percent).toBe(41)
     })
 
     test('getContextUsage returns null usage when no limit is known', () => {
@@ -122,7 +123,8 @@ describe('Session 3: Context Indicator', () => {
       })
 
       const usage = useContextStore.getState().getContextUsage('session-1', 'unknown-model')
-      expect(usage.used).toBe(150)
+      // Context window = input only = 100 (output excluded)
+      expect(usage.used).toBe(100)
       expect(usage.limit).toBeUndefined()
       expect(usage.percent).toBeNull()
     })
@@ -140,7 +142,8 @@ describe('Session 3: Context Indicator', () => {
       })
 
       const usage = useContextStore.getState().getContextUsage('session-1', 'claude-opus')
-      expect(usage.percent).toBe(350)
+      // Context window = input only = 200 (output/reasoning excluded)
+      expect(usage.percent).toBe(200)
     })
 
     test('getContextUsage returns zeros for unknown session', () => {
@@ -293,7 +296,7 @@ describe('Session 3: Context Indicator', () => {
       act(() => {
         useContextStore.getState().setModelLimit('model', 200000)
         useContextStore.getState().setSessionTokens('s1', {
-          input: 50000,
+          input: 60000,
           output: 10000,
           reasoning: 0,
           cacheRead: 0,
@@ -302,6 +305,7 @@ describe('Session 3: Context Indicator', () => {
       })
 
       const usage = useContextStore.getState().getContextUsage('s1', 'model')
+      // Context window = input only = 60000 → 30%
       expect(usage.percent).toBe(30)
     })
 
@@ -309,7 +313,7 @@ describe('Session 3: Context Indicator', () => {
       act(() => {
         useContextStore.getState().setModelLimit('model', 200000)
         useContextStore.getState().setSessionTokens('s1', {
-          input: 120000,
+          input: 140000,
           output: 20000,
           reasoning: 0,
           cacheRead: 0,
@@ -318,26 +322,11 @@ describe('Session 3: Context Indicator', () => {
       })
 
       const usage = useContextStore.getState().getContextUsage('s1', 'model')
+      // Context window = input only = 140000 → 70%
       expect(usage.percent).toBe(70)
     })
 
     test('percentage 85 is in orange zone (80-90)', () => {
-      act(() => {
-        useContextStore.getState().setModelLimit('model', 200000)
-        useContextStore.getState().setSessionTokens('s1', {
-          input: 150000,
-          output: 20000,
-          reasoning: 0,
-          cacheRead: 0,
-          cacheWrite: 0
-        })
-      })
-
-      const usage = useContextStore.getState().getContextUsage('s1', 'model')
-      expect(usage.percent).toBe(85)
-    })
-
-    test('percentage 95 is in red zone (90-100)', () => {
       act(() => {
         useContextStore.getState().setModelLimit('model', 200000)
         useContextStore.getState().setSessionTokens('s1', {
@@ -350,6 +339,24 @@ describe('Session 3: Context Indicator', () => {
       })
 
       const usage = useContextStore.getState().getContextUsage('s1', 'model')
+      // Context window = input only = 170000 → 85%
+      expect(usage.percent).toBe(85)
+    })
+
+    test('percentage 95 is in red zone (90-100)', () => {
+      act(() => {
+        useContextStore.getState().setModelLimit('model', 200000)
+        useContextStore.getState().setSessionTokens('s1', {
+          input: 190000,
+          output: 20000,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0
+        })
+      })
+
+      const usage = useContextStore.getState().getContextUsage('s1', 'model')
+      // Context window = input only = 190000 → 95%
       expect(usage.percent).toBe(95)
     })
   })

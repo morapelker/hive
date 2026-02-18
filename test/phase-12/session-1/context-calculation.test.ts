@@ -41,8 +41,9 @@ describe('Session 1: Context Calculation Fix', () => {
         })
       })
       const usage = store.getContextUsage('s1', 'model1')
-      // Should be 200+80+0+50+10 = 340, NOT 300+130+10+80+30 = 550
-      expect(usage.used).toBe(340)
+      // Context window = input + cacheRead + cacheWrite = 200+50+10 = 260
+      // (output and reasoning excluded — they don't occupy the context window)
+      expect(usage.used).toBe(260)
     })
 
     test('getContextUsage computes correct total with all 5 categories', () => {
@@ -58,8 +59,9 @@ describe('Session 1: Context Calculation Fix', () => {
         })
       })
       const usage = store.getContextUsage('s1', 'model1')
-      expect(usage.used).toBe(22000) // 15000+2000+500+3000+1500
-      expect(usage.percent).toBe(11) // Math.round(22000/200000*100)
+      // Context window = input + cacheRead + cacheWrite = 15000+3000+1500 = 19500
+      expect(usage.used).toBe(19500)
+      expect(usage.percent).toBe(10) // Math.round(19500/200000*100)
     })
 
     test('cost tracks per session', () => {
@@ -122,7 +124,8 @@ describe('Session 1: Context Calculation Fix', () => {
         })
       })
       const usage = store.getContextUsage('s1', 'unknown-model')
-      expect(usage.used).toBe(1500)
+      // Context window = input only (no cache) = 1000
+      expect(usage.used).toBe(1000)
       expect(usage.percent).toBeNull()
     })
 
@@ -139,7 +142,8 @@ describe('Session 1: Context Calculation Fix', () => {
         })
       })
       const usage = store.getContextUsage('s1', 'model1')
-      expect(usage.percent).toBe(350)
+      // Context window = input only = 200 (output/reasoning excluded)
+      expect(usage.percent).toBe(200)
     })
 
     test('context usage uses snapshot model identity over caller model id', () => {
@@ -167,7 +171,8 @@ describe('Session 1: Context Calculation Fix', () => {
       // Pass a different fallback model id. Store should still use snapshot model limit.
       const usage = store.getContextUsage('s1', 'gpt-4o', 'openai')
       expect(usage.limit).toBe(200000)
-      expect(usage.percent).toBe(6)
+      // Context window = input only = 10000 (output excluded)
+      expect(usage.percent).toBe(5)
     })
 
     test('context limits are provider+model scoped for duplicate model ids', () => {
@@ -195,6 +200,25 @@ describe('Session 1: Context Calculation Fix', () => {
       const usage = store.getContextUsage('s1', 'same-model', 'provider-a')
       expect(usage.limit).toBe(300000)
       expect(usage.percent).toBe(20)
+    })
+
+    test('context window percentage excludes output and reasoning tokens', () => {
+      const store = useContextStore.getState()
+      act(() => {
+        store.setModelLimit('model1', 200000)
+        store.setSessionTokens('s1', {
+          input: 50000,
+          output: 30000,
+          reasoning: 20000,
+          cacheRead: 10000,
+          cacheWrite: 5000
+        })
+      })
+      const usage = store.getContextUsage('s1', 'model1')
+      // Context window = input + cacheRead + cacheWrite = 65000
+      // Output (30000) and reasoning (20000) are NOT counted
+      expect(usage.used).toBe(65000)
+      expect(usage.percent).toBe(33) // Math.round(65000/200000*100)
     })
   })
 
