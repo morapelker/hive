@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Copy, Check, Bug, Clock } from 'lucide-react'
 import {
   Dialog,
@@ -62,10 +62,22 @@ interface ToolCallDebugModalProps {
 export function ToolCallDebugModal({ open, onOpenChange, toolUse }: ToolCallDebugModalProps) {
   const [activeTab, setActiveTab] = useState<'input' | 'output'>('input')
 
-  const inputJson = JSON.stringify(toolUse.input, null, 2)
-  const outputText = toolUse.error
-    ? `[ERROR]\n${toolUse.error}`
-    : toolUse.output ?? '(no output)'
+  useEffect(() => {
+    setActiveTab('input')
+  }, [toolUse.id])
+
+  const inputJson = useMemo(() => {
+    try {
+      return JSON.stringify(toolUse.input, null, 2)
+    } catch {
+      return '(unable to serialize input)'
+    }
+  }, [toolUse.input])
+
+  const outputText = useMemo(
+    () => toolUse.error ? `[ERROR]\n${toolUse.error}` : toolUse.output ?? '(no output)',
+    [toolUse.error, toolUse.output]
+  )
 
   const duration =
     toolUse.endTime && toolUse.startTime
@@ -74,7 +86,7 @@ export function ToolCallDebugModal({ open, onOpenChange, toolUse }: ToolCallDebu
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-3">
+      <DialogContent data-testid="tool-debug-modal" className="max-w-2xl max-h-[85vh] flex flex-col gap-3">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Bug className="h-4 w-4 text-muted-foreground" />
@@ -105,8 +117,11 @@ export function ToolCallDebugModal({ open, onOpenChange, toolUse }: ToolCallDebu
         </DialogHeader>
 
         {/* Tab buttons */}
-        <div className="flex items-center gap-1 border-b border-border">
+        <div role="tablist" className="flex items-center gap-1 border-b border-border">
           <button
+            role="tab"
+            aria-selected={activeTab === 'input'}
+            data-testid="tool-debug-tab-input"
             onClick={() => setActiveTab('input')}
             className={cn(
               'px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px',
@@ -118,6 +133,9 @@ export function ToolCallDebugModal({ open, onOpenChange, toolUse }: ToolCallDebu
             Input
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'output'}
+            data-testid="tool-debug-tab-output"
             onClick={() => setActiveTab('output')}
             className={cn(
               'px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px',
@@ -136,8 +154,8 @@ export function ToolCallDebugModal({ open, onOpenChange, toolUse }: ToolCallDebu
         </div>
 
         {/* Tab content */}
-        <div className="flex-1 min-h-0">
-          <pre className="bg-muted rounded-md p-3 font-mono text-xs leading-relaxed overflow-auto max-h-[60vh] select-text whitespace-pre-wrap break-words">
+        <div role="tabpanel" className="flex-1 min-h-0">
+          <pre data-testid="tool-debug-content" className="bg-muted rounded-md p-3 font-mono text-xs leading-relaxed overflow-auto max-h-[60vh] select-text whitespace-pre-wrap break-words">
             {activeTab === 'input' ? inputJson : outputText}
           </pre>
         </div>
