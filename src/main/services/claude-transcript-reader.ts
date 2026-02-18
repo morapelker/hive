@@ -33,10 +33,13 @@ interface ClaudeContentBlock {
 interface ClaudeJsonlEntry {
   type: string
   uuid?: string
+  requestId?: string
   timestamp?: string
   message?: {
     role?: string
     content?: ClaudeContentBlock[] | string
+    usage?: Record<string, unknown>
+    model?: unknown
   }
   isSidechain?: boolean
 }
@@ -113,13 +116,29 @@ function translateEntry(entry: ClaudeJsonlEntry, index: number): Record<string, 
     droppedBlocks: content.length - parts.length
   })
 
-  return {
+  const translated: Record<string, unknown> = {
     id: entry.uuid ?? `entry-${index}`,
     role: entry.message?.role ?? entry.type,
     timestamp: entry.timestamp ?? new Date(0).toISOString(),
     content: extractTextFromContent(entry.message?.content),
     parts
   }
+
+  if (typeof entry.requestId === 'string' && entry.requestId.length > 0) {
+    translated.requestId = entry.requestId
+  }
+
+  if (entry.type === 'assistant') {
+    if (entry.message?.usage && typeof entry.message.usage === 'object') {
+      translated.usage = entry.message.usage
+    }
+
+    if (entry.message?.model !== undefined) {
+      translated.model = entry.message.model
+    }
+  }
+
+  return translated
 }
 
 /**
@@ -206,7 +225,7 @@ export async function readClaudeTranscript(
   for (const entry of entries) {
     // Skip subagent messages — they have parent_tool_use_id set and belong
     // to child session transcripts, not the main conversation.
-    const rawEntry = entry as Record<string, unknown>
+    const rawEntry = entry as unknown as Record<string, unknown>
     if (rawEntry.parent_tool_use_id) {
       continue
     }

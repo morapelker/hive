@@ -296,6 +296,50 @@ describe('Session 1: Context Calculation Fix', () => {
         cacheWrite: 0
       })
     })
+
+    test('parses Claude usage payload with raw *_tokens fields', () => {
+      const result = extractTokens({
+        info: {
+          usage: {
+            input_tokens: 42,
+            output_tokens: 7,
+            cache_read_input_tokens: 1000,
+            cache_creation_input_tokens: 500
+          }
+        }
+      })
+
+      expect(result).toEqual({
+        input: 42,
+        output: 7,
+        reasoning: 0,
+        cacheRead: 1000,
+        cacheWrite: 500
+      })
+    })
+
+    test('parses Claude statusline context_window.current_usage shape', () => {
+      const result = extractTokens({
+        context_window: {
+          total_input_tokens: 999999,
+          total_output_tokens: 888888,
+          current_usage: {
+            input_tokens: 1200,
+            output_tokens: 150,
+            cache_read_input_tokens: 300,
+            cache_creation_input_tokens: 200
+          }
+        }
+      })
+
+      expect(result).toEqual({
+        input: 1200,
+        output: 150,
+        reasoning: 0,
+        cacheRead: 300,
+        cacheWrite: 200
+      })
+    })
   })
 
   describe('extractCost', () => {
@@ -342,6 +386,19 @@ describe('Session 1: Context Calculation Fix', () => {
 
     test('returns null when model identity is missing', () => {
       expect(extractModelRef({})).toBeNull()
+    })
+
+    test('parses provider/model from info.model string', () => {
+      const result = extractModelRef({
+        info: {
+          model: 'anthropic/claude-sonnet-4-5-20250929'
+        }
+      })
+
+      expect(result).toEqual({
+        providerID: 'anthropic',
+        modelID: 'claude-sonnet-4-5-20250929'
+      })
     })
   })
 })

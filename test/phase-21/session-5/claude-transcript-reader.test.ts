@@ -372,5 +372,33 @@ describe('claude-transcript-reader', () => {
       const result = translateEntry(entry, 1) as any
       expect(result.role).toBe('assistant')
     })
+
+    it('preserves assistant usage/request metadata for token hydration', () => {
+      const entry = makeAssistantEntry({
+        requestId: 'req_123',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Done' }],
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 20
+          },
+          model: 'anthropic/claude-sonnet-4-5-20250929'
+        } as any
+      } as any)
+
+      const result = translateEntry(entry as any, 2) as any
+
+      expect(result.requestId).toBe('req_123')
+      expect(result.usage).toEqual({
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_input_tokens: 100,
+        cache_creation_input_tokens: 20
+      })
+      expect(result.model).toBe('anthropic/claude-sonnet-4-5-20250929')
+    })
   })
 })
