@@ -136,8 +136,9 @@ export const useContextStore = create<ContextState>()((set, get) => ({
         state.modelLimits[getModelLimitKey(model.modelID)])
       : undefined
     const cost = state.costBySession[sessionId] ?? 0
-    const used =
-      tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
+    // Context window = total prompt tokens (input + cached).
+    // Output and reasoning are generated tokens — they don't occupy the context window.
+    const used = tokens.input + tokens.cacheRead + tokens.cacheWrite
     const percent = typeof limit === 'number' && limit > 0 ? Math.round((used / limit) * 100) : null
 
     return { used, limit, percent, tokens, cost, model }

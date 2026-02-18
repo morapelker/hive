@@ -32,6 +32,7 @@ import { TaskToolView } from './tools/TaskToolView'
 import { QuestionToolView } from './tools/QuestionToolView'
 import { SkillToolView } from './tools/SkillToolView'
 import { ExitPlanModeToolView } from './tools/ExitPlanModeToolView'
+import { ToolCallContextMenu } from './ToolCallContextMenu'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
 
@@ -674,77 +675,26 @@ export const ToolCard = memo(function ToolCard({
     isSearchOperation(toolUse.name) ||
     isSkillTool(toolUse.name)
   ) {
-    return <CompactFileToolCard toolUse={toolUse} cwd={cwd} />
+    return (
+      <ToolCallContextMenu toolUse={toolUse}>
+        <div>
+          <CompactFileToolCard toolUse={toolUse} cwd={cwd} />
+        </div>
+      </ToolCallContextMenu>
+    )
   }
 
   // TodoWrite: always-visible, no expand/collapse
   if (isTodoWriteTool(toolUse.name)) {
     return (
-      <div
-        className={cn(
-          compact
-            ? 'my-0 rounded-md border border-l-2 text-xs'
-            : 'my-1 rounded-md border border-l-2 text-xs',
-          toolUse.status === 'running' && 'animate-pulse',
-          'border-border bg-muted/30'
-        )}
-        style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
-        data-testid="tool-card"
-        data-tool-name={toolUse.name}
-        data-tool-status={toolUse.status}
-      >
-        {/* Header */}
-        <div
-          className={cn(
-            'flex items-center gap-1.5 w-full text-left',
-            compact ? 'px-2 py-1.5' : 'px-2.5 py-1.5'
-          )}
-          data-testid="tool-card-header"
-        >
-          <CollapsedContent toolUse={toolUse} cwd={cwd} />
-          <span className="flex-1" />
-          {duration && (
-            <span
-              className="text-muted-foreground shrink-0 flex items-center gap-1"
-              data-testid="tool-duration"
-            >
-              <Clock className="h-3 w-3" />
-              {duration}
-            </span>
-          )}
-          <StatusIndicator status={toolUse.status} />
-        </div>
-        {/* Always-visible content */}
-        <div
-          className={cn('border-t border-border', compact ? 'px-2 py-1.5' : 'px-2.5 py-2')}
-          data-testid="tool-output"
-        >
-          <Renderer
-            name={toolUse.name}
-            input={toolUse.input}
-            output={toolUse.output}
-            error={toolUse.error}
-            status={toolUse.status}
-          />
-        </div>
-      </div>
-    )
-  }
-
-  // ExitPlanMode: always-expanded plan card with fake user message on acceptance/rejection
-  if (isExitPlanMode) {
-    const planAccepted = toolUse.status === 'success'
-    const planRejected = toolUse.status === 'error'
-    return (
-      <>
+      <ToolCallContextMenu toolUse={toolUse}>
         <div
           className={cn(
             compact
               ? 'my-0 rounded-md border border-l-2 text-xs'
               : 'my-1 rounded-md border border-l-2 text-xs',
-            planRejected
-              ? 'border-red-500/30 bg-red-500/5'
-              : 'border-border bg-primary/[0.04]'
+            toolUse.status === 'running' && 'animate-pulse',
+            'border-border bg-muted/30'
           )}
           style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
           data-testid="tool-card"
@@ -772,125 +722,188 @@ export const ToolCard = memo(function ToolCard({
             )}
             <StatusIndicator status={toolUse.status} />
           </div>
-          {/* Always-visible plan content */}
-          {hasPlanInput && (
+          {/* Always-visible content */}
+          <div
+            className={cn('border-t border-border', compact ? 'px-2 py-1.5' : 'px-2.5 py-2')}
+            data-testid="tool-output"
+          >
+            <Renderer
+              name={toolUse.name}
+              input={toolUse.input}
+              output={toolUse.output}
+              error={toolUse.error}
+              status={toolUse.status}
+            />
+          </div>
+        </div>
+      </ToolCallContextMenu>
+    )
+  }
+
+  // ExitPlanMode: always-expanded plan card with fake user message on acceptance/rejection
+  if (isExitPlanMode) {
+    const planAccepted = toolUse.status === 'success'
+    const planRejected = toolUse.status === 'error'
+    return (
+      <ToolCallContextMenu toolUse={toolUse}>
+        <div>
+          <div
+            className={cn(
+              compact
+                ? 'my-0 rounded-md border border-l-2 text-xs'
+                : 'my-1 rounded-md border border-l-2 text-xs',
+              planRejected
+                ? 'border-red-500/30 bg-red-500/5'
+                : 'border-border bg-primary/[0.04]'
+            )}
+            style={{ borderLeftColor: getLeftBorderColor(toolUse.status) }}
+            data-testid="tool-card"
+            data-tool-name={toolUse.name}
+            data-tool-status={toolUse.status}
+          >
+            {/* Header */}
             <div
-              className={cn('border-t border-border', compact ? 'px-3 py-2.5' : 'px-4 py-3')}
-              data-testid="tool-output"
+              className={cn(
+                'flex items-center gap-1.5 w-full text-left',
+                compact ? 'px-2 py-1.5' : 'px-2.5 py-1.5'
+              )}
+              data-testid="tool-card-header"
             >
-              <Renderer
-                name={toolUse.name}
-                input={toolUse.input}
-                output={toolUse.output}
-                error={toolUse.error}
-                status={toolUse.status}
-              />
+              <CollapsedContent toolUse={toolUse} cwd={cwd} />
+              <span className="flex-1" />
+              {duration && (
+                <span
+                  className="text-muted-foreground shrink-0 flex items-center gap-1"
+                  data-testid="tool-duration"
+                >
+                  <Clock className="h-3 w-3" />
+                  {duration}
+                </span>
+              )}
+              <StatusIndicator status={toolUse.status} />
+            </div>
+            {/* Always-visible plan content */}
+            {hasPlanInput && (
+              <div
+                className={cn('border-t border-border', compact ? 'px-3 py-2.5' : 'px-4 py-3')}
+                data-testid="tool-output"
+              >
+                <Renderer
+                  name={toolUse.name}
+                  input={toolUse.input}
+                  output={toolUse.output}
+                  error={toolUse.error}
+                  status={toolUse.status}
+                />
+              </div>
+            )}
+          </div>
+          {/* Fake user message after plan acceptance */}
+          {planAccepted && (
+            <div className="flex justify-end px-6 py-4" data-testid="plan-accepted-message">
+              <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-primary/10 text-foreground">
+                <p className="text-sm whitespace-pre-wrap leading-relaxed">Implement the plan</p>
+              </div>
+            </div>
+          )}
+          {/* Fake user message after plan rejection with feedback */}
+          {planRejected && toolUse.error && (
+            <div className="flex justify-end px-6 py-4" data-testid="plan-rejected-message">
+              <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-primary/10 text-foreground">
+                <p className="text-sm whitespace-pre-wrap leading-relaxed">{toolUse.error}</p>
+              </div>
             </div>
           )}
         </div>
-        {/* Fake user message after plan acceptance */}
-        {planAccepted && (
-          <div className="flex justify-end px-6 py-4" data-testid="plan-accepted-message">
-            <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-primary/10 text-foreground">
-              <p className="text-sm whitespace-pre-wrap leading-relaxed">Implement the plan</p>
-            </div>
-          </div>
-        )}
-        {/* Fake user message after plan rejection with feedback */}
-        {planRejected && toolUse.error && (
-          <div className="flex justify-end px-6 py-4" data-testid="plan-rejected-message">
-            <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-primary/10 text-foreground">
-              <p className="text-sm whitespace-pre-wrap leading-relaxed">{toolUse.error}</p>
-            </div>
-          </div>
-        )}
-      </>
+      </ToolCallContextMenu>
     )
   }
 
   return (
-    <div
-      className={cn(
-        compact
-          ? 'my-0 rounded-md border border-l-2 text-xs'
-          : 'my-1 rounded-md border border-l-2 text-xs',
-        toolUse.status === 'running' && 'animate-pulse',
-        toolUse.status === 'error'
-          ? 'border-red-500/30 bg-red-500/5'
-          : 'border-border bg-muted/30'
-      )}
-      style={{
-        borderLeftColor: getLeftBorderColor(toolUse.status)
-      }}
-      data-testid="tool-card"
-      data-tool-name={toolUse.name}
-      data-tool-status={toolUse.status}
-    >
-      {/* Header - always visible */}
-      <button
-        onClick={() => hasDetail && setIsExpanded(!isExpanded)}
-        className={cn(
-          compact
-            ? 'flex items-center gap-1.5 w-full px-2 py-1.5 text-left'
-            : 'flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left',
-          hasDetail && 'cursor-pointer hover:bg-muted/50 transition-colors'
-        )}
-        disabled={!hasDetail}
-        aria-expanded={hasDetail ? isExpanded : undefined}
-        data-testid="tool-card-header"
-      >
-        {/* Tool-specific collapsed content */}
-        <CollapsedContent toolUse={toolUse} cwd={cwd} />
-
-        {/* Spacer */}
-        <span className="flex-1" />
-
-        {/* Duration */}
-        {duration && (
-          <span
-            className="text-muted-foreground shrink-0 flex items-center gap-1"
-            data-testid="tool-duration"
-          >
-            <Clock className="h-3 w-3" />
-            {duration}
-          </span>
-        )}
-
-        {/* Status indicator */}
-        <StatusIndicator status={toolUse.status} />
-
-        {/* Expand/Collapse affordance */}
-        {hasDetail && (
-          <span className="ml-1 inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            {isExpanded ? 'Hide' : 'View'}
-            <ChevronDown
-              className={cn(
-                'h-2.5 w-2.5 shrink-0 transition-transform duration-150',
-                !isExpanded && '-rotate-90'
-              )}
-            />
-          </span>
-        )}
-      </button>
-
-      {/* Expandable detail view with rich renderer */}
+    <ToolCallContextMenu toolUse={toolUse}>
       <div
         className={cn(
-          'transition-all duration-150 overflow-hidden',
-          isExpanded && hasDetail ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+          compact
+            ? 'my-0 rounded-md border border-l-2 text-xs'
+            : 'my-1 rounded-md border border-l-2 text-xs',
+          toolUse.status === 'running' && 'animate-pulse',
+          toolUse.status === 'error'
+            ? 'border-red-500/30 bg-red-500/5'
+            : 'border-border bg-muted/30'
         )}
-        data-testid="tool-output"
+        style={{
+          borderLeftColor: getLeftBorderColor(toolUse.status)
+        }}
+        data-testid="tool-card"
+        data-tool-name={toolUse.name}
+        data-tool-status={toolUse.status}
       >
-        <div className={cn('border-t border-border', compact ? 'px-2 py-1.5' : 'px-2.5 py-2')}>
-          <Renderer
-            name={toolUse.name}
-            input={toolUse.input}
-            output={toolUse.output}
-            error={toolUse.error}
-            status={toolUse.status}
-          />
+        {/* Header - always visible */}
+        <button
+          onClick={() => hasDetail && setIsExpanded(!isExpanded)}
+          className={cn(
+            compact
+              ? 'flex items-center gap-1.5 w-full px-2 py-1.5 text-left'
+              : 'flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left',
+            hasDetail && 'cursor-pointer hover:bg-muted/50 transition-colors'
+          )}
+          disabled={!hasDetail}
+          aria-expanded={hasDetail ? isExpanded : undefined}
+          data-testid="tool-card-header"
+        >
+          {/* Tool-specific collapsed content */}
+          <CollapsedContent toolUse={toolUse} cwd={cwd} />
+
+          {/* Spacer */}
+          <span className="flex-1" />
+
+          {/* Duration */}
+          {duration && (
+            <span
+              className="text-muted-foreground shrink-0 flex items-center gap-1"
+              data-testid="tool-duration"
+            >
+              <Clock className="h-3 w-3" />
+              {duration}
+            </span>
+          )}
+
+          {/* Status indicator */}
+          <StatusIndicator status={toolUse.status} />
+
+          {/* Expand/Collapse affordance */}
+          {hasDetail && (
+            <span className="ml-1 inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {isExpanded ? 'Hide' : 'View'}
+              <ChevronDown
+                className={cn(
+                  'h-2.5 w-2.5 shrink-0 transition-transform duration-150',
+                  !isExpanded && '-rotate-90'
+                )}
+              />
+            </span>
+          )}
+        </button>
+
+        {/* Expandable detail view with rich renderer */}
+        <div
+          className={cn(
+            'transition-all duration-150 overflow-hidden',
+            isExpanded && hasDetail ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+          )}
+          data-testid="tool-output"
+        >
+          <div className={cn('border-t border-border', compact ? 'px-2 py-1.5' : 'px-2.5 py-2')}>
+            <Renderer
+              name={toolUse.name}
+              input={toolUse.input}
+              output={toolUse.output}
+              error={toolUse.error}
+              status={toolUse.status}
+            />
+          </div>
         </div>
       </div>
-    </div>
+    </ToolCallContextMenu>
   )
 })
