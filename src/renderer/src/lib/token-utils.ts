@@ -16,6 +16,15 @@ function toNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+function firstFiniteNumber(...values: unknown[]): number {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value
+    }
+  }
+  return 0
+}
+
 /**
  * Extract token info from a parsed message JSON object.
  * Checks multiple paths to handle format differences between SDKs:
@@ -25,27 +34,38 @@ function toNumber(value: unknown): number {
  */
 export function extractTokens(messageData: Record<string, unknown>): TokenInfo | null {
   const info = asRecord(messageData.info)
+  const contextWindow = asRecord(messageData.context_window ?? info?.context_window)
+  const currentUsage = asRecord(contextWindow?.current_usage)
   // OpenCode uses `tokens`/`info.tokens`; Claude Code uses `usage`/`info.usage`
   const tokens = asRecord(
-    messageData.tokens ?? info?.tokens ?? messageData.usage ?? info?.usage
+    messageData.tokens ?? info?.tokens ?? messageData.usage ?? info?.usage ?? currentUsage
   )
   if (!tokens) return null
 
   const cache = asRecord(tokens.cache)
   const result: TokenInfo = {
-    input: toNumber(tokens.input),
-    output: toNumber(tokens.output),
-    reasoning: toNumber(tokens.reasoning),
-    cacheRead:
-      toNumber(tokens.cacheRead) || toNumber(tokens.cache_read) || toNumber(cache?.read) || 0,
-    cacheWrite:
-      toNumber(tokens.cacheWrite) ||
-      toNumber(tokens.cache_write) ||
-      toNumber(cache?.write) ||
+    input: firstFiniteNumber(tokens.input, tokens.input_tokens, tokens.inputTokens),
+    output: firstFiniteNumber(tokens.output, tokens.output_tokens, tokens.outputTokens),
+    reasoning: firstFiniteNumber(tokens.reasoning, tokens.reasoning_tokens, tokens.reasoningTokens),
+    cacheRead: firstFiniteNumber(
+      tokens.cacheRead,
+      tokens.cache_read,
+      tokens.cacheReadInputTokens,
+      tokens.cache_read_input_tokens,
+      cache?.read
+    ),
+    cacheWrite: firstFiniteNumber(
+      tokens.cacheWrite,
+      tokens.cache_write,
+      tokens.cacheWriteInputTokens,
+      tokens.cache_write_input_tokens,
+      cache?.write,
       // Claude Code SDK uses "cacheCreation" instead of "cacheWrite"
-      toNumber(tokens.cacheCreation) ||
-      toNumber(tokens.cache_creation) ||
-      0
+      tokens.cacheCreation,
+      tokens.cache_creation,
+      tokens.cacheCreationInputTokens,
+      tokens.cache_creation_input_tokens
+    )
   }
 
   const total =
@@ -70,9 +90,31 @@ export function extractCost(messageData: Record<string, unknown>): number {
  */
 export function extractModelRef(messageData: Record<string, unknown>): SessionModelRef | null {
   const info = asRecord(messageData.info)
+  const modelObj = asRecord(messageData.model) ?? asRecord(info?.model)
 
-  const providerID = messageData.providerID ?? info?.providerID
-  const modelID = messageData.modelID ?? info?.modelID
+  const providerFromModel = modelObj?.providerID
+  const modelFromModel = modelObj?.modelID ?? modelObj?.id
+
+  let providerID =
+    (typeof providerFromModel === 'string' ? providerFromModel : undefined) ??
+    (typeof messageData.providerID === 'string' ? messageData.providerID : undefined) ??
+    (typeof info?.providerID === 'string' ? info.providerID : undefined)
+  let modelID =
+    (typeof modelFromModel === 'string' ? modelFromModel : undefined) ??
+    (typeof messageData.modelID === 'string' ? messageData.modelID : undefined) ??
+    (typeof info?.modelID === 'string' ? info.modelID : undefined)
+
+  const modelString =
+    (typeof messageData.model === 'string' ? messageData.model : undefined) ??
+    (typeof info?.model === 'string' ? info.model : undefined)
+
+  if ((!providerID || !modelID) && modelString) {
+    const [providerPart, modelPart] = modelString.split('/')
+    if (providerPart && modelPart) {
+      providerID = providerID ?? providerPart
+      modelID = modelID ?? modelPart
+    }
+  }
 
   if (typeof providerID !== 'string' || typeof modelID !== 'string') {
     return null
@@ -101,9 +143,7 @@ export interface ModelUsageEntry {
  * each with token counts and `contextWindow` (the model's context limit).
  * Returns null if no modelUsage is present.
  */
-export function extractModelUsage(
-  messageData: Record<string, unknown>
-): ModelUsageEntry[] | null {
+export function extractModelUsage(messageData: Record<string, unknown>): ModelUsageEntry[] | null {
   const info = asRecord(messageData.info)
   const modelUsage = asRecord(messageData.modelUsage ?? info?.modelUsage)
   if (!modelUsage) return null
