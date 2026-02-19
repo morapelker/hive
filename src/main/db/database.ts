@@ -179,6 +179,7 @@ export class DatabaseService {
     )
     this.safeAddColumn('sessions', 'agent_sdk', "TEXT NOT NULL DEFAULT 'opencode'")
     this.safeAddColumn('connections', 'color', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('connections', 'custom_name', 'TEXT DEFAULT NULL')
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
@@ -925,6 +926,7 @@ export class DatabaseService {
     const connection: Connection = {
       id: randomUUID(),
       name: data.name,
+      custom_name: data.custom_name ?? null,
       path: data.path,
       color: data.color ?? null,
       status: 'active',
@@ -933,11 +935,12 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO connections (id, name, path, color, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO connections (id, name, custom_name, path, color, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       connection.id,
       connection.name,
+      connection.custom_name,
       connection.path,
       connection.color,
       connection.status,
@@ -1005,6 +1008,10 @@ export class DatabaseService {
     if (data.name !== undefined) {
       updates.push('name = ?')
       values.push(data.name)
+    }
+    if (data.custom_name !== undefined) {
+      updates.push('custom_name = ?')
+      values.push(data.custom_name ?? null)
     }
     if (data.path !== undefined) {
       updates.push('path = ?')

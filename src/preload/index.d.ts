@@ -1005,6 +1005,10 @@ declare global {
       openInTerminal: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
       openInEditor: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
       removeWorktreeFromAll: (worktreeId: string) => Promise<{ success: boolean; error?: string }>
+      rename: (
+        connectionId: string,
+        customName: string | null
+      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
     }
   }
 

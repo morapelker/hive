@@ -121,6 +121,33 @@ export function registerConnectionHandlers(): void {
     }
   )
 
+  // Rename a connection (set or clear custom_name)
+  ipcMain.handle(
+    'connection:rename',
+    async (
+      _event,
+      { connectionId, customName }: { connectionId: string; customName: string | null }
+    ): Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }> => {
+      log.info('Renaming connection', { connectionId, customName })
+      try {
+        const db = getDatabase()
+        const existing = db.getConnection(connectionId)
+        if (!existing) {
+          return { success: false, error: 'Connection not found' }
+        }
+
+        db.updateConnection(connectionId, { custom_name: customName || null })
+        const updated = db.getConnection(connectionId)
+        log.info('Connection renamed', { connectionId, customName: updated?.custom_name })
+        return { success: true, connection: updated ?? undefined }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error('Connection rename failed', error instanceof Error ? error : new Error(message))
+        return { success: false, error: message }
+      }
+    }
+  )
+
   // Delete a connection (filesystem + DB)
   ipcMain.handle(
     'connection:delete',

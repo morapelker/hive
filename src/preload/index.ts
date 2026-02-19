@@ -1503,7 +1503,9 @@ const connectionOps = {
   openInEditor: (connectionPath: string) =>
     ipcRenderer.invoke('connection:openInEditor', { connectionPath }),
   removeWorktreeFromAll: (worktreeId: string) =>
-    ipcRenderer.invoke('connection:removeWorktreeFromAll', { worktreeId })
+    ipcRenderer.invoke('connection:removeWorktreeFromAll', { worktreeId }),
+  rename: (connectionId: string, customName: string | null) =>
+    ipcRenderer.invoke('connection:rename', { connectionId, customName })
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

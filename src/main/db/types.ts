@@ -201,6 +201,7 @@ export type ConnectionColorQuad = [string, string, string, string]
 export interface Connection {
   id: string
   name: string
+  custom_name: string | null
   path: string
   color: string | null // JSON-serialised ConnectionColorQuad
   status: 'active' | 'archived'
@@ -212,10 +213,12 @@ export interface ConnectionCreate {
   name: string
   path: string
   color?: string | null
+  custom_name?: string | null
 }
 
 export interface ConnectionUpdate {
   name?: string
+  custom_name?: string | null
   path?: string
   color?: string | null
   status?: 'active' | 'archived'

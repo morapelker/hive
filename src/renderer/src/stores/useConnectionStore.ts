@@ -20,6 +20,7 @@ interface ConnectionMemberEnriched {
 interface Connection {
   id: string
   name: string
+  custom_name: string | null
   status: 'active' | 'archived'
   path: string
   color: string | null
@@ -51,6 +52,9 @@ interface ConnectionState {
   removeMember: (connectionId: string, worktreeId: string) => Promise<void>
   updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<void>
   selectConnection: (id: string | null) => void
+
+  // Rename
+  renameConnection: (connectionId: string, customName: string | null) => Promise<void>
 
   // Connection Mode Actions
   enterConnectionMode: (sourceWorktreeId: string) => void
@@ -234,6 +238,26 @@ export const useConnectionStore = create<ConnectionState>()(
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           toast.error(`Failed to update connection: ${message}`)
+        }
+      },
+
+      renameConnection: async (connectionId: string, customName: string | null) => {
+        try {
+          const result = await window.connectionOps.rename(connectionId, customName)
+          if (!result.success) {
+            toast.error(result.error || 'Failed to rename connection')
+            return
+          }
+          if (result.connection) {
+            set((state) => ({
+              connections: state.connections.map((c) =>
+                c.id === connectionId ? { ...c, custom_name: result.connection!.custom_name } : c
+              )
+            }))
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          toast.error(`Failed to rename connection: ${message}`)
         }
       },
 

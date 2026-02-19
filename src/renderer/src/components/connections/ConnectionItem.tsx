@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import {
   AlertCircle,
   Code,
@@ -8,6 +8,7 @@ import {
   Loader2,
   Map,
   MoreHorizontal,
+  Pencil,
   Settings2,
   Terminal,
   Trash2
@@ -48,6 +49,7 @@ interface ConnectionMemberEnriched {
 interface Connection {
   id: string
   name: string
+  custom_name: string | null
   status: 'active' | 'archived'
   path: string
   color: string | null
@@ -68,6 +70,7 @@ export function ConnectionItem({
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectConnection = useConnectionStore((s) => s.selectConnection)
   const deleteConnection = useConnectionStore((s) => s.deleteConnection)
+  const renameConnection = useConnectionStore((s) => s.renameConnection)
 
   const connectionStatus = useWorktreeStatusStore((state) =>
     state.getConnectionStatus(connection.id)
@@ -97,6 +100,47 @@ export function ConnectionItem({
   const [isAnimating, setIsAnimating] = useState(false)
   const [scrollDistance, setScrollDistance] = useState(0)
   const [animationDuration, setAnimationDuration] = useState(3)
+
+  // Inline rename state
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (isRenaming && renameInputRef.current) {
+      renameInputRef.current.focus()
+      renameInputRef.current.select()
+    }
+  }, [isRenaming])
+
+  const handleStartRename = useCallback((): void => {
+    setNameInput(connection.custom_name || '')
+    setIsRenaming(true)
+  }, [connection.custom_name])
+
+  const handleSaveRename = useCallback(async (): Promise<void> => {
+    setIsRenaming(false)
+    const trimmed = nameInput.trim()
+    // Empty string clears the custom name (revert to default)
+    const newCustomName = trimmed || null
+    // Only save if the value actually changed
+    if (newCustomName !== (connection.custom_name || null)) {
+      await renameConnection(connection.id, newCustomName)
+    }
+  }, [nameInput, connection.id, connection.custom_name, renameConnection])
+
+  const handleRenameKeyDown = useCallback(
+    (e: React.KeyboardEvent): void => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        handleSaveRename()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        setIsRenaming(false)
+      }
+    },
+    [handleSaveRename]
+  )
 
   const handleMouseEnter = useCallback((): void => {
     if (!containerRef.current || !textRef.current) return
@@ -154,17 +198,25 @@ export function ConnectionItem({
     onManageWorktrees?.(connection.id)
   }, [onManageWorktrees, connection.id])
 
-  // Build the display name from unique project names
-  const displayName =
-    [...new Set(connection.members?.map((m) => m.project_name) || [])].join(' + ') ||
-    connection.name ||
-    'Connection'
+  // Build the project names string from unique project names
+  const projectNames =
+    [...new Set(connection.members?.map((m) => m.project_name) || [])].join(' + ')
+
+  // Display logic: custom name takes priority over project names
+  const hasCustomName = !!connection.custom_name
+  const displayName = hasCustomName
+    ? connection.custom_name!
+    : projectNames || connection.name || 'Connection'
 
   const menuItems = (
     <>
       <ContextMenuItem onClick={handleManageWorktrees}>
         <Settings2 className="h-4 w-4 mr-2" />
         Connection Worktrees
+      </ContextMenuItem>
+      <ContextMenuItem onClick={handleStartRename}>
+        <Pencil className="h-4 w-4 mr-2" />
+        Rename
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem onClick={handleOpenInTerminal}>
@@ -229,31 +281,52 @@ export function ConnectionItem({
 
           {/* Name and status */}
           <div className="flex-1 min-w-0">
-            <div
-              className="overflow-hidden"
-              ref={containerRef}
-              onMouseEnter={handleMouseEnter}
-              onMouseLeave={handleMouseLeave}
-            >
-              <span
-                ref={textRef}
-                className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
-                style={
-                  isAnimating
-                    ? ({
-                        '--scroll-distance': `${scrollDistance}px`,
-                        animation: `marquee-scroll ${animationDuration}s linear infinite`
-                      } as React.CSSProperties)
-                    : undefined
-                }
-                title={displayName}
-              >
-                {displayName}
-              </span>
-            </div>
-            <span className={cn('text-[11px]', statusClass)} data-testid="connection-status-text">
-              {displayStatus}
-            </span>
+            {isRenaming ? (
+              <input
+                ref={renameInputRef}
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                onKeyDown={handleRenameKeyDown}
+                onBlur={() => setIsRenaming(false)}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-background border border-border rounded px-1.5 py-0.5 text-sm w-full focus:outline-none focus:ring-1 focus:ring-ring"
+                placeholder={projectNames || 'Connection name'}
+              />
+            ) : (
+              <>
+                <div
+                  className="overflow-hidden"
+                  ref={containerRef}
+                  onMouseEnter={handleMouseEnter}
+                  onMouseLeave={handleMouseLeave}
+                >
+                  <span
+                    ref={textRef}
+                    className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
+                    style={
+                      isAnimating
+                        ? ({
+                            '--scroll-distance': `${scrollDistance}px`,
+                            animation: `marquee-scroll ${animationDuration}s linear infinite`
+                          } as React.CSSProperties)
+                        : undefined
+                    }
+                    title={displayName}
+                  >
+                    {displayName}
+                  </span>
+                </div>
+                <span
+                  className={cn('text-[11px]', statusClass)}
+                  data-testid="connection-status-text"
+                >
+                  {displayStatus}
+                  {hasCustomName && projectNames && (
+                    <span className="text-muted-foreground font-normal"> · {projectNames}</span>
+                  )}
+                </span>
+              </>
+            )}
           </div>
 
           {/* Unread dot badge */}
@@ -280,6 +353,10 @@ export function ConnectionItem({
               <DropdownMenuItem onClick={handleManageWorktrees}>
                 <Settings2 className="h-4 w-4 mr-2" />
                 Connection Worktrees
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleStartRename}>
+                <Pencil className="h-4 w-4 mr-2" />
+                Rename
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleOpenInTerminal}>
