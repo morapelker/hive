@@ -119,6 +119,11 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
   const currentAnswers = answers[currentTab] || []
   const hasCurrentAnswer = currentAnswers.length > 0
 
+  // Detect a custom answer (one not matching any predefined option label)
+  const customAnswer = isCustomAllowed
+    ? currentAnswers.find((a) => !currentQuestion?.options.some((o) => o.label === a))
+    : undefined
+
   // For multi-question: check all questions have at least one answer
   const allAnswered = isMultiQuestion ? answers.every((a) => a.length > 0) : false
 
@@ -213,8 +218,26 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
             )
           })}
 
-          {/* Custom text option */}
-          {isCustomAllowed && !editingCustom && (
+          {/* Custom answer display (when a custom answer has been entered) */}
+          {isCustomAllowed && !editingCustom && customAnswer && (
+            <button
+              onClick={() => {
+                setEditingCustom(true)
+                handleCustomInputChange(customAnswer)
+              }}
+              disabled={sending}
+              className="w-full text-left px-3 py-2 rounded-md border border-blue-500/50 bg-blue-500/10 transition-colors disabled:opacity-50"
+              data-testid="custom-answer-display"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Pencil className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                <span className="text-sm font-medium truncate">{customAnswer}</span>
+              </div>
+            </button>
+          )}
+
+          {/* Custom text option (when no custom answer yet) */}
+          {isCustomAllowed && !editingCustom && !customAnswer && (
             <button
               onClick={() => setEditingCustom(true)}
               disabled={sending}
