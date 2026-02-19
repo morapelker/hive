@@ -12,7 +12,7 @@ import {
   Terminal,
   Trash2
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, parseColorQuad } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   ContextMenu,
@@ -50,6 +50,7 @@ interface Connection {
   name: string
   status: 'active' | 'archived'
   path: string
+  color: string | null
   created_at: string
   updated_at: string
   members: ConnectionMemberEnriched[]
@@ -204,7 +205,18 @@ export function ConnectionItem({
           onClick={handleClick}
           data-testid={`connection-item-${connection.id}`}
         >
-          {/* Status icon */}
+          {/* Connection color indicator — always visible */}
+          {connection.color ? (
+            <span
+              className="h-2.5 w-2.5 rounded-full flex-shrink-0"
+              style={{ backgroundColor: parseColorQuad(connection.color)[1] }}
+              aria-hidden="true"
+            />
+          ) : (
+            <Link className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          )}
+
+          {/* Status icon (shown alongside color) */}
           {(connectionStatus === 'working' || connectionStatus === 'planning') && (
             <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
           )}
@@ -214,13 +226,6 @@ export function ConnectionItem({
           {connectionStatus === 'plan_ready' && (
             <Map className="h-3.5 w-3.5 text-blue-400 shrink-0" />
           )}
-          {connectionStatus !== 'working' &&
-            connectionStatus !== 'planning' &&
-            connectionStatus !== 'answering' &&
-            connectionStatus !== 'permission' &&
-            connectionStatus !== 'plan_ready' && (
-              <Link className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            )}
 
           {/* Name and status */}
           <div className="flex-1 min-w-0">

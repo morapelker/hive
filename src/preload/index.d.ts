@@ -4,6 +4,7 @@ interface Connection {
   name: string
   status: 'active' | 'archived'
   path: string
+  color: string | null // JSON-serialised ConnectionColorQuad
   created_at: string
   updated_at: string
 }

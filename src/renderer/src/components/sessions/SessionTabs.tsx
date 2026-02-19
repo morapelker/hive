@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent } from 'react'
 import {
   Plus,
   X,
@@ -17,7 +17,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { cn } from '@/lib/utils'
+import { cn, parseColorQuad } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import {
   ContextMenu,
@@ -358,6 +358,77 @@ function DiffTabItem({
   )
 }
 
+// Sticky connection session tab — simplified, non-closable, non-draggable
+interface ConnectionSessionTabProps {
+  sessionId: string
+  name: string
+  isActive: boolean
+  onClick: () => void
+  connectionColor: string | null
+  connectionName: string
+}
+
+function ConnectionSessionTab({
+  sessionId,
+  name,
+  isActive,
+  onClick,
+  connectionColor,
+  connectionName
+}: ConnectionSessionTabProps): React.JSX.Element {
+  const sessionStatus = useWorktreeStatusStore(
+    (state) => state.sessionStatuses[sessionId]?.status ?? null
+  )
+
+  const [inactiveBg, activeBg, inactiveText, activeText] = parseColorQuad(connectionColor)
+
+  return (
+    <div
+      data-testid={`connection-session-tab-${sessionId}`}
+      role="tab"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') onClick()
+      }}
+      title={`${connectionName} — ${name || 'Untitled'}`}
+      className={cn(
+        'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
+        'border-r border-border/50 transition-colors min-w-[100px] max-w-[200px]'
+      )}
+      style={{
+        backgroundColor: isActive ? activeBg : inactiveBg,
+        color: isActive ? activeText : inactiveText
+      }}
+    >
+      {/* Status indicators */}
+      {(sessionStatus === 'working' || sessionStatus === 'planning') && (
+        <Loader2
+          className="h-3 w-3 animate-spin flex-shrink-0"
+          style={{ color: isActive ? activeText : undefined }}
+        />
+      )}
+      {(sessionStatus === 'answering' || sessionStatus === 'permission') && (
+        <AlertCircle
+          className="h-3 w-3 flex-shrink-0"
+          style={{ color: isActive ? activeText : undefined }}
+        />
+      )}
+      {sessionStatus === 'completed' && (
+        <Check
+          className="h-3 w-3 flex-shrink-0"
+          style={{ color: isActive ? activeText : undefined }}
+        />
+      )}
+      {sessionStatus === 'unread' && !isActive && (
+        <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+      )}
+
+      <span className="truncate flex-1">{name || 'Untitled'}</span>
+    </div>
+  )
+}
+
 export function SessionTabs(): React.JSX.Element | null {
   const tabsContainerRef = useRef<HTMLDivElement>(null)
   const [showLeftArrow, setShowLeftArrow] = useState(false)
@@ -385,7 +456,11 @@ export function SessionTabs(): React.JSX.Element | null {
     setActiveConnectionSession,
     reorderConnectionTabs,
     closeOtherConnectionSessions,
-    closeConnectionSessionsToRight
+    closeConnectionSessionsToRight,
+    inlineConnectionSessionId,
+    setInlineConnectionSession,
+    clearInlineConnectionSession,
+    loadConnectionSessionsBackground
   } = useSessionStore()
 
   const {
@@ -400,6 +475,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const { selectedWorktreeId } = useWorktreeStore()
   const { projects } = useProjectStore()
   const selectedConnectionId = useConnectionStore((state) => state.selectedConnectionId)
+  const connections = useConnectionStore((state) => state.connections)
 
   // Determine whether we are in connection mode or worktree mode
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
@@ -497,6 +573,34 @@ export function SessionTabs(): React.JSX.Element | null {
     createConnectionSession
   ])
 
+  // Connections that include the currently selected worktree (for sticky tabs)
+  const connectionsForWorktree = useMemo(() => {
+    if (!selectedWorktreeId || isConnectionMode) return []
+    return connections.filter((c) =>
+      c.members.some((m) => m.worktree_id === selectedWorktreeId)
+    )
+  }, [connections, selectedWorktreeId, isConnectionMode])
+
+  // Track which connection IDs have already been background-loaded for the current worktree.
+  const loadedConnectionsRef = useRef<Set<string>>(new Set())
+
+  // Reset loaded set when the selected worktree changes
+  useEffect(() => {
+    loadedConnectionsRef.current.clear()
+  }, [selectedWorktreeId])
+
+  // Background-load sessions for all connections the selected worktree belongs to.
+  // This is non-blocking and does not enter connection mode.
+  useEffect(() => {
+    if (isConnectionMode || !selectedWorktreeId || connectionsForWorktree.length === 0) return
+    for (const connection of connectionsForWorktree) {
+      if (!loadedConnectionsRef.current.has(connection.id)) {
+        loadedConnectionsRef.current.add(connection.id)
+        loadConnectionSessionsBackground(connection.id)
+      }
+    }
+  }, [selectedWorktreeId, connectionsForWorktree, isConnectionMode, loadConnectionSessionsBackground])
+
   // Check for tab overflow and update arrow visibility
   const checkOverflow = useCallback(() => {
     const container = tabsContainerRef.current
@@ -579,11 +683,19 @@ export function SessionTabs(): React.JSX.Element | null {
   // Handle clicking a session tab - deactivate file tab and clear unread status
   const handleSessionTabClick = (sessionId: string) => {
     setActiveFile(null)
+    clearInlineConnectionSession()
     if (isConnectionMode) {
       setActiveConnectionSession(sessionId)
     } else {
       setActiveSession(sessionId)
     }
+    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+  }
+
+  // Handle clicking a sticky connection session tab (inline viewing in worktree mode)
+  const handleConnectionSessionTabClick = (sessionId: string) => {
+    setActiveFile(null)
+    setInlineConnectionSession(sessionId)
     useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
   }
 
@@ -722,7 +834,12 @@ export function SessionTabs(): React.JSX.Element | null {
         className="flex-1 flex overflow-x-auto scrollbar-hide"
         style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
       >
-        {orderedSessions.length === 0 && fileTabs.length === 0 && diffTabs.length === 0 ? (
+        {orderedSessions.length === 0 &&
+        fileTabs.length === 0 &&
+        diffTabs.length === 0 &&
+        !(!isConnectionMode && connectionsForWorktree.some((c) =>
+          (sessionsByConnection.get(c.id) || []).length > 0
+        )) ? (
           <div
             className="flex items-center px-3 py-1.5 text-sm text-muted-foreground"
             data-testid="no-sessions"
@@ -731,13 +848,42 @@ export function SessionTabs(): React.JSX.Element | null {
           </div>
         ) : (
           <>
+            {/* Sticky connection session tabs (worktree mode only) */}
+            {!isConnectionMode && connectionsForWorktree.map((connection) => {
+              const connectionSessions = sessionsByConnection.get(connection.id) || []
+              const connectionTabOrder = tabOrderByConnection.get(connection.id) || []
+              const orderedConnectionSessions = connectionTabOrder
+                .map((id) => connectionSessions.find((s) => s.id === id))
+                .filter((s): s is NonNullable<typeof s> => s !== undefined)
+
+              if (orderedConnectionSessions.length === 0) return null
+
+              return (
+                <Fragment key={connection.id}>
+                  {/* Thin visual separator before each connection group */}
+                  <div className="w-px bg-border/60 self-stretch my-1" aria-hidden="true" />
+                  {orderedConnectionSessions.map((session) => (
+                    <ConnectionSessionTab
+                      key={session.id}
+                      sessionId={session.id}
+                      name={session.name || 'Untitled'}
+                      isActive={session.id === inlineConnectionSessionId && !isFileTabActive}
+                      onClick={() => handleConnectionSessionTabClick(session.id)}
+                      connectionColor={connection.color}
+                      connectionName={connection.name}
+                    />
+                  ))}
+                </Fragment>
+              )
+            })}
+
             {/* Session tabs */}
             {orderedSessions.map((session) => (
               <SessionTab
                 key={session.id}
                 sessionId={session.id}
                 name={session.name || 'Untitled'}
-                isActive={session.id === activeSessionId && !isFileTabActive}
+                isActive={session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId}
                 onClick={() => handleSessionTabClick(session.id)}
                 onClose={(e) => handleCloseSession(e, session.id)}
                 onMiddleClick={(e) => handleCloseSession(e, session.id)}
