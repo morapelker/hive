@@ -38,6 +38,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.42",
     "@electron-toolkit/utils": "^3.0.0",
+    "@monaco-editor/react": "^4.7.0",
     "@opencode-ai/sdk": "^1.1.51",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
@@ -58,6 +59,7 @@
     "fix-path": "^4.0.0",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.468.0",
+    "monaco-editor": "^0.55.1",
     "node-addon-api": "^8.5.0",
     "node-pty": "^1.1.0",
     "radix-ui": "^1.4.3",

@@ -1,3 +1,5 @@
 export { DiffViewer, type DiffViewMode } from './DiffViewer'
 export { DiffModal } from './DiffModal'
 export { InlineDiffViewer } from './InlineDiffViewer'
+export { MonacoDiffToolbar } from './MonacoDiffToolbar'
+export { HunkActionGutter } from './HunkActionGutter'

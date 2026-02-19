@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, lazy, Suspense } from 'react'
 import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
 import { FileViewer } from '@/components/file-viewer'
@@ -7,6 +7,8 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+
+const MonacoDiffView = lazy(() => import('@/components/diff/MonacoDiffView'))
 
 interface MainPaneProps {
   children?: React.ReactNode
@@ -60,18 +62,41 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       )
     }
 
-    // Inline diff viewer is active
+    // Diff viewer is active
     if (activeDiff) {
+      // New/untracked files use the syntax highlighter view
+      if (activeDiff.isNewFile || activeDiff.isUntracked) {
+        return (
+          <InlineDiffViewer
+            worktreePath={activeDiff.worktreePath}
+            filePath={activeDiff.filePath}
+            fileName={activeDiff.fileName}
+            staged={activeDiff.staged}
+            isUntracked={activeDiff.isUntracked}
+            isNewFile={activeDiff.isNewFile}
+            onClose={handleCloseDiff}
+          />
+        )
+      }
+      // Tracked files use Monaco DiffEditor with per-hunk actions
       return (
-        <InlineDiffViewer
-          worktreePath={activeDiff.worktreePath}
-          filePath={activeDiff.filePath}
-          fileName={activeDiff.fileName}
-          staged={activeDiff.staged}
-          isUntracked={activeDiff.isUntracked}
-          isNewFile={activeDiff.isNewFile}
-          onClose={handleCloseDiff}
-        />
+        <Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          }
+        >
+          <MonacoDiffView
+            worktreePath={activeDiff.worktreePath}
+            filePath={activeDiff.filePath}
+            fileName={activeDiff.fileName}
+            staged={activeDiff.staged}
+            isUntracked={activeDiff.isUntracked}
+            isNewFile={activeDiff.isNewFile}
+            onClose={handleCloseDiff}
+          />
+        </Suspense>
       )
     }
 
