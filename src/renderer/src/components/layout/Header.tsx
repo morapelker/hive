@@ -133,6 +133,13 @@ export function Header(): React.JSX.Element {
       : null
   )
 
+  // Clear conflict fix flow as soon as conflicts are resolved
+  useEffect(() => {
+    if (!hasConflicts && conflictFixFlow) {
+      setConflictFixFlow(null)
+    }
+  }, [hasConflicts, conflictFixFlow])
+
   useEffect(() => {
     if (!conflictFixFlow || conflictFixFlow.phase !== 'running') return
 
