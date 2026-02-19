@@ -11,7 +11,8 @@ import {
   removeSymlink,
   deleteConnectionDir,
   generateConnectionInstructions,
-  deriveSymlinkName
+  deriveSymlinkName,
+  generateConnectionColor
 } from '../services/connection-service'
 import { getDatabase } from '../db'
 import type { ConnectionWithMembers } from '../db/types'
@@ -62,8 +63,9 @@ export function registerConnectionHandlers(): void {
         const dirName = randomUUID().slice(0, 8)
         const dirPath = createConnectionDir(dirName)
 
-        // Create the DB connection record with placeholder name
-        const connection = db.createConnection({ name: dirName, path: dirPath })
+        // Create the DB connection record with placeholder name and random color
+        const color = generateConnectionColor()
+        const connection = db.createConnection({ name: dirName, path: dirPath, color })
 
         // For each worktree, look up its data, derive symlink name, create symlink + member
         const existingSymlinkNames: string[] = []

@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 3
+export const CURRENT_SCHEMA_VERSION = 4
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -189,5 +189,12 @@ export const MIGRATIONS: Migration[] = [
       DROP TABLE IF EXISTS connection_members;
       DROP TABLE IF EXISTS connections;
     `
+  },
+  {
+    version: 4,
+    name: 'add_connection_color',
+    up: `-- NOTE: ALTER TABLE for color is handled idempotently by
+         -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

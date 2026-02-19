@@ -150,6 +150,7 @@ export class DatabaseService {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         path TEXT NOT NULL,
+        color TEXT DEFAULT NULL,
         status TEXT NOT NULL DEFAULT 'active',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -177,6 +178,7 @@ export class DatabaseService {
       'TEXT DEFAULT NULL REFERENCES connections(id) ON DELETE SET NULL'
     )
     this.safeAddColumn('sessions', 'agent_sdk', "TEXT NOT NULL DEFAULT 'opencode'")
+    this.safeAddColumn('connections', 'color', 'TEXT DEFAULT NULL')
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
@@ -924,18 +926,20 @@ export class DatabaseService {
       id: randomUUID(),
       name: data.name,
       path: data.path,
+      color: data.color ?? null,
       status: 'active',
       created_at: now,
       updated_at: now
     }
 
     db.prepare(
-      `INSERT INTO connections (id, name, path, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO connections (id, name, path, color, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(
       connection.id,
       connection.name,
       connection.path,
+      connection.color,
       connection.status,
       connection.created_at,
       connection.updated_at
@@ -1009,6 +1013,10 @@ export class DatabaseService {
     if (data.status !== undefined) {
       updates.push('status = ?')
       values.push(data.status)
+    }
+    if (data.color !== undefined) {
+      updates.push('color = ?')
+      values.push(data.color)
     }
 
     values.push(id)

@@ -22,6 +22,7 @@ interface Connection {
   name: string
   status: 'active' | 'archived'
   path: string
+  color: string | null
   created_at: string
   updated_at: string
   members: ConnectionMemberEnriched[]

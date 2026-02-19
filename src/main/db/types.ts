@@ -194,11 +194,15 @@ export interface ProjectSpaceAssignment {
   space_id: string
 }
 
+// Connection color quad: [inactiveBg, activeBg, inactiveText, activeText] stored as JSON string
+export type ConnectionColorQuad = [string, string, string, string]
+
 // Connection types
 export interface Connection {
   id: string
   name: string
   path: string
+  color: string | null // JSON-serialised ConnectionColorQuad
   status: 'active' | 'archived'
   created_at: string
   updated_at: string
@@ -207,11 +211,13 @@ export interface Connection {
 export interface ConnectionCreate {
   name: string
   path: string
+  color?: string | null
 }
 
 export interface ConnectionUpdate {
   name?: string
   path?: string
+  color?: string | null
   status?: 'active' | 'archived'
 }
 

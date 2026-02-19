@@ -59,6 +59,11 @@ interface SessionState {
   activeSessionByConnection: Record<string, string> // persisted
   activeConnectionId: string | null
 
+  // Inline connection session viewing (in worktree mode)
+  // When set, MainPane renders this connection session instead of the active worktree session.
+  // Sidebar selection remains on the worktree.
+  inlineConnectionSessionId: string | null
+
   // Actions
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
   createSession: (
@@ -89,6 +94,11 @@ interface SessionState {
   setPendingPlan: (sessionId: string, plan: PendingPlan) => void
   clearPendingPlan: (sessionId: string) => void
   getPendingPlan: (sessionId: string) => PendingPlan | null
+
+  // Inline connection session actions
+  setInlineConnectionSession: (sessionId: string | null) => void
+  clearInlineConnectionSession: () => void
+  loadConnectionSessionsBackground: (connectionId: string) => Promise<void>
 
   // Connection session actions
   loadConnectionSessions: (connectionId: string) => Promise<void>
@@ -142,6 +152,7 @@ export const useSessionStore = create<SessionState>()(
       tabOrderByConnection: new Map(),
       activeSessionByConnection: {},
       activeConnectionId: null,
+      inlineConnectionSessionId: null,
 
       // Load sessions for a worktree from database (only active sessions for tabs)
       loadSessions: async (worktreeId: string, _projectId: string) => {
@@ -515,7 +526,7 @@ export const useSessionStore = create<SessionState>()(
 
         if (worktreeId === state.activeWorktreeId) return
 
-        set({ activeWorktreeId: worktreeId, activeConnectionId: null })
+        set({ activeWorktreeId: worktreeId, activeConnectionId: null, inlineConnectionSessionId: null })
 
         if (worktreeId) {
           // Check if we already have sessions for this worktree
@@ -861,6 +872,66 @@ export const useSessionStore = create<SessionState>()(
 
       getPendingPlan: (sessionId: string): PendingPlan | null => {
         return get().pendingPlans.get(sessionId) ?? null
+      },
+
+      // ─── Inline connection session actions ─────────────────────────────
+
+      setInlineConnectionSession: (sessionId: string | null) => {
+        set({ inlineConnectionSessionId: sessionId })
+      },
+
+      clearInlineConnectionSession: () => {
+        set({ inlineConnectionSessionId: null })
+      },
+
+      // Load sessions for a connection without entering connection mode.
+      // Used by sticky tabs in worktree mode to pre-load connection sessions.
+      loadConnectionSessionsBackground: async (connectionId: string) => {
+        try {
+          const sessions = await window.db.session.getActiveByConnection(connectionId)
+          const sortedSessions = sessions.sort(
+            (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+          )
+
+          set((state) => {
+            const newSessionsMap = new Map(state.sessionsByConnection)
+            newSessionsMap.set(connectionId, sortedSessions)
+
+            // Initialize or sync tab order
+            const newTabOrderMap = new Map(state.tabOrderByConnection)
+            if (!newTabOrderMap.has(connectionId)) {
+              newTabOrderMap.set(
+                connectionId,
+                sortedSessions.map((s) => s.id)
+              )
+            } else {
+              const existingOrder = newTabOrderMap.get(connectionId)!
+              const sessionIds = new Set(sortedSessions.map((s) => s.id))
+              const validOrder = existingOrder.filter((id) => sessionIds.has(id))
+              const newIds = sortedSessions
+                .map((s) => s.id)
+                .filter((id) => !validOrder.includes(id))
+              newTabOrderMap.set(connectionId, [...validOrder, ...newIds])
+            }
+
+            // Populate mode map
+            const newModeMap = new Map(state.modeBySession)
+            for (const session of sortedSessions) {
+              if (!newModeMap.has(session.id)) {
+                newModeMap.set(session.id, session.mode || 'build')
+              }
+            }
+
+            return {
+              sessionsByConnection: newSessionsMap,
+              tabOrderByConnection: newTabOrderMap,
+              modeBySession: newModeMap
+              // NOTE: does NOT touch activeSessionId or activeConnectionId
+            }
+          })
+        } catch {
+          // Non-fatal: sticky tabs just won't show sessions until next load
+        }
       },
 
       // ─── Connection session actions ──────────────────────────────────────

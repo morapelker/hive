@@ -52,6 +52,8 @@ const mockConnectionService = vi.hoisted(() => ({
   removeSymlink: vi.fn(),
   deleteConnectionDir: vi.fn(),
   generateAgentsMd: vi.fn(),
+  generateConnectionInstructions: vi.fn(),
+  generateConnectionColor: vi.fn(() => JSON.stringify(['#bfdbfe', '#2563eb', '#1e3a5f', '#ffffff'])),
   deriveSymlinkName: vi.fn((name: string) => name.toLowerCase().replace(/[^a-z0-9-]/g, '-')),
   renameConnectionDir: vi.fn(),
   getConnectionsBaseDir: vi.fn(() => '/mock/.hive/connections')
@@ -133,6 +135,7 @@ function makeConnection(overrides: Record<string, unknown> = {}) {
     id: 'conn-1',
     name: 'golden-retriever',
     path: '/mock/.hive/connections/golden-retriever',
+    color: JSON.stringify(['#bfdbfe', '#2563eb', '#1e3a5f', '#ffffff']),
     status: 'active',
     created_at: '2025-01-01T00:00:00.000Z',
     updated_at: '2025-01-01T00:00:00.000Z',

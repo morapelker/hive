@@ -17,6 +17,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const selectedConnectionId = useConnectionStore((state) => state.selectedConnectionId)
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
   const isLoading = useSessionStore((state) => state.isLoading)
+  const inlineConnectionSessionId = useSessionStore((state) => state.inlineConnectionSessionId)
   const activeFilePath = useFileViewerStore((state) => state.activeFilePath)
   const activeDiff = useFileViewerStore((state) => state.activeDiff)
 
@@ -77,6 +78,11 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     // File viewer tab is active - render FileViewer (skip diff tab keys)
     if (activeFilePath && !activeFilePath.startsWith('diff:')) {
       return <FileViewer filePath={activeFilePath} />
+    }
+
+    // Inline connection session view (sticky tab clicked in worktree mode)
+    if (inlineConnectionSessionId) {
+      return <SessionView key={inlineConnectionSessionId} sessionId={inlineConnectionSessionId} />
     }
 
     // Worktree or connection selected but no session - show create session prompt
