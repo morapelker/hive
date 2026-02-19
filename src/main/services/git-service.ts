@@ -1,7 +1,8 @@
 import simpleGit, { SimpleGit, BranchSummary } from 'simple-git'
 import { app } from 'electron'
 import { join, basename, dirname } from 'path'
-import { existsSync, mkdirSync, rmSync, cpSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
 import { selectUniqueBreedName, ALL_BREED_NAMES, LEGACY_CITY_NAMES, type BreedType } from './breed-names'
 import { createLogger } from './logger'
 
@@ -406,87 +407,64 @@ export class GitService {
   /**
    * Get git status for all files in the repository
    * Returns file statuses with M (modified), A (staged/added), D (deleted), ? (untracked), C (conflicted)
+   *
+   * Uses status.files (per-file porcelain codes) instead of convenience arrays
+   * because simple-git's status.modified includes fully-staged files (porcelain `M `)
+   * which would incorrectly appear as unstaged changes.
    */
   async getFileStatuses(): Promise<GitStatusResult> {
     try {
       const status = await this.git.status()
       const files: GitFileStatus[] = []
+      const conflictedSet = new Set(status.conflicted)
 
-      // Process modified files (not staged)
-      for (const file of status.modified) {
-        files.push({
-          path: join(this.repoPath, file),
-          relativePath: file,
-          status: 'M',
-          staged: false
-        })
-      }
+      for (const fileStatus of status.files) {
+        const filePath = fileStatus.path
+        const fullPath = join(this.repoPath, filePath)
+        const idx = fileStatus.index
+        const wd = fileStatus.working_dir
 
-      // Process staged files
-      for (const file of status.staged) {
-        // Check if it's already in files (modified but staged some changes)
-        const existing = files.find((f) => f.relativePath === file)
-        if (existing) {
-          // File has both staged and unstaged changes — keep BOTH entries
-          // existing stays as { staged: false } (unstaged changes)
-          // Add new entry for the staged portion
+        // Conflicted files
+        if (conflictedSet.has(filePath)) {
           files.push({
-            path: join(this.repoPath, file),
-            relativePath: file,
-            status: 'M',
-            staged: true
+            path: fullPath,
+            relativePath: filePath,
+            status: 'C',
+            staged: false
           })
-        } else {
+          continue
+        }
+
+        // Untracked files
+        if (idx === '?' && wd === '?') {
           files.push({
-            path: join(this.repoPath, file),
-            relativePath: file,
-            status: 'A',
+            path: fullPath,
+            relativePath: filePath,
+            status: '?',
+            staged: false
+          })
+          continue
+        }
+
+        // Staged changes — index column indicates staged modifications
+        if (idx === 'M' || idx === 'A' || idx === 'D' || idx === 'R' || idx === 'C') {
+          files.push({
+            path: fullPath,
+            relativePath: filePath,
+            status: idx === 'D' ? 'D' : idx === 'M' ? 'M' : 'A',
             staged: true
           })
         }
-      }
 
-      // Process created/added files (not yet tracked, staged)
-      for (const file of status.created) {
-        const existing = files.find((f) => f.relativePath === file)
-        if (!existing) {
+        // Unstaged working tree changes — only when working_dir indicates real changes
+        if (wd === 'M' || wd === 'D') {
           files.push({
-            path: join(this.repoPath, file),
-            relativePath: file,
-            status: 'A',
-            staged: true
+            path: fullPath,
+            relativePath: filePath,
+            status: wd === 'D' ? 'D' : 'M',
+            staged: false
           })
         }
-      }
-
-      // Process deleted files
-      for (const file of status.deleted) {
-        files.push({
-          path: join(this.repoPath, file),
-          relativePath: file,
-          status: 'D',
-          staged: false
-        })
-      }
-
-      // Process untracked files
-      for (const file of status.not_added) {
-        files.push({
-          path: join(this.repoPath, file),
-          relativePath: file,
-          status: '?',
-          staged: false
-        })
-      }
-
-      // Process conflicted files
-      for (const file of status.conflicted) {
-        files.push({
-          path: join(this.repoPath, file),
-          relativePath: file,
-          status: 'C',
-          staged: false
-        })
       }
 
       return { success: true, files }
@@ -896,6 +874,97 @@ export class GitService {
       log.error('Failed to get diff', error instanceof Error ? error : new Error(message), {
         filePath,
         staged,
+        repoPath: this.repoPath
+      })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Get file content from a specific git ref (HEAD, index, etc.)
+   * @param ref - Git ref: 'HEAD' for HEAD version, '' (empty string) for index/staged version
+   * @param filePath - Relative path to the file
+   */
+  async getRefContent(
+    ref: string,
+    filePath: string
+  ): Promise<{ success: boolean; content?: string; error?: string }> {
+    try {
+      // 'HEAD:path' for HEAD, ':path' for index (staged)
+      const refSpec = ref ? `${ref}:${filePath}` : `:${filePath}`
+      const content = await this.git.show([refSpec])
+      return { success: true, content }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to get ref content', error instanceof Error ? error : new Error(message), {
+        ref,
+        filePath,
+        repoPath: this.repoPath
+      })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Write patch content to a temp file, run git apply, then clean up.
+   * simple-git's applyPatch() treats the first arg as a file path,
+   * so we must write the patch string to disk first.
+   */
+  private async applyPatchString(patch: string, options: string[]): Promise<void> {
+    const tmpFile = join(tmpdir(), `hive-patch-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`)
+    try {
+      writeFileSync(tmpFile, patch, 'utf-8')
+      await this.git.applyPatch(tmpFile, options)
+    } finally {
+      try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
+    }
+  }
+
+  /**
+   * Stage a single hunk by applying a patch to the index
+   * @param patch - Unified diff patch string for the hunk
+   */
+  async stageHunk(patch: string): Promise<GitOperationResult> {
+    try {
+      await this.applyPatchString(patch, ['--cached', '--unidiff-zero'])
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to stage hunk', error instanceof Error ? error : new Error(message), {
+        repoPath: this.repoPath
+      })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Unstage a single hunk by reverse-applying a patch from the index
+   * @param patch - Unified diff patch string for the hunk
+   */
+  async unstageHunk(patch: string): Promise<GitOperationResult> {
+    try {
+      await this.applyPatchString(patch, ['--cached', '--reverse', '--unidiff-zero'])
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to unstage hunk', error instanceof Error ? error : new Error(message), {
+        repoPath: this.repoPath
+      })
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Revert a single hunk in the working tree
+   * @param patch - Unified diff patch string for the hunk
+   */
+  async revertHunk(patch: string): Promise<GitOperationResult> {
+    try {
+      await this.applyPatchString(patch, ['--reverse', '--unidiff-zero'])
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error('Failed to revert hunk', error instanceof Error ? error : new Error(message), {
         repoPath: this.repoPath
       })
       return { success: false, error: message }

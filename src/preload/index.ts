@@ -883,7 +883,45 @@ const gitOps = {
       headRefName: string
     }>
     error?: string
-  }> => ipcRenderer.invoke('git:listPRs', { projectPath })
+  }> => ipcRenderer.invoke('git:listPRs', { projectPath }),
+
+  // Get file content from a specific git ref (HEAD, index)
+  getRefContent: (
+    worktreePath: string,
+    ref: string,
+    filePath: string
+  ): Promise<{
+    success: boolean
+    content?: string
+    error?: string
+  }> => ipcRenderer.invoke('git:getRefContent', worktreePath, ref, filePath),
+
+  // Stage a single hunk by applying a patch to the index
+  stageHunk: (
+    worktreePath: string,
+    patch: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:stageHunk', worktreePath, patch),
+
+  // Unstage a single hunk by reverse-applying a patch from the index
+  unstageHunk: (
+    worktreePath: string,
+    patch: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:unstageHunk', worktreePath, patch),
+
+  // Revert a single hunk in the working tree
+  revertHunk: (
+    worktreePath: string,
+    patch: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:revertHunk', worktreePath, patch)
 }
 
 const opencodeOps = {

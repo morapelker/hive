@@ -646,6 +646,97 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 
+  // Get file content from a specific git ref (HEAD, index)
+  ipcMain.handle(
+    'git:getRefContent',
+    async (
+      _event,
+      worktreePath: string,
+      ref: string,
+      filePath: string
+    ): Promise<{ success: boolean; content?: string; error?: string }> => {
+      log.info('Getting ref content', { worktreePath, ref, filePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.getRefContent(ref, filePath)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to get ref content',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath, ref, filePath }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Stage a single hunk by applying a patch to the index
+  ipcMain.handle(
+    'git:stageHunk',
+    async (
+      _event,
+      worktreePath: string,
+      patch: string
+    ): Promise<GitOperationResult> => {
+      log.info('Staging hunk', { worktreePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.stageHunk(patch)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to stage hunk', error instanceof Error ? error : new Error(message), {
+          worktreePath
+        })
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Unstage a single hunk by reverse-applying a patch from the index
+  ipcMain.handle(
+    'git:unstageHunk',
+    async (
+      _event,
+      worktreePath: string,
+      patch: string
+    ): Promise<GitOperationResult> => {
+      log.info('Unstaging hunk', { worktreePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.unstageHunk(patch)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to unstage hunk', error instanceof Error ? error : new Error(message), {
+          worktreePath
+        })
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Revert a single hunk in the working tree
+  ipcMain.handle(
+    'git:revertHunk',
+    async (
+      _event,
+      worktreePath: string,
+      patch: string
+    ): Promise<GitOperationResult> => {
+      log.info('Reverting hunk', { worktreePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.revertHunk(patch)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error('Failed to revert hunk', error instanceof Error ? error : new Error(message), {
+          worktreePath
+        })
+        return { success: false, error: message }
+      }
+    }
+  )
+
   // List open pull requests via gh CLI
   ipcMain.handle(
     'git:listPRs',
