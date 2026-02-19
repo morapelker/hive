@@ -39,11 +39,11 @@ brew install --cask hive
 
 That's it. Open Hive from your Applications folder and point it at a git repo.
 
-<!-- ## Screenshots
+## Screenshots
 
-> Screenshots coming soon.
-
--->
+<p align="center">
+  <img src="docs/screenshots/hive-ss-1.png" alt="Hive — AI coding session with git worktrees" width="800" />
+</p>
 
 ---
 
