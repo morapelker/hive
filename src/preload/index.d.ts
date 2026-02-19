@@ -921,6 +921,40 @@ declare global {
         }>
         error?: string
       }>
+      // Get file content from a specific git ref (HEAD, index)
+      getRefContent: (
+        worktreePath: string,
+        ref: string,
+        filePath: string
+      ) => Promise<{
+        success: boolean
+        content?: string
+        error?: string
+      }>
+      // Stage a single hunk by applying a patch to the index
+      stageHunk: (
+        worktreePath: string,
+        patch: string
+      ) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Unstage a single hunk by reverse-applying a patch from the index
+      unstageHunk: (
+        worktreePath: string,
+        patch: string
+      ) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Revert a single hunk in the working tree
+      revertHunk: (
+        worktreePath: string,
+        patch: string
+      ) => Promise<{
+        success: boolean
+        error?: string
+      }>
     }
     updaterOps: {
       checkForUpdate: () => Promise<void>
