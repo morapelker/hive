@@ -4,23 +4,23 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 const MAX_HISTORY_SIZE = 100
 
 interface PromptHistoryState {
-  historyByWorktree: Record<string, string[]>
+  historyByScope: Record<string, string[]>
   // Actions
-  addPrompt: (worktreeId: string, prompt: string) => void
-  getHistory: (worktreeId: string) => string[]
+  addPrompt: (scopeId: string, prompt: string) => void
+  getHistory: (scopeId: string) => string[]
 }
 
 export const usePromptHistoryStore = create<PromptHistoryState>()(
   persist(
     (set, get) => ({
-      historyByWorktree: {},
+      historyByScope: {},
 
-      addPrompt: (worktreeId: string, prompt: string) => {
+      addPrompt: (scopeId: string, prompt: string) => {
         const trimmed = prompt.trim()
         if (!trimmed) return
 
         set((state) => {
-          const existing = state.historyByWorktree[worktreeId] ?? []
+          const existing = state.historyByScope[scopeId] ?? []
           // Deduplicate: remove existing match
           const filtered = existing.filter((p) => p !== trimmed)
           // Append newest at the end
@@ -32,21 +32,31 @@ export const usePromptHistoryStore = create<PromptHistoryState>()(
               : filtered
 
           return {
-            historyByWorktree: {
-              ...state.historyByWorktree,
-              [worktreeId]: capped
+            historyByScope: {
+              ...state.historyByScope,
+              [scopeId]: capped
             }
           }
         })
       },
 
-      getHistory: (worktreeId: string) => {
-        return get().historyByWorktree[worktreeId] ?? []
+      getHistory: (scopeId: string) => {
+        return get().historyByScope[scopeId] ?? []
       }
     }),
     {
       name: 'hive-prompt-history',
-      storage: createJSONStorage(() => localStorage)
+      storage: createJSONStorage(() => localStorage),
+      version: 1,
+      migrate: (persisted: unknown, version: number) => {
+        if (version === 0) {
+          const old = persisted as { historyByWorktree?: Record<string, string[]> }
+          return {
+            historyByScope: old.historyByWorktree ?? {}
+          }
+        }
+        return persisted as PromptHistoryState
+      }
     }
   )
 )

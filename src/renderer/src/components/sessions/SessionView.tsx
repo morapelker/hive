@@ -329,11 +329,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // OpenCode state
   const [worktreePath, setWorktreePath] = useState<string | null>(null)
   const [worktreeId, setWorktreeId] = useState<string | null>(null)
+  const [connectionId, setConnectionId] = useState<string | null>(null)
   const [opencodeSessionId, setOpencodeSessionId] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [sessionRetry, setSessionRetry] = useState<SessionRetryState | null>(null)
   const [sessionErrorMessage, setSessionErrorMessage] = useState<string | null>(null)
   const [retryTickMs, setRetryTickMs] = useState<number>(Date.now())
+
+  // Prompt history key: works for both worktree and connection sessions
+  const historyKey = worktreeId ?? connectionId
 
   // Fetch runtime capabilities when the opencode session changes
   useEffect(() => {
@@ -1770,6 +1774,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           }
         } else if (session.connection_id) {
           // Connection session: resolve the connection folder path
+          setConnectionId(session.connection_id)
           try {
             const connResult = await window.connectionOps.get(session.connection_id)
             if (connResult.success && connResult.connection) {
@@ -2592,8 +2597,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         newPromptPendingRef.current = true
 
         // Record prompt to history for Up/Down navigation
+        const hKey = worktreeId ?? connectionId
+        if (hKey) {
+          usePromptHistoryStore.getState().addPrompt(hKey, trimmedValue)
+        }
         if (worktreeId) {
-          usePromptHistoryStore.getState().addPrompt(worktreeId, trimmedValue)
           useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
         }
         setHistoryIndex(null)
@@ -2746,6 +2754,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       sessionRecord,
       worktreePath,
       worktreeId,
+      connectionId,
       opencodeSessionId,
       attachments,
       allSlashCommands,
@@ -2943,9 +2952,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // Only activate at cursor position 0 (very beginning)
         if (textarea.selectionStart !== 0 || textarea.selectionEnd !== 0) return
 
-        const wId = worktreeId
-        if (!wId) return
-        const history = usePromptHistoryStore.getState().getHistory(wId)
+        const hKey = historyKey
+        if (!hKey) return
+        const history = usePromptHistoryStore.getState().getHistory(hKey)
         if (history.length === 0) return
 
         e.preventDefault()
@@ -2984,9 +2993,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
         if (historyIndex === null) return // Not navigating
 
-        const wId = worktreeId
-        if (!wId) return
-        const history = usePromptHistoryStore.getState().getHistory(wId)
+        const hKey = historyKey
+        if (!hKey) return
+        const history = usePromptHistoryStore.getState().getHistory(hKey)
 
         e.preventDefault()
 
@@ -3015,7 +3024,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       handleSend,
       handlePlanReject,
       sessionId,
-      worktreeId,
+      historyKey,
       historyIndex,
       inputValue,
       fileMentions.isOpen
