@@ -24,3 +24,70 @@ export function extractBearerToken(header: string | undefined | null): string | 
   if (!token || token.trim() === '') return null
   return token
 }
+
+interface BruteForceEntry {
+  attempts: number
+  firstAttempt: number
+  blockedUntil: number
+}
+
+interface BruteForceOpts {
+  maxAttempts: number
+  windowMs: number
+  blockMs: number
+}
+
+export class BruteForceTracker {
+  private map = new Map<string, BruteForceEntry>()
+  private opts: BruteForceOpts
+
+  constructor(opts: BruteForceOpts) {
+    this.opts = opts
+  }
+
+  get size(): number {
+    return this.map.size
+  }
+
+  recordFailure(ip: string): void {
+    const now = Date.now()
+    const entry = this.map.get(ip)
+
+    if (!entry || now - entry.firstAttempt > this.opts.windowMs) {
+      this.map.set(ip, { attempts: 1, firstAttempt: now, blockedUntil: 0 })
+      return
+    }
+
+    entry.attempts++
+    if (entry.attempts >= this.opts.maxAttempts) {
+      entry.blockedUntil = now + this.opts.blockMs
+    }
+  }
+
+  recordSuccess(ip: string): void {
+    this.map.delete(ip)
+  }
+
+  isBlocked(ip: string): boolean {
+    const entry = this.map.get(ip)
+    if (!entry) return false
+    if (entry.blockedUntil === 0) return false
+    if (Date.now() > entry.blockedUntil) {
+      this.map.delete(ip)
+      return false
+    }
+    return true
+  }
+
+  cleanup(): void {
+    const now = Date.now()
+    for (const [ip, entry] of this.map) {
+      const expiry = entry.blockedUntil > 0
+        ? entry.blockedUntil
+        : entry.firstAttempt + this.opts.windowMs
+      if (now > expiry) {
+        this.map.delete(ip)
+      }
+    }
+  }
+}
