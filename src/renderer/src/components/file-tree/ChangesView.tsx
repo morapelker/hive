@@ -500,6 +500,7 @@ export function ChangesView({
                   key={`conflict-${file.relativePath}`}
                   file={file}
                   onViewDiff={handleViewDiff}
+                  onStageToggle={handleStageFile}
                   contextMenu={
                     <ContextMenuContent>
                       <ContextMenuItem onClick={() => handleStageFile(file)}>
@@ -544,6 +545,7 @@ export function ChangesView({
                   key={`staged-${file.relativePath}`}
                   file={file}
                   onViewDiff={handleViewDiff}
+                  onStageToggle={handleUnstageFile}
                   contextMenu={
                     <ContextMenuContent>
                       <ContextMenuItem onClick={() => handleUnstageFile(file)}>
@@ -588,6 +590,7 @@ export function ChangesView({
                   key={`modified-${file.relativePath}`}
                   file={file}
                   onViewDiff={handleViewDiff}
+                  onStageToggle={handleStageFile}
                   contextMenu={
                     <ContextMenuContent>
                       <ContextMenuItem onClick={() => handleStageFile(file)}>
@@ -627,6 +630,7 @@ export function ChangesView({
                   key={`untracked-${file.relativePath}`}
                   file={file}
                   onViewDiff={handleViewDiff}
+                  onStageToggle={handleStageFile}
                   contextMenu={
                     <ContextMenuContent>
                       <ContextMenuItem onClick={() => handleStageFile(file)}>
@@ -764,12 +768,14 @@ interface FileRowProps {
   file: GitFileStatus
   onViewDiff: (file: GitFileStatus) => void
   contextMenu: React.ReactNode
+  onStageToggle?: (file: GitFileStatus) => void
 }
 
 const FileRow = memo(function FileRow({
   file,
   onViewDiff,
-  contextMenu
+  contextMenu,
+  onStageToggle
 }: FileRowProps): React.JSX.Element {
   const fileName = file.relativePath.split('/').pop() || file.relativePath
   const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : null
@@ -782,7 +788,37 @@ const FileRow = memo(function FileRow({
           onClick={() => onViewDiff(file)}
           data-testid={`changes-file-${file.relativePath}`}
         >
-          <FileIcon name={fileName} extension={ext} isDirectory={false} className="h-3.5 w-3.5" />
+          {onStageToggle ? (
+            <div className="relative h-3.5 w-3.5 flex-shrink-0">
+              <FileIcon
+                name={fileName}
+                extension={ext}
+                isDirectory={false}
+                className="h-3.5 w-3.5 group-hover:invisible"
+              />
+              <button
+                className="absolute inset-0 hidden group-hover:flex items-center justify-center text-muted-foreground hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onStageToggle(file)
+                }}
+                title={file.staged ? 'Unstage' : 'Stage'}
+              >
+                {file.staged ? (
+                  <Minus className="h-3.5 w-3.5" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
+          ) : (
+            <FileIcon
+              name={fileName}
+              extension={ext}
+              isDirectory={false}
+              className="h-3.5 w-3.5"
+            />
+          )}
           <span className="text-xs truncate flex-1" title={file.relativePath}>
             {file.relativePath}
           </span>
@@ -846,6 +882,20 @@ const MemberChanges = memo(function MemberChanges({
 
   const wp = member.worktree_path
 
+  const handleStageToggle = useCallback(
+    (file: GitFileStatus) => {
+      onStageFile(wp, file.relativePath)
+    },
+    [onStageFile, wp]
+  )
+
+  const handleUnstageToggle = useCallback(
+    (file: GitFileStatus) => {
+      onUnstageFile(wp, file.relativePath)
+    },
+    [onUnstageFile, wp]
+  )
+
   return (
     <div className="pl-3 pb-1">
       {/* Staged */}
@@ -873,6 +923,7 @@ const MemberChanges = memo(function MemberChanges({
               key={`staged-${file.relativePath}`}
               file={file}
               onViewDiff={handleViewDiff}
+              onStageToggle={handleUnstageToggle}
               contextMenu={
                 <ContextMenuContent>
                   <ContextMenuItem onClick={() => onUnstageFile(wp, file.relativePath)}>
@@ -911,6 +962,7 @@ const MemberChanges = memo(function MemberChanges({
               key={`modified-${file.relativePath}`}
               file={file}
               onViewDiff={handleViewDiff}
+              onStageToggle={handleStageToggle}
               contextMenu={
                 <ContextMenuContent>
                   <ContextMenuItem onClick={() => onStageFile(wp, file.relativePath)}>
@@ -945,6 +997,7 @@ const MemberChanges = memo(function MemberChanges({
               key={`untracked-${file.relativePath}`}
               file={file}
               onViewDiff={handleViewDiff}
+              onStageToggle={handleStageToggle}
               contextMenu={
                 <ContextMenuContent>
                   <ContextMenuItem onClick={() => onStageFile(wp, file.relativePath)}>
