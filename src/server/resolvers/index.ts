@@ -7,6 +7,10 @@ import { fileTreeQueryResolvers } from './query/file-tree.resolvers'
 import { dbMutationResolvers } from './mutation/db.resolvers'
 import { systemMutationResolvers } from './mutation/system.resolvers'
 import { fileMutationResolvers } from './mutation/file.resolvers'
+import { projectQueryResolvers } from './query/project.resolvers'
+import { projectMutationResolvers } from './mutation/project.resolvers'
+import { worktreeQueryResolvers } from './query/worktree.resolvers'
+import { worktreeMutationResolvers } from './mutation/worktree.resolvers'
 
 function deepMerge(...objects: Resolvers[]): Resolvers {
   const result: Record<string, unknown> = {}
@@ -37,6 +41,10 @@ export function mergeResolvers(): Resolvers {
     fileTreeQueryResolvers,
     dbMutationResolvers,
     systemMutationResolvers,
-    fileMutationResolvers
+    fileMutationResolvers,
+    projectQueryResolvers,
+    projectMutationResolvers,
+    worktreeQueryResolvers,
+    worktreeMutationResolvers
   )
 }
