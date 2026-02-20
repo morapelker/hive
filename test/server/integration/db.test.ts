@@ -1,6 +1,24 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { homedir } from 'os'
+import { join } from 'path'
 import { MockDatabaseService } from '../helpers/mock-db'
 import { createTestServer } from '../helpers/test-server'
+
+// Mock Electron's app module — resolver chain imports logger which calls app.getPath at load time
+vi.mock('electron', () => ({
+  app: {
+    getPath: (name: string) => {
+      if (name === 'home') return homedir()
+      if (name === 'userData') return join(homedir(), '.hive')
+      if (name === 'logs') return join(homedir(), '.hive', 'logs')
+      return '/tmp'
+    },
+    getVersion: () => '0.0.0-test',
+    getAppPath: () => '/tmp/hive-test-app'
+  },
+  ipcMain: { handle: vi.fn() },
+  BrowserWindow: vi.fn()
+}))
 
 describe('DB Resolvers — Integration Tests', () => {
   let db: MockDatabaseService

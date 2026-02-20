@@ -114,7 +114,7 @@ export const gitQueryResolvers: Resolvers = {
       try {
         const gitService = createGitService(worktreePath)
         return await gitService.isBranchMerged(branch)
-      } catch (error) {
+      } catch {
         return { success: false, isMerged: false }
       }
     },

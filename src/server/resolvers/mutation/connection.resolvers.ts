@@ -12,7 +12,7 @@ import {
 // snake_case DB rows -> camelCase GraphQL fields
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+/* eslint-disable @typescript-eslint/no-explicit-any */
 function mapConnection(row: any) {
   if (!row) return null
   return {
