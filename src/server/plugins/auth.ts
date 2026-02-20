@@ -15,3 +15,12 @@ export function verifyApiKey(key: string, storedHash: string): boolean {
   if (keyBuf.length !== storedBuf.length) return false
   return crypto.timingSafeEqual(keyBuf, storedBuf)
 }
+
+export function extractBearerToken(header: string | undefined | null): string | null {
+  if (!header || typeof header !== 'string') return null
+  const parts = header.split(' ')
+  if (parts.length !== 2 || parts[0] !== 'Bearer') return null
+  const token = parts[1]
+  if (!token || token.trim() === '') return null
+  return token
+}
