@@ -1,6 +1,12 @@
 import type { Resolvers } from '../__generated__/resolvers-types'
 import { dbQueryResolvers } from './query/db.resolvers'
+import { systemQueryResolvers } from './query/system.resolvers'
+import { settingsQueryResolvers } from './query/settings.resolvers'
+import { fileQueryResolvers } from './query/file.resolvers'
+import { fileTreeQueryResolvers } from './query/file-tree.resolvers'
 import { dbMutationResolvers } from './mutation/db.resolvers'
+import { systemMutationResolvers } from './mutation/system.resolvers'
+import { fileMutationResolvers } from './mutation/file.resolvers'
 
 function deepMerge(...objects: Resolvers[]): Resolvers {
   const result: Record<string, unknown> = {}
@@ -23,5 +29,14 @@ function deepMerge(...objects: Resolvers[]): Resolvers {
 }
 
 export function mergeResolvers(): Resolvers {
-  return deepMerge(dbQueryResolvers, dbMutationResolvers)
+  return deepMerge(
+    dbQueryResolvers,
+    systemQueryResolvers,
+    settingsQueryResolvers,
+    fileQueryResolvers,
+    fileTreeQueryResolvers,
+    dbMutationResolvers,
+    systemMutationResolvers,
+    fileMutationResolvers
+  )
 }
