@@ -10,6 +10,7 @@ import { fileMutationResolvers } from './mutation/file.resolvers'
 import { projectQueryResolvers } from './query/project.resolvers'
 import { projectMutationResolvers } from './mutation/project.resolvers'
 import { worktreeQueryResolvers } from './query/worktree.resolvers'
+import { gitQueryResolvers } from './query/git.resolvers'
 import { worktreeMutationResolvers } from './mutation/worktree.resolvers'
 
 function deepMerge(...objects: Resolvers[]): Resolvers {
@@ -45,6 +46,7 @@ export function mergeResolvers(): Resolvers {
     projectQueryResolvers,
     projectMutationResolvers,
     worktreeQueryResolvers,
+    gitQueryResolvers,
     worktreeMutationResolvers
   )
 }
