@@ -1,7 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import {
   AlertCircle,
-  GitBranch,
   Link,
   Loader2,
   Map as MapIcon,
@@ -15,9 +14,12 @@ import {
   useWorktreeStatusStore,
   useSessionStore
 } from '@/stores'
+import { useScriptStore } from '@/stores/useScriptStore'
 import { useRecentStore } from '@/stores/useRecentStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { ModelIcon } from '@/components/worktrees/ModelIcon'
+import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
+import { LanguageIcon } from '@/components/projects/LanguageIcon'
 
 type RecentItem =
   | { kind: 'worktree'; id: string; timestamp: number }
@@ -105,6 +107,7 @@ function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
 
   const worktreeStatus = useWorktreeStatusStore((s) => s.getWorktreeStatus(worktreeId))
   const isSelected = selectedWorktreeId === worktreeId
+  const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktreeId]?.runRunning ?? false)
 
   // Look up worktree and project
   const worktree = useWorktreeStore((s) => {
@@ -148,8 +151,22 @@ function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       onClick={handleClick}
       data-testid={`recent-worktree-${worktreeId}`}
     >
-      {/* Status icon */}
-      <StatusIcon status={worktreeStatus} fallback={<GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />} />
+      {/* Project icon */}
+      <LanguageIcon language={project.language} customIcon={project.custom_icon} />
+
+      {/* Status indicators (heartbeat + AI status) */}
+      {isRunProcessAlive && (
+        <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />
+      )}
+      {(worktreeStatus === 'working' || worktreeStatus === 'planning') && (
+        <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
+      )}
+      {(worktreeStatus === 'answering' || worktreeStatus === 'permission') && (
+        <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+      )}
+      {worktreeStatus === 'plan_ready' && (
+        <MapIcon className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+      )}
 
       {/* Name and status line */}
       <div className="flex-1 min-w-0">
@@ -249,25 +266,6 @@ function RecentConnectionItem({ connectionId }: { connectionId: string }): React
 // ── Shared helpers ─────────────────────────────────────────────
 
 type StatusType = string | null
-
-function StatusIcon({
-  status,
-  fallback
-}: {
-  status: StatusType
-  fallback: React.ReactNode
-}): React.JSX.Element {
-  if (status === 'working' || status === 'planning') {
-    return <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
-  }
-  if (status === 'answering' || status === 'permission') {
-    return <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-  }
-  if (status === 'plan_ready') {
-    return <MapIcon className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-  }
-  return <>{fallback}</>
-}
 
 function StatusText({ status }: { status: StatusType }): React.JSX.Element {
   const { text, className } =
