@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 
 import { createLogger } from './logger'
+import { notificationService } from './notification-service'
 import { loadClaudeSDK } from './claude-sdk-loader'
 import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
@@ -1781,6 +1782,45 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       data: { status: statusPayload },
       statusPayload
     })
+
+    if (status === 'idle') {
+      this.maybeNotifySessionComplete(hiveSessionId)
+    }
+  }
+
+  /**
+   * Show a native notification when a session completes while the app window is unfocused
+   */
+  private maybeNotifySessionComplete(hiveSessionId: string): void {
+    try {
+      if (!this.mainWindow || this.mainWindow.isDestroyed() || this.mainWindow.isFocused()) {
+        return
+      }
+
+      if (!this.dbService) return
+
+      const session = this.dbService.getSession(hiveSessionId)
+      if (!session) {
+        log.warn('Cannot notify: session not found', { hiveSessionId })
+        return
+      }
+
+      const project = this.dbService.getProject(session.project_id)
+      if (!project) {
+        log.warn('Cannot notify: project not found', { projectId: session.project_id })
+        return
+      }
+
+      notificationService.showSessionComplete({
+        projectName: project.name,
+        sessionName: session.name || 'Untitled',
+        projectId: session.project_id,
+        worktreeId: session.worktree_id || '',
+        sessionId: hiveSessionId
+      })
+    } catch (error) {
+      log.warn('Failed to show session completion notification', { hiveSessionId, error })
+    }
   }
 
   private emitSdkMessage(
