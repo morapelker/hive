@@ -21,6 +21,12 @@ import { scriptQueryResolvers } from './query/script.resolvers'
 import { scriptMutationResolvers } from './mutation/script.resolvers'
 import { terminalMutationResolvers } from './mutation/terminal.resolvers'
 import { loggingMutationResolvers } from './mutation/logging.resolvers'
+import { opencodeSubscriptionResolvers } from './subscription/opencode.resolvers'
+import { gitSubscriptionResolvers } from './subscription/git.resolvers'
+import { fileTreeSubscriptionResolvers } from './subscription/file-tree.resolvers'
+import { terminalSubscriptionResolvers } from './subscription/terminal.resolvers'
+import { scriptSubscriptionResolvers } from './subscription/script.resolvers'
+import { worktreeSubscriptionResolvers } from './subscription/worktree.resolvers'
 
 function deepMerge(...objects: Resolvers[]): Resolvers {
   const result: Record<string, unknown> = {}
@@ -65,6 +71,12 @@ export function mergeResolvers(): Resolvers {
     scriptQueryResolvers,
     scriptMutationResolvers,
     terminalMutationResolvers,
-    loggingMutationResolvers
+    loggingMutationResolvers,
+    opencodeSubscriptionResolvers,
+    gitSubscriptionResolvers,
+    fileTreeSubscriptionResolvers,
+    terminalSubscriptionResolvers,
+    scriptSubscriptionResolvers,
+    worktreeSubscriptionResolvers
   )
 }
