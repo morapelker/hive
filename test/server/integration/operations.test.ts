@@ -68,6 +68,17 @@ describe('Operation Resolvers — Integration Tests', () => {
     query: string,
     variables?: Record<string, unknown>
   ) => Promise<{ data?: any; errors?: any[] }>
+  const tempDirs: string[] = []
+
+  afterAll(() => {
+    for (const dir of tempDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true })
+      } catch {
+        /* ignore */
+      }
+    }
+  })
 
   beforeEach(() => {
     db = new MockDatabaseService()
@@ -318,15 +329,7 @@ describe('Operation Resolvers — Integration Tests', () => {
 
     beforeEach(() => {
       tempDir = mkdtempSync(join(tmpdir(), 'hive-test-'))
-    })
-
-    afterAll(() => {
-      // Clean up temp dirs (best-effort)
-      try {
-        // Temp dirs created per test are unique; afterAll handles overall cleanup
-      } catch {
-        /* ignore */
-      }
+      tempDirs.push(tempDir)
     })
 
     it('fileRead reads an existing file', async () => {
@@ -391,6 +394,7 @@ describe('Operation Resolvers — Integration Tests', () => {
 
     beforeEach(() => {
       tempDir = mkdtempSync(join(tmpdir(), 'hive-tree-'))
+      tempDirs.push(tempDir)
       // Create a small directory structure
       writeFileSync(join(tempDir, 'file1.ts'), 'const a = 1')
       writeFileSync(join(tempDir, 'file2.txt'), 'hello')

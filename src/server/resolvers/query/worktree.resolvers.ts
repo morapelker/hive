@@ -8,8 +8,12 @@ export const worktreeQueryResolvers: Resolvers = {
       return existsSync(worktreePath)
     },
     worktreeHasCommits: async (_parent, { projectPath }) => {
-      const gitService = createGitService(projectPath)
-      return gitService.hasCommits()
+      try {
+        const gitService = createGitService(projectPath)
+        return await gitService.hasCommits()
+      } catch {
+        return false
+      }
     },
     gitBranches: async (_parent, { projectPath }) => {
       try {
@@ -29,8 +33,12 @@ export const worktreeQueryResolvers: Resolvers = {
       }
     },
     gitBranchExists: async (_parent, { projectPath, branchName }) => {
-      const gitService = createGitService(projectPath)
-      return gitService.branchExists(branchName)
+      try {
+        const gitService = createGitService(projectPath)
+        return await gitService.branchExists(branchName)
+      } catch {
+        return false
+      }
     }
   }
 }
