@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useContextStore } from '@/stores/useContextStore'
@@ -222,12 +223,34 @@ export function useOpenCodeGlobalListener(): void {
             .getState()
             .setSessionStatus(sessionId, 'completed', { word, durationMs })
 
-          // Update last message time for the worktree
+          // Update last message time for the worktree (or connection member worktrees)
+          const now = Date.now()
           const sessions = useSessionStore.getState().sessionsByWorktree
+          let found = false
           for (const [worktreeId, wSessions] of sessions) {
             if (wSessions.some((s) => s.id === sessionId)) {
-              useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
+              useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, now)
+              found = true
               break
+            }
+          }
+          // If the session belongs to a connection, update all member worktrees
+          if (!found) {
+            const connSessions = useSessionStore.getState().sessionsByConnection
+            for (const [connectionId, cSessions] of connSessions) {
+              if (cSessions.some((s) => s.id === sessionId)) {
+                const connection = useConnectionStore
+                  .getState()
+                  .connections.find((c) => c.id === connectionId)
+                if (connection) {
+                  for (const member of connection.members) {
+                    useWorktreeStatusStore
+                      .getState()
+                      .setLastMessageTime(member.worktree_id, now)
+                  }
+                }
+                break
+              }
             }
           }
         })

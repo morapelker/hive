@@ -34,6 +34,7 @@ import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { useWorktreeStore } from '@/stores'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
@@ -2603,6 +2604,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
         if (worktreeId) {
           useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
+        } else if (connectionId) {
+          // Connection session — update all member worktrees
+          const connection = useConnectionStore
+            .getState()
+            .connections.find((c) => c.id === connectionId)
+          if (connection) {
+            const now = Date.now()
+            for (const member of connection.members) {
+              useWorktreeStatusStore.getState().setLastMessageTime(member.worktree_id, now)
+            }
+          }
         }
         setHistoryIndex(null)
         savedDraftRef.current = ''
