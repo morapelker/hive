@@ -17,6 +17,10 @@ import { connectionQueryResolvers } from './query/connection.resolvers'
 import { connectionMutationResolvers } from './mutation/connection.resolvers'
 import { opencodeQueryResolvers } from './query/opencode.resolvers'
 import { opencodeMutationResolvers } from './mutation/opencode.resolvers'
+import { scriptQueryResolvers } from './query/script.resolvers'
+import { scriptMutationResolvers } from './mutation/script.resolvers'
+import { terminalMutationResolvers } from './mutation/terminal.resolvers'
+import { loggingMutationResolvers } from './mutation/logging.resolvers'
 
 function deepMerge(...objects: Resolvers[]): Resolvers {
   const result: Record<string, unknown> = {}
@@ -57,6 +61,10 @@ export function mergeResolvers(): Resolvers {
     connectionQueryResolvers,
     connectionMutationResolvers,
     opencodeQueryResolvers,
-    opencodeMutationResolvers
+    opencodeMutationResolvers,
+    scriptQueryResolvers,
+    scriptMutationResolvers,
+    terminalMutationResolvers,
+    loggingMutationResolvers
   )
 }
