@@ -33,7 +33,8 @@
     "test:e2e": "playwright test",
     "build:native": "cd src/native && npx node-gyp rebuild",
     "release": "bash scripts/release.sh",
-    "release:canary": "bash scripts/release-canary.sh"
+    "release:canary": "bash scripts/release-canary.sh",
+    "codegen": "graphql-codegen --config src/shared/codegen.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.42",

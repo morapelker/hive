@@ -1,0 +1,66 @@
+type GitFileStatus {
+  path: String!
+  relativePath: String!
+  status: String!
+  staged: Boolean!
+}
+
+type GitBranchInfo {
+  name: String!
+  tracking: String
+  ahead: Int!
+  behind: Int!
+}
+
+type GitDiffStatFile {
+  path: String!
+  additions: Int!
+  deletions: Int!
+  binary: Boolean!
+}
+
+type GitStatusChangedEvent {
+  worktreePath: String!
+}
+
+type GitBranchChangedEvent {
+  worktreePath: String!
+}
+
+type GitBranchWithStatus {
+  name: String!
+  isRemote: Boolean!
+  isCheckedOut: Boolean!
+  worktreePath: String
+}
+
+type GitPR {
+  number: Int!
+  title: String!
+  author: String!
+  headRefName: String!
+}
+
+# --- Inputs ---
+
+input GitDiffInput {
+  worktreePath: String!
+  filePath: String!
+  staged: Boolean!
+  isUntracked: Boolean!
+  contextLines: Int
+}
+
+input GitPushInput {
+  worktreePath: String!
+  remote: String
+  branch: String
+  force: Boolean
+}
+
+input GitPullInput {
+  worktreePath: String!
+  remote: String
+  branch: String
+  rebase: Boolean
+}
