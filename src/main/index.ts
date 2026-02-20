@@ -41,6 +41,18 @@ const log = createLogger({ component: 'Main' })
 // Parse CLI flags
 const cliArgs = process.argv.slice(2)
 const isLogMode = cliArgs.includes('--log')
+const isHeadless = cliArgs.includes('--headless')
+const headlessPort = cliArgs.includes('--port')
+  ? parseInt(cliArgs[cliArgs.indexOf('--port') + 1])
+  : undefined
+const headlessBind = cliArgs.includes('--bind')
+  ? cliArgs[cliArgs.indexOf('--bind') + 1]
+  : undefined
+const isRotateKey = cliArgs.includes('--rotate-key')
+const isRegenCerts = cliArgs.includes('--regen-certs')
+const isShowStatus = cliArgs.includes('--show-status')
+const isKill = cliArgs.includes('--kill')
+const isUnlock = cliArgs.includes('--unlock')
 
 interface WindowBounds {
   x: number
@@ -312,7 +324,7 @@ function registerLoggingHandlers(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Fix PATH for macOS when launched from Finder/Dock/Spotlight.
   // Must run before any child process spawning (opencode, scripts).
   fixPath()
@@ -332,6 +344,31 @@ app.whenReady().then(() => {
 
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.hive')
+
+  // --- Headless mode ---
+  if (isHeadless) {
+    log.info('Starting in headless mode')
+
+    // Handle one-shot management commands
+    if (isRotateKey || isRegenCerts || isShowStatus || isKill || isUnlock) {
+      const { handleManagementCommand } = await import('../server/headless-bootstrap')
+      await handleManagementCommand({
+        rotateKey: isRotateKey,
+        regenCerts: isRegenCerts,
+        showStatus: isShowStatus,
+        kill: isKill,
+        unlock: isUnlock
+      })
+      app.quit()
+      return
+    }
+
+    // Normal headless startup
+    const { headlessBootstrap } = await import('../server/headless-bootstrap')
+    await headlessBootstrap({ port: headlessPort, bind: headlessBind })
+    return
+  }
+  // --- End headless mode ---
 
   // Initialize database
   log.info('Initializing database')
