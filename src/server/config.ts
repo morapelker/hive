@@ -65,7 +65,7 @@ function cloneDefaults(): HeadlessConfig {
   return {
     ...DEFAULTS,
     tls: { ...DEFAULTS.tls },
-    security: { ...DEFAULTS.security }
+    security: { ...DEFAULTS.security, allowedIps: [...DEFAULTS.security.allowedIps] }
   }
 }
 

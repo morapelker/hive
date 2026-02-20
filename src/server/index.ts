@@ -1,4 +1,4 @@
-import { createYoga, createSchema } from 'graphql-yoga'
+import { createYoga, createSchema, GraphQLError } from 'graphql-yoga'
 import { useServer } from 'graphql-ws/use/ws'
 import { createServer } from 'node:https'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -48,11 +48,21 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
   const yoga = createYoga({
     schema: createSchema({ typeDefs, resolvers }),
     graphqlEndpoint: '/graphql',
-    context: ({ request }: { request: Request }) => {
-      const clientIp =
-        request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-        'unknown'
-      const token = extractBearerToken(request.headers.get('authorization'))
+    context: (ctx: { request: Request }) => {
+      // Use Node.js socket remoteAddress — x-forwarded-for is client-controlled
+      const nodeReq = (ctx as Record<string, unknown>).req as
+        | { socket?: { remoteAddress?: string } }
+        | undefined
+      const clientIp = nodeReq?.socket?.remoteAddress ?? 'unknown'
+
+      // Reject IPs that have exceeded the brute force threshold
+      if (opts.bruteForce.isBlocked(clientIp)) {
+        throw new GraphQLError('Too many failed authentication attempts', {
+          extensions: { http: { status: 429 } }
+        })
+      }
+
+      const token = extractBearerToken(ctx.request.headers.get('authorization'))
       let authenticated = false
 
       if (token) {
@@ -98,10 +108,20 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
         authenticated: true
       }),
       onConnect: (ctx) => {
+        const clientIp =
+          (ctx.extra as { request: { socket: { remoteAddress?: string } } })
+            .request.socket.remoteAddress || 'unknown'
+
+        if (opts.bruteForce.isBlocked(clientIp)) return false
+
         const apiKey = ctx.connectionParams?.apiKey as string | undefined
         if (!apiKey) return false
         const hash = opts.getKeyHash()
-        if (!verifyApiKey(apiKey, hash)) return false
+        if (!verifyApiKey(apiKey, hash)) {
+          opts.bruteForce.recordFailure(clientIp)
+          return false
+        }
+        opts.bruteForce.recordSuccess(clientIp)
         return true
       }
     },
