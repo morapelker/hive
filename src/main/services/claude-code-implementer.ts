@@ -9,6 +9,7 @@ import type { DatabaseService } from '../db/database'
 import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
 import { generateSessionTitle } from './claude-session-title'
 import { autoRenameWorktreeBranch } from './git-service'
+import { getEventBus } from '../../server/event-bus'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -2321,6 +2322,15 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       this.mainWindow.webContents.send(channel, data)
     } else {
       log.warn('Cannot send to renderer: window not available')
+    }
+    try {
+      const bus = getEventBus()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (channel === 'opencode:stream') bus.emit('opencode:stream', data as any)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      else if (channel === 'worktree:branchRenamed') bus.emit('worktree:branchRenamed', data as any)
+    } catch {
+      // EventBus not available
     }
   }
 

@@ -3,6 +3,7 @@ import { join } from 'path'
 import { existsSync, statSync, readFileSync } from 'fs'
 import { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
+import { getEventBus } from '../../server/event-bus'
 
 const log = createLogger({ component: 'BranchWatcher' })
 
@@ -54,6 +55,7 @@ function resolveGitDir(worktreePath: string): string | null {
 function emitBranchChanged(worktreePath: string): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.webContents.send('git:branchChanged', { worktreePath })
+  try { getEventBus().emit('git:branchChanged', { worktreePath }) } catch { /* EventBus not available */ }
 }
 
 export function initBranchWatcher(window: BrowserWindow): void {
