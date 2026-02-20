@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Resolvers } from '../../__generated__/resolvers-types'
 import { openCodeService } from '../../../main/services/opencode-service'
 import { withSdkDispatch, withSdkDispatchByHiveSession } from '../helpers/sdk-dispatch'
@@ -166,6 +167,160 @@ export const opencodeMutationResolvers: Resolvers = {
           opencodeSessionId,
           () => openCodeService.sendCommand(worktreePath, opencodeSessionId, command, args, model),
           (impl) => impl.sendCommand(worktreePath, opencodeSessionId, command, args)
+        )
+        return { success: true }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodePermissionReply: async (_parent, { input }) => {
+      try {
+        const { requestId, reply, worktreePath, message } = input
+        await openCodeService.permissionReply(
+          requestId,
+          reply as 'once' | 'always' | 'reject',
+          worktreePath ?? undefined,
+          message ?? undefined
+        )
+        return { success: true }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodeQuestionReply: async (_parent, { input }, ctx) => {
+      try {
+        const { requestId, answers, worktreePath } = input
+        if (ctx.sdkManager) {
+          const claudeImpl = ctx.sdkManager.getImplementer('claude-code')
+          if ('hasPendingQuestion' in claudeImpl) {
+            const typedImpl = claudeImpl as any
+            if (typedImpl.hasPendingQuestion(requestId)) {
+              await typedImpl.questionReply(requestId, answers, worktreePath ?? undefined)
+              return { success: true }
+            }
+          }
+        }
+        await openCodeService.questionReply(requestId, answers, worktreePath ?? undefined)
+        return { success: true }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodeQuestionReject: async (_parent, { requestId, worktreePath }, ctx) => {
+      try {
+        if (ctx.sdkManager) {
+          const claudeImpl = ctx.sdkManager.getImplementer('claude-code')
+          if ('hasPendingQuestion' in claudeImpl) {
+            const typedImpl = claudeImpl as any
+            if (typedImpl.hasPendingQuestion(requestId)) {
+              await typedImpl.questionReject(requestId, worktreePath ?? undefined)
+              return { success: true }
+            }
+          }
+        }
+        await openCodeService.questionReject(requestId, worktreePath ?? undefined)
+        return { success: true }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodePlanApprove: async (_parent, { input }, ctx) => {
+      try {
+        const { worktreePath, hiveSessionId, requestId } = input
+        if (ctx.sdkManager) {
+          const claudeImpl = ctx.sdkManager.getImplementer('claude-code')
+          if ('hasPendingPlan' in claudeImpl) {
+            const typedImpl = claudeImpl as any
+            if (
+              (requestId && typedImpl.hasPendingPlan(requestId)) ||
+              typedImpl.hasPendingPlanForSession(hiveSessionId)
+            ) {
+              await typedImpl.planApprove(worktreePath, hiveSessionId, requestId ?? undefined)
+              return { success: true }
+            }
+          }
+        }
+        return { success: false, error: 'No pending plan found' }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodePlanReject: async (_parent, { input }, ctx) => {
+      try {
+        const { worktreePath, hiveSessionId, feedback, requestId } = input
+        if (ctx.sdkManager) {
+          const claudeImpl = ctx.sdkManager.getImplementer('claude-code')
+          if ('hasPendingPlan' in claudeImpl) {
+            const typedImpl = claudeImpl as any
+            if (
+              (requestId && typedImpl.hasPendingPlan(requestId)) ||
+              typedImpl.hasPendingPlanForSession(hiveSessionId)
+            ) {
+              await typedImpl.planReject(
+                worktreePath,
+                hiveSessionId,
+                feedback,
+                requestId ?? undefined
+              )
+              return { success: true }
+            }
+          }
+        }
+        return { success: false, error: 'No pending plan found' }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodeFork: async (_parent, { input }) => {
+      try {
+        const { worktreePath, opencodeSessionId, messageId } = input
+        const result = await openCodeService.forkSession(
+          worktreePath,
+          opencodeSessionId,
+          messageId ?? undefined
+        )
+        return { success: true, sessionId: result.sessionId }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodeRenameSession: async (_parent, { input }, ctx) => {
+      try {
+        const { opencodeSessionId, title, worktreePath } = input
+        await withSdkDispatch(
+          ctx,
+          opencodeSessionId,
+          () =>
+            openCodeService.renameSession(opencodeSessionId, title, worktreePath ?? undefined),
+          (impl) => impl.renameSession(worktreePath ?? '', opencodeSessionId, title)
         )
         return { success: true }
       } catch (error) {

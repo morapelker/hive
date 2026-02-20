@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Resolvers } from '../../__generated__/resolvers-types'
 import { openCodeService } from '../../../main/services/opencode-service'
 import { withSdkDispatch } from '../helpers/sdk-dispatch'
@@ -75,6 +76,58 @@ export const opencodeQueryResolvers: Resolvers = {
       } catch (error) {
         return {
           success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodeCommands: async (_parent, { worktreePath, sessionId }, ctx) => {
+      try {
+        if (ctx.sdkManager && ctx.db && sessionId) {
+          const sdkId = ctx.db.getAgentSdkForSession(sessionId)
+          if (sdkId === 'claude-code') {
+            const impl = ctx.sdkManager.getImplementer('claude-code')
+            const commands = await impl.listCommands(worktreePath)
+            return { success: true, commands: commands as any[] }
+          }
+        }
+        const commands = await openCodeService.listCommands(worktreePath)
+        return { success: true, commands: commands as any[] }
+      } catch (error) {
+        return {
+          success: false,
+          commands: [],
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodeCapabilities: async (_parent, { sessionId }, ctx) => {
+      try {
+        if (ctx.sdkManager && ctx.db && sessionId) {
+          const sdkId = ctx.db.getAgentSdkForSession(sessionId)
+          if (sdkId) {
+            return { success: true, capabilities: ctx.sdkManager.getCapabilities(sdkId) }
+          }
+        }
+        const defaultCaps = ctx.sdkManager?.getCapabilities('opencode') ?? null
+        return { success: true, capabilities: defaultCaps }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodePermissionList: async (_parent, { worktreePath }) => {
+      try {
+        const permissions = await openCodeService.permissionList(worktreePath)
+        return { success: true, permissions: permissions as any[] }
+      } catch (error) {
+        return {
+          success: false,
+          permissions: [],
           error: error instanceof Error ? error.message : 'Unknown error'
         }
       }
