@@ -65,6 +65,26 @@ interface SessionRow {
   draft_input?: string | null
 }
 
+interface ConnectionRow {
+  id: string
+  name: string
+  custom_name: string | null
+  path: string
+  color: string | null
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+interface ConnectionMemberRow {
+  id: string
+  connection_id: string
+  worktree_id: string
+  project_id: string
+  symlink_name: string
+  added_at: string
+}
+
 interface SpaceRow {
   id: string
   name: string
@@ -95,6 +115,8 @@ export class MockDatabaseService {
   spaces: SpaceRow[] = []
   settings: SettingRow[] = []
   spaceAssignments: SpaceAssignment[] = []
+  connections: ConnectionRow[] = []
+  connectionMembers: ConnectionMemberRow[] = []
 
   // -- Settings --
   getSetting(key: string): string | null {
@@ -451,6 +473,107 @@ export class MockDatabaseService {
 
   getAllProjectSpaceAssignments(): SpaceAssignment[] {
     return [...this.spaceAssignments]
+  }
+
+  // -- Connections --
+  createConnection(data: any): ConnectionRow {
+    const now = new Date().toISOString()
+    const connection: ConnectionRow = {
+      id: randomUUID(),
+      name: data.name,
+      custom_name: data.custom_name ?? null,
+      path: data.path,
+      color: data.color ?? null,
+      status: 'active',
+      created_at: now,
+      updated_at: now
+    }
+    this.connections.push(connection)
+    return connection
+  }
+
+  getConnection(id: string): (ConnectionRow & { members: any[] }) | null {
+    const connection = this.connections.find((c) => c.id === id)
+    if (!connection) return null
+
+    const members = this.connectionMembers
+      .filter((m) => m.connection_id === id)
+      .map((m) => {
+        const worktree = this.worktrees.find((w) => w.id === m.worktree_id)
+        const project = this.projects.find((p) => p.id === m.project_id)
+        return {
+          ...m,
+          worktree_name: worktree?.name ?? '',
+          worktree_branch: worktree?.branch_name ?? '',
+          worktree_path: worktree?.path ?? '',
+          project_name: project?.name ?? ''
+        }
+      })
+
+    return { ...connection, members }
+  }
+
+  getAllConnections(): (ConnectionRow & { members: any[] })[] {
+    return this.connections
+      .filter((c) => c.status === 'active')
+      .map((c) => {
+        const members = this.connectionMembers
+          .filter((m) => m.connection_id === c.id)
+          .map((m) => {
+            const worktree = this.worktrees.find((w) => w.id === m.worktree_id)
+            const project = this.projects.find((p) => p.id === m.project_id)
+            return {
+              ...m,
+              worktree_name: worktree?.name ?? '',
+              worktree_branch: worktree?.branch_name ?? '',
+              worktree_path: worktree?.path ?? '',
+              project_name: project?.name ?? ''
+            }
+          })
+        return { ...c, members }
+      })
+  }
+
+  updateConnection(id: string, data: any): ConnectionRow | null {
+    const connection = this.connections.find((c) => c.id === id)
+    if (!connection) return null
+    Object.assign(connection, data, { updated_at: new Date().toISOString() })
+    return connection
+  }
+
+  deleteConnection(id: string): boolean {
+    const len = this.connections.length
+    this.connections = this.connections.filter((c) => c.id !== id)
+    this.connectionMembers = this.connectionMembers.filter(
+      (m) => m.connection_id !== id
+    )
+    return this.connections.length < len
+  }
+
+  createConnectionMember(data: any): ConnectionMemberRow {
+    const now = new Date().toISOString()
+    const member: ConnectionMemberRow = {
+      id: randomUUID(),
+      connection_id: data.connection_id,
+      worktree_id: data.worktree_id,
+      project_id: data.project_id,
+      symlink_name: data.symlink_name,
+      added_at: now
+    }
+    this.connectionMembers.push(member)
+    return member
+  }
+
+  deleteConnectionMember(connectionId: string, worktreeId: string): boolean {
+    const len = this.connectionMembers.length
+    this.connectionMembers = this.connectionMembers.filter(
+      (m) => !(m.connection_id === connectionId && m.worktree_id === worktreeId)
+    )
+    return this.connectionMembers.length < len
+  }
+
+  getConnectionMembersByWorktree(worktreeId: string): ConnectionMemberRow[] {
+    return this.connectionMembers.filter((m) => m.worktree_id === worktreeId)
   }
 
   // -- Utility --
