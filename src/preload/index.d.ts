@@ -2,6 +2,7 @@
 interface Connection {
   id: string
   name: string
+  custom_name: string | null
   status: 'active' | 'archived'
   path: string
   color: string | null // JSON-serialised ConnectionColorQuad
@@ -177,6 +178,7 @@ declare global {
         get: (id: string) => Promise<Worktree | null>
         getByProject: (projectId: string) => Promise<Worktree[]>
         getActiveByProject: (projectId: string) => Promise<Worktree[]>
+        getRecentlyActive: (cutoffMs: number) => Promise<Worktree[]>
         update: (
           id: string,
           data: {

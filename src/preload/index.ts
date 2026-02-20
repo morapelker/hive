@@ -50,6 +50,8 @@ const db = {
     getByProject: (projectId: string) => ipcRenderer.invoke('db:worktree:getByProject', projectId),
     getActiveByProject: (projectId: string) =>
       ipcRenderer.invoke('db:worktree:getActiveByProject', projectId),
+    getRecentlyActive: (cutoffMs: number) =>
+      ipcRenderer.invoke('db:worktree:getRecentlyActive', cutoffMs),
     update: (
       id: string,
       data: { name?: string; status?: 'active' | 'archived'; last_accessed_at?: string }

@@ -104,6 +104,10 @@ export function registerDatabaseHandlers(): void {
     return getDatabase().getActiveWorktreesByProject(projectId)
   })
 
+  ipcMain.handle('db:worktree:getRecentlyActive', (_event, cutoffMs: number) => {
+    return getDatabase().getRecentlyActiveWorktrees(cutoffMs)
+  })
+
   ipcMain.handle('db:worktree:update', (_event, id: string, data: WorktreeUpdate) => {
     return getDatabase().updateWorktree(id, data)
   })
