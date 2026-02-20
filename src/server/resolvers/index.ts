@@ -12,6 +12,7 @@ import { projectMutationResolvers } from './mutation/project.resolvers'
 import { worktreeQueryResolvers } from './query/worktree.resolvers'
 import { gitQueryResolvers } from './query/git.resolvers'
 import { worktreeMutationResolvers } from './mutation/worktree.resolvers'
+import { gitMutationResolvers } from './mutation/git.resolvers'
 
 function deepMerge(...objects: Resolvers[]): Resolvers {
   const result: Record<string, unknown> = {}
@@ -47,6 +48,7 @@ export function mergeResolvers(): Resolvers {
     projectMutationResolvers,
     worktreeQueryResolvers,
     gitQueryResolvers,
-    worktreeMutationResolvers
+    worktreeMutationResolvers,
+    gitMutationResolvers
   )
 }
