@@ -36,7 +36,10 @@ function loadSchemaSDL(): string {
 // createTestServer
 // ---------------------------------------------------------------------------
 
-export function createTestServer(mockDb: MockDatabaseService) {
+export function createTestServer(
+  mockDb: MockDatabaseService,
+  contextOverrides?: Record<string, unknown>
+) {
   const typeDefs = loadSchemaSDL()
   const resolvers = mergeResolvers()
 
@@ -48,7 +51,8 @@ export function createTestServer(mockDb: MockDatabaseService) {
       clientIp: '127.0.0.1',
       // Stubs for other context fields that resolvers may reference in future
       sdkManager: {} as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-      eventBus: {} as any // eslint-disable-line @typescript-eslint/no-explicit-any
+      eventBus: {} as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+      ...contextOverrides
     }
   })
 
