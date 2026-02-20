@@ -15,6 +15,7 @@ import { worktreeMutationResolvers } from './mutation/worktree.resolvers'
 import { gitMutationResolvers } from './mutation/git.resolvers'
 import { connectionQueryResolvers } from './query/connection.resolvers'
 import { connectionMutationResolvers } from './mutation/connection.resolvers'
+import { opencodeQueryResolvers } from './query/opencode.resolvers'
 import { opencodeMutationResolvers } from './mutation/opencode.resolvers'
 
 function deepMerge(...objects: Resolvers[]): Resolvers {
@@ -55,6 +56,7 @@ export function mergeResolvers(): Resolvers {
     gitMutationResolvers,
     connectionQueryResolvers,
     connectionMutationResolvers,
+    opencodeQueryResolvers,
     opencodeMutationResolvers
   )
 }
