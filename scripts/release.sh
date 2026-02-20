@@ -41,8 +41,8 @@ ok "Clean working tree"
 CURRENT_BRANCH=$(git branch --show-current)
 if [[ "$CURRENT_BRANCH" != "main" ]]; then
   warn "You are on branch '$CURRENT_BRANCH', not 'main'."
-  read -rp "Continue anyway? [y/N] " confirm
-  [[ "$confirm" =~ ^[Yy]$ ]] || exit 1
+  read -rp "Continue anyway? [Y/n] " confirm
+  [[ "$confirm" =~ ^[Nn]$ ]] && exit 1
 fi
 
 # Check .env.signing exists
@@ -150,8 +150,8 @@ echo "  4. Publish DMGs/ZIPs to GitHub Release v${NEW_VERSION}"
 echo "  5. Update Homebrew cask with new SHA256 checksums"
 echo "  6. Push Homebrew repo"
 echo ""
-read -rp "Proceed? [y/N] " confirm
-[[ "$confirm" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
+read -rp "Proceed? [Y/n] " confirm
+[[ "$confirm" =~ ^[Nn]$ ]] && { info "Aborted."; exit 0; }
 
 # ── Phase 2: Version bump + git ──────────────────────────────────
 info "Bumping version to ${NEW_VERSION}..."

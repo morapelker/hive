@@ -171,8 +171,8 @@ echo "  3. Build for arm64 + x64 (sign + notarize)"
 echo "  4. Publish DMGs/ZIPs to GitHub Release v${NEW_VERSION} (prerelease)"
 echo "  5. Update Homebrew canary cask with new SHA256 checksums"
 echo ""
-read -rp "Proceed? [y/N] " confirm
-[[ "$confirm" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
+read -rp "Proceed? [Y/n] " confirm
+[[ "$confirm" =~ ^[Nn]$ ]] && { info "Aborted."; exit 0; }
 
 # ── Phase 2: Version bump + git ──────────────────────────────────
 info "Bumping version to ${NEW_VERSION}..."
