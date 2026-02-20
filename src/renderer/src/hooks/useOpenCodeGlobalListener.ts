@@ -5,6 +5,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useContextStore } from '@/stores/useContextStore'
+import { useRecentStore } from '@/stores/useRecentStore'
 import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '@/lib/token-utils'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes } from '@/lib/message-send-times'
@@ -203,6 +204,23 @@ export function useOpenCodeGlobalListener(): void {
                 .getState()
                 .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             }
+
+            // Always track recent activity so data is fresh when toggled on (Fix #6)
+            const wSessions = useSessionStore.getState().sessionsByWorktree
+            for (const [worktreeId, sessions] of wSessions) {
+              if (sessions.some((s) => s.id === sessionId)) {
+                useRecentStore.getState().addWorktreeToRecent(worktreeId)
+                break
+              }
+            }
+            const cSessions = useSessionStore.getState().sessionsByConnection
+            for (const [connectionId, sessions] of cSessions) {
+              if (sessions.some((s) => s.id === sessionId)) {
+                useRecentStore.getState().addConnectionToRecent(connectionId)
+                break
+              }
+            }
+
             return
           }
 
@@ -227,6 +245,17 @@ export function useOpenCodeGlobalListener(): void {
           for (const [worktreeId, wSessions] of sessions) {
             if (wSessions.some((s) => s.id === sessionId)) {
               useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
+              // Always track recent activity so data is fresh when toggled on (Fix #6)
+              useRecentStore.getState().addWorktreeToRecent(worktreeId)
+              break
+            }
+          }
+
+          // Also check connection sessions for recent tracking
+          const connectionSessions = useSessionStore.getState().sessionsByConnection
+          for (const [connectionId, cSessions] of connectionSessions) {
+            if (cSessions.some((s) => s.id === sessionId)) {
+              useRecentStore.getState().addConnectionToRecent(connectionId)
               break
             }
           }

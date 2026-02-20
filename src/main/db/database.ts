@@ -458,6 +458,16 @@ export class DatabaseService {
     return rows.map((row) => this.mapWorktreeRow(row))
   }
 
+  getRecentlyActiveWorktrees(cutoffMs: number): Worktree[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        "SELECT * FROM worktrees WHERE status = 'active' AND last_message_at IS NOT NULL AND last_message_at > ? ORDER BY last_message_at DESC"
+      )
+      .all(cutoffMs) as Record<string, unknown>[]
+    return rows.map((row) => this.mapWorktreeRow(row))
+  }
+
   updateWorktree(id: string, data: WorktreeUpdate): Worktree | null {
     const db = this.getDb()
     const existing = this.getWorktree(id)

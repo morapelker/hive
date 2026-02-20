@@ -4,9 +4,15 @@ import { useSpaceStore, useProjectStore, useConnectionStore } from '@/stores'
 import { ResizeHandle } from './ResizeHandle'
 import { FolderGit2, Link, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { ProjectList, AddProjectButton, SortProjectsButton } from '@/components/projects'
+import {
+  ProjectList,
+  AddProjectButton,
+  SortProjectsButton,
+  RecentToggleButton
+} from '@/components/projects'
 import { ConnectionList } from '@/components/connections'
 import { SpacesTabBar } from '@/components/spaces'
+import { RecentList } from './RecentList'
 
 export function LeftSidebar(): React.JSX.Element {
   const { leftSidebarWidth, leftSidebarCollapsed, setLeftSidebarWidth } = useLayoutStore()
@@ -126,12 +132,14 @@ export function LeftSidebar(): React.JSX.Element {
               <span>Projects</span>
             </div>
             <div className="flex items-center gap-1">
+              <RecentToggleButton />
               <SortProjectsButton />
               <AddProjectButton />
             </div>
           </div>
         )}
         <div className="flex-1 overflow-auto p-2">
+          <RecentList />
           <ConnectionList />
           <ProjectList onAddProject={handleAddProject} />
         </div>
