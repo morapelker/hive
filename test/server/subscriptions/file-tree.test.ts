@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { EventBus } from '../../../src/server/event-bus'
 import type { FileTreeChangeEvent } from '../../../src/shared/types/file-tree'
