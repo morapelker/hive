@@ -3,6 +3,7 @@ import { Toaster as Sonner, type ToasterProps } from 'sonner'
 function Toaster({ ...props }: ToasterProps) {
   return (
     <Sonner
+      position="bottom-left"
       theme="dark"
       className="toaster group"
       toastOptions={{
