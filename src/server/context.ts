@@ -1,8 +1,11 @@
-// GraphQL context type — placeholder for Phase 3
-// Will be expanded with auth, database, services, etc.
+import type { DatabaseService } from '../main/db/database'
+import type { AgentSdkManager } from '../main/services/agent-sdk-manager'
+import type { EventBus } from './event-bus'
+
 export interface GraphQLContext {
-  // Phase 3 will add:
-  // db: DatabaseService
-  // auth: AuthContext
-  // eventBus: EventBus
+  db: DatabaseService
+  sdkManager: AgentSdkManager
+  eventBus: EventBus
+  clientIp: string
+  authenticated: boolean
 }
