@@ -95,5 +95,85 @@ export const opencodeMutationResolvers: Resolvers = {
         }
       }
     },
+
+    opencodeSetModel: async (_parent, { input }, ctx) => {
+      try {
+        const { providerID, modelID, variant, agentSdk } = input
+        if (agentSdk === 'claude_code' && ctx.sdkManager) {
+          const impl = ctx.sdkManager.getImplementer('claude-code')
+          impl.setSelectedModel({ providerID, modelID, variant: variant ?? undefined })
+          return { success: true }
+        }
+        openCodeService.setSelectedModel({ providerID, modelID, variant: variant ?? undefined })
+        return { success: true }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodeUndo: async (_parent, { worktreePath, sessionId }, ctx) => {
+      try {
+        const result = await withSdkDispatch(
+          ctx,
+          sessionId,
+          () => openCodeService.undo(worktreePath, sessionId),
+          (impl) => impl.undo(worktreePath, sessionId, '')
+        )
+        const r = result as Record<string, unknown>
+        return {
+          success: true,
+          revertMessageID: (r.revertMessageID as string) ?? null,
+          restoredPrompt: (r.restoredPrompt as string) ?? null,
+          revertDiff: (r.revertDiff as string) ?? null
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodeRedo: async (_parent, { worktreePath, sessionId }, ctx) => {
+      try {
+        const result = await withSdkDispatch(
+          ctx,
+          sessionId,
+          () => openCodeService.redo(worktreePath, sessionId),
+          (impl) => impl.redo(worktreePath, sessionId, '')
+        )
+        const r = result as Record<string, unknown>
+        return {
+          success: true,
+          revertMessageID: (r.revertMessageID as string) ?? null
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
+    opencodeCommand: async (_parent, { input }, ctx) => {
+      try {
+        const { worktreePath, opencodeSessionId, command, args, model } = input
+        await withSdkDispatch(
+          ctx,
+          opencodeSessionId,
+          () => openCodeService.sendCommand(worktreePath, opencodeSessionId, command, args, model),
+          (impl) => impl.sendCommand(worktreePath, opencodeSessionId, command, args)
+        )
+        return { success: true }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
   }
 }
