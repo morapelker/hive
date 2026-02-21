@@ -39,6 +39,10 @@ function getColorEnv(): NodeJS.ProcessEnv {
 export class ScriptRunner {
   private mainWindow: BrowserWindow | null = null
   private runningProcesses: Map<string, ChildProcess> = new Map()
+  private outputBuffers: Map<string, string> = new Map()
+  private outputFlushTimers: Map<string, NodeJS.Timeout> = new Map()
+
+  private static readonly OUTPUT_FLUSH_MS = 16
 
   private isCurrentProcess(eventKey: string, proc: ChildProcess): boolean {
     return this.runningProcesses.get(eventKey) === proc
@@ -47,6 +51,7 @@ export class ScriptRunner {
   private clearCurrentProcess(eventKey: string, proc: ChildProcess): void {
     if (this.isCurrentProcess(eventKey, proc)) {
       this.runningProcesses.delete(eventKey)
+      this.clearBufferedOutput(eventKey)
     }
   }
 
@@ -137,6 +142,40 @@ export class ScriptRunner {
     this.mainWindow.webContents.send(eventKey, event)
   }
 
+  private scheduleOutputFlush(eventKey: string): void {
+    if (this.outputFlushTimers.has(eventKey)) return
+
+    const timer = setTimeout(() => {
+      this.outputFlushTimers.delete(eventKey)
+      this.flushOutputBuffer(eventKey)
+    }, ScriptRunner.OUTPUT_FLUSH_MS)
+
+    this.outputFlushTimers.set(eventKey, timer)
+  }
+
+  private queueOutput(eventKey: string, data: string): void {
+    const existing = this.outputBuffers.get(eventKey)
+    this.outputBuffers.set(eventKey, existing ? existing + data : data)
+    this.scheduleOutputFlush(eventKey)
+  }
+
+  private flushOutputBuffer(eventKey: string): void {
+    const buffered = this.outputBuffers.get(eventKey)
+    if (!buffered) return
+
+    this.outputBuffers.delete(eventKey)
+    this.sendEvent(eventKey, { type: 'output', data: buffered })
+  }
+
+  private clearBufferedOutput(eventKey: string): void {
+    const timer = this.outputFlushTimers.get(eventKey)
+    if (timer) {
+      clearTimeout(timer)
+      this.outputFlushTimers.delete(eventKey)
+    }
+    this.outputBuffers.delete(eventKey)
+  }
+
   private parseCommands(commands: string[]): string[] {
     return commands
       .flatMap((cmd) => cmd.split('\n'))
@@ -159,12 +198,14 @@ export class ScriptRunner {
       const result = await this.execCommand(command, cwd, eventKey, extraEnv)
 
       if (result.exitCode !== 0) {
+        this.flushOutputBuffer(eventKey)
         this.sendEvent(eventKey, { type: 'error', command, exitCode: result.exitCode })
         log.warn('runSequential command failed', { command, exitCode: result.exitCode })
         return { success: false, error: `Command "${command}" exited with code ${result.exitCode}` }
       }
     }
 
+    this.flushOutputBuffer(eventKey)
     this.sendEvent(eventKey, { type: 'done' })
     log.info('runSequential completed successfully', { eventKey })
     return { success: true }
@@ -187,20 +228,22 @@ export class ScriptRunner {
       this.runningProcesses.set(eventKey, proc)
 
       proc.stdout?.on('data', (chunk: Buffer) => {
-        this.sendEvent(eventKey, { type: 'output', data: chunk.toString() })
+        this.queueOutput(eventKey, chunk.toString())
       })
 
       proc.stderr?.on('data', (chunk: Buffer) => {
-        this.sendEvent(eventKey, { type: 'output', data: chunk.toString() })
+        this.queueOutput(eventKey, chunk.toString())
       })
 
       proc.on('error', (err) => {
-        log.error('Process spawn error', { command, error: err.message })
+        log.error('Process spawn error', err, { command })
+        this.flushOutputBuffer(eventKey)
         this.clearCurrentProcess(eventKey, proc)
         resolve({ exitCode: 1 })
       })
 
       proc.on('close', (code) => {
+        this.flushOutputBuffer(eventKey)
         this.clearCurrentProcess(eventKey, proc)
         resolve({ exitCode: code ?? 1 })
       })
@@ -232,16 +275,17 @@ export class ScriptRunner {
     this.runningProcesses.set(eventKey, proc)
 
     proc.stdout?.on('data', (chunk: Buffer) => {
-      this.sendEvent(eventKey, { type: 'output', data: chunk.toString() })
+      this.queueOutput(eventKey, chunk.toString())
     })
 
     proc.stderr?.on('data', (chunk: Buffer) => {
-      this.sendEvent(eventKey, { type: 'output', data: chunk.toString() })
+      this.queueOutput(eventKey, chunk.toString())
     })
 
     proc.on('error', (err) => {
       if (!this.isCurrentProcess(eventKey, proc)) return
-      log.error('Persistent process error', { eventKey, error: err.message })
+      log.error('Persistent process error', err, { eventKey })
+      this.flushOutputBuffer(eventKey)
       this.sendEvent(eventKey, { type: 'error', exitCode: 1 })
       this.clearCurrentProcess(eventKey, proc)
     })
@@ -249,6 +293,7 @@ export class ScriptRunner {
     proc.on('close', (code) => {
       if (!this.isCurrentProcess(eventKey, proc)) return
       log.info('Persistent process exited', { eventKey, code })
+      this.flushOutputBuffer(eventKey)
       if (code === 0) {
         this.sendEvent(eventKey, { type: 'done' })
       } else {
@@ -364,6 +409,7 @@ export class ScriptRunner {
     }
 
     if (proc.exitCode !== null || proc.signalCode !== null) {
+      this.flushOutputBuffer(eventKey)
       this.clearCurrentProcess(eventKey, proc)
       return true
     }
@@ -373,6 +419,7 @@ export class ScriptRunner {
     this.signalProcessTree(proc, 'SIGTERM', eventKey)
     const exitedGracefully = await this.waitForProcessExit(proc, 800)
     if (exitedGracefully) {
+      this.flushOutputBuffer(eventKey)
       this.clearCurrentProcess(eventKey, proc)
       return true
     }
@@ -381,7 +428,9 @@ export class ScriptRunner {
     this.signalProcessTree(proc, 'SIGKILL', eventKey)
     const exitedAfterForceKill = await this.waitForProcessExit(proc, 2500)
     if (!exitedAfterForceKill && this.isCurrentProcess(eventKey, proc)) {
+      this.flushOutputBuffer(eventKey)
       this.runningProcesses.delete(eventKey)
+      this.clearBufferedOutput(eventKey)
     }
 
     return true
@@ -392,6 +441,7 @@ export class ScriptRunner {
     for (const [key, proc] of this.runningProcesses) {
       log.info('killAll: killing process', { key, pid: proc.pid })
       this.signalProcessTree(proc, 'SIGTERM', key)
+      this.clearBufferedOutput(key)
     }
     this.runningProcesses.clear()
   }

@@ -47,7 +47,7 @@ export function BottomPanel(): React.JSX.Element {
 
   const detectedUrl = useMemo(() => {
     if (!selectedWorktreeId || !scriptState?.runRunning) return null
-    const runOutput = getOrCreateBuffer(selectedWorktreeId).toArray()
+    const runOutput = getOrCreateBuffer(selectedWorktreeId).toRecentArray(80)
     if (!runOutput.length) return null
     return extractDevServerUrl(runOutput)
     // eslint-disable-next-line react-hooks/exhaustive-deps

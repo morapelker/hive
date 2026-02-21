@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import Ansi from 'ansi-to-react'
 import { Play, Square, RotateCcw, Loader2, Trash2, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -12,6 +13,8 @@ interface RunTabProps {
 }
 
 const emptyOutput: string[] = []
+const VIRTUALIZE_THRESHOLD = 500
+const ROW_ESTIMATE_PX = 20
 
 export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
   const outputRef = useRef<HTMLDivElement>(null)
@@ -27,6 +30,16 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
     return getOrCreateBuffer(worktreeId).toArray()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [worktreeId, runOutputVersion])
+
+  const shouldVirtualize = runOutput.length >= VIRTUALIZE_THRESHOLD
+
+  const virtualizer = useVirtualizer({
+    count: runOutput.length,
+    getScrollElement: () => outputRef.current,
+    estimateSize: () => ROW_ESTIMATE_PX,
+    overscan: 30,
+    enabled: shouldVirtualize
+  })
 
   const runRunning = useScriptStore((s) =>
     worktreeId ? (s.scriptStates[worktreeId]?.runRunning ?? false) : false
@@ -142,40 +155,86 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
             )}
           </div>
         )}
-        {runOutput.map((line, i) => {
-          if (line === TRUNCATION_MARKER || line.startsWith('\x00TRUNC:')) {
-            const msg = line.startsWith('\x00TRUNC:') ? line.slice(7) : '[older output truncated]'
+        {shouldVirtualize ? (
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative'
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const line = runOutput[virtualRow.index]
+              if (line === undefined) return null
+
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`
+                  }}
+                >
+                  {line === TRUNCATION_MARKER || line.startsWith('\x00TRUNC:') ? (
+                    <div className="text-muted-foreground text-center text-[10px] py-1 border-b border-border/50">
+                      {line.startsWith('\x00TRUNC:') ? line.slice(7) : '[older output truncated]'}
+                    </div>
+                  ) : line.startsWith('\x00CMD:') ? (
+                    <div className="text-muted-foreground font-semibold mt-1">
+                      $ {line.slice(5)}
+                    </div>
+                  ) : line.startsWith('\x00ERR:') ? (
+                    <div className="text-destructive">{line.slice(5)}</div>
+                  ) : (
+                    <div className="whitespace-pre-wrap break-all [&_code]:all-unset">
+                      <Ansi>{line}</Ansi>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          runOutput.map((line, i) => {
+            if (line === TRUNCATION_MARKER || line.startsWith('\x00TRUNC:')) {
+              const msg = line.startsWith('\x00TRUNC:') ? line.slice(7) : '[older output truncated]'
+              return (
+                <div
+                  key={i}
+                  className="text-muted-foreground text-center text-[10px] py-1 border-b border-border/50"
+                >
+                  {msg}
+                </div>
+              )
+            }
+            if (line.startsWith('\x00CMD:')) {
+              const cmd = line.slice(5)
+              return (
+                <div key={i} className="text-muted-foreground font-semibold mt-1">
+                  $ {cmd}
+                </div>
+              )
+            }
+            if (line.startsWith('\x00ERR:')) {
+              const msg = line.slice(5)
+              return (
+                <div key={i} className="text-destructive">
+                  {msg}
+                </div>
+              )
+            }
             return (
-              <div
-                key={i}
-                className="text-muted-foreground text-center text-[10px] py-1 border-b border-border/50"
-              >
-                {msg}
+              <div key={i} className="whitespace-pre-wrap break-all [&_code]:all-unset">
+                <Ansi>{line}</Ansi>
               </div>
             )
-          }
-          if (line.startsWith('\x00CMD:')) {
-            const cmd = line.slice(5)
-            return (
-              <div key={i} className="text-muted-foreground font-semibold mt-1">
-                $ {cmd}
-              </div>
-            )
-          }
-          if (line.startsWith('\x00ERR:')) {
-            const msg = line.slice(5)
-            return (
-              <div key={i} className="text-destructive">
-                {msg}
-              </div>
-            )
-          }
-          return (
-            <div key={i} className="whitespace-pre-wrap break-all [&_code]:all-unset">
-              <Ansi>{line}</Ansi>
-            </div>
-          )
-        })}
+          })
+        )}
       </div>
 
       {/* Status bar */}

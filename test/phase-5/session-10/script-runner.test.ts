@@ -41,6 +41,7 @@ class MockChildProcess extends EventEmitter {
 describe('ScriptRunner process lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.useRealTimers()
   })
 
   test('runPersistent uses latest PATH at spawn time', async () => {
@@ -97,5 +98,39 @@ describe('ScriptRunner process lifecycle', () => {
     await killPromise
 
     processKillSpy.mockRestore()
+  })
+
+  test('runPersistent batches output chunks into fewer IPC events', async () => {
+    vi.useFakeTimers()
+
+    const runner = new ScriptRunner()
+    const proc = new MockChildProcess(4001)
+    const sendSpy = vi.fn()
+
+    spawnMock.mockReturnValue(proc)
+
+    const mockWindow = {
+      isDestroyed: () => false,
+      webContents: {
+        send: sendSpy
+      }
+    } as unknown as Parameters<ScriptRunner['setMainWindow']>[0]
+
+    runner.setMainWindow(mockWindow)
+
+    await runner.runPersistent(['echo run'], '/tmp', 'script:run:batched')
+
+    proc.stdout.emit('data', Buffer.from('A'))
+    proc.stdout.emit('data', Buffer.from('B'))
+    proc.stderr.emit('data', Buffer.from('C'))
+
+    expect(sendSpy).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(20)
+
+    expect(sendSpy).toHaveBeenCalledWith('script:run:batched', {
+      type: 'output',
+      data: 'ABC'
+    })
   })
 })

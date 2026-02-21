@@ -14,6 +14,16 @@ describe('OutputRingBuffer', () => {
     expect(buf.toArray()).toEqual(['A', 'B', 'C'])
   })
 
+  test('toRecentArray returns only most recent entries', () => {
+    const buf = new OutputRingBuffer(8)
+    buf.append('A')
+    buf.append('B')
+    buf.append('C')
+    buf.append('D')
+    expect(buf.toRecentArray(2)).toEqual(['C', 'D'])
+    expect(buf.toRecentArray(10)).toEqual(['A', 'B', 'C', 'D'])
+  })
+
   test('evicts oldest when char limit exceeded', () => {
     // Use a high capacity so char limit is the binding constraint
     const buf = new OutputRingBuffer(100)

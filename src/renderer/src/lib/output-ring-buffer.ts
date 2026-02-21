@@ -59,6 +59,25 @@ export class OutputRingBuffer {
     return result
   }
 
+  /**
+   * Return only the most recent entries. Used by lightweight consumers
+   * that don't need the full history (for example, URL detection).
+   */
+  toRecentArray(maxEntries: number): string[] {
+    if (maxEntries <= 0 || this._count === 0) return []
+
+    const safeMax = Math.min(maxEntries, this._count)
+    const start = this._count - safeMax
+    const result: string[] = []
+
+    for (let i = start; i < this._count; i++) {
+      const chunk = this.chunks[(this.tail + i) % this.capacity]
+      if (chunk !== null) result.push(chunk)
+    }
+
+    return result
+  }
+
   clear(): void {
     this.chunks.fill(null)
     this.head = 0
