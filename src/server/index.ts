@@ -1,6 +1,8 @@
-import { createYoga, createSchema, GraphQLError } from 'graphql-yoga'
+import { createYoga, createSchema } from 'graphql-yoga'
+import { GraphQLError } from 'graphql'
 import { useServer } from 'graphql-ws/use/ws'
-import { createServer } from 'node:https'
+import { createServer as createHttpsServer } from 'node:https'
+import { createServer as createHttpServer } from 'node:http'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { WebSocketServer } from 'ws'
@@ -30,8 +32,9 @@ function loadSchemaSDL(): string {
 export interface ServerOptions {
   port: number
   bindAddress: string
-  tlsCert: string
-  tlsKey: string
+  insecure?: boolean
+  tlsCert?: string
+  tlsKey?: string
   context: Omit<GraphQLContext, 'clientIp' | 'authenticated'>
   getKeyHash: () => string
   bruteForce: BruteForceTracker
@@ -63,36 +66,43 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
       }
 
       const token = extractBearerToken(ctx.request.headers.get('authorization'))
-      let authenticated = false
 
-      if (token) {
-        const hash = opts.getKeyHash()
-        if (verifyApiKey(token, hash)) {
-          authenticated = true
-          opts.bruteForce.recordSuccess(clientIp)
-        } else {
-          opts.bruteForce.recordFailure(clientIp)
-        }
+      if (!token) {
+        throw new GraphQLError('Authentication required', {
+          extensions: { http: { status: 401 } }
+        })
       }
+
+      const hash = opts.getKeyHash()
+      if (!verifyApiKey(token, hash)) {
+        opts.bruteForce.recordFailure(clientIp)
+        throw new GraphQLError('Invalid API key', {
+          extensions: { http: { status: 401 } }
+        })
+      }
+
+      opts.bruteForce.recordSuccess(clientIp)
 
       return {
         ...opts.context,
         clientIp,
-        authenticated
+        authenticated: true
       }
     }
   })
 
-  const httpsServer = createServer(
-    {
-      cert: readFileSync(opts.tlsCert),
-      key: readFileSync(opts.tlsKey)
-    },
-    yoga
-  )
+  const server = opts.insecure
+    ? createHttpServer(yoga)
+    : createHttpsServer(
+        {
+          cert: readFileSync(opts.tlsCert!),
+          key: readFileSync(opts.tlsKey!)
+        },
+        yoga
+      )
 
   const wss = new WebSocketServer({
-    server: httpsServer,
+    server,
     path: yoga.graphqlEndpoint
   })
 
@@ -128,13 +138,13 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
     wss
   )
 
-  httpsServer.listen(opts.port, opts.bindAddress)
+  server.listen(opts.port, opts.bindAddress)
 
   return {
     close: () =>
       new Promise<void>((resolve, reject) => {
         wss.close(() => {
-          httpsServer.close((err) => {
+          server.close((err) => {
             if (err) reject(err)
             else resolve()
           })

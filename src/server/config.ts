@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 export interface HeadlessConfig {
   port: number
   bindAddress: string
+  insecure: boolean
   tls: {
     certPath: string
     keyPath: string
@@ -21,6 +22,7 @@ export interface HeadlessConfig {
 const DEFAULTS: HeadlessConfig = {
   port: 8443,
   bindAddress: '0.0.0.0',
+  insecure: false,
   tls: {
     certPath: join(homedir(), '.hive', 'tls', 'server.crt'),
     keyPath: join(homedir(), '.hive', 'tls', 'server.key')

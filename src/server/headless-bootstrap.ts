@@ -74,11 +74,14 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
   // EventBus singleton
   const eventBus = getEventBus()
 
-  // Ensure TLS certs
-  const tlsDir = join(homedir(), '.hive', 'tls')
-  const fingerprint = ensureTlsCerts(tlsDir, (fp) => {
-    db.setSetting('headless_cert_fingerprint', fp)
-  })
+  // Ensure TLS certs (skip in insecure/HTTP mode)
+  let fingerprint: string | null = null
+  if (!config.insecure) {
+    const tlsDir = join(homedir(), '.hive', 'tls')
+    fingerprint = ensureTlsCerts(tlsDir, (fp) => {
+      db.setSetting('headless_cert_fingerprint', fp)
+    })
+  }
 
   // Ensure API key
   let existingHash = db.getSetting('headless_api_key_hash')
@@ -105,15 +108,20 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
   serverHandle = startGraphQLServer({
     port,
     bindAddress: bind,
-    tlsCert: config.tls.certPath,
-    tlsKey: config.tls.keyPath,
+    insecure: config.insecure,
+    ...(config.insecure
+      ? {}
+      : { tlsCert: config.tls.certPath, tlsKey: config.tls.keyPath }),
     context: { db, sdkManager, eventBus },
     getKeyHash: () => db.getSetting('headless_api_key_hash') || '',
     bruteForce
   })
 
-  console.log(`Hive headless server running on https://${bind}:${port}/graphql`)
-  console.log(`TLS fingerprint: ${fingerprint}`)
+  const protocol = config.insecure ? 'http' : 'https'
+  console.log(`Hive headless server running on ${protocol}://${bind}:${port}/graphql`)
+  if (fingerprint) {
+    console.log(`TLS fingerprint: ${fingerprint}`)
+  }
 
   // Handle shutdown
   process.on('SIGTERM', async () => {
