@@ -142,6 +142,10 @@ export class MockDatabaseService {
 
   // -- Projects --
   createProject(data: any): ProjectRow {
+    // Enforce UNIQUE path constraint (mirrors real SQLite schema)
+    if (this.projects.some((p) => p.path === data.path)) {
+      throw new Error(`UNIQUE constraint failed: projects.path`)
+    }
     const now = new Date().toISOString()
     const project: ProjectRow = {
       id: randomUUID(),

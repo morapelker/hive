@@ -144,6 +144,20 @@ describe('DB Resolvers — Integration Tests', () => {
       )
       expect(data.reorderProjects).toBe(true)
     })
+
+    it('rejects duplicate project path', async () => {
+      await execute(`
+        mutation { createProject(input: { name: "First", path: "/tmp/dup-path" }) { id } }
+      `)
+
+      const { data, errors } = await execute(`
+        mutation { createProject(input: { name: "Second", path: "/tmp/dup-path" }) { id } }
+      `)
+
+      // The UNIQUE constraint on path causes the second insert to fail
+      expect(errors).toBeDefined()
+      expect(data?.createProject ?? null).toBeNull()
+    })
   })
 
   // =========================================================================
@@ -235,6 +249,15 @@ describe('DB Resolvers — Integration Tests', () => {
         { id: wt.id }
       )
       expect(data.archiveWorktree.status).toBe('archived')
+    })
+
+    it('touches a worktree', async () => {
+      const wt = db.worktrees[0]
+      const { data } = await execute(
+        `mutation($id: ID!) { touchWorktree(id: $id) }`,
+        { id: wt.id }
+      )
+      expect(data.touchWorktree).toBe(true)
     })
 
     it('appends worktree session title', async () => {
