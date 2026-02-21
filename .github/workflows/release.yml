@@ -2,8 +2,9 @@ name: Release
 
 on:
   push:
-    tags: 
+    tags:
       - 'gh-v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
