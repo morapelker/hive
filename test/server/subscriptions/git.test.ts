@@ -105,5 +105,25 @@ describe('git subscriptions', () => {
       const result = await (iter as AsyncGenerator).next()
       expect(result.value.gitBranchChanged.worktreePath).toBe('/tmp/project/feature')
     })
+
+    it('cleans up listener on return', async () => {
+      const subscribe = getSubscribeFn('gitBranchChanged')
+      const iter = subscribe(
+        {},
+        { worktreePath: '/repo' },
+        { eventBus } as any,
+        {} as any,
+      ) as AsyncGenerator
+
+      setTimeout(() => {
+        eventBus.emit('git:branchChanged', { worktreePath: '/repo' })
+      }, 10)
+
+      await iter.next()
+      await iter.return(undefined)
+
+      // After return, no more events should be queued
+      eventBus.emit('git:branchChanged', { worktreePath: '/repo' })
+    })
   })
 })

@@ -102,5 +102,24 @@ describe('terminal subscriptions', () => {
       expect(result.value.terminalExit.code).toBe(0)
       expect(result.value.terminalExit.worktreeId).toBe('wt-1')
     })
+
+    it('cleans up listener on return', async () => {
+      const subscribe = getSubscribeFn('terminalExit')
+      const iter = subscribe(
+        {},
+        { worktreeId: 'wt-1' },
+        { eventBus } as any,
+        {} as any,
+      ) as AsyncGenerator
+
+      setTimeout(() => {
+        eventBus.emit('terminal:exit', 'wt-1', 0)
+      }, 10)
+
+      await iter.next()
+      await iter.return(undefined)
+
+      eventBus.emit('terminal:exit', 'wt-1', 1)
+    })
   })
 })

@@ -76,6 +76,7 @@ describe('scriptOutput subscription', () => {
     const events: ScriptOutputEvent[] = [
       { type: 'command-start', command: 'npm test' },
       { type: 'output', data: 'PASS' },
+      { type: 'error', data: 'Warning: deprecated API' },
       { type: 'done', exitCode: 0 },
     ]
 

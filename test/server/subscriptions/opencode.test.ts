@@ -115,4 +115,26 @@ describe('opencodeStream subscription', () => {
       data: {},
     })
   })
+
+  it('delivers same event to multiple concurrent subscribers', async () => {
+    const subscribe = getSubscribeFn()
+    const iter1 = subscribe({}, {}, { eventBus } as any, {} as any)
+    const iter2 = subscribe({}, {}, { eventBus } as any, {} as any)
+
+    const event: OpenCodeStreamEvent = {
+      type: 'message.created',
+      sessionId: 'sess-1',
+      data: { content: 'shared' },
+    }
+
+    setTimeout(() => eventBus.emit('opencode:stream', event), 10)
+
+    const [r1, r2] = await Promise.all([
+      (iter1 as AsyncGenerator).next(),
+      (iter2 as AsyncGenerator).next(),
+    ])
+
+    expect(r1.value.opencodeStream.sessionId).toBe('sess-1')
+    expect(r2.value.opencodeStream.sessionId).toBe('sess-1')
+  })
 })
