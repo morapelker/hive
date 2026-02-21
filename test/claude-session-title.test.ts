@@ -1,11 +1,9 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ── Hoisted mock references (available to vi.mock factories) ───────────
 
-const { mockQuery, mockMkdirSync, mockLoadClaudeSDK, mockHomedir } = vi.hoisted(() => ({
+const { mockQuery, mockLoadClaudeSDK, mockHomedir } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
-  mockMkdirSync: vi.fn(),
   mockLoadClaudeSDK: vi.fn(async () => ({ query: mockQuery })),
   mockHomedir: vi.fn(() => '/mock-home')
 }))
@@ -25,16 +23,6 @@ vi.mock('../src/main/services/claude-sdk-loader', () => ({
   loadClaudeSDK: mockLoadClaudeSDK
 }))
 
-vi.mock('node:fs', () => {
-  const fsMock = {
-    mkdirSync: mockMkdirSync,
-    existsSync: vi.fn(() => true),
-    readFileSync: vi.fn(),
-    writeFileSync: vi.fn()
-  }
-  return { ...fsMock, default: fsMock }
-})
-
 vi.mock('node:os', () => {
   const osMock = { homedir: mockHomedir }
   return { ...osMock, default: osMock }
@@ -44,9 +32,10 @@ vi.mock('node:os', () => {
 
 /**
  * Make sdk.query() return an async generator that yields a single result message.
+ * When called multiple times (for retries), each call returns a fresh generator.
  */
 function mockQueryResult(text: string): void {
-  mockQuery.mockReturnValue(
+  mockQuery.mockImplementation(() =>
     (async function* () {
       yield { type: 'result', result: text }
     })()
@@ -55,13 +44,17 @@ function mockQueryResult(text: string): void {
 
 /**
  * Make sdk.query() throw an error (thrown from within the async generator).
+ * When called multiple times (for retries), each call throws.
  */
 function mockQueryError(err: Error): void {
-  mockQuery.mockReturnValue(
-    (async function* () {
+  mockQuery.mockImplementation(() => ({
+    async next() {
       throw err
-    })()
-  )
+    },
+    [Symbol.asyncIterator]() {
+      return this
+    }
+  }))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -91,38 +84,105 @@ describe('generateSessionTitle', () => {
     expect(result).toBe('Add dark mode toggle')
   })
 
-  // ── Null-return cases ──────────────────────────────────────────────
+  // ── Post-processing ────────────────────────────────────────────────
 
-  it('returns null on empty SDK result', async () => {
-    mockQueryResult('')
+  it('strips <think> tags from response', async () => {
+    mockQueryResult('<think>reasoning here</think>Fix auth bug')
     const result = await generateSessionTitle('message')
-    expect(result).toBeNull()
+    expect(result).toBe('Fix auth bug')
   })
 
-  it('returns null on whitespace-only SDK result', async () => {
-    mockQueryResult('   \n  ')
+  it('strips multiline <think> tags', async () => {
+    mockQueryResult('<think>\nsome reasoning\nacross lines\n</think>\nDatabase migration')
     const result = await generateSessionTitle('message')
-    expect(result).toBeNull()
+    expect(result).toBe('Database migration')
   })
 
-  it('returns null when title exceeds 50 characters', async () => {
-    const longTitle = 'A'.repeat(51)
+  it('takes first non-empty line from multiline response', async () => {
+    mockQueryResult('\n\n  Fix auth bug  \nAnother line\n')
+    const result = await generateSessionTitle('message')
+    expect(result).toBe('Fix auth bug')
+  })
+
+  it('truncates titles longer than 100 chars to 97 + "..."', async () => {
+    const longTitle = 'A'.repeat(110)
     mockQueryResult(longTitle)
     const result = await generateSessionTitle('message')
-    expect(result).toBeNull()
+    expect(result).toBe('A'.repeat(97) + '...')
+    expect(result!.length).toBe(100)
   })
 
-  it('returns title when exactly 50 characters', async () => {
-    const exactTitle = 'A'.repeat(50)
+  it('returns full title when exactly 100 characters', async () => {
+    const exactTitle = 'A'.repeat(100)
     mockQueryResult(exactTitle)
     const result = await generateSessionTitle('message')
     expect(result).toBe(exactTitle)
   })
 
-  it('returns null when SDK query throws', async () => {
+  it('returns full title when under 100 characters', async () => {
+    const shortTitle = 'A'.repeat(50)
+    mockQueryResult(shortTitle)
+    const result = await generateSessionTitle('message')
+    expect(result).toBe(shortTitle)
+  })
+
+  // ── Null-return cases ──────────────────────────────────────────────
+
+  it('returns null on empty SDK result after all retries', async () => {
+    mockQueryResult('')
+    const result = await generateSessionTitle('message')
+    expect(result).toBeNull()
+  })
+
+  it('returns null on whitespace-only SDK result after all retries', async () => {
+    mockQueryResult('   \n  ')
+    const result = await generateSessionTitle('message')
+    expect(result).toBeNull()
+  })
+
+  it('returns null when SDK query throws after all retries', async () => {
     mockQueryError(new Error('SDK query failed'))
     const result = await generateSessionTitle('message')
     expect(result).toBeNull()
+  })
+
+  // ── Retry behavior ────────────────────────────────────────────────
+
+  it('retries up to 3 times total (2 retries) on failure', async () => {
+    mockQueryError(new Error('fail'))
+    await generateSessionTitle('message')
+    // Should have been called 3 times (1 initial + 2 retries)
+    expect(mockQuery).toHaveBeenCalledTimes(3)
+  })
+
+  it('retries up to 3 times on empty results', async () => {
+    mockQueryResult('')
+    await generateSessionTitle('message')
+    expect(mockQuery).toHaveBeenCalledTimes(3)
+  })
+
+  it('returns on first successful attempt without retrying', async () => {
+    mockQueryResult('Good title')
+    const result = await generateSessionTitle('message')
+    expect(result).toBe('Good title')
+    expect(mockQuery).toHaveBeenCalledTimes(1)
+  })
+
+  it('succeeds on second attempt after first failure', async () => {
+    let callCount = 0
+    mockQuery.mockImplementation(() =>
+      (async function* () {
+        callCount++
+        if (callCount === 1) {
+          yield { type: 'result', result: '' }
+        } else {
+          yield { type: 'result', result: 'Recovered title' }
+        }
+      })()
+    )
+    const result = await generateSessionTitle('message')
+    expect(result).toBe('Recovered title')
+    expect(mockQuery).toHaveBeenCalledTimes(2)
   })
 
   // ── Message truncation ────────────────────────────────────────────
@@ -150,7 +210,17 @@ describe('generateSessionTitle', () => {
     const callArgs = mockQuery.mock.calls[0][0]
     const prompt: string = callArgs.prompt
     expect(prompt).toContain(shortMessage)
-    expect(prompt).not.toContain('...')
+  })
+
+  // ── User message format ────────────────────────────────────────────
+
+  it('formats user prompt with "Generate a title" prefix', async () => {
+    mockQueryResult('Some title')
+    await generateSessionTitle('hello world')
+
+    const callArgs = mockQuery.mock.calls[0][0]
+    expect(callArgs.prompt).toContain('Generate a title for this conversation:')
+    expect(callArgs.prompt).toContain('hello world')
   })
 
   // ── Never throws ──────────────────────────────────────────────────
@@ -172,12 +242,12 @@ describe('generateSessionTitle', () => {
     expect(callArgs.options.model).toBe('haiku')
   })
 
-  it('sets cwd to ~/.hive/titles/ path', async () => {
+  it('sets cwd to homedir()', async () => {
     mockQueryResult('Some title')
     await generateSessionTitle('hello')
 
     const callArgs = mockQuery.mock.calls[0][0]
-    expect(callArgs.options.cwd).toBe('/mock-home/.hive/titles')
+    expect(callArgs.options.cwd).toBe('/mock-home')
   })
 
   it('passes maxTurns: 1 in query options', async () => {
@@ -186,6 +256,47 @@ describe('generateSessionTitle', () => {
 
     const callArgs = mockQuery.mock.calls[0][0]
     expect(callArgs.options.maxTurns).toBe(1)
+  })
+
+  it('passes systemPrompt in query options', async () => {
+    mockQueryResult('Some title')
+    await generateSessionTitle('hello')
+
+    const callArgs = mockQuery.mock.calls[0][0]
+    expect(callArgs.options.systemPrompt).toBeDefined()
+    expect(callArgs.options.systemPrompt).toContain('You are a title generator')
+  })
+
+  it('passes effort: "low" in query options', async () => {
+    mockQueryResult('Some title')
+    await generateSessionTitle('hello')
+
+    const callArgs = mockQuery.mock.calls[0][0]
+    expect(callArgs.options.effort).toBe('low')
+  })
+
+  it('disables thinking in query options', async () => {
+    mockQueryResult('Some title')
+    await generateSessionTitle('hello')
+
+    const callArgs = mockQuery.mock.calls[0][0]
+    expect(callArgs.options.thinking).toEqual({ type: 'disabled' })
+  })
+
+  it('disables all tools in query options', async () => {
+    mockQueryResult('Some title')
+    await generateSessionTitle('hello')
+
+    const callArgs = mockQuery.mock.calls[0][0]
+    expect(callArgs.options.tools).toEqual([])
+  })
+
+  it('disables session persistence', async () => {
+    mockQueryResult('Some title')
+    await generateSessionTitle('hello')
+
+    const callArgs = mockQuery.mock.calls[0][0]
+    expect(callArgs.options.persistSession).toBe(false)
   })
 
   it('passes pathToClaudeCodeExecutable when claudeBinaryPath is provided', async () => {
@@ -210,13 +321,6 @@ describe('generateSessionTitle', () => {
 
     const callArgs = mockQuery.mock.calls[0][0]
     expect(callArgs.options.pathToClaudeCodeExecutable).toBeUndefined()
-  })
-
-  it('creates ~/.hive/titles/ directory if it does not exist', async () => {
-    mockQueryResult('Some title')
-    await generateSessionTitle('hello')
-
-    expect(mockMkdirSync).toHaveBeenCalledWith('/mock-home/.hive/titles', { recursive: true })
   })
 
   it('aborts query via AbortController after timeout', async () => {
