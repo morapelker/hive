@@ -459,4 +459,68 @@ describe('OpenCode Resolvers — Integration Tests', () => {
       expect(result.data.opencodeReconnect.success).toBe(true)
     })
   })
+
+  // --- Plan Approve/Reject ---
+  describe('opencodePlanApprove', () => {
+    it('approves a pending plan by session', async () => {
+      sdkMocks.claudeImpl.hasPendingPlan.mockReturnValue(false)
+      sdkMocks.claudeImpl.hasPendingPlanForSession.mockReturnValue(true)
+      const hiveClaudeSessionId = db.sessions[1].id
+
+      const result = await execute(`
+        mutation { opencodePlanApprove(input: {
+          worktreePath: "/tmp/test"
+          hiveSessionId: "${hiveClaudeSessionId}"
+        }) { success error }}
+      `)
+
+      expect(result.data.opencodePlanApprove.success).toBe(true)
+      expect(sdkMocks.claudeImpl.planApprove).toHaveBeenCalled()
+    })
+
+    it('approves a pending plan by requestId', async () => {
+      sdkMocks.claudeImpl.hasPendingPlan.mockReturnValue(true)
+      const hiveClaudeSessionId = db.sessions[1].id
+
+      const result = await execute(`
+        mutation { opencodePlanApprove(input: {
+          worktreePath: "/tmp/test"
+          hiveSessionId: "${hiveClaudeSessionId}"
+          requestId: "plan-req-1"
+        }) { success error }}
+      `)
+
+      expect(result.data.opencodePlanApprove.success).toBe(true)
+    })
+
+    it('returns error when no pending plan', async () => {
+      const result = await execute(`
+        mutation { opencodePlanApprove(input: {
+          worktreePath: "/tmp/test"
+          hiveSessionId: "no-such-session"
+        }) { success error }}
+      `)
+
+      expect(result.data.opencodePlanApprove.success).toBe(false)
+      expect(result.data.opencodePlanApprove.error).toContain('No pending plan')
+    })
+  })
+
+  describe('opencodePlanReject', () => {
+    it('rejects a pending plan with feedback', async () => {
+      sdkMocks.claudeImpl.hasPendingPlanForSession.mockReturnValue(true)
+      const hiveClaudeSessionId = db.sessions[1].id
+
+      const result = await execute(`
+        mutation { opencodePlanReject(input: {
+          worktreePath: "/tmp/test"
+          hiveSessionId: "${hiveClaudeSessionId}"
+          feedback: "needs more detail"
+        }) { success error }}
+      `)
+
+      expect(result.data.opencodePlanReject.success).toBe(true)
+      expect(sdkMocks.claudeImpl.planReject).toHaveBeenCalled()
+    })
+  })
 })
