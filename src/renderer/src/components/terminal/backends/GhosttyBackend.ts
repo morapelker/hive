@@ -18,6 +18,7 @@ export class GhosttyBackend implements TerminalBackend {
   private worktreeId: string = ''
   private container: HTMLDivElement | null = null
   private resizeObserver: ResizeObserver | null = null
+  private windowResizeHandler: (() => void) | null = null
   private mounted = false
   private syncFrameTimer: ReturnType<typeof requestAnimationFrame> | null = null
 
@@ -48,6 +49,12 @@ export class GhosttyBackend implements TerminalBackend {
       this.debouncedSyncFrame()
     })
     this.resizeObserver.observe(container)
+
+    // Also listen for window resize — the container's position within the window
+    // changes when the window is resized, but ResizeObserver only fires on
+    // dimension changes, not position changes.
+    this.windowResizeHandler = () => this.debouncedSyncFrame()
+    window.addEventListener('resize', this.windowResizeHandler)
   }
 
   /**
@@ -203,6 +210,11 @@ export class GhosttyBackend implements TerminalBackend {
 
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+
+    if (this.windowResizeHandler) {
+      window.removeEventListener('resize', this.windowResizeHandler)
+      this.windowResizeHandler = null
+    }
 
     if (this.container) {
       this.container.style.pointerEvents = ''
