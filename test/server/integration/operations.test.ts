@@ -57,6 +57,66 @@ vi.mock('../../../src/server/event-bus', () => ({
   getEventBus: vi.fn(() => ({ emit: vi.fn() }))
 }))
 
+// Mock project-ops (filesystem-dependent)
+vi.mock('../../../src/main/services/project-ops', () => ({
+  validateProject: vi.fn((path: string) => {
+    if (path === '/nonexistent') {
+      return { success: false, error: 'The selected path is not a valid directory.' }
+    }
+    return { success: true, path, name: path.split('/').pop() }
+  }),
+  isGitRepository: vi.fn((path: string) => path !== '/not-a-repo'),
+  detectProjectLanguage: vi.fn(() => 'typescript'),
+  loadLanguageIcons: vi.fn(() => ({})),
+  getIconDataUrl: vi.fn(() => 'data:image/png;base64,abc'),
+  initRepository: vi.fn(() => ({ success: true })),
+  uploadIcon: vi.fn(() => ({ success: true })),
+  removeIcon: vi.fn(() => ({ success: true }))
+}))
+
+// Mock connection-ops (filesystem-dependent)
+vi.mock('../../../src/main/services/connection-ops', () => ({
+  createConnectionOp: vi.fn((_db: any, worktreeIds: string[]) => ({
+    success: true,
+    connection: {
+      id: 'conn-new',
+      name: 'Connection 1',
+      custom_name: null,
+      status: 'active',
+      path: '/tmp/connections/conn-new',
+      color: '["#aaa","#bbb","#ccc","#ddd"]',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      members: worktreeIds.map((wtId: string, i: number) => ({
+        id: `cm-${i}`,
+        connection_id: 'conn-new',
+        worktree_id: wtId,
+        project_id: `proj-${i}`,
+        symlink_name: `wt-${i}`,
+        added_at: new Date().toISOString()
+      }))
+    }
+  })),
+  deleteConnectionOp: vi.fn(() => ({ success: true })),
+  renameConnectionOp: vi.fn((_db: any, connId: string, name: string | null) => ({
+    success: true,
+    connection: {
+      id: connId,
+      name: name ?? 'Connection 1',
+      custom_name: name,
+      status: 'active',
+      path: '/tmp/connections/conn-1',
+      color: '["#aaa","#bbb","#ccc","#ddd"]',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      members: []
+    }
+  })),
+  addConnectionMemberOp: vi.fn(() => ({ success: true })),
+  removeConnectionMemberOp: vi.fn(() => ({ success: true })),
+  removeWorktreeFromAllConnectionsOp: vi.fn(() => ({ success: true }))
+}))
+
 import { MockDatabaseService } from '../helpers/mock-db'
 import { createTestServer } from '../helpers/test-server'
 
@@ -507,6 +567,322 @@ describe('Operation Resolvers — Integration Tests', () => {
       )
       expect(errors).toBeUndefined()
       expect(data?.worktreeExists).toBe(false)
+    })
+  })
+
+  // =========================================================================
+  // Project Operations (via mocked project-ops)
+  // =========================================================================
+  describe('Project Operations', () => {
+    it('projectValidate returns success for valid path', async () => {
+      const { data, errors } = await execute(
+        `query { projectValidate(path: "/tmp/my-project") { success path name error } }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.projectValidate.success).toBe(true)
+      expect(data?.projectValidate.path).toBe('/tmp/my-project')
+      expect(data?.projectValidate.name).toBe('my-project')
+      expect(data?.projectValidate.error).toBeNull()
+    })
+
+    it('projectValidate returns failure for nonexistent path', async () => {
+      const { data, errors } = await execute(
+        `query { projectValidate(path: "/nonexistent") { success error } }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.projectValidate.success).toBe(false)
+      expect(data?.projectValidate.error).toBeDefined()
+    })
+
+    it('projectIsGitRepository returns true for git repo', async () => {
+      const { data, errors } = await execute(
+        `query { projectIsGitRepository(path: "/tmp/git-repo") }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.projectIsGitRepository).toBe(true)
+    })
+
+    it('projectIsGitRepository returns false for non-repo', async () => {
+      const { data, errors } = await execute(
+        `query { projectIsGitRepository(path: "/not-a-repo") }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.projectIsGitRepository).toBe(false)
+    })
+
+    it('projectDetectLanguage returns detected language', async () => {
+      const { data, errors } = await execute(
+        `query { projectDetectLanguage(projectPath: "/tmp/my-project") }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.projectDetectLanguage).toBe('typescript')
+    })
+
+    it('projectInitRepository returns success', async () => {
+      const { data, errors } = await execute(
+        `mutation { projectInitRepository(path: "/tmp/new-repo") { success error } }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.projectInitRepository.success).toBe(true)
+    })
+
+    it('projectUploadIcon returns success', async () => {
+      const { data, errors } = await execute(
+        `mutation { projectUploadIcon(projectId: "proj-1", data: "abc123", filename: "icon.png") { success error } }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.projectUploadIcon.success).toBe(true)
+    })
+
+    it('projectRemoveIcon returns success', async () => {
+      const { data, errors } = await execute(
+        `mutation { projectRemoveIcon(projectId: "proj-1") { success error } }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.projectRemoveIcon.success).toBe(true)
+    })
+  })
+
+  // =========================================================================
+  // Worktree Mutations (via mocked worktree-ops)
+  // =========================================================================
+  describe('Worktree Mutations', () => {
+    it('createWorktree returns success with worktree', async () => {
+      const { createWorktreeOp } = await import('../../../src/main/services/worktree-ops')
+      vi.mocked(createWorktreeOp).mockResolvedValue({
+        success: true,
+        worktree: {
+          id: 'wt-1',
+          project_id: 'proj-1',
+          name: 'feature-x',
+          branch_name: 'feature-x',
+          path: '/tmp/worktrees/feature-x',
+          status: 'active',
+          is_default: false,
+          branch_renamed: 0,
+          last_message_at: null,
+          session_titles: '[]',
+          last_model_provider_id: null,
+          last_model_id: null,
+          last_model_variant: null,
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_accessed_at: '2026-01-01T00:00:00.000Z'
+        }
+      })
+
+      const { data, errors } = await execute(
+        `mutation($input: CreateWorktreeInput!) {
+          createWorktree(input: $input) { success worktree { id name branchName path } error }
+        }`,
+        { input: { projectId: 'proj-1', projectPath: '/tmp/proj', projectName: 'MyProj' } }
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.createWorktree.success).toBe(true)
+      expect(data?.createWorktree.worktree).toBeDefined()
+      expect(data?.createWorktree.worktree.name).toBe('feature-x')
+      expect(data?.createWorktree.worktree.branchName).toBe('feature-x')
+    })
+
+    it('deleteWorktree returns success', async () => {
+      const { deleteWorktreeOp } = await import('../../../src/main/services/worktree-ops')
+      vi.mocked(deleteWorktreeOp).mockResolvedValue({ success: true })
+
+      const { data, errors } = await execute(
+        `mutation($input: DeleteWorktreeInput!) {
+          deleteWorktree(input: $input) { success error }
+        }`,
+        {
+          input: {
+            worktreeId: 'wt-1',
+            worktreePath: '/tmp/worktrees/feature-x',
+            branchName: 'feature-x',
+            projectPath: '/tmp/proj',
+            archive: false
+          }
+        }
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.deleteWorktree.success).toBe(true)
+    })
+
+    it('syncWorktrees returns success', async () => {
+      const { syncWorktreesOp } = await import('../../../src/main/services/worktree-ops')
+      vi.mocked(syncWorktreesOp).mockResolvedValue({ success: true })
+
+      const { data, errors } = await execute(
+        `mutation { syncWorktrees(projectId: "proj-1", projectPath: "/tmp/proj") { success error } }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.syncWorktrees.success).toBe(true)
+    })
+
+    it('duplicateWorktree returns success with worktree', async () => {
+      const { duplicateWorktreeOp } = await import('../../../src/main/services/worktree-ops')
+      vi.mocked(duplicateWorktreeOp).mockResolvedValue({
+        success: true,
+        worktree: {
+          id: 'wt-dup',
+          project_id: 'proj-1',
+          name: 'feature-x-copy',
+          branch_name: 'feature-x-copy',
+          path: '/tmp/worktrees/feature-x-copy',
+          status: 'active',
+          is_default: false,
+          branch_renamed: 0,
+          last_message_at: null,
+          session_titles: '[]',
+          last_model_provider_id: null,
+          last_model_id: null,
+          last_model_variant: null,
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_accessed_at: '2026-01-01T00:00:00.000Z'
+        }
+      })
+
+      const { data, errors } = await execute(
+        `mutation($input: DuplicateWorktreeInput!) {
+          duplicateWorktree(input: $input) { success worktree { id name branchName } error }
+        }`,
+        {
+          input: {
+            projectId: 'proj-1',
+            projectPath: '/tmp/proj',
+            projectName: 'MyProj',
+            sourceBranch: 'feature-x',
+            sourceWorktreePath: '/tmp/worktrees/feature-x'
+          }
+        }
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.duplicateWorktree.success).toBe(true)
+      expect(data?.duplicateWorktree.worktree.name).toBe('feature-x-copy')
+    })
+
+    it('renameWorktreeBranch returns success', async () => {
+      const { renameWorktreeBranchOp } = await import('../../../src/main/services/worktree-ops')
+      vi.mocked(renameWorktreeBranchOp).mockResolvedValue({ success: true })
+
+      const { data, errors } = await execute(
+        `mutation($input: RenameBranchInput!) {
+          renameWorktreeBranch(input: $input) { success error }
+        }`,
+        {
+          input: {
+            worktreeId: 'wt-1',
+            worktreePath: '/tmp/worktrees/feature-x',
+            oldBranch: 'feature-x',
+            newBranch: 'feature-y'
+          }
+        }
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.renameWorktreeBranch.success).toBe(true)
+    })
+
+    it('createWorktreeFromBranch returns success with worktree', async () => {
+      const { createWorktreeFromBranchOp } = await import('../../../src/main/services/worktree-ops')
+      vi.mocked(createWorktreeFromBranchOp).mockResolvedValue({
+        success: true,
+        worktree: {
+          id: 'wt-from-branch',
+          project_id: 'proj-1',
+          name: 'existing-branch',
+          branch_name: 'existing-branch',
+          path: '/tmp/worktrees/existing-branch',
+          status: 'active',
+          is_default: false,
+          branch_renamed: 0,
+          last_message_at: null,
+          session_titles: '[]',
+          last_model_provider_id: null,
+          last_model_id: null,
+          last_model_variant: null,
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_accessed_at: '2026-01-01T00:00:00.000Z'
+        }
+      })
+
+      const { data, errors } = await execute(
+        `mutation($input: CreateFromBranchInput!) {
+          createWorktreeFromBranch(input: $input) { success worktree { id name branchName } error }
+        }`,
+        {
+          input: {
+            projectId: 'proj-1',
+            projectPath: '/tmp/proj',
+            projectName: 'MyProj',
+            branchName: 'existing-branch'
+          }
+        }
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.createWorktreeFromBranch.success).toBe(true)
+      expect(data?.createWorktreeFromBranch.worktree.name).toBe('existing-branch')
+      expect(data?.createWorktreeFromBranch.worktree.branchName).toBe('existing-branch')
+    })
+  })
+
+  // =========================================================================
+  // Connection Mutations (via mocked connection-ops)
+  // =========================================================================
+  describe('Connection Mutations', () => {
+    it('createConnection returns success with connection and members', async () => {
+      const { data, errors } = await execute(
+        `mutation($ids: [ID!]!) {
+          createConnection(worktreeIds: $ids) {
+            success
+            connection { id name status path members { worktreeId symlinkName } }
+            error
+          }
+        }`,
+        { ids: ['wt-1', 'wt-2'] }
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.createConnection.success).toBe(true)
+      expect(data?.createConnection.connection).toBeDefined()
+      expect(data?.createConnection.connection.id).toBe('conn-new')
+      expect(data?.createConnection.connection.name).toBe('Connection 1')
+      expect(data?.createConnection.connection.members).toHaveLength(2)
+      expect(data?.createConnection.connection.members[0].worktreeId).toBe('wt-1')
+      expect(data?.createConnection.connection.members[1].worktreeId).toBe('wt-2')
+    })
+
+    it('deleteConnection returns success', async () => {
+      const { data, errors } = await execute(
+        `mutation { deleteConnection(connectionId: "conn-1") { success error } }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.deleteConnection.success).toBe(true)
+    })
+
+    it('renameConnection returns renamed connection', async () => {
+      const { data, errors } = await execute(
+        `mutation {
+          renameConnection(connectionId: "conn-1", customName: "My Custom Name") {
+            id name status
+          }
+        }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.renameConnection).toBeDefined()
+      expect(data?.renameConnection.id).toBe('conn-1')
+      expect(data?.renameConnection.name).toBe('My Custom Name')
+    })
+
+    it('addConnectionMember returns success', async () => {
+      const { data, errors } = await execute(
+        `mutation { addConnectionMember(connectionId: "conn-1", worktreeId: "wt-3") { success error } }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.addConnectionMember.success).toBe(true)
+    })
+
+    it('removeConnectionMember returns success', async () => {
+      const { data, errors } = await execute(
+        `mutation { removeConnectionMember(connectionId: "conn-1", worktreeId: "wt-1") { success error } }`
+      )
+      expect(errors).toBeUndefined()
+      expect(data?.removeConnectionMember.success).toBe(true)
     })
   })
 })
