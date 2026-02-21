@@ -76,7 +76,7 @@ vi.mock('../../../src/main/services/project-ops', () => ({
 
 // Mock connection-ops (filesystem-dependent)
 vi.mock('../../../src/main/services/connection-ops', () => ({
-  createConnectionOp: vi.fn((_db: any, worktreeIds: string[]) => ({
+  createConnectionOp: vi.fn((_db: unknown, worktreeIds: string[]) => ({
     success: true,
     connection: {
       id: 'conn-new',
@@ -98,7 +98,7 @@ vi.mock('../../../src/main/services/connection-ops', () => ({
     }
   })),
   deleteConnectionOp: vi.fn(() => ({ success: true })),
-  renameConnectionOp: vi.fn((_db: any, connId: string, name: string | null) => ({
+  renameConnectionOp: vi.fn((_db: unknown, connId: string, name: string | null) => ({
     success: true,
     connection: {
       id: connId,
