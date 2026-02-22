@@ -2321,7 +2321,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send(channel, data)
     } else {
-      log.warn('Cannot send to renderer: window not available')
+      // Headless mode — no renderer window. Events still reach mobile
+      // clients via the EventBus emit below, so this is expected.
+      log.debug('sendToRenderer: no window (headless)')
     }
     try {
       const bus = getEventBus()

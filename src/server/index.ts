@@ -47,9 +47,10 @@ export interface ServerHandle {
 export function startGraphQLServer(opts: ServerOptions): ServerHandle {
   const typeDefs = loadSchemaSDL()
   const resolvers = mergeResolvers()
+  const schema = createSchema({ typeDefs, resolvers })
 
   const yoga = createYoga({
-    schema: createSchema({ typeDefs, resolvers }),
+    schema,
     graphqlEndpoint: '/graphql',
     context: (ctx: { request: Request }) => {
       // Use Node.js socket remoteAddress — x-forwarded-for is client-controlled
@@ -108,8 +109,7 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
 
   useServer(
     {
-      execute: (args: unknown) => (args as { rootValue: never }).rootValue,
-      subscribe: (args: unknown) => (args as { rootValue: never }).rootValue,
+      schema,
       context: (ctx) => ({
         ...opts.context,
         clientIp:

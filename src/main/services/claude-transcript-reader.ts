@@ -109,13 +109,6 @@ function translateEntry(entry: ClaudeJsonlEntry, index: number): Record<string, 
     .map((block, i) => translateContentBlock(block, i, entry.timestamp))
     .filter((p): p is Record<string, unknown> => p !== null)
 
-  log.debug('TOOL_LIFECYCLE: translateEntry', {
-    type: entry.type,
-    blockTypes: content.map((b) => b.type),
-    keptParts: parts.length,
-    droppedBlocks: content.length - parts.length
-  })
-
   const translated: Record<string, unknown> = {
     id: entry.uuid ?? `entry-${index}`,
     role: entry.message?.role ?? entry.type,
