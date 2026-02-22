@@ -2,6 +2,7 @@ import fixPath from 'fix-path'
 import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
 import { spawn, exec, execFileSync } from 'child_process'
+import { promisify } from 'util'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
@@ -307,6 +308,66 @@ function registerSystemHandlers(): void {
   // Quit the app (needed for macOS where window.close() doesn't quit)
   ipcMain.handle('system:quitApp', () => {
     app.quit()
+  })
+
+  // Check if the app is running in packaged mode (not dev)
+  ipcMain.handle('system:isPackaged', () => {
+    return app.isPackaged
+  })
+
+  // Install hive-server shell wrapper to /usr/local/bin
+  ipcMain.handle('system:installServerToPath', async () => {
+    const targetPath = '/usr/local/bin/hive-server'
+    const execAsync = promisify(exec)
+
+    try {
+      const execPath = process.execPath
+      const scriptContent = [
+        '#!/bin/bash',
+        '# hive-server — Hive headless mode launcher',
+        '# Installed by Hive.app',
+        `exec "${execPath}" --headless "$@"`
+      ].join('\n') + '\n'
+
+      // Write to a temp file first (no admin needed), then move with elevation
+      const tmpPath = join(app.getPath('temp'), 'hive-server-install')
+      writeFileSync(tmpPath, scriptContent, { mode: 0o755 })
+
+      const osascript = `do shell script "mv '${tmpPath}' '${targetPath}' && chmod +x '${targetPath}'" with administrator privileges`
+      await execAsync(`osascript -e '${osascript}'`, { timeout: 30000 })
+
+      return { success: true, path: targetPath }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // User cancelled the admin dialog
+      if (message.includes('User canceled') || message.includes('-128')) {
+        return { success: false, error: 'Installation cancelled' }
+      }
+      return { success: false, error: message }
+    }
+  })
+
+  // Uninstall hive-server from /usr/local/bin
+  ipcMain.handle('system:uninstallServerFromPath', async () => {
+    const targetPath = '/usr/local/bin/hive-server'
+    const execAsync = promisify(exec)
+
+    try {
+      if (!existsSync(targetPath)) {
+        return { success: false, error: 'hive-server is not installed' }
+      }
+
+      const osascript = `do shell script "rm '${targetPath}'" with administrator privileges`
+      await execAsync(`osascript -e '${osascript}'`, { timeout: 30000 })
+
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes('User canceled') || message.includes('-128')) {
+        return { success: false, error: 'Uninstall cancelled' }
+      }
+      return { success: false, error: message }
+    }
   })
 }
 
