@@ -22,7 +22,7 @@ const CLAUDE_MODELS = [
   },
   {
     id: 'sonnet',
-    name: 'Sonnet 4.5',
+    name: 'Sonnet 4.6',
     limit: { context: 200000, output: 16000 }
   },
   {
