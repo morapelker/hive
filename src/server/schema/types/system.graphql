@@ -1,0 +1,18 @@
+type ServerStatus {
+  uptime: Int!
+  connections: Int!
+  requestCount: Int!
+  locked: Boolean!
+  version: String!
+}
+
+type AppPaths {
+  userData: String!
+  home: String!
+  logs: String!
+}
+
+type AgentSdkDetection {
+  opencode: Boolean!
+  claude: Boolean!
+}

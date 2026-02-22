@@ -1,0 +1,14 @@
+type ScriptOutputEvent {
+  type: String!
+  command: String
+  data: String
+  exitCode: Int
+}
+
+# --- Inputs ---
+
+input ScriptRunInput {
+  commands: [String!]!
+  cwd: String!
+  worktreeId: ID!
+}

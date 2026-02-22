@@ -3,7 +3,9 @@
   "include": [
     "electron.vite.config.*",
     "src/main/**/*",
-    "src/preload/**/*"
+    "src/preload/**/*",
+    "src/server/**/*",
+    "src/shared/**/*"
   ],
   "compilerOptions": {
     "composite": true,

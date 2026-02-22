@@ -1,0 +1,227 @@
+type Project {
+  id: ID!
+  name: String!
+  path: String!
+  description: String
+  tags: String
+  language: String
+  customIcon: String
+  setupScript: String
+  runScript: String
+  archiveScript: String
+  autoAssignPort: Boolean!
+  sortOrder: Int!
+  createdAt: String!
+  lastAccessedAt: String!
+}
+
+type Worktree {
+  id: ID!
+  projectId: ID!
+  name: String!
+  branchName: String!
+  path: String!
+  status: WorktreeStatus!
+  isDefault: Boolean!
+  branchRenamed: Int!
+  lastMessageAt: Float
+  sessionTitles: String!
+  lastModelProviderId: String
+  lastModelId: String
+  lastModelVariant: String
+  createdAt: String!
+  lastAccessedAt: String!
+}
+
+type Session {
+  id: ID!
+  worktreeId: ID
+  projectId: ID!
+  connectionId: ID
+  name: String
+  status: SessionStatus!
+  opencodeSessionId: String
+  agentSdk: AgentSdk!
+  mode: SessionMode!
+  modelProviderId: String
+  modelId: String
+  modelVariant: String
+  createdAt: String!
+  updatedAt: String!
+  completedAt: String
+}
+
+type SessionWithWorktree {
+  id: ID!
+  worktreeId: ID
+  projectId: ID!
+  connectionId: ID
+  name: String
+  status: SessionStatus!
+  opencodeSessionId: String
+  agentSdk: AgentSdk!
+  mode: SessionMode!
+  modelProviderId: String
+  modelId: String
+  modelVariant: String
+  createdAt: String!
+  updatedAt: String!
+  completedAt: String
+  worktreeName: String
+  worktreeBranchName: String
+  projectName: String
+}
+
+type Space {
+  id: ID!
+  name: String!
+  iconType: String!
+  iconValue: String!
+  sortOrder: Int!
+  createdAt: String!
+}
+
+type ProjectSpaceAssignment {
+  projectId: ID!
+  spaceId: ID!
+}
+
+enum WorktreeStatus {
+  active
+  archived
+}
+
+enum SessionStatus {
+  active
+  completed
+  error
+}
+
+enum SessionMode {
+  build
+  plan
+}
+
+enum AgentSdk {
+  opencode
+  claude_code
+}
+
+# --- Inputs ---
+
+input CreateProjectInput {
+  name: String!
+  path: String!
+  description: String
+  tags: [String!]
+}
+
+input UpdateProjectInput {
+  name: String
+  description: String
+  tags: [String!]
+  language: String
+  customIcon: String
+  setupScript: String
+  runScript: String
+  archiveScript: String
+  autoAssignPort: Boolean
+  lastAccessedAt: String
+}
+
+input CreateWorktreeInput {
+  projectId: ID!
+  projectPath: String!
+  projectName: String!
+}
+
+input DeleteWorktreeInput {
+  worktreeId: ID!
+  worktreePath: String!
+  branchName: String!
+  projectPath: String!
+  archive: Boolean!
+}
+
+input DuplicateWorktreeInput {
+  projectId: ID!
+  projectPath: String!
+  projectName: String!
+  sourceBranch: String!
+  sourceWorktreePath: String!
+}
+
+input RenameBranchInput {
+  worktreeId: ID!
+  worktreePath: String!
+  oldBranch: String!
+  newBranch: String!
+}
+
+input CreateFromBranchInput {
+  projectId: ID!
+  projectPath: String!
+  projectName: String!
+  branchName: String!
+}
+
+input UpdateWorktreeInput {
+  name: String
+  status: WorktreeStatus
+  lastMessageAt: Float
+  lastAccessedAt: String
+}
+
+input UpdateWorktreeModelInput {
+  worktreeId: ID!
+  modelProviderId: String!
+  modelId: String!
+  modelVariant: String
+}
+
+input CreateSessionInput {
+  worktreeId: ID
+  projectId: ID!
+  connectionId: ID
+  name: String
+  opencodeSessionId: String
+  agentSdk: AgentSdk
+  modelProviderId: String
+  modelId: String
+  modelVariant: String
+}
+
+input UpdateSessionInput {
+  name: String
+  status: SessionStatus
+  opencodeSessionId: String
+  agentSdk: AgentSdk
+  mode: SessionMode
+  modelProviderId: String
+  modelId: String
+  modelVariant: String
+  updatedAt: String
+  completedAt: String
+}
+
+input SessionSearchInput {
+  keyword: String
+  projectId: ID
+  worktreeId: ID
+  dateFrom: String
+  dateTo: String
+  includeArchived: Boolean
+}
+
+input CreateSpaceInput {
+  name: String!
+  iconType: String
+  iconValue: String
+}
+
+input UpdateSpaceInput {
+  name: String
+  iconType: String
+  iconValue: String
+  sortOrder: Int
+}
