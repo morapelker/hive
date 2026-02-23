@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useCallback } from 'react'
+import { useEffect, useMemo, useCallback, useState } from 'react'
 import {
   useProjectStore,
   useWorktreeStore,
@@ -43,6 +43,12 @@ export function useCommands() {
     addRecentCommand,
     pushCommandLevel
   } = useCommandPaletteStore()
+
+  // Track whether the app is running in packaged mode (not dev)
+  const [isPackaged, setIsPackaged] = useState(false)
+  useEffect(() => {
+    window.systemOps.isPackaged().then(setIsPackaged)
+  }, [])
 
   // Get the currently selected worktree path
   const getActiveWorktreePath = useCallback(() => {
@@ -557,6 +563,54 @@ export function useCommands() {
             () => cancelPreview()
           )
         }
+      },
+
+      // =====================
+      // SERVER COMMANDS
+      // =====================
+      {
+        id: 'action:install-server',
+        label: "Install 'hive-server' Command in PATH",
+        description: 'Install the hive-server CLI to /usr/local/bin',
+        category: 'action',
+        icon: 'Terminal',
+        keywords: ['install', 'server', 'path', 'headless', 'cli', 'terminal'],
+        isVisible: () => isPackaged,
+        action: async () => {
+          try {
+            const result = await window.systemOps.installServerToPath()
+            if (result.success) {
+              toast.success(`Installed hive-server to ${result.path}`)
+            } else {
+              toast.error(result.error || 'Failed to install')
+            }
+          } catch {
+            toast.error('Installation cancelled or failed')
+          }
+          closeCommandPalette()
+        }
+      },
+      {
+        id: 'action:uninstall-server',
+        label: "Uninstall 'hive-server' Command from PATH",
+        description: 'Remove the hive-server CLI from /usr/local/bin',
+        category: 'action',
+        icon: 'Trash2',
+        keywords: ['uninstall', 'remove', 'server', 'path', 'cli'],
+        isVisible: () => isPackaged,
+        action: async () => {
+          try {
+            const result = await window.systemOps.uninstallServerFromPath()
+            if (result.success) {
+              toast.success('Removed hive-server from PATH')
+            } else {
+              toast.error(result.error || 'Failed to uninstall')
+            }
+          } catch {
+            toast.error('Uninstall cancelled or failed')
+          }
+          closeCommandPalette()
+        }
       }
     ]
 
@@ -597,7 +651,8 @@ export function useCommands() {
     getDisplayString,
     getActiveWorktreePath,
     closeCommandPalette,
-    pushCommandLevel
+    pushCommandLevel,
+    isPackaged
   ])
 
   // Get filtered commands based on search query

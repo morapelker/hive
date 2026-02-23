@@ -1,0 +1,42 @@
+type Connection {
+  id: ID!
+  name: String!
+  status: String!
+  path: String!
+  color: String
+  createdAt: String!
+  updatedAt: String!
+}
+
+type ConnectionMember {
+  id: ID!
+  connectionId: ID!
+  worktreeId: ID!
+  projectId: ID!
+  symlinkName: String!
+  addedAt: String!
+}
+
+type ConnectionWithMembers {
+  id: ID!
+  name: String!
+  status: String!
+  path: String!
+  color: String
+  createdAt: String!
+  updatedAt: String!
+  members: [ConnectionMemberWithDetails!]!
+}
+
+type ConnectionMemberWithDetails {
+  id: ID!
+  connectionId: ID!
+  worktreeId: ID!
+  projectId: ID!
+  symlinkName: String!
+  addedAt: String!
+  worktreeName: String!
+  worktreeBranch: String!
+  worktreePath: String!
+  projectName: String!
+}

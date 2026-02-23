@@ -11,7 +11,8 @@ export default defineWorkspace([
         'test/session-3/**/*.test.ts',
         'test/phase-9/session-2/**/*.test.ts',
         'test/phase-9/session-5/**/*.test.ts',
-        'test/phase-9/session-13/**/*.test.ts'
+        'test/phase-9/session-13/**/*.test.ts',
+        'test/server/**/*.test.ts'
       ]
     }
   },
@@ -23,7 +24,8 @@ export default defineWorkspace([
         'test/session-3/**/*.test.ts',
         'test/phase-9/session-2/**/*.test.ts',
         'test/phase-9/session-5/**/*.test.ts',
-        'test/phase-9/session-13/**/*.test.ts'
+        'test/phase-9/session-13/**/*.test.ts',
+        'test/server/**/*.test.ts'
       ],
       globals: true
     }

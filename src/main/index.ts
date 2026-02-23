@@ -2,6 +2,7 @@ import fixPath from 'fix-path'
 import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
 import { spawn, exec, execFileSync } from 'child_process'
+import { promisify } from 'util'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
@@ -41,6 +42,18 @@ const log = createLogger({ component: 'Main' })
 // Parse CLI flags
 const cliArgs = process.argv.slice(2)
 const isLogMode = cliArgs.includes('--log')
+const isHeadless = cliArgs.includes('--headless')
+const headlessPort = cliArgs.includes('--port')
+  ? parseInt(cliArgs[cliArgs.indexOf('--port') + 1])
+  : undefined
+const headlessBind = cliArgs.includes('--bind')
+  ? cliArgs[cliArgs.indexOf('--bind') + 1]
+  : undefined
+const isRotateKey = cliArgs.includes('--rotate-key')
+const isRegenCerts = cliArgs.includes('--regen-certs')
+const isShowStatus = cliArgs.includes('--show-status')
+const isKill = cliArgs.includes('--kill')
+const isUnlock = cliArgs.includes('--unlock')
 
 interface WindowBounds {
   x: number
@@ -296,6 +309,66 @@ function registerSystemHandlers(): void {
   ipcMain.handle('system:quitApp', () => {
     app.quit()
   })
+
+  // Check if the app is running in packaged mode (not dev)
+  ipcMain.handle('system:isPackaged', () => {
+    return app.isPackaged
+  })
+
+  // Install hive-server shell wrapper to /usr/local/bin
+  ipcMain.handle('system:installServerToPath', async () => {
+    const targetPath = '/usr/local/bin/hive-server'
+    const execAsync = promisify(exec)
+
+    try {
+      const execPath = process.execPath
+      const scriptContent = [
+        '#!/bin/bash',
+        '# hive-server — Hive headless mode launcher',
+        '# Installed by Hive.app',
+        `exec "${execPath}" --headless "$@"`
+      ].join('\n') + '\n'
+
+      // Write to a temp file first (no admin needed), then move with elevation
+      const tmpPath = join(app.getPath('temp'), 'hive-server-install')
+      writeFileSync(tmpPath, scriptContent, { mode: 0o755 })
+
+      const osascript = `do shell script "mv '${tmpPath}' '${targetPath}' && chmod +x '${targetPath}'" with administrator privileges`
+      await execAsync(`osascript -e '${osascript}'`, { timeout: 30000 })
+
+      return { success: true, path: targetPath }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // User cancelled the admin dialog
+      if (message.includes('User canceled') || message.includes('-128')) {
+        return { success: false, error: 'Installation cancelled' }
+      }
+      return { success: false, error: message }
+    }
+  })
+
+  // Uninstall hive-server from /usr/local/bin
+  ipcMain.handle('system:uninstallServerFromPath', async () => {
+    const targetPath = '/usr/local/bin/hive-server'
+    const execAsync = promisify(exec)
+
+    try {
+      if (!existsSync(targetPath)) {
+        return { success: false, error: 'hive-server is not installed' }
+      }
+
+      const osascript = `do shell script "rm '${targetPath}'" with administrator privileges`
+      await execAsync(`osascript -e '${osascript}'`, { timeout: 30000 })
+
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes('User canceled') || message.includes('-128')) {
+        return { success: false, error: 'Uninstall cancelled' }
+      }
+      return { success: false, error: message }
+    }
+  })
 }
 
 // Register response logging IPC handlers (only when --log is active)
@@ -312,7 +385,7 @@ function registerLoggingHandlers(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Fix PATH for macOS when launched from Finder/Dock/Spotlight.
   // Must run before any child process spawning (opencode, scripts).
   fixPath()
@@ -332,6 +405,31 @@ app.whenReady().then(() => {
 
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.hive')
+
+  // --- Headless mode ---
+  if (isHeadless) {
+    log.info('Starting in headless mode')
+
+    // Handle one-shot management commands
+    if (isRotateKey || isRegenCerts || isShowStatus || isKill || isUnlock) {
+      const { handleManagementCommand } = await import('../server/headless-bootstrap')
+      await handleManagementCommand({
+        rotateKey: isRotateKey,
+        regenCerts: isRegenCerts,
+        showStatus: isShowStatus,
+        kill: isKill,
+        unlock: isUnlock
+      })
+      app.quit()
+      return
+    }
+
+    // Normal headless startup
+    const { headlessBootstrap } = await import('../server/headless-bootstrap')
+    await headlessBootstrap({ port: headlessPort, bind: headlessBind })
+    return
+  }
+  // --- End headless mode ---
 
   // Initialize database
   log.info('Initializing database')

@@ -10,24 +10,35 @@ import type { DatabaseService } from '../db/database'
 import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
 import { generateSessionTitle } from './claude-session-title'
 import { autoRenameWorktreeBranch } from './git-service'
+import { getEventBus } from '../../server/event-bus'
+import { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
+
+const CLAUDE_EFFORT_VARIANTS_FULL = { low: {}, medium: {}, high: {}, max: {} }
+const CLAUDE_EFFORT_VARIANTS_STANDARD = { low: {}, medium: {}, high: {} }
 
 const CLAUDE_MODELS = [
   {
     id: 'opus',
     name: 'Opus 4.6',
-    limit: { context: 200000, output: 32000 }
+    limit: { context: 200000, output: 32000 },
+    variants: CLAUDE_EFFORT_VARIANTS_FULL,
+    defaultVariant: 'max'
   },
   {
     id: 'sonnet',
-    name: 'Sonnet 4.5',
-    limit: { context: 200000, output: 16000 }
+    name: 'Sonnet 4.6',
+    limit: { context: 200000, output: 16000 },
+    variants: CLAUDE_EFFORT_VARIANTS_STANDARD,
+    defaultVariant: 'high'
   },
   {
     id: 'haiku',
     name: 'Haiku 4.5',
-    limit: { context: 200000, output: 8192 }
+    limit: { context: 200000, output: 8192 },
+    variants: CLAUDE_EFFORT_VARIANTS_STANDARD,
+    defaultVariant: 'high'
   }
 ]
 
@@ -111,6 +122,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   private claudeBinaryPath: string | null = null
   private sessions = new Map<string, ClaudeSessionState>()
   private selectedModel: string = 'sonnet'
+  private selectedVariant: string | undefined
   /** Tracks in-flight tool_use content blocks for input_json_delta accumulation.
    *  Keyed by hiveSessionId → Map<blockIndex, { id, name, inputJson }>. */
   private activeToolBlocks = new Map<
@@ -395,7 +407,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       // Determine permission mode from DB session mode
       // 'plan' mode uses SDK-native plan mode (ExitPlanMode blocking tool)
       // 'build' mode uses 'default' so canUseTool handles AskUserQuestion
-      let sdkPermissionMode: string = 'default'
+      let sdkPermissionMode: PermissionMode = 'default'
       if (this.dbService) {
         try {
           const dbSession = this.dbService.getSession(session.hiveSessionId)
@@ -407,17 +419,27 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         }
       }
 
+      // Resolve effort level from variant selection (default per model)
+      const resolvedModel = modelOverride?.modelID ?? this.selectedModel
+      const modelDef = CLAUDE_MODELS.find((m) => m.id === resolvedModel)
+      const effortLevel = (modelOverride?.variant ??
+        this.selectedVariant ??
+        modelDef?.defaultVariant ??
+        'high') as Options['effort']
+
       // Build SDK query options
-      const options: Record<string, unknown> = {
+      const options: Options = {
         cwd: session.worktreePath,
         permissionMode: sdkPermissionMode,
         abortController: session.abortController,
         maxThinkingTokens: 31999,
-        model: modelOverride?.modelID ?? this.selectedModel,
+        model: resolvedModel,
         includePartialMessages: true,
         enableFileCheckpointing: true,
         settingSources: ['user', 'project', 'local'],
         extraArgs: { 'replay-user-messages': null },
+        thinking: { type: 'adaptive' },
+        effort: effortLevel,
         env: {
           ...process.env,
           CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
@@ -447,6 +469,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
       log.info('Prompt: calling sdk.query()', {
         model: options.model,
+        effort: options.effort,
         resume: !!options.resume,
         forkSession: !!options.forkSession,
         resumeSessionAt: options.resumeSessionAt ?? null,
@@ -893,7 +916,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         id: 'claude-code',
         name: 'Claude Code',
         models: Object.fromEntries(
-          CLAUDE_MODELS.map((m) => [m.id, { id: m.id, name: m.name, limit: m.limit }])
+          CLAUDE_MODELS.map((m) => [
+            m.id,
+            { id: m.id, name: m.name, limit: m.limit, variants: m.variants }
+          ])
         )
       }
     ]
@@ -914,7 +940,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
   setSelectedModel(model: { providerID: string; modelID: string; variant?: string }): void {
     this.selectedModel = model.modelID
-    log.info('Selected model set', { model: model.modelID })
+    this.selectedVariant = model.variant
+    log.info('Selected model set', { model: model.modelID, variant: model.variant })
   }
 
   // ── Session info ─────────────────────────────────────────────────
@@ -2360,7 +2387,18 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send(channel, data)
     } else {
-      log.warn('Cannot send to renderer: window not available')
+      // Headless mode — no renderer window. Events still reach mobile
+      // clients via the EventBus emit below, so this is expected.
+      log.debug('sendToRenderer: no window (headless)')
+    }
+    try {
+      const bus = getEventBus()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (channel === 'opencode:stream') bus.emit('opencode:stream', data as any)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      else if (channel === 'worktree:branchRenamed') bus.emit('worktree:branchRenamed', data as any)
+    } catch {
+      // EventBus not available
     }
   }
 

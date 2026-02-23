@@ -1,0 +1,23 @@
+type FileTreeNode {
+  name: String!
+  path: String!
+  relativePath: String!
+  isDirectory: Boolean!
+  isSymlink: Boolean
+  extension: String
+  children: [FileTreeNode!]
+}
+
+type FlatFile {
+  name: String!
+  path: String!
+  relativePath: String!
+  extension: String
+}
+
+type FileTreeChangeEvent {
+  worktreePath: String!
+  eventType: String!
+  changedPath: String!
+  relativePath: String!
+}

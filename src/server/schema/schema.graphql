@@ -1,0 +1,233 @@
+type Query {
+  # --- Projects ---
+  projects: [Project!]!
+  project(id: ID!): Project
+  projectByPath(path: String!): Project
+
+  # --- Worktrees ---
+  worktree(id: ID!): Worktree
+  worktreesByProject(projectId: ID!): [Worktree!]!
+  activeWorktreesByProject(projectId: ID!): [Worktree!]!
+  worktreeExists(worktreePath: String!): Boolean!
+  worktreeHasCommits(projectPath: String!): Boolean!
+
+  # --- Sessions ---
+  session(id: ID!): Session
+  sessionsByWorktree(worktreeId: ID!): [Session!]!
+  activeSessionsByWorktree(worktreeId: ID!): [Session!]!
+  sessionsByProject(projectId: ID!): [Session!]!
+  sessionsByConnection(connectionId: ID!): [Session!]!
+  activeSessionsByConnection(connectionId: ID!): [Session!]!
+  searchSessions(input: SessionSearchInput!): [SessionWithWorktree!]!
+  sessionDraft(sessionId: ID!): String
+
+  # --- Spaces ---
+  spaces: [Space!]!
+  spaceProjectIds(spaceId: ID!): [ID!]!
+  allSpaceAssignments: [ProjectSpaceAssignment!]!
+
+  # --- Settings ---
+  setting(key: String!): String
+  allSettings: [SettingEntry!]!
+
+  # --- AI Operations ---
+  opencodeMessages(worktreePath: String!, sessionId: String!): OpenCodeMessagesResult!
+  opencodeModels(agentSdk: AgentSdk): OpenCodeModelsResult!
+  opencodeModelInfo(worktreePath: String!, modelId: String!, agentSdk: AgentSdk): OpenCodeModelInfoResult!
+  opencodeSessionInfo(worktreePath: String!, sessionId: String!): OpenCodeSessionInfoResult!
+  opencodeCommands(worktreePath: String!, sessionId: String): OpenCodeCommandsResult!
+  opencodeCapabilities(sessionId: String): OpenCodeCapabilitiesResult!
+  opencodePermissionList(worktreePath: String): OpenCodePermissionListResult!
+
+  # --- Git ---
+  gitFileStatuses(worktreePath: String!): GitFileStatusesResult!
+  gitDiff(input: GitDiffInput!): GitDiffResult!
+  gitDiffStat(worktreePath: String!): GitDiffStatResult!
+  gitFileContent(worktreePath: String!, filePath: String!): GitFileContentResult!
+  gitRefContent(worktreePath: String!, ref: String!, filePath: String!): GitRefContentResult!
+  gitBranchInfo(worktreePath: String!): GitBranchInfoResult!
+  gitBranches(projectPath: String!): GitBranchesResult!
+  gitBranchExists(projectPath: String!, branchName: String!): Boolean!
+  gitBranchesWithStatus(projectPath: String!): GitBranchesWithStatusResult!
+  gitIsBranchMerged(worktreePath: String!, branch: String!): GitIsMergedResult!
+  gitRemoteUrl(worktreePath: String!, remote: String): GitRemoteUrlResult!
+  gitListPRs(projectPath: String!): GitPRListResult!
+
+  # --- File Tree ---
+  fileTreeScan(dirPath: String!): FileTreeScanResult!
+  fileTreeScanFlat(dirPath: String!): FileTreeScanFlatResult!
+  fileTreeLoadChildren(dirPath: String!, rootPath: String!): FileTreeChildrenResult!
+
+  # --- File ---
+  fileRead(filePath: String!): FileReadResult!
+  fileReadPrompt(promptName: String!): FileReadResult!
+
+  # --- Connection ---
+  connections: [ConnectionWithMembers!]!
+  connection(connectionId: ID!): ConnectionWithMembers
+
+  # --- Project Operations ---
+  projectValidate(path: String!): ProjectValidateResult!
+  projectIsGitRepository(path: String!): Boolean!
+  projectDetectLanguage(projectPath: String!): String
+  projectLanguageIcons: JSON!
+  projectIconPath(filename: String!): String
+
+  # --- Settings Operations ---
+  detectedEditors: [DetectedApp!]!
+  detectedTerminals: [DetectedApp!]!
+
+  # --- System ---
+  systemLogDir: String!
+  systemAppVersion: String!
+  systemAppPaths: AppPaths!
+  systemDetectAgentSdks: AgentSdkDetection!
+  systemServerStatus: ServerStatus!
+
+  # --- Script ---
+  scriptPort(cwd: String!): Int
+
+  # --- DB Utility ---
+  dbSchemaVersion: Int!
+}
+
+type Mutation {
+  # --- Projects ---
+  createProject(input: CreateProjectInput!): Project!
+  updateProject(id: ID!, input: UpdateProjectInput!): Project
+  deleteProject(id: ID!): Boolean!
+  touchProject(id: ID!): Boolean!
+  reorderProjects(orderedIds: [ID!]!): Boolean!
+
+  # --- Worktrees ---
+  createWorktree(input: CreateWorktreeInput!): WorktreeCreateResult!
+  deleteWorktree(input: DeleteWorktreeInput!): SuccessResult!
+  syncWorktrees(projectId: ID!, projectPath: String!): SuccessResult!
+  duplicateWorktree(input: DuplicateWorktreeInput!): WorktreeCreateResult!
+  renameWorktreeBranch(input: RenameBranchInput!): SuccessResult!
+  createWorktreeFromBranch(input: CreateFromBranchInput!): WorktreeCreateResult!
+  updateWorktree(id: ID!, input: UpdateWorktreeInput!): Worktree
+  archiveWorktree(id: ID!): Worktree
+  touchWorktree(id: ID!): Boolean!
+  appendWorktreeSessionTitle(worktreeId: ID!, title: String!): SuccessResult!
+  updateWorktreeModel(input: UpdateWorktreeModelInput!): SuccessResult!
+
+  # --- Sessions ---
+  createSession(input: CreateSessionInput!): Session!
+  updateSession(id: ID!, input: UpdateSessionInput!): Session
+  deleteSession(id: ID!): Boolean!
+  updateSessionDraft(sessionId: ID!, draft: String): Boolean!
+
+  # --- Spaces ---
+  createSpace(input: CreateSpaceInput!): Space!
+  updateSpace(id: ID!, input: UpdateSpaceInput!): Space
+  deleteSpace(id: ID!): Boolean!
+  assignProjectToSpace(projectId: ID!, spaceId: ID!): Boolean!
+  removeProjectFromSpace(projectId: ID!, spaceId: ID!): Boolean!
+  reorderSpaces(orderedIds: [ID!]!): Boolean!
+
+  # --- Settings ---
+  setSetting(key: String!, value: String!): Boolean!
+  deleteSetting(key: String!): Boolean!
+
+  # --- AI Operations ---
+  opencodeConnect(worktreePath: String!, hiveSessionId: ID!): OpenCodeConnectResult!
+  opencodeReconnect(input: OpenCodeReconnectInput!): OpenCodeReconnectResult!
+  opencodeDisconnect(worktreePath: String!, sessionId: String!): SuccessResult!
+  opencodePrompt(input: OpenCodePromptInput!): SuccessResult!
+  opencodeAbort(worktreePath: String!, sessionId: String!): SuccessResult!
+  opencodeSetModel(input: SetModelInput!): SuccessResult!
+  opencodeUndo(worktreePath: String!, sessionId: String!): OpenCodeUndoResult!
+  opencodeRedo(worktreePath: String!, sessionId: String!): OpenCodeRedoResult!
+  opencodeCommand(input: OpenCodeCommandInput!): SuccessResult!
+  opencodeRenameSession(input: RenameSessionInput!): SuccessResult!
+  opencodeFork(input: ForkSessionInput!): OpenCodeForkResult!
+  opencodeQuestionReply(input: QuestionReplyInput!): SuccessResult!
+  opencodeQuestionReject(requestId: String!, worktreePath: String): SuccessResult!
+  opencodePlanApprove(input: PlanApproveInput!): SuccessResult!
+  opencodePlanReject(input: PlanRejectInput!): SuccessResult!
+  opencodePermissionReply(input: PermissionReplyInput!): SuccessResult!
+
+  # --- Git ---
+  gitStageFile(worktreePath: String!, filePath: String!): SuccessResult!
+  gitUnstageFile(worktreePath: String!, filePath: String!): SuccessResult!
+  gitStageAll(worktreePath: String!): SuccessResult!
+  gitUnstageAll(worktreePath: String!): SuccessResult!
+  gitStageHunk(worktreePath: String!, patch: String!): SuccessResult!
+  gitUnstageHunk(worktreePath: String!, patch: String!): SuccessResult!
+  gitRevertHunk(worktreePath: String!, patch: String!): SuccessResult!
+  gitDiscardChanges(worktreePath: String!, filePath: String!): SuccessResult!
+  gitAddToGitignore(worktreePath: String!, pattern: String!): SuccessResult!
+  gitCommit(worktreePath: String!, message: String!): GitCommitResult!
+  gitPush(input: GitPushInput!): SuccessResult!
+  gitPull(input: GitPullInput!): SuccessResult!
+  gitMerge(worktreePath: String!, sourceBranch: String!): GitMergeResult!
+  gitDeleteBranch(worktreePath: String!, branchName: String!): SuccessResult!
+  gitPrMerge(worktreePath: String!, prNumber: Int!): SuccessResult!
+  gitWatchWorktree(worktreePath: String!): SuccessResult!
+  gitUnwatchWorktree(worktreePath: String!): SuccessResult!
+  gitWatchBranch(worktreePath: String!): SuccessResult!
+  gitUnwatchBranch(worktreePath: String!): SuccessResult!
+
+  # --- File Tree ---
+  fileTreeWatch(worktreePath: String!): SuccessResult!
+  fileTreeUnwatch(worktreePath: String!): SuccessResult!
+
+  # --- File ---
+  fileWrite(filePath: String!, content: String!): SuccessResult!
+
+  # --- Script ---
+  scriptRunSetup(input: ScriptRunInput!): SuccessResult!
+  scriptRunProject(input: ScriptRunInput!): ScriptRunResult!
+  scriptKill(worktreeId: ID!): SuccessResult!
+  scriptRunArchive(commands: [String!]!, cwd: String!): ScriptArchiveResult!
+
+  # --- Terminal ---
+  terminalCreate(worktreeId: ID!, cwd: String!, shell: String): TerminalCreateResult!
+  terminalWrite(worktreeId: ID!, data: String!): Boolean!
+  terminalResize(worktreeId: ID!, cols: Int!, rows: Int!): Boolean!
+  terminalDestroy(worktreeId: ID!): Boolean!
+
+  # --- Connection ---
+  createConnection(worktreeIds: [ID!]!): ConnectionCreateResult!
+  deleteConnection(connectionId: ID!): SuccessResult!
+  renameConnection(connectionId: ID!, customName: String): ConnectionWithMembers
+  addConnectionMember(connectionId: ID!, worktreeId: ID!): ConnectionAddMemberResult!
+  removeConnectionMember(connectionId: ID!, worktreeId: ID!): ConnectionRemoveMemberResult!
+  removeWorktreeFromAllConnections(worktreeId: ID!): SuccessResult!
+
+  # --- Project Operations ---
+  projectInitRepository(path: String!): SuccessResult!
+  projectUploadIcon(projectId: ID!, data: String!, filename: String!): SuccessResult!
+  projectRemoveIcon(projectId: ID!): SuccessResult!
+
+  # --- Logging ---
+  createResponseLog(sessionId: ID!): String!
+  appendResponseLog(filePath: String!, data: JSON!): Boolean!
+
+  # --- System ---
+  systemKillSwitch: Boolean!
+  systemRegisterPushToken(token: String!, platform: String!): Boolean!
+}
+
+type Subscription {
+  # AI streaming (core subscription)
+  opencodeStream(sessionIds: [String!]): OpenCodeStreamEvent!
+
+  # Git status changes
+  gitStatusChanged(worktreePath: String): GitStatusChangedEvent!
+  gitBranchChanged(worktreePath: String): GitBranchChangedEvent!
+
+  # File tree changes
+  fileTreeChange(worktreePath: String): FileTreeChangeEvent!
+
+  # Terminal I/O
+  terminalData(worktreeId: ID!): TerminalDataEvent!
+  terminalExit(worktreeId: ID!): TerminalExitEvent!
+
+  # Script output
+  scriptOutput(worktreeId: ID!, channel: String!): ScriptOutputEvent!
+
+  # Worktree events
+  worktreeBranchRenamed: WorktreeBranchRenamedEvent!
+}

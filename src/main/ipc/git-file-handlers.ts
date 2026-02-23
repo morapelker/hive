@@ -19,6 +19,7 @@ import {
   GitDiffStatResult
 } from '../services/git-service'
 import { createLogger } from '../services/logger'
+import { getEventBus } from '../../server/event-bus'
 import {
   initWorktreeWatcher,
   watchWorktree,
@@ -588,6 +589,7 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         if (mainWindow) {
           mainWindow.webContents.send('git:statusChanged', { worktreePath })
         }
+        try { getEventBus().emit('git:statusChanged', { worktreePath }) } catch { /* EventBus not available */ }
 
         return { success: true }
       } catch (error) {

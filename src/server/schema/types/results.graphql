@@ -1,0 +1,248 @@
+# Common
+type SuccessResult {
+  success: Boolean!
+  error: String
+}
+
+type WorktreeCreateResult {
+  success: Boolean!
+  worktree: Worktree
+  error: String
+}
+
+# OpenCode Results
+type OpenCodeConnectResult {
+  success: Boolean!
+  sessionId: String
+  error: String
+}
+
+type OpenCodeReconnectResult {
+  success: Boolean!
+  sessionStatus: String
+  revertMessageID: String
+  error: String
+}
+
+type OpenCodeMessagesResult {
+  success: Boolean!
+  messages: JSON
+  error: String
+}
+
+type OpenCodeModelsResult {
+  success: Boolean!
+  providers: JSON
+  error: String
+}
+
+type OpenCodeModelInfoResult {
+  success: Boolean!
+  model: JSON
+  error: String
+}
+
+type OpenCodeSessionInfoResult {
+  success: Boolean!
+  revertMessageID: String
+  revertDiff: String
+  error: String
+}
+
+type OpenCodeUndoResult {
+  success: Boolean!
+  revertMessageID: String
+  restoredPrompt: String
+  revertDiff: String
+  error: String
+}
+
+type OpenCodeRedoResult {
+  success: Boolean!
+  revertMessageID: String
+  error: String
+}
+
+type OpenCodeCommandsResult {
+  success: Boolean!
+  commands: [OpenCodeCommand!]!
+  error: String
+}
+
+type OpenCodeCapabilitiesResult {
+  success: Boolean!
+  capabilities: OpenCodeCapabilities
+  error: String
+}
+
+type OpenCodePermissionListResult {
+  success: Boolean!
+  permissions: [PermissionRequest!]!
+  error: String
+}
+
+type OpenCodeForkResult {
+  success: Boolean!
+  sessionId: String
+  error: String
+}
+
+# Git Results
+type GitFileStatusesResult {
+  success: Boolean!
+  files: [GitFileStatus!]
+  error: String
+}
+
+type GitDiffResult {
+  success: Boolean!
+  diff: String
+  fileName: String
+  error: String
+}
+
+type GitDiffStatResult {
+  success: Boolean!
+  files: [GitDiffStatFile!]
+  error: String
+}
+
+type GitFileContentResult {
+  success: Boolean!
+  content: String
+  error: String
+}
+
+type GitRefContentResult {
+  success: Boolean!
+  content: String
+  error: String
+}
+
+type GitBranchInfoResult {
+  success: Boolean!
+  branch: GitBranchInfo
+  error: String
+}
+
+type GitBranchesResult {
+  success: Boolean!
+  branches: [String!]
+  currentBranch: String
+  error: String
+}
+
+type GitBranchesWithStatusResult {
+  success: Boolean!
+  branches: [GitBranchWithStatus!]
+  error: String
+}
+
+type GitIsMergedResult {
+  success: Boolean!
+  isMerged: Boolean!
+}
+
+type GitRemoteUrlResult {
+  success: Boolean!
+  url: String
+  remote: String
+  error: String
+}
+
+type GitPRListResult {
+  success: Boolean!
+  prs: [GitPR!]
+  error: String
+}
+
+type GitCommitResult {
+  success: Boolean!
+  commitHash: String
+  error: String
+}
+
+type GitMergeResult {
+  success: Boolean!
+  error: String
+  conflicts: [String!]
+}
+
+# File Results
+type FileTreeScanResult {
+  success: Boolean!
+  tree: [FileTreeNode!]
+  error: String
+}
+
+type FileTreeScanFlatResult {
+  success: Boolean!
+  files: [FlatFile!]
+  error: String
+}
+
+type FileTreeChildrenResult {
+  success: Boolean!
+  children: [FileTreeNode!]
+  error: String
+}
+
+type FileReadResult {
+  success: Boolean!
+  content: String
+  error: String
+}
+
+# Project Results
+type ProjectValidateResult {
+  success: Boolean!
+  path: String
+  name: String
+  error: String
+}
+
+# Terminal Results
+type TerminalCreateResult {
+  success: Boolean!
+  cols: Int
+  rows: Int
+  error: String
+}
+
+# Script Results
+type ScriptRunResult {
+  success: Boolean!
+  pid: Int
+  error: String
+}
+
+type ScriptArchiveResult {
+  success: Boolean!
+  output: String
+  error: String
+}
+
+# Connection Results
+type ConnectionCreateResult {
+  success: Boolean!
+  connection: ConnectionWithMembers
+  error: String
+}
+
+type ConnectionAddMemberResult {
+  success: Boolean!
+  member: JSON
+  error: String
+}
+
+type ConnectionRemoveMemberResult {
+  success: Boolean!
+  connectionDeleted: Boolean
+  error: String
+}
+
+# Subscription Events
+type WorktreeBranchRenamedEvent {
+  worktreeId: ID!
+  newBranch: String!
+}

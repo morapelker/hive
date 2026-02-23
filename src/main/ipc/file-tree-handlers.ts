@@ -4,6 +4,7 @@ import simpleGit from 'simple-git'
 import { Dirent, promises as fs, existsSync, statSync } from 'fs'
 import { join, basename, extname, relative } from 'path'
 import { createLogger } from '../services/logger'
+import { getEventBus } from '../../server/event-bus'
 
 const log = createLogger({ component: 'FileTreeHandlers' })
 
@@ -271,12 +272,15 @@ function emitFileTreeChange(worktreePath: string, eventType: string, changedPath
   // Set new debounce timer (100ms as per requirements)
   const timer = setTimeout(() => {
     debounceTimers.delete(worktreePath)
-    mainWindow?.webContents.send('file-tree:change', {
+    const payload = {
       worktreePath,
       eventType,
       changedPath,
       relativePath: relative(worktreePath, changedPath)
-    })
+    }
+    mainWindow?.webContents.send('file-tree:change', payload)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try { getEventBus().emit('file-tree:change', payload as any) } catch { /* EventBus not available */ }
   }, 100)
 
   debounceTimers.set(worktreePath, timer)
