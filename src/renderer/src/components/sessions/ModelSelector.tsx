@@ -373,7 +373,7 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
                           }}
                           data-testid={`variant-chip-${variant}`}
                         >
-                          {variant}
+                          {variant.toUpperCase()}
                         </button>
                       ))}
                     </div>
