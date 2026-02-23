@@ -17,7 +17,8 @@ import {
   Plus,
   Minus,
   Zap,
-  ClipboardCheck
+  ClipboardCheck,
+  Globe
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './tools/types'
@@ -32,6 +33,7 @@ import { TaskToolView } from './tools/TaskToolView'
 import { QuestionToolView } from './tools/QuestionToolView'
 import { SkillToolView } from './tools/SkillToolView'
 import { ExitPlanModeToolView } from './tools/ExitPlanModeToolView'
+import { WebFetchToolView } from './tools/WebFetchToolView'
 import { ToolCallContextMenu } from './ToolCallContextMenu'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
@@ -96,6 +98,9 @@ function getToolIcon(name: string): React.JSX.Element {
   if (lowerName === 'exitplanmode') {
     return <ClipboardCheck className={iconClass} />
   }
+  if (lowerName === 'webfetch' || lowerName === 'web_fetch') {
+    return <Globe className={iconClass} />
+  }
   // Default
   return <Terminal className={iconClass} />
 }
@@ -158,6 +163,16 @@ function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string
     return skillName || 'unknown'
   }
 
+  // Show URL for webfetch
+  if (lowerName === 'webfetch' || lowerName === 'web_fetch') {
+    const url = (input.url || '') as string
+    try {
+      return new URL(url).hostname
+    } catch {
+      return url
+    }
+  }
+
   return ''
 }
 
@@ -218,7 +233,10 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   Skill: SkillToolView,
   mcp_skill: SkillToolView,
   ExitPlanMode: ExitPlanModeToolView,
-  exitplanmode: ExitPlanModeToolView
+  exitplanmode: ExitPlanModeToolView,
+  WebFetch: WebFetchToolView,
+  webfetch: WebFetchToolView,
+  web_fetch: WebFetchToolView
 }
 
 /** Resolve a tool name to its rich renderer, falling back to FallbackToolView */
@@ -247,6 +265,7 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (lower.includes('question')) return QuestionToolView
   if (lower.includes('skill')) return SkillToolView
   if (lower === 'exitplanmode') return ExitPlanModeToolView
+  if (lower === 'webfetch' || lower === 'web_fetch') return WebFetchToolView
   // Fallback
   return FallbackToolView
 }
@@ -486,6 +505,24 @@ function CollapsedContent({
         )}>
           {badgeText}
         </span>
+      </>
+    )
+  }
+
+  // WebFetch
+  if (lowerName === 'webfetch' || lowerName === 'web_fetch') {
+    const url = (input.url || '') as string
+    let hostname = url
+    try {
+      hostname = new URL(url).hostname
+    } catch {
+      // keep full url
+    }
+    return (
+      <>
+        <Globe className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+        <span className="font-medium text-foreground shrink-0">Fetch</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">{hostname}</span>
       </>
     )
   }
