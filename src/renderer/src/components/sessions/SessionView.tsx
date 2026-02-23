@@ -44,7 +44,7 @@ const EMPTY_FILE_TREE: never[] = []
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
-import { PLAN_MODE_PREFIX, stripPlanModePrefix } from '@/lib/constants'
+import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, stripPlanModePrefix } from '@/lib/constants'
 
 interface SlashCommandInfo {
   name: string
@@ -71,6 +71,12 @@ export const BUILT_IN_SLASH_COMMANDS: SlashCommandInfo[] = [
     name: 'clear',
     description: 'Close current tab and open a new one',
     template: '/clear',
+    builtIn: true
+  },
+  {
+    name: 'ask',
+    description: 'Ask a question without making code changes (uses Haiku for low token usage)',
+    template: '/ask ',
     builtIn: true
   }
 ]
@@ -2514,6 +2520,102 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             if (success && session) {
               useSessionStore.getState().setActiveSession(session.id)
             }
+          }
+
+          return
+        }
+
+        if (commandName === 'ask') {
+          const question = trimmedValue.slice(5).trim() // Remove "/ask " prefix
+
+          if (!question) {
+            toast.error('Please provide a question after /ask')
+            return
+          }
+
+          if (!worktreePath || !opencodeSessionId) {
+            toast.error('OpenCode is not connected')
+            return
+          }
+
+          setShowSlashCommands(false)
+
+          // Clear input and update UI state immediately
+          setInputValue('')
+          inputValueRef.current = ''
+          fileMentions.clearMentions()
+          if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+          window.db.session.updateDraft(sessionId, null)
+
+          // Set sending state
+          hasFinalizedCurrentResponseRef.current = false
+          setIsSending(true)
+
+          // Handle scroll behavior
+          if (scrollCooldownRef.current !== null) {
+            clearTimeout(scrollCooldownRef.current)
+            scrollCooldownRef.current = null
+          }
+          isScrollCooldownActiveRef.current = false
+          isAutoScrollEnabledRef.current = true
+          setShowScrollFab(false)
+          userHasScrolledUpRef.current = false
+
+          // Start completion badge timer
+          messageSendTimes.set(sessionId, Date.now())
+          lastSendMode.set(sessionId, 'ask')
+          useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+
+          // Force Haiku model for low token usage
+          const haikuModel = {
+            providerID: 'anthropic',
+            modelID: 'claude-haiku-4-5-20251001'
+          }
+
+          // Prefix with ASK_MODE_PREFIX to prevent code changes
+          const prefixedQuestion = ASK_MODE_PREFIX + question
+
+          // Add user message to UI immediately (before response)
+          setMessages((prev) => [...prev, createLocalMessage('user', prefixedQuestion)])
+
+          // Mark that a new prompt is in flight
+          newPromptPendingRef.current = true
+
+          // Record prompt to history
+          if (worktreeId) {
+            usePromptHistoryStore.getState().addPrompt(worktreeId, question)
+            useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
+          }
+
+          // Build message parts (support file attachments if any)
+          const parts: MessagePart[] = [
+            ...attachments.map((a) => ({
+              type: 'file' as const,
+              mime: a.mime,
+              url: a.dataUrl,
+              filename: a.name
+            })),
+            { type: 'text' as const, text: prefixedQuestion }
+          ]
+          setAttachments([])
+
+          try {
+            const result = await window.opencodeOps.prompt(
+              worktreePath,
+              opencodeSessionId,
+              parts,
+              haikuModel
+            )
+
+            if (!result.success) {
+              console.error('Failed to send /ask question:', result.error)
+              toast.error('Failed to send question')
+              setIsSending(false)
+            }
+          } catch (error) {
+            console.error('Error sending /ask question:', error)
+            toast.error('Failed to send question')
+            setIsSending(false)
           }
 
           return
