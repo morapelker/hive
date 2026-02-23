@@ -59,6 +59,7 @@ interface Worktree {
   last_model_provider_id: string | null
   last_model_id: string | null
   last_model_variant: string | null
+  attachments: string // JSON array of Attachment objects
   created_at: string
   last_accessed_at: string
 }
@@ -201,6 +202,14 @@ declare global {
           modelId: string
           modelVariant: string | null
         }) => Promise<{ success: boolean; error?: string }>
+        addAttachment: (
+          worktreeId: string,
+          attachment: { type: 'jira' | 'figma'; url: string; label: string }
+        ) => Promise<{ success: boolean; error?: string }>
+        removeAttachment: (
+          worktreeId: string,
+          attachmentId: string
+        ) => Promise<{ success: boolean; error?: string }>
       }
       session: {
         create: (data: {

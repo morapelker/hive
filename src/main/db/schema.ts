@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 5
+export const CURRENT_SCHEMA_VERSION = 6
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS worktrees (
   last_model_provider_id TEXT,
   last_model_id TEXT,
   last_model_variant TEXT,
+  attachments TEXT DEFAULT '[]',
   created_at TEXT NOT NULL,
   last_accessed_at TEXT NOT NULL
 );
@@ -202,6 +203,12 @@ export const MIGRATIONS: Migration[] = [
     name: 'add_connection_custom_name',
     up: `-- NOTE: ALTER TABLE for custom_name is handled idempotently by
          -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 6,
+    name: 'add_worktree_attachments',
+    up: `ALTER TABLE worktrees ADD COLUMN attachments TEXT DEFAULT '[]'`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]
