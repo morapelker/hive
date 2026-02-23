@@ -15,29 +15,28 @@ import { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
-const CLAUDE_EFFORT_VARIANTS_FULL = { low: {}, medium: {}, high: {}, max: {} }
-const CLAUDE_EFFORT_VARIANTS_STANDARD = { low: {}, medium: {}, high: {} }
+const CLAUDE_EFFORT_VARIANTS = { low: {}, medium: {}, high: {} }
 
 const CLAUDE_MODELS = [
   {
     id: 'opus',
     name: 'Opus 4.6',
     limit: { context: 200000, output: 32000 },
-    variants: CLAUDE_EFFORT_VARIANTS_FULL,
-    defaultVariant: 'max'
+    variants: CLAUDE_EFFORT_VARIANTS,
+    defaultVariant: 'high'
   },
   {
     id: 'sonnet',
     name: 'Sonnet 4.6',
     limit: { context: 200000, output: 16000 },
-    variants: CLAUDE_EFFORT_VARIANTS_STANDARD,
+    variants: CLAUDE_EFFORT_VARIANTS,
     defaultVariant: 'high'
   },
   {
     id: 'haiku',
     name: 'Haiku 4.5',
     limit: { context: 200000, output: 8192 },
-    variants: CLAUDE_EFFORT_VARIANTS_STANDARD,
+    variants: CLAUDE_EFFORT_VARIANTS,
     defaultVariant: 'high'
   }
 ]
