@@ -86,7 +86,8 @@ export class DatabaseService {
       session_titles: (row.session_titles as string) ?? '[]',
       last_model_provider_id: (row.last_model_provider_id as string) ?? null,
       last_model_id: (row.last_model_id as string) ?? null,
-      last_model_variant: (row.last_model_variant as string) ?? null
+      last_model_variant: (row.last_model_variant as string) ?? null,
+      attachments: (row.attachments as string) ?? '[]'
     } as Worktree
   }
 
