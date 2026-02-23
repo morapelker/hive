@@ -50,7 +50,7 @@ export function MessageRenderer({
         />
       ) : (
         <AssistantCanvas
-          content={displayContent}
+          content={message.content}
           timestamp={message.timestamp}
           isStreaming={isStreaming}
           parts={message.parts}
