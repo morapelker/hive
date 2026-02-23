@@ -218,6 +218,11 @@ pnpm exec electron-builder --mac --publish always
 
 ok "Assets uploaded to GitHub Releases"
 
+# Also publish canary-mac.yml so canary-channel users see this stable release
+cp "$DIST_DIR/latest-mac.yml" "$DIST_DIR/canary-mac.yml"
+gh release upload "v${NEW_VERSION}" "$DIST_DIR/canary-mac.yml" --repo "$REPO" --clobber
+ok "canary-mac.yml published (canary users will see this stable release)"
+
 # Un-draft the release and attach release notes
 info "Publishing release (removing draft status)..."
 if [[ -n "$RELEASE_NOTES" ]]; then

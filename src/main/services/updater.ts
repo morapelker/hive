@@ -36,7 +36,7 @@ export const updaterService = {
     const channel = getUpdateChannel()
     autoUpdater.channel = channel === 'canary' ? 'canary' : 'latest'
     autoUpdater.allowPrerelease = channel === 'canary'
-    autoUpdater.allowDowngrade = true // needed so canary->stable downgrades work
+    autoUpdater.allowDowngrade = false // only allow downgrade on explicit channel switch
     log.info('Auto-updater initialized', { channel })
 
     autoUpdater.on('checking-for-update', () => {
@@ -123,6 +123,7 @@ export const updaterService = {
   setChannel(channel: 'stable' | 'canary'): void {
     autoUpdater.channel = channel === 'canary' ? 'canary' : 'latest'
     autoUpdater.allowPrerelease = channel === 'canary'
+    autoUpdater.allowDowngrade = true // allow downgrade on explicit channel switch
     log.info('Update channel changed', { channel })
     this.checkForUpdates()
   },
