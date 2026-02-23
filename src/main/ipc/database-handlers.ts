@@ -167,6 +167,37 @@ export function registerDatabaseHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    'db:worktree:addAttachment',
+    (
+      _event,
+      {
+        worktreeId,
+        attachment
+      }: {
+        worktreeId: string
+        attachment: { type: 'jira' | 'figma'; url: string; label: string }
+      }
+    ) => {
+      try {
+        return getDatabase().addAttachment(worktreeId, attachment)
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'db:worktree:removeAttachment',
+    (_event, { worktreeId, attachmentId }: { worktreeId: string; attachmentId: string }) => {
+      try {
+        return getDatabase().removeAttachment(worktreeId, attachmentId)
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  )
+
   // Sessions
   ipcMain.handle('db:session:create', (_event, data: SessionCreate) => {
     return getDatabase().createSession(data)
