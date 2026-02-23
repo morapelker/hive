@@ -66,7 +66,14 @@ const db = {
       modelProviderId: string
       modelId: string
       modelVariant: string | null
-    }) => ipcRenderer.invoke('db:worktree:updateModel', params)
+    }) => ipcRenderer.invoke('db:worktree:updateModel', params),
+    addAttachment: (
+      worktreeId: string,
+      attachment: { type: 'jira' | 'figma'; url: string; label: string }
+    ) =>
+      ipcRenderer.invoke('db:worktree:addAttachment', { worktreeId, attachment }),
+    removeAttachment: (worktreeId: string, attachmentId: string) =>
+      ipcRenderer.invoke('db:worktree:removeAttachment', { worktreeId, attachmentId })
   },
 
   // Sessions

@@ -13,7 +13,11 @@ import {
   GitBranchPlus,
   Copy,
   ExternalLink,
-  Pencil
+  Pencil,
+  Figma,
+  Ticket,
+  Plus,
+  Unlink
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -23,14 +27,20 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuTrigger
+  ContextMenuTrigger,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent
 } from '@/components/ui/context-menu'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger
+  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent
 } from '@/components/ui/dropdown-menu'
 import { useWorktreeStore, useProjectStore, useConnectionStore } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
@@ -41,6 +51,7 @@ import { formatRelativeTime } from '@/lib/format-utils'
 import { PulseAnimation } from './PulseAnimation'
 import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
+import { AddAttachmentDialog } from './AddAttachmentDialog'
 
 interface Worktree {
   id: string
@@ -53,6 +64,7 @@ interface Worktree {
   last_message_at: number | null
   created_at: string
   last_accessed_at: string
+  attachments: string // JSON array
 }
 
 interface WorktreeItemProps {
@@ -133,6 +145,51 @@ export function WorktreeItem({
   const [archiveConfirmFiles, setArchiveConfirmFiles] = useState<
     Array<{ path: string; additions: number; deletions: number; binary: boolean }>
   >([])
+
+  // Attachment state
+  const [addAttachmentOpen, setAddAttachmentOpen] = useState(false)
+  const [attachments, setAttachments] = useState<
+    Array<{ id: string; type: 'jira' | 'figma'; url: string; label: string; created_at: string }>
+  >([])
+
+  // Parse attachments from worktree data
+  useEffect(() => {
+    try {
+      setAttachments(JSON.parse(worktree.attachments || '[]'))
+    } catch {
+      setAttachments([])
+    }
+  }, [worktree.attachments])
+
+  const handleOpenAttachment = useCallback(async (url: string): Promise<void> => {
+    await window.systemOps.openInChrome(url)
+  }, [])
+
+  const handleDetachAttachment = useCallback(
+    async (attachmentId: string): Promise<void> => {
+      const result = await window.db.worktree.removeAttachment(worktree.id, attachmentId)
+      if (result.success) {
+        setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
+        toast.success('Attachment removed')
+      } else {
+        toast.error(result.error || 'Failed to remove attachment')
+      }
+    },
+    [worktree.id]
+  )
+
+  const handleAttachmentAdded = useCallback((): void => {
+    // Reload worktree data to get fresh attachments
+    window.db.worktree.get(worktree.id).then((w) => {
+      if (w) {
+        try {
+          setAttachments(JSON.parse(w.attachments || '[]'))
+        } catch {
+          // ignore
+        }
+      }
+    })
+  }, [worktree.id])
 
   // Branch rename state
   const [isRenamingBranch, setIsRenamingBranch] = useState(false)
@@ -476,6 +533,41 @@ export function WorktreeItem({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-52" align="end">
+              {attachments.length > 0 && (
+                <>
+                  {attachments.map((attachment) => (
+                    <DropdownMenuSub key={attachment.id}>
+                      <DropdownMenuSubTrigger>
+                        {attachment.type === 'jira' ? (
+                          <Ticket className="h-4 w-4 mr-2 text-blue-500" />
+                        ) : (
+                          <Figma className="h-4 w-4 mr-2 text-purple-500" />
+                        )}
+                        {attachment.label}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-40">
+                        <DropdownMenuItem onClick={() => handleOpenAttachment(attachment.url)}>
+                          <ExternalLink className="h-4 w-4 mr-2" />
+                          Open
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handleDetachAttachment(attachment.id)}
+                          className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                        >
+                          <Unlink className="h-4 w-4 mr-2" />
+                          Detach
+                        </DropdownMenuItem>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  ))}
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem onClick={() => setAddAttachmentOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Attachment
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleOpenInTerminal}>
                 <Terminal className="h-4 w-4 mr-2" />
                 Open in Terminal
@@ -538,6 +630,41 @@ export function WorktreeItem({
 
       {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">
+        {attachments.length > 0 && (
+          <>
+            {attachments.map((attachment) => (
+              <ContextMenuSub key={attachment.id}>
+                <ContextMenuSubTrigger>
+                  {attachment.type === 'jira' ? (
+                    <Ticket className="h-4 w-4 mr-2 text-blue-500" />
+                  ) : (
+                    <Figma className="h-4 w-4 mr-2 text-purple-500" />
+                  )}
+                  {attachment.label}
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent className="w-40">
+                  <ContextMenuItem onClick={() => handleOpenAttachment(attachment.url)}>
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    Open
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => handleDetachAttachment(attachment.id)}
+                    className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                  >
+                    <Unlink className="h-4 w-4 mr-2" />
+                    Detach
+                  </ContextMenuItem>
+                </ContextMenuSubContent>
+              </ContextMenuSub>
+            ))}
+            <ContextMenuSeparator />
+          </>
+        )}
+        <ContextMenuItem onClick={() => setAddAttachmentOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Attachment
+        </ContextMenuItem>
+        <ContextMenuSeparator />
         <ContextMenuItem onClick={handleOpenInTerminal}>
           <Terminal className="h-4 w-4 mr-2" />
           Open in Terminal
@@ -586,6 +713,13 @@ export function WorktreeItem({
           </>
         )}
       </ContextMenuContent>
+
+      <AddAttachmentDialog
+        open={addAttachmentOpen}
+        onOpenChange={setAddAttachmentOpen}
+        worktreeId={worktree.id}
+        onAttachmentAdded={handleAttachmentAdded}
+      />
     </ContextMenu>
   )
 }

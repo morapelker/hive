@@ -52,6 +52,7 @@ export interface Worktree {
   last_model_provider_id: string | null
   last_model_id: string | null
   last_model_variant: string | null
+  attachments: string // JSON array of Attachment objects
   created_at: string
   last_accessed_at: string
 }
