@@ -80,12 +80,6 @@ export const BUILT_IN_SLASH_COMMANDS: SlashCommandInfo[] = [
     description: 'Ask a question without making code changes',
     template: '/ask ',
     builtIn: true
-  },
-  {
-    name: 'compact',
-    description: 'Manually compact session context to reduce token usage',
-    template: '/compact',
-    builtIn: false
   }
 ]
 

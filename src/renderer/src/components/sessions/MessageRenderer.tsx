@@ -14,16 +14,6 @@ interface MessageRendererProps {
   isForking?: boolean
 }
 
-// Clean up command output tags
-function cleanCommandOutput(content: string): string {
-  // Strip <local-command-stdout> tags and format nicely
-  return content
-    .replace(/<local-command-stdout>/g, '✓ ')
-    .replace(/<\/local-command-stdout>/g, '')
-    .replace(/Compacted Tip/g, 'Compaction tip')
-    .trim()
-}
-
 export function MessageRenderer({
   message,
   isStreaming = false,
@@ -34,17 +24,11 @@ export function MessageRenderer({
 }: MessageRendererProps): React.JSX.Element {
   const isPlanMode = message.role === 'user' && message.content.startsWith(PLAN_MODE_PREFIX)
   const isAskMode = message.role === 'user' && message.content.startsWith(ASK_MODE_PREFIX)
-  let displayContent = isPlanMode
+  const displayContent = isPlanMode
     ? message.content.slice(PLAN_MODE_PREFIX.length)
     : isAskMode
     ? message.content.slice(ASK_MODE_PREFIX.length)
     : message.content
-
-  // Clean command output tags (for all messages)
-  if (displayContent.includes('<local-command-stdout>')) {
-    console.log('[MessageRenderer] Cleaning command output tags from content')
-    displayContent = cleanCommandOutput(displayContent)
-  }
   const isAssistantMessage = message.role === 'assistant' && !isStreaming
 
   return (
