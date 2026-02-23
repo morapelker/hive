@@ -180,6 +180,7 @@ export class DatabaseService {
     this.safeAddColumn('sessions', 'agent_sdk', "TEXT NOT NULL DEFAULT 'opencode'")
     this.safeAddColumn('connections', 'color', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'custom_name', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('worktrees', 'attachments', "TEXT DEFAULT '[]'")
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
@@ -542,6 +543,70 @@ export class DatabaseService {
         worktreeId
       )
     }
+  }
+
+  /**
+   * Add an attachment to a worktree's attachments JSON array.
+   * Rejects duplicates by URL.
+   */
+  addAttachment(
+    worktreeId: string,
+    attachment: { type: 'jira' | 'figma'; url: string; label: string }
+  ): { success: boolean; error?: string } {
+    const db = this.getDb()
+    const row = db.prepare('SELECT attachments FROM worktrees WHERE id = ?').get(worktreeId) as
+      | Record<string, unknown>
+      | undefined
+    if (!row) return { success: false, error: 'Worktree not found' }
+    const attachments: Array<{
+      id: string
+      type: string
+      url: string
+      label: string
+      created_at: string
+    }> = JSON.parse((row.attachments as string) || '[]')
+    if (attachments.some((a) => a.url === attachment.url)) {
+      return { success: false, error: 'Already attached' }
+    }
+    const id = randomUUID()
+    attachments.push({
+      id,
+      type: attachment.type,
+      url: attachment.url,
+      label: attachment.label,
+      created_at: new Date().toISOString()
+    })
+    db.prepare('UPDATE worktrees SET attachments = ? WHERE id = ?').run(
+      JSON.stringify(attachments),
+      worktreeId
+    )
+    return { success: true }
+  }
+
+  /**
+   * Remove an attachment from a worktree by attachment ID.
+   */
+  removeAttachment(
+    worktreeId: string,
+    attachmentId: string
+  ): { success: boolean; error?: string } {
+    const db = this.getDb()
+    const row = db.prepare('SELECT attachments FROM worktrees WHERE id = ?').get(worktreeId) as
+      | Record<string, unknown>
+      | undefined
+    if (!row) return { success: false, error: 'Worktree not found' }
+    const attachments: Array<{ id: string }> = JSON.parse(
+      (row.attachments as string) || '[]'
+    )
+    const filtered = attachments.filter((a) => a.id !== attachmentId)
+    if (filtered.length === attachments.length) {
+      return { success: false, error: 'Attachment not found' }
+    }
+    db.prepare('UPDATE worktrees SET attachments = ? WHERE id = ?').run(
+      JSON.stringify(filtered),
+      worktreeId
+    )
+    return { success: true }
   }
 
   /**
