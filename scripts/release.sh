@@ -26,6 +26,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 info "Running preflight checks..."
 
 cd "$PROJECT_DIR"
+DIST_DIR="$PROJECT_DIR/dist"
 
 # Check gh CLI is authenticated
 gh auth status &>/dev/null || fatal "gh CLI is not authenticated. Run 'gh auth login' first."
@@ -247,7 +248,6 @@ if [[ ! -f "$CASK_FILE" ]]; then
 fi
 
 # Compute SHA256 from local build artifacts
-DIST_DIR="$PROJECT_DIR/dist"
 DMG_ARM="Hive-${NEW_VERSION}-arm64.dmg"
 DMG_X64="Hive-${NEW_VERSION}.dmg"
 
