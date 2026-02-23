@@ -75,7 +75,7 @@ export const BUILT_IN_SLASH_COMMANDS: SlashCommandInfo[] = [
   },
   {
     name: 'ask',
-    description: 'Ask a question without making code changes (uses Haiku for low token usage)',
+    description: 'Ask a question without making code changes',
     template: '/ask ',
     builtIn: true
   }
@@ -2566,11 +2566,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           lastSendMode.set(sessionId, 'ask')
           useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
 
-          // Force Haiku model for low token usage
-          const haikuModel = {
-            providerID: 'anthropic',
-            modelID: 'claude-haiku-4-5-20251001'
-          }
+          // Use the currently selected model
+          const selectedModel = getModelForRequests()
 
           // Prefix with ASK_MODE_PREFIX to prevent code changes
           const prefixedQuestion = ASK_MODE_PREFIX + question
@@ -2604,7 +2601,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               worktreePath,
               opencodeSessionId,
               parts,
-              haikuModel
+              selectedModel
             )
 
             if (!result.success) {
