@@ -80,12 +80,6 @@ export const BUILT_IN_SLASH_COMMANDS: SlashCommandInfo[] = [
     description: 'Ask a question without making code changes',
     template: '/ask ',
     builtIn: true
-  },
-  {
-    name: 'compact',
-    description: 'Manually compact session context to reduce token usage',
-    template: '/compact',
-    builtIn: true
   }
 ]
 
@@ -2632,43 +2626,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             console.error('Error sending /ask question:', error)
             toast.error('Failed to send question')
             setIsSending(false)
-          }
-
-          return
-        }
-
-        if (commandName === 'compact') {
-          if (!worktreePath || !opencodeSessionId) {
-            toast.error('OpenCode is not connected')
-            return
-          }
-
-          setShowSlashCommands(false)
-          setInputValue('')
-          inputValueRef.current = ''
-          if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          window.db.session.updateDraft(sessionId, null)
-
-          try {
-            const selectedModel = getModelForRequests()
-            const result = await window.opencodeOps.command(
-              worktreePath,
-              opencodeSessionId,
-              'compact',
-              '',
-              selectedModel
-            )
-
-            if (result.success) {
-              toast.success('Context compacted successfully')
-              // Refresh messages to show the compaction pill
-              await refreshMessagesFromOpenCode()
-            } else {
-              toast.error(result.error || 'Failed to compact context')
-            }
-          } catch (error) {
-            console.error('Compact command failed:', error)
-            toast.error('Failed to compact context')
           }
 
           return
