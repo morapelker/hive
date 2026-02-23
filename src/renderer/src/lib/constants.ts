@@ -10,10 +10,3 @@ export function stripPlanModePrefix(value: string): string {
   }
   return value
 }
-
-export function stripAskModePrefix(value: string): string {
-  if (value.startsWith(ASK_MODE_PREFIX)) {
-    return value.slice(ASK_MODE_PREFIX.length)
-  }
-  return value
-}
