@@ -164,4 +164,43 @@ describe('MainPane terminal persistence', () => {
     expect(screen.queryByTestId('session-terminal-term-1')).not.toBeInTheDocument()
     expect(screen.getByTestId('session-terminal-term-2')).toBeInTheDocument()
   })
+
+  test('preserves terminal state across worktree switches', () => {
+    render(<MainPane />)
+
+    // Both terminals mounted in wt-1
+    expect(screen.getByTestId('session-terminal-term-1')).toBeInTheDocument()
+    expect(screen.getByTestId('session-terminal-term-2')).toBeInTheDocument()
+    expect(terminalMounts.get('term-1')).toBe(1)
+
+    // Switch to a different worktree with its own terminal
+    act(() => {
+      useWorktreeStore.setState({ selectedWorktreeId: 'wt-2' })
+      useSessionStore.setState({
+        activeSessionId: 'term-3',
+        activeWorktreeId: 'wt-2',
+        sessionsByWorktree: new Map([
+          ['wt-1', [makeTerminalSession('term-1'), makeTerminalSession('term-2')]],
+          ['wt-2', [{ ...makeTerminalSession('term-3'), worktree_id: 'wt-2' }]]
+        ])
+      })
+    })
+
+    // term-3 is now mounted, term-1 and term-2 are still mounted (hidden)
+    expect(screen.getByTestId('session-terminal-term-3')).toBeInTheDocument()
+    expect(screen.getByTestId('session-terminal-term-1')).toBeInTheDocument()
+    expect(screen.getByTestId('session-terminal-term-2')).toBeInTheDocument()
+
+    // Switch back — term-1 should NOT have remounted
+    act(() => {
+      useWorktreeStore.setState({ selectedWorktreeId: 'wt-1' })
+      useSessionStore.setState({
+        activeSessionId: 'term-1',
+        activeWorktreeId: 'wt-1'
+      })
+    })
+
+    expect(terminalMounts.get('term-1')).toBe(1) // Still 1 — never unmounted
+    expect(screen.getByTestId('session-terminal-term-1').getAttribute('data-visible')).toBe('true')
+  })
 })
