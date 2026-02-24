@@ -3,6 +3,14 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 
 export type BottomPanelTab = 'setup' | 'run' | 'terminal'
 
+const LEFT_SIDEBAR_DEFAULT = 240
+const LEFT_SIDEBAR_MIN = 200
+const LEFT_SIDEBAR_MAX = 400
+const RIGHT_SIDEBAR_DEFAULT = 280
+const SPLIT_FRACTION_DEFAULT = 0.5
+const SPLIT_FRACTION_MIN = 0.15
+const SPLIT_FRACTION_MAX = 0.85
+
 interface LayoutState {
   leftSidebarWidth: number
   leftSidebarCollapsed: boolean
@@ -10,6 +18,7 @@ interface LayoutState {
   rightSidebarCollapsed: boolean
   bottomPanelTab: BottomPanelTab
   ghosttyOverlaySuppressed: boolean
+  splitFractionByEntity: Record<string, number>
   setLeftSidebarWidth: (width: number) => void
   toggleLeftSidebar: () => void
   setLeftSidebarCollapsed: (collapsed: boolean) => void
@@ -18,12 +27,8 @@ interface LayoutState {
   setRightSidebarCollapsed: (collapsed: boolean) => void
   setBottomPanelTab: (tab: BottomPanelTab) => void
   setGhosttyOverlaySuppressed: (suppressed: boolean) => void
+  setSplitFraction: (entityKey: string, fraction: number) => void
 }
-
-const LEFT_SIDEBAR_DEFAULT = 240
-const LEFT_SIDEBAR_MIN = 200
-const LEFT_SIDEBAR_MAX = 400
-const RIGHT_SIDEBAR_DEFAULT = 280
 
 export const useLayoutStore = create<LayoutState>()(
   persist(
@@ -34,6 +39,7 @@ export const useLayoutStore = create<LayoutState>()(
       rightSidebarCollapsed: false,
       bottomPanelTab: 'setup' as BottomPanelTab,
       ghosttyOverlaySuppressed: false,
+      splitFractionByEntity: {} as Record<string, number>,
 
       setLeftSidebarWidth: (width: number) => {
         const clampedWidth = Math.min(Math.max(width, LEFT_SIDEBAR_MIN), LEFT_SIDEBAR_MAX)
@@ -66,6 +72,13 @@ export const useLayoutStore = create<LayoutState>()(
 
       setGhosttyOverlaySuppressed: (suppressed: boolean) => {
         set({ ghosttyOverlaySuppressed: suppressed })
+      },
+
+      setSplitFraction: (entityKey: string, fraction: number) => {
+        const clamped = Math.min(Math.max(fraction, SPLIT_FRACTION_MIN), SPLIT_FRACTION_MAX)
+        set((state) => ({
+          splitFractionByEntity: { ...state.splitFractionByEntity, [entityKey]: clamped }
+        }))
       }
     }),
     {
@@ -75,7 +88,8 @@ export const useLayoutStore = create<LayoutState>()(
         leftSidebarWidth: state.leftSidebarWidth,
         leftSidebarCollapsed: state.leftSidebarCollapsed,
         rightSidebarWidth: state.rightSidebarWidth,
-        rightSidebarCollapsed: state.rightSidebarCollapsed
+        rightSidebarCollapsed: state.rightSidebarCollapsed,
+        splitFractionByEntity: state.splitFractionByEntity
       })
     }
   )
@@ -90,5 +104,10 @@ export const LAYOUT_CONSTRAINTS = {
   rightSidebar: {
     default: RIGHT_SIDEBAR_DEFAULT,
     min: 200
+  },
+  splitFraction: {
+    default: SPLIT_FRACTION_DEFAULT,
+    min: SPLIT_FRACTION_MIN,
+    max: SPLIT_FRACTION_MAX
   }
 }

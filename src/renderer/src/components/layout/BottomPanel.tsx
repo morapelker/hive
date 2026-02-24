@@ -21,13 +21,17 @@ const tabs: { id: BottomPanelTab; label: string }[] = [
 interface BottomPanelProps {
   /** TerminalManager rendered by RightSidebar — passed as a slot to keep it alive across sidebar collapse */
   terminalSlot: React.ReactNode
+  /** When true, only the terminal tab is shown (setup/run are worktree-specific) */
+  isConnectionMode?: boolean
 }
 
-export function BottomPanel({ terminalSlot }: BottomPanelProps): React.JSX.Element {
+export function BottomPanel({ terminalSlot, isConnectionMode }: BottomPanelProps): React.JSX.Element {
   const activeTab = useLayoutStore((s) => s.bottomPanelTab)
-  useGhosttyPromotion(activeTab === 'terminal')
+  const effectiveTab = isConnectionMode ? 'terminal' : activeTab
+  useGhosttyPromotion(effectiveTab === 'terminal')
   const setActiveTab = useLayoutStore((s) => s.setBottomPanelTab)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
+  const visibleTabs = isConnectionMode ? tabs.filter((t) => t.id === 'terminal') : tabs
 
   // Open in Chrome state
   const scriptState = useScriptStore((s) =>
@@ -52,20 +56,20 @@ export function BottomPanel({ terminalSlot }: BottomPanelProps): React.JSX.Eleme
   return (
     <div className="flex flex-col min-h-0 flex-1" data-testid="bottom-panel">
       <div className="flex border-b border-border" data-testid="bottom-panel-tabs">
-        {tabs.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`text-xs px-3 py-1.5 transition-colors relative ${
-              activeTab === tab.id
+              effectiveTab === tab.id
                 ? 'text-foreground'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
             data-testid={`bottom-panel-tab-${tab.id}`}
-            data-active={activeTab === tab.id}
+            data-active={effectiveTab === tab.id}
           >
             {tab.label}
-            {activeTab === tab.id && (
+            {effectiveTab === tab.id && (
               <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
             )}
           </button>
@@ -129,10 +133,10 @@ export function BottomPanel({ terminalSlot }: BottomPanelProps): React.JSX.Eleme
         )}
       </div>
       <div className="flex-1 min-h-0 overflow-hidden" data-testid="bottom-panel-content">
-        {activeTab === 'setup' && <SetupTab worktreeId={selectedWorktreeId} />}
-        {activeTab === 'run' && <RunTab worktreeId={selectedWorktreeId} />}
+        {effectiveTab === 'setup' && <SetupTab worktreeId={selectedWorktreeId} />}
+        {effectiveTab === 'run' && <RunTab worktreeId={selectedWorktreeId} />}
         {/* Terminal slot is always rendered but hidden when not active, preserving PTY state */}
-        <div className={activeTab === 'terminal' ? 'h-full w-full' : 'hidden'}>
+        <div className={effectiveTab === 'terminal' ? 'h-full w-full' : 'hidden'}>
           {terminalSlot}
         </div>
       </div>

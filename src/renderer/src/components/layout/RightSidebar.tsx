@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import { useLayoutStore } from '@/stores/useLayoutStore'
+import { LAYOUT_CONSTRAINTS } from '@/stores/useLayoutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
@@ -13,6 +14,8 @@ export function RightSidebar(): React.JSX.Element {
   const { rightSidebarWidth, rightSidebarCollapsed, setRightSidebarWidth, toggleRightSidebar } =
     useLayoutStore()
   const bottomPanelTab = useLayoutStore((s) => s.bottomPanelTab)
+  const splitFractionByEntity = useLayoutStore((s) => s.splitFractionByEntity)
+  const setSplitFraction = useLayoutStore((s) => s.setSplitFraction)
 
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
@@ -20,6 +23,13 @@ export function RightSidebar(): React.JSX.Element {
     s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
   )
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
+
+  const entityKey = selectedWorktreeId || selectedConnectionId
+  const splitFraction = entityKey
+    ? (splitFractionByEntity[entityKey] ?? LAYOUT_CONSTRAINTS.splitFraction.default)
+    : LAYOUT_CONSTRAINTS.splitFraction.default
+
+  const sidebarRef = useRef<HTMLElement>(null)
 
   // Get the selected worktree path by searching all projects' worktrees
   const selectedWorktreePath = useMemo(() => {
@@ -44,6 +54,18 @@ export function RightSidebar(): React.JSX.Element {
     setRightSidebarWidth(rightSidebarWidth + delta)
   }
 
+  const handleVerticalResize = useCallback(
+    (delta: number) => {
+      if (!entityKey || !sidebarRef.current) return
+      const totalHeight = sidebarRef.current.clientHeight
+      if (totalHeight <= 0) return
+      const fractionDelta = delta / totalHeight
+      const current = splitFractionByEntity[entityKey] ?? LAYOUT_CONSTRAINTS.splitFraction.default
+      setSplitFraction(entityKey, current + fractionDelta)
+    },
+    [entityKey, splitFractionByEntity, setSplitFraction]
+  )
+
   const handleFileClick = (node: { path: string; name: string; isDirectory: boolean }): void => {
     // Open file in the file viewer tab
     const contextId = selectedWorktreeId || selectedConnectionId
@@ -52,13 +74,16 @@ export function RightSidebar(): React.JSX.Element {
     }
   }
 
+  // For connections, the effective tab is always 'terminal' since setup/run are worktree-specific
+  const effectiveBottomPanelTab = isConnectionMode ? 'terminal' : bottomPanelTab
+
   // TerminalManager is always rendered (even when sidebar is collapsed) to preserve
   // PTY state across sidebar collapse/expand and worktree switches.
   const terminalManager = (
     <TerminalManager
       selectedWorktreeId={selectedWorktreeId}
       worktreePath={selectedWorktreePath}
-      isVisible={!rightSidebarCollapsed && bottomPanelTab === 'terminal'}
+      isVisible={!rightSidebarCollapsed && effectiveBottomPanelTab === 'terminal'}
     />
   )
 
@@ -75,6 +100,7 @@ export function RightSidebar(): React.JSX.Element {
     <div className="flex flex-shrink-0" data-testid="right-sidebar-container">
       <ResizeHandle onResize={handleResize} direction="right" />
       <aside
+        ref={sidebarRef}
         className="bg-sidebar text-sidebar-foreground border-l flex flex-col overflow-hidden"
         style={{ width: rightSidebarWidth }}
         data-testid="right-sidebar"
@@ -83,7 +109,11 @@ export function RightSidebar(): React.JSX.Element {
         aria-label="File sidebar"
       >
         {/* Top half: Tabbed sidebar (Changes / Files) */}
-        <div className="flex flex-col flex-1 min-h-0" data-testid="right-sidebar-top">
+        <div
+          className="flex flex-col min-h-0 overflow-hidden"
+          style={{ flex: `${splitFraction} 1 0%` }}
+          data-testid="right-sidebar-top"
+        >
           <ErrorBoundary
             componentName="FileSidebar"
             fallback={
@@ -103,12 +133,16 @@ export function RightSidebar(): React.JSX.Element {
           </ErrorBoundary>
         </div>
 
-        {/* Divider */}
-        <div className="border-t border-border" data-testid="right-sidebar-divider" />
+        {/* Draggable divider between top and bottom panels */}
+        <ResizeHandle onResize={handleVerticalResize} direction="up" />
 
         {/* Bottom half: Tab panel */}
-        <div className="flex flex-col flex-1 min-h-0" data-testid="right-sidebar-bottom">
-          <BottomPanel terminalSlot={terminalManager} />
+        <div
+          className="flex flex-col min-h-0 overflow-hidden"
+          style={{ flex: `${1 - splitFraction} 1 0%` }}
+          data-testid="right-sidebar-bottom"
+        >
+          <BottomPanel terminalSlot={terminalManager} isConnectionMode={isConnectionMode} />
         </div>
       </aside>
     </div>
