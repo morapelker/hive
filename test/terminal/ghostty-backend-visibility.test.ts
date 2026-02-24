@@ -70,13 +70,15 @@ describe('GhosttyBackend visibility', () => {
     const hiddenFrame = mockTerminalOps.ghosttySetFrame.mock.calls.at(-1)?.[1]
     expect(hiddenFrame.x).toBeLessThan(0)
     expect(hiddenFrame.y).toBeLessThan(0)
-    expect(hiddenFrame.w).toBe(1)
-    expect(hiddenFrame.h).toBe(1)
+    expect(hiddenFrame.w).toBe(640)
+    expect(hiddenFrame.h).toBe(360)
+    expect(mockTerminalOps.ghosttyDestroySurface).not.toHaveBeenCalled()
 
     visibilityBackend.setVisible(true)
 
     const visibleFrame = mockTerminalOps.ghosttySetFrame.mock.calls.at(-1)?.[1]
     expect(visibleFrame).toEqual({ x: 100, y: 80, w: 640, h: 360 })
+    expect(mockTerminalOps.ghosttyDestroySurface).not.toHaveBeenCalled()
 
     backend.dispose()
   })

@@ -24,6 +24,10 @@ export function registerOpenCodeHandlers(
         // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
         if (sdkManager && dbService) {
           const session = dbService.getSession(hiveSessionId)
+          // Terminal sessions have no AI backend — short-circuit
+          if (session?.agent_sdk === 'terminal') {
+            return { success: true, sessionId: hiveSessionId }
+          }
           if (session?.agent_sdk === 'claude-code') {
             const impl = sdkManager.getImplementer('claude-code')
             const result = await impl.connect(worktreePath, hiveSessionId)
@@ -52,6 +56,10 @@ export function registerOpenCodeHandlers(
         // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
         if (sdkManager && dbService) {
           const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          // Terminal sessions have no AI backend — short-circuit
+          if (sdkId === 'terminal') {
+            return { success: true, sessionStatus: 'idle' as const }
+          }
           if (sdkId === 'claude-code') {
             const impl = sdkManager.getImplementer('claude-code')
             const result = await impl.reconnect(worktreePath, opencodeSessionId, hiveSessionId)

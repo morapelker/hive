@@ -10,7 +10,7 @@ export class GhosttyBackend implements TerminalBackend {
   readonly type = 'ghostty' as const
   readonly supportsSearch = false // Ghostty handles its own search natively
 
-  private static readonly HIDDEN_RECT = { x: -10000, y: -10000, w: 1, h: 1 }
+  private static readonly HIDDEN_RECT = { x: -10000, y: -10000, w: 400, h: 300 }
 
   /** Fallback font size when the setting is unavailable (points). */
   private static readonly FALLBACK_FONT_SIZE = 14
@@ -21,6 +21,7 @@ export class GhosttyBackend implements TerminalBackend {
   private windowResizeHandler: (() => void) | null = null
   private mounted = false
   private syncFrameTimer: ReturnType<typeof requestAnimationFrame> | null = null
+  private lastVisibleRect: { x: number; y: number; w: number; h: number } | null = null
 
   mount(container: HTMLDivElement, opts: TerminalOpts, callbacks: TerminalBackendCallbacks): void {
     this.worktreeId = opts.worktreeId
@@ -72,6 +73,7 @@ export class GhosttyBackend implements TerminalBackend {
       // Get container rect for initial surface placement
       const rect = this.getContainerRect()
       if (!rect) return false
+      this.lastVisibleRect = rect
 
       // Create the native surface
       const result = await window.terminalOps.ghosttyCreateSurface(this.worktreeId, rect, {
@@ -157,6 +159,8 @@ export class GhosttyBackend implements TerminalBackend {
     const rect = this.getContainerRect()
     if (!rect) return
 
+    this.lastVisibleRect = rect
+
     window.terminalOps.ghosttySetFrame(this.worktreeId, rect).catch(() => {
       // Ignore frame sync errors during teardown
     })
@@ -186,7 +190,16 @@ export class GhosttyBackend implements TerminalBackend {
       window.terminalOps.ghosttySetFocus(this.worktreeId, false).catch(() => {
         // Ignore focus errors
       })
-      window.terminalOps.ghosttySetFrame(this.worktreeId, GhosttyBackend.HIDDEN_RECT).catch(() => {
+      const hiddenRect = this.lastVisibleRect
+        ? {
+            x: GhosttyBackend.HIDDEN_RECT.x,
+            y: GhosttyBackend.HIDDEN_RECT.y,
+            w: this.lastVisibleRect.w,
+            h: this.lastVisibleRect.h
+          }
+        : GhosttyBackend.HIDDEN_RECT
+
+      window.terminalOps.ghosttySetFrame(this.worktreeId, hiddenRect).catch(() => {
         // Ignore frame sync errors during teardown
       })
       return

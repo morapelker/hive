@@ -9,7 +9,6 @@ import { extractDevServerUrl } from '@/lib/format-utils'
 import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
 import { SetupTab } from './SetupTab'
 import { RunTab } from './RunTab'
-import { TerminalManager } from '@/components/terminal/TerminalManager'
 import { toast } from '@/lib/toast'
 import { useGhosttyPromotion } from '@/hooks/useGhosttyPromotion'
 
@@ -19,22 +18,16 @@ const tabs: { id: BottomPanelTab; label: string }[] = [
   { id: 'terminal', label: 'Terminal' }
 ]
 
-export function BottomPanel(): React.JSX.Element {
+interface BottomPanelProps {
+  /** TerminalManager rendered by RightSidebar — passed as a slot to keep it alive across sidebar collapse */
+  terminalSlot: React.ReactNode
+}
+
+export function BottomPanel({ terminalSlot }: BottomPanelProps): React.JSX.Element {
   const activeTab = useLayoutStore((s) => s.bottomPanelTab)
   useGhosttyPromotion(activeTab === 'terminal')
   const setActiveTab = useLayoutStore((s) => s.setBottomPanelTab)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
-  const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
-
-  // Resolve the selected worktree's path
-  const worktreePath = useMemo(() => {
-    if (!selectedWorktreeId) return null
-    for (const [, worktrees] of worktreesByProject) {
-      const worktree = worktrees.find((w) => w.id === selectedWorktreeId)
-      if (worktree) return worktree.path
-    }
-    return null
-  }, [selectedWorktreeId, worktreesByProject])
 
   // Open in Chrome state
   const scriptState = useScriptStore((s) =>
@@ -138,13 +131,9 @@ export function BottomPanel(): React.JSX.Element {
       <div className="flex-1 min-h-0 overflow-hidden" data-testid="bottom-panel-content">
         {activeTab === 'setup' && <SetupTab worktreeId={selectedWorktreeId} />}
         {activeTab === 'run' && <RunTab worktreeId={selectedWorktreeId} />}
-        {/* Terminal is always rendered but hidden when not active, preserving PTY state */}
+        {/* Terminal slot is always rendered but hidden when not active, preserving PTY state */}
         <div className={activeTab === 'terminal' ? 'h-full w-full' : 'hidden'}>
-          <TerminalManager
-            selectedWorktreeId={selectedWorktreeId}
-            worktreePath={worktreePath}
-            isVisible={activeTab === 'terminal'}
-          />
+          {terminalSlot}
         </div>
       </div>
     </div>

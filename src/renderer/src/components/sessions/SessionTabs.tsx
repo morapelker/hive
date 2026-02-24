@@ -1,4 +1,12 @@
-import { Fragment, useEffect, useRef, useState, useCallback, useMemo, type KeyboardEvent } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  type KeyboardEvent
+} from 'react'
 import {
   Plus,
   X,
@@ -8,7 +16,8 @@ import {
   GitCompareArrows,
   Loader2,
   AlertCircle,
-  Check
+  Check,
+  TerminalSquare
 } from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useFileViewerStore, type FileViewerTab, type DiffTab } from '@/stores/useFileViewerStore'
@@ -17,6 +26,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useLayoutStore } from '@/stores/useLayoutStore'
 import { cn, parseColorQuad } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import {
@@ -32,6 +42,7 @@ interface SessionTabProps {
   sessionId: string
   name: string
   isActive: boolean
+  agentSdk: 'opencode' | 'claude-code' | 'terminal'
   onClick: () => void
   onClose: (e: React.MouseEvent) => void
   onMiddleClick: (e: React.MouseEvent) => void
@@ -51,6 +62,7 @@ function SessionTab({
   sessionId,
   name,
   isActive,
+  agentSdk,
   onClick,
   onClose,
   onMiddleClick,
@@ -134,32 +146,41 @@ function SessionTab({
             isDragOver && 'bg-accent/50'
           )}
         >
-          {(sessionStatus === 'working' || sessionStatus === 'planning') && (
-            <Loader2
-              className={cn(
-                'h-3 w-3 animate-spin flex-shrink-0',
-                sessionStatus === 'planning' ? 'text-blue-400' : 'text-blue-500'
+          {agentSdk === 'terminal' ? (
+            <TerminalSquare
+              className="h-3 w-3 text-emerald-500 flex-shrink-0"
+              data-testid={`tab-terminal-${sessionId}`}
+            />
+          ) : (
+            <>
+              {(sessionStatus === 'working' || sessionStatus === 'planning') && (
+                <Loader2
+                  className={cn(
+                    'h-3 w-3 animate-spin flex-shrink-0',
+                    sessionStatus === 'planning' ? 'text-blue-400' : 'text-blue-500'
+                  )}
+                  data-testid={`tab-spinner-${sessionId}`}
+                />
               )}
-              data-testid={`tab-spinner-${sessionId}`}
-            />
-          )}
-          {(sessionStatus === 'answering' || sessionStatus === 'permission') && (
-            <AlertCircle
-              className="h-3 w-3 text-amber-500 flex-shrink-0"
-              data-testid={`tab-${sessionStatus === 'permission' ? 'permission' : 'answering'}-${sessionId}`}
-            />
-          )}
-          {sessionStatus === 'completed' && (
-            <Check
-              className="h-3 w-3 text-green-500 flex-shrink-0"
-              data-testid={`tab-completed-${sessionId}`}
-            />
-          )}
-          {sessionStatus === 'unread' && !isActive && (
-            <span
-              className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"
-              data-testid={`tab-unread-${sessionId}`}
-            />
+              {(sessionStatus === 'answering' || sessionStatus === 'permission') && (
+                <AlertCircle
+                  className="h-3 w-3 text-amber-500 flex-shrink-0"
+                  data-testid={`tab-${sessionStatus === 'permission' ? 'permission' : 'answering'}-${sessionId}`}
+                />
+              )}
+              {sessionStatus === 'completed' && (
+                <Check
+                  className="h-3 w-3 text-green-500 flex-shrink-0"
+                  data-testid={`tab-completed-${sessionId}`}
+                />
+              )}
+              {sessionStatus === 'unread' && !isActive && (
+                <span
+                  className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"
+                  data-testid={`tab-unread-${sessionId}`}
+                />
+              )}
+            </>
           )}
           {isEditing ? (
             <input
@@ -476,6 +497,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const { projects } = useProjectStore()
   const selectedConnectionId = useConnectionStore((state) => state.selectedConnectionId)
   const connections = useConnectionStore((state) => state.connections)
+  const setGhosttyOverlaySuppressed = useLayoutStore((state) => state.setGhosttyOverlaySuppressed)
 
   // Determine whether we are in connection mode or worktree mode
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
@@ -513,7 +535,6 @@ export function SessionTabs(): React.JSX.Element | null {
   // eliminate race conditions between the two async operations.
   const autoStartSession = useSettingsStore((state) => state.autoStartSession)
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
-  const showProviderMenu = availableAgentSdks?.opencode && availableAgentSdks?.claude
   const autoStartedRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -578,9 +599,7 @@ export function SessionTabs(): React.JSX.Element | null {
   // Connections that include the currently selected worktree (for sticky tabs)
   const connectionsForWorktree = useMemo(() => {
     if (!selectedWorktreeId || isConnectionMode) return []
-    return connections.filter((c) =>
-      c.members.some((m) => m.worktree_id === selectedWorktreeId)
-    )
+    return connections.filter((c) => c.members.some((m) => m.worktree_id === selectedWorktreeId))
   }, [connections, selectedWorktreeId, isConnectionMode])
 
   // Track which connection IDs have already been background-loaded for the current worktree.
@@ -601,7 +620,12 @@ export function SessionTabs(): React.JSX.Element | null {
         loadConnectionSessionsBackground(connection.id)
       }
     }
-  }, [selectedWorktreeId, connectionsForWorktree, isConnectionMode, loadConnectionSessionsBackground])
+  }, [
+    selectedWorktreeId,
+    connectionsForWorktree,
+    isConnectionMode,
+    loadConnectionSessionsBackground
+  ])
 
   // Check for tab overflow and update arrow visibility
   const checkOverflow = useCallback(() => {
@@ -631,6 +655,13 @@ export function SessionTabs(): React.JSX.Element | null {
     tabOrderByConnection,
     openFiles
   ])
+
+  // Safety: never leave Ghostty overlays suppressed if this component unmounts.
+  useEffect(() => {
+    return () => {
+      setGhosttyOverlaySuppressed(false)
+    }
+  }, [setGhosttyOverlaySuppressed])
 
   // Scroll functions
   const scrollLeft = () => {
@@ -666,7 +697,7 @@ export function SessionTabs(): React.JSX.Element | null {
   }
 
   // Handle creating a new session with a specific agent SDK (from context menu)
-  const handleCreateSessionWithSdk = async (sdk: 'opencode' | 'claude-code') => {
+  const handleCreateSessionWithSdk = async (sdk: 'opencode' | 'claude-code' | 'terminal') => {
     if (isConnectionMode && selectedConnectionId) {
       const result = await createConnectionSession(selectedConnectionId, sdk)
       if (!result.success) {
@@ -828,38 +859,36 @@ export function SessionTabs(): React.JSX.Element | null {
       data-testid="session-tabs"
     >
       {/* New session button - on the left */}
-      {/* Right-click shows provider menu when both SDKs are available */}
-      {showProviderMenu ? (
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <button
-              onClick={handleCreateSession}
-              className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
-              data-testid="create-session"
-              title="Create new session (right-click for provider options)"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
+      {/* Right-click shows provider menu with session type options */}
+      <ContextMenu onOpenChange={setGhosttyOverlaySuppressed}>
+        <ContextMenuTrigger asChild>
+          <button
+            onClick={handleCreateSession}
+            className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
+            data-testid="create-session"
+            title="Create new session (right-click for options)"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="z-[2147483647]">
+          {availableAgentSdks?.opencode && (
             <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
               New OpenCode Session
             </ContextMenuItem>
+          )}
+          {availableAgentSdks?.claude && (
             <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
               New Claude Code Session
             </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
-      ) : (
-        <button
-          onClick={handleCreateSession}
-          className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
-          data-testid="create-session"
-          title="Create new session"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
-      )}
+          )}
+          {(availableAgentSdks?.opencode || availableAgentSdks?.claude) && <ContextMenuSeparator />}
+          <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
+            <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
+            New Terminal
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       {/* Left scroll arrow */}
       {showLeftArrow && (
@@ -881,9 +910,10 @@ export function SessionTabs(): React.JSX.Element | null {
         {orderedSessions.length === 0 &&
         fileTabs.length === 0 &&
         diffTabs.length === 0 &&
-        !(!isConnectionMode && connectionsForWorktree.some((c) =>
-          (sessionsByConnection.get(c.id) || []).length > 0
-        )) ? (
+        !(
+          !isConnectionMode &&
+          connectionsForWorktree.some((c) => (sessionsByConnection.get(c.id) || []).length > 0)
+        ) ? (
           <div
             className="flex items-center px-3 py-1.5 text-sm text-muted-foreground"
             data-testid="no-sessions"
@@ -893,33 +923,34 @@ export function SessionTabs(): React.JSX.Element | null {
         ) : (
           <>
             {/* Sticky connection session tabs (worktree mode only) */}
-            {!isConnectionMode && connectionsForWorktree.map((connection) => {
-              const connectionSessions = sessionsByConnection.get(connection.id) || []
-              const connectionTabOrder = tabOrderByConnection.get(connection.id) || []
-              const orderedConnectionSessions = connectionTabOrder
-                .map((id) => connectionSessions.find((s) => s.id === id))
-                .filter((s): s is NonNullable<typeof s> => s !== undefined)
+            {!isConnectionMode &&
+              connectionsForWorktree.map((connection) => {
+                const connectionSessions = sessionsByConnection.get(connection.id) || []
+                const connectionTabOrder = tabOrderByConnection.get(connection.id) || []
+                const orderedConnectionSessions = connectionTabOrder
+                  .map((id) => connectionSessions.find((s) => s.id === id))
+                  .filter((s): s is NonNullable<typeof s> => s !== undefined)
 
-              if (orderedConnectionSessions.length === 0) return null
+                if (orderedConnectionSessions.length === 0) return null
 
-              return (
-                <Fragment key={connection.id}>
-                  {/* Thin visual separator before each connection group */}
-                  <div className="w-px bg-border/60 self-stretch my-1" aria-hidden="true" />
-                  {orderedConnectionSessions.map((session) => (
-                    <ConnectionSessionTab
-                      key={session.id}
-                      sessionId={session.id}
-                      name={session.name || 'Untitled'}
-                      isActive={session.id === inlineConnectionSessionId && !isFileTabActive}
-                      onClick={() => handleConnectionSessionTabClick(session.id)}
-                      connectionColor={connection.color}
-                      connectionName={connection.name}
-                    />
-                  ))}
-                </Fragment>
-              )
-            })}
+                return (
+                  <Fragment key={connection.id}>
+                    {/* Thin visual separator before each connection group */}
+                    <div className="w-px bg-border/60 self-stretch my-1" aria-hidden="true" />
+                    {orderedConnectionSessions.map((session) => (
+                      <ConnectionSessionTab
+                        key={session.id}
+                        sessionId={session.id}
+                        name={session.name || 'Untitled'}
+                        isActive={session.id === inlineConnectionSessionId && !isFileTabActive}
+                        onClick={() => handleConnectionSessionTabClick(session.id)}
+                        connectionColor={connection.color}
+                        connectionName={connection.name}
+                      />
+                    ))}
+                  </Fragment>
+                )
+              })}
 
             {/* Session tabs */}
             {orderedSessions.map((session) => (
@@ -927,7 +958,10 @@ export function SessionTabs(): React.JSX.Element | null {
                 key={session.id}
                 sessionId={session.id}
                 name={session.name || 'Untitled'}
-                isActive={session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId}
+                agentSdk={session.agent_sdk}
+                isActive={
+                  session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId
+                }
                 onClick={() => handleSessionTabClick(session.id)}
                 onClose={(e) => handleCloseSession(e, session.id)}
                 onMiddleClick={(e) => handleCloseSession(e, session.id)}

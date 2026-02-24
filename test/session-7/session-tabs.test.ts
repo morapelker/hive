@@ -175,11 +175,14 @@ describe('Session 7: Session Tabs', () => {
 
       expect(result.success).toBe(true)
       expect(result.session).toBeDefined()
-      expect(mockDbSession.create).toHaveBeenCalledWith({
-        worktree_id: 'worktree-1',
-        project_id: 'project-1',
-        name: expect.stringMatching(/^Session \d+$/)
-      })
+      expect(mockDbSession.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          worktree_id: 'worktree-1',
+          project_id: 'project-1',
+          name: expect.stringMatching(/^Session \d+$/),
+          agent_sdk: 'opencode'
+        })
+      )
 
       const state = useSessionStore.getState()
       expect(state.activeSessionId).toBe('new-session')
