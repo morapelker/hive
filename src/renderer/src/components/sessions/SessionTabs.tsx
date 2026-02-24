@@ -8,7 +8,8 @@ import {
   GitCompareArrows,
   Loader2,
   AlertCircle,
-  Check
+  Check,
+  TerminalSquare
 } from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useFileViewerStore, type FileViewerTab, type DiffTab } from '@/stores/useFileViewerStore'
@@ -32,6 +33,7 @@ interface SessionTabProps {
   sessionId: string
   name: string
   isActive: boolean
+  agentSdk: 'opencode' | 'claude-code' | 'terminal'
   onClick: () => void
   onClose: (e: React.MouseEvent) => void
   onMiddleClick: (e: React.MouseEvent) => void
@@ -51,6 +53,7 @@ function SessionTab({
   sessionId,
   name,
   isActive,
+  agentSdk,
   onClick,
   onClose,
   onMiddleClick,
@@ -134,32 +137,41 @@ function SessionTab({
             isDragOver && 'bg-accent/50'
           )}
         >
-          {(sessionStatus === 'working' || sessionStatus === 'planning') && (
-            <Loader2
-              className={cn(
-                'h-3 w-3 animate-spin flex-shrink-0',
-                sessionStatus === 'planning' ? 'text-blue-400' : 'text-blue-500'
+          {agentSdk === 'terminal' ? (
+            <TerminalSquare
+              className="h-3 w-3 text-emerald-500 flex-shrink-0"
+              data-testid={`tab-terminal-${sessionId}`}
+            />
+          ) : (
+            <>
+              {(sessionStatus === 'working' || sessionStatus === 'planning') && (
+                <Loader2
+                  className={cn(
+                    'h-3 w-3 animate-spin flex-shrink-0',
+                    sessionStatus === 'planning' ? 'text-blue-400' : 'text-blue-500'
+                  )}
+                  data-testid={`tab-spinner-${sessionId}`}
+                />
               )}
-              data-testid={`tab-spinner-${sessionId}`}
-            />
-          )}
-          {(sessionStatus === 'answering' || sessionStatus === 'permission') && (
-            <AlertCircle
-              className="h-3 w-3 text-amber-500 flex-shrink-0"
-              data-testid={`tab-${sessionStatus === 'permission' ? 'permission' : 'answering'}-${sessionId}`}
-            />
-          )}
-          {sessionStatus === 'completed' && (
-            <Check
-              className="h-3 w-3 text-green-500 flex-shrink-0"
-              data-testid={`tab-completed-${sessionId}`}
-            />
-          )}
-          {sessionStatus === 'unread' && !isActive && (
-            <span
-              className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"
-              data-testid={`tab-unread-${sessionId}`}
-            />
+              {(sessionStatus === 'answering' || sessionStatus === 'permission') && (
+                <AlertCircle
+                  className="h-3 w-3 text-amber-500 flex-shrink-0"
+                  data-testid={`tab-${sessionStatus === 'permission' ? 'permission' : 'answering'}-${sessionId}`}
+                />
+              )}
+              {sessionStatus === 'completed' && (
+                <Check
+                  className="h-3 w-3 text-green-500 flex-shrink-0"
+                  data-testid={`tab-completed-${sessionId}`}
+                />
+              )}
+              {sessionStatus === 'unread' && !isActive && (
+                <span
+                  className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"
+                  data-testid={`tab-unread-${sessionId}`}
+                />
+              )}
+            </>
           )}
           {isEditing ? (
             <input
@@ -883,6 +895,7 @@ export function SessionTabs(): React.JSX.Element | null {
                 key={session.id}
                 sessionId={session.id}
                 name={session.name || 'Untitled'}
+                agentSdk={session.agent_sdk}
                 isActive={session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId}
                 onClick={() => handleSessionTabClick(session.id)}
                 onClose={(e) => handleCloseSession(e, session.id)}

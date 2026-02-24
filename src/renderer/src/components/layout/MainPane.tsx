@@ -1,6 +1,7 @@
 import { useCallback, lazy, Suspense } from 'react'
 import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
+import { SessionTerminalView } from '@/components/sessions/SessionTerminalView'
 import { FileViewer } from '@/components/file-viewer'
 import { InlineDiffViewer } from '@/components/diff'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -22,6 +23,24 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const inlineConnectionSessionId = useSessionStore((state) => state.inlineConnectionSessionId)
   const activeFilePath = useFileViewerStore((state) => state.activeFilePath)
   const activeDiff = useFileViewerStore((state) => state.activeDiff)
+
+  // Look up the agent_sdk for a given session ID
+  const getAgentSdk = useCallback(
+    (sid: string | null): string | null => {
+      if (!sid) return null
+      const state = useSessionStore.getState()
+      for (const sessions of state.sessionsByWorktree.values()) {
+        const found = sessions.find((s) => s.id === sid)
+        if (found) return found.agent_sdk
+      }
+      for (const sessions of state.sessionsByConnection.values()) {
+        const found = sessions.find((s) => s.id === sid)
+        if (found) return found.agent_sdk
+      }
+      return null
+    },
+    []
+  )
 
   const handleCloseDiff = useCallback(() => {
     const filePath = useFileViewerStore.getState().activeFilePath
@@ -107,6 +126,9 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
 
     // Inline connection session view (sticky tab clicked in worktree mode)
     if (inlineConnectionSessionId) {
+      if (getAgentSdk(inlineConnectionSessionId) === 'terminal') {
+        return <SessionTerminalView key={inlineConnectionSessionId} sessionId={inlineConnectionSessionId} />
+      }
       return <SessionView key={inlineConnectionSessionId} sessionId={inlineConnectionSessionId} />
     }
 
@@ -122,7 +144,10 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       )
     }
 
-    // Session is active - render SessionView
+    // Session is active - dispatch based on agent SDK
+    if (getAgentSdk(activeSessionId) === 'terminal') {
+      return <SessionTerminalView key={activeSessionId} sessionId={activeSessionId} />
+    }
     return <SessionView key={activeSessionId} sessionId={activeSessionId} />
   }
 

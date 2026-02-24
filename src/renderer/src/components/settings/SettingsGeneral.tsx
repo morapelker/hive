@@ -120,7 +120,24 @@ export function SettingsGeneral(): React.JSX.Element {
           >
             Claude Code
           </button>
+          <button
+            onClick={() => updateSetting('defaultAgentSdk', 'terminal')}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              defaultAgentSdk === 'terminal'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="agent-sdk-terminal"
+          >
+            Terminal
+          </button>
         </div>
+        {defaultAgentSdk === 'terminal' && (
+          <p className="text-xs text-muted-foreground/70 italic">
+            Opens a terminal window. Run any AI tool manually (claude, aider, cursor, etc.)
+          </p>
+        )}
       </div>
 
       {/* Strip @ from file mentions */}

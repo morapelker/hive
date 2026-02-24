@@ -23,7 +23,7 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code'
+  agent_sdk: 'opencode' | 'claude-code' | 'terminal'
   mode: SessionMode
   model_provider_id: string | null
   model_id: string | null
@@ -234,50 +234,53 @@ export const useSessionStore = create<SessionState>()(
       // Create a new session
       createSession: async (worktreeId: string, projectId: string) => {
         try {
-          // Determine default model: worktree's last-used model > global setting
+          // Resolve default agent SDK from settings
+          const { useSettingsStore } = await import('./useSettingsStore')
+          const defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+
+          const isTerminal = defaultAgentSdk === 'terminal'
+
+          // Terminal sessions skip model resolution entirely
           let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
 
-          // Priority 1: worktree's last-used model
-          const worktree = useWorktreeStore.getState().worktreesByProject
-          let worktreeRecord:
-            | {
-                last_model_provider_id: string | null
-                last_model_id: string | null
-                last_model_variant: string | null
-              }
-            | undefined
-          for (const worktrees of worktree.values()) {
-            worktreeRecord = worktrees.find((w) => w.id === worktreeId)
-            if (worktreeRecord) break
-          }
-          if (worktreeRecord?.last_model_id) {
-            defaultModel = {
-              providerID: worktreeRecord.last_model_provider_id!,
-              modelID: worktreeRecord.last_model_id,
-              variant: worktreeRecord.last_model_variant ?? undefined
+          if (!isTerminal) {
+            // Priority 1: worktree's last-used model
+            const worktree = useWorktreeStore.getState().worktreesByProject
+            let worktreeRecord:
+              | {
+                  last_model_provider_id: string | null
+                  last_model_id: string | null
+                  last_model_variant: string | null
+                }
+              | undefined
+            for (const worktrees of worktree.values()) {
+              worktreeRecord = worktrees.find((w) => w.id === worktreeId)
+              if (worktreeRecord) break
             }
-          }
+            if (worktreeRecord?.last_model_id) {
+              defaultModel = {
+                providerID: worktreeRecord.last_model_provider_id!,
+                modelID: worktreeRecord.last_model_id,
+                variant: worktreeRecord.last_model_variant ?? undefined
+              }
+            }
 
-          // Priority 2: global default
-          if (!defaultModel) {
-            const { useSettingsStore } = await import('./useSettingsStore')
-            const globalModel = useSettingsStore.getState().selectedModel
-            if (globalModel) {
-              defaultModel = globalModel
+            // Priority 2: global default
+            if (!defaultModel) {
+              const globalModel = useSettingsStore.getState().selectedModel
+              if (globalModel) {
+                defaultModel = globalModel
+              }
             }
           }
 
           const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
           const sessionNumber = existingSessions.length + 1
 
-          // Resolve default agent SDK from settings
-          const { useSettingsStore } = await import('./useSettingsStore')
-          const defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
-
           const session = await window.db.session.create({
             worktree_id: worktreeId,
             project_id: projectId,
-            name: `Session ${sessionNumber}`,
+            name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
             agent_sdk: defaultAgentSdk,
             ...(defaultModel
               ? {
@@ -327,12 +330,40 @@ export const useSessionStore = create<SessionState>()(
       // Scope-agnostic: works for both worktree and connection sessions
       closeSession: async (sessionId: string) => {
         try {
+          // Check if this is a terminal session before removing from state
+          let isTerminalSession = false
+          for (const sessions of get().sessionsByWorktree.values()) {
+            const found = sessions.find((s) => s.id === sessionId)
+            if (found) {
+              isTerminalSession = found.agent_sdk === 'terminal'
+              break
+            }
+          }
+          if (!isTerminalSession) {
+            for (const sessions of get().sessionsByConnection.values()) {
+              const found = sessions.find((s) => s.id === sessionId)
+              if (found) {
+                isTerminalSession = found.agent_sdk === 'terminal'
+                break
+              }
+            }
+          }
+
           // Mark session as completed instead of deleting
           // This preserves it in session history
           await window.db.session.update(sessionId, {
             status: 'completed',
             completed_at: new Date().toISOString()
           })
+
+          // Destroy PTY for terminal sessions
+          if (isTerminalSession) {
+            try {
+              await window.terminalOps.destroy(sessionId)
+            } catch {
+              // Best-effort cleanup — PTY may already be gone
+            }
+          }
 
           set((state) => {
             const newWorktreeSessionsMap = new Map(state.sessionsByWorktree)
@@ -730,10 +761,10 @@ export const useSessionStore = create<SessionState>()(
           console.error('Failed to persist session model:', error)
         }
 
-        // Push to agent backend (SDK-aware)
+        // Push to agent backend (SDK-aware) — skip for terminal sessions
         try {
           // Find the session's SDK to route correctly
-          let agentSdk: 'opencode' | 'claude-code' = 'opencode'
+          let agentSdk: 'opencode' | 'claude-code' | 'terminal' = 'opencode'
           for (const sessions of get().sessionsByWorktree.values()) {
             const found = sessions.find((s) => s.id === sessionId)
             if (found?.agent_sdk) {
@@ -741,7 +772,9 @@ export const useSessionStore = create<SessionState>()(
               break
             }
           }
-          await window.opencodeOps.setModel({ ...model, agentSdk })
+          if (agentSdk !== 'terminal') {
+            await window.opencodeOps.setModel({ ...model, agentSdk })
+          }
         } catch (error) {
           console.error('Failed to push model to agent backend:', error)
         }
@@ -1022,18 +1055,22 @@ export const useSessionStore = create<SessionState>()(
 
           // Determine default model and agent SDK from global settings
           let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
-          let defaultAgentSdk: 'opencode' | 'claude-code' = 'opencode'
+          let defaultAgentSdk: 'opencode' | 'claude-code' | 'terminal' = 'opencode'
           try {
             const { useSettingsStore } = await import('./useSettingsStore')
-            const globalModel = useSettingsStore.getState().selectedModel
-            if (globalModel) {
-              defaultModel = globalModel
-            }
             defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+            // Terminal sessions skip model resolution
+            if (defaultAgentSdk !== 'terminal') {
+              const globalModel = useSettingsStore.getState().selectedModel
+              if (globalModel) {
+                defaultModel = globalModel
+              }
+            }
           } catch {
             /* non-critical */
           }
 
+          const isTerminal = defaultAgentSdk === 'terminal'
           const existingSessions = get().sessionsByConnection.get(connectionId) || []
           const sessionNumber = existingSessions.length + 1
 
@@ -1041,7 +1078,7 @@ export const useSessionStore = create<SessionState>()(
             worktree_id: null,
             project_id: projectId,
             connection_id: connectionId,
-            name: `Session ${sessionNumber}`,
+            name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
             agent_sdk: defaultAgentSdk,
             ...(defaultModel
               ? {

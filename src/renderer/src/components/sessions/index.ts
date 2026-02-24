@@ -1,4 +1,5 @@
 export { SessionTabs } from './SessionTabs'
+export { SessionTerminalView } from './SessionTerminalView'
 export { SessionView } from './SessionView'
 export { SessionHistory } from './SessionHistory'
 export { UserBubble } from './UserBubble'

@@ -59,7 +59,7 @@ export interface AppSettings {
   showModelIcons: boolean
 
   // Agent SDK
-  defaultAgentSdk: 'opencode' | 'claude-code'
+  defaultAgentSdk: 'opencode' | 'claude-code' | 'terminal'
 
   // Setup
   initialSetupComplete: boolean
