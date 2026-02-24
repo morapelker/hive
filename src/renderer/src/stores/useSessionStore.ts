@@ -788,13 +788,22 @@ export const useSessionStore = create<SessionState>()(
 
         // Push to agent backend (SDK-aware) — skip for terminal sessions
         try {
-          // Find the session's SDK to route correctly
+          // Find the session's SDK to route correctly (search both scopes)
           let agentSdk: 'opencode' | 'claude-code' | 'terminal' = 'opencode'
           for (const sessions of get().sessionsByWorktree.values()) {
             const found = sessions.find((s) => s.id === sessionId)
             if (found?.agent_sdk) {
               agentSdk = found.agent_sdk
               break
+            }
+          }
+          if (agentSdk === 'opencode') {
+            for (const sessions of get().sessionsByConnection.values()) {
+              const found = sessions.find((s) => s.id === sessionId)
+              if (found?.agent_sdk) {
+                agentSdk = found.agent_sdk
+                break
+              }
             }
           }
           if (agentSdk !== 'terminal') {

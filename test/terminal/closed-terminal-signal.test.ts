@@ -109,3 +109,79 @@ describe('closedTerminalSessionIds signal', () => {
     expect(useSessionStore.getState().closedTerminalSessionIds.size).toBe(0)
   })
 })
+
+function makeConnectionTerminalSession(id: string, connectionId: string) {
+  return {
+    id,
+    worktree_id: null,
+    project_id: 'proj-1',
+    connection_id: connectionId,
+    name: id,
+    status: 'active' as const,
+    opencode_session_id: null,
+    agent_sdk: 'terminal' as const,
+    mode: 'build' as const,
+    model_provider_id: null,
+    model_id: null,
+    model_variant: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    completed_at: null
+  }
+}
+
+describe('setSessionModel with connection terminal sessions', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'db', {
+      value: {
+        session: { update: vi.fn().mockResolvedValue(undefined) },
+        worktree: { updateModel: vi.fn().mockResolvedValue(undefined) }
+      },
+      writable: true,
+      configurable: true
+    })
+    Object.defineProperty(window, 'opencodeOps', {
+      value: {
+        setModel: vi.fn().mockResolvedValue(undefined)
+      },
+      writable: true,
+      configurable: true
+    })
+    Object.defineProperty(window, 'terminalOps', {
+      value: { destroy: vi.fn().mockResolvedValue(undefined) },
+      writable: true,
+      configurable: true
+    })
+
+    act(() => {
+      useSessionStore.setState({
+        activeSessionId: 'conn-term-1',
+        activeWorktreeId: null,
+        activeConnectionId: 'conn-1',
+        inlineConnectionSessionId: null,
+        isLoading: false,
+        closedTerminalSessionIds: new Set(),
+        sessionsByWorktree: new Map(),
+        sessionsByConnection: new Map([
+          ['conn-1', [makeConnectionTerminalSession('conn-term-1', 'conn-1')]]
+        ]),
+        tabOrderByWorktree: new Map(),
+        tabOrderByConnection: new Map([['conn-1', ['conn-term-1']]]),
+        activeSessionByWorktree: {},
+        activeSessionByConnection: { 'conn-1': 'conn-term-1' }
+      })
+    })
+  })
+
+  test('does NOT call opencodeOps.setModel for connection-scoped terminal sessions', async () => {
+    await act(async () => {
+      await useSessionStore.getState().setSessionModel('conn-term-1', {
+        providerID: 'anthropic',
+        modelID: 'claude-4',
+        variant: null
+      })
+    })
+
+    expect(window.opencodeOps.setModel).not.toHaveBeenCalled()
+  })
+})
