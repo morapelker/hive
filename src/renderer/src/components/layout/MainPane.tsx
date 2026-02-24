@@ -24,6 +24,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const inlineConnectionSessionId = useSessionStore((state) => state.inlineConnectionSessionId)
   const activeFilePath = useFileViewerStore((state) => state.activeFilePath)
   const activeDiff = useFileViewerStore((state) => state.activeDiff)
+  const closedTerminalSessionIds = useSessionStore((state) => state.closedTerminalSessionIds)
   const ghosttyOverlaySuppressed = useLayoutStore((state) => state.ghosttyOverlaySuppressed)
 
   // Subscribe to session maps so terminal list stays reactive
@@ -87,6 +88,20 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       return changed ? merged : current
     })
   }, [terminalSessions])
+
+  // Prune terminals that were explicitly closed (tab close).
+  // This is the ONLY path that removes from mountedTerminalSessionIds.
+  useEffect(() => {
+    if (closedTerminalSessionIds.size === 0) return
+
+    setMountedTerminalSessionIds((current) => {
+      const filtered = current.filter((id) => !closedTerminalSessionIds.has(id))
+      return filtered.length === current.length ? current : filtered
+    })
+
+    // Acknowledge so the signal set doesn't grow forever
+    useSessionStore.getState().acknowledgeClosedTerminals(closedTerminalSessionIds)
+  }, [closedTerminalSessionIds])
 
   // Determine which terminal session is currently visible (if any).
   // A terminal is visible when it's the active session AND no diff/file/loading overlay is on top.

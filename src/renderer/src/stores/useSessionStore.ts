@@ -64,7 +64,12 @@ interface SessionState {
   // Sidebar selection remains on the worktree.
   inlineConnectionSessionId: string | null
 
+  // Transient signal: terminal session IDs that were closed since last acknowledgement.
+  // MainPane subscribes to this to prune mountedTerminalSessionIds.
+  closedTerminalSessionIds: Set<string>
+
   // Actions
+  acknowledgeClosedTerminals: (ids: Set<string>) => void
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
   createSession: (
     worktreeId: string,
@@ -155,6 +160,15 @@ export const useSessionStore = create<SessionState>()(
       activeSessionByConnection: {},
       activeConnectionId: null,
       inlineConnectionSessionId: null,
+      closedTerminalSessionIds: new Set<string>(),
+
+      acknowledgeClosedTerminals: (ids: Set<string>) => {
+        set((state) => {
+          const remaining = new Set(state.closedTerminalSessionIds)
+          for (const id of ids) remaining.delete(id)
+          return { closedTerminalSessionIds: remaining }
+        })
+      },
 
       // Load sessions for a worktree from database (only active sessions for tabs)
       loadSessions: async (worktreeId: string, _projectId: string) => {
@@ -455,6 +469,10 @@ export const useSessionStore = create<SessionState>()(
               }
             }
 
+            const newClosedTerminals = isTerminalSession
+              ? new Set([...state.closedTerminalSessionIds, sessionId])
+              : state.closedTerminalSessionIds
+
             return {
               sessionsByWorktree: newWorktreeSessionsMap,
               tabOrderByWorktree: newWorktreeTabOrderMap,
@@ -462,7 +480,8 @@ export const useSessionStore = create<SessionState>()(
               tabOrderByConnection: newConnectionTabOrderMap,
               activeSessionId: newActiveSessionId,
               activeSessionByWorktree: newActiveByWorktree,
-              activeSessionByConnection: newActiveByConnection
+              activeSessionByConnection: newActiveByConnection,
+              closedTerminalSessionIds: newClosedTerminals
             }
           })
 
@@ -769,13 +788,22 @@ export const useSessionStore = create<SessionState>()(
 
         // Push to agent backend (SDK-aware) — skip for terminal sessions
         try {
-          // Find the session's SDK to route correctly
+          // Find the session's SDK to route correctly (search both scopes)
           let agentSdk: 'opencode' | 'claude-code' | 'terminal' = 'opencode'
           for (const sessions of get().sessionsByWorktree.values()) {
             const found = sessions.find((s) => s.id === sessionId)
             if (found?.agent_sdk) {
               agentSdk = found.agent_sdk
               break
+            }
+          }
+          if (agentSdk === 'opencode') {
+            for (const sessions of get().sessionsByConnection.values()) {
+              const found = sessions.find((s) => s.id === sessionId)
+              if (found?.agent_sdk) {
+                agentSdk = found.agent_sdk
+                break
+              }
             }
           }
           if (agentSdk !== 'terminal') {

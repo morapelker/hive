@@ -3,6 +3,8 @@ import { useWorktreeStore } from './useWorktreeStore'
 
 // Debounce timers for git status refresh per worktree
 const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// Pending promise resolvers — accumulated so ALL callers resolve when debounced work completes
+const pendingResolvers = new Map<string, Array<() => void>>()
 const REFRESH_DEBOUNCE_MS = 150
 
 // Git status types matching main process
@@ -297,17 +299,27 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       clearTimeout(existing)
     }
 
-    // Set debounced refresh
+    // Set debounced refresh — accumulate resolvers so all callers get notified
     return new Promise<void>((resolve) => {
+      const resolvers = pendingResolvers.get(worktreePath) || []
+      resolvers.push(resolve)
+      pendingResolvers.set(worktreePath, resolvers)
+
       refreshTimers.set(
         worktreePath,
         setTimeout(async () => {
           refreshTimers.delete(worktreePath)
-          await Promise.all([
-            get().loadFileStatuses(worktreePath),
-            get().loadBranchInfo(worktreePath)
-          ])
-          resolve()
+          try {
+            await Promise.all([
+              get().loadFileStatuses(worktreePath),
+              get().loadBranchInfo(worktreePath)
+            ])
+          } finally {
+            // Resolve ALL pending promises for this worktree
+            const toResolve = pendingResolvers.get(worktreePath) || []
+            pendingResolvers.delete(worktreePath)
+            toResolve.forEach((r) => r())
+          }
         }, REFRESH_DEBOUNCE_MS)
       )
     })
@@ -406,8 +418,12 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
     try {
       const result = await window.gitOps.commit(worktreePath, message)
       if (result.success) {
-        // Refresh statuses after commit
-        await get().refreshStatuses(worktreePath)
+        // Refresh statuses after commit (wrapped so failure doesn't block commit success)
+        try {
+          await get().refreshStatuses(worktreePath)
+        } catch {
+          // Non-critical — commit already succeeded
+        }
 
         // Set the committed branch as the default merge target for sibling worktrees
         const branchInfo = get().branchInfoByWorktree.get(worktreePath)
@@ -423,12 +439,13 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
         // Bump version so components reset any manual merge-from selection
         set((state) => ({ mergeSelectionVersion: state.mergeSelectionVersion + 1 }))
       }
-      set({ isCommitting: false })
       return result
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : 'Failed to commit'
-      set({ isCommitting: false, error: errMessage })
+      set({ error: errMessage })
       return { success: false, error: errMessage }
+    } finally {
+      set({ isCommitting: false })
     }
   },
 
@@ -439,14 +456,19 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       const result = await window.gitOps.push(worktreePath, remote, branch, force)
       if (result.success) {
         // Refresh branch info to update ahead/behind counts
-        await get().loadBranchInfo(worktreePath)
+        try {
+          await get().loadBranchInfo(worktreePath)
+        } catch {
+          // Non-critical — push already succeeded
+        }
       }
-      set({ isPushing: false })
       return result
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : 'Failed to push'
-      set({ isPushing: false, error: errMessage })
+      set({ error: errMessage })
       return { success: false, error: errMessage }
+    } finally {
+      set({ isPushing: false })
     }
   },
 
@@ -456,15 +478,20 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
     try {
       const result = await window.gitOps.pull(worktreePath, remote, branch, rebase)
       if (result.success) {
-        // Refresh statuses after pull
-        await get().refreshStatuses(worktreePath)
+        // Refresh statuses after pull (wrapped so failure doesn't block pull success)
+        try {
+          await get().refreshStatuses(worktreePath)
+        } catch {
+          // Non-critical — pull already succeeded
+        }
       }
-      set({ isPulling: false })
       return result
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : 'Failed to pull'
-      set({ isPulling: false, error: errMessage })
+      set({ error: errMessage })
       return { success: false, error: errMessage }
+    } finally {
+      set({ isPulling: false })
     }
   }
 }))
