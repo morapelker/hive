@@ -31,6 +31,10 @@ export { useContextStore } from './useContextStore'
 export { useFileSearchStore } from './useFileSearchStore'
 export { useQuestionStore } from './useQuestionStore'
 export { usePermissionStore } from './usePermissionStore'
+export {
+  useCommandApprovalStore,
+  type CommandApprovalRequest
+} from './useCommandApprovalStore'
 export { usePromptHistoryStore } from './usePromptHistoryStore'
 export { useSpaceStore } from './useSpaceStore'
 export { useTerminalStore, type TerminalStatus, type TerminalInfo } from './useTerminalStore'

@@ -32,6 +32,7 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { SelectedModel } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
+import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { useWorktreeStore } from '@/stores'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -45,6 +46,7 @@ import beeIcon from '@/assets/bee.png'
 const EMPTY_FILE_INDEX: FlatFile[] = []
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
+import { CommandApprovalPrompt } from './CommandApprovalPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, stripPlanModePrefix } from '@/lib/constants'
 
@@ -396,6 +398,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Active question prompt from AI
   const activeQuestion = useQuestionStore((s) => s.getActiveQuestion(sessionId))
   const activePermission = usePermissionStore((s) => s.getActivePermission(sessionId))
+  const activeCommandApproval = useCommandApprovalStore((s) => s.getActiveApproval(sessionId))
 
   // Pending plan approval (ExitPlanMode blocking tool)
   const pendingPlan = useSessionStore((s) => s.pendingPlans.get(sessionId) ?? null)
@@ -1271,6 +1274,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
+          // Handle command approval events (command filter system)
+          if (event.type === 'command.approval_needed') {
+            const request = event.data
+            if (request?.id && request?.toolName) {
+              useCommandApprovalStore.getState().addApproval(sessionId, request)
+            }
+            return
+          }
+
           // Handle plan events (ExitPlanMode blocking tool)
           if (event.type === 'plan.ready') {
             const data = event.data as {
@@ -1669,6 +1681,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             immediateFlush()
             setIsSending(false)
             setQueuedMessages([])
+            // Clear any stale command approvals when session goes idle
+            useCommandApprovalStore.getState().clearSession(sessionId)
 
             if (!hasFinalizedCurrentResponseRef.current) {
               hasFinalizedCurrentResponseRef.current = true
@@ -1710,6 +1724,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               immediateFlush()
               setIsSending(false)
               setQueuedMessages([])
+              // Clear any stale command approvals when session goes idle
+              useCommandApprovalStore.getState().clearSession(sessionId)
 
               if (!hasFinalizedCurrentResponseRef.current) {
                 hasFinalizedCurrentResponseRef.current = true
@@ -2347,6 +2363,32 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     [worktreePath]
   )
 
+  // Handle command approval reply (approve/deny with optional remember + pattern)
+  const handleCommandApprovalReply = useCallback(
+    async (
+      requestId: string,
+      approved: boolean,
+      remember?: 'allow' | 'block',
+      pattern?: string
+    ) => {
+      try {
+        await window.opencodeOps.commandApprovalReply(
+          requestId,
+          approved,
+          remember,
+          pattern,
+          worktreePath || undefined
+        )
+        // Remove from store after sending reply
+        useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
+      } catch (err) {
+        console.error('Failed to reply to command approval:', err)
+        toast.error('Failed to send command approval reply')
+      }
+    },
+    [worktreePath, sessionId]
+  )
+
   const refreshMessagesFromOpenCode = useCallback(async (): Promise<boolean> => {
     if (!worktreePath || !opencodeSessionId) return false
 
@@ -2659,6 +2701,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       isAutoScrollEnabledRef.current = true
       setShowScrollFab(false)
       userHasScrolledUpRef.current = false
+
+      // Clear any stale command approvals from previous turns
+      useCommandApprovalStore.getState().clearSession(sessionId)
 
       // Start the completion badge timer from when the user sends the message
       messageSendTimes.set(sessionId, Date.now())
@@ -3022,8 +3067,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Abort streaming
   const handleAbort = useCallback(async () => {
     if (!worktreePath || !opencodeSessionId) return
+    // Clear any pending command approvals — the abort will auto-deny them on the main process side
+    useCommandApprovalStore.getState().clearSession(sessionId)
     await window.opencodeOps.abort(worktreePath, opencodeSessionId)
-  }, [worktreePath, opencodeSessionId])
+  }, [worktreePath, opencodeSessionId, sessionId])
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(
@@ -3611,6 +3658,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               key={activePermission.id}
               request={activePermission}
               onReply={handlePermissionReply}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Command approval prompt from AI (command filter system) */}
+      {activeCommandApproval && (
+        <div className="px-4 pb-2">
+          <div className="max-w-4xl mx-auto">
+            <CommandApprovalPrompt
+              key={activeCommandApproval.id}
+              request={activeCommandApproval}
+              onReply={handleCommandApprovalReply}
             />
           </div>
         </div>

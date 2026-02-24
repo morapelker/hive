@@ -654,6 +654,46 @@ export function registerOpenCodeHandlers(
     }
   )
 
+  // Reply to a pending command approval request (for command filter system)
+  ipcMain.handle(
+    'opencode:commandApprovalReply',
+    async (
+      _event,
+      {
+        requestId,
+        approved,
+        remember,
+        pattern,
+        worktreePath
+      }: {
+        requestId: string
+        approved: boolean
+        remember?: 'allow' | 'block'
+        pattern?: string
+        worktreePath?: string
+      }
+    ) => {
+      log.info('IPC: opencode:commandApprovalReply', { requestId, approved, remember, pattern })
+      try {
+        // Route to Claude Code implementer (command approval is Claude Code specific)
+        if (sdkManager) {
+          const impl = sdkManager.getImplementer('claude-code')
+          if (impl instanceof ClaudeCodeImplementer) {
+            impl.handleApprovalReply(requestId, approved, remember, pattern)
+            return { success: true }
+          }
+        }
+        throw new Error('Claude Code implementer not available')
+      } catch (error) {
+        log.error('IPC: opencode:commandApprovalReply failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Rename a session's title via the OpenCode PATCH API
   ipcMain.handle(
     'opencode:renameSession',

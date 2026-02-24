@@ -1090,6 +1090,22 @@ const opencodeOps = {
   ): Promise<{ success: boolean; permissions: unknown[]; error?: string }> =>
     ipcRenderer.invoke('opencode:permission:list', { worktreePath }),
 
+  // Reply to a pending command approval request (for command filter system)
+  commandApprovalReply: (
+    requestId: string,
+    approved: boolean,
+    remember?: 'allow' | 'block',
+    pattern?: string,
+    worktreePath?: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('opencode:commandApprovalReply', {
+      requestId,
+      approved,
+      remember,
+      pattern,
+      worktreePath
+    }),
+
   // Get session info (revert state)
   sessionInfo: (
     worktreePath: string,
@@ -1301,7 +1317,16 @@ const settingsOps = {
     terminalId: string,
     customCommand?: string
   ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('settings:openWithTerminal', worktreePath, terminalId, customCommand)
+    ipcRenderer.invoke('settings:openWithTerminal', worktreePath, terminalId, customCommand),
+
+  // Listen for settings updates from main process
+  onSettingsUpdated: (callback: (data: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, data: unknown): void => callback(data)
+    ipcRenderer.on('settings:updated', handler)
+    return () => {
+      ipcRenderer.removeListener('settings:updated', handler)
+    }
+  }
 }
 
 // Terminal operations API (PTY management)

@@ -503,6 +503,14 @@ declare global {
       permissionList: (
         worktreePath?: string
       ) => Promise<{ success: boolean; permissions: PermissionRequest[]; error?: string }>
+      // Reply to a pending command approval request (approve or deny, optionally add to allowlist/blocklist)
+      commandApprovalReply: (
+        requestId: string,
+        approved: boolean,
+        remember?: 'allow' | 'block',
+        pattern?: string,
+        worktreePath?: string
+      ) => Promise<{ success: boolean; error?: string }>
       // Get session info (revert state)
       sessionInfo: (
         worktreePath: string,
@@ -638,6 +646,7 @@ declare global {
         success: boolean
         error?: string
       }>
+      onSettingsUpdated: (callback: (data: unknown) => void) => () => void
     }
     scriptOps: {
       runSetup: (
@@ -1066,6 +1075,20 @@ declare global {
     patterns: string[]
     metadata: Record<string, unknown>
     always: string[]
+    tool?: {
+      messageID: string
+      callID: string
+    }
+  }
+
+  // Command approval request type (for command filter system)
+  interface CommandApprovalRequest {
+    id: string
+    sessionID: string
+    toolName: string
+    commandStr: string
+    input: Record<string, unknown>
+    patternSuggestions: string[]
     tool?: {
       messageID: string
       callID: string
