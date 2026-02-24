@@ -87,6 +87,7 @@ describe('MainPane terminal persistence', () => {
         activeConnectionId: null,
         inlineConnectionSessionId: null,
         isLoading: false,
+        closedTerminalSessionIds: new Set(),
         sessionsByWorktree: new Map([
           ['wt-1', [makeTerminalSession('term-1'), makeTerminalSession('term-2')]]
         ]),
@@ -141,5 +142,26 @@ describe('MainPane terminal persistence', () => {
 
     expect(screen.getByTestId('session-terminal-term-1')).toHaveAttribute('data-visible', 'false')
     expect(screen.getByTestId('session-terminal-term-2')).toHaveAttribute('data-visible', 'false')
+  })
+
+  test('removes terminal from mounted list when session is closed via store signal', () => {
+    render(<MainPane />)
+
+    // Both terminals are mounted
+    expect(screen.getByTestId('session-terminal-term-1')).toBeInTheDocument()
+    expect(screen.getByTestId('session-terminal-term-2')).toBeInTheDocument()
+
+    // Simulate closeSession: remove from sessions map AND signal via closedTerminalSessionIds
+    act(() => {
+      useSessionStore.setState({
+        activeSessionId: 'term-2',
+        closedTerminalSessionIds: new Set(['term-1']),
+        sessionsByWorktree: new Map([['wt-1', [makeTerminalSession('term-2')]]])
+      })
+    })
+
+    // term-1 should be unmounted, term-2 should remain
+    expect(screen.queryByTestId('session-terminal-term-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('session-terminal-term-2')).toBeInTheDocument()
   })
 })
