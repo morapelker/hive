@@ -100,6 +100,9 @@ interface SettingsState extends AppSettings {
   activeSection: string
   isLoading: boolean
 
+  // Cached SDK availability (non-persisted, re-detected each launch)
+  availableAgentSdks: { opencode: boolean; claude: boolean } | null
+
   // Actions
   openSettings: (section?: string) => void
   closeSettings: () => void
@@ -111,6 +114,7 @@ interface SettingsState extends AppSettings {
   getModelVariantDefault: (providerID: string, modelID: string) => string | undefined
   resetToDefaults: () => void
   loadFromDatabase: () => Promise<void>
+  detectAvailableAgentSdks: () => Promise<void>
 }
 
 async function saveToDatabase(settings: AppSettings): Promise<void> {
@@ -169,6 +173,7 @@ export const useSettingsStore = create<SettingsState>()(
       isOpen: false,
       activeSection: 'appearance',
       isLoading: true,
+      availableAgentSdks: null,
 
       openSettings: (section?: string) => {
         set({ isOpen: true, activeSection: section || get().activeSection })
@@ -249,6 +254,16 @@ export const useSettingsStore = create<SettingsState>()(
           set({ isLoading: false })
           await saveToDatabase(extractSettings(get()))
         }
+      },
+
+      detectAvailableAgentSdks: async () => {
+        try {
+          const result = await window.systemOps.detectAgentSdks()
+          set({ availableAgentSdks: result })
+        } catch {
+          // Fail gracefully — context menu just won't show
+          set({ availableAgentSdks: null })
+        }
       }
     }),
     {
@@ -280,9 +295,14 @@ export const useSettingsStore = create<SettingsState>()(
   )
 )
 
-// Load from database on startup
+// Load from database on startup, then detect available agent SDKs
 if (typeof window !== 'undefined') {
   setTimeout(() => {
-    useSettingsStore.getState().loadFromDatabase()
+    useSettingsStore
+      .getState()
+      .loadFromDatabase()
+      .then(() => {
+        useSettingsStore.getState().detectAvailableAgentSdks()
+      })
   }, 200)
 }

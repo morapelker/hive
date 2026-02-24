@@ -524,6 +524,8 @@ export function SessionTabs(): React.JSX.Element | null {
   // Auto-start runs as a direct follow-up to loadSessions (not a separate effect) to
   // eliminate race conditions between the two async operations.
   const autoStartSession = useSettingsStore((state) => state.autoStartSession)
+  const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
+  const showProviderMenu = availableAgentSdks?.opencode && availableAgentSdks?.claude
   const autoStartedRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -675,6 +677,24 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }
 
+  // Handle creating a new session with a specific agent SDK (from context menu)
+  const handleCreateSessionWithSdk = async (sdk: 'opencode' | 'claude-code') => {
+    if (isConnectionMode && selectedConnectionId) {
+      const result = await createConnectionSession(selectedConnectionId, sdk)
+      if (!result.success) {
+        toast.error(result.error || 'Failed to create session')
+      }
+      return
+    }
+
+    if (!selectedWorktreeId || !project) return
+
+    const result = await createSession(selectedWorktreeId, project.id, sdk)
+    if (!result.success) {
+      toast.error(result.error || 'Failed to create session')
+    }
+  }
+
   // Handle closing a session
   const handleCloseSession = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation()
@@ -820,14 +840,38 @@ export function SessionTabs(): React.JSX.Element | null {
       data-testid="session-tabs"
     >
       {/* New session button - on the left */}
-      <button
-        onClick={handleCreateSession}
-        className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
-        data-testid="create-session"
-        title="Create new session"
-      >
-        <Plus className="h-4 w-4" />
-      </button>
+      {/* Right-click shows provider menu when both SDKs are available */}
+      {showProviderMenu ? (
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <button
+              onClick={handleCreateSession}
+              className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
+              data-testid="create-session"
+              title="Create new session (right-click for provider options)"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
+              New OpenCode Session
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
+              New Claude Code Session
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      ) : (
+        <button
+          onClick={handleCreateSession}
+          className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
+          data-testid="create-session"
+          title="Create new session"
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      )}
 
       {/* Left scroll arrow */}
       {showLeftArrow && (

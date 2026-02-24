@@ -68,7 +68,8 @@ interface SessionState {
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
   createSession: (
     worktreeId: string,
-    projectId: string
+    projectId: string,
+    agentSdkOverride?: 'opencode' | 'claude-code'
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -103,7 +104,8 @@ interface SessionState {
   // Connection session actions
   loadConnectionSessions: (connectionId: string) => Promise<void>
   createConnectionSession: (
-    connectionId: string
+    connectionId: string,
+    agentSdkOverride?: 'opencode' | 'claude-code'
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -232,11 +234,15 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Create a new session
-      createSession: async (worktreeId: string, projectId: string) => {
+      createSession: async (
+        worktreeId: string,
+        projectId: string,
+        agentSdkOverride?: 'opencode' | 'claude-code'
+      ) => {
         try {
           // Resolve default agent SDK from settings
           const { useSettingsStore } = await import('./useSettingsStore')
-          const defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+          const defaultAgentSdk = agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
 
           const isTerminal = defaultAgentSdk === 'terminal'
 
@@ -1043,7 +1049,10 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Create a session scoped to a connection
-      createConnectionSession: async (connectionId: string) => {
+      createConnectionSession: async (
+        connectionId: string,
+        agentSdkOverride?: 'opencode' | 'claude-code'
+      ) => {
         try {
           // Look up the connection to get the first member's project_id
           const result = await window.connectionOps.get(connectionId)
@@ -1058,7 +1067,8 @@ export const useSessionStore = create<SessionState>()(
           let defaultAgentSdk: 'opencode' | 'claude-code' | 'terminal' = 'opencode'
           try {
             const { useSettingsStore } = await import('./useSettingsStore')
-            defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+            defaultAgentSdk =
+              agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
             // Terminal sessions skip model resolution
             if (defaultAgentSdk !== 'terminal') {
               const globalModel = useSettingsStore.getState().selectedModel
