@@ -68,7 +68,8 @@ interface SessionState {
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
   createSession: (
     worktreeId: string,
-    projectId: string
+    projectId: string,
+    agentSdkOverride?: 'opencode' | 'claude-code'
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -103,7 +104,8 @@ interface SessionState {
   // Connection session actions
   loadConnectionSessions: (connectionId: string) => Promise<void>
   createConnectionSession: (
-    connectionId: string
+    connectionId: string,
+    agentSdkOverride?: 'opencode' | 'claude-code'
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -232,7 +234,11 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Create a new session
-      createSession: async (worktreeId: string, projectId: string) => {
+      createSession: async (
+        worktreeId: string,
+        projectId: string,
+        agentSdkOverride?: 'opencode' | 'claude-code'
+      ) => {
         try {
           // Determine default model: worktree's last-used model > global setting
           let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
@@ -270,9 +276,10 @@ export const useSessionStore = create<SessionState>()(
           const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
           const sessionNumber = existingSessions.length + 1
 
-          // Resolve default agent SDK from settings
+          // Resolve agent SDK: explicit override > settings default > fallback
           const { useSettingsStore } = await import('./useSettingsStore')
-          const defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+          const defaultAgentSdk =
+            agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
 
           const session = await window.db.session.create({
             worktree_id: worktreeId,
@@ -1010,7 +1017,10 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Create a session scoped to a connection
-      createConnectionSession: async (connectionId: string) => {
+      createConnectionSession: async (
+        connectionId: string,
+        agentSdkOverride?: 'opencode' | 'claude-code'
+      ) => {
         try {
           // Look up the connection to get the first member's project_id
           const result = await window.connectionOps.get(connectionId)
@@ -1029,7 +1039,8 @@ export const useSessionStore = create<SessionState>()(
             if (globalModel) {
               defaultModel = globalModel
             }
-            defaultAgentSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+            defaultAgentSdk =
+              agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
           } catch {
             /* non-critical */
           }
