@@ -6,11 +6,13 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FileSidebar } from '@/components/file-tree'
 import { BottomPanel } from './BottomPanel'
+import { TerminalManager } from '@/components/terminal/TerminalManager'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 
 export function RightSidebar(): React.JSX.Element {
   const { rightSidebarWidth, rightSidebarCollapsed, setRightSidebarWidth, toggleRightSidebar } =
     useLayoutStore()
+  const bottomPanelTab = useLayoutStore((s) => s.bottomPanelTab)
 
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
@@ -50,8 +52,23 @@ export function RightSidebar(): React.JSX.Element {
     }
   }
 
+  // TerminalManager is always rendered (even when sidebar is collapsed) to preserve
+  // PTY state across sidebar collapse/expand and worktree switches.
+  const terminalManager = (
+    <TerminalManager
+      selectedWorktreeId={selectedWorktreeId}
+      worktreePath={selectedWorktreePath}
+      isVisible={!rightSidebarCollapsed && bottomPanelTab === 'terminal'}
+    />
+  )
+
   if (rightSidebarCollapsed) {
-    return <div data-testid="right-sidebar-collapsed" />
+    return (
+      <div data-testid="right-sidebar-collapsed">
+        {/* Keep TerminalManager alive when sidebar is collapsed so PTYs persist */}
+        <div className="hidden">{terminalManager}</div>
+      </div>
+    )
   }
 
   return (
@@ -91,7 +108,7 @@ export function RightSidebar(): React.JSX.Element {
 
         {/* Bottom half: Tab panel */}
         <div className="flex flex-col flex-1 min-h-0" data-testid="right-sidebar-bottom">
-          <BottomPanel />
+          <BottomPanel terminalSlot={terminalManager} />
         </div>
       </aside>
     </div>

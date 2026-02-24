@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { TerminalView } from '@/components/terminal/TerminalView'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -6,6 +6,8 @@ import { useConnectionStore } from '@/stores/useConnectionStore'
 
 interface SessionTerminalViewProps {
   sessionId: string
+  /** Whether this terminal is currently visible (not hidden by CSS). Controls fit/focus and Ghostty frame sync. */
+  isVisible?: boolean
 }
 
 /**
@@ -13,7 +15,10 @@ interface SessionTerminalViewProps {
  * Uses the session ID as the PTY key (not worktree ID) to avoid
  * conflicts with the bottom-panel terminal.
  */
-export function SessionTerminalView({ sessionId }: SessionTerminalViewProps): React.JSX.Element {
+export function SessionTerminalView({
+  sessionId,
+  isVisible = true
+}: SessionTerminalViewProps): React.JSX.Element {
   // Look up the session to find its worktree_id or connection_id
   const session = useSessionStore((state) => {
     for (const sessions of state.sessionsByWorktree.values()) {
@@ -28,7 +33,7 @@ export function SessionTerminalView({ sessionId }: SessionTerminalViewProps): Re
   })
 
   // Resolve the working directory from the session's worktree
-  const cwd = useMemo(() => {
+  const resolvedCwd = useMemo(() => {
     if (!session) return null
 
     // Direct worktree session
@@ -56,6 +61,15 @@ export function SessionTerminalView({ sessionId }: SessionTerminalViewProps): Re
     return null
   }, [session])
 
+  const [lastKnownCwd, setLastKnownCwd] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!resolvedCwd) return
+    setLastKnownCwd((current) => (current === resolvedCwd ? current : resolvedCwd))
+  }, [resolvedCwd])
+
+  const cwd = resolvedCwd || lastKnownCwd
+
   if (!cwd) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -66,11 +80,7 @@ export function SessionTerminalView({ sessionId }: SessionTerminalViewProps): Re
 
   return (
     <div className="flex-1 flex flex-col min-h-0" data-testid="session-terminal-view">
-      <TerminalView
-        worktreeId={sessionId}
-        cwd={cwd}
-        isVisible={true}
-      />
+      <TerminalView worktreeId={sessionId} cwd={cwd} isVisible={isVisible} />
     </div>
   )
 }

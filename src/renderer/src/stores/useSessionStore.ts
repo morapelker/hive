@@ -69,7 +69,7 @@ interface SessionState {
   createSession: (
     worktreeId: string,
     projectId: string,
-    agentSdkOverride?: 'opencode' | 'claude-code'
+    agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -105,7 +105,7 @@ interface SessionState {
   loadConnectionSessions: (connectionId: string) => Promise<void>
   createConnectionSession: (
     connectionId: string,
-    agentSdkOverride?: 'opencode' | 'claude-code'
+    agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -237,7 +237,7 @@ export const useSessionStore = create<SessionState>()(
       createSession: async (
         worktreeId: string,
         projectId: string,
-        agentSdkOverride?: 'opencode' | 'claude-code'
+        agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
       ) => {
         try {
           // Resolve default agent SDK from settings
@@ -1051,7 +1051,7 @@ export const useSessionStore = create<SessionState>()(
       // Create a session scoped to a connection
       createConnectionSession: async (
         connectionId: string,
-        agentSdkOverride?: 'opencode' | 'claude-code'
+        agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
       ) => {
         try {
           // Look up the connection to get the first member's project_id

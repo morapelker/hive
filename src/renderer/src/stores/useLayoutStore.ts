@@ -9,6 +9,7 @@ interface LayoutState {
   rightSidebarWidth: number
   rightSidebarCollapsed: boolean
   bottomPanelTab: BottomPanelTab
+  ghosttyOverlaySuppressed: boolean
   setLeftSidebarWidth: (width: number) => void
   toggleLeftSidebar: () => void
   setLeftSidebarCollapsed: (collapsed: boolean) => void
@@ -16,6 +17,7 @@ interface LayoutState {
   toggleRightSidebar: () => void
   setRightSidebarCollapsed: (collapsed: boolean) => void
   setBottomPanelTab: (tab: BottomPanelTab) => void
+  setGhosttyOverlaySuppressed: (suppressed: boolean) => void
 }
 
 const LEFT_SIDEBAR_DEFAULT = 240
@@ -31,6 +33,7 @@ export const useLayoutStore = create<LayoutState>()(
       rightSidebarWidth: RIGHT_SIDEBAR_DEFAULT,
       rightSidebarCollapsed: false,
       bottomPanelTab: 'setup' as BottomPanelTab,
+      ghosttyOverlaySuppressed: false,
 
       setLeftSidebarWidth: (width: number) => {
         const clampedWidth = Math.min(Math.max(width, LEFT_SIDEBAR_MIN), LEFT_SIDEBAR_MAX)
@@ -59,6 +62,10 @@ export const useLayoutStore = create<LayoutState>()(
 
       setBottomPanelTab: (tab: BottomPanelTab) => {
         set({ bottomPanelTab: tab })
+      },
+
+      setGhosttyOverlaySuppressed: (suppressed: boolean) => {
+        set({ ghosttyOverlaySuppressed: suppressed })
       }
     }),
     {
