@@ -12,6 +12,10 @@ import { generateSessionTitle } from './claude-session-title'
 import { autoRenameWorktreeBranch } from './git-service'
 import { getEventBus } from '../../server/event-bus'
 import { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk'
+import {
+  CommandFilterService,
+  type CommandFilterSettings
+} from './command-filter-service'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -136,6 +140,18 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   private cachedSlashCommands = new Map<
     string,
     Array<{ name: string; description: string; argumentHint: string }>
+  >()
+  /** Command filter service for evaluating tool use permissions */
+  private commandFilterService = new CommandFilterService()
+  /** Maps pending command approval requestIds to their resolution callbacks */
+  private pendingApprovals = new Map<
+    string,
+    {
+      resolve: (response: { approved: boolean; remember?: 'allow' | 'block' }) => void
+      toolName: string
+      input: Record<string, unknown>
+      commandStr: string
+    }
   >()
 
   // ── Window binding ───────────────────────────────────────────────
@@ -1688,10 +1704,36 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         return this.handleExitPlanMode(session, input, options)
       }
 
-      if (toolName !== 'AskUserQuestion') {
-        // Auto-allow all non-question tools (normal permissions handled by permissionMode)
-        return { behavior: 'allow' as const, updatedInput: input }
+      // Handle AskUserQuestion (intercept and block for user response)
+      if (toolName === 'AskUserQuestion') {
+        // Continue to existing AskUserQuestion handling below...
+      } else {
+        // For all other tools, evaluate against command filter
+        const settings = await this.getCommandFilterSettings()
+        const action = this.commandFilterService.evaluateToolUse(toolName, input, settings)
+
+        if (action === 'allow') {
+          return { behavior: 'allow' as const, updatedInput: input }
+        }
+
+        if (action === 'block') {
+          const commandStr = this.commandFilterService.formatCommandString(toolName, input)
+          log.info('canUseTool: tool blocked by command filter', {
+            toolName,
+            commandStr,
+            sessionId: session.hiveSessionId
+          })
+          return {
+            behavior: 'deny' as const,
+            message: `Command blocked by security policy: ${commandStr}`
+          }
+        }
+
+        // action === 'ask' - show approval prompt
+        return this.handleCommandApproval(session, toolName, input, options)
       }
+
+      // Continue with AskUserQuestion handling (existing code below)...
 
       const requestId = `askuser-${Date.now()}-${randomUUID().slice(0, 8)}`
       const toolUseID = options.toolUseID
@@ -1794,6 +1836,214 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         updatedInput: { ...input, answers: sdkAnswers }
       }
     }
+  }
+
+  /**
+   * Handle command approval flow for tool uses requiring user permission
+   * Blocks execution until user approves or denies, optionally adding to allowlist/blocklist
+   */
+  private async handleCommandApproval(
+    session: ClaudeSessionState,
+    toolName: string,
+    input: Record<string, unknown>,
+    options: { signal: AbortSignal; toolUseID: string }
+  ): Promise<
+    | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
+    | { behavior: 'deny'; message: string }
+  > {
+    const requestId = `approval-${Date.now()}-${randomUUID().slice(0, 8)}`
+    const commandStr = this.commandFilterService.formatCommandString(toolName, input)
+
+    log.info('handleCommandApproval: awaiting user decision', {
+      requestId,
+      toolName,
+      commandStr,
+      hiveSessionId: session.hiveSessionId
+    })
+
+    const patternSuggestions = this.commandFilterService.generatePatternSuggestions(
+      toolName,
+      input
+    )
+
+    const approvalRequest = {
+      id: requestId,
+      sessionID: session.hiveSessionId,
+      toolName,
+      commandStr,
+      input,
+      patternSuggestions,
+      tool: { messageID: `msg-${Date.now()}`, callID: options.toolUseID }
+    }
+
+    // Emit command.approval_needed event to renderer
+    this.sendToRenderer('opencode:stream', {
+      type: 'command.approval_needed',
+      sessionId: session.hiveSessionId,
+      data: approvalRequest
+    })
+
+    // Block execution with a Promise that waits for user response
+    const userResponse = await new Promise<{
+      approved: boolean
+      remember?: 'allow' | 'block'
+      pattern?: string
+    }>((resolve) => {
+      this.pendingApprovals.set(requestId, {
+        resolve: (response) => resolve(response),
+        toolName,
+        input,
+        commandStr
+      })
+
+      // If the session is aborted while waiting, auto-deny
+      const onAbort = (): void => {
+        if (this.pendingApprovals.has(requestId)) {
+          log.info('handleCommandApproval: session aborted while approval pending, auto-denying', {
+            requestId
+          })
+          this.pendingApprovals.delete(requestId)
+          resolve({ approved: false })
+        }
+      }
+      options.signal.addEventListener('abort', onAbort, { once: true })
+    })
+
+    // Clean up tracking state
+    this.pendingApprovals.delete(requestId)
+
+    // Handle "remember" choice - update settings with user-selected pattern
+    if (userResponse.remember) {
+      const patternToSave = userResponse.pattern || commandStr
+      await this.updateCommandFilter(patternToSave, userResponse.remember)
+    }
+
+    if (!userResponse.approved) {
+      log.info('handleCommandApproval: user denied command', { requestId, commandStr })
+      return {
+        behavior: 'deny' as const,
+        message: `Command rejected by user: ${commandStr}`
+      }
+    }
+
+    log.info('handleCommandApproval: user approved command', { requestId, commandStr })
+    return { behavior: 'allow' as const, updatedInput: input }
+  }
+
+  /**
+   * Load command filter settings from database
+   */
+  private async getCommandFilterSettings(): Promise<CommandFilterSettings> {
+    if (!this.dbService) {
+      log.warn('getCommandFilterSettings: no database service available, using defaults')
+      return {
+        allowlist: [],
+        blocklist: [],
+        defaultBehavior: 'ask',
+        enabled: true
+      }
+    }
+
+    try {
+      const settingsJson = this.dbService.getSetting('app_settings')
+      if (!settingsJson) {
+        log.warn('getCommandFilterSettings: no app_settings found in DB, using defaults')
+        return {
+          allowlist: [],
+          blocklist: [],
+          defaultBehavior: 'ask',
+          enabled: true
+        }
+      }
+
+      const settings = JSON.parse(settingsJson)
+      const filterSettings = settings.commandFilter || {
+        allowlist: [],
+        blocklist: [],
+        defaultBehavior: 'ask',
+        enabled: true
+      }
+
+      log.info('getCommandFilterSettings: loaded from DB', {
+        enabled: filterSettings.enabled,
+        allowlistCount: filterSettings.allowlist?.length,
+        blocklistCount: filterSettings.blocklist?.length,
+        blocklist: filterSettings.blocklist,
+        defaultBehavior: filterSettings.defaultBehavior
+      })
+
+      return filterSettings
+    } catch (error) {
+      log.error('getCommandFilterSettings: failed to load settings', { error })
+      return {
+        allowlist: [],
+        blocklist: [],
+        defaultBehavior: 'ask',
+        enabled: true
+      }
+    }
+  }
+
+  /**
+   * Update command filter settings by adding a pattern to allowlist or blocklist
+   */
+  private async updateCommandFilter(
+    pattern: string,
+    action: 'allow' | 'block'
+  ): Promise<void> {
+    if (!this.dbService) {
+      log.error('updateCommandFilter: no database service available')
+      return
+    }
+
+    try {
+      const settingsJson = this.dbService.getSetting('app_settings') || '{}'
+      const settings = JSON.parse(settingsJson)
+
+      if (!settings.commandFilter) {
+        settings.commandFilter = {
+          allowlist: [],
+          blocklist: [],
+          defaultBehavior: 'ask',
+          enabled: true
+        }
+      }
+
+      const list = action === 'allow' ? settings.commandFilter.allowlist : settings.commandFilter.blocklist
+
+      if (!list.includes(pattern)) {
+        list.push(pattern)
+        this.dbService.setSetting('app_settings', JSON.stringify(settings))
+
+        log.info('updateCommandFilter: added pattern', { pattern, action })
+
+        // Notify renderer to update settings store
+        this.sendToRenderer('settings:updated', {
+          commandFilter: settings.commandFilter
+        })
+      }
+    } catch (error) {
+      log.error('updateCommandFilter: failed to update settings', { error })
+    }
+  }
+
+  /**
+   * Handle approval reply from IPC (called by opencode-handlers.ts)
+   */
+  handleApprovalReply(
+    requestId: string,
+    approved: boolean,
+    remember?: 'allow' | 'block',
+    pattern?: string
+  ): void {
+    const pendingApproval = this.pendingApprovals.get(requestId)
+    if (!pendingApproval) {
+      log.warn('handleApprovalReply: no pending approval found', { requestId })
+      return
+    }
+
+    log.info('handleApprovalReply: user responded', { requestId, approved, remember, pattern })
+    pendingApproval.resolve({ approved, remember, pattern })
   }
 
   private emitStatus(

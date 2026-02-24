@@ -24,6 +24,13 @@ export interface SelectedModel {
 
 export type QuickActionType = 'cursor' | 'terminal' | 'copy-path' | 'finder'
 
+export interface CommandFilterSettings {
+  allowlist: string[]
+  blocklist: string[]
+  defaultBehavior: 'ask' | 'allow' | 'block'
+  enabled: boolean
+}
+
 export interface AppSettings {
   // General
   autoStartSession: boolean
@@ -69,6 +76,9 @@ export interface AppSettings {
 
   // Updates
   updateChannel: 'stable' | 'canary'
+
+  // Command Filter
+  commandFilter: CommandFilterSettings
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -90,7 +100,23 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultAgentSdk: 'opencode',
   stripAtMentions: true,
   updateChannel: 'stable',
-  initialSetupComplete: false
+  initialSetupComplete: false,
+  commandFilter: {
+    allowlist: ['edit: **', 'write: **'],
+    blocklist: [
+      'bash: rm -rf *',
+      'bash: sudo rm *',
+      'bash: sudo *',
+      'edit: **/.env',
+      'edit: **/*.key',
+      'edit: **/credentials*',
+      'write: **/.env',
+      'write: **/*.key',
+      'write: **/credentials*'
+    ],
+    defaultBehavior: 'ask',
+    enabled: true
+  }
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -161,7 +187,8 @@ function extractSettings(state: SettingsState): AppSettings {
     defaultAgentSdk: state.defaultAgentSdk,
     stripAtMentions: state.stripAtMentions,
     updateChannel: state.updateChannel,
-    initialSetupComplete: state.initialSetupComplete
+    initialSetupComplete: state.initialSetupComplete,
+    commandFilter: state.commandFilter
   }
 }
 
@@ -289,7 +316,8 @@ export const useSettingsStore = create<SettingsState>()(
         activeSection: state.activeSection,
         stripAtMentions: state.stripAtMentions,
         updateChannel: state.updateChannel,
-        initialSetupComplete: state.initialSetupComplete
+        initialSetupComplete: state.initialSetupComplete,
+        commandFilter: state.commandFilter
       })
     }
   )
@@ -305,4 +333,12 @@ if (typeof window !== 'undefined') {
         useSettingsStore.getState().detectAvailableAgentSdks()
       })
   }, 200)
+
+  // Listen for settings updates from main process (e.g., when "Allow always" adds to allowlist)
+  window.settingsOps?.onSettingsUpdated((data) => {
+    const typedData = data as { commandFilter?: CommandFilterSettings }
+    if (typedData.commandFilter) {
+      useSettingsStore.setState({ commandFilter: typedData.commandFilter })
+    }
+  })
 }
