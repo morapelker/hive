@@ -19,7 +19,8 @@ Available operations:
 
 Line and character are 1-based (first line is 1, first column is 1).
 filePath can be absolute or relative to the project root.
-documentSymbol only needs filePath. workspaceSymbol and diagnostics need no file/position.`
+documentSymbol only needs filePath. workspaceSymbol uses filePath as the search query string.
+diagnostics needs no file/position.`
 
 interface LspToolArgs {
   operation: LspOperation

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -41,6 +41,12 @@ describe('createLspToolHandler', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lsp-mcp-test-'))
     testFilePath = path.join(tmpDir, 'test.ts')
     fs.writeFileSync(testFilePath, 'const x: number = 1\n')
+  })
+
+  afterEach(() => {
+    if (tmpDir) {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
   })
 
   it('goToDefinition calls lspService.goToDefinition with 0-based position', async () => {
@@ -344,8 +350,7 @@ describe('createLspToolHandler', () => {
 
 describe('createLspMcpServerConfig', () => {
   it('returns object with type: "sdk", name: "hive-lsp", and instance', async () => {
-    // This test dynamically imports the SDK, so it may fail if SDK is not available
-    // in test environment. We wrap in try/catch to provide a clear skip message.
+    // Dynamically import the SDK-dependent factory function
     const { createLspMcpServerConfig } = await import(
       '../../src/main/services/lsp/lsp-mcp-server'
     )
