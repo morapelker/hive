@@ -71,7 +71,7 @@ describe('LSP MCP E2E', () => {
     const fakeDef = createFakeServerDef()
     mockServersForFile([fakeDef])
 
-    const handler = createLspToolHandler(service, tmpDir)
+    const handler = createLspToolHandler(service)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -95,7 +95,7 @@ describe('LSP MCP E2E', () => {
     const fakeDef = createFakeServerDef()
     mockServersForFile([fakeDef])
 
-    const handler = createLspToolHandler(service, tmpDir)
+    const handler = createLspToolHandler(service)
 
     const result = await handler({
       operation: 'hover',
@@ -118,7 +118,7 @@ describe('LSP MCP E2E', () => {
     const fakeDef = createFakeServerDef()
     mockServersForFile([fakeDef])
 
-    const handler = createLspToolHandler(service, tmpDir)
+    const handler = createLspToolHandler(service)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -135,7 +135,7 @@ describe('LSP MCP E2E', () => {
     const fakeDef = createFakeServerDef()
     mockServersForFile([fakeDef])
 
-    const handler = createLspToolHandler(service, tmpDir)
+    const handler = createLspToolHandler(service)
 
     const result = await handler({
       operation: 'documentSymbol',
@@ -153,7 +153,7 @@ describe('LSP MCP E2E', () => {
     const fakeDef = createFakeServerDef()
     mockServersForFile([fakeDef])
 
-    const handler = createLspToolHandler(service, tmpDir)
+    const handler = createLspToolHandler(service)
 
     const result = await handler({
       operation: 'findReferences',
@@ -172,7 +172,7 @@ describe('LSP MCP E2E', () => {
     const fakeDef = createFakeServerDef()
     mockServersForFile([fakeDef])
 
-    const handler = createLspToolHandler(service, tmpDir)
+    const handler = createLspToolHandler(service)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -193,7 +193,7 @@ describe('LSP MCP E2E', () => {
     // Must open a file first to populate diagnostics
     await service.touchFile(testFilePath, true)
 
-    const handler = createLspToolHandler(service, tmpDir)
+    const handler = createLspToolHandler(service)
 
     const result = await handler({
       operation: 'diagnostics',

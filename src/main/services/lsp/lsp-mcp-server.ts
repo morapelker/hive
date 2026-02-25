@@ -37,10 +37,7 @@ interface LspToolResult {
  * Create the LSP tool handler function.
  * Exported separately so it can be unit-tested without the SDK.
  */
-export function createLspToolHandler(
-  lspService: LspService,
-  projectRoot: string
-) {
+export function createLspToolHandler(lspService: LspService) {
   return async (args: LspToolArgs): Promise<LspToolResult> => {
     const { operation, filePath, line, character } = args
 
@@ -48,7 +45,7 @@ export function createLspToolHandler(
       // Resolve absolute path
       const absolutePath = path.isAbsolute(filePath)
         ? filePath
-        : path.join(projectRoot, filePath)
+        : path.join(lspService.getProjectRoot(), filePath)
 
       // Operations that don't need a file path
       if (operation === 'diagnostics') {
@@ -191,16 +188,13 @@ export function createLspToolHandler(
  * Create an MCP server config that exposes the LSP tool to the Claude Agent SDK.
  * Dynamically imports the SDK since it's ESM-only.
  */
-export async function createLspMcpServerConfig(
-  lspService: LspService,
-  projectRoot: string
-) {
+export async function createLspMcpServerConfig(lspService: LspService) {
   const { createSdkMcpServer, tool } = await import(
     '@anthropic-ai/claude-agent-sdk'
   )
   const { z } = await import('zod')
 
-  const handler = createLspToolHandler(lspService, projectRoot)
+  const handler = createLspToolHandler(lspService)
 
   const lspTool = tool(
     'lsp',

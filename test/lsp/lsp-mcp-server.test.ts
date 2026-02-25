@@ -9,10 +9,11 @@ import type { LspService } from '../../src/main/services/lsp/lsp-service'
  * Create a mock LspService with all methods stubbed.
  */
 function createMockLspService(
+  projectRoot: string,
   overrides: Partial<Record<keyof LspService, unknown>> = {}
 ): LspService {
   return {
-    getProjectRoot: vi.fn().mockReturnValue('/mock/project'),
+    getProjectRoot: vi.fn().mockReturnValue(projectRoot),
     hasClients: vi.fn().mockResolvedValue(true),
     getClients: vi.fn().mockResolvedValue([]),
     touchFile: vi.fn().mockResolvedValue(undefined),
@@ -43,8 +44,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('goToDefinition calls lspService.goToDefinition with 0-based position', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -66,8 +67,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('converts line: 10, character: 5 to line: 9, character: 4', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     await handler({
       operation: 'goToDefinition',
@@ -82,8 +83,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('returns isError: true when file does not exist', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -97,10 +98,10 @@ describe('createLspToolHandler', () => {
   })
 
   it('returns isError: true when hasClients() returns false', async () => {
-    const mockService = createMockLspService({
+    const mockService = createMockLspService(tmpDir, {
       hasClients: vi.fn().mockResolvedValue(false)
     })
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -114,8 +115,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('hover calls lspService.hover()', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'hover',
@@ -135,8 +136,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('findReferences calls lspService.findReferences()', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     await handler({
       operation: 'findReferences',
@@ -153,8 +154,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('documentSymbol calls lspService.documentSymbol() with file path', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'documentSymbol',
@@ -168,8 +169,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('workspaceSymbol calls lspService.workspaceSymbol()', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'workspaceSymbol',
@@ -187,10 +188,10 @@ describe('createLspToolHandler', () => {
       { uri: 'file:///a.ts', range: { start: { line: 1, character: 0 } } },
       { uri: 'file:///b.ts', range: { start: { line: 2, character: 5 } } }
     ]
-    const mockService = createMockLspService({
+    const mockService = createMockLspService(tmpDir, {
       goToDefinition: vi.fn().mockResolvedValue(mockResults)
     })
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -204,10 +205,10 @@ describe('createLspToolHandler', () => {
   })
 
   it('returns "No results found" when operation returns empty array', async () => {
-    const mockService = createMockLspService({
+    const mockService = createMockLspService(tmpDir, {
       goToDefinition: vi.fn().mockResolvedValue([])
     })
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -221,8 +222,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('relative file path resolved against project root', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     await handler({
       operation: 'goToDefinition',
@@ -241,8 +242,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('goToImplementation calls lspService.goToImplementation()', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     await handler({
       operation: 'goToImplementation',
@@ -259,8 +260,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('incomingCalls calls lspService.incomingCalls()', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     await handler({
       operation: 'incomingCalls',
@@ -277,8 +278,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('outgoingCalls calls lspService.outgoingCalls()', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     await handler({
       operation: 'outgoingCalls',
@@ -295,8 +296,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('diagnostics calls lspService.diagnostics() and returns all', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'diagnostics',
@@ -311,8 +312,8 @@ describe('createLspToolHandler', () => {
   })
 
   it('returns error when position-based operation is missing line/character', async () => {
-    const mockService = createMockLspService()
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const mockService = createMockLspService(tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -324,10 +325,10 @@ describe('createLspToolHandler', () => {
   })
 
   it('catches and wraps errors from service methods', async () => {
-    const mockService = createMockLspService({
+    const mockService = createMockLspService(tmpDir, {
       goToDefinition: vi.fn().mockRejectedValue(new Error('Connection lost'))
     })
-    const handler = createLspToolHandler(mockService, tmpDir)
+    const handler = createLspToolHandler(mockService)
 
     const result = await handler({
       operation: 'goToDefinition',
@@ -349,8 +350,8 @@ describe('createLspMcpServerConfig', () => {
       '../../src/main/services/lsp/lsp-mcp-server'
     )
 
-    const mockService = createMockLspService()
-    const config = await createLspMcpServerConfig(mockService, '/mock/project')
+    const mockService = createMockLspService('/mock/project')
+    const config = await createLspMcpServerConfig(mockService)
 
     expect(config.type).toBe('sdk')
     expect(config.name).toBe('hive-lsp')
