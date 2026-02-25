@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'child_process'
+import { spawn, execFileSync } from 'child_process'
 import { existsSync } from 'fs'
 import { dirname, extname, join } from 'path'
 import type { LspServerDefinition, LspServerHandle } from './lsp-types'
@@ -35,7 +35,7 @@ export function findProjectRoot(
  */
 function binaryExists(name: string): boolean {
   try {
-    execSync(`which ${name}`, { stdio: 'ignore' })
+    execFileSync('which', [name], { stdio: 'ignore' })
     return true
   } catch {
     return false
