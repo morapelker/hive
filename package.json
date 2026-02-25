@@ -1,6 +1,6 @@
 {
   "name": "hive",
-  "version": "1.0.43",
+  "version": "1.0.44",
   "description": "Electron app for managing git projects and worktrees with OpenCode AI sessions",
   "main": "./out/main/index.js",
   "author": "",
