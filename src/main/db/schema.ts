@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS worktrees (
   last_model_id TEXT,
   last_model_variant TEXT,
   attachments TEXT DEFAULT '[]',
+  pinned INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   last_accessed_at TEXT NOT NULL
 );
@@ -159,6 +160,7 @@ export const MIGRATIONS: Migration[] = [
         name TEXT NOT NULL,
         path TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'active',
+        pinned INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );

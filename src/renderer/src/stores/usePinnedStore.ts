@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { toast } from '@/lib/toast'
 import { useWorktreeStore } from './useWorktreeStore'
 
 interface PinnedState {
@@ -11,6 +12,10 @@ interface PinnedState {
   unpinWorktree: (id: string) => Promise<void>
   pinConnection: (id: string) => Promise<void>
   unpinConnection: (id: string) => Promise<void>
+  /** Remove a worktree from pinned state (local only, no IPC). Use when the item is archived/deleted. */
+  removeWorktree: (id: string) => void
+  /** Remove a connection from pinned state (local only, no IPC). Use when the item is deleted. */
+  removeConnection: (id: string) => void
   isWorktreePinned: (id: string) => boolean
   isConnectionPinned: (id: string) => boolean
 }
@@ -59,6 +64,8 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
         next.add(id)
         return { pinnedWorktreeIds: next }
       })
+    } else {
+      toast.error(result.error || 'Failed to pin worktree')
     }
   },
 
@@ -70,6 +77,8 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
         next.delete(id)
         return { pinnedWorktreeIds: next }
       })
+    } else {
+      toast.error(result.error || 'Failed to unpin worktree')
     }
   },
 
@@ -81,6 +90,8 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
         next.add(id)
         return { pinnedConnectionIds: next }
       })
+    } else {
+      toast.error(result.error || 'Failed to pin connection')
     }
   },
 
@@ -92,7 +103,27 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
         next.delete(id)
         return { pinnedConnectionIds: next }
       })
+    } else {
+      toast.error(result.error || 'Failed to unpin connection')
     }
+  },
+
+  removeWorktree: (id: string) => {
+    set((state) => {
+      if (!state.pinnedWorktreeIds.has(id)) return state
+      const next = new Set(state.pinnedWorktreeIds)
+      next.delete(id)
+      return { pinnedWorktreeIds: next }
+    })
+  },
+
+  removeConnection: (id: string) => {
+    set((state) => {
+      if (!state.pinnedConnectionIds.has(id)) return state
+      const next = new Set(state.pinnedConnectionIds)
+      next.delete(id)
+      return { pinnedConnectionIds: next }
+    })
   },
 
   isWorktreePinned: (id: string) => {

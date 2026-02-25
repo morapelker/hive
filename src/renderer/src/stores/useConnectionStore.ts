@@ -124,6 +124,10 @@ export const useConnectionStore = create<ConnectionState>()(
             toast.error(result.error || 'Failed to delete connection')
             return
           }
+          // Remove from pinned list if pinned
+          const { usePinnedStore } = await import('./usePinnedStore')
+          usePinnedStore.getState().removeConnection(connectionId)
+
           set((state) => {
             const connections = state.connections.filter((c) => c.id !== connectionId)
             const selectedConnectionId =

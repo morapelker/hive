@@ -1105,7 +1105,7 @@ export class DatabaseService {
     if (!existing) return null
 
     const updates: string[] = ['updated_at = ?']
-    const values: (string | null)[] = [new Date().toISOString()]
+    const values: (string | number | null)[] = [new Date().toISOString()]
 
     if (data.name !== undefined) {
       updates.push('name = ?')
@@ -1129,7 +1129,7 @@ export class DatabaseService {
     }
     if (data.pinned !== undefined) {
       updates.push('pinned = ?')
-      values.push(String(data.pinned))
+      values.push(data.pinned)
     }
 
     values.push(id)
