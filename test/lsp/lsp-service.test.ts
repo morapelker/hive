@@ -275,6 +275,21 @@ describe('LspService', () => {
     expect(clients2[0]).toBe(clients3[0])
   })
 
+  it('workspaceSymbol returns results from fake server', async () => {
+    const fakeDef = createFakeServerDef()
+    mockServersForFile([fakeDef])
+
+    // Must spawn clients first — workspaceSymbol only queries cached clients
+    await service.touchFile(testFilePath, true)
+
+    const results = await service.workspaceSymbol('hello')
+
+    expect(results).toBeDefined()
+    expect(results.length).toBeGreaterThan(0)
+    const symbol = results[0] as Record<string, unknown>
+    expect(symbol.name).toBe('hello')
+  })
+
   it('goToImplementation returns results from fake server', async () => {
     const fakeDef = createFakeServerDef()
     mockServersForFile([fakeDef])

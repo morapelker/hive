@@ -67,13 +67,9 @@ export class LspService {
         this.spawning.set(cacheKey, spawnPromise)
       }
 
-      try {
-        const client = await spawnPromise
-        if (client) {
-          result.push(client)
-        }
-      } finally {
-        this.spawning.delete(cacheKey)
+      const client = await spawnPromise
+      if (client) {
+        result.push(client)
       }
     }
 
@@ -104,14 +100,18 @@ export class LspService {
     const results: unknown[] = []
 
     for (const client of clients) {
-      const uri = pathToFileURL(pos.file).toString()
-      const res = await client.connection.sendRequest('textDocument/definition', {
-        textDocument: { uri },
-        position: { line: pos.line, character: pos.character }
-      })
-      if (res) {
-        const items = Array.isArray(res) ? res : [res]
-        results.push(...items)
+      try {
+        const uri = pathToFileURL(pos.file).toString()
+        const res = await client.connection.sendRequest('textDocument/definition', {
+          textDocument: { uri },
+          position: { line: pos.line, character: pos.character }
+        })
+        if (res) {
+          const items = Array.isArray(res) ? res : [res]
+          results.push(...items)
+        }
+      } catch {
+        // Client may have crashed — skip and continue
       }
     }
 
@@ -123,13 +123,17 @@ export class LspService {
     const results: unknown[] = []
 
     for (const client of clients) {
-      const uri = pathToFileURL(pos.file).toString()
-      const res = await client.connection.sendRequest('textDocument/hover', {
-        textDocument: { uri },
-        position: { line: pos.line, character: pos.character }
-      })
-      if (res) {
-        results.push(res)
+      try {
+        const uri = pathToFileURL(pos.file).toString()
+        const res = await client.connection.sendRequest('textDocument/hover', {
+          textDocument: { uri },
+          position: { line: pos.line, character: pos.character }
+        })
+        if (res) {
+          results.push(res)
+        }
+      } catch {
+        // Client may have crashed — skip and continue
       }
     }
 
@@ -141,15 +145,19 @@ export class LspService {
     const results: unknown[] = []
 
     for (const client of clients) {
-      const uri = pathToFileURL(pos.file).toString()
-      const res = await client.connection.sendRequest('textDocument/references', {
-        textDocument: { uri },
-        position: { line: pos.line, character: pos.character },
-        context: { includeDeclaration: true }
-      })
-      if (res) {
-        const items = Array.isArray(res) ? res : [res]
-        results.push(...items)
+      try {
+        const uri = pathToFileURL(pos.file).toString()
+        const res = await client.connection.sendRequest('textDocument/references', {
+          textDocument: { uri },
+          position: { line: pos.line, character: pos.character },
+          context: { includeDeclaration: true }
+        })
+        if (res) {
+          const items = Array.isArray(res) ? res : [res]
+          results.push(...items)
+        }
+      } catch {
+        // Client may have crashed — skip and continue
       }
     }
 
@@ -161,19 +169,27 @@ export class LspService {
     const results: unknown[] = []
 
     for (const client of clients) {
-      const uri = pathToFileURL(filePath).toString()
-      const res = await client.connection.sendRequest('textDocument/documentSymbol', {
-        textDocument: { uri }
-      })
-      if (res) {
-        const items = Array.isArray(res) ? res : [res]
-        results.push(...items)
+      try {
+        const uri = pathToFileURL(filePath).toString()
+        const res = await client.connection.sendRequest('textDocument/documentSymbol', {
+          textDocument: { uri }
+        })
+        if (res) {
+          const items = Array.isArray(res) ? res : [res]
+          results.push(...items)
+        }
+      } catch {
+        // Client may have crashed — skip and continue
       }
     }
 
     return results
   }
 
+  /**
+   * Search for symbols across the workspace.
+   * Only queries clients that have already been spawned (via getClients or touchFile).
+   */
   async workspaceSymbol(query = '') {
     // Gather unique clients from all cached servers
     const seen = new Set<LspClient>()
@@ -188,12 +204,16 @@ export class LspService {
     const results: unknown[] = []
 
     for (const client of clients) {
-      const res = await client.connection.sendRequest('workspace/symbol', {
-        query
-      })
-      if (res) {
-        const items = Array.isArray(res) ? res : [res]
-        results.push(...items)
+      try {
+        const res = await client.connection.sendRequest('workspace/symbol', {
+          query
+        })
+        if (res) {
+          const items = Array.isArray(res) ? res : [res]
+          results.push(...items)
+        }
+      } catch {
+        // Client may have crashed — skip and continue
       }
     }
 
@@ -205,14 +225,18 @@ export class LspService {
     const results: unknown[] = []
 
     for (const client of clients) {
-      const uri = pathToFileURL(pos.file).toString()
-      const res = await client.connection.sendRequest('textDocument/implementation', {
-        textDocument: { uri },
-        position: { line: pos.line, character: pos.character }
-      })
-      if (res) {
-        const items = Array.isArray(res) ? res : [res]
-        results.push(...items)
+      try {
+        const uri = pathToFileURL(pos.file).toString()
+        const res = await client.connection.sendRequest('textDocument/implementation', {
+          textDocument: { uri },
+          position: { line: pos.line, character: pos.character }
+        })
+        if (res) {
+          const items = Array.isArray(res) ? res : [res]
+          results.push(...items)
+        }
+      } catch {
+        // Client may have crashed — skip and continue
       }
     }
 
@@ -224,26 +248,30 @@ export class LspService {
     const results: unknown[] = []
 
     for (const client of clients) {
-      const uri = pathToFileURL(pos.file).toString()
-      const items = await client.connection.sendRequest(
-        'textDocument/prepareCallHierarchy',
-        {
-          textDocument: { uri },
-          position: { line: pos.line, character: pos.character }
-        }
-      ) as unknown[] | null
+      try {
+        const uri = pathToFileURL(pos.file).toString()
+        const items = await client.connection.sendRequest(
+          'textDocument/prepareCallHierarchy',
+          {
+            textDocument: { uri },
+            position: { line: pos.line, character: pos.character }
+          }
+        ) as unknown[] | null
 
-      if (items && Array.isArray(items)) {
-        for (const item of items) {
-          const calls = await client.connection.sendRequest(
-            'callHierarchy/incomingCalls',
-            { item }
-          )
-          if (calls) {
-            const callItems = Array.isArray(calls) ? calls : [calls]
-            results.push(...callItems)
+        if (items && Array.isArray(items)) {
+          for (const item of items) {
+            const calls = await client.connection.sendRequest(
+              'callHierarchy/incomingCalls',
+              { item }
+            )
+            if (calls) {
+              const callItems = Array.isArray(calls) ? calls : [calls]
+              results.push(...callItems)
+            }
           }
         }
+      } catch {
+        // Client may have crashed — skip and continue
       }
     }
 
@@ -255,26 +283,30 @@ export class LspService {
     const results: unknown[] = []
 
     for (const client of clients) {
-      const uri = pathToFileURL(pos.file).toString()
-      const items = await client.connection.sendRequest(
-        'textDocument/prepareCallHierarchy',
-        {
-          textDocument: { uri },
-          position: { line: pos.line, character: pos.character }
-        }
-      ) as unknown[] | null
+      try {
+        const uri = pathToFileURL(pos.file).toString()
+        const items = await client.connection.sendRequest(
+          'textDocument/prepareCallHierarchy',
+          {
+            textDocument: { uri },
+            position: { line: pos.line, character: pos.character }
+          }
+        ) as unknown[] | null
 
-      if (items && Array.isArray(items)) {
-        for (const item of items) {
-          const calls = await client.connection.sendRequest(
-            'callHierarchy/outgoingCalls',
-            { item }
-          )
-          if (calls) {
-            const callItems = Array.isArray(calls) ? calls : [calls]
-            results.push(...callItems)
+        if (items && Array.isArray(items)) {
+          for (const item of items) {
+            const calls = await client.connection.sendRequest(
+              'callHierarchy/outgoingCalls',
+              { item }
+            )
+            if (calls) {
+              const callItems = Array.isArray(calls) ? calls : [calls]
+              results.push(...callItems)
+            }
           }
         }
+      } catch {
+        // Client may have crashed — skip and continue
       }
     }
 
@@ -341,6 +373,8 @@ export class LspService {
     } catch {
       this.broken.add(cacheKey)
       return undefined
+    } finally {
+      this.spawning.delete(cacheKey)
     }
   }
 }
