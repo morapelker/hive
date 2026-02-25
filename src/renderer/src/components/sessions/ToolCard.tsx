@@ -18,7 +18,8 @@ import {
   Minus,
   Zap,
   ClipboardCheck,
-  Globe
+  Globe,
+  Code2
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './tools/types'
@@ -34,6 +35,12 @@ import { QuestionToolView } from './tools/QuestionToolView'
 import { SkillToolView } from './tools/SkillToolView'
 import { ExitPlanModeToolView } from './tools/ExitPlanModeToolView'
 import { WebFetchToolView } from './tools/WebFetchToolView'
+import {
+  LspToolView,
+  getLspOperationLabel,
+  getLspOperationColor,
+  getLspResultCount
+} from './tools/LspToolView'
 import { ToolCallContextMenu } from './ToolCallContextMenu'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
@@ -53,6 +60,12 @@ export interface ToolUseInfo {
 function isTodoWriteTool(name: string): boolean {
   const lower = name.toLowerCase()
   return lower.includes('todowrite') || lower.includes('todo_write')
+}
+
+/** Check if a tool name refers to the LSP tool */
+function isLspTool(name: string): boolean {
+  const lower = name.toLowerCase()
+  return lower === 'mcp__hive-lsp__lsp' || lower.includes('hive-lsp')
 }
 
 // Map tool names to icons
@@ -100,6 +113,9 @@ function getToolIcon(name: string): React.JSX.Element {
   }
   if (lowerName === 'webfetch' || lowerName === 'web_fetch') {
     return <Globe className={iconClass} />
+  }
+  if (isLspTool(name)) {
+    return <Code2 className={cn(iconClass, 'text-purple-400')} />
   }
   // Default
   return <Terminal className={iconClass} />
@@ -173,6 +189,12 @@ function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string
     }
   }
 
+  // Show operation for LSP tool
+  if (isLspTool(name)) {
+    const operation = (input.operation || '') as string
+    return getLspOperationLabel(operation)
+  }
+
   return ''
 }
 
@@ -236,7 +258,8 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   exitplanmode: ExitPlanModeToolView,
   WebFetch: WebFetchToolView,
   webfetch: WebFetchToolView,
-  web_fetch: WebFetchToolView
+  web_fetch: WebFetchToolView,
+  'mcp__hive-lsp__lsp': LspToolView
 }
 
 /** Resolve a tool name to its rich renderer, falling back to FallbackToolView */
@@ -266,6 +289,7 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (lower.includes('skill')) return SkillToolView
   if (lower === 'exitplanmode') return ExitPlanModeToolView
   if (lower === 'webfetch' || lower === 'web_fetch') return WebFetchToolView
+  if (isLspTool(name)) return LspToolView
   // Fallback
   return FallbackToolView
 }
@@ -527,6 +551,43 @@ function CollapsedContent({
     )
   }
 
+  // LSP tool
+  if (isLspTool(name)) {
+    const operation = (input.operation || '') as string
+    const filePath = (input.filePath || '') as string
+    const line = input.line as number | undefined
+    const character = input.character as number | undefined
+    const resultCount = getLspResultCount(output)
+    return (
+      <>
+        <Code2 className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+        <span className="font-medium text-foreground shrink-0">LSP</span>
+        <span
+          className={cn(
+            'text-[10px] rounded px-1 py-0.5 font-medium shrink-0',
+            getLspOperationColor(operation)
+          )}
+        >
+          {getLspOperationLabel(operation)}
+        </span>
+        {filePath && (
+          <span className="font-mono text-muted-foreground truncate min-w-0">
+            {shortenPath(filePath, cwd)}
+          </span>
+        )}
+        {line !== undefined && (
+          <span className="text-[10px] text-muted-foreground shrink-0">
+            L:{line}
+            {character !== undefined && ` C:${character}`}
+          </span>
+        )}
+        {resultCount !== null && resultCount > 0 && (
+          <span className="text-muted-foreground shrink-0">({resultCount})</span>
+        )}
+      </>
+    )
+  }
+
   // Default fallback
   const label = getToolLabel(name, input, cwd)
   return (
@@ -582,7 +643,7 @@ function getFileToolLabel(name: string): string {
   return name
 }
 
-/** Compact single-line renderer for Read/Write/Edit file operations, Search/Find tools, and Skill tools */
+/** Compact single-line renderer for Read/Write/Edit file operations, Search/Find tools, Skill tools, and LSP tools */
 const CompactFileToolCard = memo(function CompactFileToolCard({
   toolUse,
   cwd
@@ -594,6 +655,7 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
 
   const isSearch = isSearchOperation(toolUse.name)
   const isSkill = isSkillTool(toolUse.name)
+  const isLsp = isLspTool(toolUse.name)
   const filePath = (toolUse.input.filePath ||
     toolUse.input.file_path ||
     toolUse.input.path ||
@@ -608,6 +670,9 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
   const hasOutput = !!(toolUse.output || toolUse.error)
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
+
+  // Use CollapsedContent for search and LSP tools (they have rich collapsed headers)
+  const useCollapsedContent = isSearch || isLsp
 
   const icon = useMemo(() => {
     if (isExpanded) {
@@ -624,8 +689,11 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
     if (isSkill) {
       return <Zap className="h-3.5 w-3.5 text-amber-400" data-testid="tool-success" />
     }
+    if (isLsp) {
+      return <Code2 className="h-3.5 w-3.5 text-purple-400" data-testid="tool-success" />
+    }
     return <Plus className="h-3.5 w-3.5 text-muted-foreground" data-testid="tool-success" />
-  }, [isExpanded, isRunning, isError, isSkill])
+  }, [isExpanded, isRunning, isError, isSkill, isLsp])
 
   return (
     <div
@@ -644,7 +712,7 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
         disabled={!hasOutput && !isRunning}
       >
         {icon}
-        {isSearch ? (
+        {useCollapsedContent ? (
           <CollapsedContent toolUse={toolUse} cwd={cwd} />
         ) : (
           <>
@@ -706,11 +774,12 @@ export const ToolCard = memo(function ToolCard({
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
-  // Route file operations, search tools, and skill tools to compact layout
+  // Route file operations, search tools, skill tools, and LSP tools to compact layout
   if (
     isFileOperation(toolUse.name) ||
     isSearchOperation(toolUse.name) ||
-    isSkillTool(toolUse.name)
+    isSkillTool(toolUse.name) ||
+    isLspTool(toolUse.name)
   ) {
     return (
       <ToolCallContextMenu toolUse={toolUse}>
