@@ -6,6 +6,7 @@ interface Connection {
   status: 'active' | 'archived'
   path: string
   color: string | null // JSON-serialised ConnectionColorQuad
+  pinned: number // 0 = not pinned, 1 = pinned
   created_at: string
   updated_at: string
 }
@@ -60,6 +61,7 @@ interface Worktree {
   last_model_id: string | null
   last_model_variant: string | null
   attachments: string // JSON array of Attachment objects
+  pinned: number // 0 = not pinned, 1 = pinned
   created_at: string
   last_accessed_at: string
 }
@@ -210,6 +212,11 @@ declare global {
           worktreeId: string,
           attachmentId: string
         ) => Promise<{ success: boolean; error?: string }>
+        setPinned: (
+          worktreeId: string,
+          pinned: boolean
+        ) => Promise<{ success: boolean; error?: string }>
+        getPinned: () => Promise<Worktree[]>
       }
       session: {
         create: (data: {
@@ -1032,6 +1039,11 @@ declare global {
         connectionId: string,
         customName: string | null
       ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      setPinned: (
+        connectionId: string,
+        pinned: boolean
+      ) => Promise<{ success: boolean; error?: string }>
+      getPinned: () => Promise<Connection[]>
     }
   }
 

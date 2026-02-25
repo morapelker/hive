@@ -73,7 +73,10 @@ const db = {
     ) =>
       ipcRenderer.invoke('db:worktree:addAttachment', { worktreeId, attachment }),
     removeAttachment: (worktreeId: string, attachmentId: string) =>
-      ipcRenderer.invoke('db:worktree:removeAttachment', { worktreeId, attachmentId })
+      ipcRenderer.invoke('db:worktree:removeAttachment', { worktreeId, attachmentId }),
+    setPinned: (worktreeId: string, pinned: boolean) =>
+      ipcRenderer.invoke('db:worktree:setPinned', { worktreeId, pinned }),
+    getPinned: () => ipcRenderer.invoke('db:worktree:getPinned')
   },
 
   // Sessions
@@ -1550,7 +1553,10 @@ const connectionOps = {
   removeWorktreeFromAll: (worktreeId: string) =>
     ipcRenderer.invoke('connection:removeWorktreeFromAll', { worktreeId }),
   rename: (connectionId: string, customName: string | null) =>
-    ipcRenderer.invoke('connection:rename', { connectionId, customName })
+    ipcRenderer.invoke('connection:rename', { connectionId, customName }),
+  setPinned: (connectionId: string, pinned: boolean) =>
+    ipcRenderer.invoke('db:connection:setPinned', { connectionId, pinned }),
+  getPinned: () => ipcRenderer.invoke('db:connection:getPinned')
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

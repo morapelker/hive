@@ -9,6 +9,8 @@ import {
   Map,
   MoreHorizontal,
   Pencil,
+  Pin,
+  PinOff,
   Settings2,
   Terminal,
   Trash2
@@ -29,7 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { useConnectionStore } from '@/stores'
+import { useConnectionStore, usePinnedStore } from '@/stores'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, clipboardToast } from '@/lib/toast'
 
@@ -71,6 +73,19 @@ export function ConnectionItem({
   const selectConnection = useConnectionStore((s) => s.selectConnection)
   const deleteConnection = useConnectionStore((s) => s.deleteConnection)
   const renameConnection = useConnectionStore((s) => s.renameConnection)
+
+  // Pinned state
+  const isPinned = usePinnedStore((s) => s.pinnedConnectionIds.has(connection.id))
+  const pinConnection = usePinnedStore((s) => s.pinConnection)
+  const unpinConnection = usePinnedStore((s) => s.unpinConnection)
+
+  const handleTogglePin = useCallback(async (): Promise<void> => {
+    if (isPinned) {
+      await unpinConnection(connection.id)
+    } else {
+      await pinConnection(connection.id)
+    }
+  }, [isPinned, connection.id, pinConnection, unpinConnection])
 
   const connectionStatus = useWorktreeStatusStore((state) =>
     state.getConnectionStatus(connection.id)
@@ -218,6 +233,14 @@ export function ConnectionItem({
         <Pencil className="h-4 w-4 mr-2" />
         Rename
       </ContextMenuItem>
+      <ContextMenuItem onClick={handleTogglePin}>
+        {isPinned ? (
+          <PinOff className="h-4 w-4 mr-2" />
+        ) : (
+          <Pin className="h-4 w-4 mr-2" />
+        )}
+        {isPinned ? 'Unpin' : 'Pin'}
+      </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem onClick={handleOpenInTerminal}>
         <Terminal className="h-4 w-4 mr-2" />
@@ -357,6 +380,14 @@ export function ConnectionItem({
               <DropdownMenuItem onClick={handleStartRename}>
                 <Pencil className="h-4 w-4 mr-2" />
                 Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleTogglePin}>
+                {isPinned ? (
+                  <PinOff className="h-4 w-4 mr-2" />
+                ) : (
+                  <Pin className="h-4 w-4 mr-2" />
+                )}
+                {isPinned ? 'Unpin' : 'Pin'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleOpenInTerminal}>

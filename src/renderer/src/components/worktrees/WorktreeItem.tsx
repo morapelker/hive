@@ -17,6 +17,8 @@ import {
   Figma,
   Ticket,
   Plus,
+  Pin,
+  PinOff,
   Unlink
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -42,7 +44,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent
 } from '@/components/ui/dropdown-menu'
-import { useWorktreeStore, useProjectStore, useConnectionStore } from '@/stores'
+import { useWorktreeStore, useProjectStore, useConnectionStore, usePinnedStore } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -110,6 +112,19 @@ export function WorktreeItem({
   const connectionModeSelectedIds = useConnectionStore((s) => s.connectionModeSelectedIds)
   const toggleConnectionModeWorktree = useConnectionStore((s) => s.toggleConnectionModeWorktree)
   const enterConnectionMode = useConnectionStore((s) => s.enterConnectionMode)
+
+  // Pinned state
+  const isPinned = usePinnedStore((s) => s.pinnedWorktreeIds.has(worktree.id))
+  const pinWorktree = usePinnedStore((s) => s.pinWorktree)
+  const unpinWorktree = usePinnedStore((s) => s.unpinWorktree)
+
+  const handleTogglePin = useCallback(async (): Promise<void> => {
+    if (isPinned) {
+      await unpinWorktree(worktree.id)
+    } else {
+      await pinWorktree(worktree.id)
+    }
+  }, [isPinned, worktree.id, pinWorktree, unpinWorktree])
 
   const isInConnectionMode = connectionModeActive
   const isSource = connectionModeSourceId === worktree.id
@@ -584,6 +599,14 @@ export function WorktreeItem({
                 <Copy className="h-4 w-4 mr-2" />
                 Copy Path
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleTogglePin}>
+                {isPinned ? (
+                  <PinOff className="h-4 w-4 mr-2" />
+                ) : (
+                  <Pin className="h-4 w-4 mr-2" />
+                )}
+                {isPinned ? 'Unpin' : 'Pin'}
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => enterConnectionMode(worktree.id)}>
                 <Link className="h-4 w-4 mr-2" />
@@ -680,6 +703,14 @@ export function WorktreeItem({
         <ContextMenuItem onClick={handleCopyPath}>
           <Copy className="h-4 w-4 mr-2" />
           Copy Path
+        </ContextMenuItem>
+        <ContextMenuItem onClick={handleTogglePin}>
+          {isPinned ? (
+            <PinOff className="h-4 w-4 mr-2" />
+          ) : (
+            <Pin className="h-4 w-4 mr-2" />
+          )}
+          {isPinned ? 'Unpin' : 'Pin'}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onClick={() => enterConnectionMode(worktree.id)}>

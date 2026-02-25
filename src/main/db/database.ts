@@ -87,7 +87,8 @@ export class DatabaseService {
       last_model_provider_id: (row.last_model_provider_id as string) ?? null,
       last_model_id: (row.last_model_id as string) ?? null,
       last_model_variant: (row.last_model_variant as string) ?? null,
-      attachments: (row.attachments as string) ?? '[]'
+      attachments: (row.attachments as string) ?? '[]',
+      pinned: (row.pinned as number) ?? 0
     } as Worktree
   }
 
@@ -182,6 +183,8 @@ export class DatabaseService {
     this.safeAddColumn('connections', 'color', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'custom_name', 'TEXT DEFAULT NULL')
     this.safeAddColumn('worktrees', 'attachments', "TEXT DEFAULT '[]'")
+    this.safeAddColumn('worktrees', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('connections', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
@@ -470,6 +473,25 @@ export class DatabaseService {
     return rows.map((row) => this.mapWorktreeRow(row))
   }
 
+  getPinnedWorktrees(): Worktree[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        "SELECT * FROM worktrees WHERE status = 'active' AND pinned = 1 ORDER BY last_accessed_at DESC"
+      )
+      .all() as Record<string, unknown>[]
+    return rows.map((row) => this.mapWorktreeRow(row))
+  }
+
+  getPinnedConnections(): Connection[] {
+    const db = this.getDb()
+    return db
+      .prepare(
+        "SELECT * FROM connections WHERE status = 'active' AND pinned = 1 ORDER BY updated_at DESC"
+      )
+      .all() as Connection[]
+  }
+
   updateWorktree(id: string, data: WorktreeUpdate): Worktree | null {
     const db = this.getDb()
     const existing = this.getWorktree(id)
@@ -497,6 +519,10 @@ export class DatabaseService {
     if (data.last_message_at !== undefined) {
       updates.push('last_message_at = ?')
       values.push(data.last_message_at)
+    }
+    if (data.pinned !== undefined) {
+      updates.push('pinned = ?')
+      values.push(data.pinned)
     }
     if (data.last_accessed_at !== undefined) {
       updates.push('last_accessed_at = ?')
@@ -1100,6 +1126,10 @@ export class DatabaseService {
     if (data.color !== undefined) {
       updates.push('color = ?')
       values.push(data.color)
+    }
+    if (data.pinned !== undefined) {
+      updates.push('pinned = ?')
+      values.push(String(data.pinned))
     }
 
     values.push(id)

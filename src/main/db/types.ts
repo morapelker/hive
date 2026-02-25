@@ -53,6 +53,7 @@ export interface Worktree {
   last_model_id: string | null
   last_model_variant: string | null
   attachments: string // JSON array of Attachment objects
+  pinned: number // 0 = not pinned, 1 = pinned
   created_at: string
   last_accessed_at: string
 }
@@ -74,6 +75,7 @@ export interface WorktreeUpdate {
   last_model_provider_id?: string | null
   last_model_id?: string | null
   last_model_variant?: string | null
+  pinned?: number
   last_accessed_at?: string
 }
 
@@ -206,6 +208,7 @@ export interface Connection {
   path: string
   color: string | null // JSON-serialised ConnectionColorQuad
   status: 'active' | 'archived'
+  pinned: number // 0 = not pinned, 1 = pinned
   created_at: string
   updated_at: string
 }
@@ -223,6 +226,7 @@ export interface ConnectionUpdate {
   path?: string
   color?: string | null
   status?: 'active' | 'archived'
+  pinned?: number
 }
 
 export interface ConnectionMember {

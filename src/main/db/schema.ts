@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 6
+export const CURRENT_SCHEMA_VERSION = 7
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -209,6 +209,13 @@ export const MIGRATIONS: Migration[] = [
     version: 6,
     name: 'add_worktree_attachments',
     up: `ALTER TABLE worktrees ADD COLUMN attachments TEXT DEFAULT '[]'`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 7,
+    name: 'add_pinned_columns',
+    up: `-- NOTE: ALTER TABLE for pinned is handled idempotently by
+         -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]
