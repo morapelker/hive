@@ -324,7 +324,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
     // Shut down all LSP services
     for (const lsp of this.lspServices.values()) {
-      await lsp.shutdown()
+      try {
+        await lsp.shutdown()
+      } catch {
+        log.warn('Cleanup: LSP service shutdown threw, ignoring')
+      }
     }
     this.lspServices.clear()
   }
@@ -494,11 +498,18 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         ...(this.claudeBinaryPath ? { pathToClaudeCodeExecutable: this.claudeBinaryPath } : {})
       }
 
-      // Attach LSP MCP server so Claude can query language servers
-      const lspService = this.getOrCreateLspService(session.worktreePath)
-      const lspMcpServer = await createLspMcpServerConfig(lspService)
-      options.mcpServers = { ...options.mcpServers, 'hive-lsp': lspMcpServer }
-      options.allowedTools = [...(options.allowedTools ?? []), 'mcp__hive-lsp__lsp']
+      // Attach LSP MCP server so Claude can query language servers (best-effort)
+      try {
+        const lspService = this.getOrCreateLspService(session.worktreePath)
+        const lspMcpServer = await createLspMcpServerConfig(lspService)
+        options.mcpServers = { ...options.mcpServers, 'hive-lsp': lspMcpServer }
+        options.allowedTools = [...(options.allowedTools ?? []), 'mcp__hive-lsp__lsp']
+      } catch (err) {
+        log.warn('Failed to attach LSP MCP server, continuing without LSP', {
+          worktreePath: session.worktreePath,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      }
 
       // If session is materialized (has real SDK ID), add resume
       if (session.materialized) {
