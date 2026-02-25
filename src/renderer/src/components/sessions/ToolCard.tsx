@@ -19,7 +19,8 @@ import {
   Zap,
   ClipboardCheck,
   Globe,
-  Code2
+  Code2,
+  Figma
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './tools/types'
@@ -66,6 +67,61 @@ function isTodoWriteTool(name: string): boolean {
 function isLspTool(name: string): boolean {
   const lower = name.toLowerCase()
   return lower === 'mcp__hive-lsp__lsp' || lower.includes('hive-lsp')
+}
+
+/** Figma brand color for consistent icon styling */
+const FIGMA_ICON_COLOR = 'text-[#a259ff]'
+
+/** Check if a tool name refers to a Figma MCP tool */
+function isFigmaTool(name: string): boolean {
+  return name.toLowerCase().startsWith('mcp__figma__')
+}
+
+/** Extract the operation name from a Figma tool name */
+function getFigmaOperation(name: string): string {
+  return name.toLowerCase().replace('mcp__figma__', '')
+}
+
+const FIGMA_OPERATION_LABELS: Record<string, string> = {
+  get_screenshot: 'Screenshot',
+  create_design_system_rules: 'Design system rules',
+  get_design_context: 'Design context',
+  get_metadata: 'Metadata',
+  get_variable_defs: 'Variables',
+  get_figjam: 'FigJam',
+  generate_figma_design: 'Generate design',
+  generate_diagram: 'Generate diagram',
+  get_code_connect_map: 'Code connect map',
+  whoami: 'Who am I',
+  add_code_connect_map: 'Add code connect',
+  get_code_connect_suggestions: 'Code connect suggestions',
+  send_code_connect_mappings: 'Send mappings'
+}
+
+const FIGMA_OPERATION_COLORS: Record<string, string> = {
+  get_screenshot: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
+  get_design_context: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
+  get_metadata: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
+  get_variable_defs: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
+  get_figjam: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
+  generate_figma_design: 'bg-purple-500/15 text-purple-500 dark:text-purple-400',
+  generate_diagram: 'bg-purple-500/15 text-purple-500 dark:text-purple-400',
+  create_design_system_rules: 'bg-purple-500/15 text-purple-500 dark:text-purple-400',
+  get_code_connect_map: 'bg-teal-500/15 text-teal-500 dark:text-teal-400',
+  add_code_connect_map: 'bg-teal-500/15 text-teal-500 dark:text-teal-400',
+  get_code_connect_suggestions: 'bg-teal-500/15 text-teal-500 dark:text-teal-400',
+  send_code_connect_mappings: 'bg-teal-500/15 text-teal-500 dark:text-teal-400',
+  whoami: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400'
+}
+
+/** Get human-readable label for a Figma operation */
+function getFigmaOperationLabel(operation: string): string {
+  return FIGMA_OPERATION_LABELS[operation] || operation.replace(/_/g, ' ')
+}
+
+/** Get badge color class for a Figma operation */
+function getFigmaOperationColor(operation: string): string {
+  return FIGMA_OPERATION_COLORS[operation] || 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400'
 }
 
 // Map tool names to icons
@@ -116,6 +172,9 @@ function getToolIcon(name: string): React.JSX.Element {
   }
   if (isLspTool(name)) {
     return <Code2 className={cn(iconClass, 'text-purple-400')} />
+  }
+  if (isFigmaTool(name)) {
+    return <Figma className={cn(iconClass, FIGMA_ICON_COLOR)} />
   }
   // Default
   return <Terminal className={iconClass} />
@@ -193,6 +252,11 @@ function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string
   if (isLspTool(name)) {
     const operation = (input.operation || '') as string
     return getLspOperationLabel(operation)
+  }
+
+  // Show operation for Figma tools
+  if (isFigmaTool(name)) {
+    return getFigmaOperationLabel(getFigmaOperation(name))
   }
 
   return ''
@@ -290,6 +354,8 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (lower === 'exitplanmode') return ExitPlanModeToolView
   if (lower === 'webfetch' || lower === 'web_fetch') return WebFetchToolView
   if (isLspTool(name)) return LspToolView
+  // Figma: explicit fallback for now, will get a dedicated FigmaToolView later
+  if (isFigmaTool(name)) return FallbackToolView
   // Fallback
   return FallbackToolView
 }
@@ -588,6 +654,25 @@ function CollapsedContent({
     )
   }
 
+  // Figma MCP tools
+  if (isFigmaTool(name)) {
+    const operation = getFigmaOperation(name)
+    return (
+      <>
+        <Figma className={cn('h-3.5 w-3.5 shrink-0', FIGMA_ICON_COLOR)} />
+        <span className="font-medium text-foreground shrink-0">Figma</span>
+        <span
+          className={cn(
+            'text-[10px] rounded px-1 py-0.5 font-medium shrink-0',
+            getFigmaOperationColor(operation)
+          )}
+        >
+          {getFigmaOperationLabel(operation)}
+        </span>
+      </>
+    )
+  }
+
   // Default fallback
   const label = getToolLabel(name, input, cwd)
   return (
@@ -656,6 +741,7 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
   const isSearch = isSearchOperation(toolUse.name)
   const isSkill = isSkillTool(toolUse.name)
   const isLsp = isLspTool(toolUse.name)
+  const isFigma = isFigmaTool(toolUse.name)
   const filePath = (toolUse.input.filePath ||
     toolUse.input.file_path ||
     toolUse.input.path ||
@@ -671,8 +757,8 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
-  // Use CollapsedContent for search and LSP tools (they have rich collapsed headers)
-  const useCollapsedContent = isSearch || isLsp
+  // Use CollapsedContent for search, LSP, and Figma tools (they have rich collapsed headers)
+  const useCollapsedContent = isSearch || isLsp || isFigma
 
   const icon = useMemo(() => {
     if (isExpanded) {
@@ -692,8 +778,11 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
     if (isLsp) {
       return <Code2 className="h-3.5 w-3.5 text-purple-400" data-testid="tool-success" />
     }
+    if (isFigma) {
+      return <Figma className={cn('h-3.5 w-3.5', FIGMA_ICON_COLOR)} data-testid="tool-success" />
+    }
     return <Plus className="h-3.5 w-3.5 text-muted-foreground" data-testid="tool-success" />
-  }, [isExpanded, isRunning, isError, isSkill, isLsp])
+  }, [isExpanded, isRunning, isError, isSkill, isLsp, isFigma])
 
   return (
     <div
@@ -774,12 +863,13 @@ export const ToolCard = memo(function ToolCard({
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
-  // Route file operations, search tools, skill tools, and LSP tools to compact layout
+  // Route file operations, search tools, skill tools, LSP tools, and Figma tools to compact layout
   if (
     isFileOperation(toolUse.name) ||
     isSearchOperation(toolUse.name) ||
     isSkillTool(toolUse.name) ||
-    isLspTool(toolUse.name)
+    isLspTool(toolUse.name) ||
+    isFigmaTool(toolUse.name)
   ) {
     return (
       <ToolCallContextMenu toolUse={toolUse}>
