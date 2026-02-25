@@ -12,6 +12,7 @@ import {
 } from '@/components/projects'
 import { ConnectionList } from '@/components/connections'
 import { SpacesTabBar } from '@/components/spaces'
+import { PinnedList } from './PinnedList'
 import { RecentList } from './RecentList'
 
 export function LeftSidebar(): React.JSX.Element {
@@ -139,6 +140,7 @@ export function LeftSidebar(): React.JSX.Element {
           </div>
         )}
         <div className="flex-1 overflow-auto p-2">
+          <PinnedList />
           <RecentList />
           <ConnectionList />
           <ProjectList onAddProject={handleAddProject} />

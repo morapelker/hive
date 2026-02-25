@@ -298,6 +298,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       deleteBuffer(worktreeId)
 
+      // Remove from pinned list if pinned
+      const { usePinnedStore } = await import('./usePinnedStore')
+      usePinnedStore.getState().removeWorktree(worktreeId)
+
       // Remove from state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -373,6 +377,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       }
 
       deleteBuffer(worktreeId)
+
+      // Remove from pinned list if pinned
+      const { usePinnedStore } = await import('./usePinnedStore')
+      usePinnedStore.getState().removeWorktree(worktreeId)
 
       // Remove from state
       set((state) => {

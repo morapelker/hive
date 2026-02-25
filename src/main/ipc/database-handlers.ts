@@ -198,6 +198,23 @@ export function registerDatabaseHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    'db:worktree:setPinned',
+    (_event, { worktreeId, pinned }: { worktreeId: string; pinned: boolean }) => {
+      try {
+        getDatabase().updateWorktree(worktreeId, { pinned: pinned ? 1 : 0 })
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  )
+
+  ipcMain.handle('db:worktree:getPinned', () => {
+    const db = getDatabase()
+    return db.getPinnedWorktrees()
+  })
+
   // Sessions
   ipcMain.handle('db:session:create', (_event, data: SessionCreate) => {
     return getDatabase().createSession(data)
