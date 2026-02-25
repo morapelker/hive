@@ -51,7 +51,7 @@ function PriorityBadge({ priority }: { priority: TodoItem['priority'] }) {
 
 export function TodoWriteToolView({ input, error }: ToolViewProps) {
   const todoInput = input as unknown as TodoInput
-  const todos = useMemo(() => todoInput?.todos || [], [todoInput?.todos])
+  const todos = useMemo(() => Array.isArray(todoInput?.todos) ? todoInput.todos : [], [todoInput?.todos])
 
   if (todos.length === 0) {
     return (

@@ -127,7 +127,7 @@ function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string
 
   // Show summary for todowrite (must be before 'write' check)
   if (isTodoWriteTool(lowerName)) {
-    const todos = (input.todos || []) as Array<{ status: string }>
+    const todos = Array.isArray(input.todos) ? input.todos as Array<{ status: string }> : []
     const completed = todos.filter((t) => t.status === 'completed').length
     return `${completed}/${todos.length} completed`
   }
@@ -338,7 +338,7 @@ function CollapsedContent({
 
   // TodoWrite (must be before 'write' check since name contains 'write')
   if (isTodoWriteTool(lowerName)) {
-    const todos = (input.todos || []) as Array<{ status: string }>
+    const todos = Array.isArray(input.todos) ? input.todos as Array<{ status: string }> : []
     const completed = todos.filter((t) => t.status === 'completed').length
     const inProgress = todos.filter((t) => t.status === 'in_progress').length
     return (
@@ -474,7 +474,7 @@ function CollapsedContent({
 
   // Question
   if (lowerName.includes('question')) {
-    const questions = (input.questions || []) as Array<{ header: string; question: string }>
+    const questions = Array.isArray(input.questions) ? input.questions as Array<{ header: string; question: string }> : []
     const questionCount = questions.length
     const firstHeader = questions[0]?.header || 'Question'
     return (
