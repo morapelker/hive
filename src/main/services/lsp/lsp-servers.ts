@@ -44,28 +44,37 @@ function binaryExists(name: string): boolean {
 
 /**
  * Spawn a process with stdio pipes, returning a server handle or undefined if
- * the binary is not found.
+ * the process fails to start.
+ *
+ * Uses the 'spawn' / 'error' events to reliably detect whether the process
+ * actually started — unlike a synchronous `proc.pid` check, this handles
+ * async ENOENT errors that arrive on the next tick.
  */
 function spawnServer(
   command: string,
   args: string[],
   root: string
-): LspServerHandle | undefined {
+): Promise<LspServerHandle | undefined> {
   const proc = spawn(command, args, {
     cwd: root,
     stdio: ['pipe', 'pipe', 'pipe']
   })
 
-  // Absorb ENOENT and other spawn errors so they don't become
-  // unhandled exceptions. The caller checks `proc.pid` below.
-  proc.on('error', () => {})
+  return new Promise((resolve) => {
+    proc.on('spawn', () => {
+      // Process started successfully — attach a persistent error handler
+      // so later failures (e.g. unexpected exit) don't become unhandled.
+      proc.on('error', (err) => {
+        console.error(`[LSP] ${command} error after spawn: ${err.message}`)
+      })
+      resolve({ process: proc })
+    })
 
-  // Check that the process started successfully
-  if (!proc.pid) {
-    return undefined
-  }
-
-  return { process: proc }
+    proc.on('error', (err) => {
+      console.error(`[LSP] Failed to spawn ${command}: ${err.message}`)
+      resolve(undefined)
+    })
+  })
 }
 
 export const TypescriptServer: LspServerDefinition = {
@@ -82,10 +91,10 @@ export const TypescriptServer: LspServerDefinition = {
   async spawn(root: string): Promise<LspServerHandle | undefined> {
     try {
       if (binaryExists('typescript-language-server')) {
-        return spawnServer('typescript-language-server', ['--stdio'], root)
+        return await spawnServer('typescript-language-server', ['--stdio'], root)
       }
       // Fall back to npx
-      return spawnServer('npx', ['typescript-language-server', '--stdio'], root)
+      return await spawnServer('npx', ['typescript-language-server', '--stdio'], root)
     } catch {
       return undefined
     }
@@ -101,7 +110,7 @@ export const GoplsServer: LspServerDefinition = {
       if (!binaryExists('gopls')) {
         return undefined
       }
-      return spawnServer('gopls', ['serve'], root)
+      return await spawnServer('gopls', ['serve'], root)
     } catch {
       return undefined
     }
@@ -121,10 +130,10 @@ export const PyrightServer: LspServerDefinition = {
   async spawn(root: string): Promise<LspServerHandle | undefined> {
     try {
       if (binaryExists('pyright-langserver')) {
-        return spawnServer('pyright-langserver', ['--stdio'], root)
+        return await spawnServer('pyright-langserver', ['--stdio'], root)
       }
       // Fall back to npx
-      return spawnServer('npx', ['pyright-langserver', '--stdio'], root)
+      return await spawnServer('npx', ['pyright-langserver', '--stdio'], root)
     } catch {
       return undefined
     }
@@ -140,7 +149,7 @@ export const RustAnalyzerServer: LspServerDefinition = {
       if (!binaryExists('rust-analyzer')) {
         return undefined
       }
-      return spawnServer('rust-analyzer', [], root)
+      return await spawnServer('rust-analyzer', [], root)
     } catch {
       return undefined
     }
