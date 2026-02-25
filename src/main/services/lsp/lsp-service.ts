@@ -20,6 +20,13 @@ export class LspService {
   }
 
   /**
+   * Get the project root path.
+   */
+  getProjectRoot(): string {
+    return this.projectRoot
+  }
+
+  /**
    * Check if at least one non-broken server could handle the file.
    */
   async hasClients(filePath: string): Promise<boolean> {
