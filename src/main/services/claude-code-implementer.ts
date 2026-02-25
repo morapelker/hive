@@ -16,6 +16,7 @@ import {
   CommandFilterService,
   type CommandFilterSettings
 } from './command-filter-service'
+import { createLspMcpServerConfig, LspService } from './lsp'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -141,6 +142,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     string,
     Array<{ name: string; description: string; argumentHint: string }>
   >()
+  /** LSP services keyed by worktree path — shared across sessions on the same worktree */
+  private lspServices = new Map<string, LspService>()
   /** Command filter service for evaluating tool use permissions */
   private commandFilterService = new CommandFilterService()
   /** Maps pending command approval requestIds to their resolution callbacks */
@@ -250,6 +253,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     return { success: true, sessionStatus: 'idle', revertMessageID: null }
   }
 
+  private getOrCreateLspService(worktreePath: string): LspService {
+    const existing = this.lspServices.get(worktreePath)
+    if (existing) return existing
+    const service = new LspService(worktreePath)
+    this.lspServices.set(worktreePath, service)
+    return service
+  }
+
   async disconnect(worktreePath: string, agentSessionId: string): Promise<void> {
     const key = this.getSessionKey(worktreePath, agentSessionId)
     const session = this.sessions.get(key)
@@ -275,6 +286,20 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     this.sessions.delete(key)
     // Clear cached slash commands so a fresh session doesn't show stale entries
     this.cachedSlashCommands.delete(worktreePath)
+
+    // Shut down LSP service if no remaining sessions use this worktree
+    const stillUsed = [...this.sessions.values()].some(
+      (s) => s.worktreePath === worktreePath
+    )
+    if (!stillUsed) {
+      const lsp = this.lspServices.get(worktreePath)
+      if (lsp) {
+        await lsp.shutdown()
+        this.lspServices.delete(worktreePath)
+        log.info('LSP service shut down (no remaining sessions)', { worktreePath })
+      }
+    }
+
     log.info('Disconnected', { worktreePath, agentSessionId })
   }
 
@@ -296,6 +321,16 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }
     this.sessions.clear()
     this.cachedSlashCommands.clear()
+
+    // Shut down all LSP services
+    for (const lsp of this.lspServices.values()) {
+      try {
+        await lsp.shutdown()
+      } catch {
+        log.warn('Cleanup: LSP service shutdown threw, ignoring')
+      }
+    }
+    this.lspServices.clear()
   }
 
   // ── Messaging ────────────────────────────────────────────────────
@@ -461,6 +496,19 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         },
         canUseTool: this.createCanUseToolCallback(session),
         ...(this.claudeBinaryPath ? { pathToClaudeCodeExecutable: this.claudeBinaryPath } : {})
+      }
+
+      // Attach LSP MCP server so Claude can query language servers (best-effort)
+      try {
+        const lspService = this.getOrCreateLspService(session.worktreePath)
+        const lspMcpServer = await createLspMcpServerConfig(lspService)
+        options.mcpServers = { ...options.mcpServers, 'hive-lsp': lspMcpServer }
+        options.allowedTools = [...(options.allowedTools ?? []), 'mcp__hive-lsp__lsp']
+      } catch (err) {
+        log.warn('Failed to attach LSP MCP server, continuing without LSP', {
+          worktreePath: session.worktreePath,
+          error: err instanceof Error ? err.message : String(err)
+        })
       }
 
       // If session is materialized (has real SDK ID), add resume
