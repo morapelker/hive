@@ -1,3 +1,25 @@
+# Pinned Item Context Menus Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** Add right-click context menu and hover `...` dropdown to pinned worktree and connection items so they are functionally equivalent to their normal counterparts.
+
+**Architecture:** Modify `PinnedList.tsx` to wrap `PinnedWorktreeItem` and `PinnedConnectionItem` with `<ContextMenu>` and add a `<DropdownMenu>` trigger button. Each pinned component gets the same action handlers (open in terminal/editor/finder, copy path, unpin, archive, rename, etc.) and supporting dialogs (ArchiveConfirmDialog, AddAttachmentDialog, ManageConnectionWorktreesDialog) as the normal row components.
+
+**Tech Stack:** React 19, Radix UI (context-menu, dropdown-menu), Zustand stores, shadcn/ui components.
+
+---
+
+### Task 1: Add context menu + dropdown to PinnedWorktreeItem
+
+**Files:**
+- Modify: `src/renderer/src/components/layout/PinnedList.tsx`
+
+**Step 1: Add required imports to PinnedList.tsx**
+
+Add these imports at the top of the file (merge with existing imports):
+
+```tsx
 import { useCallback, useEffect, useState, useRef } from 'react'
 import {
   AlertCircle,
@@ -28,20 +50,20 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuTrigger,
   ContextMenuSub,
   ContextMenuSubTrigger,
-  ContextMenuSubContent
+  ContextMenuSubContent,
+  ContextMenuTrigger
 } from '@/components/ui/context-menu'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
   DropdownMenuSub,
   DropdownMenuSubTrigger,
-  DropdownMenuSubContent
+  DropdownMenuSubContent,
+  DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import {
   useProjectStore,
@@ -52,7 +74,7 @@ import {
 } from '@/stores'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useGitStore } from '@/stores/useGitStore'
-import { toast, gitToast, clipboardToast } from '@/lib/toast'
+import { toast, clipboardToast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
 import { ModelIcon } from '@/components/worktrees/ModelIcon'
 import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
@@ -60,53 +82,19 @@ import { LanguageIcon } from '@/components/projects/LanguageIcon'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
 import { AddAttachmentDialog } from '@/components/worktrees/AddAttachmentDialog'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
+```
 
-type PinnedItem =
-  | { kind: 'worktree'; id: string }
-  | { kind: 'connection'; id: string }
+**Step 2: Rewrite PinnedWorktreeItem with full menu support**
 
-export function PinnedList(): React.JSX.Element | null {
-  const pinnedWorktreeIds = usePinnedStore((s) => s.pinnedWorktreeIds)
-  const pinnedConnectionIds = usePinnedStore((s) => s.pinnedConnectionIds)
-  const loaded = usePinnedStore((s) => s.loaded)
+Replace the entire `PinnedWorktreeItem` function with the version below. This adds:
+- Store hooks for archive, unbranch, duplicate, connection mode, unpin
+- State for archive confirm dialog, add attachment dialog, attachments, branch rename, time refresh
+- All action handlers (terminal, editor, finder, copy path, unpin, connect to, rename, duplicate, unbranch, archive, attachments)
+- `<ContextMenu>` wrapper with full menu items
+- Hover `...` `<DropdownMenu>` button
+- `ArchiveConfirmDialog` and `AddAttachmentDialog` renders
 
-  // Load pinned items on mount
-  useEffect(() => {
-    usePinnedStore.getState().loadPinned()
-  }, [])
-
-  const items: PinnedItem[] = []
-  for (const id of pinnedWorktreeIds) {
-    items.push({ kind: 'worktree', id })
-  }
-  for (const id of pinnedConnectionIds) {
-    items.push({ kind: 'connection', id })
-  }
-
-  if (!loaded || items.length === 0) {
-    return null
-  }
-
-  return (
-    <div className="mb-1" data-testid="pinned-list">
-      <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-muted-foreground">
-        <Pin className="h-3 w-3" />
-        <span>Pinned</span>
-      </div>
-      {items.map((item) =>
-        item.kind === 'worktree' ? (
-          <PinnedWorktreeItem key={`wt-${item.id}`} worktreeId={item.id} />
-        ) : (
-          <PinnedConnectionItem key={`conn-${item.id}`} connectionId={item.id} />
-        )
-      )}
-      <div className="border-b border-border/50 mx-2 mt-1 mb-1" />
-    </div>
-  )
-}
-
-// ── Worktree item ──────────────────────────────────────────────
-
+```tsx
 function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.Element | null {
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
   const selectWorktree = useWorktreeStore((s) => s.selectWorktree)
@@ -114,7 +102,6 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const unbranchWorktree = useWorktreeStore((s) => s.unbranchWorktree)
   const selectProject = useProjectStore((s) => s.selectProject)
   const enterConnectionMode = useConnectionStore((s) => s.enterConnectionMode)
-  const unpinWorktree = usePinnedStore((s) => s.unpinWorktree)
 
   const worktreeStatus = useWorktreeStatusStore((s) => s.getWorktreeStatus(worktreeId))
   const lastMessageTime = useWorktreeStatusStore(
@@ -122,6 +109,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   )
   const isSelected = selectedWorktreeId === worktreeId
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktreeId]?.runRunning ?? false)
+  const unpinWorktree = usePinnedStore((s) => s.unpinWorktree)
 
   const worktree = useWorktreeStore((s) => {
     for (const worktrees of s.worktreesByProject.values()) {
@@ -139,7 +127,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
     worktree ? s.branchInfoByWorktree.get(worktree.path) : undefined
   )
 
-  // Auto-refresh relative time every 60 seconds
+  // Auto-refresh relative time every 60s
   const [, setTick] = useState(0)
   useEffect(() => {
     if (!lastMessageTime) return
@@ -159,15 +147,14 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
     Array<{ id: string; type: 'jira' | 'figma'; url: string; label: string; created_at: string }>
   >([])
 
-  // Parse attachments from worktree data
-  const worktreeAttachments = worktree?.attachments
   useEffect(() => {
+    if (!worktree) return
     try {
-      setAttachments(JSON.parse(worktreeAttachments || '[]'))
+      setAttachments(JSON.parse(worktree.attachments || '[]'))
     } catch {
       setAttachments([])
     }
-  }, [worktreeAttachments])
+  }, [worktree?.attachments])
 
   // Branch rename state
   const [isRenamingBranch, setIsRenamingBranch] = useState(false)
@@ -181,25 +168,67 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
     }
   }, [isRenamingBranch])
 
-  const handleOpenAttachment = useCallback(async (url: string): Promise<void> => {
+  if (!worktree || !project) return null
+
+  const displayBranch = liveBranch?.name ?? worktree.name
+
+  const handleClick = (): void => {
+    selectWorktree(worktreeId)
+    selectProject(project.id)
+    const expanded = useProjectStore.getState().expandedProjectIds
+    if (!expanded.has(project.id)) {
+      useProjectStore.getState().toggleProjectExpanded(project.id)
+    }
+    useWorktreeStatusStore.getState().clearWorktreeUnread(worktreeId)
+  }
+
+  const handleOpenInTerminal = async (): Promise<void> => {
+    const result = await window.worktreeOps.openInTerminal(worktree.path)
+    if (result.success) {
+      toast.success('Opened in Terminal')
+    } else {
+      toast.error(result.error || 'Failed to open in terminal')
+    }
+  }
+
+  const handleOpenInEditor = async (): Promise<void> => {
+    const result = await window.worktreeOps.openInEditor(worktree.path)
+    if (result.success) {
+      toast.success('Opened in Editor')
+    } else {
+      toast.error(result.error || 'Failed to open in editor')
+    }
+  }
+
+  const handleOpenInFinder = async (): Promise<void> => {
+    await window.projectOps.showInFolder(worktree.path)
+  }
+
+  const handleCopyPath = async (): Promise<void> => {
+    await window.projectOps.copyToClipboard(worktree.path)
+    clipboardToast.copied('Path')
+  }
+
+  const handleUnpin = async (): Promise<void> => {
+    await unpinWorktree(worktreeId)
+  }
+
+  const handleOpenAttachment = async (url: string): Promise<void> => {
     await window.systemOps.openInChrome(url)
-  }, [])
+  }
 
-  const handleDetachAttachment = useCallback(
-    async (attachmentId: string): Promise<void> => {
-      const result = await window.db.worktree.removeAttachment(worktreeId, attachmentId)
-      if (result.success) {
-        setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
-        toast.success('Attachment removed')
-      } else {
-        toast.error(result.error || 'Failed to remove attachment')
-      }
-    },
-    [worktreeId]
-  )
+  const handleDetachAttachment = async (attachmentId: string): Promise<void> => {
+    const result = await window.db.worktree.removeAttachment(worktree.id, attachmentId)
+    if (result.success) {
+      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
+      toast.success('Attachment removed')
+    } else {
+      toast.error(result.error || 'Failed to remove attachment')
+    }
+  }
 
-  const handleAttachmentAdded = useCallback((): void => {
-    window.db.worktree.get(worktreeId).then((w) => {
+  const handleAttachmentAdded = (): void => {
+    window.db.worktree.get(worktree.id).then((w) => {
       if (w) {
         try {
           setAttachments(JSON.parse(w.attachments || '[]'))
@@ -208,22 +237,19 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
         }
       }
     })
-  }, [worktreeId])
+  }
 
-  const startBranchRename = useCallback((): void => {
-    if (!worktree) return
+  const startBranchRename = (): void => {
     setBranchNameInput(worktree.branch_name)
     setIsRenamingBranch(true)
-  }, [worktree])
+  }
 
-  const handleBranchRename = useCallback(async (): Promise<void> => {
-    if (!worktree) return
+  const handleBranchRename = async (): Promise<void> => {
     const trimmed = branchNameInput.trim()
     if (!trimmed || trimmed === worktree.branch_name) {
       setIsRenamingBranch(false)
       return
     }
-
     const newBranch = trimmed
       .toLowerCase()
       .replace(/[\s_]+/g, '-')
@@ -238,14 +264,12 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       setIsRenamingBranch(false)
       return
     }
-
     const result = await window.worktreeOps.renameBranch(
       worktree.id,
       worktree.path,
       worktree.branch_name,
       newBranch
     )
-
     if (result.success) {
       useWorktreeStore.getState().updateWorktreeBranch(worktree.id, newBranch)
       toast.success(`Branch renamed to ${newBranch}`)
@@ -253,10 +277,9 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       toast.error(result.error || 'Failed to rename branch')
     }
     setIsRenamingBranch(false)
-  }, [branchNameInput, worktree])
+  }
 
-  const handleDuplicate = useCallback(async (): Promise<void> => {
-    if (!project || !worktree) return
+  const handleDuplicate = async (): Promise<void> => {
     const result = await useWorktreeStore
       .getState()
       .duplicateWorktree(
@@ -271,25 +294,21 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
     } else {
       toast.error(result.error || 'Failed to duplicate worktree')
     }
-  }, [project, worktree])
+  }
 
-  const doArchive = useCallback(async (): Promise<void> => {
-    if (!project || !worktree) return
+  const doArchive = async (): Promise<void> => {
     const result = await archiveWorktree(
       worktree.id,
       worktree.path,
       worktree.branch_name,
       project.path
     )
-    if (result.success) {
-      gitToast.worktreeArchived(worktree.name)
-    } else {
-      gitToast.operationFailed('archive worktree', result.error, doArchive)
+    if (!result.success) {
+      toast.error(result.error || 'Failed to archive worktree')
     }
-  }, [archiveWorktree, worktree, project])
+  }
 
-  const handleArchive = useCallback(async (): Promise<void> => {
-    if (!worktree) return
+  const handleArchive = async (): Promise<void> => {
     try {
       const result = await window.gitOps.getDiffStat(worktree.path)
       if (result.success && result.files && result.files.length > 0) {
@@ -298,40 +317,22 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
         return
       }
     } catch {
-      // If we can't check, proceed without confirmation
+      // proceed without confirmation
     }
     doArchive()
-  }, [worktree, doArchive])
+  }
 
-  const handleArchiveConfirm = useCallback((): void => {
-    setArchiveConfirmOpen(false)
-    setArchiveConfirmFiles([])
-    doArchive()
-  }, [doArchive])
-
-  const handleArchiveCancel = useCallback((): void => {
-    setArchiveConfirmOpen(false)
-    setArchiveConfirmFiles([])
-  }, [])
-
-  const handleUnbranch = useCallback(async (): Promise<void> => {
-    if (!project || !worktree) return
+  const handleUnbranch = async (): Promise<void> => {
     const result = await unbranchWorktree(
       worktree.id,
       worktree.path,
       worktree.branch_name,
       project.path
     )
-    if (result.success) {
-      gitToast.worktreeUnbranched(worktree.name)
-    } else {
-      gitToast.operationFailed('unbranch worktree', result.error, handleUnbranch)
+    if (!result.success) {
+      toast.error(result.error || 'Failed to unbranch worktree')
     }
-  }, [unbranchWorktree, worktree, project])
-
-  if (!worktree || !project) return null
-
-  const displayBranch = liveBranch?.name ?? worktree.name
+  }
 
   // Derive display status text + color
   const { displayStatus, statusClass } =
@@ -349,58 +350,12 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
                 ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
                 : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
-  const handleClick = (): void => {
-    selectWorktree(worktreeId)
-    selectProject(project.id)
-    const expanded = useProjectStore.getState().expandedProjectIds
-    if (!expanded.has(project.id)) {
-      useProjectStore.getState().toggleProjectExpanded(project.id)
-    }
-    useWorktreeStatusStore.getState().clearWorktreeUnread(worktreeId)
-  }
-
-  const handleOpenInTerminal = async (): Promise<void> => {
-    const result = await window.worktreeOps.openInTerminal(worktree.path)
-    if (result.success) {
-      toast.success('Opened in Terminal')
-    } else {
-      toast.error(result.error || 'Failed to open in terminal', {
-        description: 'Make sure the worktree directory exists'
-      })
-    }
-  }
-
-  const handleOpenInEditor = async (): Promise<void> => {
-    const result = await window.worktreeOps.openInEditor(worktree.path)
-    if (result.success) {
-      toast.success('Opened in Editor')
-    } else {
-      toast.error(result.error || 'Failed to open in editor', {
-        description: 'Make sure VS Code is installed'
-      })
-    }
-  }
-
-  const handleOpenInFinder = async (): Promise<void> => {
-    await window.projectOps.showInFolder(worktree.path)
-  }
-
-  const handleCopyPath = async (): Promise<void> => {
-    await window.projectOps.copyToClipboard(worktree.path)
-    clipboardToast.copied('Path')
-  }
-
-  const handleUnpin = async (): Promise<void> => {
-    await unpinWorktree(worktreeId)
-  }
-
-  /* eslint-disable @typescript-eslint/no-explicit-any */
   const worktreeMenuItems = (
-    MenuItem: any,
-    MenuSeparator: any,
-    MenuSub: any,
-    MenuSubTrigger: any,
-    MenuSubContent: any
+    MenuItem: typeof ContextMenuItem,
+    MenuSeparator: typeof ContextMenuSeparator,
+    MenuSub: typeof ContextMenuSub,
+    MenuSubTrigger: typeof ContextMenuSubTrigger,
+    MenuSubContent: typeof ContextMenuSubContent
   ): React.JSX.Element => (
     <>
       {attachments.length > 0 && (
@@ -491,15 +446,13 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       )}
     </>
   )
-  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
           className={cn(
-            'group flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer',
-            'transition-colors mx-1',
+            'group flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer transition-colors mx-1',
             isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
           )}
           onClick={handleClick}
@@ -553,7 +506,6 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
                 <span
                   className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0"
                   title={new Date(lastMessageTime).toLocaleString()}
-                  data-testid="pinned-last-message-time"
                 >
                   {formatRelativeTime(lastMessageTime)}
                 </span>
@@ -565,7 +517,6 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
             <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
           )}
 
-          {/* More Options Dropdown (visible on hover) */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -593,15 +544,6 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
         </div>
       </ContextMenuTrigger>
 
-      <ArchiveConfirmDialog
-        open={archiveConfirmOpen}
-        worktreeName={worktree.name}
-        files={archiveConfirmFiles}
-        onCancel={handleArchiveCancel}
-        onConfirm={handleArchiveConfirm}
-      />
-
-      {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">
         {worktreeMenuItems(
           ContextMenuItem,
@@ -612,31 +554,79 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
         )}
       </ContextMenuContent>
 
+      <ArchiveConfirmDialog
+        open={archiveConfirmOpen}
+        worktreeName={worktree.name}
+        files={archiveConfirmFiles}
+        onCancel={() => {
+          setArchiveConfirmOpen(false)
+          setArchiveConfirmFiles([])
+        }}
+        onConfirm={() => {
+          setArchiveConfirmOpen(false)
+          setArchiveConfirmFiles([])
+          doArchive()
+        }}
+      />
+
       <AddAttachmentDialog
         open={addAttachmentOpen}
         onOpenChange={setAddAttachmentOpen}
-        worktreeId={worktreeId}
+        worktreeId={worktree.id}
         onAttachmentAdded={handleAttachmentAdded}
       />
     </ContextMenu>
   )
 }
+```
 
-// ── Connection item ────────────────────────────────────────────
+**Step 3: Verify the app builds**
 
-function PinnedConnectionItem({
-  connectionId
-}: {
-  connectionId: string
-}): React.JSX.Element | null {
+Run: `pnpm build`
+Expected: Build succeeds with no type errors.
+
+**Step 4: Manual verification**
+
+1. Pin a worktree
+2. Right-click the pinned worktree item → context menu appears with all actions
+3. Hover the pinned item → `...` button appears, click it → dropdown appears
+4. Test: Open in Terminal, Open in Editor, Open in Finder, Copy Path, Unpin
+5. Test: Rename Branch (inline input appears), Archive (confirm dialog if uncommitted changes)
+
+**Step 5: Commit**
+
+```bash
+git add src/renderer/src/components/layout/PinnedList.tsx
+git commit -m "feat: add context menu and dropdown to pinned worktree items"
+```
+
+---
+
+### Task 2: Add context menu + dropdown to PinnedConnectionItem
+
+**Files:**
+- Modify: `src/renderer/src/components/layout/PinnedList.tsx`
+
+**Step 1: Rewrite PinnedConnectionItem with full menu support**
+
+Replace the entire `PinnedConnectionItem` function. This adds:
+- Store hooks for delete, rename, unpin
+- State for rename input, manage worktrees dialog
+- All action handlers
+- `<ContextMenu>` wrapper with full menu items
+- Hover `...` `<DropdownMenu>` button
+- `ManageConnectionWorktreesDialog` render
+
+```tsx
+function PinnedConnectionItem({ connectionId }: { connectionId: string }): React.JSX.Element | null {
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectConnection = useConnectionStore((s) => s.selectConnection)
   const deleteConnection = useConnectionStore((s) => s.deleteConnection)
   const renameConnection = useConnectionStore((s) => s.renameConnection)
-  const unpinConnection = usePinnedStore((s) => s.unpinConnection)
 
   const connectionStatus = useWorktreeStatusStore((s) => s.getConnectionStatus(connectionId))
   const isSelected = selectedConnectionId === connectionId
+  const unpinConnection = usePinnedStore((s) => s.unpinConnection)
 
   const connection = useConnectionStore((s) =>
     s.connections.find((c) => c.id === connectionId)
@@ -657,95 +647,18 @@ function PinnedConnectionItem({
     }
   }, [isRenaming])
 
-  const handleStartRename = useCallback((): void => {
-    if (!connection) return
-    setNameInput(connection.custom_name || '')
-    setIsRenaming(true)
-  }, [connection])
-
-  const handleSaveRename = useCallback(async (): Promise<void> => {
-    setIsRenaming(false)
-    if (!connection) return
-    const trimmed = nameInput.trim()
-    const newCustomName = trimmed || null
-    if (newCustomName !== (connection.custom_name || null)) {
-      await renameConnection(connection.id, newCustomName)
-    }
-  }, [nameInput, connection, renameConnection])
-
-  const handleRenameKeyDown = useCallback(
-    (e: React.KeyboardEvent): void => {
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        handleSaveRename()
-      } else if (e.key === 'Escape') {
-        e.preventDefault()
-        setIsRenaming(false)
-      }
-    },
-    [handleSaveRename]
-  )
-
-  const handleOpenInTerminal = useCallback(async (): Promise<void> => {
-    if (!connection) return
-    const result = await window.connectionOps.openInTerminal(connection.path)
-    if (result.success) {
-      toast.success('Opened in Terminal')
-    } else {
-      toast.error(result.error || 'Failed to open in terminal')
-    }
-  }, [connection])
-
-  const handleOpenInEditor = useCallback(async (): Promise<void> => {
-    if (!connection) return
-    const result = await window.connectionOps.openInEditor(connection.path)
-    if (result.success) {
-      toast.success('Opened in Editor')
-    } else {
-      toast.error(result.error || 'Failed to open in editor')
-    }
-  }, [connection])
-
-  const handleOpenInFinder = useCallback(async (): Promise<void> => {
-    if (!connection) return
-    await window.projectOps.showInFolder(connection.path)
-  }, [connection])
-
-  const handleCopyPath = useCallback(async (): Promise<void> => {
-    if (!connection) return
-    await window.projectOps.copyToClipboard(connection.path)
-    clipboardToast.copied('Path')
-  }, [connection])
-
-  const handleUnpin = useCallback(async (): Promise<void> => {
-    await unpinConnection(connectionId)
-  }, [unpinConnection, connectionId])
-
-  const handleDelete = useCallback(async (): Promise<void> => {
-    await deleteConnection(connectionId)
-  }, [deleteConnection, connectionId])
-
-  const handleManageWorktrees = useCallback((): void => {
-    setManageConnectionId(connectionId)
-  }, [connectionId])
-
   if (!connection) return null
 
-  // Build the project names string from unique project names
   const projectNames =
-    [
-      ...new Set(
-        connection.members?.map((m: { project_name: string }) => m.project_name) || []
-      )
-    ].join(' + ')
+    [...new Set(connection.members?.map((m: { project_name: string }) => m.project_name) || [])].join(' + ')
 
-  // Display logic: custom name takes priority over project names
   const hasCustomName = !!connection.custom_name
-  const displayName = hasCustomName
-    ? connection.custom_name!
-    : projectNames || connection.name || 'Connection'
+  const displayName = connection.custom_name
+    || projectNames
+    || connection.name
+    || 'Connection'
 
-  // Derive display status text + color
+  // Derive display status
   const { displayStatus, statusClass } =
     connectionStatus === 'answering'
       ? { displayStatus: 'Answer questions', statusClass: 'font-semibold text-amber-500' }
@@ -765,8 +678,63 @@ function PinnedConnectionItem({
     selectConnection(connectionId)
   }
 
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const connectionMenuItems = (MenuItem: any, MenuSeparator: any): React.JSX.Element => (
+  const handleOpenInTerminal = async (): Promise<void> => {
+    const result = await window.connectionOps.openInTerminal(connection.path)
+    if (result.success) {
+      toast.success('Opened in Terminal')
+    } else {
+      toast.error(result.error || 'Failed to open in terminal')
+    }
+  }
+
+  const handleOpenInEditor = async (): Promise<void> => {
+    const result = await window.connectionOps.openInEditor(connection.path)
+    if (result.success) {
+      toast.success('Opened in Editor')
+    } else {
+      toast.error(result.error || 'Failed to open in editor')
+    }
+  }
+
+  const handleOpenInFinder = async (): Promise<void> => {
+    await window.projectOps.showInFolder(connection.path)
+  }
+
+  const handleCopyPath = async (): Promise<void> => {
+    await window.projectOps.copyToClipboard(connection.path)
+    clipboardToast.copied('Path')
+  }
+
+  const handleUnpin = async (): Promise<void> => {
+    await unpinConnection(connectionId)
+  }
+
+  const handleStartRename = (): void => {
+    setNameInput(connection.custom_name || '')
+    setIsRenaming(true)
+  }
+
+  const handleSaveRename = async (): Promise<void> => {
+    setIsRenaming(false)
+    const trimmed = nameInput.trim()
+    const newCustomName = trimmed || null
+    if (newCustomName !== (connection.custom_name || null)) {
+      await renameConnection(connection.id, newCustomName)
+    }
+  }
+
+  const handleDelete = async (): Promise<void> => {
+    await deleteConnection(connection.id)
+  }
+
+  const handleManageWorktrees = (): void => {
+    setManageConnectionId(connection.id)
+  }
+
+  const connectionMenuItems = (
+    MenuItem: typeof ContextMenuItem,
+    MenuSeparator: typeof ContextMenuSeparator
+  ): React.JSX.Element => (
     <>
       <MenuItem onClick={handleManageWorktrees}>
         <Settings2 className="h-4 w-4 mr-2" />
@@ -807,15 +775,13 @@ function PinnedConnectionItem({
       </MenuItem>
     </>
   )
-  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
           className={cn(
-            'group flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer',
-            'transition-colors mx-1',
+            'group flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer transition-colors mx-1',
             isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
           )}
           onClick={handleClick}
@@ -847,38 +813,40 @@ function PinnedConnectionItem({
                 ref={renameInputRef}
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                onKeyDown={handleRenameKeyDown}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleSaveRename()
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setIsRenaming(false)
+                  }
+                }}
                 onBlur={() => setIsRenaming(false)}
                 onClick={(e) => e.stopPropagation()}
                 className="bg-background border border-border rounded px-1.5 py-0.5 text-sm w-full focus:outline-none focus:ring-1 focus:ring-ring"
                 placeholder={projectNames || 'Connection name'}
               />
             ) : (
-              <>
-                <span className="text-sm truncate block" title={displayName}>
-                  {displayName}
-                </span>
-                <span
-                  className={cn('text-[11px]', statusClass)}
-                  data-testid="pinned-status-text"
-                >
-                  {displayStatus}
-                  {hasCustomName && projectNames && (
-                    <span className="text-muted-foreground font-normal">
-                      {' '}
-                      · {projectNames}
-                    </span>
-                  )}
-                </span>
-              </>
+              <span className="text-sm truncate block" title={displayName}>
+                {displayName}
+              </span>
             )}
+            <span
+              className={cn('text-[11px]', statusClass)}
+              data-testid="pinned-status-text"
+            >
+              {displayStatus}
+              {hasCustomName && projectNames && (
+                <span className="text-muted-foreground font-normal"> · {projectNames}</span>
+              )}
+            </span>
           </div>
 
           {connectionStatus === 'unread' && (
             <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
           )}
 
-          {/* More Options Dropdown (visible on hover) */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -900,7 +868,6 @@ function PinnedConnectionItem({
         </div>
       </ContextMenuTrigger>
 
-      {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">
         {connectionMenuItems(ContextMenuItem, ContextMenuSeparator)}
       </ContextMenuContent>
@@ -917,3 +884,50 @@ function PinnedConnectionItem({
     </ContextMenu>
   )
 }
+```
+
+**Step 2: Remove the now-unused `StatusText` helper**
+
+The `StatusText` component at the bottom of `PinnedList.tsx` is no longer needed — both pinned items now derive status inline (matching the pattern used by `WorktreeItem` and `ConnectionItem`). Delete the `StatusText` function and the `StatusType` type.
+
+**Step 3: Verify the app builds**
+
+Run: `pnpm build`
+Expected: Build succeeds with no type errors.
+
+**Step 4: Manual verification**
+
+1. Pin a connection
+2. Right-click the pinned connection item → context menu with all actions
+3. Hover → `...` button → dropdown with all actions
+4. Test: Connection Worktrees (dialog opens), Rename (inline input), Unpin, Open in Terminal/Editor/Finder, Copy Path, Delete
+5. Verify the normal ConnectionItem in the Connections list still works identically
+
+**Step 5: Commit**
+
+```bash
+git add src/renderer/src/components/layout/PinnedList.tsx
+git commit -m "feat: add context menu and dropdown to pinned connection items"
+```
+
+---
+
+### Task 3: Final verification
+
+**Step 1: Full build + lint check**
+
+Run: `pnpm lint && pnpm build`
+Expected: No lint errors, build succeeds.
+
+**Step 2: Cross-check feature parity**
+
+Verify these match between pinned items and their normal counterparts:
+- [ ] Pinned worktree context menu matches WorktreeItem context menu
+- [ ] Pinned worktree dropdown matches WorktreeItem dropdown
+- [ ] Pinned connection context menu matches ConnectionItem context menu
+- [ ] Pinned connection dropdown matches ConnectionItem dropdown
+- [ ] Status text and icons render identically
+- [ ] Unpin action works (item disappears from pinned section)
+- [ ] Branch rename works inline on pinned worktree
+- [ ] Archive with uncommitted changes shows confirmation dialog
+- [ ] Manage Connection Worktrees dialog opens from pinned connection

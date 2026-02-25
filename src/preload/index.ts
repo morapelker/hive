@@ -1555,8 +1555,8 @@ const connectionOps = {
   rename: (connectionId: string, customName: string | null) =>
     ipcRenderer.invoke('connection:rename', { connectionId, customName }),
   setPinned: (connectionId: string, pinned: boolean) =>
-    ipcRenderer.invoke('db:connection:setPinned', { connectionId, pinned }),
-  getPinned: () => ipcRenderer.invoke('db:connection:getPinned')
+    ipcRenderer.invoke('connection:setPinned', { connectionId, pinned }),
+  getPinned: () => ipcRenderer.invoke('connection:getPinned')
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

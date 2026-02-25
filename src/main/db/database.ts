@@ -412,6 +412,7 @@ export class DatabaseService {
       last_model_provider_id: null,
       last_model_id: null,
       last_model_variant: null,
+      pinned: 0,
       created_at: now,
       last_accessed_at: now
     }
@@ -483,13 +484,28 @@ export class DatabaseService {
     return rows.map((row) => this.mapWorktreeRow(row))
   }
 
-  getPinnedConnections(): Connection[] {
+  getPinnedConnections(): ConnectionWithMembers[] {
     const db = this.getDb()
-    return db
+    const rows = db
       .prepare(
         "SELECT * FROM connections WHERE status = 'active' AND pinned = 1 ORDER BY updated_at DESC"
       )
       .all() as Connection[]
+
+    return rows.map((row) => {
+      const members = db
+        .prepare(
+          `SELECT cm.*, w.name as worktree_name, w.branch_name as worktree_branch,
+                  w.path as worktree_path, p.name as project_name
+           FROM connection_members cm
+           JOIN worktrees w ON cm.worktree_id = w.id
+           JOIN projects p ON cm.project_id = p.id
+           WHERE cm.connection_id = ?
+           ORDER BY cm.added_at ASC`
+        )
+        .all(row.id) as ConnectionWithMembers['members']
+      return { ...row, members }
+    })
   }
 
   updateWorktree(id: string, data: WorktreeUpdate): Worktree | null {
@@ -1031,6 +1047,7 @@ export class DatabaseService {
       custom_name: data.custom_name ?? null,
       path: data.path,
       color: data.color ?? null,
+      pinned: 0,
       status: 'active',
       created_at: now,
       updated_at: now

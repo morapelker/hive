@@ -1043,7 +1043,7 @@ declare global {
         connectionId: string,
         pinned: boolean
       ) => Promise<{ success: boolean; error?: string }>
-      getPinned: () => Promise<Connection[]>
+      getPinned: () => Promise<ConnectionWithMembers[]>
     }
   }
 

@@ -234,6 +234,28 @@ export function registerConnectionHandlers(): void {
     }
   )
 
+  // Pin / unpin a connection
+  ipcMain.handle(
+    'connection:setPinned',
+    (
+      _event,
+      { connectionId, pinned }: { connectionId: string; pinned: boolean }
+    ): { success: boolean; error?: string } => {
+      try {
+        getDatabase().updateConnection(connectionId, { pinned: pinned ? 1 : 0 })
+        return { success: true }
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  )
+
+  // Get all pinned connections with enriched member data
+  ipcMain.handle('connection:getPinned', () => {
+    const db = getDatabase()
+    return db.getPinnedConnections()
+  })
+
   // Remove a worktree from ALL connections it belongs to.
   // Used by the archive cascade -- when a worktree is archived, clean up its connections.
   ipcMain.handle(

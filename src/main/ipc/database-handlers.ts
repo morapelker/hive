@@ -215,23 +215,6 @@ export function registerDatabaseHandlers(): void {
     return db.getPinnedWorktrees()
   })
 
-  ipcMain.handle(
-    'db:connection:setPinned',
-    (_event, { connectionId, pinned }: { connectionId: string; pinned: boolean }) => {
-      try {
-        getDatabase().updateConnection(connectionId, { pinned: pinned ? 1 : 0 })
-        return { success: true }
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
-  )
-
-  ipcMain.handle('db:connection:getPinned', () => {
-    const db = getDatabase()
-    return db.getPinnedConnections()
-  })
-
   // Sessions
   ipcMain.handle('db:session:create', (_event, data: SessionCreate) => {
     return getDatabase().createSession(data)

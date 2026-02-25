@@ -172,6 +172,10 @@ export const useConnectionStore = create<ConnectionState>()(
           }
           if (result.connectionDeleted) {
             // Connection was deleted because it was the last member
+            // Remove from pinned list if pinned
+            const { usePinnedStore } = await import('./usePinnedStore')
+            usePinnedStore.getState().removeConnection(connectionId)
+
             set((state) => {
               const connections = state.connections.filter((c) => c.id !== connectionId)
               const selectedConnectionId =
