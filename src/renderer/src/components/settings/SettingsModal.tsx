@@ -45,7 +45,7 @@ export function SettingsModal(): React.JSX.Element {
         className="max-w-3xl h-[70vh] p-0 gap-0 overflow-hidden"
         data-testid="settings-modal"
       >
-        <div className="flex h-full">
+        <div className="flex h-full min-h-0">
           {/* Left navigation */}
           <nav className="w-48 border-r bg-muted/30 p-3 flex flex-col gap-1 shrink-0">
             <div className="flex items-center gap-2 px-2 py-1.5 mb-2">
