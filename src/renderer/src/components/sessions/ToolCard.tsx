@@ -43,6 +43,7 @@ import {
   getLspResultCount
 } from './tools/LspToolView'
 import { ToolCallContextMenu } from './ToolCallContextMenu'
+import { useSessionStore } from '@/stores/useSessionStore'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
 
@@ -857,8 +858,29 @@ export const ToolCard = memo(function ToolCard({
 
   const hasOutput = !!(toolUse.output || toolUse.error)
   const isExitPlanMode = toolUse.name.toLowerCase() === 'exitplanmode'
+
+  // Fallback: if toolUse.input.plan is missing, check the pending plan store.
+  // This handles the race where plan.ready sets pendingPlan but the streaming
+  // part's input wasn't updated in time.
+  const pendingPlanContent = useSessionStore((state) => {
+    if (!isExitPlanMode) return ''
+    for (const [, plan] of state.pendingPlans) {
+      if (plan.toolUseID === toolUse.id && plan.planContent) {
+        return plan.planContent
+      }
+    }
+    return ''
+  })
+
+  const effectiveInput =
+    isExitPlanMode && !toolUse.input?.plan && pendingPlanContent
+      ? { ...toolUse.input, plan: pendingPlanContent }
+      : toolUse.input
+
   const hasPlanInput =
-    isExitPlanMode && typeof toolUse.input?.plan === 'string' && toolUse.input.plan.length > 0
+    isExitPlanMode &&
+    typeof effectiveInput?.plan === 'string' &&
+    effectiveInput.plan.length > 0
   const hasDetail = hasOutput || hasPlanInput
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
@@ -986,7 +1008,7 @@ export const ToolCard = memo(function ToolCard({
               >
                 <Renderer
                   name={toolUse.name}
-                  input={toolUse.input}
+                  input={effectiveInput}
                   output={toolUse.output}
                   error={toolUse.error}
                   status={toolUse.status}
