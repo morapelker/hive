@@ -35,6 +35,8 @@ import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { useWorktreeStore } from '@/stores'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
@@ -331,6 +333,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       return true
     })
   }, [slashCommands, sessionCapabilities])
+
+  const hasSuperpowers = useMemo(
+    () => slashCommands.some((c) => c.name === 'using-superpowers'),
+    [slashCommands]
+  )
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
@@ -3092,6 +3099,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     await setModePromise
   }, [messages, worktreeId, sessionRecord?.project_id])
 
+  const handlePlanReadySuperpowers = useCallback(async () => {
+    toast.info('Supercharge coming soon')
+  }, [])
+
   // Abort streaming
   const handleAbort = useCallback(async () => {
     if (!worktreePath || !opencodeSessionId) return
@@ -3669,6 +3680,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           onImplement={handlePlanReadyImplement}
           onHandoff={handlePlanReadyHandoff}
           visible={showPlanReadyImplementFab}
+          superpowersAvailable={hasSuperpowers}
+          onSuperpowers={handlePlanReadySuperpowers}
         />
         {/* Scroll-to-bottom FAB */}
         <ScrollToBottomFab
