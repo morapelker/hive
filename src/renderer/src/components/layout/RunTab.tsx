@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Play, Square, RotateCcw, Loader2, Trash2, Settings } from 'lucide-react'
+import { Play, Square, RotateCcw, Trash2, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -129,12 +129,12 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
     setSearchMatches([])
     setCurrentMatchIndex(0)
     // Re-enable auto-scroll: scroll to bottom
-    const count = worktreeId ? getOrCreateBuffer(worktreeId).renderCount : 0
+    const count = buffer?.renderCount ?? 0
     if (count > 0) {
       virtualizer.scrollToIndex(count - 1, { align: 'end' })
     }
     isAtBottomRef.current = true
-  }, [worktreeId, virtualizer])
+  }, [buffer, virtualizer])
 
   const getProject = useCallback(() => {
     if (!worktreeId) return null
@@ -335,11 +335,7 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
                   className="flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-accent transition-colors"
                   data-testid="run-button"
                 >
-                  {runRunning ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Play className="h-3 w-3" />
-                  )}
+                  <Play className="h-3 w-3" />
                   Run
                 </button>
               )}
