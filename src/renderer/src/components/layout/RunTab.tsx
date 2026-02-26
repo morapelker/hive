@@ -75,14 +75,11 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
     }
   }, [runOutputVersion, searchOpen, lineCount, virtualizer])
 
-  // Cmd+F handler — capture phase, scoped to container
+  // Cmd+F handler — capture phase. No containment check needed because
+  // RunTab only mounts when the Run tab is active (same pattern as FileViewer).
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-        if (
-          !containerRef.current?.contains(document.activeElement) &&
-          !containerRef.current?.contains(e.target as Node)
-        ) return
         e.preventDefault()
         e.stopPropagation()
         setSearchOpen(true)
