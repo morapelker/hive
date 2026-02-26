@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db'
 import { createLogger } from '../services/logger'
+import { telemetryService } from '../services/telemetry-service'
 import type {
   ProjectCreate,
   ProjectUpdate,
@@ -50,6 +51,7 @@ export function registerDatabaseHandlers(): void {
       is_default: true
     })
 
+    telemetryService.track('project_added', {})
     return project
   })
 

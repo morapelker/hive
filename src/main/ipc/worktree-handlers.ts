@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
 import { createGitService, createLogger } from '../services'
+import { telemetryService } from '../services/telemetry-service'
 import {
   createWorktreeOp,
   deleteWorktreeOp,
@@ -44,7 +45,9 @@ export function registerWorktreeHandlers(): void {
   ipcMain.handle(
     'worktree:create',
     async (_event, params: CreateWorktreeParams) => {
-      return createWorktreeOp(getDatabase(), params)
+      const result = await createWorktreeOp(getDatabase(), params)
+      telemetryService.track('worktree_created')
+      return result
     }
   )
 

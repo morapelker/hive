@@ -3,6 +3,7 @@ import { existsSync } from 'fs'
 import { spawn } from 'child_process'
 import { platform } from 'os'
 import { createLogger } from '../services'
+import { telemetryService } from '../services/telemetry-service'
 import { getDatabase } from '../db'
 import { detectEditors, detectTerminals, type DetectedApp } from '../services/settings-detection'
 
@@ -64,6 +65,7 @@ export function registerSettingsHandlers(): void {
         }
 
         spawn(command, [worktreePath], { detached: true, stdio: 'ignore' })
+        telemetryService.track('worktree_opened_in_editor')
         return { success: true }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'

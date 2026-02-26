@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { openCodeService } from '../services/opencode-service'
 import { createLogger } from '../services/logger'
+import { telemetryService } from '../services/telemetry-service'
 import type { DatabaseService } from '../db/database'
 import type { AgentSdkManager } from '../services/agent-sdk-manager'
 import { ClaudeCodeImplementer } from '../services/claude-code-implementer'
@@ -31,11 +32,13 @@ export function registerOpenCodeHandlers(
           if (session?.agent_sdk === 'claude-code') {
             const impl = sdkManager.getImplementer('claude-code')
             const result = await impl.connect(worktreePath, hiveSessionId)
+            telemetryService.track('session_started', { agent_sdk: 'claude-code' })
             return { success: true, ...result }
           }
         }
         // Fall through to existing OpenCode path
         const result = await openCodeService.connect(worktreePath, hiveSessionId)
+        telemetryService.track('session_started', { agent_sdk: 'opencode' })
         return { success: true, ...result }
       } catch (error) {
         log.error('IPC: opencode:connect failed', { error })
@@ -143,11 +146,13 @@ export function registerOpenCodeHandlers(
         if (sdkId === 'claude-code') {
           const impl = sdkManager.getImplementer('claude-code')
           await impl.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
+          telemetryService.track('prompt_sent', { agent_sdk: 'claude-code' })
           return { success: true }
         }
       }
       // Fall through to existing OpenCode path
       await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
+      telemetryService.track('prompt_sent', { agent_sdk: 'opencode' })
       return { success: true }
     } catch (error) {
       log.error('IPC: opencode:prompt failed', { error })
