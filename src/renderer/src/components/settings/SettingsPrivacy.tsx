@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { cn } from '@/lib/utils'
 
 export function SettingsPrivacy(): React.JSX.Element {
+  const updateSetting = useSettingsStore((s) => s.updateSetting)
   const [enabled, setEnabled] = useState(true)
   const [loaded, setLoaded] = useState(false)
 
@@ -9,12 +11,15 @@ export function SettingsPrivacy(): React.JSX.Element {
     window.analyticsOps.isEnabled().then((val) => {
       setEnabled(val)
       setLoaded(true)
+    }).catch(() => {
+      setLoaded(true) // Fall back to default (enabled=true)
     })
   }, [])
 
   const handleToggle = () => {
     const newValue = !enabled
     setEnabled(newValue)
+    updateSetting('telemetryEnabled', newValue)
     window.analyticsOps.setEnabled(newValue)
   }
 
