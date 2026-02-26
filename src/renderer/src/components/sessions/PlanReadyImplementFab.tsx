@@ -5,7 +5,9 @@ interface PlanReadyImplementFabProps {
   onHandoff: () => void
   visible: boolean
   onSuperpowers?: () => void
+  onSuperpowersLocal?: () => void
   superpowersAvailable?: boolean
+  isConnectionSession?: boolean
 }
 
 export function PlanReadyImplementFab({
@@ -13,7 +15,9 @@ export function PlanReadyImplementFab({
   onHandoff,
   visible,
   onSuperpowers,
-  superpowersAvailable
+  onSuperpowersLocal,
+  superpowersAvailable,
+  isConnectionSession
 }: PlanReadyImplementFabProps): React.JSX.Element {
   return (
     <div
@@ -39,6 +43,23 @@ export function PlanReadyImplementFab({
       >
         Handoff
       </button>
+      {superpowersAvailable && !isConnectionSession && onSuperpowersLocal && (
+        <button
+          onClick={onSuperpowersLocal}
+          className={cn(
+            'h-8 rounded-full px-3',
+            'text-xs font-medium',
+            'border border-violet-600 text-violet-600 bg-transparent hover:bg-violet-600/10',
+            'shadow-md transition-colors duration-200',
+            'cursor-pointer',
+            visible ? 'opacity-100' : 'opacity-0'
+          )}
+          aria-label="Supercharge locally plan"
+          data-testid="plan-ready-supercharge-local-fab"
+        >
+          Supercharge locally
+        </button>
+      )}
       {superpowersAvailable && onSuperpowers && (
         <button
           onClick={onSuperpowers}
