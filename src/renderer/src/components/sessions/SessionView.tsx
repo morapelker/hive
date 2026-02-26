@@ -3135,8 +3135,67 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }, [messages, worktreeId, sessionRecord?.project_id])
 
   const handlePlanReadySuperpowers = useCallback(async () => {
-    toast.info('Supercharge coming soon')
-  }, [])
+    // 1. Extract plan content
+    const planContent =
+      pendingPlan?.planContent ??
+      [...messages]
+        .reverse()
+        .find((m) => m.role === 'assistant' && m.content.trim().length > 0)?.content
+    if (!planContent) {
+      toast.error('No plan content found to supercharge')
+      return
+    }
+
+    // 2. Look up worktree and project metadata
+    const worktreeStore = useWorktreeStore.getState()
+    let worktree: Worktree | undefined
+    for (const worktrees of worktreeStore.worktreesByProject.values()) {
+      worktree = worktrees.find((w) => w.id === worktreeId)
+      if (worktree) break
+    }
+    if (!worktree) {
+      toast.error('Could not find current worktree')
+      return
+    }
+
+    const project = useProjectStore.getState().projects.find((p) => p.id === worktree!.project_id)
+    if (!project) {
+      toast.error('Could not find project for worktree')
+      return
+    }
+
+    // 3. Duplicate worktree
+    const dupResult = await worktreeStore.duplicateWorktree(
+      project.id,
+      project.path,
+      project.name,
+      worktree.branch_name,
+      worktree.path
+    )
+    if (!dupResult.success || !dupResult.worktree) {
+      toast.error(dupResult.error ?? 'Failed to duplicate worktree')
+      return
+    }
+
+    // 4. Create session in the new worktree
+    const sessionStore = useSessionStore.getState()
+    const sessionResult = await sessionStore.createSession(dupResult.worktree.id, project.id)
+    if (!sessionResult.success || !sessionResult.session) {
+      toast.error(sessionResult.error ?? 'Failed to create supercharge session')
+      return
+    }
+
+    // 5. Configure 2-step flow
+    const newSessionId = sessionResult.session.id
+    sessionStore.setSessionMode(newSessionId, 'build')
+    sessionStore.setPendingMessage(newSessionId, '/using-superpowers')
+    sessionStore.setPendingFollowUpMessages(newSessionId, [
+      'use the subagent development skill to implement the following plan:\n' + planContent
+    ])
+
+    // 6. Navigate to the new worktree
+    worktreeStore.selectWorktree(dupResult.worktree.id)
+  }, [messages, worktreeId, pendingPlan])
 
   // Abort streaming
   const handleAbort = useCallback(async () => {
