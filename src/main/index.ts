@@ -36,6 +36,7 @@ import { ClaudeCodeImplementer } from './services/claude-code-implementer'
 import { AgentSdkManager } from './services/agent-sdk-manager'
 import { resolveClaudeBinaryPath } from './services/claude-binary-resolver'
 import type { AgentSdkImplementer } from './services/agent-sdk-types'
+import { telemetryService } from './services/telemetry-service'
 
 const log = createLogger({ component: 'Main' })
 
@@ -444,6 +445,22 @@ app.whenReady().then(async () => {
   registerSettingsHandlers()
   registerFileHandlers()
   registerConnectionHandlers()
+
+  // Telemetry IPC
+  ipcMain.handle(
+    'telemetry:track',
+    (_event, eventName: string, properties?: Record<string, unknown>) => {
+      telemetryService.track(eventName, properties)
+    }
+  )
+
+  ipcMain.handle('telemetry:setEnabled', (_event, enabled: boolean) => {
+    return telemetryService.setEnabled(enabled)
+  })
+
+  ipcMain.handle('telemetry:isEnabled', () => {
+    return telemetryService.isEnabled()
+  })
 
   // Register response logging handlers only when --log is active
   if (isLogMode) {

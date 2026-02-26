@@ -91,4 +91,16 @@ if (typeof window !== 'undefined') {
       }
     })
   }
+
+  if (!window.analyticsOps) {
+    Object.defineProperty(window, 'analyticsOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        track: vi.fn().mockResolvedValue(undefined),
+        setEnabled: vi.fn().mockResolvedValue(undefined),
+        isEnabled: vi.fn().mockResolvedValue(true)
+      }
+    })
+  }
 }
