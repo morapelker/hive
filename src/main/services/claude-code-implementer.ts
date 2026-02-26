@@ -586,7 +586,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         })
 
         // Log init messages (includes MCP server connection status) and cache slash commands
-        if (msgType === 'init') {
+        // SDK sends init as { type: 'system', subtype: 'init' }
+        const msgSubtype = (sdkMessage as Record<string, unknown>).subtype as string | undefined
+        if (msgType === 'system' && msgSubtype === 'init') {
           const initMsg = sdkMessage as Record<string, unknown>
           log.info('Prompt: init message received', {
             mcpServers: initMsg.mcp_servers,
@@ -605,8 +607,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
                 argumentHint: ''
               }))
             this.cachedSlashCommands.set(worktreePath, minimal)
+            this.persistCommandsToDb(worktreePath)
             log.info('Prompt: cached slash command names from init', {
-              count: minimal.length
+              count: minimal.length,
+              names: minimal.map((c) => c.name)
             })
           }
 
@@ -617,8 +621,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               .then((cmds) => {
                 if (cmds?.length) {
                   this.cachedSlashCommands.set(worktreePath, cmds)
+                  this.persistCommandsToDb(worktreePath)
                   log.info('Prompt: cached full slash commands from supportedCommands()', {
-                    count: cmds.length
+                    count: cmds.length,
+                    names: cmds.map((c) => c.name)
                   })
                 }
               })
@@ -1447,19 +1453,79 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
   // ── Commands ─────────────────────────────────────────────────────
 
-  async listCommands(worktreePath: string): Promise<unknown[]> {
-    const cached = this.cachedSlashCommands.get(worktreePath)
-    if (!cached?.length) {
-      log.info('listCommands: no cached commands', { worktreePath })
-      return []
-    }
-
-    // Map SDK SlashCommand format to Hive's expected command format
-    return cached.map((cmd) => ({
+  private toHiveCommandFormat(cmd: {
+    name: string
+    description: string
+    argumentHint: string
+  }) {
+    return {
       name: cmd.name,
       description: cmd.description || undefined,
       template: `/${cmd.name}${cmd.argumentHint ? ' ' + cmd.argumentHint : ''}`
-    }))
+    }
+  }
+
+  async listCommands(worktreePath: string): Promise<unknown[]> {
+    // 1. Check in-memory cache (populated after SDK init in current session)
+    const cached = this.cachedSlashCommands.get(worktreePath)
+    if (cached?.length) {
+      const commands = cached.map((cmd) => this.toHiveCommandFormat(cmd))
+      // Sync DB so removed commands are pruned from the persisted cache
+      this.persistCommandsToDb(worktreePath, commands)
+      return commands
+    }
+
+    // 2. Fallback: load from DB (persisted from a previous session)
+    if (this.dbService) {
+      try {
+        const dbKey = `slash_commands:${worktreePath}`
+        const json = this.dbService.getSetting(dbKey)
+        if (json) {
+          const commands = JSON.parse(json) as unknown[]
+          if (Array.isArray(commands) && commands.length > 0) {
+            log.info('listCommands: loaded from DB cache', {
+              worktreePath,
+              count: commands.length
+            })
+            return commands
+          }
+        }
+      } catch (err) {
+        log.warn('listCommands: DB cache read failed', {
+          error: err instanceof Error ? err.message : String(err)
+        })
+      }
+    }
+
+    log.info('listCommands: no cached commands', { worktreePath })
+    return []
+  }
+
+  private persistCommandsToDb(
+    worktreePath: string,
+    commands?: unknown[]
+  ): void {
+    if (!this.dbService) return
+
+    // If no pre-mapped commands provided, map from the in-memory cache
+    if (!commands) {
+      const cached = this.cachedSlashCommands.get(worktreePath)
+      if (!cached?.length) return
+      commands = cached.map((cmd) => this.toHiveCommandFormat(cmd))
+    }
+
+    try {
+      const dbKey = `slash_commands:${worktreePath}`
+      this.dbService.setSetting(dbKey, JSON.stringify(commands))
+      log.info('persistCommandsToDb: saved to DB', {
+        worktreePath,
+        count: commands.length
+      })
+    } catch (err) {
+      log.warn('persistCommandsToDb: failed', {
+        error: err instanceof Error ? err.message : String(err)
+      })
+    }
   }
 
   async sendCommand(

@@ -332,6 +332,17 @@ export function registerOpenCodeHandlers(
             return { success: true, commands }
           }
         }
+
+        // For pending:: sessions (not yet materialized in DB), try Claude Code
+        // implementer first — it has a DB cache fallback from previous sessions.
+        if (sdkManager && sessionId?.startsWith('pending::')) {
+          const impl = sdkManager.getImplementer('claude-code')
+          const commands = await impl.listCommands(worktreePath)
+          if (commands.length > 0) {
+            return { success: true, commands }
+          }
+        }
+
         // Fall through to existing OpenCode path
         const commands = await openCodeService.listCommands(worktreePath)
         return { success: true, commands }
