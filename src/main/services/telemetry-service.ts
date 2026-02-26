@@ -6,7 +6,7 @@ import { createLogger } from './logger'
 
 const log = createLogger({ component: 'Telemetry' })
 
-const POSTHOG_API_KEY = '<project-api-key>' // TODO: user provides their key
+const POSTHOG_API_KEY = 'phc_G54QVGSplIjNs2VH0m3bxKQ3XBvmYYacMiiZWIwxBvl'
 const POSTHOG_HOST = 'https://us.i.posthog.com'
 
 class TelemetryService {
