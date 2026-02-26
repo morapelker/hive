@@ -3119,9 +3119,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         toast.error(result.error ?? 'Failed to create handoff session')
         return
       }
-      sessionStore.setSessionMode(result.session.id, 'build')
+      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       sessionStore.setActiveConnectionSession(result.session.id)
+      await setModePromise
       return
     }
 
@@ -3137,7 +3138,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const sessionStore = useSessionStore.getState()
     const result = await sessionStore.createSession(currentWorktreeId, currentProjectId)
     if (!result.success || !result.session) {
-      toast.error('Failed to create handoff session')
+      toast.error(result.error ?? 'Failed to create handoff session')
       return
     }
 
@@ -3167,12 +3168,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
       const newSessionId = sessionResult.session.id
-      sessionStore.setSessionMode(newSessionId, 'build')
+      const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
       sessionStore.setPendingMessage(newSessionId, '/using-superpowers')
       sessionStore.setPendingFollowUpMessages(newSessionId, [
         'use the subagent development skill to implement the following plan:\n' + planContent
       ])
       sessionStore.setActiveConnectionSession(newSessionId)
+      await setModePromise
       return
     }
 
@@ -3256,7 +3258,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     // 3. Configure 2-step flow
     const newSessionId = sessionResult.session.id
-    sessionStore.setSessionMode(newSessionId, 'build')
+    const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
     sessionStore.setPendingMessage(newSessionId, '/using-superpowers')
     sessionStore.setPendingFollowUpMessages(newSessionId, [
       'use the subagent development skill to implement the following plan:\n' + planContent
@@ -3264,6 +3266,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     // 4. Navigate to the new session (same worktree)
     sessionStore.setActiveSession(newSessionId)
+    await setModePromise
   }, [messages, worktreeId, sessionRecord?.project_id, pendingPlan])
 
   // Abort streaming
