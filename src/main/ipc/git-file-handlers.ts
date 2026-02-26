@@ -4,6 +4,7 @@ import { promisify } from 'util'
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { telemetryService } from '../services/telemetry-service'
 import {
   createGitService,
   parseWorktreeForBranch,
@@ -368,6 +369,9 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const gitService = createGitService(worktreePath)
         const result = await gitService.commit(message)
 
+        if (result.success) {
+          telemetryService.track('git_commit_made')
+        }
         return result
       } catch (error) {
         const errMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -394,6 +398,9 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         const gitService = createGitService(worktreePath)
         const result = await gitService.push(remote, branch, force)
 
+        if (result.success) {
+          telemetryService.track('git_push_made')
+        }
         return result
       } catch (error) {
         const errMessage = error instanceof Error ? error.message : 'Unknown error'

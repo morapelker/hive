@@ -3,6 +3,7 @@ import { scriptRunner } from '../services/script-runner'
 import { getAssignedPort, assignPort } from '../services/port-registry'
 import { getDatabase } from '../db'
 import { createLogger } from '../services/logger'
+import { telemetryService } from '../services/telemetry-service'
 
 const log = createLogger({ component: 'ScriptHandlers' })
 
@@ -52,6 +53,9 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
           `script:setup:${worktreeId}`,
           portEnv
         )
+        if (result.success) {
+          telemetryService.track('script_run', { type: 'setup' })
+        }
         return result
       } catch (error) {
         log.error('IPC: script:runSetup failed', { error })
@@ -79,6 +83,7 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
           `script:run:${worktreeId}`,
           portEnv
         )
+        telemetryService.track('script_run', { type: 'run' })
         return { success: true, pid: handle.pid }
       } catch (error) {
         log.error('IPC: script:runProject failed', { error })
@@ -112,6 +117,9 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
       log.info('IPC: script:runArchive', { cwd, commandCount: commands.length })
       try {
         const result = await scriptRunner.runAndWait(commands, cwd, 30000)
+        if (result.success) {
+          telemetryService.track('script_run', { type: 'archive' })
+        }
         return result
       } catch (error) {
         log.error('IPC: script:runArchive failed', { error })

@@ -79,6 +79,9 @@ export interface AppSettings {
 
   // Command Filter
   commandFilter: CommandFilterSettings
+
+  // Privacy
+  telemetryEnabled: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -116,7 +119,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     ],
     defaultBehavior: 'ask',
     enabled: true
-  }
+  },
+  telemetryEnabled: true
 }
 
 const SETTINGS_DB_KEY = 'app_settings'
@@ -188,7 +192,8 @@ function extractSettings(state: SettingsState): AppSettings {
     stripAtMentions: state.stripAtMentions,
     updateChannel: state.updateChannel,
     initialSetupComplete: state.initialSetupComplete,
-    commandFilter: state.commandFilter
+    commandFilter: state.commandFilter,
+    telemetryEnabled: state.telemetryEnabled
   }
 }
 
@@ -317,7 +322,8 @@ export const useSettingsStore = create<SettingsState>()(
         stripAtMentions: state.stripAtMentions,
         updateChannel: state.updateChannel,
         initialSetupComplete: state.initialSetupComplete,
-        commandFilter: state.commandFilter
+        commandFilter: state.commandFilter,
+        telemetryEnabled: state.telemetryEnabled
       })
     }
   )
