@@ -3111,6 +3111,21 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       return
     }
 
+    if (connectionId) {
+      const handoffPrompt = `Implement the following plan\n${lastAssistantMessage.content}`
+      const sessionStore = useSessionStore.getState()
+      const result = await sessionStore.createConnectionSession(connectionId)
+      if (!result.success || !result.session) {
+        toast.error(result.error ?? 'Failed to create handoff session')
+        return
+      }
+      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+      sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+      sessionStore.setActiveConnectionSession(result.session.id)
+      await setModePromise
+      return
+    }
+
     const currentWorktreeId = worktreeId
     const currentProjectId = sessionRecord?.project_id
     if (!currentWorktreeId || !currentProjectId) {
@@ -3123,7 +3138,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const sessionStore = useSessionStore.getState()
     const result = await sessionStore.createSession(currentWorktreeId, currentProjectId)
     if (!result.success || !result.session) {
-      toast.error('Failed to create handoff session')
+      toast.error(result.error ?? 'Failed to create handoff session')
       return
     }
 
@@ -3131,7 +3146,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     sessionStore.setPendingMessage(result.session.id, handoffPrompt)
     sessionStore.setActiveSession(result.session.id)
     await setModePromise
-  }, [messages, worktreeId, sessionRecord?.project_id])
+  }, [messages, worktreeId, sessionRecord?.project_id, connectionId])
 
   const handlePlanReadySuperpowers = useCallback(async () => {
     // 1. Extract plan content
@@ -3142,6 +3157,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         .find((m) => m.role === 'assistant' && m.content.trim().length > 0)?.content
     if (!planContent) {
       toast.error('No plan content found to supercharge')
+      return
+    }
+
+    if (connectionId) {
+      const sessionStore = useSessionStore.getState()
+      const sessionResult = await sessionStore.createConnectionSession(connectionId)
+      if (!sessionResult.success || !sessionResult.session) {
+        toast.error(sessionResult.error ?? 'Failed to create supercharge session')
+        return
+      }
+      const newSessionId = sessionResult.session.id
+      const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+      sessionStore.setPendingMessage(newSessionId, '/using-superpowers')
+      sessionStore.setPendingFollowUpMessages(newSessionId, [
+        'use the subagent development skill to implement the following plan:\n' + planContent
+      ])
+      sessionStore.setActiveConnectionSession(newSessionId)
+      await setModePromise
       return
     }
 
@@ -3186,7 +3219,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     // 5. Configure 2-step flow
     const newSessionId = sessionResult.session.id
-    sessionStore.setSessionMode(newSessionId, 'build')
+    const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
     sessionStore.setPendingMessage(newSessionId, '/using-superpowers')
     sessionStore.setPendingFollowUpMessages(newSessionId, [
       'use the subagent development skill to implement the following plan:\n' + planContent
@@ -3194,7 +3227,48 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     // 6. Navigate to the new worktree
     worktreeStore.selectWorktree(dupResult.worktree.id)
-  }, [messages, worktreeId, pendingPlan])
+    await setModePromise
+  }, [messages, worktreeId, pendingPlan, connectionId])
+
+  const handlePlanReadySuperpowersLocal = useCallback(async () => {
+    // 1. Extract plan content
+    const planContent =
+      pendingPlan?.planContent ??
+      [...messages]
+        .reverse()
+        .find((m) => m.role === 'assistant' && m.content.trim().length > 0)?.content
+    if (!planContent) {
+      toast.error('No plan content found to supercharge')
+      return
+    }
+
+    // 2. Create session in the same worktree (no duplication)
+    const currentWorktreeId = worktreeId
+    const currentProjectId = sessionRecord?.project_id
+    if (!currentWorktreeId || !currentProjectId) {
+      toast.error('Could not start local supercharge session')
+      return
+    }
+
+    const sessionStore = useSessionStore.getState()
+    const sessionResult = await sessionStore.createSession(currentWorktreeId, currentProjectId)
+    if (!sessionResult.success || !sessionResult.session) {
+      toast.error(sessionResult.error ?? 'Failed to create local supercharge session')
+      return
+    }
+
+    // 3. Configure 2-step flow
+    const newSessionId = sessionResult.session.id
+    const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+    sessionStore.setPendingMessage(newSessionId, '/using-superpowers')
+    sessionStore.setPendingFollowUpMessages(newSessionId, [
+      'use the subagent development skill to implement the following plan:\n' + planContent
+    ])
+
+    // 4. Navigate to the new session (same worktree)
+    sessionStore.setActiveSession(newSessionId)
+    await setModePromise
+  }, [messages, worktreeId, sessionRecord?.project_id, pendingPlan])
 
   // Abort streaming
   const handleAbort = useCallback(async () => {
@@ -3775,6 +3849,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           visible={showPlanReadyImplementFab}
           superpowersAvailable={hasSuperpowers}
           onSuperpowers={handlePlanReadySuperpowers}
+          onSuperpowersLocal={handlePlanReadySuperpowersLocal}
+          isConnectionSession={!!connectionId}
         />
         {/* Scroll-to-bottom FAB */}
         <ScrollToBottomFab
