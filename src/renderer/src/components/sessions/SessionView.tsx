@@ -1753,6 +1753,28 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // Don't overwrite plan_ready — session is blocked waiting for plan approval
               if (useSessionStore.getState().getPendingPlan(sessionId)) return
 
+              // If there are queued follow-up messages, send the next one instead of finalizing
+              const followUp = useSessionStore.getState().consumeFollowUpMessage(sessionId)
+              if (followUp) {
+                hasFinalizedCurrentResponseRef.current = false
+                setIsSending(true)
+                setMessages((prev) => [...prev, createLocalMessage('user', followUp)])
+                newPromptPendingRef.current = true
+                messageSendTimes.set(sessionId, Date.now())
+                lastSendMode.set(sessionId, 'build')
+                useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+                lastSentPromptRef.current = followUp
+                const wtPath = transcriptSourceRef.current.worktreePath
+                const opcSid = transcriptSourceRef.current.opencodeSessionId
+                void window.opencodeOps.prompt(
+                  wtPath,
+                  opcSid,
+                  [{ type: 'text', text: followUp }],
+                  getModelForRequests()
+                )
+                return
+              }
+
               // Session is done — flush and finalize immediately
               setSessionRetry(null)
               setSessionErrorMessage(null)
