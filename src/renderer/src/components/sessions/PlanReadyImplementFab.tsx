@@ -4,12 +4,16 @@ interface PlanReadyImplementFabProps {
   onImplement: () => void
   onHandoff: () => void
   visible: boolean
+  onSuperpowers?: () => void
+  superpowersAvailable?: boolean
 }
 
 export function PlanReadyImplementFab({
   onImplement,
   onHandoff,
-  visible
+  visible,
+  onSuperpowers,
+  superpowersAvailable
 }: PlanReadyImplementFabProps): React.JSX.Element {
   return (
     <div
@@ -35,6 +39,23 @@ export function PlanReadyImplementFab({
       >
         Handoff
       </button>
+      {superpowersAvailable && onSuperpowers && (
+        <button
+          onClick={onSuperpowers}
+          className={cn(
+            'h-8 rounded-full px-3',
+            'text-xs font-medium',
+            'bg-violet-600 text-white',
+            'shadow-md hover:bg-violet-700 transition-colors duration-200',
+            'cursor-pointer',
+            visible ? 'opacity-100' : 'opacity-0'
+          )}
+          aria-label="Supercharge plan"
+          data-testid="plan-ready-supercharge-fab"
+        >
+          Supercharge
+        </button>
+      )}
       <button
         onClick={onImplement}
         className={cn(

@@ -35,6 +35,7 @@ import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { useWorktreeStore } from '@/stores'
+import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
@@ -331,6 +332,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       return true
     })
   }, [slashCommands, sessionCapabilities])
+
+  const hasSuperpowers = useMemo(
+    () => slashCommands.some((c) => c.name === 'using-superpowers'),
+    [slashCommands]
+  )
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
@@ -1746,6 +1752,41 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // Don't overwrite plan_ready — session is blocked waiting for plan approval
               if (useSessionStore.getState().getPendingPlan(sessionId)) return
 
+              // If there are queued follow-up messages, send the next one instead of finalizing
+              const followUp = useSessionStore.getState().consumeFollowUpMessage(sessionId)
+              if (followUp) {
+                hasFinalizedCurrentResponseRef.current = false
+                setIsSending(true)
+                setMessages((prev) => [...prev, createLocalMessage('user', followUp)])
+                newPromptPendingRef.current = true
+                messageSendTimes.set(sessionId, Date.now())
+                lastSendMode.set(sessionId, 'build')
+                useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+                lastSentPromptRef.current = followUp
+                const wtPath = transcriptSourceRef.current.worktreePath
+                const opcSid = transcriptSourceRef.current.opencodeSessionId
+                window.opencodeOps
+                  .prompt(
+                    wtPath,
+                    opcSid,
+                    [{ type: 'text', text: followUp }],
+                    getModelForRequests()
+                  )
+                  .then((result) => {
+                    if (!result.success) {
+                      console.error('Failed to send follow-up message:', result.error)
+                      toast.error('Failed to send follow-up prompt')
+                      setIsSending(false)
+                    }
+                  })
+                  .catch((err) => {
+                    console.error('Failed to send follow-up message:', err)
+                    toast.error('Failed to send follow-up prompt')
+                    setIsSending(false)
+                  })
+                return
+              }
+
               // Session is done — flush and finalize immediately
               setSessionRetry(null)
               setSessionErrorMessage(null)
@@ -3092,6 +3133,69 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     await setModePromise
   }, [messages, worktreeId, sessionRecord?.project_id])
 
+  const handlePlanReadySuperpowers = useCallback(async () => {
+    // 1. Extract plan content
+    const planContent =
+      pendingPlan?.planContent ??
+      [...messages]
+        .reverse()
+        .find((m) => m.role === 'assistant' && m.content.trim().length > 0)?.content
+    if (!planContent) {
+      toast.error('No plan content found to supercharge')
+      return
+    }
+
+    // 2. Look up worktree and project metadata
+    const worktreeStore = useWorktreeStore.getState()
+    let worktree: Worktree | undefined
+    for (const worktrees of worktreeStore.worktreesByProject.values()) {
+      worktree = worktrees.find((w) => w.id === worktreeId)
+      if (worktree) break
+    }
+    if (!worktree) {
+      toast.error('Could not find current worktree')
+      return
+    }
+
+    const project = useProjectStore.getState().projects.find((p) => p.id === worktree!.project_id)
+    if (!project) {
+      toast.error('Could not find project for worktree')
+      return
+    }
+
+    // 3. Duplicate worktree
+    const dupResult = await worktreeStore.duplicateWorktree(
+      project.id,
+      project.path,
+      project.name,
+      worktree.branch_name,
+      worktree.path
+    )
+    if (!dupResult.success || !dupResult.worktree) {
+      toast.error(dupResult.error ?? 'Failed to duplicate worktree')
+      return
+    }
+
+    // 4. Create session in the new worktree
+    const sessionStore = useSessionStore.getState()
+    const sessionResult = await sessionStore.createSession(dupResult.worktree.id, project.id)
+    if (!sessionResult.success || !sessionResult.session) {
+      toast.error(sessionResult.error ?? 'Failed to create supercharge session')
+      return
+    }
+
+    // 5. Configure 2-step flow
+    const newSessionId = sessionResult.session.id
+    sessionStore.setSessionMode(newSessionId, 'build')
+    sessionStore.setPendingMessage(newSessionId, '/using-superpowers')
+    sessionStore.setPendingFollowUpMessages(newSessionId, [
+      'use the subagent development skill to implement the following plan:\n' + planContent
+    ])
+
+    // 6. Navigate to the new worktree
+    worktreeStore.selectWorktree(dupResult.worktree.id)
+  }, [messages, worktreeId, pendingPlan])
+
   // Abort streaming
   const handleAbort = useCallback(async () => {
     if (!worktreePath || !opencodeSessionId) return
@@ -3669,6 +3773,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           onImplement={handlePlanReadyImplement}
           onHandoff={handlePlanReadyHandoff}
           visible={showPlanReadyImplementFab}
+          superpowersAvailable={hasSuperpowers}
+          onSuperpowers={handlePlanReadySuperpowers}
         />
         {/* Scroll-to-bottom FAB */}
         <ScrollToBottomFab

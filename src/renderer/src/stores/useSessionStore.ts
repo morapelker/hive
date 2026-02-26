@@ -44,6 +44,8 @@ interface SessionState {
   pendingMessages: Map<string, string>
   // Pending plan approvals - keyed by session ID (from ExitPlanMode blocking tool)
   pendingPlans: Map<string, PendingPlan>
+  // Pending follow-up messages - keyed by session ID, ordered queue of messages to auto-send
+  pendingFollowUpMessages: Map<string, string[]>
   isLoading: boolean
   error: string | null
 
@@ -94,6 +96,8 @@ interface SessionState {
   setOpenCodeSessionId: (sessionId: string, opencodeSessionId: string | null) => void
   setPendingMessage: (sessionId: string, message: string) => void
   consumePendingMessage: (sessionId: string) => string | null
+  setPendingFollowUpMessages: (sessionId: string, messages: string[]) => void
+  consumeFollowUpMessage: (sessionId: string) => string | null
   closeOtherSessions: (worktreeId: string, keepSessionId: string) => Promise<void>
   closeSessionsToRight: (worktreeId: string, fromSessionId: string) => Promise<void>
   // Plan approval
@@ -148,6 +152,7 @@ export const useSessionStore = create<SessionState>()(
       modeBySession: new Map(),
       pendingMessages: new Map(),
       pendingPlans: new Map(),
+      pendingFollowUpMessages: new Map(),
       isLoading: false,
       error: null,
       activeSessionId: null,
@@ -172,7 +177,11 @@ export const useSessionStore = create<SessionState>()(
 
       // Load sessions for a worktree from database (only active sessions for tabs)
       loadSessions: async (worktreeId: string, _projectId: string) => {
-        set({ isLoading: true, error: null })
+        // Only show loading indicator when no sessions are cached yet.
+        // When sessions already exist (e.g., after createSession populated them),
+        // skip the indicator to avoid unmounting active SessionViews mid-init.
+        const hasCached = get().sessionsByWorktree.has(worktreeId)
+        set({ isLoading: !hasCached, error: null })
         try {
           // Only load active sessions - completed sessions appear in history only
           const sessions = await window.db.session.getActiveByWorktree(worktreeId)
@@ -895,6 +904,32 @@ export const useSessionStore = create<SessionState>()(
           })
         }
         return message
+      },
+
+      // Set follow-up messages queue for a session (ordered, auto-sent after each idle)
+      setPendingFollowUpMessages: (sessionId: string, messages: string[]) => {
+        set((state) => {
+          const newMap = new Map(state.pendingFollowUpMessages)
+          newMap.set(sessionId, messages)
+          return { pendingFollowUpMessages: newMap }
+        })
+      },
+
+      // Consume (pop first) a follow-up message for a session
+      consumeFollowUpMessage: (sessionId: string): string | null => {
+        const messages = get().pendingFollowUpMessages.get(sessionId)
+        if (!messages || messages.length === 0) return null
+        const [first, ...rest] = messages
+        set((state) => {
+          const newMap = new Map(state.pendingFollowUpMessages)
+          if (rest.length === 0) {
+            newMap.delete(sessionId)
+          } else {
+            newMap.set(sessionId, rest)
+          }
+          return { pendingFollowUpMessages: newMap }
+        })
+        return first
       },
 
       // Close all sessions except the kept one
