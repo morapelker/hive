@@ -3219,7 +3219,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     // 5. Configure 2-step flow
     const newSessionId = sessionResult.session.id
-    sessionStore.setSessionMode(newSessionId, 'build')
+    const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
     sessionStore.setPendingMessage(newSessionId, '/using-superpowers')
     sessionStore.setPendingFollowUpMessages(newSessionId, [
       'use the subagent development skill to implement the following plan:\n' + planContent
@@ -3227,6 +3227,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     // 6. Navigate to the new worktree
     worktreeStore.selectWorktree(dupResult.worktree.id)
+    await setModePromise
   }, [messages, worktreeId, pendingPlan, connectionId])
 
   const handlePlanReadySuperpowersLocal = useCallback(async () => {
