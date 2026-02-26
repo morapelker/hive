@@ -1,44 +1,40 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import Ansi from 'ansi-to-react'
 import { Play, Square, RotateCcw, Loader2, Trash2, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { getOrCreateBuffer, TRUNCATION_MARKER } from '@/lib/output-ring-buffer'
+import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
+import { RunOutputLine } from './RunOutputLine'
+import type { SearchHighlight } from './RunOutputLine'
+import { RunOutputSearch } from './RunOutputSearch'
+import type { RunSearchMatch } from './RunOutputSearch'
 
 interface RunTabProps {
   worktreeId: string | null
 }
 
-const emptyOutput: string[] = []
-const VIRTUALIZE_THRESHOLD = 500
 const ROW_ESTIMATE_PX = 20
 
 export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
   const outputRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   // Subscribe to version counter (triggers re-render on each append)
   const runOutputVersion = useScriptStore((s) =>
     worktreeId ? (s.scriptStates[worktreeId]?.runOutputVersion ?? 0) : 0
   )
 
-  // Produce the ordered array only when version changes
-  const runOutput = useMemo(() => {
-    if (!worktreeId) return emptyOutput
-    return getOrCreateBuffer(worktreeId).toArray()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [worktreeId, runOutputVersion])
-
-  const shouldVirtualize = runOutput.length >= VIRTUALIZE_THRESHOLD
+  // Derive buffer and lineCount from renderCount (index-based access)
+  const buffer = worktreeId ? getOrCreateBuffer(worktreeId) : null
+  const lineCount = buffer ? buffer.renderCount : 0
 
   const virtualizer = useVirtualizer({
-    count: runOutput.length,
+    count: lineCount,
     getScrollElement: () => outputRef.current,
     estimateSize: () => ROW_ESTIMATE_PX,
-    overscan: 30,
-    enabled: shouldVirtualize
+    overscan: 30
   })
 
   const runRunning = useScriptStore((s) =>
@@ -49,12 +45,93 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
 
   const { clearRunOutput } = useScriptStore.getState()
 
-  // Auto-scroll to bottom on new output
+  // --- Smart auto-scroll ---
+  const isAtBottomRef = useRef(true)
+
+  // Scroll listener to track if user is near bottom
   useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight
+    const el = outputRef.current
+    if (!el) return
+    const handleScroll = (): void => {
+      isAtBottomRef.current =
+        el.scrollHeight - el.scrollTop - el.clientHeight < 50
     }
-  }, [runOutputVersion])
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  // --- Search state ---
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchMatches, setSearchMatches] = useState<RunSearchMatch[]>([])
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
+
+  // Auto-scroll on new output (only when at bottom and search not open)
+  useEffect(() => {
+    if (!isAtBottomRef.current || searchOpen) return
+    const count = worktreeId ? getOrCreateBuffer(worktreeId).renderCount : 0
+    if (count > 0) {
+      virtualizer.scrollToIndex(count - 1, { align: 'end' })
+    }
+  }, [runOutputVersion, searchOpen, worktreeId, virtualizer])
+
+  // Cmd+F handler — capture phase, scoped to container
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        if (
+          !containerRef.current?.contains(document.activeElement) &&
+          !containerRef.current?.contains(e.target as Node)
+        ) return
+        e.preventDefault()
+        e.stopPropagation()
+        setSearchOpen(true)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
+  }, [])
+
+  // Build highlight map for O(1) lookup per visible row
+  const highlightMap = useMemo(() => {
+    const map = new Map<number, SearchHighlight>()
+    if (searchMatches.length === 0) return map
+    for (let i = 0; i < searchMatches.length; i++) {
+      const match = searchMatches[i]
+      if (!map.has(match.lineIndex) || i === currentMatchIndex) {
+        map.set(match.lineIndex, {
+          matchStart: match.matchStart,
+          matchEnd: match.matchEnd,
+          isCurrent: i === currentMatchIndex
+        })
+      }
+    }
+    return map
+  }, [searchMatches, currentMatchIndex])
+
+  // Handle search matches change — scroll to current match
+  const handleSearchMatchesChange = useCallback(
+    (matches: RunSearchMatch[], index: number) => {
+      setSearchMatches(matches)
+      setCurrentMatchIndex(index)
+      if (matches.length > 0 && matches[index]) {
+        virtualizer.scrollToIndex(matches[index].lineIndex, { align: 'center' })
+      }
+    },
+    [virtualizer]
+  )
+
+  // Close search handler
+  const handleSearchClose = useCallback(() => {
+    setSearchOpen(false)
+    setSearchMatches([])
+    setCurrentMatchIndex(0)
+    // Re-enable auto-scroll: scroll to bottom
+    const count = worktreeId ? getOrCreateBuffer(worktreeId).renderCount : 0
+    if (count > 0) {
+      virtualizer.scrollToIndex(count - 1, { align: 'end' })
+    }
+    isAtBottomRef.current = true
+  }, [worktreeId, virtualizer])
 
   const getProject = useCallback(() => {
     if (!worktreeId) return null
@@ -130,14 +207,24 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
   const hasRunScript = !!project?.run_script
 
   return (
-    <div className="flex flex-col h-full" data-testid="run-tab">
+    <div ref={containerRef} className="flex flex-col h-full" data-testid="run-tab">
+      {/* Search bar */}
+      {searchOpen && buffer && (
+        <RunOutputSearch
+          buffer={buffer}
+          outputVersion={runOutputVersion}
+          onMatchesChange={handleSearchMatchesChange}
+          onClose={handleSearchClose}
+        />
+      )}
+
       {/* Output area */}
       <div
         ref={outputRef}
         className="flex-1 min-h-0 overflow-auto p-2 font-mono text-xs leading-relaxed"
         data-testid="run-tab-output"
       >
-        {runOutput.length === 0 && !runRunning && (
+        {lineCount === 0 && !runRunning && (
           <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground text-xs">
             {hasRunScript ? (
               'No run output yet. Press ⌘R or click Run to start.'
@@ -155,86 +242,37 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
             )}
           </div>
         )}
-        {shouldVirtualize ? (
-          <div
-            style={{
-              height: `${virtualizer.getTotalSize()}px`,
-              width: '100%',
-              position: 'relative'
-            }}
-          >
-            {virtualizer.getVirtualItems().map((virtualRow) => {
-              const line = runOutput[virtualRow.index]
-              if (line === undefined) return null
-
-              return (
-                <div
-                  key={virtualRow.key}
-                  data-index={virtualRow.index}
-                  ref={virtualizer.measureElement}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    transform: `translateY(${virtualRow.start}px)`
-                  }}
-                >
-                  {line === TRUNCATION_MARKER || line.startsWith('\x00TRUNC:') ? (
-                    <div className="text-muted-foreground text-center text-[10px] py-1 border-b border-border/50">
-                      {line.startsWith('\x00TRUNC:') ? line.slice(7) : '[older output truncated]'}
-                    </div>
-                  ) : line.startsWith('\x00CMD:') ? (
-                    <div className="text-muted-foreground font-semibold mt-1">
-                      $ {line.slice(5)}
-                    </div>
-                  ) : line.startsWith('\x00ERR:') ? (
-                    <div className="text-destructive">{line.slice(5)}</div>
-                  ) : (
-                    <div className="whitespace-pre-wrap break-all [&_code]:all-unset">
-                      <Ansi>{line}</Ansi>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          runOutput.map((line, i) => {
-            if (line === TRUNCATION_MARKER || line.startsWith('\x00TRUNC:')) {
-              const msg = line.startsWith('\x00TRUNC:') ? line.slice(7) : '[older output truncated]'
-              return (
-                <div
-                  key={i}
-                  className="text-muted-foreground text-center text-[10px] py-1 border-b border-border/50"
-                >
-                  {msg}
-                </div>
-              )
-            }
-            if (line.startsWith('\x00CMD:')) {
-              const cmd = line.slice(5)
-              return (
-                <div key={i} className="text-muted-foreground font-semibold mt-1">
-                  $ {cmd}
-                </div>
-              )
-            }
-            if (line.startsWith('\x00ERR:')) {
-              const msg = line.slice(5)
-              return (
-                <div key={i} className="text-destructive">
-                  {msg}
-                </div>
-              )
-            }
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative'
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const line = buffer!.get(virtualRow.index)
+            if (line === null) return null
             return (
-              <div key={i} className="whitespace-pre-wrap break-all [&_code]:all-unset">
-                <Ansi>{line}</Ansi>
+              <div
+                key={virtualRow.key}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualRow.start}px)`
+                }}
+              >
+                <RunOutputLine
+                  line={line}
+                  highlight={highlightMap.get(virtualRow.index)}
+                />
               </div>
             )
-          })
-        )}
+          })}
+        </div>
       </div>
 
       {/* Status bar */}
@@ -245,7 +283,7 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
               <span className="h-2 w-2 rounded-full bg-green-500 shrink-0" />
               <span className="text-muted-foreground">Running</span>
             </>
-          ) : runOutput.length > 0 ? (
+          ) : lineCount > 0 ? (
             <>
               <span className="h-2 w-2 rounded-full bg-muted-foreground shrink-0" />
               <span className="text-muted-foreground">Stopped</span>
@@ -257,7 +295,7 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
         </div>
 
         <div className="flex items-center gap-1">
-          {runOutput.length > 0 && (
+          {lineCount > 0 && (
             <button
               onClick={() => clearRunOutput(worktreeId!)}
               className="flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-accent transition-colors"
