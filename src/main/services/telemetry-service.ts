@@ -27,26 +27,34 @@ class TelemetryService {
   }
 
   init(): void {
-    const db = getDatabase()
+    try {
+      const db = getDatabase()
 
-    // Load or generate distinct ID
-    let distinctId = db.getSetting('telemetry_distinct_id')
-    if (!distinctId) {
-      distinctId = randomUUID()
-      db.setSetting('telemetry_distinct_id', distinctId)
-      log.info('Generated new telemetry distinct ID')
-    }
-    this.distinctId = distinctId
+      // Load or generate distinct ID
+      let distinctId = db.getSetting('telemetry_distinct_id')
+      if (!distinctId) {
+        distinctId = randomUUID()
+        db.setSetting('telemetry_distinct_id', distinctId)
+        log.info('Generated new telemetry distinct ID')
+      }
+      this.distinctId = distinctId
 
-    // Load enabled state (absent = enabled, opt-out model)
-    const enabledSetting = db.getSetting('telemetry_enabled')
-    this.enabled = enabledSetting !== 'false'
+      // Load enabled state (absent = enabled, opt-out model)
+      const enabledSetting = db.getSetting('telemetry_enabled')
+      this.enabled = enabledSetting !== 'false'
 
-    if (this.enabled) {
-      this.createClient()
-      log.info('Telemetry initialized', { enabled: this.enabled })
-    } else {
-      log.info('Telemetry is disabled')
+      if (this.enabled) {
+        this.createClient()
+        log.info('Telemetry initialized', { distinctId: this.distinctId, enabled: this.enabled })
+      } else {
+        log.info('Telemetry is disabled')
+      }
+    } catch (err) {
+      log.error(
+        'Failed to initialize telemetry',
+        err instanceof Error ? err : new Error(String(err))
+      )
+      this.enabled = false
     }
   }
 
@@ -113,6 +121,11 @@ class TelemetryService {
   }
 
   private createClient(): void {
+    if (POSTHOG_API_KEY.startsWith('<')) {
+      log.warn('PostHog API key not configured, telemetry client not created')
+      return
+    }
+    if (this.client) return
     this.client = new PostHog(POSTHOG_API_KEY, {
       host: POSTHOG_HOST,
       flushAt: 20,
