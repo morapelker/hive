@@ -54,7 +54,7 @@ export function PlanReadyImplementFab({
             'cursor-pointer',
             visible ? 'opacity-100' : 'opacity-0'
           )}
-          aria-label="Supercharge locally plan"
+          aria-label="Supercharge plan locally"
           data-testid="plan-ready-supercharge-local-fab"
         >
           Supercharge locally
