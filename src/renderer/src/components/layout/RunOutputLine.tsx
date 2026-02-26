@@ -16,6 +16,9 @@ interface RunOutputLineProps {
   highlight?: SearchHighlight
 }
 
+// When a search highlight is active, ANSI coloring is intentionally dropped
+// in favor of highlight visibility (plain text + yellow mark). This matches
+// the behavior of VS Code's terminal search.
 function renderHighlightedLine(
   line: string,
   highlight: SearchHighlight

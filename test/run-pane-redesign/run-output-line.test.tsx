@@ -197,20 +197,8 @@ describe('RunOutputLine', () => {
 
   describe('React.memo', () => {
     test('does not re-render when props are unchanged', () => {
-      const renderSpy = vi.fn()
-
-      function SpyWrapper(props: {
-        line: string
-        highlight?: SearchHighlight
-      }): React.JSX.Element {
-        renderSpy()
-        return <RunOutputLine {...props} />
-      }
-
-      // We can't spy on RunOutputLine internals directly since it's memoized,
-      // but we can verify memo works by checking the component itself.
-      // Instead, let's use a ref-based approach: render twice with same props
-      // and verify the DOM node is the same (React.memo skips re-render).
+      // Render twice with same props and verify the DOM is identical
+      // (React.memo skips re-render when shallow comparison passes)
       const { rerender } = render(<RunOutputLine line="stable" />)
       const firstHtml = document.body.innerHTML
 
