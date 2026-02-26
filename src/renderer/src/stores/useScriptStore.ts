@@ -189,7 +189,9 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
     // Cancel any pending RAF for this worktree — the buffer is now empty
     const pendingHandle = pendingVersionBumps.get(worktreeId)
     if (pendingHandle !== undefined) {
-      cancelAnimationFrame(pendingHandle)
+      if (pendingHandle !== -1) {
+        cancelAnimationFrame(pendingHandle)
+      }
       pendingVersionBumps.delete(worktreeId)
     }
 
