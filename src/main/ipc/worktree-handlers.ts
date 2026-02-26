@@ -46,7 +46,9 @@ export function registerWorktreeHandlers(): void {
     'worktree:create',
     async (_event, params: CreateWorktreeParams) => {
       const result = await createWorktreeOp(getDatabase(), params)
-      telemetryService.track('worktree_created')
+      if (result.success) {
+        telemetryService.track('worktree_created')
+      }
       return result
     }
   )

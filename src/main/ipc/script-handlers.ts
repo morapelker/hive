@@ -53,7 +53,9 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
           `script:setup:${worktreeId}`,
           portEnv
         )
-        telemetryService.track('script_run', { type: 'setup' })
+        if (result.success) {
+          telemetryService.track('script_run', { type: 'setup' })
+        }
         return result
       } catch (error) {
         log.error('IPC: script:runSetup failed', { error })
@@ -115,7 +117,9 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
       log.info('IPC: script:runArchive', { cwd, commandCount: commands.length })
       try {
         const result = await scriptRunner.runAndWait(commands, cwd, 30000)
-        telemetryService.track('script_run', { type: 'archive' })
+        if (result.success) {
+          telemetryService.track('script_run', { type: 'archive' })
+        }
         return result
       } catch (error) {
         log.error('IPC: script:runArchive failed', { error })
