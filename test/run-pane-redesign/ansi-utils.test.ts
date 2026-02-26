@@ -158,4 +158,25 @@ describe('parseAnsiSegments', () => {
       { raw: '\x1b[0m', text: '' }
     ])
   })
+
+  test('handles private-mode CSI sequences (e.g. show/hide cursor)', () => {
+    // \x1b[?25h = show cursor, \x1b[?25l = hide cursor
+    expect(stripAnsi('\x1b[?25hvisible\x1b[?25l')).toBe('visible')
+    // \x1b[?1049h = alt screen buffer
+    expect(stripAnsi('\x1b[?1049hcontent\x1b[?1049l')).toBe('content')
+  })
+
+  test('handles OSC sequences terminated by ST (ESC backslash)', () => {
+    // OSC with ST terminator: \x1b]0;title\x1b\\
+    expect(stripAnsi('\x1b]0;title\x1b\\output')).toBe('output')
+  })
+
+  test('parseAnsiSegments handles private-mode CSI', () => {
+    const input = '\x1b[?25hvisible'
+    const result = parseAnsiSegments(input)
+    expect(result).toEqual<AnsiSegment[]>([
+      { raw: '\x1b[?25h', text: '' },
+      { raw: 'visible', text: 'visible' }
+    ])
+  })
 })
