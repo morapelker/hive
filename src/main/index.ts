@@ -40,6 +40,8 @@ import { telemetryService } from './services/telemetry-service'
 
 const log = createLogger({ component: 'Main' })
 
+const appStartTime = Date.now()
+
 // Parse CLI flags
 const cliArgs = process.argv.slice(2)
 const isLogMode = cliArgs.includes('--log')
@@ -436,6 +438,9 @@ app.whenReady().then(async () => {
   log.info('Initializing database')
   getDatabase()
 
+  // Initialize telemetry (must come after DB init since it reads/writes settings)
+  telemetryService.init()
+
   // Register IPC handlers
   log.info('Registering IPC handlers')
   registerDatabaseHandlers()
@@ -543,6 +548,14 @@ app.whenReady().then(async () => {
     // Register updater IPC handlers and initialize auto-updater
     registerUpdaterHandlers()
     updaterService.init(mainWindow)
+
+    // Track app launch telemetry
+    telemetryService.track('app_launched')
+    telemetryService.identify({
+      platform: process.platform,
+      app_version: app.getVersion(),
+      electron_version: process.versions.electron
+    })
   }
 
   app.on('activate', function () {
@@ -575,6 +588,11 @@ app.on('will-quit', async () => {
   await cleanupBranchWatchers()
   // Cleanup OpenCode connections
   await cleanupOpenCode()
+  // Flush telemetry before closing database
+  telemetryService.track('app_session_ended', {
+    session_duration_ms: Date.now() - appStartTime
+  })
+  await telemetryService.shutdown()
   // Close database
   closeDatabase()
 })
