@@ -67,12 +67,23 @@ export function RunOutputSearch({
   const inputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Store callbacks in refs to avoid re-triggering the debounce effect
+  // when the parent re-renders with a new function reference.
+  const onMatchesChangeRef = useRef(onMatchesChange)
+  onMatchesChangeRef.current = onMatchesChange
+
+  // Track current index in a ref for use inside the debounce callback
+  const currentIndexRef = useRef(currentIndex)
+  currentIndexRef.current = currentIndex
+
   // Focus input on mount
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
-  // Debounced search when query or outputVersion changes
+  // Debounced search when query or outputVersion changes.
+  // `buffer` is included to handle worktree switches;
+  // `outputVersion` handles content changes within the same buffer.
   useEffect(() => {
     if (debounceRef.current !== null) {
       clearTimeout(debounceRef.current)
@@ -81,16 +92,21 @@ export function RunOutputSearch({
     if (!query) {
       setMatches([])
       setCurrentIndex(0)
-      onMatchesChange([], 0)
+      onMatchesChangeRef.current([], 0)
       return
     }
 
     debounceRef.current = setTimeout(() => {
       const found = searchBuffer(buffer, query)
       setMatches(found)
-      const newIndex = 0
+      // Preserve position when re-searching (e.g. new output arrived).
+      // Clamp to bounds, fall back to 0 if matches shrank.
+      const prevIndex = currentIndexRef.current
+      const newIndex = found.length > 0
+        ? Math.min(prevIndex, found.length - 1)
+        : 0
       setCurrentIndex(newIndex)
-      onMatchesChange(found, newIndex)
+      onMatchesChangeRef.current(found, newIndex)
     }, 150)
 
     return () => {
@@ -98,16 +114,16 @@ export function RunOutputSearch({
         clearTimeout(debounceRef.current)
       }
     }
-  }, [query, outputVersion, buffer, onMatchesChange])
+  }, [query, outputVersion, buffer])
 
   const goToMatch = useCallback(
     (index: number) => {
       if (matches.length === 0) return
       const wrapped = ((index % matches.length) + matches.length) % matches.length
       setCurrentIndex(wrapped)
-      onMatchesChange(matches, wrapped)
+      onMatchesChangeRef.current(matches, wrapped)
     },
-    [matches, onMatchesChange]
+    [matches]
   )
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
