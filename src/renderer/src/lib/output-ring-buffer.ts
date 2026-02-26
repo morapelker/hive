@@ -87,6 +87,28 @@ export class OutputRingBuffer {
     this._truncated = false
   }
 
+  /**
+   * O(1) random access for the virtualizer.
+   * If truncated, index 0 returns the truncation marker and all data
+   * indices shift by 1.  Returns null for out-of-bounds.
+   */
+  get(index: number): string | null {
+    if (index < 0 || index >= this.renderCount) return null
+    if (this._truncated) {
+      if (index === 0) return TRUNCATION_MARKER
+      const dataIndex = index - 1
+      return this.chunks[(this.tail + dataIndex) % this.capacity] ?? null
+    }
+    return this.chunks[(this.tail + index) % this.capacity] ?? null
+  }
+
+  /**
+   * Total row count for the virtualizer, including the truncation marker.
+   */
+  get renderCount(): number {
+    return this._count + (this._truncated ? 1 : 0)
+  }
+
   get totalChars(): number {
     return this._totalChars
   }

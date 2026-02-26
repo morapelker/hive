@@ -2,6 +2,15 @@ import '@testing-library/jest-dom'
 import { vi } from 'vitest'
 
 if (typeof window !== 'undefined') {
+  // Synchronous rAF mock — fires the callback immediately so that
+  // RAF-throttled store updates behave synchronously in tests.
+  let rafId = 0
+  window.requestAnimationFrame = (cb: FrameRequestCallback): number => {
+    cb(performance.now())
+    return ++rafId
+  }
+  window.cancelAnimationFrame = vi.fn()
+
   // Mock matchMedia for theme detection
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
