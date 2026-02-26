@@ -77,7 +77,7 @@ class TelemetryService {
     })
   }
 
-  setEnabled(enabled: boolean): void {
+  async setEnabled(enabled: boolean): Promise<void> {
     const db = getDatabase()
 
     if (enabled) {
@@ -90,7 +90,7 @@ class TelemetryService {
       this.track('telemetry_disabled')
       this.enabled = false
       db.setSetting('telemetry_enabled', 'false')
-      this.shutdown()
+      await this.shutdown()
       this.client = null
       log.info('Telemetry disabled')
     }
