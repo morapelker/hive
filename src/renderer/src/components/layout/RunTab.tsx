@@ -26,7 +26,8 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
     worktreeId ? (s.scriptStates[worktreeId]?.runOutputVersion ?? 0) : 0
   )
 
-  // Derive buffer and lineCount from renderCount (index-based access)
+  // Derive buffer and lineCount from renderCount (index-based access).
+  // lineCount is re-derived on each render triggered by runOutputVersion changes.
   const buffer = worktreeId ? getOrCreateBuffer(worktreeId) : null
   const lineCount = buffer ? buffer.renderCount : 0
 
@@ -65,14 +66,14 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
   const [searchMatches, setSearchMatches] = useState<RunSearchMatch[]>([])
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
 
-  // Auto-scroll on new output (only when at bottom and search not open)
+  // Auto-scroll on new output (only when at bottom and search not open).
+  // runOutputVersion in deps triggers this effect when new output arrives.
   useEffect(() => {
     if (!isAtBottomRef.current || searchOpen) return
-    const count = worktreeId ? getOrCreateBuffer(worktreeId).renderCount : 0
-    if (count > 0) {
-      virtualizer.scrollToIndex(count - 1, { align: 'end' })
+    if (lineCount > 0) {
+      virtualizer.scrollToIndex(lineCount - 1, { align: 'end' })
     }
-  }, [runOutputVersion, searchOpen, worktreeId, virtualizer])
+  }, [runOutputVersion, searchOpen, lineCount, virtualizer])
 
   // Cmd+F handler — capture phase, scoped to container
   useEffect(() => {
@@ -91,7 +92,9 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
     return () => document.removeEventListener('keydown', handleKeyDown, true)
   }, [])
 
-  // Build highlight map for O(1) lookup per visible row
+  // Build highlight map for O(1) lookup per visible row.
+  // Limitation: only one highlight per line is stored. When a line has multiple
+  // matches, the current match takes priority; otherwise the first match wins.
   const highlightMap = useMemo(() => {
     const map = new Map<number, SearchHighlight>()
     if (searchMatches.length === 0) return map
@@ -249,8 +252,8 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
             position: 'relative'
           }}
         >
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const line = buffer!.get(virtualRow.index)
+          {buffer && virtualizer.getVirtualItems().map((virtualRow) => {
+            const line = buffer.get(virtualRow.index)
             if (line === null) return null
             return (
               <div
