@@ -842,12 +842,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Update existing — preserve name if update doesn't provide one
           const existing = parts[existingIndex]
           const updatedParts = [...parts]
+          // Don't let a 'running' status overwrite 'pending' (race: content_block_stop
+          // arrives after plan.ready already set status to 'pending')
+          const preserveStatus =
+            existing.toolUse?.status === 'pending' &&
+            (update.status === 'running' || !update.status)
           updatedParts[existingIndex] = {
             ...existing,
             toolUse: {
               ...existing.toolUse!,
               ...update,
-              name: update.name || existing.toolUse!.name
+              name: update.name || existing.toolUse!.name,
+              ...(preserveStatus ? { status: 'pending' as const } : {})
             }
           }
           return updatedParts
@@ -1313,20 +1319,42 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
               // Inject plan content into the ExitPlanMode tool_use input for rendering
               if (planText && data.toolUseID) {
-                updateStreamingPartsRef((parts) =>
-                  parts.map((p) =>
-                    p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
-                      ? {
-                          ...p,
-                          toolUse: {
-                            ...p.toolUse!,
-                            input: { ...p.toolUse!.input, plan: planText },
-                            status: 'pending' as const
-                          }
-                        }
-                      : p
-                  )
+                const hasExisting = streamingPartsRef.current.some(
+                  (p) => p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
                 )
+                if (hasExisting) {
+                  // Update existing streaming part
+                  updateStreamingPartsRef((parts) =>
+                    parts.map((p) =>
+                      p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+                        ? {
+                            ...p,
+                            toolUse: {
+                              ...p.toolUse!,
+                              input: { ...p.toolUse!.input, plan: planText },
+                              status: 'pending' as const
+                            }
+                          }
+                        : p
+                    )
+                  )
+                } else {
+                  // Tool_use part not yet in streaming parts (race: content_block_start
+                  // hasn't been processed yet) — create it so the plan card renders
+                  updateStreamingPartsRef((parts) => [
+                    ...parts,
+                    {
+                      type: 'tool_use' as const,
+                      toolUse: {
+                        id: data.toolUseID,
+                        name: 'ExitPlanMode',
+                        input: { plan: planText },
+                        status: 'pending' as const,
+                        startTime: Date.now()
+                      }
+                    }
+                  ])
+                }
                 immediateFlush()
               }
 
