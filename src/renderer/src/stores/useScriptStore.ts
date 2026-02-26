@@ -5,6 +5,13 @@ import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
 // Keeps listeners alive regardless of which worktree the UI is showing.
 const runSubscriptions = new Map<string, () => void>()
 
+// RAF-throttle: tracks pending requestAnimationFrame handles per worktreeId.
+// Only one RAF is scheduled per worktreeId at a time; subsequent appends within
+// the same frame are buffer-only (no Zustand set()). Max ~60 re-renders/sec.
+const pendingVersionBumps = new Map<string, number>()
+
+const hasRAF = typeof requestAnimationFrame === 'function'
+
 interface ScriptState {
   setupOutput: string[]
   setupRunning: boolean
@@ -104,19 +111,51 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
     const buffer = getOrCreateBuffer(worktreeId)
     buffer.append(line)
 
-    // Bump version to trigger React re-render
-    set((state) => {
-      const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
-      return {
-        scriptStates: {
-          ...state.scriptStates,
-          [worktreeId]: {
-            ...existing,
-            runOutputVersion: existing.runOutputVersion + 1
-          }
+    // RAF-throttled version bump: schedule at most one set() per animation frame
+    // per worktreeId. Subsequent appends within the same frame are buffer-only.
+    if (hasRAF) {
+      if (!pendingVersionBumps.has(worktreeId)) {
+        // Use a sentinel to reserve the slot immediately. The rAF callback
+        // deletes it, preventing the post-schedule set from re-inserting
+        // a stale entry (matters when rAF fires synchronously in tests).
+        pendingVersionBumps.set(worktreeId, -1)
+        const handle = requestAnimationFrame(() => {
+          pendingVersionBumps.delete(worktreeId)
+          set((state) => {
+            const existing =
+              state.scriptStates[worktreeId] || createDefaultScriptState()
+            return {
+              scriptStates: {
+                ...state.scriptStates,
+                [worktreeId]: {
+                  ...existing,
+                  runOutputVersion: existing.runOutputVersion + 1
+                }
+              }
+            }
+          })
+        })
+        // Only store the real handle if the callback hasn't already fired.
+        // When rAF is synchronous (test mocks), the delete above already ran.
+        if (pendingVersionBumps.has(worktreeId)) {
+          pendingVersionBumps.set(worktreeId, handle)
         }
       }
-    })
+    } else {
+      // Fallback for environments without rAF (pure Node.js)
+      set((state) => {
+        const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
+        return {
+          scriptStates: {
+            ...state.scriptStates,
+            [worktreeId]: {
+              ...existing,
+              runOutputVersion: existing.runOutputVersion + 1
+            }
+          }
+        }
+      })
+    }
   },
 
   setRunRunning: (worktreeId, running) => {
@@ -147,6 +186,14 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
     const buffer = getOrCreateBuffer(worktreeId)
     buffer.clear()
 
+    // Cancel any pending RAF for this worktree — the buffer is now empty
+    const pendingHandle = pendingVersionBumps.get(worktreeId)
+    if (pendingHandle !== undefined) {
+      cancelAnimationFrame(pendingHandle)
+      pendingVersionBumps.delete(worktreeId)
+    }
+
+    // Bump version synchronously so React sees the cleared state immediately
     set((state) => {
       const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
       return {
