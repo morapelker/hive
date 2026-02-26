@@ -1559,6 +1559,15 @@ const connectionOps = {
   getPinned: () => ipcRenderer.invoke('connection:getPinned')
 }
 
+const analyticsOps = {
+  track: (event: string, properties?: Record<string, unknown>) =>
+    ipcRenderer.invoke('telemetry:track', event, properties),
+  setEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke('telemetry:setEnabled', enabled),
+  isEnabled: () =>
+    ipcRenderer.invoke('telemetry:isEnabled') as Promise<boolean>
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -1578,6 +1587,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('terminalOps', terminalOps)
     contextBridge.exposeInMainWorld('updaterOps', updaterOps)
     contextBridge.exposeInMainWorld('connectionOps', connectionOps)
+    contextBridge.exposeInMainWorld('analyticsOps', analyticsOps)
   } catch (error) {
     console.error(error)
   }
@@ -1610,4 +1620,6 @@ if (process.contextIsolated) {
   window.updaterOps = updaterOps
   // @ts-expect-error (define in dts)
   window.connectionOps = connectionOps
+  // @ts-expect-error (define in dts)
+  window.analyticsOps = analyticsOps
 }

@@ -1045,6 +1045,11 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>
       getPinned: () => Promise<ConnectionWithMembers[]>
     }
+    analyticsOps: {
+      track: (event: string, properties?: Record<string, unknown>) => Promise<void>
+      setEnabled: (enabled: boolean) => Promise<void>
+      isEnabled: () => Promise<boolean>
+    }
   }
 
   interface GitDiffStatFile {

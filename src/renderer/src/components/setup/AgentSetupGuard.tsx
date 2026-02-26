@@ -32,6 +32,10 @@ export function AgentSetupGuard(): React.JSX.Element | null {
           // Exactly one found — auto-select it
           updateSetting('defaultAgentSdk', opencode ? 'opencode' : 'claude-code')
           updateSetting('initialSetupComplete', true)
+          window.analyticsOps.track('onboarding_completed', {
+            sdk: opencode ? 'opencode' : 'claude-code',
+            auto_selected: true
+          })
           setStatus('done')
         }
       })
@@ -62,6 +66,10 @@ export function AgentSetupGuard(): React.JSX.Element | null {
         onSelect={(sdk) => {
           updateSetting('defaultAgentSdk', sdk)
           updateSetting('initialSetupComplete', true)
+          window.analyticsOps.track('onboarding_completed', {
+            sdk,
+            auto_selected: false
+          })
           setStatus('done')
         }}
       />

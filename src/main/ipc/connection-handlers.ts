@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
 import { createLogger } from '../services'
+import { telemetryService } from '../services/telemetry-service'
 import {
   createConnectionOp,
   deleteConnectionOp,
@@ -31,7 +32,11 @@ export function registerConnectionHandlers(): void {
       error?: string
     }> => {
       const db = getDatabase()
-      return createConnectionOp(db, worktreeIds)
+      const result = createConnectionOp(db, worktreeIds)
+      if (result.success) {
+        telemetryService.track('connection_created')
+      }
+      return result
     }
   )
 
