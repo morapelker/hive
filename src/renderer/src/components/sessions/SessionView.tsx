@@ -1766,12 +1766,25 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 lastSentPromptRef.current = followUp
                 const wtPath = transcriptSourceRef.current.worktreePath
                 const opcSid = transcriptSourceRef.current.opencodeSessionId
-                void window.opencodeOps.prompt(
-                  wtPath,
-                  opcSid,
-                  [{ type: 'text', text: followUp }],
-                  getModelForRequests()
-                )
+                window.opencodeOps
+                  .prompt(
+                    wtPath,
+                    opcSid,
+                    [{ type: 'text', text: followUp }],
+                    getModelForRequests()
+                  )
+                  .then((result) => {
+                    if (!result.success) {
+                      console.error('Failed to send follow-up message:', result.error)
+                      toast.error('Failed to send follow-up prompt')
+                      setIsSending(false)
+                    }
+                  })
+                  .catch((err) => {
+                    console.error('Failed to send follow-up message:', err)
+                    toast.error('Failed to send follow-up prompt')
+                    setIsSending(false)
+                  })
                 return
               }
 
