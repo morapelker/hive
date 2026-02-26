@@ -177,7 +177,11 @@ export const useSessionStore = create<SessionState>()(
 
       // Load sessions for a worktree from database (only active sessions for tabs)
       loadSessions: async (worktreeId: string, _projectId: string) => {
-        set({ isLoading: true, error: null })
+        // Only show loading indicator when no sessions are cached yet.
+        // When sessions already exist (e.g., after createSession populated them),
+        // skip the indicator to avoid unmounting active SessionViews mid-init.
+        const hasCached = get().sessionsByWorktree.has(worktreeId)
+        set({ isLoading: !hasCached, error: null })
         try {
           // Only load active sessions - completed sessions appear in history only
           const sessions = await window.db.session.getActiveByWorktree(worktreeId)
