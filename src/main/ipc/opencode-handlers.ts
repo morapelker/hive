@@ -8,6 +8,9 @@ import { ClaudeCodeImplementer } from '../services/claude-code-implementer'
 
 const log = createLogger({ component: 'OpenCodeHandlers' })
 
+// Track sessions that have already received context injection
+const injectedSessions = new Set<string>()
+
 export function registerOpenCodeHandlers(
   mainWindow: BrowserWindow,
   sdkManager?: AgentSdkManager,
@@ -130,6 +133,38 @@ export function registerOpenCodeHandlers(
           modelID: rawModel.modelID,
           variant: typeof rawModel.variant === 'string' ? rawModel.variant : undefined
         }
+      }
+    }
+
+    // Inject worktree context on first prompt of each session
+    if (!injectedSessions.has(opencodeSessionId) && dbService) {
+      injectedSessions.add(opencodeSessionId)
+      try {
+        const worktree = dbService.getWorktreeByPath(worktreePath)
+        if (worktree?.context) {
+          const contextPrefix = `[Worktree Context]\n${worktree.context}\n\n[User Message]\n`
+          if (typeof messageOrParts === 'string') {
+            messageOrParts = contextPrefix + messageOrParts
+          } else if (Array.isArray(messageOrParts)) {
+            // Find the first text part and prepend context
+            const textPartIndex = messageOrParts.findIndex((p) => p.type === 'text')
+            if (textPartIndex >= 0) {
+              const textPart = messageOrParts[textPartIndex]
+              if (textPart.type === 'text' && textPart.text) {
+                messageOrParts = [...messageOrParts]
+                messageOrParts[textPartIndex] = {
+                  ...textPart,
+                  text: contextPrefix + textPart.text
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        log.warn('Failed to inject worktree context', {
+          worktreePath,
+          error: err instanceof Error ? err.message : String(err)
+        })
       }
     }
 

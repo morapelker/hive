@@ -311,6 +311,12 @@ export async function duplicateWorktreeOp(
       path: result.path
     })
 
+    // Copy context from source worktree
+    const sourceWorktree = db.getWorktreeByPath(params.sourceWorktreePath)
+    if (sourceWorktree?.context) {
+      db.updateWorktreeContext(worktree.id, sourceWorktree.context)
+    }
+
     // Auto-assign port if project has it enabled
     const project = db.getProject(params.projectId)
     if (project && project.auto_assign_port) {
