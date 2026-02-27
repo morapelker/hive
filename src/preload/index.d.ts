@@ -375,6 +375,15 @@ declare global {
       onBranchRenamed: (
         callback: (data: { worktreeId: string; newBranch: string }) => void
       ) => () => void
+      getContext: (worktreeId: string) => Promise<{
+        success: boolean
+        context?: string | null
+        error?: string
+      }>
+      updateContext: (
+        worktreeId: string,
+        context: string | null
+      ) => Promise<{ success: boolean; error?: string }>
     }
     systemOps: {
       getLogDir: () => Promise<string>

@@ -293,4 +293,38 @@ export function registerWorktreeHandlers(): void {
       return createWorktreeFromBranchOp(getDatabase(), params)
     }
   )
+
+  // Get worktree context
+  ipcMain.handle('worktree:getContext', async (_event, worktreeId: string) => {
+    try {
+      const db = getDatabase()
+      const worktree = db.getWorktree(worktreeId)
+      if (!worktree) {
+        return { success: false, error: 'Worktree not found' }
+      }
+      return { success: true, context: worktree.context }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
+  // Update worktree context
+  ipcMain.handle(
+    'worktree:updateContext',
+    async (_event, worktreeId: string, context: string | null) => {
+      try {
+        const db = getDatabase()
+        db.updateWorktreeContext(worktreeId, context)
+        return { success: true }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
 }
