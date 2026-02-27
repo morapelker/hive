@@ -138,10 +138,14 @@ export function registerOpenCodeHandlers(
 
     // Inject worktree context on first prompt of each session
     if (!injectedSessions.has(opencodeSessionId) && dbService) {
-      injectedSessions.add(opencodeSessionId)
       try {
         const worktree = dbService.getWorktreeByPath(worktreePath)
         if (worktree?.context) {
+          log.info('Injecting worktree context into first prompt', {
+            worktreePath,
+            opencodeSessionId,
+            contextLength: worktree.context.length
+          })
           const contextPrefix = `[Worktree Context]\n${worktree.context}\n\n[User Message]\n`
           if (typeof messageOrParts === 'string') {
             messageOrParts = contextPrefix + messageOrParts
@@ -160,7 +164,10 @@ export function registerOpenCodeHandlers(
             }
           }
         }
+        // Mark as injected after successful lookup (even if no context to inject)
+        injectedSessions.add(opencodeSessionId)
       } catch (err) {
+        // Don't add to injectedSessions — allow retry on next prompt
         log.warn('Failed to inject worktree context', {
           worktreePath,
           error: err instanceof Error ? err.message : String(err)
@@ -203,6 +210,7 @@ export function registerOpenCodeHandlers(
     'opencode:disconnect',
     async (_event, worktreePath: string, opencodeSessionId: string) => {
       log.info('IPC: opencode:disconnect', { worktreePath, opencodeSessionId })
+      injectedSessions.delete(opencodeSessionId)
       try {
         // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
         if (sdkManager && dbService) {
@@ -857,5 +865,6 @@ export function registerOpenCodeHandlers(
 
 export async function cleanupOpenCode(): Promise<void> {
   log.info('Cleaning up OpenCode service')
+  injectedSessions.clear()
   await openCodeService.cleanup()
 }
