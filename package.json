@@ -37,7 +37,7 @@
     "codegen": "graphql-codegen --config src/shared/codegen.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.50",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.62",
     "@electron-toolkit/utils": "^3.0.0",
     "@monaco-editor/react": "^4.7.0",
     "@opencode-ai/sdk": "^1.1.51",
