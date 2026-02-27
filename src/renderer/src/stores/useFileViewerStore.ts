@@ -17,7 +17,13 @@ export interface DiffTab {
   isNewFile?: boolean
 }
 
-export type TabEntry = FileViewerTab | DiffTab
+export interface ContextTab {
+  type: 'context'
+  worktreeId: string
+  worktreeName: string
+}
+
+export type TabEntry = FileViewerTab | DiffTab | ContextTab
 
 export interface ActiveDiff {
   worktreePath: string
@@ -32,6 +38,10 @@ interface FileViewerState {
   openFiles: Map<string, TabEntry>
   activeFilePath: string | null
   activeDiff: ActiveDiff | null
+
+  contextEditorWorktreeId: string | null
+  openContextEditor: (worktreeId: string) => void
+  closeContextEditor: () => void
 
   openFile: (path: string, name: string, worktreeId: string) => void
   closeFile: (path: string) => void
@@ -49,6 +59,48 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
   openFiles: new Map(),
   activeFilePath: null,
   activeDiff: null,
+  contextEditorWorktreeId: null,
+
+  openContextEditor: (worktreeId: string) => {
+    set((state) => {
+      const tabKey = `context:${worktreeId}`
+      const openFiles = new Map(state.openFiles)
+      openFiles.set(tabKey, {
+        type: 'context',
+        worktreeId,
+        worktreeName: '' // Will be resolved by the tab component
+      })
+      return {
+        openFiles,
+        activeFilePath: tabKey,
+        activeDiff: null,
+        contextEditorWorktreeId: worktreeId
+      }
+    })
+  },
+
+  closeContextEditor: () => {
+    set((state) => {
+      const tabKey = state.contextEditorWorktreeId
+        ? `context:${state.contextEditorWorktreeId}`
+        : null
+      const openFiles = new Map(state.openFiles)
+      if (tabKey) openFiles.delete(tabKey)
+
+      let newActivePath = state.activeFilePath
+      if (state.activeFilePath === tabKey) {
+        const paths = Array.from(openFiles.keys())
+        newActivePath = paths.length > 0 ? paths[paths.length - 1] : null
+      }
+
+      return {
+        openFiles,
+        activeFilePath: newActivePath,
+        activeDiff: null,
+        contextEditorWorktreeId: null
+      }
+    })
+  },
 
   openFile: (path: string, name: string, worktreeId: string) => {
     set((state) => {

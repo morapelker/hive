@@ -19,7 +19,8 @@ import {
   Plus,
   Pin,
   PinOff,
-  Unlink
+  Unlink,
+  FileText
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -54,6 +55,7 @@ import { PulseAnimation } from './PulseAnimation'
 import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 import { AddAttachmentDialog } from './AddAttachmentDialog'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 
 interface Worktree {
   id: string
@@ -125,6 +127,10 @@ export function WorktreeItem({
       await pinWorktree(worktree.id)
     }
   }, [isPinned, worktree.id, pinWorktree, unpinWorktree])
+
+  const handleEditContext = useCallback(() => {
+    useFileViewerStore.getState().openContextEditor(worktree.id)
+  }, [worktree.id])
 
   const isInConnectionMode = connectionModeActive
   const isSource = connectionModeSourceId === worktree.id
@@ -582,6 +588,10 @@ export function WorktreeItem({
                 <Plus className="h-4 w-4 mr-2" />
                 Add Attachment
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleEditContext}>
+                <FileText className="h-4 w-4 mr-2" />
+                Edit Context
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleOpenInTerminal}>
                 <Terminal className="h-4 w-4 mr-2" />
@@ -686,6 +696,10 @@ export function WorktreeItem({
         <ContextMenuItem onClick={() => setAddAttachmentOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
           Add Attachment
+        </ContextMenuItem>
+        <ContextMenuItem onClick={handleEditContext}>
+          <FileText className="h-4 w-4 mr-2" />
+          Edit Context
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onClick={handleOpenInTerminal}>
