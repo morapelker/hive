@@ -72,9 +72,30 @@ export function WorktreeContextEditor({
     }
   }, [worktreeId, content])
 
+  // Save on Cmd+S / Ctrl+S
+  useEffect(() => {
+    if (!isEditing) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault()
+        if (hasUnsavedChanges && !isSaving) {
+          handleSave()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isEditing, hasUnsavedChanges, isSaving, handleSave])
+
   const handleClose = useCallback(() => {
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm('You have unsaved changes. Discard them?')
+      if (!confirmed) return
+    }
     useFileViewerStore.getState().closeContextEditor()
-  }, [])
+  }, [hasUnsavedChanges])
 
   if (isLoading) {
     return (

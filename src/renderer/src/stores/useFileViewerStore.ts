@@ -42,6 +42,7 @@ interface FileViewerState {
   contextEditorWorktreeId: string | null
   openContextEditor: (worktreeId: string) => void
   closeContextEditor: () => void
+  activateContextEditor: (worktreeId: string) => void
 
   openFile: (path: string, name: string, worktreeId: string) => void
   closeFile: (path: string) => void
@@ -99,6 +100,15 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
         activeDiff: null,
         contextEditorWorktreeId: null
       }
+    })
+  },
+
+  activateContextEditor: (worktreeId: string) => {
+    const tabKey = `context:${worktreeId}`
+    set({
+      activeFilePath: tabKey,
+      activeDiff: null,
+      contextEditorWorktreeId: worktreeId
     })
   },
 

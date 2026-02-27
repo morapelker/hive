@@ -1037,9 +1037,7 @@ export function SessionTabs(): React.JSX.Element | null {
                 key={key}
                 data-testid={`context-tab-${tab.worktreeId}`}
                 onClick={() => {
-                  setActiveFile(key)
-                  // Restore the context editor state
-                  useFileViewerStore.getState().openContextEditor(tab.worktreeId)
+                  useFileViewerStore.getState().activateContextEditor(tab.worktreeId)
                 }}
                 onMouseDown={(e) => {
                   if (e.button === 1) {
