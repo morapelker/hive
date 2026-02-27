@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileCode,
+  FileText,
   GitCompareArrows,
   Loader2,
   AlertCircle,
@@ -20,7 +21,12 @@ import {
   TerminalSquare
 } from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
-import { useFileViewerStore, type FileViewerTab, type DiffTab } from '@/stores/useFileViewerStore'
+import {
+  useFileViewerStore,
+  type FileViewerTab,
+  type DiffTab,
+  type ContextTab
+} from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -850,6 +856,11 @@ export function SessionTabs(): React.JSX.Element | null {
     (entry): entry is [string, DiffTab] => entry[1].type === 'diff'
   )
 
+  // Get context tabs from openFiles
+  const contextTabs = Array.from(openFiles.entries()).filter(
+    (entry): entry is [string, ContextTab] => entry[1].type === 'context'
+  )
+
   // Determine if a file/diff tab is the active one
   const isFileTabActive = activeFilePath !== null
 
@@ -910,6 +921,7 @@ export function SessionTabs(): React.JSX.Element | null {
         {orderedSessions.length === 0 &&
         fileTabs.length === 0 &&
         diffTabs.length === 0 &&
+        contextTabs.length === 0 &&
         !(
           !isConnectionMode &&
           connectionsForWorktree.some((c) => (sessionsByConnection.get(c.id) || []).length > 0)
@@ -1018,6 +1030,52 @@ export function SessionTabs(): React.JSX.Element | null {
                 onCloseOthers={() => closeOtherFiles(key)}
                 onCloseToRight={() => closeFilesToRight(key)}
               />
+            ))}
+            {/* Context editor tabs */}
+            {contextTabs.map(([key, tab]) => (
+              <div
+                key={key}
+                data-testid={`context-tab-${tab.worktreeId}`}
+                onClick={() => {
+                  setActiveFile(key)
+                  // Restore the context editor state
+                  useFileViewerStore.getState().openContextEditor(tab.worktreeId)
+                }}
+                onMouseDown={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault()
+                    useFileViewerStore.getState().closeContextEditor()
+                  }
+                }}
+                className={cn(
+                  'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
+                  'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
+                  isFileTabActive && activeFilePath === key
+                    ? 'bg-background text-foreground'
+                    : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+                )}
+                title="Worktree Context"
+              >
+                <FileText className="h-3.5 w-3.5 flex-shrink-0 text-emerald-400" />
+                <span className="truncate flex-1">Context</span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    useFileViewerStore.getState().closeContextEditor()
+                  }}
+                  className={cn(
+                    'p-0.5 rounded hover:bg-accent transition-opacity',
+                    isFileTabActive && activeFilePath === key
+                      ? 'opacity-100'
+                      : 'opacity-0 group-hover:opacity-100'
+                  )}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+                {isFileTabActive && activeFilePath === key && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                )}
+              </div>
             ))}
           </>
         )}
