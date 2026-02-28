@@ -54,6 +54,7 @@ export interface Worktree {
   last_model_variant: string | null
   attachments: string // JSON array of Attachment objects
   pinned: number // 0 = not pinned, 1 = pinned
+  context: string | null
   created_at: string
   last_accessed_at: string
 }

@@ -17,7 +17,12 @@ export interface DiffTab {
   isNewFile?: boolean
 }
 
-export type TabEntry = FileViewerTab | DiffTab
+export interface ContextTab {
+  type: 'context'
+  worktreeId: string
+}
+
+export type TabEntry = FileViewerTab | DiffTab | ContextTab
 
 export interface ActiveDiff {
   worktreePath: string
@@ -32,6 +37,11 @@ interface FileViewerState {
   openFiles: Map<string, TabEntry>
   activeFilePath: string | null
   activeDiff: ActiveDiff | null
+
+  contextEditorWorktreeId: string | null
+  openContextEditor: (worktreeId: string) => void
+  closeContextEditor: () => void
+  activateContextEditor: (worktreeId: string) => void
 
   openFile: (path: string, name: string, worktreeId: string) => void
   closeFile: (path: string) => void
@@ -49,6 +59,56 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
   openFiles: new Map(),
   activeFilePath: null,
   activeDiff: null,
+  contextEditorWorktreeId: null,
+
+  openContextEditor: (worktreeId: string) => {
+    set((state) => {
+      const tabKey = `context:${worktreeId}`
+      const openFiles = new Map(state.openFiles)
+      openFiles.set(tabKey, {
+        type: 'context',
+        worktreeId
+      })
+      return {
+        openFiles,
+        activeFilePath: tabKey,
+        activeDiff: null,
+        contextEditorWorktreeId: worktreeId
+      }
+    })
+  },
+
+  closeContextEditor: () => {
+    set((state) => {
+      const tabKey = state.contextEditorWorktreeId
+        ? `context:${state.contextEditorWorktreeId}`
+        : null
+      const openFiles = new Map(state.openFiles)
+      if (tabKey) openFiles.delete(tabKey)
+
+      let newActivePath = state.activeFilePath
+      if (state.activeFilePath === tabKey) {
+        const paths = Array.from(openFiles.keys())
+        newActivePath = paths.length > 0 ? paths[paths.length - 1] : null
+      }
+
+      return {
+        openFiles,
+        activeFilePath: newActivePath,
+        activeDiff: null,
+        contextEditorWorktreeId: null
+      }
+    })
+  },
+
+  activateContextEditor: (worktreeId: string) => {
+    const tabKey = `context:${worktreeId}`
+    set({
+      activeFilePath: tabKey,
+      activeDiff: null,
+      contextEditorWorktreeId: worktreeId
+    })
+  },
 
   openFile: (path: string, name: string, worktreeId: string) => {
     set((state) => {
@@ -79,7 +139,7 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
   },
 
   closeAllFiles: () => {
-    set({ openFiles: new Map(), activeFilePath: null, activeDiff: null })
+    set({ openFiles: new Map(), activeFilePath: null, activeDiff: null, contextEditorWorktreeId: null })
   },
 
   setActiveDiff: (diff: ActiveDiff | null) => {
@@ -143,10 +203,16 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
       const newMap = new Map<string, TabEntry>()
       const kept = state.openFiles.get(keepKey)
       if (kept) newMap.set(keepKey, kept)
+      // Clear contextEditorWorktreeId if the context tab was closed
+      const contextTabKey = state.contextEditorWorktreeId
+        ? `context:${state.contextEditorWorktreeId}`
+        : null
+      const contextStillOpen = contextTabKey ? newMap.has(contextTabKey) : false
       return {
         openFiles: newMap,
         activeFilePath: kept ? keepKey : null,
-        activeDiff: kept?.type === 'diff' ? state.activeDiff : null
+        activeDiff: kept?.type === 'diff' ? state.activeDiff : null,
+        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null
       }
     })
   },
@@ -163,9 +229,15 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
       }
       // If active file was to the right and got closed, activate the fromKey
       const activeStillOpen = newMap.has(state.activeFilePath || '')
+      // Clear contextEditorWorktreeId if the context tab was closed
+      const contextTabKey = state.contextEditorWorktreeId
+        ? `context:${state.contextEditorWorktreeId}`
+        : null
+      const contextStillOpen = contextTabKey ? newMap.has(contextTabKey) : false
       return {
         openFiles: newMap,
-        activeFilePath: activeStillOpen ? state.activeFilePath : fromKey
+        activeFilePath: activeStillOpen ? state.activeFilePath : fromKey,
+        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null
       }
     })
   }
