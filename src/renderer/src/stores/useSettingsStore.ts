@@ -118,7 +118,7 @@ const DEFAULT_SETTINGS: AppSettings = {
       'write: **/credentials*'
     ],
     defaultBehavior: 'ask',
-    enabled: true
+    enabled: false
   },
   telemetryEnabled: true
 }
