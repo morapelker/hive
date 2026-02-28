@@ -1,9 +1,9 @@
-import { Copy, Check, FolderOpen, GitBranch, Terminal } from 'lucide-react'
+import { Copy, Check, FolderOpen, GitBranch, Terminal, Code } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
-import { useSettingsStore, type TerminalOption } from '@/stores/useSettingsStore'
+import { useSettingsStore, type EditorOption, type TerminalOption } from '@/stores/useSettingsStore'
 
 function CursorIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -44,6 +44,15 @@ function WarpIcon({ className }: { className?: string }): React.JSX.Element {
   )
 }
 
+const EDITOR_LABELS: Record<EditorOption, string> = {
+  vscode: 'VS Code',
+  cursor: 'Cursor',
+  sublime: 'Sublime',
+  webstorm: 'WebStorm',
+  zed: 'Zed',
+  custom: 'Editor'
+}
+
 const TERMINAL_LABELS: Record<TerminalOption, string> = {
   terminal: 'Terminal',
   iterm: 'iTerm',
@@ -77,6 +86,7 @@ export function QuickActions(): React.JSX.Element | null {
   const selectedConnection = useConnectionStore((s) =>
     s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
   )
+  const defaultEditor = useSettingsStore((s) => s.defaultEditor)
   const defaultTerminal = useSettingsStore((s) => s.defaultTerminal)
   const customTerminalCommand = useSettingsStore((s) => s.customTerminalCommand)
   const [copied, setCopied] = useState(false)
@@ -103,13 +113,29 @@ export function QuickActions(): React.JSX.Element | null {
       : null
   const disabled = !activePath
 
+  const editorLabel = EDITOR_LABELS[defaultEditor]
   const terminalLabel = TERMINAL_LABELS[defaultTerminal]
+
+  const handleOpenInEditor = useCallback(async () => {
+    if (!activePath) return
+    try {
+      if (isConnectionMode) {
+        await window.connectionOps.openInEditor(activePath)
+      } else {
+        await window.worktreeOps.openInEditor(activePath)
+      }
+    } catch (error) {
+      console.error('Open in editor failed:', error)
+    }
+  }, [activePath, isConnectionMode])
 
   const handleAction = useCallback(
     async (actionId: string) => {
       if (!activePath) return
       try {
-        if (actionId === 'copy-path') {
+        if (actionId === 'editor') {
+          await handleOpenInEditor()
+        } else if (actionId === 'copy-path') {
           await window.projectOps.copyToClipboard(activePath)
           setCopied(true)
           setTimeout(() => setCopied(false), 1500)
@@ -133,7 +159,7 @@ export function QuickActions(): React.JSX.Element | null {
         console.error('Quick action failed:', error)
       }
     },
-    [activePath, branchName, defaultTerminal, customTerminalCommand]
+    [activePath, branchName, defaultTerminal, customTerminalCommand, handleOpenInEditor]
   )
 
   return (
@@ -143,12 +169,16 @@ export function QuickActions(): React.JSX.Element | null {
         size="sm"
         className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
         disabled={disabled}
-        onClick={() => handleAction('cursor')}
-        title="Open in Cursor"
-        data-testid="quick-action-cursor"
+        onClick={() => handleAction('editor')}
+        title={`Open in ${editorLabel}`}
+        data-testid="quick-action-editor"
       >
-        <CursorIcon className="h-3.5 w-3.5" />
-        <span>Cursor</span>
+        {defaultEditor === 'cursor' ? (
+          <CursorIcon className="h-3.5 w-3.5" />
+        ) : (
+          <Code className="h-3.5 w-3.5" />
+        )}
+        <span>{editorLabel}</span>
       </Button>
       <Button
         variant="ghost"

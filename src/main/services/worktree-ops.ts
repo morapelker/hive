@@ -5,6 +5,7 @@ import { scriptRunner } from './script-runner'
 import { assignPort, releasePort } from './port-registry'
 import { createLogger } from './logger'
 import type { DatabaseService } from '../db/database'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 
 const log = createLogger({ component: 'WorktreeOps' })
 
@@ -77,7 +78,7 @@ export interface SimpleResult {
 
 export function getBreedType(db: DatabaseService): BreedType {
   try {
-    const settingsJson = db.getSetting('app_settings')
+    const settingsJson = db.getSetting(APP_SETTINGS_DB_KEY)
     if (settingsJson) {
       const settings = JSON.parse(settingsJson)
       if (settings.breedType === 'cats') {

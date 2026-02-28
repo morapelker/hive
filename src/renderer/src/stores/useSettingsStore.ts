@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 
 // ==========================================
 // Types
@@ -123,8 +124,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   telemetryEnabled: true
 }
 
-const SETTINGS_DB_KEY = 'app_settings'
-
 interface SettingsState extends AppSettings {
   isOpen: boolean
   activeSection: string
@@ -150,7 +149,7 @@ interface SettingsState extends AppSettings {
 async function saveToDatabase(settings: AppSettings): Promise<void> {
   try {
     if (typeof window !== 'undefined' && window.db?.setting) {
-      await window.db.setting.set(SETTINGS_DB_KEY, JSON.stringify(settings))
+      await window.db.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
     }
   } catch (error) {
     console.error('Failed to save settings to database:', error)
@@ -160,7 +159,7 @@ async function saveToDatabase(settings: AppSettings): Promise<void> {
 async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
   try {
     if (typeof window !== 'undefined' && window.db?.setting) {
-      const value = await window.db.setting.get(SETTINGS_DB_KEY)
+      const value = await window.db.setting.get(APP_SETTINGS_DB_KEY)
       if (value) {
         return { ...DEFAULT_SETTINGS, ...JSON.parse(value) }
       }

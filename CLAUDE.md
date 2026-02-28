@@ -39,21 +39,22 @@ All renderer↔main communication goes through the preload layer via typed IPC. 
 - `@/` → `src/renderer/src/` (renderer code)
 - `@main/` → `src/main/` (main process code)
 - `@preload/` → `src/preload/` (preload scripts)
+- `@shared/` → `src/shared/` (shared types across all processes)
 
 ### Main Process (`src/main/`)
 
-- **`db/`** — SQLite via better-sqlite3. Schema in `schema.ts` with versioned migrations (CURRENT_SCHEMA_VERSION = 4). Database at `~/.hive/hive.db`. WAL mode, foreign keys enabled.
-- **`ipc/`** — 13 IPC handler modules registered in `index.ts`. Pattern: `ipcMain.handle(channel, handler)` returning Promise results.
+- **`db/`** — SQLite via better-sqlite3. Schema in `schema.ts` with versioned migrations (CURRENT_SCHEMA_VERSION = 7). Database at `~/.hive/hive.db`. WAL mode, foreign keys enabled.
+- **`ipc/`** — IPC handler modules registered in `index.ts`. Pattern: `ipcMain.handle(channel, handler)` returning Promise results.
 - **`services/`** — Core services: `git-service.ts` (simple-git wrapper), `opencode-service.ts` (OpenCode SDK lifecycle), `script-runner.ts` (setup/run/archive script execution), `logger.ts` (Winston-style, logs to ~/Library/Logs/hive/).
 
 ### Preload (`src/preload/`)
 
-- **`index.ts`** — Exposes typed APIs to renderer window: `window.db`, `window.projectOps`, `window.worktreeOps`, `window.opencodeOps`, `window.gitOps`, `window.fileTreeOps`, `window.settingsOps`, `window.fileOps`, `window.scriptOps`, `window.systemOps`, `window.loggingOps`.
-- **`index.d.ts`** — Global type declarations for all window APIs and database entities (Project, Worktree, Session, SessionMessage, Setting). This is the single source of truth for shared types between processes.
+- **`index.ts`** — Exposes typed APIs to renderer window: `window.db`, `window.projectOps`, `window.worktreeOps`, `window.opencodeOps`, `window.gitOps`, `window.fileTreeOps`, `window.settingsOps`, `window.fileOps`, `window.scriptOps`, `window.systemOps`, `window.loggingOps`, `window.analyticsOps`, `window.connectionOps`.
+- **`index.d.ts`** — Global type declarations for all window APIs. Shared types (Project, Worktree, Session, etc.) live in `src/shared/types/`.
 
 ### Renderer (`src/renderer/src/`)
 
-- **`stores/`** — Zustand stores (18 files). Each domain has its own store (useProjectStore, useWorktreeStore, useSessionStore, useLayoutStore, useThemeStore, useFileTreeStore, useGitStore, useScriptStore, etc.). All exported from `stores/index.ts`.
+- **`stores/`** — Zustand stores (~25 files). Each domain has its own store (useProjectStore, useWorktreeStore, useSessionStore, useLayoutStore, useThemeStore, useFileTreeStore, useGitStore, useScriptStore, useConnectionStore, useSpaceStore, usePinnedStore, etc.). All exported from `stores/index.ts`.
 - **`hooks/`** — Custom hooks: `useKeyboardShortcuts` (global), `useKeyboardShortcut` (individual), `useCommands` (command palette), `useOpenCodeGlobalListener` (background session events). All exported from `hooks/index.ts`.
 - **`components/`** — React components organized by domain: `ui/` (shadcn/ui primitives), `layout/` (AppLayout, Header, sidebars, MainPane), `projects/`, `worktrees/`, `sessions/`, `settings/`, `command-palette/`, `file-tree/`, `file-viewer/`, `git/`, `diff/`, `error/`.
 - **`lib/`** — Utilities: `utils.ts` (cn() helper), `themes.ts` (CSS variable-based theming).
@@ -65,6 +66,10 @@ All renderer↔main communication goes through the preload layer via typed IPC. 
 3. Preload forwards via `ipcRenderer.invoke(channel, args)`
 4. Main process handler in `src/main/ipc/` processes and returns
 5. Store updates with result, component re-renders
+
+### Shared Types (`src/shared/`)
+
+- **`types/`** — Shared type definitions used across main, preload, and renderer (project, worktree, session, connection, space, git, terminal, etc.). This is the source of truth for cross-process types.
 
 ### Adding a New IPC Channel
 
@@ -94,7 +99,7 @@ Schema migrations live in `src/main/db/schema.ts` in the `MIGRATIONS` array. Bum
 
 ## Testing
 
-- **Vitest** with two workspaces: `renderer` (jsdom) and `main` (node, only `test/session-3/`)
+- **Vitest** with two workspaces defined in `vitest.workspace.ts`: `renderer` (jsdom) and `main` (node environment for `test/session-3/`, `test/phase-9/`, `test/server/`, `test/lsp/`)
 - Test setup in `test/setup.ts` mocks `window.matchMedia`, `window.gitOps`, `window.fileTreeOps`
 - Tests organized by phase/session directories under `test/`
 - Window API mocks: define on `window` with `Object.defineProperty` in setup or individual test files

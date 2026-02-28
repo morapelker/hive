@@ -17,6 +17,7 @@ import {
   type CommandFilterSettings
 } from './command-filter-service'
 import { createLspMcpServerConfig, LspService } from './lsp'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -2059,7 +2060,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }
 
     try {
-      const settingsJson = this.dbService.getSetting('app_settings')
+      const settingsJson = this.dbService.getSetting(APP_SETTINGS_DB_KEY)
       if (!settingsJson) {
         log.warn('getCommandFilterSettings: no app_settings found in DB, using defaults')
         return {
@@ -2111,7 +2112,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }
 
     try {
-      const settingsJson = this.dbService.getSetting('app_settings') || '{}'
+      const settingsJson = this.dbService.getSetting(APP_SETTINGS_DB_KEY) || '{}'
       const settings = JSON.parse(settingsJson)
 
       if (!settings.commandFilter) {
@@ -2127,7 +2128,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
       if (!list.includes(pattern)) {
         list.push(pattern)
-        this.dbService.setSetting('app_settings', JSON.stringify(settings))
+        this.dbService.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
 
         log.info('updateCommandFilter: added pattern', { pattern, action })
 

@@ -1,7 +1,8 @@
-import { ipcMain, shell } from 'electron'
+import { ipcMain } from 'electron'
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
+import { openPathWithPreferredEditor } from './settings-handlers'
 import { createGitService, createLogger } from '../services'
 import { telemetryService } from '../services/telemetry-service'
 import {
@@ -157,7 +158,7 @@ export function registerWorktreeHandlers(): void {
     }
   )
 
-  // Open worktree in default editor (VS Code)
+  // Open worktree in user's preferred editor (from Settings)
   ipcMain.handle(
     'worktree:openInEditor',
     async (
@@ -166,53 +167,7 @@ export function registerWorktreeHandlers(): void {
     ): Promise<{
       success: boolean
       error?: string
-    }> => {
-      try {
-        if (!existsSync(worktreePath)) {
-          return {
-            success: false,
-            error: 'Worktree directory does not exist'
-          }
-        }
-
-        const currentPlatform = platform()
-
-        // Try VS Code first
-        const vsCodeCommands =
-          currentPlatform === 'darwin'
-            ? [
-                '/usr/local/bin/code',
-                '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'
-              ]
-            : currentPlatform === 'win32'
-              ? ['code.cmd', 'code']
-              : ['code']
-
-        let launched = false
-        for (const codeCmd of vsCodeCommands) {
-          try {
-            spawn(codeCmd, [worktreePath], { detached: true, stdio: 'ignore' })
-            launched = true
-            break
-          } catch {
-            // Try next command
-          }
-        }
-
-        if (!launched) {
-          // Fallback: open in default file manager
-          await shell.openPath(worktreePath)
-        }
-
-        return { success: true }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        return {
-          success: false,
-          error: message
-        }
-      }
-    }
+    }> => openPathWithPreferredEditor(worktreePath)
   )
 
   // Get git branches for a project

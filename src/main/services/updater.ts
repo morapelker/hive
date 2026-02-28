@@ -2,13 +2,14 @@ import { app, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { createLogger } from './logger'
 import { getDatabase } from '../db'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 
 const log = createLogger({ component: 'AutoUpdater' })
 
 function getUpdateChannel(): 'stable' | 'canary' {
   try {
     const db = getDatabase()
-    const raw = db.getSetting('app_settings')
+    const raw = db.getSetting(APP_SETTINGS_DB_KEY)
     if (raw) {
       const settings = JSON.parse(raw)
       return settings.updateChannel === 'canary' ? 'canary' : 'stable'
