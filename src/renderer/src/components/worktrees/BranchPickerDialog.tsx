@@ -30,7 +30,7 @@ interface BranchPickerDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectPath: string
-  onSelect: (branchName: string) => void
+  onSelect: (branchName: string, prNumber?: number) => void
 }
 
 export function BranchPickerDialog({
@@ -131,7 +131,7 @@ export function BranchPickerDialog({
   }
 
   const handlePRSelect = (pr: PullRequestInfo): void => {
-    onSelect(pr.headRefName)
+    onSelect(pr.headRefName, pr.number)
   }
 
   return (

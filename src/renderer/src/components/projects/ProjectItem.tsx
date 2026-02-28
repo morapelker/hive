@@ -213,13 +213,14 @@ export function ProjectItem({
   )
 
   const handleBranchSelect = useCallback(
-    async (branchName: string): Promise<void> => {
+    async (branchName: string, prNumber?: number): Promise<void> => {
       setBranchPickerOpen(false)
       const result = await window.worktreeOps.createFromBranch(
         project.id,
         project.path,
         project.name,
-        branchName
+        branchName,
+        prNumber
       )
       if (result.success && result.worktree) {
         useWorktreeStore.getState().loadWorktrees(project.id)
