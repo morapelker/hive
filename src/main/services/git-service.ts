@@ -1153,17 +1153,24 @@ export class GitService {
     prNumber?: number
   ): Promise<CreateWorktreeResult> {
     try {
-      // Check if branch is already checked out
-      const worktreeList = await this.git.raw(['worktree', 'list', '--porcelain'])
-      const blocks = worktreeList.split('\n\n').filter(Boolean)
+      // Check if branch is already checked out (skip for PR checkouts —
+      // a fork's head ref may collide with a local branch name)
+      if (prNumber == null) {
+        const worktreeList = await this.git.raw(['worktree', 'list', '--porcelain'])
+        const blocks = worktreeList.split('\n\n').filter(Boolean)
 
-      for (const block of blocks) {
-        const lines = block.split('\n')
-        const branch = lines.find((l) => l.startsWith('branch '))?.replace('branch refs/heads/', '')
-        const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
-        if (branch === branchName && wtPath) {
-          // Already checked out — duplicate it
-          return this.duplicateWorktree(branchName, wtPath, projectName)
+        for (const block of blocks) {
+          const lines = block.split('\n')
+          const branch = lines
+            .find((l) => l.startsWith('branch '))
+            ?.replace('branch refs/heads/', '')
+          const wtPath = lines
+            .find((l) => l.startsWith('worktree '))
+            ?.replace('worktree ', '')
+          if (branch === branchName && wtPath) {
+            // Already checked out — duplicate it
+            return this.duplicateWorktree(branchName, wtPath, projectName)
+          }
         }
       }
 
@@ -1194,7 +1201,7 @@ export class GitService {
       log.error(
         'Failed to create worktree from branch',
         error instanceof Error ? error : new Error(message),
-        { projectName, branchName, repoPath: this.repoPath }
+        { projectName, branchName, prNumber, repoPath: this.repoPath }
       )
       return { success: false, error: message }
     }
