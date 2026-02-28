@@ -8,8 +8,12 @@ import { ClaudeCodeImplementer } from '../services/claude-code-implementer'
 
 const log = createLogger({ component: 'OpenCodeHandlers' })
 
-// Track sessions that have already received context injection
-const injectedSessions = new Set<string>()
+// Track worktree paths that have already received context injection for their
+// current session. We key by worktreePath (not opencodeSessionId) because
+// Claude Code sessions start with a `pending::` ID that materializes to a real
+// SDK ID after the first prompt — using the session ID would cause re-injection
+// when the ID changes.
+const injectedWorktrees = new Set<string>()
 
 export function registerOpenCodeHandlers(
   mainWindow: BrowserWindow,
@@ -24,6 +28,8 @@ export function registerOpenCodeHandlers(
     'opencode:connect',
     async (_event, worktreePath: string, hiveSessionId: string) => {
       log.info('IPC: opencode:connect', { worktreePath, hiveSessionId })
+      // New session on this worktree — allow context injection for the first prompt
+      injectedWorktrees.delete(worktreePath)
       try {
         // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
         if (sdkManager && dbService) {
@@ -136,8 +142,11 @@ export function registerOpenCodeHandlers(
       }
     }
 
-    // Inject worktree context on first prompt of each session
-    if (!injectedSessions.has(opencodeSessionId) && dbService) {
+    // Inject worktree context on first prompt of each session.
+    // We track by worktreePath (not opencodeSessionId) because Claude Code
+    // sessions start with a pending:: ID that materializes to a real ID after
+    // the first prompt — tracking by session ID would miss the transition.
+    if (!injectedWorktrees.has(worktreePath) && dbService) {
       try {
         const worktree = dbService.getWorktreeByPath(worktreePath)
         if (worktree?.context) {
@@ -165,9 +174,9 @@ export function registerOpenCodeHandlers(
           }
         }
         // Mark as injected after successful lookup (even if no context to inject)
-        injectedSessions.add(opencodeSessionId)
+        injectedWorktrees.add(worktreePath)
       } catch (err) {
-        // Don't add to injectedSessions — allow retry on next prompt
+        // Don't add to injectedWorktrees — allow retry on next prompt
         log.warn('Failed to inject worktree context', {
           worktreePath,
           error: err instanceof Error ? err.message : String(err)
@@ -210,7 +219,7 @@ export function registerOpenCodeHandlers(
     'opencode:disconnect',
     async (_event, worktreePath: string, opencodeSessionId: string) => {
       log.info('IPC: opencode:disconnect', { worktreePath, opencodeSessionId })
-      injectedSessions.delete(opencodeSessionId)
+      injectedWorktrees.delete(worktreePath)
       try {
         // SDK-aware dispatch: route Claude sessions to ClaudeCodeImplementer
         if (sdkManager && dbService) {
@@ -865,6 +874,6 @@ export function registerOpenCodeHandlers(
 
 export async function cleanupOpenCode(): Promise<void> {
   log.info('Cleaning up OpenCode service')
-  injectedSessions.clear()
+  injectedWorktrees.clear()
   await openCodeService.cleanup()
 }

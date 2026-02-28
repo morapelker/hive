@@ -20,7 +20,6 @@ export interface DiffTab {
 export interface ContextTab {
   type: 'context'
   worktreeId: string
-  worktreeName: string
 }
 
 export type TabEntry = FileViewerTab | DiffTab | ContextTab
@@ -68,8 +67,7 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
       const openFiles = new Map(state.openFiles)
       openFiles.set(tabKey, {
         type: 'context',
-        worktreeId,
-        worktreeName: '' // Will be resolved by the tab component
+        worktreeId
       })
       return {
         openFiles,
@@ -141,7 +139,7 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
   },
 
   closeAllFiles: () => {
-    set({ openFiles: new Map(), activeFilePath: null, activeDiff: null })
+    set({ openFiles: new Map(), activeFilePath: null, activeDiff: null, contextEditorWorktreeId: null })
   },
 
   setActiveDiff: (diff: ActiveDiff | null) => {
@@ -205,10 +203,16 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
       const newMap = new Map<string, TabEntry>()
       const kept = state.openFiles.get(keepKey)
       if (kept) newMap.set(keepKey, kept)
+      // Clear contextEditorWorktreeId if the context tab was closed
+      const contextTabKey = state.contextEditorWorktreeId
+        ? `context:${state.contextEditorWorktreeId}`
+        : null
+      const contextStillOpen = contextTabKey ? newMap.has(contextTabKey) : false
       return {
         openFiles: newMap,
         activeFilePath: kept ? keepKey : null,
-        activeDiff: kept?.type === 'diff' ? state.activeDiff : null
+        activeDiff: kept?.type === 'diff' ? state.activeDiff : null,
+        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null
       }
     })
   },
@@ -225,9 +229,15 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
       }
       // If active file was to the right and got closed, activate the fromKey
       const activeStillOpen = newMap.has(state.activeFilePath || '')
+      // Clear contextEditorWorktreeId if the context tab was closed
+      const contextTabKey = state.contextEditorWorktreeId
+        ? `context:${state.contextEditorWorktreeId}`
+        : null
+      const contextStillOpen = contextTabKey ? newMap.has(contextTabKey) : false
       return {
         openFiles: newMap,
-        activeFilePath: activeStillOpen ? state.activeFilePath : fromKey
+        activeFilePath: activeStillOpen ? state.activeFilePath : fromKey,
+        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null
       }
     })
   }
