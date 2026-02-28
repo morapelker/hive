@@ -49,6 +49,7 @@ export interface CreateFromBranchParams {
   projectPath: string
   projectName: string
   branchName: string
+  prNumber?: number
 }
 
 // ── Result types ────────────────────────────────────────────────
@@ -398,7 +399,8 @@ export async function createWorktreeFromBranchOp(
     const result = await gitService.createWorktreeFromBranch(
       params.projectName,
       params.branchName,
-      breedType
+      breedType,
+      params.prNumber
     )
     if (!result.success || !result.path) {
       return { success: false, error: result.error || 'Failed to create worktree from branch' }

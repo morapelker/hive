@@ -1149,7 +1149,8 @@ export class GitService {
   async createWorktreeFromBranch(
     projectName: string,
     branchName: string,
-    breedType: BreedType = 'dogs'
+    breedType: BreedType = 'dogs',
+    prNumber?: number
   ): Promise<CreateWorktreeResult> {
     try {
       // Check if branch is already checked out
@@ -1178,8 +1179,14 @@ export class GitService {
       const projectWorktreesDir = this.ensureWorktreesDir(projectName)
       const worktreePath = join(projectWorktreesDir, breedName)
 
-      // Create a new breed-named branch derived from the selected branch
-      await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, branchName])
+      if (prNumber != null) {
+        // Fetch the PR ref directly — works for both fork and same-repo PRs
+        await this.git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
+        await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, 'FETCH_HEAD'])
+      } else {
+        // Create a new breed-named branch derived from the selected branch
+        await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, branchName])
+      }
 
       return { success: true, path: worktreePath, branchName: breedName, name: breedName }
     } catch (error) {
