@@ -106,8 +106,6 @@ export function registerSettingsHandlers(): void {
         if ('error' in resolved) {
           return { success: false, error: resolved.error }
         }
-        // spawn(resolved.command, [worktreePath], { detached: true, stdio: 'ignore' })
-        //   command = editor.command
 
         spawn(resolved.command, [worktreePath], { detached: true, stdio: 'ignore' })
         telemetryService.track('worktree_opened_in_editor')
