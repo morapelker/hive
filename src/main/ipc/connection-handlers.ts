@@ -1,7 +1,8 @@
-import { ipcMain, shell } from 'electron'
+import { ipcMain } from 'electron'
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { platform } from 'os'
+import { openPathWithPreferredEditor } from './settings-handlers'
 import { createLogger } from '../services'
 import { telemetryService } from '../services/telemetry-service'
 import {
@@ -192,51 +193,13 @@ export function registerConnectionHandlers(): void {
     }
   )
 
-  // Open connection directory in editor (VS Code)
+  // Open connection directory in user's preferred editor (from Settings)
   ipcMain.handle(
     'connection:openInEditor',
     async (
       _event,
       { connectionPath }: { connectionPath: string }
-    ): Promise<{ success: boolean; error?: string }> => {
-      try {
-        if (!existsSync(connectionPath)) {
-          return { success: false, error: 'Connection directory does not exist' }
-        }
-
-        const currentPlatform = platform()
-
-        const vsCodeCommands =
-          currentPlatform === 'darwin'
-            ? [
-                '/usr/local/bin/code',
-                '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'
-              ]
-            : currentPlatform === 'win32'
-              ? ['code.cmd', 'code']
-              : ['code']
-
-        let launched = false
-        for (const codeCmd of vsCodeCommands) {
-          try {
-            spawn(codeCmd, [connectionPath], { detached: true, stdio: 'ignore' })
-            launched = true
-            break
-          } catch {
-            // Try next command
-          }
-        }
-
-        if (!launched) {
-          await shell.openPath(connectionPath)
-        }
-
-        return { success: true }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return { success: false, error: message }
-      }
-    }
+    ): Promise<{ success: boolean; error?: string }> => openPathWithPreferredEditor(connectionPath)
   )
 
   // Pin / unpin a connection

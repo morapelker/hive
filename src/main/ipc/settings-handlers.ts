@@ -6,8 +6,59 @@ import { createLogger } from '../services'
 import { telemetryService } from '../services/telemetry-service'
 import { getDatabase } from '../db'
 import { detectEditors, detectTerminals, type DetectedApp } from '../services/settings-detection'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 
 const log = createLogger({ component: 'SettingsHandlers' })
+
+function resolveEditorCommand(
+  editorId: string,
+  customCommand?: string
+): { command: string } | { error: string } {
+  if (editorId === 'custom' && customCommand) {
+    return { command: customCommand }
+  }
+  const editors = detectEditors()
+  const editor = editors.find((e) => e.id === editorId)
+  if (!editor?.available) {
+    return { error: `Editor ${editorId} not found` }
+  }
+  return { command: editor.command }
+}
+
+/**
+ * Open a path with the user's preferred editor (reads defaultEditor and customEditorCommand from DB).
+ * Used by worktree, connection, and git "Open in Editor" handlers.
+ */
+export function openPathWithPreferredEditor(
+  path: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!existsSync(path)) {
+    return Promise.resolve({ success: false, error: 'Path does not exist' })
+  }
+  let editorId = 'vscode'
+  let customCommand = ''
+  try {
+    const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
+    if (raw) {
+      const settings = JSON.parse(raw) as { defaultEditor?: string; customEditorCommand?: string }
+      if (settings.defaultEditor) editorId = settings.defaultEditor
+      if (settings.customEditorCommand != null) customCommand = settings.customEditorCommand
+    }
+  } catch {
+    // Use defaults
+  }
+  const resolved = resolveEditorCommand(editorId, customCommand || undefined)
+  if ('error' in resolved) {
+    return Promise.resolve({ success: false, error: resolved.error })
+  }
+  try {
+    spawn(resolved.command, [path], { detached: true, stdio: 'ignore' })
+    return Promise.resolve({ success: true })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    return Promise.resolve({ success: false, error: message })
+  }
+}
 
 export function registerSettingsHandlers(): void {
   log.info('Registering settings handlers')
@@ -38,7 +89,7 @@ export function registerSettingsHandlers(): void {
     }
   })
 
-  // Open a path with a specific editor command
+  // Open a path with a specific editor command (explicit editorId/customCommand from renderer)
   ipcMain.handle(
     'settings:openWithEditor',
     async (
@@ -51,20 +102,12 @@ export function registerSettingsHandlers(): void {
         if (!existsSync(worktreePath)) {
           return { success: false, error: 'Path does not exist' }
         }
-
-        let command: string
-        if (editorId === 'custom' && customCommand) {
-          command = customCommand
-        } else {
-          const editors = detectEditors()
-          const editor = editors.find((e) => e.id === editorId)
-          if (!editor?.available) {
-            return { success: false, error: `Editor ${editorId} not found` }
-          }
-          command = editor.command
+        const resolved = resolveEditorCommand(editorId, customCommand)
+        if ('error' in resolved) {
+          return { success: false, error: resolved.error }
         }
 
-        spawn(command, [worktreePath], { detached: true, stdio: 'ignore' })
+        spawn(resolved.command, [worktreePath], { detached: true, stdio: 'ignore' })
         telemetryService.track('worktree_opened_in_editor')
         return { success: true }
       } catch (error) {
