@@ -364,7 +364,14 @@ const worktreeOps = {
     return () => {
       ipcRenderer.removeListener('worktree:branchRenamed', handler)
     }
-  }
+  },
+
+  // Get worktree context
+  getContext: (worktreeId: string) => ipcRenderer.invoke('worktree:getContext', worktreeId),
+
+  // Update worktree context
+  updateContext: (worktreeId: string, context: string | null) =>
+    ipcRenderer.invoke('worktree:updateContext', worktreeId, context)
 }
 
 // System operations API

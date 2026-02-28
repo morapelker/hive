@@ -11,6 +11,11 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 
 const MonacoDiffView = lazy(() => import('@/components/diff/MonacoDiffView'))
+const WorktreeContextEditor = lazy(() =>
+  import('@/components/worktrees/WorktreeContextEditor').then((m) => ({
+    default: m.WorktreeContextEditor
+  }))
+)
 
 interface MainPaneProps {
   children?: React.ReactNode
@@ -24,6 +29,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const inlineConnectionSessionId = useSessionStore((state) => state.inlineConnectionSessionId)
   const activeFilePath = useFileViewerStore((state) => state.activeFilePath)
   const activeDiff = useFileViewerStore((state) => state.activeDiff)
+  const contextEditorWorktreeId = useFileViewerStore((state) => state.contextEditorWorktreeId)
   const closedTerminalSessionIds = useSessionStore((state) => state.closedTerminalSessionIds)
   const ghosttyOverlaySuppressed = useLayoutStore((state) => state.ghosttyOverlaySuppressed)
 
@@ -209,6 +215,21 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
             isNewFile={activeDiff.isNewFile}
             onClose={handleCloseDiff}
           />
+        </Suspense>
+      )
+    }
+
+    // Context editor is active
+    if (contextEditorWorktreeId && activeFilePath?.startsWith('context:')) {
+      return (
+        <Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          }
+        >
+          <WorktreeContextEditor worktreeId={contextEditorWorktreeId} />
         </Suspense>
       )
     }

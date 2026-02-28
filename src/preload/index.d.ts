@@ -62,6 +62,7 @@ interface Worktree {
   last_model_variant: string | null
   attachments: string // JSON array of Attachment objects
   pinned: number // 0 = not pinned, 1 = pinned
+  context: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -374,6 +375,15 @@ declare global {
       onBranchRenamed: (
         callback: (data: { worktreeId: string; newBranch: string }) => void
       ) => () => void
+      getContext: (worktreeId: string) => Promise<{
+        success: boolean
+        context?: string | null
+        error?: string
+      }>
+      updateContext: (
+        worktreeId: string,
+        context: string | null
+      ) => Promise<{ success: boolean; error?: string }>
     }
     systemOps: {
       getLogDir: () => Promise<string>
