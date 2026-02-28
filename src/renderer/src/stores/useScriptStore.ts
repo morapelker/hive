@@ -238,7 +238,12 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
         s.appendRunOutput(worktreeId, `\x00CMD:${event.command}`)
         break
       case 'output':
-        if (event.data) s.appendRunOutput(worktreeId, event.data)
+        if (event.data) {
+          const lines = event.data.split('\n')
+          for (const line of lines) {
+            if (line !== '') s.appendRunOutput(worktreeId, line)
+          }
+        }
         break
       case 'error':
         s.appendRunOutput(

@@ -1,5 +1,5 @@
-const MAX_CHARS = 500_000
-const BUFFER_CAPACITY = 50_000 // max entries (50K * ~10 chars avg = 500K)
+export const MAX_CHARS = 200_000
+export const BUFFER_CAPACITY = 10_000
 const TRUNCATION_MARKER = '\x00TRUNC:[older output truncated]'
 
 export class OutputRingBuffer {

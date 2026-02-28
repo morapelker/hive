@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Globe } from 'lucide-react'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
@@ -42,13 +42,24 @@ export function BottomPanel({ terminalSlot, isConnectionMode }: BottomPanelProps
   )
   const customChromeCommand = useSettingsStore((s) => s.customChromeCommand)
 
-  const detectedUrl = useMemo(() => {
-    if (!selectedWorktreeId || !scriptState?.runRunning) return null
-    const runOutput = getOrCreateBuffer(selectedWorktreeId).toRecentArray(80)
-    if (!runOutput.length) return null
-    return extractDevServerUrl(runOutput)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedWorktreeId, scriptState?.runRunning, runOutputVersion])
+  const [detectedUrl, setDetectedUrl] = useState<string | null>(null)
+
+  // Scan for dev server URL only while running and not yet found.
+  // Once a URL is detected, scanning stops entirely (zero cost per subsequent version bump).
+  // When runRunning becomes false, the URL resets so the next run can detect a new one.
+  useEffect(() => {
+    if (!selectedWorktreeId || !scriptState?.runRunning) {
+      setDetectedUrl(null)
+      return
+    }
+    // Already found — stop scanning
+    if (detectedUrl) return
+
+    const output = getOrCreateBuffer(selectedWorktreeId).toRecentArray(80)
+    if (!output.length) return
+    const url = extractDevServerUrl(output)
+    if (url) setDetectedUrl(url)
+  }, [selectedWorktreeId, scriptState?.runRunning, runOutputVersion, detectedUrl])
 
   const [chromeConfigOpen, setChromeConfigOpen] = useState(false)
   const [chromeCommandInput, setChromeCommandInput] = useState(customChromeCommand)

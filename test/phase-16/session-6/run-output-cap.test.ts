@@ -1,4 +1,4 @@
-import { OutputRingBuffer } from '../../../src/renderer/src/lib/output-ring-buffer'
+import { OutputRingBuffer, MAX_CHARS } from '../../../src/renderer/src/lib/output-ring-buffer'
 import { deleteBuffer } from '../../../src/renderer/src/lib/output-ring-buffer'
 import { useScriptStore } from '../../../src/renderer/src/stores/useScriptStore'
 
@@ -27,11 +27,11 @@ describe('OutputRingBuffer', () => {
   test('evicts oldest when char limit exceeded', () => {
     // Use a high capacity so char limit is the binding constraint
     const buf = new OutputRingBuffer(100)
-    const bigChunk = 'x'.repeat(200_000)
+    const bigChunk = 'x'.repeat(100_000)
     buf.append(bigChunk)
     buf.append(bigChunk)
-    buf.append(bigChunk) // total = 600K, limit = 500K
-    expect(buf.totalChars).toBeLessThanOrEqual(500_000)
+    buf.append(bigChunk) // total = 300K, limit = 200K
+    expect(buf.totalChars).toBeLessThanOrEqual(MAX_CHARS)
     expect(buf.truncated).toBe(true)
     const arr = buf.toArray()
     // First entry should be the truncation marker
@@ -172,7 +172,7 @@ describe('useScriptStore with ring buffer', () => {
 
   test('special markers (CMD, ERR) are preserved in recent output', () => {
     const store = useScriptStore.getState()
-    const bigChunk = 'x'.repeat(500_000)
+    const bigChunk = 'x'.repeat(200_001)
     store.appendRunOutput('wt-1', bigChunk)
     store.appendRunOutput('wt-1', '\x00CMD:pnpm dev')
     store.appendRunOutput('wt-1', 'server started')
@@ -204,17 +204,17 @@ describe('useScriptStore with ring buffer', () => {
 
   test('output over limit is trimmed from the front', () => {
     const store = useScriptStore.getState()
-    // Append chunks that total > 500K chars
+    // Append chunks that total > MAX_CHARS (200K)
     const bigChunk = 'x'.repeat(100_000)
     for (let i = 0; i < 6; i++) {
       store.appendRunOutput('wt-1', bigChunk)
     }
     const output = useScriptStore.getState().getRunOutput('wt-1')
-    // Total data chars should be <= 500K
+    // Total data chars should be <= MAX_CHARS
     const dataChars = output
       .filter((s) => !s.startsWith('\x00'))
       .reduce((sum, s) => sum + s.length, 0)
-    expect(dataChars).toBeLessThanOrEqual(500_000)
+    expect(dataChars).toBeLessThanOrEqual(MAX_CHARS)
     // First entry should be the truncation marker
     expect(output[0]).toMatch(/truncated/)
   })
@@ -234,7 +234,7 @@ describe('useScriptStore with ring buffer', () => {
 
   test('most recent entry is always preserved', () => {
     const store = useScriptStore.getState()
-    const bigChunk = 'x'.repeat(500_001)
+    const bigChunk = 'x'.repeat(200_001)
     store.appendRunOutput('wt-1', bigChunk)
     store.appendRunOutput('wt-1', 'latest')
     const output = useScriptStore.getState().getRunOutput('wt-1')
