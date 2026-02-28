@@ -45,9 +45,8 @@ export const COMPLETION_WORDS = [
 const DEV_SERVER_URL_PATTERN = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{3,5}\/?/
 
 export function extractDevServerUrl(output: string[]): string | null {
-  // Scan last 50 chunks for a dev server URL.
-  // Each chunk may contain multiple lines (raw process output),
-  // so we search the full text of each chunk.
+  // Scan last 50 entries for a dev server URL.
+  // Each entry is a single line of output after line splitting.
   for (let i = output.length - 1; i >= Math.max(0, output.length - 50); i--) {
     const match = output[i].match(DEV_SERVER_URL_PATTERN)
     if (match) return match[0]

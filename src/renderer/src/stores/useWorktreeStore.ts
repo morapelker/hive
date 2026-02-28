@@ -32,7 +32,12 @@ export function fireSetupScript(projectId: string, worktreeId: string, cwd: stri
         s.appendSetupOutput(worktreeId, `\x00CMD:${event.command}`)
         break
       case 'output':
-        if (event.data) s.appendSetupOutput(worktreeId, event.data)
+        if (event.data) {
+          const lines = event.data.split('\n')
+          for (const line of lines) {
+            if (line !== '') s.appendSetupOutput(worktreeId, line)
+          }
+        }
         break
       case 'error':
         s.appendSetupOutput(
