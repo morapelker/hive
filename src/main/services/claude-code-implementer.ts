@@ -2075,7 +2075,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         allowlist: [],
         blocklist: [],
         defaultBehavior: 'ask',
-        enabled: true
+        enabled: false
       }
 
       log.info('getCommandFilterSettings: loaded from DB', {
