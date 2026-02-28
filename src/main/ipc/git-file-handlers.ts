@@ -5,6 +5,7 @@ import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { telemetryService } from '../services/telemetry-service'
+import { openPathWithPreferredEditor } from './settings-handlers'
 import {
   createGitService,
   parseWorktreeForBranch,
@@ -255,25 +256,12 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 
-  // Open file in default editor
+  // Open file in user's preferred editor (from Settings)
   ipcMain.handle(
     'git:openInEditor',
     async (_event, filePath: string): Promise<GitOperationResult> => {
       log.info('Opening in editor', { filePath })
-      try {
-        const result = await shell.openPath(filePath)
-        if (result) {
-          // shell.openPath returns an error message if it fails, empty string on success
-          return { success: false, error: result }
-        }
-        return { success: true }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        log.error('Failed to open in editor', error instanceof Error ? error : new Error(message), {
-          filePath
-        })
-        return { success: false, error: message }
-      }
+      return openPathWithPreferredEditor(filePath)
     }
   )
 
