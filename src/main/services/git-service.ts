@@ -1373,7 +1373,7 @@ export class GitService {
     branch: string
   ): Promise<{ success: boolean; files?: { relativePath: string; status: string }[]; error?: string }> {
     try {
-      const result = await this.git.raw(['diff', '--name-status', branch])
+      const result = await this.git.raw(['diff', '--name-status', '--no-renames', branch])
       const files: { relativePath: string; status: string }[] = []
       for (const line of result.trim().split('\n')) {
         if (!line) continue
@@ -1385,7 +1385,7 @@ export class GitService {
       }
       return { success: true, files }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
+      const message = error instanceof Error ? error.message : String(error)
       log.error(
         'Failed to get branch diff files',
         error instanceof Error ? error : new Error(message),
@@ -1406,7 +1406,7 @@ export class GitService {
       const result = await this.git.raw(['diff', branch, '--', filePath])
       return { success: true, diff: result || '' }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
+      const message = error instanceof Error ? error.message : String(error)
       log.error(
         'Failed to get branch file diff',
         error instanceof Error ? error : new Error(message),
