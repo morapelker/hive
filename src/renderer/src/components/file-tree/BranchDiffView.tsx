@@ -22,6 +22,12 @@ interface BranchInfo {
   worktreePath?: string
 }
 
+const KNOWN_STATUS_CODES: GitStatusCode[] = ['M', 'A', 'D', '?', 'C', '']
+
+function toGitStatusCode(raw: string): GitStatusCode {
+  return KNOWN_STATUS_CODES.includes(raw as GitStatusCode) ? (raw as GitStatusCode) : 'M'
+}
+
 export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX.Element {
   const selectedDiffBranch = useGitStore((state) => state.selectedDiffBranch)
   const setSelectedDiffBranch = useGitStore((state) => state.setSelectedDiffBranch)
@@ -164,7 +170,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
   return (
     <div className="flex flex-col h-full" data-testid="branch-diff-view">
       {/* Branch selector */}
-      <div className="px-2 py-1.5 border-b border-border" ref={dropdownRef}>
+      <div className="px-2 py-1.5 border-b border-border relative" ref={dropdownRef}>
         <button
           type="button"
           className={cn(
@@ -296,7 +302,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
                   {file.relativePath}
                 </span>
                 <GitStatusIndicator
-                  status={file.status as GitStatusCode}
+                  status={toGitStatusCode(file.status)}
                   className="mr-1"
                 />
               </div>
