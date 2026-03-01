@@ -272,6 +272,7 @@ export default function MonacoDiffView({
         fileName={fileName}
         staged={staged}
         isUntracked={isUntracked}
+        compareBranch={compareBranch}
         sideBySide={sideBySide}
         onToggleSideBySide={handleToggleSideBySide}
         onPrevHunk={handlePrevHunk}
