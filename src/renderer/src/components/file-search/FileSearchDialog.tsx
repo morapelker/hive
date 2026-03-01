@@ -2,6 +2,7 @@ import { useEffect, useCallback, useMemo, useRef } from 'react'
 import { Command } from 'cmdk'
 import { Search } from 'lucide-react'
 import { useFileSearchStore } from '@/stores/useFileSearchStore'
+import { useGhosttySuppression } from '@/hooks'
 import { useFileTreeStore } from '@/stores'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores'
@@ -15,6 +16,7 @@ const EMPTY_INDEX: FlatFile[] = []
 export function FileSearchDialog() {
   const { isOpen, searchQuery, selectedIndex, close, setSearchQuery, setSelectedIndex } =
     useFileSearchStore()
+  useGhosttySuppression('file-search', isOpen)
 
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const inputRef = useRef<HTMLInputElement>(null)
