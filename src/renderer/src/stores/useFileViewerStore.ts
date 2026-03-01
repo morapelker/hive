@@ -15,6 +15,7 @@ export interface DiffTab {
   staged: boolean
   isUntracked: boolean
   isNewFile?: boolean
+  compareBranch?: string
 }
 
 export interface ContextTab {
@@ -31,6 +32,7 @@ export interface ActiveDiff {
   staged: boolean
   isUntracked: boolean
   isNewFile?: boolean
+  compareBranch?: string
 }
 
 interface FileViewerState {
@@ -147,7 +149,9 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
       set({ activeDiff: null })
       return
     }
-    const tabKey = `diff:${diff.filePath}:${diff.staged ? 'staged' : 'unstaged'}`
+    const tabKey = diff.compareBranch
+      ? `diff:${diff.filePath}:branch:${diff.compareBranch}`
+      : `diff:${diff.filePath}:${diff.staged ? 'staged' : 'unstaged'}`
     set((state) => {
       const openFiles = new Map(state.openFiles)
       openFiles.set(tabKey, {
@@ -157,7 +161,8 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
         fileName: diff.fileName,
         staged: diff.staged,
         isUntracked: diff.isUntracked,
-        isNewFile: diff.isNewFile
+        isNewFile: diff.isNewFile,
+        compareBranch: diff.compareBranch
       })
       return { activeDiff: diff, activeFilePath: tabKey, openFiles }
     })
@@ -192,7 +197,8 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
           fileName: tab.fileName,
           staged: tab.staged,
           isUntracked: tab.isUntracked,
-          isNewFile: tab.isNewFile
+          isNewFile: tab.isNewFile,
+          compareBranch: tab.compareBranch
         }
       }
     })

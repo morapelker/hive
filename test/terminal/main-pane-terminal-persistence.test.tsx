@@ -79,7 +79,9 @@ describe('MainPane terminal persistence', () => {
       useWorktreeStore.setState({ selectedWorktreeId: 'wt-1' })
       useConnectionStore.setState({ selectedConnectionId: null })
       useFileViewerStore.setState({ activeFilePath: null, activeDiff: null })
-      useLayoutStore.setState({ ghosttyOverlaySuppressed: false } as never)
+      // Clean up any suppression keys left by previous tests, then reset boolean
+      useLayoutStore.getState().popGhosttySuppression('test-overlay')
+      useLayoutStore.setState({ ghosttyOverlaySuppressed: false })
 
       useSessionStore.setState({
         activeSessionId: 'term-1',
@@ -137,7 +139,7 @@ describe('MainPane terminal persistence', () => {
     expect(screen.getByTestId('session-terminal-term-1')).toHaveAttribute('data-visible', 'true')
 
     act(() => {
-      useLayoutStore.setState({ ghosttyOverlaySuppressed: true } as never)
+      useLayoutStore.getState().pushGhosttySuppression('test-overlay')
     })
 
     expect(screen.getByTestId('session-terminal-term-1')).toHaveAttribute('data-visible', 'false')

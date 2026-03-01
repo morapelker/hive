@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Settings, Palette, Monitor, Code, Terminal, Keyboard, Download, Shield, Eye } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useGhosttySuppression } from '@/hooks'
 import { SettingsAppearance } from './SettingsAppearance'
 import { SettingsGeneral } from './SettingsGeneral'
 import { SettingsEditor } from './SettingsEditor'
@@ -26,6 +27,7 @@ const SECTIONS = [
 export function SettingsModal(): React.JSX.Element {
   const { isOpen, activeSection, closeSettings, openSettings, setActiveSection } =
     useSettingsStore()
+  useGhosttySuppression('settings-modal', isOpen)
 
   // Listen for the custom event dispatched by keyboard shortcut handler
   useEffect(() => {

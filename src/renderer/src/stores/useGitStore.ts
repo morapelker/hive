@@ -67,6 +67,9 @@ interface GitStoreState {
   // Merge branch selection - keyed by worktree path
   selectedMergeBranch: Map<string, string>
 
+  // Diff branch comparison - keyed by worktree path
+  selectedDiffBranch: Map<string, string>
+
   // Actions
   loadFileStatuses: (worktreePath: string) => Promise<void>
   loadBranchInfo: (worktreePath: string) => Promise<void>
@@ -97,6 +100,9 @@ interface GitStoreState {
 
   // Merge branch selection actions
   setSelectedMergeBranch: (worktreePath: string, branch: string) => void
+
+  // Diff branch comparison actions
+  setSelectedDiffBranch: (worktreePath: string, branch: string) => void
 
   // Commit, Push, Pull actions
   commit: (
@@ -144,6 +150,9 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
 
   // Merge branch selection
   selectedMergeBranch: new Map(),
+
+  // Diff branch comparison
+  selectedDiffBranch: new Map(),
 
   // Load file statuses for a worktree
   loadFileStatuses: async (worktreePath: string) => {
@@ -409,6 +418,15 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       const newMap = new Map(state.selectedMergeBranch)
       newMap.set(worktreePath, branch)
       return { selectedMergeBranch: newMap }
+    })
+  },
+
+  // Set the selected diff comparison branch for a worktree
+  setSelectedDiffBranch: (worktreePath: string, branch: string) => {
+    set((state) => {
+      const newMap = new Map(state.selectedDiffBranch)
+      newMap.set(worktreePath, branch)
+      return { selectedDiffBranch: newMap }
     })
   },
 

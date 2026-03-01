@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useImperativeHandle, forwardRef, useState } from 'react'
 import { useTerminalStore } from '@/stores/useTerminalStore'
 import { useSettingsStore, type EmbeddedTerminalBackend } from '@/stores/useSettingsStore'
+import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useThemeStore } from '@/stores/useThemeStore'
 import { TerminalToolbar } from './TerminalToolbar'
 import { XtermBackend } from './backends/XtermBackend'
@@ -56,6 +57,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     (s) => s.embeddedTerminalBackend
   ) as EmbeddedTerminalBackend
   const ghosttyFontSize = useSettingsStore((s) => s.ghosttyFontSize)
+  const ghosttyOverlaySuppressed = useLayoutStore((s) => s.ghosttyOverlaySuppressed)
+
+  const effectiveVisible = isVisible && !ghosttyOverlaySuppressed
 
   // Expose imperative methods to parent via ref
   useImperativeHandle(
@@ -91,9 +95,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   useEffect(() => {
     if (!backendRef.current) return
 
-    backendRef.current.setVisible?.(isVisible)
+    backendRef.current.setVisible?.(effectiveVisible)
 
-    if (!isVisible) return
+    if (!effectiveVisible) return
 
     const timer = setTimeout(() => {
       const backend = backendRef.current
@@ -103,7 +107,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       backend?.focus()
     }, 50)
     return () => clearTimeout(timer)
-  }, [isVisible])
+  }, [effectiveVisible])
 
   // Search helpers (only for xterm backend)
   const handleSearch = useCallback((query: string) => {

@@ -11,6 +11,10 @@ const SPLIT_FRACTION_DEFAULT = 0.5
 const SPLIT_FRACTION_MIN = 0.15
 const SPLIT_FRACTION_MAX = 0.85
 
+// Module-level Set to track suppression keys — kept outside Zustand state
+// because Set cannot be serialized by the persist middleware.
+const _ghosttySuppressKeys = new Set<string>()
+
 interface LayoutState {
   leftSidebarWidth: number
   leftSidebarCollapsed: boolean
@@ -27,6 +31,8 @@ interface LayoutState {
   setRightSidebarCollapsed: (collapsed: boolean) => void
   setBottomPanelTab: (tab: BottomPanelTab) => void
   setGhosttyOverlaySuppressed: (suppressed: boolean) => void
+  pushGhosttySuppression: (key: string) => void
+  popGhosttySuppression: (key: string) => void
   setSplitFraction: (entityKey: string, fraction: number) => void
 }
 
@@ -71,7 +77,22 @@ export const useLayoutStore = create<LayoutState>()(
       },
 
       setGhosttyOverlaySuppressed: (suppressed: boolean) => {
-        set({ ghosttyOverlaySuppressed: suppressed })
+        if (suppressed) {
+          _ghosttySuppressKeys.add('_compat')
+        } else {
+          _ghosttySuppressKeys.delete('_compat')
+        }
+        set({ ghosttyOverlaySuppressed: _ghosttySuppressKeys.size > 0 })
+      },
+
+      pushGhosttySuppression: (key: string) => {
+        _ghosttySuppressKeys.add(key)
+        set({ ghosttyOverlaySuppressed: true })
+      },
+
+      popGhosttySuppression: (key: string) => {
+        _ghosttySuppressKeys.delete(key)
+        set({ ghosttyOverlaySuppressed: _ghosttySuppressKeys.size > 0 })
       },
 
       setSplitFraction: (entityKey: string, fraction: number) => {

@@ -4,7 +4,7 @@ import {
   useCommandPaletteStore,
   type Command as CommandType
 } from '@/stores/useCommandPaletteStore'
-import { useCommands } from '@/hooks'
+import { useCommands, useGhosttySuppression } from '@/hooks'
 import { categoryLabels } from '@/lib/command-registry'
 import { CommandItem } from './CommandItem'
 import { ArrowLeft, Search } from 'lucide-react'
@@ -24,6 +24,7 @@ export function CommandPalette() {
   } = useCommandPaletteStore()
 
   const { filteredCommands, recentCommands, executeCommand } = useCommands()
+  useGhosttySuppression('command-palette', isOpen)
 
   // Cmd/Ctrl+P is handled centrally by useKeyboardShortcuts
 

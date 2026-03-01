@@ -953,7 +953,28 @@ const gitOps = {
   ): Promise<{
     success: boolean
     error?: string
-  }> => ipcRenderer.invoke('git:revertHunk', worktreePath, patch)
+  }> => ipcRenderer.invoke('git:revertHunk', worktreePath, patch),
+
+  // Get list of files changed between current worktree and a branch
+  getBranchDiffFiles: (
+    worktreePath: string,
+    branch: string
+  ): Promise<{
+    success: boolean
+    files?: { relativePath: string; status: string }[]
+    error?: string
+  }> => ipcRenderer.invoke('git:branchDiffFiles', worktreePath, branch),
+
+  // Get unified diff between current worktree and a branch for a specific file
+  getBranchFileDiff: (
+    worktreePath: string,
+    branch: string,
+    filePath: string
+  ): Promise<{
+    success: boolean
+    diff?: string
+    error?: string
+  }> => ipcRenderer.invoke('git:branchFileDiff', worktreePath, branch, filePath)
 }
 
 const opencodeOps = {

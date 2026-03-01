@@ -503,7 +503,8 @@ export function SessionTabs(): React.JSX.Element | null {
   const { projects } = useProjectStore()
   const selectedConnectionId = useConnectionStore((state) => state.selectedConnectionId)
   const connections = useConnectionStore((state) => state.connections)
-  const setGhosttyOverlaySuppressed = useLayoutStore((state) => state.setGhosttyOverlaySuppressed)
+  const pushGhosttySuppression = useLayoutStore((state) => state.pushGhosttySuppression)
+  const popGhosttySuppression = useLayoutStore((state) => state.popGhosttySuppression)
 
   // Determine whether we are in connection mode or worktree mode
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
@@ -665,9 +666,9 @@ export function SessionTabs(): React.JSX.Element | null {
   // Safety: never leave Ghostty overlays suppressed if this component unmounts.
   useEffect(() => {
     return () => {
-      setGhosttyOverlaySuppressed(false)
+      popGhosttySuppression('session-tabs-context')
     }
-  }, [setGhosttyOverlaySuppressed])
+  }, [popGhosttySuppression])
 
   // Scroll functions
   const scrollLeft = () => {
@@ -871,7 +872,10 @@ export function SessionTabs(): React.JSX.Element | null {
     >
       {/* New session button - on the left */}
       {/* Right-click shows provider menu with session type options */}
-      <ContextMenu onOpenChange={setGhosttyOverlaySuppressed}>
+      <ContextMenu onOpenChange={(open) => {
+          if (open) pushGhosttySuppression('session-tabs-context')
+          else popGhosttySuppression('session-tabs-context')
+        }}>
         <ContextMenuTrigger asChild>
           <button
             onClick={handleCreateSession}
@@ -882,7 +886,7 @@ export function SessionTabs(): React.JSX.Element | null {
             <Plus className="h-4 w-4" />
           </button>
         </ContextMenuTrigger>
-        <ContextMenuContent className="z-[2147483647]">
+        <ContextMenuContent>
           {availableAgentSdks?.opencode && (
             <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
               New OpenCode Session

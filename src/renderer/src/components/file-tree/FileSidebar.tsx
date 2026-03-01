@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileTree } from './FileTree'
 import { ChangesView } from './ChangesView'
+import { BranchDiffView } from './BranchDiffView'
 
 interface ConnectionMemberInfo {
   worktree_path: string
@@ -27,7 +28,7 @@ export function FileSidebar({
   onFileClick,
   className
 }: FileSidebarProps): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<'changes' | 'files'>('changes')
+  const [activeTab, setActiveTab] = useState<'changes' | 'files' | 'diffs'>('changes')
 
   return (
     <div className={cn('flex flex-col h-full', className)}>
@@ -60,6 +61,20 @@ export function FileSidebar({
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}
         </button>
+        <button
+          className={cn(
+            'px-3 py-1.5 text-xs font-medium transition-colors relative',
+            activeTab === 'diffs'
+              ? 'text-foreground'
+              : 'text-muted-foreground hover:text-foreground'
+          )}
+          onClick={() => setActiveTab('diffs')}
+        >
+          Diffs
+          {activeTab === 'diffs' && (
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+          )}
+        </button>
         <div className="flex-1" />
         <button
           onClick={onClose}
@@ -77,6 +92,8 @@ export function FileSidebar({
             isConnectionMode={isConnectionMode}
             connectionMembers={connectionMembers}
           />
+        ) : activeTab === 'diffs' ? (
+          <BranchDiffView worktreePath={worktreePath} />
         ) : (
           <FileTree
             worktreePath={worktreePath}

@@ -16,6 +16,7 @@ interface MonacoDiffViewProps {
   staged: boolean
   isUntracked: boolean
   isNewFile?: boolean
+  compareBranch?: string
   onClose: () => void
 }
 
@@ -25,6 +26,7 @@ export default function MonacoDiffView({
   fileName,
   staged,
   isUntracked,
+  compareBranch,
   onClose
 }: MonacoDiffViewProps): React.JSX.Element {
   const [originalContent, setOriginalContent] = useState<string | null>(null)
@@ -49,7 +51,18 @@ export default function MonacoDiffView({
     setError(null)
 
     try {
-      if (staged) {
+      if (compareBranch) {
+        // Branch diff: original = branch ref, modified = working tree
+        const [origResult, modResult] = await Promise.all([
+          window.gitOps.getRefContent(worktreePath, compareBranch, filePath),
+          window.gitOps.getFileContent(worktreePath, filePath)
+        ])
+
+        // File added (doesn't exist in branch) — empty original
+        setOriginalContent(origResult.success ? (origResult.content ?? '') : '')
+        // File deleted (doesn't exist in working tree) — empty modified
+        setModifiedContent(modResult.success ? (modResult.content ?? '') : '')
+      } else if (staged) {
         // Staged diff: original = HEAD, modified = Index (staged)
         const [origResult, modResult] = await Promise.all([
           window.gitOps.getRefContent(worktreePath, 'HEAD', filePath),
@@ -94,7 +107,7 @@ export default function MonacoDiffView({
       setIsLoading(false)
       isInitialLoad.current = false
     }
-  }, [worktreePath, filePath, staged])
+  }, [worktreePath, filePath, staged, compareBranch])
 
   // Fetch on mount and when refresh is triggered
   useEffect(() => {
@@ -181,12 +194,19 @@ export default function MonacoDiffView({
 
   // Copy diff content
   const handleCopy = useCallback(async () => {
-    // Get the unified diff via existing IPC
-    const result = await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
-    if (result.success && result.diff) {
-      await window.projectOps.copyToClipboard(result.diff)
+    if (compareBranch) {
+      const result = await window.gitOps.getBranchFileDiff(worktreePath, compareBranch, filePath)
+      if (result.success && result.diff) {
+        await window.projectOps.copyToClipboard(result.diff)
+      }
+    } else {
+      // Get the unified diff via existing IPC
+      const result = await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
+      if (result.success && result.diff) {
+        await window.projectOps.copyToClipboard(result.diff)
+      }
     }
-  }, [worktreePath, filePath, staged, isUntracked])
+  }, [worktreePath, filePath, staged, isUntracked, compareBranch])
 
   // Trigger re-fetch after hunk actions — suppress watcher duplicate for 500ms
   const handleContentChanged = useCallback(() => {
@@ -206,6 +226,7 @@ export default function MonacoDiffView({
           fileName={fileName}
           staged={staged}
           isUntracked={isUntracked}
+          compareBranch={compareBranch}
           sideBySide={sideBySide}
           onToggleSideBySide={handleToggleSideBySide}
           onPrevHunk={handlePrevHunk}
@@ -227,6 +248,7 @@ export default function MonacoDiffView({
           fileName={fileName}
           staged={staged}
           isUntracked={isUntracked}
+          compareBranch={compareBranch}
           sideBySide={sideBySide}
           onToggleSideBySide={handleToggleSideBySide}
           onPrevHunk={handlePrevHunk}
@@ -250,6 +272,7 @@ export default function MonacoDiffView({
         fileName={fileName}
         staged={staged}
         isUntracked={isUntracked}
+        compareBranch={compareBranch}
         sideBySide={sideBySide}
         onToggleSideBySide={handleToggleSideBySide}
         onPrevHunk={handlePrevHunk}
@@ -292,7 +315,7 @@ export default function MonacoDiffView({
             </div>
           }
         />
-        {originalContent !== null && modifiedContent !== null && (
+        {!compareBranch && originalContent !== null && modifiedContent !== null && (
           <HunkActionGutter
             hunks={hunks}
             staged={staged}
