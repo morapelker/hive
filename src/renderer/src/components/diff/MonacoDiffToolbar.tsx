@@ -14,6 +14,7 @@ interface MonacoDiffToolbarProps {
   fileName: string
   staged: boolean
   isUntracked: boolean
+  compareBranch?: string
   sideBySide: boolean
   onToggleSideBySide: () => void
   onPrevHunk: () => void
@@ -26,6 +27,7 @@ export function MonacoDiffToolbar({
   fileName,
   staged,
   isUntracked,
+  compareBranch,
   sideBySide,
   onToggleSideBySide,
   onPrevHunk,
@@ -33,7 +35,13 @@ export function MonacoDiffToolbar({
   onCopy,
   onClose
 }: MonacoDiffToolbarProps): React.JSX.Element {
-  const statusLabel = staged ? 'Staged' : isUntracked ? 'New file' : 'Unstaged'
+  const statusLabel = compareBranch
+    ? `vs ${compareBranch}`
+    : staged
+      ? 'Staged'
+      : isUntracked
+        ? 'New file'
+        : 'Unstaged'
 
   const handleCopy = useCallback(async () => {
     onCopy()

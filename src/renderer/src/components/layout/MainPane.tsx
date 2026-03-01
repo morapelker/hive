@@ -183,8 +183,9 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
 
     // Diff viewer is active
     if (activeDiff) {
-      // New/untracked files use the syntax highlighter view
-      if (activeDiff.isNewFile || activeDiff.isUntracked) {
+      // New/untracked files use the syntax highlighter view (but not in branch mode —
+      // branch diffs always use Monaco since we have an empty original to compare against)
+      if ((activeDiff.isNewFile || activeDiff.isUntracked) && !activeDiff.compareBranch) {
         return (
           <InlineDiffViewer
             worktreePath={activeDiff.worktreePath}
@@ -197,7 +198,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
           />
         )
       }
-      // Tracked files use Monaco DiffEditor with per-hunk actions
+      // Tracked files (and branch diffs) use Monaco DiffEditor with per-hunk actions
       return (
         <Suspense
           fallback={
@@ -213,6 +214,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
             staged={activeDiff.staged}
             isUntracked={activeDiff.isUntracked}
             isNewFile={activeDiff.isNewFile}
+            compareBranch={activeDiff.compareBranch}
             onClose={handleCloseDiff}
           />
         </Suspense>
