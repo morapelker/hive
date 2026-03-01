@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -684,13 +684,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   ])
 
   // Auto-resize textarea (depends on sessionId to handle pre-populated drafts)
-  useEffect(() => {
+  // Uses useLayoutEffect to measure and set height synchronously before paint,
+  // ensuring correct height when drafts are loaded on worktree navigation.
+  useLayoutEffect(() => {
     const textarea = textareaRef.current
     if (textarea) {
-      requestAnimationFrame(() => {
-        textarea.style.height = 'auto'
-        textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
-      })
+      textarea.style.height = 'auto'
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
     }
   }, [inputValue, sessionId])
 
