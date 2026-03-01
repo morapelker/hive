@@ -1372,6 +1372,9 @@ export class GitService {
   async getBranchDiffFiles(
     branch: string
   ): Promise<{ success: boolean; files?: { relativePath: string; status: string }[]; error?: string }> {
+    if (!branch || branch.startsWith('-')) {
+      return { success: false, error: 'Invalid branch name' }
+    }
     try {
       const result = await this.git.raw(['diff', '--name-status', '--no-renames', branch])
       const files: { relativePath: string; status: string }[] = []
@@ -1402,6 +1405,9 @@ export class GitService {
     branch: string,
     filePath: string
   ): Promise<{ success: boolean; diff?: string; error?: string }> {
+    if (!branch || branch.startsWith('-')) {
+      return { success: false, error: 'Invalid branch name' }
+    }
     try {
       const result = await this.git.raw(['diff', branch, '--', filePath])
       return { success: true, diff: result || '' }

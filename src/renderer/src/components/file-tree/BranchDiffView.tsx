@@ -37,6 +37,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
   const [branches, setBranches] = useState<BranchInfo[]>([])
   const [files, setFiles] = useState<BranchDiffFile[]>([])
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
+  const [diffError, setDiffError] = useState<string | null>(null)
   const [isLoadingBranches, setIsLoadingBranches] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [searchFilter, setSearchFilter] = useState('')
@@ -70,12 +71,15 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
       const result = await window.gitOps.getBranchDiffFiles(worktreePath, selectedBranch)
       if (result.success && result.files) {
         setFiles(result.files)
+        setDiffError(null)
       } else {
         setFiles([])
+        setDiffError(result.error || 'Failed to load diff files')
       }
     } catch (error) {
       console.error('Failed to load branch diff files:', error)
       setFiles([])
+      setDiffError(error instanceof Error ? error.message : 'Failed to load diff files')
     } finally {
       setIsLoadingFiles(false)
     }
@@ -274,6 +278,10 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
       ) : isLoadingFiles ? (
         <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
           Loading...
+        </div>
+      ) : diffError ? (
+        <div className="flex-1 flex items-center justify-center text-xs text-destructive px-4 text-center">
+          {diffError}
         </div>
       ) : files.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
