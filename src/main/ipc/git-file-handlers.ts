@@ -734,6 +734,53 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 
+  // Get list of files changed between current worktree and a branch
+  ipcMain.handle(
+    'git:branchDiffFiles',
+    async (
+      _event,
+      worktreePath: string,
+      branch: string
+    ): Promise<{ success: boolean; files?: { relativePath: string; status: string }[]; error?: string }> => {
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.getBranchDiffFiles(branch)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to get branch diff files',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath, branch }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Get unified diff between current worktree and a branch for a specific file
+  ipcMain.handle(
+    'git:branchFileDiff',
+    async (
+      _event,
+      worktreePath: string,
+      branch: string,
+      filePath: string
+    ): Promise<{ success: boolean; diff?: string; error?: string }> => {
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.getBranchFileDiff(branch, filePath)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to get branch file diff',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath, branch, filePath }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
+
   // List open pull requests via gh CLI
   ipcMain.handle(
     'git:listPRs',

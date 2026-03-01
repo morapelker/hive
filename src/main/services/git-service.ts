@@ -1364,6 +1364,57 @@ export class GitService {
       return { success: false, error: message }
     }
   }
+
+  /**
+   * Get list of files changed between the current worktree and a branch
+   * Uses git diff --name-status to get file paths and their change status
+   */
+  async getBranchDiffFiles(
+    branch: string
+  ): Promise<{ success: boolean; files?: { relativePath: string; status: string }[]; error?: string }> {
+    try {
+      const result = await this.git.raw(['diff', '--name-status', branch])
+      const files: { relativePath: string; status: string }[] = []
+      for (const line of result.trim().split('\n')) {
+        if (!line) continue
+        const [status, ...pathParts] = line.split('\t')
+        const relativePath = pathParts.join('\t')
+        if (status && relativePath) {
+          files.push({ relativePath, status })
+        }
+      }
+      return { success: true, files }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error(
+        'Failed to get branch diff files',
+        error instanceof Error ? error : new Error(message),
+        { branch, repoPath: this.repoPath }
+      )
+      return { success: false, error: message }
+    }
+  }
+
+  /**
+   * Get unified diff between the current worktree and a branch for a specific file
+   */
+  async getBranchFileDiff(
+    branch: string,
+    filePath: string
+  ): Promise<{ success: boolean; diff?: string; error?: string }> {
+    try {
+      const result = await this.git.raw(['diff', branch, '--', filePath])
+      return { success: true, diff: result || '' }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error(
+        'Failed to get branch file diff',
+        error instanceof Error ? error : new Error(message),
+        { branch, filePath, repoPath: this.repoPath }
+      )
+      return { success: false, error: message }
+    }
+  }
 }
 
 /**

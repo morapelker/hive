@@ -997,6 +997,25 @@ declare global {
         success: boolean
         error?: string
       }>
+      // Get list of files changed between current worktree and a branch
+      getBranchDiffFiles: (
+        worktreePath: string,
+        branch: string
+      ) => Promise<{
+        success: boolean
+        files?: { relativePath: string; status: string }[]
+        error?: string
+      }>
+      // Get unified diff between current worktree and a branch for a specific file
+      getBranchFileDiff: (
+        worktreePath: string,
+        branch: string,
+        filePath: string
+      ) => Promise<{
+        success: boolean
+        diff?: string
+        error?: string
+      }>
     }
     updaterOps: {
       checkForUpdate: () => Promise<void>
