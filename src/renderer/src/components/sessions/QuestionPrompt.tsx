@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useLayoutEffect } from 'react'
 import { MessageCircleQuestion, Check, X, ChevronRight, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -17,11 +17,22 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
   const [editingCustom, setEditingCustom] = useState(false)
   const [sending, setSending] = useState(false)
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
   const isMultiQuestion = request.questions.length > 1
   const currentQuestion = request.questions[currentTab]
   const isMultiple = currentQuestion?.multiple ?? false
   const isCustomAllowed = currentQuestion?.custom !== false
   const isLastTab = currentTab === request.questions.length - 1
+
+  // Auto-resize the custom answer textarea
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      textarea.style.height = 'auto'
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+    }
+  }, [customInputs, currentTab])
 
   const handleSubmit = useCallback(
     (finalAnswers?: QuestionAnswer[]) => {
@@ -231,7 +242,7 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Pencil className="h-3.5 w-3.5 shrink-0 text-blue-400" />
-                <span className="text-sm font-medium truncate">{customAnswer}</span>
+                <span className="text-sm font-medium whitespace-pre-wrap line-clamp-3">{customAnswer}</span>
               </div>
             </button>
           )}
@@ -258,12 +269,20 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
               className="flex gap-2"
               data-testid="custom-input-form"
             >
-              <input
+              <textarea
+                ref={textareaRef}
                 autoFocus
                 value={customInputs[currentTab] || ''}
                 onChange={(e) => handleCustomInputChange(e.target.value)}
-                className="flex-1 bg-background border border-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500/50 transition-colors"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleCustomSubmit(e)
+                  }
+                }}
+                className="flex-1 bg-background border border-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500/50 transition-colors resize-none min-h-[36px] max-h-[200px]"
                 placeholder="Type your answer..."
+                rows={1}
                 disabled={sending}
               />
               <Button
