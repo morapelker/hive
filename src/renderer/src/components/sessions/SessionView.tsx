@@ -461,7 +461,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // rely on the FileTree sidebar component having already populated the store
   // (sidebar may be collapsed, on a different tab, or targeting a different worktree).
   const fileIndex = useFileTreeStore((state) =>
-    worktreePath ? (state.fileIndexByWorktree.get(worktreePath) ?? EMPTY_FILE_INDEX) : EMPTY_FILE_INDEX
+    worktreePath
+      ? (state.fileIndexByWorktree.get(worktreePath) ?? EMPTY_FILE_INDEX)
+      : EMPTY_FILE_INDEX
   )
   useEffect(() => {
     if (worktreePath && fileIndex === EMPTY_FILE_INDEX) {
@@ -1010,10 +1012,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         for (const msg of loadedMessages) {
           if (msg.parts) {
             for (const part of msg.parts) {
-              if (
-                part.type === 'tool_use' &&
-                part.toolUse?.id === pendingPlanForLoad.toolUseID
-              ) {
+              if (part.type === 'tool_use' && part.toolUse?.id === pendingPlanForLoad.toolUseID) {
                 part.toolUse.status = 'pending'
               }
             }
@@ -1142,6 +1141,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // instances process events concurrently during tab transitions.
     streamGenerationRef.current += 1
     const currentGeneration = streamGenerationRef.current
+    let isEffectActive = true
+
+    const shouldAbortInit = (): boolean => {
+      return !isEffectActive || streamGenerationRef.current !== currentGeneration
+    }
 
     // Clear streaming display state. The key={sessionId} on SessionView forces a
     // full remount on session change, so this always starts fresh.
@@ -1765,13 +1769,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 lastSentPromptRef.current = followUp
                 const wtPath = transcriptSourceRef.current.worktreePath
                 const opcSid = transcriptSourceRef.current.opencodeSessionId
+                if (!wtPath || !opcSid) {
+                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, followUp)
+                  useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+                  setIsSending(false)
+                  return
+                }
                 window.opencodeOps
-                  .prompt(
-                    wtPath,
-                    opcSid,
-                    [{ type: 'text', text: followUp }],
-                    getModelForRequests()
-                  )
+                  .prompt(wtPath, opcSid, [{ type: 'text', text: followUp }], getModelForRequests())
                   .then((result) => {
                     if (!result.success) {
                       console.error('Failed to send follow-up message:', result.error)
@@ -1821,6 +1826,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       : () => {}
 
     const initializeSession = async (): Promise<void> => {
+      if (shouldAbortInit()) return
+
       setViewState({ status: 'connecting' })
       setSessionRetry(null)
       setSessionErrorMessage(null)
@@ -1838,6 +1845,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       try {
         // 1. Resolve session/worktree metadata so transcript loading can prefer OpenCode
         const session = (await window.db.session.get(sessionId)) as DbSession | null
+        if (shouldAbortInit()) return
         if (!session) {
           throw new Error('Session not found')
         }
@@ -1859,6 +1867,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         if (session.worktree_id) {
           setWorktreeId(session.worktree_id)
           const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
+          if (shouldAbortInit()) return
           if (worktree) {
             wtPath = worktree.path
             setWorktreePath(wtPath)
@@ -1869,6 +1878,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           setConnectionId(session.connection_id)
           try {
             const connResult = await window.connectionOps.get(session.connection_id)
+            if (shouldAbortInit()) return
             if (connResult.success && connResult.connection) {
               wtPath = connResult.connection.path
               setWorktreePath(wtPath)
@@ -1890,6 +1900,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         if (wtPath && existingOpcSessionId && window.opencodeOps?.sessionInfo) {
           try {
             const sessionInfo = await window.opencodeOps.sessionInfo(wtPath, existingOpcSessionId)
+            if (shouldAbortInit()) return
             if (sessionInfo.success) {
               setRevertMessageID(sessionInfo.revertMessageID ?? null)
               revertDiffRef.current = sessionInfo.revertDiff ?? null
@@ -1904,6 +1915,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           worktreePath: wtPath,
           opencodeSessionId: existingOpcSessionId
         })
+        if (shouldAbortInit()) return
 
         // 2b. Restore streaming parts from the last persisted assistant message,
         // but ONLY when the session is actively busy. For idle sessions the
@@ -2075,8 +2087,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
         // Send any pending initial message (e.g., from code review)
         const sendPendingMessage = async (path: string, opcId: string): Promise<void> => {
-          const pendingMsg = useSessionStore.getState().consumePendingMessage(sessionId)
+          if (shouldAbortInit()) return
+          const pendingMsg = useSessionStore.getState().dequeuePendingMessage(sessionId)
           if (!pendingMsg) return
+
+          const restorePendingAfterFailure = (): void => {
+            useSessionStore.getState().requeuePendingMessage(sessionId, pendingMsg)
+            newPromptPendingRef.current = false
+            useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+          }
+
           try {
             // Mirror handleSend: set streaming/sending state BEFORE the prompt call
             // so the UI shows the correct state and finalizeResponse behaves correctly.
@@ -2108,14 +2128,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               { type: 'text' as const, text: promptMessage }
             ]
             const result = await window.opencodeOps.prompt(path, opcId, parts, model)
+            if (shouldAbortInit()) {
+              if (!result.success) {
+                restorePendingAfterFailure()
+              }
+              setIsSending(false)
+              return
+            }
             if (!result.success) {
               console.error('Failed to send pending message:', result.error)
               toast.error('Failed to send review prompt')
+              restorePendingAfterFailure()
               setIsSending(false)
             }
           } catch (err) {
             console.error('Failed to send pending message:', err)
             toast.error('Failed to send review prompt')
+            restorePendingAfterFailure()
             setIsSending(false)
           }
         }
@@ -2127,6 +2156,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             existingOpcSessionId,
             sessionId
           )
+          if (shouldAbortInit()) return
           if (reconnectResult.success) {
             setOpencodeSessionId(existingOpcSessionId)
             useSessionStore.getState().setOpenCodeSessionId(sessionId, existingOpcSessionId)
@@ -2154,9 +2184,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Corrects Part A if the session finished while we were away,
             // or confirms busy if the store was accurate.
             // Don't overwrite plan_ready — session is blocked waiting for plan approval.
-            const hasPendingPlanOnReconnect = useSessionStore
-              .getState()
-              .getPendingPlan(sessionId)
+            const hasPendingPlanOnReconnect = useSessionStore.getState().getPendingPlan(sessionId)
             if (reconnectResult.sessionStatus === 'busy') {
               if (!hasPendingPlanOnReconnect) {
                 setSessionRetry(null)
@@ -2166,10 +2194,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 const currentMode = useSessionStore.getState().getSessionMode(sessionId)
                 useWorktreeStatusStore
                   .getState()
-                  .setSessionStatus(
-                    sessionId,
-                    currentMode === 'plan' ? 'planning' : 'working'
-                  )
+                  .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
               }
             } else if (reconnectResult.sessionStatus === 'idle') {
               if (!hasPendingPlanOnReconnect) {
@@ -2179,14 +2204,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 setSessionErrorMessage(null)
                 // If the session was previously busy, the agent finished while we
                 // were away — show a completion badge instead of clearing to "Ready".
-                if (
-                  storedStatus?.status === 'working' ||
-                  storedStatus?.status === 'planning'
-                ) {
+                if (storedStatus?.status === 'working' || storedStatus?.status === 'planning') {
                   const sendTime = messageSendTimes.get(sessionId)
                   const durationMs = sendTime ? Date.now() - sendTime : 0
-                  const word =
-                    COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+                  const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
                   useWorktreeStatusStore
                     .getState()
                     .setSessionStatus(sessionId, 'completed', { word, durationMs })
@@ -2203,6 +2224,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Refresh transcript using the confirmed live OpenCode session ID.
             // This avoids keeping a stale/partial pre-connect transcript.
             await loadMessages({ worktreePath: wtPath, opencodeSessionId: existingOpcSessionId })
+            if (shouldAbortInit()) return
 
             await sendPendingMessage(wtPath, existingOpcSessionId)
             return
@@ -2211,6 +2233,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
         // Create new OpenCode session
         const connectResult = await window.opencodeOps.connect(wtPath, sessionId)
+        if (shouldAbortInit()) return
         if (connectResult.success && connectResult.sessionId) {
           setOpencodeSessionId(connectResult.sessionId)
           useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
@@ -2241,6 +2264,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
           // Refresh transcript after establishing the active OpenCode session.
           await loadMessages({ worktreePath: wtPath, opencodeSessionId: connectResult.sessionId })
+          if (shouldAbortInit()) return
 
           await sendPendingMessage(wtPath, connectResult.sessionId)
         } else {
@@ -2259,6 +2283,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     // Cleanup on unmount or session change
     return () => {
+      isEffectActive = false
       unsubscribe()
       // DO NOT clear questions or permissions — they must persist across tab switches.
       // They are removed individually when answered/rejected via removeQuestion/removePermission.
@@ -3051,7 +3076,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     await useSessionStore.getState().setSessionMode(sessionId, 'build')
     lastSendMode.set(sessionId, 'build')
     await handleSend('Implement')
-  }, [sessionId, handleSend, worktreePath, pendingPlan, isClaudeCode, updateStreamingPartsRef, immediateFlush])
+  }, [
+    sessionId,
+    handleSend,
+    worktreePath,
+    pendingPlan,
+    isClaudeCode,
+    updateStreamingPartsRef,
+    immediateFlush
+  ])
 
   const handlePlanReject = useCallback(
     async (feedback: string) => {
@@ -3152,9 +3185,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // 1. Extract plan content
     const planContent =
       pendingPlan?.planContent ??
-      [...messages]
-        .reverse()
-        .find((m) => m.role === 'assistant' && m.content.trim().length > 0)?.content
+      [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim().length > 0)
+        ?.content
     if (!planContent) {
       toast.error('No plan content found to supercharge')
       return
@@ -3234,9 +3266,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // 1. Extract plan content
     const planContent =
       pendingPlan?.planContent ??
-      [...messages]
-        .reverse()
-        .find((m) => m.role === 'assistant' && m.content.trim().length > 0)?.content
+      [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim().length > 0)
+        ?.content
     if (!planContent) {
       toast.error('No plan content found to supercharge')
       return

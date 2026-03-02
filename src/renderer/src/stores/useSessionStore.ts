@@ -95,8 +95,12 @@ interface SessionState {
   setSessionModel: (sessionId: string, model: SelectedModel) => Promise<void>
   setOpenCodeSessionId: (sessionId: string, opencodeSessionId: string | null) => void
   setPendingMessage: (sessionId: string, message: string) => void
+  dequeuePendingMessage: (sessionId: string) => string | null
+  requeuePendingMessage: (sessionId: string, message: string) => void
   consumePendingMessage: (sessionId: string) => string | null
   setPendingFollowUpMessages: (sessionId: string, messages: string[]) => void
+  dequeueFollowUpMessage: (sessionId: string) => string | null
+  requeueFollowUpMessageFront: (sessionId: string, message: string) => void
   consumeFollowUpMessage: (sessionId: string) => string | null
   closeOtherSessions: (worktreeId: string, keepSessionId: string) => Promise<void>
   closeSessionsToRight: (worktreeId: string, fromSessionId: string) => Promise<void>
@@ -265,7 +269,8 @@ export const useSessionStore = create<SessionState>()(
         try {
           // Resolve default agent SDK from settings
           const { useSettingsStore } = await import('./useSettingsStore')
-          const defaultAgentSdk = agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+          const defaultAgentSdk =
+            agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
 
           const isTerminal = defaultAgentSdk === 'terminal'
 
@@ -591,7 +596,11 @@ export const useSessionStore = create<SessionState>()(
 
         if (worktreeId === state.activeWorktreeId) return
 
-        set({ activeWorktreeId: worktreeId, activeConnectionId: null, inlineConnectionSessionId: null })
+        set({
+          activeWorktreeId: worktreeId,
+          activeConnectionId: null,
+          inlineConnectionSessionId: null
+        })
 
         if (worktreeId) {
           // Check if we already have sessions for this worktree
@@ -893,8 +902,8 @@ export const useSessionStore = create<SessionState>()(
         })
       },
 
-      // Consume (get and remove) a pending message for a session
-      consumePendingMessage: (sessionId: string): string | null => {
+      // Dequeue (get and remove) a pending message for a session
+      dequeuePendingMessage: (sessionId: string): string | null => {
         const message = get().pendingMessages.get(sessionId) || null
         if (message) {
           set((state) => {
@@ -906,19 +915,35 @@ export const useSessionStore = create<SessionState>()(
         return message
       },
 
+      // Restore a pending message for a session (used when auto-send fails)
+      requeuePendingMessage: (sessionId: string, message: string) => {
+        set((state) => {
+          const newMap = new Map(state.pendingMessages)
+          newMap.set(sessionId, message)
+          return { pendingMessages: newMap }
+        })
+      },
+
+      // Consume (get and remove) a pending message for a session
+      consumePendingMessage: (sessionId: string): string | null => {
+        return get().dequeuePendingMessage(sessionId)
+      },
+
       // Set follow-up messages queue for a session (ordered, auto-sent after each idle)
       setPendingFollowUpMessages: (sessionId: string, messages: string[]) => {
         set((state) => {
           const newMap = new Map(state.pendingFollowUpMessages)
-          newMap.set(sessionId, messages)
+          newMap.set(sessionId, [...messages])
           return { pendingFollowUpMessages: newMap }
         })
       },
 
-      // Consume (pop first) a follow-up message for a session
-      consumeFollowUpMessage: (sessionId: string): string | null => {
+      // Dequeue (pop first) a follow-up message for a session
+      dequeueFollowUpMessage: (sessionId: string): string | null => {
         const messages = get().pendingFollowUpMessages.get(sessionId)
-        if (!messages || messages.length === 0) return null
+        if (!messages || messages.length === 0) {
+          return null
+        }
         const [first, ...rest] = messages
         set((state) => {
           const newMap = new Map(state.pendingFollowUpMessages)
@@ -930,6 +955,21 @@ export const useSessionStore = create<SessionState>()(
           return { pendingFollowUpMessages: newMap }
         })
         return first
+      },
+
+      // Requeue a follow-up message at the front (used on transient send failure)
+      requeueFollowUpMessageFront: (sessionId: string, message: string) => {
+        set((state) => {
+          const existing = state.pendingFollowUpMessages.get(sessionId) || []
+          const newMap = new Map(state.pendingFollowUpMessages)
+          newMap.set(sessionId, [message, ...existing])
+          return { pendingFollowUpMessages: newMap }
+        })
+      },
+
+      // Consume (pop first) a follow-up message for a session
+      consumeFollowUpMessage: (sessionId: string): string | null => {
+        return get().dequeueFollowUpMessage(sessionId)
       },
 
       // Close all sessions except the kept one

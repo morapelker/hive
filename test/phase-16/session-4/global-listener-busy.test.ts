@@ -56,6 +56,27 @@ vi.mock('@/stores/useQuestionStore', () => ({
   }
 }))
 
+// Mock usePermissionStore
+vi.mock('@/stores/usePermissionStore', () => ({
+  usePermissionStore: {
+    getState: () => ({
+      addPermission: vi.fn(),
+      removePermission: vi.fn(),
+      pendingBySession: new Map()
+    })
+  }
+}))
+
+// Mock useRecentStore
+vi.mock('@/stores/useRecentStore', () => ({
+  useRecentStore: {
+    getState: () => ({
+      addWorktreeToRecent: vi.fn(),
+      addConnectionToRecent: vi.fn()
+    })
+  }
+}))
+
 // Mock useContextStore (imported by the listener)
 const setSessionTokensSpy = vi.fn()
 const addSessionCostSpy = vi.fn()
@@ -97,8 +118,11 @@ vi.mock('@/stores/useSessionStore', () => ({
       activeSessionId: 'session-A',
       getSessionMode: getSessionModeSpy,
       getPendingPlan: vi.fn(() => null),
+      dequeueFollowUpMessage: vi.fn(() => null),
+      requeueFollowUpMessageFront: vi.fn(),
       updateSessionName: updateSessionNameSpy,
-      sessionsByWorktree: new Map([['wt-1', [{ id: 'session-B' }]]])
+      sessionsByWorktree: new Map([['wt-1', [{ id: 'session-B', opencode_session_id: 'opc-1' }]]]),
+      sessionsByConnection: new Map()
     })
   }
 }))

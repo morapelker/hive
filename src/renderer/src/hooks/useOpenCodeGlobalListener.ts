@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -11,6 +11,145 @@ import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes } from '@/lib/message-send-times'
 
+interface PromptDispatchContext {
+  worktreePath: string
+  opencodeSessionId: string
+}
+
+function resolvePromptDispatchContextFromStores(sessionId: string): PromptDispatchContext | null {
+  const sessionState = useSessionStore.getState()
+
+  for (const [worktreeId, sessions] of sessionState.sessionsByWorktree) {
+    const session = sessions.find((s) => s.id === sessionId)
+    if (!session?.opencode_session_id) continue
+
+    const worktreesByProject = useWorktreeStore.getState().worktreesByProject
+    for (const worktrees of worktreesByProject.values()) {
+      const worktree = worktrees.find((w) => w.id === worktreeId)
+      if (worktree?.path) {
+        return {
+          worktreePath: worktree.path,
+          opencodeSessionId: session.opencode_session_id
+        }
+      }
+    }
+  }
+
+  for (const [connectionId, sessions] of sessionState.sessionsByConnection) {
+    const session = sessions.find((s) => s.id === sessionId)
+    if (!session?.opencode_session_id) continue
+
+    const connection = useConnectionStore
+      .getState()
+      .connections.find((item) => item.id === connectionId)
+    if (connection?.path) {
+      return {
+        worktreePath: connection.path,
+        opencodeSessionId: session.opencode_session_id
+      }
+    }
+  }
+
+  return null
+}
+
+async function resolvePromptDispatchContext(
+  sessionId: string
+): Promise<PromptDispatchContext | null> {
+  const storeContext = resolvePromptDispatchContextFromStores(sessionId)
+
+  if (!window.db?.session?.get) {
+    return storeContext
+  }
+
+  try {
+    const dbSession = (await window.db.session.get(sessionId)) as {
+      worktree_id?: string | null
+      connection_id?: string | null
+      opencode_session_id?: string | null
+    } | null
+
+    const dbOpcSessionId = dbSession?.opencode_session_id ?? null
+    if (!dbOpcSessionId) {
+      return storeContext
+    }
+
+    if (dbSession?.worktree_id && window.db?.worktree?.get) {
+      const dbWorktree = (await window.db.worktree.get(dbSession.worktree_id)) as {
+        path?: string | null
+      } | null
+      if (dbWorktree?.path) {
+        return {
+          worktreePath: dbWorktree.path,
+          opencodeSessionId: dbOpcSessionId
+        }
+      }
+    }
+
+    if (dbSession?.connection_id && window.connectionOps?.get) {
+      const connectionResult = await window.connectionOps.get(dbSession.connection_id)
+      if (connectionResult.success && connectionResult.connection?.path) {
+        return {
+          worktreePath: connectionResult.connection.path,
+          opencodeSessionId: dbOpcSessionId
+        }
+      }
+    }
+
+    if (storeContext) {
+      return { ...storeContext, opencodeSessionId: dbOpcSessionId }
+    }
+  } catch {
+    // DB lookup failed — fall through to store context
+  }
+
+  return storeContext
+}
+
+function markBackgroundSessionCompleted(sessionId: string): void {
+  const sendTime = messageSendTimes.get(sessionId)
+  const durationMs = sendTime ? Date.now() - sendTime : 0
+  const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+  useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'completed', { word, durationMs })
+
+  const now = Date.now()
+  const sessions = useSessionStore.getState().sessionsByWorktree
+  let found = false
+  for (const [worktreeId, wSessions] of sessions) {
+    if (wSessions.some((s) => s.id === sessionId)) {
+      useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, now)
+      useRecentStore.getState().addWorktreeToRecent(worktreeId)
+      found = true
+      break
+    }
+  }
+
+  const connectionSessions = useSessionStore.getState().sessionsByConnection
+  for (const [connectionId, cSessions] of connectionSessions) {
+    if (cSessions.some((s) => s.id === sessionId)) {
+      useRecentStore.getState().addConnectionToRecent(connectionId)
+      break
+    }
+  }
+
+  if (!found) {
+    const connSessions = useSessionStore.getState().sessionsByConnection
+    for (const [connectionId, cSessions] of connSessions) {
+      if (cSessions.some((s) => s.id === sessionId)) {
+        const connection = useConnectionStore
+          .getState()
+          .connections.find((c) => c.id === connectionId)
+        if (connection) {
+          for (const member of connection.members) {
+            useWorktreeStatusStore.getState().setLastMessageTime(member.worktree_id, now)
+          }
+        }
+        break
+      }
+    }
+  }
+}
+
 /**
  * Persistent global listener for OpenCode stream events.
  *
@@ -21,6 +160,9 @@ import { messageSendTimes } from '@/lib/message-send-times'
  * - Branch auto-rename notifications from the main process
  */
 export function useOpenCodeGlobalListener(): void {
+  const backgroundFollowUpDispatchingRef = useRef<Set<string>>(new Set())
+  const deferredIdleWhileDispatchingRef = useRef<Set<string>>(new Set())
+
   // Listen for branch auto-rename events from the main process
   useEffect(() => {
     const unsubscribe = window.worktreeOps?.onBranchRenamed
@@ -233,55 +375,86 @@ export function useOpenCodeGlobalListener(): void {
           // Active session is handled by SessionView.
           if (sessionId === activeId) return
 
-          // Set completion badge — duration measured from when user sent the message
-          const sendTime = messageSendTimes.get(sessionId)
-          const durationMs = sendTime ? Date.now() - sendTime : 0
-          const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
-          useWorktreeStatusStore
-            .getState()
-            .setSessionStatus(sessionId, 'completed', { word, durationMs })
+          const dispatchBackgroundFollowUp = (message: string): void => {
+            backgroundFollowUpDispatchingRef.current.add(sessionId)
 
-          // Update last message time for the worktree (or connection member worktrees)
-          const now = Date.now()
-          const sessions = useSessionStore.getState().sessionsByWorktree
-          let found = false
-          for (const [worktreeId, wSessions] of sessions) {
-            if (wSessions.some((s) => s.id === sessionId)) {
-              useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, now)
-              // Always track recent activity so data is fresh when toggled on (Fix #6)
-              useRecentStore.getState().addWorktreeToRecent(worktreeId)
-              found = true
-              break
-            }
-          }
-
-          // Also check connection sessions for recent tracking
-          const connectionSessions = useSessionStore.getState().sessionsByConnection
-          for (const [connectionId, cSessions] of connectionSessions) {
-            if (cSessions.some((s) => s.id === sessionId)) {
-              useRecentStore.getState().addConnectionToRecent(connectionId)
-              break
-            }
-          }
-          // If the session belongs to a connection, update all member worktrees
-          if (!found) {
-            const connSessions = useSessionStore.getState().sessionsByConnection
-            for (const [connectionId, cSessions] of connSessions) {
-              if (cSessions.some((s) => s.id === sessionId)) {
-                const connection = useConnectionStore
-                  .getState()
-                  .connections.find((c) => c.id === connectionId)
-                if (connection) {
-                  for (const member of connection.members) {
-                    useWorktreeStatusStore
-                      .getState()
-                      .setLastMessageTime(member.worktree_id, now)
-                  }
+            void (async () => {
+              let dispatchSucceeded = false
+              try {
+                const context = await resolvePromptDispatchContext(sessionId)
+                if (!context || !window.opencodeOps?.prompt) {
+                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
+                  markBackgroundSessionCompleted(sessionId)
+                  return
                 }
-                break
+
+                if (context.opencodeSessionId.startsWith('pending::')) {
+                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
+                  markBackgroundSessionCompleted(sessionId)
+                  return
+                }
+
+                const mode = useSessionStore.getState().getSessionMode(sessionId)
+                useWorktreeStatusStore
+                  .getState()
+                  .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+
+                const result = await window.opencodeOps.prompt(
+                  context.worktreePath,
+                  context.opencodeSessionId,
+                  [{ type: 'text', text: message }]
+                )
+
+                if (!result.success) {
+                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
+                  markBackgroundSessionCompleted(sessionId)
+                  return
+                }
+
+                dispatchSucceeded = true
+              } catch {
+                useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
+                markBackgroundSessionCompleted(sessionId)
+              } finally {
+                backgroundFollowUpDispatchingRef.current.delete(sessionId)
+
+                if (!deferredIdleWhileDispatchingRef.current.has(sessionId)) {
+                  return
+                }
+
+                deferredIdleWhileDispatchingRef.current.delete(sessionId)
+
+                // If dispatch failed, we've already requeued + set completed above.
+                if (!dispatchSucceeded) return
+
+                // Don't overwrite plan_ready — session is blocked waiting for plan approval
+                if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
+                const nextFollowUp = useSessionStore.getState().dequeueFollowUpMessage(sessionId)
+                if (nextFollowUp) {
+                  dispatchBackgroundFollowUp(nextFollowUp)
+                  return
+                }
+
+                markBackgroundSessionCompleted(sessionId)
               }
-            }
+            })()
           }
+
+          // Background queued follow-ups should be dispatched here so they survive tab switches.
+          if (backgroundFollowUpDispatchingRef.current.has(sessionId)) {
+            deferredIdleWhileDispatchingRef.current.add(sessionId)
+            return
+          }
+
+          const followUp = useSessionStore.getState().dequeueFollowUpMessage(sessionId)
+          if (followUp) {
+            dispatchBackgroundFollowUp(followUp)
+
+            return
+          }
+
+          markBackgroundSessionCompleted(sessionId)
         })
       : () => {}
 

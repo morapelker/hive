@@ -122,18 +122,14 @@ describe('Session 4: Code Review', () => {
   // ---------------------------------------------------------------------------
   describe('Session store pending messages', () => {
     test('setPendingMessage stores message', async () => {
-      const { useSessionStore } = await import(
-        '../../../src/renderer/src/stores/useSessionStore'
-      )
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
 
       useSessionStore.getState().setPendingMessage('session-1', 'Review prompt text')
       expect(useSessionStore.getState().pendingMessages.get('session-1')).toBe('Review prompt text')
     })
 
     test('consumePendingMessage returns and removes message', async () => {
-      const { useSessionStore } = await import(
-        '../../../src/renderer/src/stores/useSessionStore'
-      )
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
 
       useSessionStore.getState().setPendingMessage('session-2', 'Another prompt')
 
@@ -146,12 +142,32 @@ describe('Session 4: Code Review', () => {
     })
 
     test('consumePendingMessage returns null for unknown session', async () => {
-      const { useSessionStore } = await import(
-        '../../../src/renderer/src/stores/useSessionStore'
-      )
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
 
       const message = useSessionStore.getState().consumePendingMessage('nonexistent')
       expect(message).toBeNull()
+    })
+
+    test('dequeuePendingMessage returns and removes message', async () => {
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
+
+      useSessionStore.getState().setPendingMessage('session-3', 'Dequeued prompt')
+
+      const message = useSessionStore.getState().dequeuePendingMessage('session-3')
+      expect(message).toBe('Dequeued prompt')
+      expect(useSessionStore.getState().pendingMessages.get('session-3')).toBeUndefined()
+    })
+
+    test('requeuePendingMessage restores a failed auto-send prompt', async () => {
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
+
+      useSessionStore.getState().setPendingMessage('session-4', 'Failed prompt')
+      const dequeued = useSessionStore.getState().dequeuePendingMessage('session-4')
+      expect(dequeued).toBe('Failed prompt')
+
+      useSessionStore.getState().requeuePendingMessage('session-4', dequeued!)
+
+      expect(useSessionStore.getState().consumePendingMessage('session-4')).toBe('Failed prompt')
     })
   })
 
@@ -217,18 +233,14 @@ describe('Session 4: Code Review', () => {
   // ---------------------------------------------------------------------------
   describe('Review target branch store', () => {
     test('setReviewTargetBranch stores branch for worktree', async () => {
-      const { useGitStore } = await import(
-        '../../../src/renderer/src/stores/useGitStore'
-      )
+      const { useGitStore } = await import('../../../src/renderer/src/stores/useGitStore')
 
       useGitStore.getState().setReviewTargetBranch('wt-1', 'origin/develop')
       expect(useGitStore.getState().reviewTargetBranch.get('wt-1')).toBe('origin/develop')
     })
 
     test('setReviewTargetBranch updates existing branch', async () => {
-      const { useGitStore } = await import(
-        '../../../src/renderer/src/stores/useGitStore'
-      )
+      const { useGitStore } = await import('../../../src/renderer/src/stores/useGitStore')
 
       useGitStore.getState().setReviewTargetBranch('wt-1', 'origin/develop')
       useGitStore.getState().setReviewTargetBranch('wt-1', 'origin/main')
@@ -236,9 +248,7 @@ describe('Session 4: Code Review', () => {
     })
 
     test('reviewTargetBranch returns undefined for unknown worktree', async () => {
-      const { useGitStore } = await import(
-        '../../../src/renderer/src/stores/useGitStore'
-      )
+      const { useGitStore } = await import('../../../src/renderer/src/stores/useGitStore')
 
       expect(useGitStore.getState().reviewTargetBranch.get('nonexistent')).toBeUndefined()
     })
