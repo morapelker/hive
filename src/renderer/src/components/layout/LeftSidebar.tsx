@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useLayoutStore } from '@/stores/useLayoutStore'
-import { useSpaceStore, useProjectStore, useConnectionStore } from '@/stores'
+import { useProjectStore, useConnectionStore } from '@/stores'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FolderGit2, Link, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -12,13 +13,14 @@ import {
 } from '@/components/projects'
 import { ConnectionList } from '@/components/connections'
 import { SpacesTabBar } from '@/components/spaces'
+import { UsageIndicator } from './UsageIndicator'
 import { PinnedList } from './PinnedList'
 import { RecentList } from './RecentList'
 
 export function LeftSidebar(): React.JSX.Element {
   const { leftSidebarWidth, leftSidebarCollapsed, setLeftSidebarWidth } = useLayoutStore()
-  const loadSpaces = useSpaceStore((s) => s.loadSpaces)
   const expandAllProjects = useProjectStore((s) => s.expandAllProjects)
+  const showUsageIndicator = useSettingsStore((s) => s.showUsageIndicator)
 
   // Connection mode state
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
@@ -28,10 +30,6 @@ export function LeftSidebar(): React.JSX.Element {
   const finalizeConnection = useConnectionStore((s) => s.finalizeConnection)
 
   const canFinalize = connectionModeSelectedIds.size >= 2
-
-  useEffect(() => {
-    loadSpaces()
-  }, [loadSpaces])
 
   // Expand all projects when entering connection mode
   useEffect(() => {
@@ -145,7 +143,9 @@ export function LeftSidebar(): React.JSX.Element {
           <ConnectionList />
           <ProjectList onAddProject={handleAddProject} />
         </div>
-        {!connectionModeActive && <SpacesTabBar />}
+        {!connectionModeActive && (
+          showUsageIndicator ? <UsageIndicator /> : <SpacesTabBar />
+        )}
       </aside>
       <ResizeHandle onResize={handleResize} direction="left" />
     </div>

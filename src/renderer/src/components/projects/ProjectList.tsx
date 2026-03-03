@@ -62,10 +62,12 @@ export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Eleme
     setDragOverProjectId(null)
   }, [])
 
-  // Load projects on mount
+  // Load projects and spaces on mount
+  const loadSpaces = useSpaceStore((s) => s.loadSpaces)
   useEffect(() => {
     loadProjects()
-  }, [loadProjects])
+    loadSpaces()
+  }, [loadProjects, loadSpaces])
 
   // Space filtering: restrict to projects in the active space
   const activeSpaceId = useSpaceStore((s) => s.activeSpaceId)
