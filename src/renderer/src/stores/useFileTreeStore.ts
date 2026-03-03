@@ -130,6 +130,11 @@ export const useFileTreeStore = create<FileTreeState>()(
             loadingMap.set(worktreePath, false)
             return { fileIndexByWorktree: indexMap, fileIndexLoadingByWorktree: loadingMap }
           })
+
+          // Ensure the file watcher subscription is active so incremental
+          // updates flow even when the Files sidebar tab is hidden.
+          // startWatching guards against duplicate subscriptions internally.
+          get().startWatching(worktreePath)
         } catch {
           set((state) => {
             const loadingMap = new Map(state.fileIndexLoadingByWorktree)
