@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { FlatFile } from '@/lib/file-search-utils'
+import type { FileTreeChangeEventItem } from '@shared/types/file-tree'
 
 // File tree node structure matching main process
 interface FileTreeNode {
@@ -44,7 +45,7 @@ interface FileTreeState {
   stopWatching: (worktreePath: string) => Promise<void>
   handleFileChange: (
     worktreePath: string,
-    events: Array<{ eventType: string; changedPath: string; relativePath: string }>
+    events: FileTreeChangeEventItem[]
   ) => Promise<void>
 }
 
@@ -300,7 +301,7 @@ export const useFileTreeStore = create<FileTreeState>()(
       // Handle batched file change events from watcher
       handleFileChange: async (
         worktreePath: string,
-        events: Array<{ eventType: string; changedPath: string; relativePath: string }>
+        events: FileTreeChangeEventItem[]
       ) => {
         // Refresh the tree display once (not per-event)
         await get().refreshFileTree(worktreePath)
@@ -311,33 +312,41 @@ export const useFileTreeStore = create<FileTreeState>()(
           if (!currentIndex) return state // No index loaded yet
 
           let updatedIndex = [...currentIndex]
+          const knownPaths = new Set(currentIndex.map((f) => f.path))
+          let mutated = false
 
           for (const { eventType, changedPath, relativePath } of events) {
-            if (eventType === 'add') {
-              // Only add if not already present (avoid duplicates)
-              if (!updatedIndex.some((f) => f.path === changedPath)) {
+            if (eventType === 'add' || eventType === 'change') {
+              // For 'add': ensure file is in the index (avoid duplicates)
+              // For 'change': if path is NOT in the index, treat as implicit 'add'
+              //   — recovers from lost add events (debounce race, missed watcher event)
+              if (!knownPaths.has(changedPath)) {
                 const name = relativePath.split('/').pop() || relativePath
                 const dotIdx = name.lastIndexOf('.')
                 const extension = dotIdx > 0 ? name.substring(dotIdx).toLowerCase() : null
                 updatedIndex.push({ name, path: changedPath, relativePath, extension })
-              }
-            } else if (eventType === 'change') {
-              // Key fix: if a 'change' fires for a path not in the index,
-              // treat it as an implicit 'add' — recovers from lost add events
-              if (!updatedIndex.some((f) => f.path === changedPath)) {
-                const name = relativePath.split('/').pop() || relativePath
-                const dotIdx = name.lastIndexOf('.')
-                const extension = dotIdx > 0 ? name.substring(dotIdx).toLowerCase() : null
-                updatedIndex.push({ name, path: changedPath, relativePath, extension })
+                knownPaths.add(changedPath)
+                mutated = true
               }
             } else if (eventType === 'unlink') {
               updatedIndex = updatedIndex.filter((f) => f.path !== changedPath)
+              knownPaths.delete(changedPath)
+              mutated = true
             } else if (eventType === 'unlinkDir') {
               const prefix = changedPath + '/'
-              updatedIndex = updatedIndex.filter((f) => !f.path.startsWith(prefix))
+              updatedIndex = updatedIndex.filter((f) => {
+                if (f.path.startsWith(prefix)) {
+                  knownPaths.delete(f.path)
+                  return false
+                }
+                return true
+              })
+              mutated = true
             }
             // 'addDir' events do not affect the flat file index
           }
+
+          if (!mutated) return state
 
           const newMap = new Map(state.fileIndexByWorktree)
           newMap.set(worktreePath, updatedIndex)
