@@ -183,7 +183,7 @@ describe('GraphQL resolver routing: opencodeSetModel', () => {
   })
 })
 
-describe('GraphQL resolver routing: opcodeCommands by session lookup', () => {
+describe('GraphQL resolver routing: opencodeCommands by session lookup', () => {
   let sdkManager: AgentSdkManager
   let mockCodex: ReturnType<typeof createMockImplementer>
 

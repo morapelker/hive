@@ -20,11 +20,14 @@ export type Scalars = {
 
 export type AgentSdk =
   | 'claude_code'
-  | 'opencode';
+  | 'codex'
+  | 'opencode'
+  | 'terminal';
 
 export type AgentSdkDetection = {
   __typename?: 'AgentSdkDetection';
   claude: Scalars['Boolean']['output'];
+  codex: Scalars['Boolean']['output'];
   opencode: Scalars['Boolean']['output'];
 };
 
@@ -2104,6 +2107,7 @@ export type ResolversParentTypes = ResolversObject<{
 
 export type AgentSdkDetectionResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['AgentSdkDetection'] = ResolversParentTypes['AgentSdkDetection']> = ResolversObject<{
   claude?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+  codex?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
   opencode?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
 }>;
 
