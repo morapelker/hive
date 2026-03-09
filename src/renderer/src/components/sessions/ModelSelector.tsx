@@ -57,7 +57,8 @@ export function ModelSelector({ sessionId, worktreeId, value, onChange }: ModelS
     }
     return null
   })
-  const agentSdk = session?.agent_sdk ?? 'opencode'
+  const defaultAgentSdk = useSettingsStore((state) => state.defaultAgentSdk)
+  const agentSdk = session?.agent_sdk ?? defaultAgentSdk ?? 'opencode'
   const globalModel = useSettingsStore((state) => state.selectedModel)
   const sessionModel =
     session?.model_id && session.model_provider_id
