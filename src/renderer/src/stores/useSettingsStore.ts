@@ -22,6 +22,12 @@ export interface SelectedModel {
   variant?: string
 }
 
+export interface ModeDefaultModels {
+  build: SelectedModel | null
+  plan: SelectedModel | null
+  ask: SelectedModel | null
+}
+
 export type QuickActionType = 'cursor' | 'terminal' | 'copy-path' | 'finder'
 
 export interface CommandFilterSettings {
@@ -49,6 +55,7 @@ export interface AppSettings {
 
   // Model
   selectedModel: SelectedModel | null
+  defaultModels: ModeDefaultModels | null
 
   // Quick Actions
   lastOpenAction: QuickActionType | null
@@ -95,6 +102,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   ghosttyFontSize: 14,
   ghosttyPromotionDismissed: false,
   selectedModel: null,
+  defaultModels: null,
   lastOpenAction: null,
   favoriteModels: [],
   customChromeCommand: '',
@@ -139,6 +147,8 @@ interface SettingsState extends AppSettings {
   setActiveSection: (section: string) => void
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   setSelectedModel: (model: SelectedModel) => Promise<void>
+  setModeDefaultModel: (mode: 'build' | 'plan' | 'ask', model: SelectedModel | null) => Promise<void>
+  getModelForMode: (mode: 'build' | 'plan' | 'ask') => SelectedModel | null
   toggleFavoriteModel: (providerID: string, modelID: string) => void
   setModelVariantDefault: (providerID: string, modelID: string, variant: string) => void
   getModelVariantDefault: (providerID: string, modelID: string) => string | undefined
@@ -183,6 +193,7 @@ function extractSettings(state: SettingsState): AppSettings {
     ghosttyFontSize: state.ghosttyFontSize,
     ghosttyPromotionDismissed: state.ghosttyPromotionDismissed,
     selectedModel: state.selectedModel,
+    defaultModels: state.defaultModels,
     lastOpenAction: state.lastOpenAction,
     favoriteModels: state.favoriteModels,
     customChromeCommand: state.customChromeCommand,
@@ -243,6 +254,36 @@ export const useSettingsStore = create<SettingsState>()(
         saveToDatabase(settings)
       },
 
+      setModeDefaultModel: async (mode: 'build' | 'plan' | 'ask', model: SelectedModel | null) => {
+        const currentDefaults = get().defaultModels || { build: null, plan: null, ask: null }
+        const updated = { ...currentDefaults, [mode]: model }
+        set({ defaultModels: updated })
+
+        // Save to database
+        const settings = extractSettings({ ...get(), defaultModels: updated } as SettingsState)
+        await saveToDatabase(settings)
+
+        // If setting a non-null model, also update OpenCode service
+        if (model) {
+          try {
+            await window.opencodeOps.setModel(model)
+          } catch (error) {
+            console.error('Failed to persist model selection:', error)
+          }
+        }
+      },
+
+      getModelForMode: (mode: 'build' | 'plan' | 'ask') => {
+        // Check mode-specific default
+        const modeDefault = get().defaultModels?.[mode]
+        if (modeDefault) {
+          return modeDefault
+        }
+
+        // Fall back to global default
+        return get().selectedModel
+      },
+
       setModelVariantDefault: (providerID: string, modelID: string, variant: string) => {
         const key = `${providerID}::${modelID}`
         const updated = { ...get().modelVariantDefaults, [key]: variant }
@@ -276,10 +317,30 @@ export const useSettingsStore = create<SettingsState>()(
       loadFromDatabase: async () => {
         const dbSettings = await loadSettingsFromDatabase()
         if (dbSettings) {
+          // MIGRATION: If defaultModels is null but selectedModel exists,
+          // initialize all mode defaults to the global default
+          let migratedSettings = dbSettings
+          if (
+            dbSettings.defaultModels === null &&
+            dbSettings.selectedModel !== null &&
+            dbSettings.selectedModel !== undefined
+          ) {
+            migratedSettings = {
+              ...dbSettings,
+              defaultModels: {
+                build: dbSettings.selectedModel,
+                plan: dbSettings.selectedModel,
+                ask: dbSettings.selectedModel
+              }
+            }
+            // Save migrated settings
+            await saveToDatabase(migratedSettings)
+          }
+
           set({
-            ...dbSettings,
+            ...migratedSettings,
             // Existing users upgrading: if field missing, they've already set up
-            initialSetupComplete: dbSettings.initialSetupComplete ?? true,
+            initialSetupComplete: migratedSettings.initialSetupComplete ?? true,
             isLoading: false
           })
         } else {
@@ -312,6 +373,7 @@ export const useSettingsStore = create<SettingsState>()(
         ghosttyFontSize: state.ghosttyFontSize,
         ghosttyPromotionDismissed: state.ghosttyPromotionDismissed,
         selectedModel: state.selectedModel,
+        defaultModels: state.defaultModels,
         lastOpenAction: state.lastOpenAction,
         favoriteModels: state.favoriteModels,
         customChromeCommand: state.customChromeCommand,

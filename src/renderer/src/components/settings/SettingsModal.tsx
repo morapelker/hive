@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
-import { Settings, Palette, Monitor, Code, Terminal, Keyboard, Download, Shield, Eye } from 'lucide-react'
+import { Settings, Palette, Monitor, Code, Terminal, Keyboard, Download, Shield, Eye, Sparkles } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { SettingsAppearance } from './SettingsAppearance'
 import { SettingsGeneral } from './SettingsGeneral'
+import { SettingsModels } from './SettingsModels'
 import { SettingsEditor } from './SettingsEditor'
 import { SettingsTerminal } from './SettingsTerminal'
 import { SettingsShortcuts } from './SettingsShortcuts'
@@ -15,6 +16,7 @@ import { cn } from '@/lib/utils'
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'general', label: 'General', icon: Monitor },
+  { id: 'models', label: 'Models', icon: Sparkles },
   { id: 'editor', label: 'Editor', icon: Code },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'security', label: 'Security', icon: Shield },
@@ -79,6 +81,7 @@ export function SettingsModal(): React.JSX.Element {
           <div className="flex-1 overflow-y-auto p-6">
             {activeSection === 'appearance' && <SettingsAppearance />}
             {activeSection === 'general' && <SettingsGeneral />}
+            {activeSection === 'models' && <SettingsModels />}
             {activeSection === 'editor' && <SettingsEditor />}
             {activeSection === 'terminal' && <SettingsTerminal />}
             {activeSection === 'security' && <SettingsSecurity />}

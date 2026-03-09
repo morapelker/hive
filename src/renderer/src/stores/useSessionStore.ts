@@ -294,7 +294,15 @@ export const useSessionStore = create<SessionState>()(
               }
             }
 
-            // Priority 2: global default
+            // Priority 2: mode-specific default (build mode for new sessions)
+            if (!defaultModel) {
+              const modeModel = useSettingsStore.getState().getModelForMode('build')
+              if (modeModel) {
+                defaultModel = modeModel
+              }
+            }
+
+            // Priority 3: global default
             if (!defaultModel) {
               const globalModel = useSettingsStore.getState().selectedModel
               if (globalModel) {
@@ -1134,9 +1142,18 @@ export const useSessionStore = create<SessionState>()(
               agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
             // Terminal sessions skip model resolution
             if (defaultAgentSdk !== 'terminal') {
-              const globalModel = useSettingsStore.getState().selectedModel
-              if (globalModel) {
-                defaultModel = globalModel
+              // Priority 1: mode-specific default (build mode for new sessions)
+              const modeModel = useSettingsStore.getState().getModelForMode('build')
+              if (modeModel) {
+                defaultModel = modeModel
+              }
+
+              // Priority 2: global default
+              if (!defaultModel) {
+                const globalModel = useSettingsStore.getState().selectedModel
+                if (globalModel) {
+                  defaultModel = globalModel
+                }
               }
             }
           } catch {

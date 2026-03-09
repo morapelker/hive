@@ -37,9 +37,13 @@ function getVariantKeys(model: ModelInfo): string[] {
 
 interface ModelSelectorProps {
   sessionId?: string
+  worktreeId?: string
+  // Controlled mode (for settings)
+  value?: { providerID: string; modelID: string; variant?: string } | null
+  onChange?: (model: { providerID: string; modelID: string; variant?: string }) => void
 }
 
-export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Element {
+export function ModelSelector({ sessionId, worktreeId, value, onChange }: ModelSelectorProps): React.JSX.Element {
   // Read per-session model from session store (with global fallback)
   const session = useSessionStore((state) => {
     if (!sessionId) return null
@@ -63,7 +67,8 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
           variant: session.model_variant ?? undefined
         }
       : null
-  const selectedModel = sessionModel ?? globalModel
+  // Use controlled value if provided (for settings), otherwise use session/global
+  const selectedModel = value !== undefined ? value : (sessionModel ?? globalModel)
   const setSelectedModel = useSettingsStore((state) => state.setSelectedModel)
   const favoriteModels = useSettingsStore((s) => s.favoriteModels)
   const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel)
@@ -150,7 +155,11 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
           ? variantKeys[0]
           : undefined
     const newModel = { providerID: model.providerID, modelID: model.id, variant }
-    if (sessionId) {
+    
+    // Use controlled onChange if provided (for settings), otherwise update store
+    if (onChange) {
+      onChange(newModel)
+    } else if (sessionId) {
       useSessionStore.getState().setSessionModel(sessionId, newModel)
     } else {
       setSelectedModel(newModel)
@@ -160,7 +169,11 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
   function handleSelectVariant(model: ModelInfo, variant: string): void {
     useSettingsStore.getState().setModelVariantDefault(model.providerID, model.id, variant)
     const newModel = { providerID: model.providerID, modelID: model.id, variant }
-    if (sessionId) {
+    
+    // Use controlled onChange if provided (for settings), otherwise update store
+    if (onChange) {
+      onChange(newModel)
+    } else if (sessionId) {
       useSessionStore.getState().setSessionModel(sessionId, newModel)
     } else {
       setSelectedModel(newModel)

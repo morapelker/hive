@@ -2690,8 +2690,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           lastSendMode.set(sessionId, 'ask')
           useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
 
-          // Use the currently selected model
-          const selectedModel = getModelForRequests()
+          // Use the ask-specific model if configured, otherwise use session model
+          const { useSettingsStore } = await import('@/stores/useSettingsStore')
+          const askModel = useSettingsStore.getState().getModelForMode('ask')
+          const selectedModel = askModel || getModelForRequests()
 
           // Prefix with ASK_MODE_PREFIX to prevent code changes
           const prefixedQuestion = ASK_MODE_PREFIX + question
