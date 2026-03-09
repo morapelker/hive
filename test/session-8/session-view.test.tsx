@@ -1402,7 +1402,7 @@ describe('Session 8: Session View', () => {
       render(<SessionView sessionId="test-session-1" />)
 
       await waitFor(() => {
-        expect(screen.getByText(/Enter to send/i)).toBeInTheDocument()
+        expect(screen.getByText(/to change variant/i)).toBeInTheDocument()
       })
     })
 

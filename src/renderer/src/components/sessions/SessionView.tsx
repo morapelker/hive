@@ -4082,7 +4082,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   {elapsedTimerText
                     ?? (pendingPlan
                       ? 'Enter to send feedback to revise the plan'
-                      : 'Enter to send, Shift+Enter for new line')}
+                      : `${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Shift+Enter for new line`)}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
