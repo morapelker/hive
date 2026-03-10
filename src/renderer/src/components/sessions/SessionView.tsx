@@ -2138,6 +2138,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
             // Start completion timer for auto-sent pending prompts (e.g. PR creation)
             messageSendTimes.set(sessionId, Date.now())
+            userExplicitSendTimes.set(sessionId, Date.now())
             // Set worktree status based on session mode
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
             lastSendMode.set(sessionId, currentMode)
@@ -3177,6 +3178,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       return
     }
 
+    useSessionStore.getState().clearPendingPlan(sessionId)
+    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+
     if (connectionId) {
       const handoffPrompt = `Implement the following plan\n${lastAssistantMessage.content}`
       const sessionStore = useSessionStore.getState()
@@ -3212,7 +3216,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     sessionStore.setPendingMessage(result.session.id, handoffPrompt)
     sessionStore.setActiveSession(result.session.id)
     await setModePromise
-  }, [messages, worktreeId, sessionRecord?.project_id, connectionId])
+  }, [messages, worktreeId, sessionRecord?.project_id, connectionId, sessionId])
 
   const handlePlanReadySuperpowers = useCallback(async () => {
     // 1. Extract plan content
@@ -3224,6 +3228,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       toast.error('No plan content found to supercharge')
       return
     }
+
+    useSessionStore.getState().clearPendingPlan(sessionId)
+    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
 
     if (connectionId) {
       const sessionStore = useSessionStore.getState()
@@ -3293,7 +3300,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // 6. Navigate to the new worktree
     worktreeStore.selectWorktree(dupResult.worktree.id)
     await setModePromise
-  }, [messages, worktreeId, pendingPlan, connectionId])
+  }, [messages, worktreeId, pendingPlan, connectionId, sessionId])
 
   const handlePlanReadySuperpowersLocal = useCallback(async () => {
     // 1. Extract plan content
@@ -3305,6 +3312,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       toast.error('No plan content found to supercharge')
       return
     }
+
+    useSessionStore.getState().clearPendingPlan(sessionId)
+    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
 
     // 2. Create session in the same worktree (no duplication)
     const currentWorktreeId = worktreeId
@@ -3332,7 +3342,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // 4. Navigate to the new session (same worktree)
     sessionStore.setActiveSession(newSessionId)
     await setModePromise
-  }, [messages, worktreeId, sessionRecord?.project_id, pendingPlan])
+  }, [messages, worktreeId, sessionRecord?.project_id, pendingPlan, sessionId])
 
   // Abort streaming
   const handleAbort = useCallback(async () => {
