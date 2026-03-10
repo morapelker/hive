@@ -69,7 +69,7 @@ export function ModelSelector({ sessionId, worktreeId, value, onChange }: ModelS
         }
       : null
   // Use controlled value if provided (for settings), otherwise use session/global
-  const selectedModel = value !== undefined ? value : (sessionModel ?? globalModel)
+  const selectedModel = (value !== undefined && value !== null) ? value : (sessionModel ?? globalModel)
   const setSelectedModel = useSettingsStore((state) => state.setSelectedModel)
   const favoriteModels = useSettingsStore((s) => s.favoriteModels)
   const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel)
