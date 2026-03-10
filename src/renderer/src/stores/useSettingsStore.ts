@@ -146,7 +146,7 @@ interface SettingsState extends AppSettings {
   closeSettings: () => void
   setActiveSection: (section: string) => void
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
-  setSelectedModel: (model: SelectedModel) => Promise<void>
+  setSelectedModel: (model: SelectedModel | null) => Promise<void>
   setModeDefaultModel: (mode: 'build' | 'plan' | 'ask', model: SelectedModel | null) => Promise<void>
   getModelForMode: (mode: 'build' | 'plan' | 'ask') => SelectedModel | null
   toggleFavoriteModel: (providerID: string, modelID: string) => void
@@ -241,15 +241,18 @@ export const useSettingsStore = create<SettingsState>()(
         }
       },
 
-      setSelectedModel: async (model: SelectedModel) => {
+      setSelectedModel: async (model: SelectedModel | null) => {
         set({ selectedModel: model })
         // Persist to backend (settings DB + opencode service)
-        try {
-          await window.opencodeOps.setModel(model)
-        } catch (error) {
-          console.error('Failed to persist model selection:', error)
+        // Only call opencodeOps.setModel if model is non-null
+        if (model) {
+          try {
+            await window.opencodeOps.setModel(model)
+          } catch (error) {
+            console.error('Failed to persist model selection:', error)
+          }
         }
-        // Also save in app settings
+        // Always save to app settings (including null to clear)
         const settings = extractSettings({ ...get(), selectedModel: model } as SettingsState)
         saveToDatabase(settings)
       },
