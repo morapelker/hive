@@ -753,6 +753,29 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 
+  // Get diff stat (additions/deletions per file) between current branch and a base branch
+  ipcMain.handle(
+    'git:branchDiffStat',
+    async (
+      _event,
+      worktreePath: string,
+      baseBranch: string
+    ): Promise<{ success: boolean; files?: GitDiffStatFile[]; error?: string }> => {
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.getBranchDiffStat(baseBranch)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to get branch diff stat',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath, baseBranch }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
+
   // Get unified diff between current worktree and a branch for a specific file
   ipcMain.handle(
     'git:branchFileDiff',

@@ -1463,6 +1463,41 @@ export class GitService {
   }
 
   /**
+   * Get diff stats (additions/deletions per file) for branch-to-branch comparison.
+   * Uses git diff --numstat <baseBranch>...HEAD
+   */
+  async getBranchDiffStat(baseBranch: string): Promise<GitDiffStatResult> {
+    if (!baseBranch || baseBranch.startsWith('-')) {
+      return { success: false, error: 'Invalid branch name' }
+    }
+    try {
+      const files: GitDiffStatFile[] = []
+      const output = await this.git.raw(['diff', '--numstat', `${baseBranch}...HEAD`])
+      for (const line of output.trim().split('\n')) {
+        if (!line) continue
+        const [add, del, path] = line.split('\t')
+        if (!path) continue
+        const binary = add === '-' && del === '-'
+        files.push({
+          path,
+          additions: binary ? 0 : parseInt(add, 10) || 0,
+          deletions: binary ? 0 : parseInt(del, 10) || 0,
+          binary
+        })
+      }
+      return { success: true, files }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log.error(
+        'Failed to get branch diff stat',
+        error instanceof Error ? error : new Error(message),
+        { baseBranch, repoPath: this.repoPath }
+      )
+      return { success: false, error: message }
+    }
+  }
+
+  /**
    * Get list of files changed between the current worktree and a branch
    * Uses git diff --name-status to get file paths and their change status
    */
