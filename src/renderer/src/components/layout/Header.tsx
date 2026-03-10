@@ -31,6 +31,8 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { QuickActions } from './QuickActions'
 import { usePRDetection } from '@/hooks/usePRDetection'
+import { CreatePRModal } from '@/components/git/CreatePRModal'
+import { NoRemoteModal } from '@/components/git/NoRemoteModal'
 import hiveLogo from '@/assets/icon.png'
 
 type ConflictFixFlow =
@@ -70,6 +72,8 @@ export function Header(): React.JSX.Element {
   const setPendingMessage = useSessionStore((s) => s.setPendingMessage)
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
   const [conflictFixFlow, setConflictFixFlow] = useState<ConflictFixFlow | null>(null)
+  const [createPRModalOpen, setCreatePRModalOpen] = useState(false)
+  const [noRemoteModalOpen, setNoRemoteModalOpen] = useState(false)
 
   // Monitor PR session stream events for PR URL detection
   usePRDetection(selectedWorktreeId)
@@ -185,7 +189,7 @@ export function Header(): React.JSX.Element {
   }, [conflictFixFlow, conflictFixSessionStatus])
 
   // Load remote branches for the PR target and review target dropdowns
-  const [remoteBranches, setRemoteBranches] = useState<{ name: string }[]>([])
+  const [remoteBranches, setRemoteBranches] = useState<{ name: string; isRemote: boolean }[]>([])
   const [isMergingPR, setIsMergingPR] = useState(false)
   const [isArchivingWorktree, setIsArchivingWorktree] = useState(false)
 
@@ -201,7 +205,7 @@ export function Header(): React.JSX.Element {
     })
   }, [selectedWorktree?.path])
 
-  const handleCreatePR = useCallback(async () => {
+  const handleCreatePRLegacy = useCallback(async () => {
     if (!selectedWorktree?.path) return
 
     const wtId = selectedWorktreeId
@@ -250,6 +254,19 @@ export function Header(): React.JSX.Element {
       targetBranch
     })
   }, [selectedWorktree?.path, selectedWorktreeId, prTargetBranch, branchInfo])
+
+  const handleCreatePR = useCallback(() => {
+    if (!remoteInfo?.hasRemote) {
+      setNoRemoteModalOpen(true)
+      return
+    }
+    if (!remoteInfo?.isGitHub) {
+      // Keep existing AI-session flow for non-GitHub remotes
+      handleCreatePRLegacy()
+      return
+    }
+    setCreatePRModalOpen(true)
+  }, [remoteInfo, handleCreatePRLegacy])
 
   const handleReview = useCallback(async () => {
     if (!selectedWorktree?.path) return
@@ -616,6 +633,18 @@ export function Header(): React.JSX.Element {
           )}
         </Button>
       </div>
+      <CreatePRModal
+        open={createPRModalOpen}
+        onOpenChange={setCreatePRModalOpen}
+        worktreePath={selectedWorktree?.path || ''}
+        worktreeId={selectedWorktreeId || ''}
+        branchName={branchInfo?.name || ''}
+        defaultTargetBranch={
+          prTargetBranch || branchInfo?.tracking?.replace('origin/', '') || 'main'
+        }
+        remoteBranches={remoteBranches}
+      />
+      <NoRemoteModal open={noRemoteModalOpen} onOpenChange={setNoRemoteModalOpen} />
     </header>
   )
 }
