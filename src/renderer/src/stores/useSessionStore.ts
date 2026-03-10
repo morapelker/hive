@@ -713,6 +713,19 @@ export const useSessionStore = create<SessionState>()(
         return get().modeBySession.get(sessionId) || 'build'
       },
 
+      // Get session by ID from either worktree or connection sessions
+      getSessionById: (sessionId: string): Session | null => {
+        for (const sessions of get().sessionsByWorktree.values()) {
+          const found = sessions.find((s) => s.id === sessionId)
+          if (found) return found
+        }
+        for (const sessions of get().sessionsByConnection.values()) {
+          const found = sessions.find((s) => s.id === sessionId)
+          if (found) return found
+        }
+        return null
+      },
+
       // Toggle session mode between build and plan
       toggleSessionMode: async (sessionId: string) => {
         const currentMode = get().modeBySession.get(sessionId) || 'build'
@@ -731,6 +744,9 @@ export const useSessionStore = create<SessionState>()(
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
+
+        // Auto-apply mode-specific model if configured
+        await get().applyModeDefaultModel(sessionId, newMode)
       },
 
       // Set session mode explicitly
@@ -853,6 +869,22 @@ export const useSessionStore = create<SessionState>()(
             /* non-critical */
           }
         }
+      },
+
+      // Apply mode-specific default model when toggling modes
+      applyModeDefaultModel: async (sessionId: string, newMode: SessionMode) => {
+        // Import settings store dynamically to avoid circular deps
+        const { useSettingsStore } = await import('./useSettingsStore')
+
+        // Check if there's a mode-specific default for the new mode
+        const newModeDefault = useSettingsStore.getState().getModelForMode(newMode)
+        if (!newModeDefault) {
+          // No default configured for this mode, keep current model
+          return
+        }
+
+        // Apply the new mode's default model
+        await get().setSessionModel(sessionId, newModeDefault)
       },
 
       // Keep opencode_session_id in sync in-memory after connect/reconnect (scope-agnostic)
