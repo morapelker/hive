@@ -548,7 +548,6 @@ export function Header(): React.JSX.Element {
           </>
         )}
         {!isConnectionMode &&
-          isGitHub &&
           (prState === 'none' ||
             prState === 'creating' ||
             (prState === 'created' && !isCleanTree)) && (
