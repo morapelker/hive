@@ -1013,6 +1013,12 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     log.info('Selected model set', { model: model.modelID, variant: model.variant })
   }
 
+  clearSelectedModel(): void {
+    this.selectedModel = undefined
+    this.selectedVariant = undefined
+    log.info('Selected model cleared')
+  }
+
   // ── Session info ─────────────────────────────────────────────────
 
   async getSessionInfo(
