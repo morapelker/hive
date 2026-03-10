@@ -193,11 +193,14 @@ export function CreatePRModal({
               'disabled:cursor-not-allowed disabled:opacity-50'
             )}
           >
-            {remoteBranches.map((branch) => (
-              <option key={branch.name} value={branch.name}>
-                {branch.name.replace(/^origin\//, '')}
-              </option>
-            ))}
+            {remoteBranches.map((branch) => {
+              const branchValue = branch.name.replace(/^origin\//, '')
+              return (
+                <option key={branch.name} value={branchValue}>
+                  {branchValue}
+                </option>
+              )
+            })}
           </select>
         </div>
 

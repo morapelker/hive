@@ -163,7 +163,8 @@ async function generateViaClaudeCode(
 
 async function generateViaOpenCode(
   prompt: string,
-  worktreePath: string
+  worktreePath: string,
+  worktreeId: string
 ): Promise<string> {
   const client = openCodeService.getClient()
   if (!client) {
@@ -206,6 +207,12 @@ async function generateViaOpenCode(
       if (statusMap?.[sessionId]?.type === 'idle') {
         break
       }
+    }
+
+    if (Date.now() - start >= maxWait) {
+      log.warn('OpenCode session timed out waiting for response', {
+        worktreeId
+      })
     }
 
     // Fetch messages and extract assistant response
@@ -274,7 +281,7 @@ export async function generatePRContent(params: {
 
   try {
     if (sdk === 'opencode') {
-      rawResponse = await generateViaOpenCode(prompt, worktreePath)
+      rawResponse = await generateViaOpenCode(prompt, worktreePath, worktreeId)
     } else {
       rawResponse = await generateViaClaudeCode(prompt, worktreePath, model ?? 'sonnet')
     }
