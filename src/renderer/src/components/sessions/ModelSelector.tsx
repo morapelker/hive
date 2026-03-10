@@ -37,10 +37,12 @@ function getVariantKeys(model: ModelInfo): string[] {
 
 interface ModelSelectorProps {
   sessionId?: string
-  worktreeId?: string
+interface ModelSelectorProps {
+  sessionId?: string
   // Controlled mode (for settings)
   value?: { providerID: string; modelID: string; variant?: string } | null
   onChange?: (model: { providerID: string; modelID: string; variant?: string }) => void
+}
 }
 
 export function ModelSelector({ sessionId, worktreeId: _worktreeId, value, onChange }: ModelSelectorProps): React.JSX.Element {
