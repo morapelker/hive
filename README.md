@@ -1,8 +1,8 @@
 <div align="center">
   <img src="resources/icon.png" alt="Hive" width="128" />
   <h1>Hive</h1>
-  <p><strong>A native macOS app for managing git worktrees and AI-powered coding sessions.</strong></p>
-  <p>Work on multiple branches simultaneously. Run AI coding agents inline. Never stash again.</p>
+  <p><strong>An open-source AI agent orchestrator for parallel coding across projects.</strong></p>
+  <p>Run Claude Code, OpenCode, and Codex sessions in parallel. One window. Isolated branches. Zero tab chaos.</p>
 
   <p>
     <a href="https://github.com/morapelker/hive/releases/latest"><img src="https://img.shields.io/github/v/release/morapelker/hive?style=flat-square&logo=github&label=version" alt="Latest Release" /></a>
@@ -43,9 +43,9 @@
 
 ## What is Hive?
 
-If you work across multiple branches, features, or repos at the same time, you know the pain -- constant stashing, context switching, and losing your place. Git worktrees solve this, but managing them from the terminal is tedious.
+If you run multiple AI coding agents across different projects and branches, you know the pain -- six terminal tabs open, you can't remember which agent is working on what, and you're worried two of them are editing the same files.
 
-Hive gives you a dedicated workspace for worktree-based development. Create, switch, and archive worktrees visually. Run AI coding sessions directly inside each worktree. See file changes, diffs, and git status in real time -- all from one app.
+Hive is an AI agent orchestrator. See all your running agents in one sidebar, click to switch between them, and each one runs on an isolated git worktree branch so they can't conflict. Connect multiple repositories together so a single agent session has context across your entire stack.
 
 ## Features
 
@@ -169,21 +169,20 @@ Connect any two worktrees to:
 
 **Refactoring**: Connect old and new implementations to ensure feature parity during large refactors.
 
-## Screenshots
+## See It In Action
 
 <div align="center">
-  <img src="docs/screenshots/hive-ss-1.png" alt="Hive — AI coding session with git worktrees" width="900" />
-  <br/>
-  <sub>AI-powered coding sessions with integrated git worktree management</sub>
+  <img src="docs/screenshots/hive-full-demo.gif" alt="Hive demo — orchestrate AI agents across projects" width="900" />
 </div>
-
-<br/>
 
 <details>
 <summary><strong>More Screenshots</strong></summary>
 
 <div align="center">
   <br/>
+  <img src="docs/screenshots/hive-ss-1.png" alt="Hive — AI coding session with git worktrees" width="900" />
+  <sub>AI-powered coding sessions with integrated git worktree management</sub>
+  <br/><br/>
   <img src="docs/screenshots/hive-worktree-create.png" alt="Creating a new worktree" width="900" />
   <sub>Create and manage worktrees visually</sub>
   <br/><br/>
