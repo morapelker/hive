@@ -377,7 +377,8 @@ export class CommandFilterService {
    * Used internally by both generateBashSuggestions and generateSubCommandSuggestions.
    *
    * For long commands (>5 words), limits to first 4 patterns (exact + 3 wildcard levels)
-   * to avoid overwhelming the user with too many options.
+   * starting from the broadest patterns (fewest words before wildcard).
+   * e.g. "gh pr create --title ... --body ..." → ["exact", "gh *", "gh pr *", "gh pr create *"]
    */
   private generateSingleCommandSuggestions(commandStr: string): string[] {
     const prefix = 'bash: '
@@ -391,14 +392,15 @@ export class CommandFilterService {
 
     const suggestions: string[] = [commandStr]
 
-    // For long commands, limit to 3 wildcard levels to keep the list manageable
-    // e.g. "gh pr create --title ... --body ..." → ["exact", "gh pr create *", "gh pr *", "gh *"]
+    // For long commands, limit to 3 wildcard levels starting from the broadest
+    // e.g. "gh pr create --title ... --body ..." → ["exact", "gh *", "gh pr *", "gh pr create *"]
     const MAX_WILDCARD_LEVELS = parts.length > 5 ? 3 : parts.length - 1
 
-    // Generate progressively broader patterns by trimming from the right
-    // e.g. "gcloud compute list --project x" → "gcloud compute list *" → "gcloud compute *" → "gcloud *"
+    // Generate progressively more specific patterns starting from the broadest
+    // For long commands, we want the FIRST few patterns: "gh *", "gh pr *", "gh pr create *"
+    // NOT the last few patterns near the end of the command
     let levelsAdded = 0
-    for (let i = parts.length - 1; i >= 1 && levelsAdded < MAX_WILDCARD_LEVELS; i--) {
+    for (let i = 1; i <= parts.length - 1 && levelsAdded < MAX_WILDCARD_LEVELS; i++) {
       const pattern = `${prefix}${parts.slice(0, i).join(' ')} *`
       if (!suggestions.includes(pattern)) {
         suggestions.push(pattern)
