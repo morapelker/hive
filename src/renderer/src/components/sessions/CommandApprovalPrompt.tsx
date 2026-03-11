@@ -183,7 +183,8 @@ function splitBashForDisplay(
   let inSingleQuote = false
   let inDoubleQuote = false
   let escapeNext = false
-  let parenDepth = 0
+  // Stack to track command substitutions: each entry records whether it was opened inside double quotes
+  const parenStack: boolean[] = []
   let i = 0
 
   while (i < command.length) {
@@ -204,8 +205,7 @@ function splitBashForDisplay(
       continue
     }
 
-    // Handle quotes - track them regardless of nesting level
-    // Quotes inside $(...) affect whether ) closes the substitution
+    // Handle quotes
     if (char === "'" && !inDoubleQuote) {
       inSingleQuote = !inSingleQuote
       current += char
@@ -220,26 +220,29 @@ function splitBashForDisplay(
       continue
     }
 
-    // Track command substitutions $(...)
+    // Track command substitutions $(...) - push current quote state onto stack
     if (char === '$' && next === '(' && !inSingleQuote) {
-      parenDepth++
+      parenStack.push(inDoubleQuote)
       current += char + next
       i += 2
       continue
     }
 
     // Track closing ) of command substitution
-    // Only decrement parenDepth if ) appears OUTSIDE quotes
-    // This correctly handles $(echo ")") - the ) inside quotes doesn't close the substitution
-    if (char === ')' && parenDepth > 0 && !inSingleQuote && !inDoubleQuote) {
-      parenDepth--
+    // Match ) with the most recent $( by checking if we're in the same quote context
+    if (char === ')' && parenStack.length > 0 && !inSingleQuote) {
+      const openedInDoubleQuote = parenStack[parenStack.length - 1]
+      // Only close if we're in the same quote context as when it opened
+      if (inDoubleQuote === openedInDoubleQuote) {
+        parenStack.pop()
+      }
       current += char
       i++
       continue
     }
 
     // Only split when not inside quotes or command substitutions
-    if (!inSingleQuote && !inDoubleQuote && parenDepth === 0) {
+    if (!inSingleQuote && !inDoubleQuote && parenStack.length === 0) {
       if (char === '&' && next === '&') {
         if (current.trim()) parts.push({ cmd: current.trim(), separator: '&&' })
         current = ''
@@ -328,11 +331,17 @@ function CommandDisplay({ commandStr }: { commandStr: string }) {
   )
 }
 
-/** Build initial per-sub-command selected patterns: pick index 1 (one wildcard step up) or index 0 */
+/**
+ * Build initial per-sub-command selected patterns.
+ * Since patterns are now ordered broad→specific (e.g., ["exact", "gh *", "gh pr *", "gh pr create *"]),
+ * we default to the LAST pattern (most specific wildcard) to avoid granting overly broad permissions.
+ */
 function buildDefaultSubPatterns(groups: SubCommandSuggestions[]): Record<number, string> {
   const defaults: Record<number, string> = {}
   groups.forEach((group, idx) => {
-    defaults[idx] = group.patterns[1] ?? group.patterns[0] ?? ''
+    // Pick the last pattern (most specific wildcard), or fallback to exact if only 1 pattern
+    const lastIdx = group.patterns.length - 1
+    defaults[idx] = group.patterns[lastIdx] ?? ''
   })
   return defaults
 }
