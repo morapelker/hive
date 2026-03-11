@@ -58,15 +58,16 @@ export class CommandFilterService {
         continue
       }
 
-      // Handle quotes
-      if (char === "'" && !inDoubleQuote && parenDepth === 0) {
+      // Handle quotes - track them regardless of nesting level
+      // Quotes inside $(...) affect whether ) closes the substitution
+      if (char === "'" && !inDoubleQuote) {
         inSingleQuote = !inSingleQuote
         current += char
         i++
         continue
       }
 
-      if (char === '"' && !inSingleQuote && parenDepth === 0) {
+      if (char === '"' && !inSingleQuote) {
         inDoubleQuote = !inDoubleQuote
         current += char
         i++
@@ -83,9 +84,9 @@ export class CommandFilterService {
       }
 
       // Track closing ) of command substitution
-      // Command substitutions work inside double quotes, so always decrement when we see )
-      // Only skip if in single quotes (single quotes prevent all substitution)
-      if (char === ')' && parenDepth > 0 && !inSingleQuote) {
+      // Only decrement parenDepth if ) appears OUTSIDE quotes
+      // This correctly handles $(echo ")") - the ) inside quotes doesn't close the substitution
+      if (char === ')' && parenDepth > 0 && !inSingleQuote && !inDoubleQuote) {
         parenDepth--
         current += char
         i++

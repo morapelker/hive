@@ -2069,8 +2069,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               commandStr
             })
             this.pendingApprovals.delete(requestId)
-            resolve({ approved: false })
           }
+          // Always resolve even if already handled - prevents permanently pending Promise
+          resolve({ approved: false })
         }, 5 * 60 * 1000) // 5 minutes
       })
     ])
