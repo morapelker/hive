@@ -1,9 +1,24 @@
 import { Globe, ExternalLink } from 'lucide-react'
 import type { ToolViewProps } from './types'
 
+function formatResponseSize(content: string): string {
+  const byteCount = new TextEncoder().encode(content).length
+
+  if (byteCount < 1024) {
+    return `${byteCount} byte${byteCount === 1 ? '' : 's'}`
+  }
+
+  if (byteCount < 1024 * 1024) {
+    return `${(byteCount / 1024).toFixed(1)} KB`
+  }
+
+  return `${(byteCount / (1024 * 1024)).toFixed(1)} MB`
+}
+
 export function WebFetchToolView({ input, output, error }: ToolViewProps): React.JSX.Element {
   const url = (input.url || '') as string
   const prompt = (input.prompt || '') as string
+  const responseSize = output ? formatResponseSize(output) : null
 
   return (
     <div className="text-xs" data-testid="webfetch-tool-view">
@@ -41,9 +56,19 @@ export function WebFetchToolView({ input, output, error }: ToolViewProps): React
       {/* Output */}
       {output && !error && <div className="border-t border-border mx-3" />}
       {output && !error && (
-        <pre className="px-3 py-2 text-muted-foreground font-mono whitespace-pre-wrap break-words max-h-[300px] overflow-y-auto">
-          {output}
-        </pre>
+        <>
+          {responseSize && (
+            <div
+              className="px-3 pt-2 text-[10px] uppercase tracking-wide text-muted-foreground/70"
+              data-testid="webfetch-response-size"
+            >
+              {responseSize}
+            </div>
+          )}
+          <pre className="px-3 py-2 text-muted-foreground font-mono whitespace-pre-wrap break-words max-h-[300px] overflow-y-auto">
+            {output}
+          </pre>
+        </>
       )}
     </div>
   )
