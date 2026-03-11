@@ -172,6 +172,111 @@ function FlatPatternPicker({
 }
 
 /**
+ * Split a bash command for display, respecting quotes and command substitutions.
+ * Mirrors backend splitBashChain logic.
+ */
+function splitBashForDisplay(
+  command: string
+): Array<{ cmd: string; separator?: string }> {
+  const parts: Array<{ cmd: string; separator?: string }> = []
+  let current = ''
+  let inSingleQuote = false
+  let inDoubleQuote = false
+  let escapeNext = false
+  let parenDepth = 0
+  let i = 0
+
+  while (i < command.length) {
+    const char = command[i]
+    const next = command[i + 1]
+
+    if (escapeNext) {
+      current += char
+      escapeNext = false
+      i++
+      continue
+    }
+
+    if (char === '\\' && !inSingleQuote) {
+      current += char
+      escapeNext = true
+      i++
+      continue
+    }
+
+    if (char === "'" && !inDoubleQuote && parenDepth === 0) {
+      inSingleQuote = !inSingleQuote
+      current += char
+      i++
+      continue
+    }
+
+    if (char === '"' && !inSingleQuote && parenDepth === 0) {
+      inDoubleQuote = !inDoubleQuote
+      current += char
+      i++
+      continue
+    }
+
+    // Track command substitutions $(...)
+    if (char === '$' && next === '(' && !inSingleQuote) {
+      parenDepth++
+      current += char + next
+      i += 2
+      continue
+    }
+
+    if (char === ')' && parenDepth > 0 && !inSingleQuote && !inDoubleQuote) {
+      parenDepth--
+      current += char
+      i++
+      continue
+    }
+
+    // Only split when not inside quotes or command substitutions
+    if (!inSingleQuote && !inDoubleQuote && parenDepth === 0) {
+      if (char === '&' && next === '&') {
+        if (current.trim()) parts.push({ cmd: current.trim(), separator: '&&' })
+        current = ''
+        i += 2
+        while (i < command.length && /\s/.test(command[i])) i++
+        continue
+      }
+
+      if (char === '|' && next === '|') {
+        if (current.trim()) parts.push({ cmd: current.trim(), separator: '||' })
+        current = ''
+        i += 2
+        while (i < command.length && /\s/.test(command[i])) i++
+        continue
+      }
+
+      if (char === '|' && next !== '|') {
+        if (current.trim()) parts.push({ cmd: current.trim(), separator: '|' })
+        current = ''
+        i++
+        while (i < command.length && /\s/.test(command[i])) i++
+        continue
+      }
+
+      if (char === ';') {
+        if (current.trim()) parts.push({ cmd: current.trim(), separator: ';' })
+        current = ''
+        i++
+        while (i < command.length && /\s/.test(command[i])) i++
+        continue
+      }
+    }
+
+    current += char
+    i++
+  }
+
+  if (current.trim()) parts.push({ cmd: current.trim() })
+  return parts
+}
+
+/**
  * Display a bash command, splitting on && / || / ; into labelled rows.
  * For non-bash or single commands: shows the plain command string.
  */
@@ -186,19 +291,9 @@ function CommandDisplay({ commandStr }: { commandStr: string }) {
   }
 
   const command = commandStr.slice(prefix.length)
-  const parts = command.split(/(\s+&&\s+|\s+\|\|\s+|\s+\|\s+|\s*;\s+)/)
-  const subCmds: string[] = []
-  const seps: string[] = []
+  const parts = splitBashForDisplay(command)
 
-  for (const part of parts) {
-    if (/^\s*(&&|\|\||\||;)\s*$/.test(part)) {
-      seps.push(part.trim())
-    } else if (part.trim()) {
-      subCmds.push(part.trim())
-    }
-  }
-
-  if (subCmds.length <= 1) {
+  if (parts.length <= 1) {
     return (
       <div className="text-xs font-mono px-2 py-1.5 rounded bg-muted/50 text-foreground break-all max-h-32 overflow-y-auto">
         {commandStr}
@@ -208,16 +303,16 @@ function CommandDisplay({ commandStr }: { commandStr: string }) {
 
   return (
     <div className="max-h-40 overflow-y-auto space-y-0.5">
-      {subCmds.map((sub, idx) => (
+      {parts.map((part, idx) => (
         <div key={idx}>
           <div className="text-xs font-mono px-2 py-1.5 rounded bg-muted/50 text-foreground break-all">
-            {sub}
+            {part.cmd}
           </div>
-          {idx < subCmds.length - 1 && (
+          {part.separator && (
             <div className="flex items-center gap-1 py-0.5 px-2">
               <div className="h-px flex-1 bg-border/40" />
               <span className="text-[10px] font-mono text-muted-foreground/60">
-                {seps[idx] ?? '&&'}
+                {part.separator}
               </span>
               <div className="h-px flex-1 bg-border/40" />
             </div>

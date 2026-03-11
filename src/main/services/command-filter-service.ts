@@ -34,6 +34,7 @@ export class CommandFilterService {
     let inSingleQuote = false
     let inDoubleQuote = false
     let escapeNext = false
+    let parenDepth = 0 // Track nesting depth of command substitutions $(...)
     let i = 0
 
     while (i < command.length) {
@@ -58,22 +59,40 @@ export class CommandFilterService {
       }
 
       // Handle quotes
-      if (char === "'" && !inDoubleQuote) {
+      if (char === "'" && !inDoubleQuote && parenDepth === 0) {
         inSingleQuote = !inSingleQuote
         current += char
         i++
         continue
       }
 
-      if (char === '"' && !inSingleQuote) {
+      if (char === '"' && !inSingleQuote && parenDepth === 0) {
         inDoubleQuote = !inDoubleQuote
         current += char
         i++
         continue
       }
 
-      // Only split on operators when not inside quotes
-      if (!inSingleQuote && !inDoubleQuote) {
+      // Track command substitutions $(...) - increase depth when we see $(
+      // Only when not inside single quotes (single quotes prevent substitution)
+      if (char === '$' && next === '(' && !inSingleQuote) {
+        parenDepth++
+        current += char + next
+        i += 2
+        continue
+      }
+
+      // Track closing ) of command substitution
+      // Only decrease depth when not in quotes
+      if (char === ')' && parenDepth > 0 && !inSingleQuote && !inDoubleQuote) {
+        parenDepth--
+        current += char
+        i++
+        continue
+      }
+
+      // Only split on operators when not inside quotes AND not inside command substitution
+      if (!inSingleQuote && !inDoubleQuote && parenDepth === 0) {
         // Check for &&
         if (char === '&' && next === '&') {
           if (current.trim()) parts.push(current.trim())
