@@ -1,35 +1,137 @@
 import { create } from 'zustand'
-import type { UsageData } from '@shared/types/usage'
+import type { UsageData, OpenAIUsageData, UsageProvider } from '@shared/types/usage'
 
-export type { UsageData }
+export type { UsageData, UsageProvider }
 
 interface UsageState {
-  usage: UsageData | null
-  lastFetchedAt: number | null
-  isLoading: boolean
+  anthropicUsage: UsageData | null
+  anthropicLastFetchedAt: number | null
+  anthropicIsLoading: boolean
+
+  openaiUsage: OpenAIUsageData | null
+  openaiLastFetchedAt: number | null
+  openaiIsLoading: boolean
+
+  activeProvider: UsageProvider
+
+  fetchUsageForProvider: (provider: UsageProvider) => Promise<void>
+  setActiveProvider: (provider: UsageProvider) => void
   fetchUsage: () => Promise<void>
 }
 
 const DEBOUNCE_MS = 180_000 // 3 minutes
 
 export const useUsageStore = create<UsageState>()((set, get) => ({
-  usage: null,
-  lastFetchedAt: null,
-  isLoading: false,
+  anthropicUsage: null,
+  anthropicLastFetchedAt: null,
+  anthropicIsLoading: false,
+
+  openaiUsage: null,
+  openaiLastFetchedAt: null,
+  openaiIsLoading: false,
+
+  activeProvider: 'anthropic',
+
+  fetchUsageForProvider: async (provider: UsageProvider) => {
+    const state = get()
+
+    if (provider === 'anthropic') {
+      if (state.anthropicIsLoading) return
+      if (
+        state.anthropicLastFetchedAt &&
+        Date.now() - state.anthropicLastFetchedAt < DEBOUNCE_MS
+      ) return
+
+      set({ anthropicIsLoading: true })
+      try {
+        const result = await window.usageOps.fetch()
+        if (result.success) {
+          set({ anthropicUsage: result.data ?? null })
+        }
+      } finally {
+        set({ anthropicIsLoading: false, anthropicLastFetchedAt: Date.now() })
+      }
+    } else {
+      if (state.openaiIsLoading) return
+      if (
+        state.openaiLastFetchedAt &&
+        Date.now() - state.openaiLastFetchedAt < DEBOUNCE_MS
+      ) return
+
+      set({ openaiIsLoading: true })
+      try {
+        const result = await window.usageOps.fetchOpenai()
+        if (result.success) {
+          set({ openaiUsage: result.data ?? null })
+        }
+      } finally {
+        set({ openaiIsLoading: false, openaiLastFetchedAt: Date.now() })
+      }
+    }
+  },
+
+  setActiveProvider: (provider: UsageProvider) => {
+    set({ activeProvider: provider })
+
+    const state = get()
+    const lastFetched =
+      provider === 'anthropic'
+        ? state.anthropicLastFetchedAt
+        : state.openaiLastFetchedAt
+    const isStale = !lastFetched || Date.now() - lastFetched >= DEBOUNCE_MS
+
+    if (isStale) {
+      state.fetchUsageForProvider(provider).catch(() => {})
+    }
+  },
 
   fetchUsage: async () => {
-    const { isLoading, lastFetchedAt } = get()
-    if (isLoading) return
-    if (lastFetchedAt && Date.now() - lastFetchedAt < DEBOUNCE_MS) return
-
-    set({ isLoading: true })
-    try {
-      const result = await window.usageOps.fetch()
-      if (result.success) {
-        set({ usage: result.data })
-      }
-    } finally {
-      set({ isLoading: false, lastFetchedAt: Date.now() })
-    }
+    const { activeProvider, fetchUsageForProvider } = get()
+    await fetchUsageForProvider(activeProvider)
   }
 }))
+
+// --- Exported helpers ---
+
+interface SessionLike {
+  agent_sdk?: string | null
+  model_provider_id?: string | null
+  model_id?: string | null
+}
+
+export function resolveUsageProvider(session: SessionLike): UsageProvider {
+  if (session.agent_sdk === 'claude-code') return 'anthropic'
+  if (session.model_provider_id === 'openai') return 'openai'
+  if (session.model_id?.startsWith('gpt')) return 'openai'
+  return 'anthropic'
+}
+
+export function normalizeUsage(
+  provider: UsageProvider,
+  anthropicUsage: UsageData | null | undefined,
+  openaiUsage: OpenAIUsageData | null | undefined
+): UsageData | null {
+  if (provider === 'anthropic') {
+    return anthropicUsage ?? null
+  }
+
+  if (!openaiUsage) return null
+
+  const primary = openaiUsage.rate_limit.primary_window
+  const secondary = openaiUsage.rate_limit.secondary_window
+
+  return {
+    five_hour: {
+      utilization: primary ? primary.used_percent : 0,
+      resets_at: primary
+        ? new Date(primary.reset_at * 1000).toISOString()
+        : ''
+    },
+    seven_day: {
+      utilization: secondary ? secondary.used_percent : 0,
+      resets_at: secondary
+        ? new Date(secondary.reset_at * 1000).toISOString()
+        : ''
+    }
+  }
+}

@@ -1114,6 +1114,7 @@ declare global {
     }
     usageOps: {
       fetch: () => Promise<import('../shared/types/usage').UsageResult>
+      fetchOpenai: () => Promise<import('../shared/types/usage').OpenAIUsageResult>
     }
     analyticsOps: {
       track: (event: string, properties?: Record<string, unknown>) => Promise<void>

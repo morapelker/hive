@@ -8,8 +8,7 @@ import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useContextStore } from '@/stores/useContextStore'
 import { useRecentStore } from '@/stores/useRecentStore'
-import { useUsageStore } from '@/stores'
-import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useUsageStore, resolveUsageProvider } from '@/stores'
 import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '@/lib/token-utils'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes } from '@/lib/message-send-times'
@@ -387,7 +386,28 @@ export function useOpenCodeGlobalListener(): void {
           if (status?.type !== 'idle') return
 
           if (useSettingsStore.getState().showUsageIndicator) {
-            useUsageStore.getState().fetchUsage()
+            const sessionState = useSessionStore.getState()
+            let idleSession: {
+              agent_sdk?: string | null
+              model_provider_id?: string | null
+              model_id?: string | null
+            } | null = null
+            for (const sessions of sessionState.sessionsByWorktree.values()) {
+              const found = sessions.find((s) => s.id === sessionId)
+              if (found) { idleSession = found; break }
+            }
+            if (!idleSession) {
+              for (const sessions of sessionState.sessionsByConnection.values()) {
+                const found = sessions.find((s) => s.id === sessionId)
+                if (found) { idleSession = found; break }
+              }
+            }
+            if (idleSession) {
+              const provider = resolveUsageProvider(idleSession)
+              useUsageStore.getState().fetchUsageForProvider(provider)
+            } else {
+              useUsageStore.getState().fetchUsage()
+            }
           }
 
           // Don't overwrite plan_ready — session is blocked waiting for plan approval

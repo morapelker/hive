@@ -1645,7 +1645,8 @@ const connectionOps = {
 }
 
 const usageOps = {
-  fetch: () => ipcRenderer.invoke('usage:fetch')
+  fetch: () => ipcRenderer.invoke('usage:fetch'),
+  fetchOpenai: () => ipcRenderer.invoke('usage:fetchOpenai')
 }
 
 const analyticsOps = {
