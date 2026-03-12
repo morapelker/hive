@@ -63,6 +63,7 @@ interface Worktree {
   attachments: string // JSON array of Attachment objects
   pinned: number // 0 = not pinned, 1 = pinned
   context: string | null
+  docker_sandbox: number // 0 = off, 1 = on
   created_at: string
   last_accessed_at: string
 }
