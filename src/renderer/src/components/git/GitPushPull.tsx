@@ -63,6 +63,7 @@ export function GitPushPull({
 
   // Cross-worktree merge default: look up the project for this worktree
   const selectedWorktreeId = useWorktreeStore((state) => state.selectedWorktreeId)
+  const worktreesByProject = useWorktreeStore((state) => state.worktreesByProject)
   const worktreeProjectId = useWorktreeStore((state) => {
     if (!selectedWorktreeId) return undefined
     for (const [projectId, worktrees] of state.worktreesByProject) {
@@ -207,6 +208,16 @@ export function GitPushPull({
     if (!mergeBranch) return undefined
     return branches.find((b) => b.name === mergeBranch)
   }, [branches, mergeBranch])
+
+  // Check if the selected branch's worktree is the default (no-worktree) — unarchivable
+  const isSelectedBranchDefaultWorktree = useMemo(() => {
+    if (!selectedBranchInfo?.worktreePath) return false
+    for (const worktrees of worktreesByProject.values()) {
+      const found = worktrees.find((w) => w.path === selectedBranchInfo.worktreePath)
+      if (found) return found.is_default
+    }
+    return false
+  }, [selectedBranchInfo?.worktreePath, worktreesByProject])
 
   const handleArchiveWorktree = useCallback(async () => {
     // Archive the worktree that has the SELECTED BRANCH checked out (not our worktree)
@@ -419,7 +430,7 @@ export function GitPushPull({
             </div>
           )}
         </div>
-        {isBranchMerged && selectedBranchInfo?.isCheckedOut ? (
+        {isBranchMerged && selectedBranchInfo?.isCheckedOut && !isSelectedBranchDefaultWorktree ? (
           <Button
             variant="destructive"
             size="sm"

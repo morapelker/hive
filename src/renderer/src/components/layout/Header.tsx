@@ -448,7 +448,7 @@ export function Header(): React.JSX.Element {
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        {!isConnectionMode && isGitHub && prState === 'merged' && (
+        {!isConnectionMode && isGitHub && prState === 'merged' && !selectedWorktree?.is_default && (
           <Button
             size="sm"
             variant="destructive"
