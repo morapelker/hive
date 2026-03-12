@@ -52,6 +52,8 @@ export class CommandFilterService {
     // Counter to track bare subshells: (cmd1 && cmd2)
     // Prevents operators inside subshells from being treated as top-level separators
     let subshellDepth = 0
+    // Track if the last processed character was an unescaped $ (for bare subshell detection)
+    let lastCharWasUnescapedDollar = false
     let i = 0
 
     while (i < command.length) {
@@ -63,6 +65,7 @@ export class CommandFilterService {
       if (escapeNext) {
         current += char
         escapeNext = false
+        lastCharWasUnescapedDollar = false
         i++
         continue
       }
@@ -70,6 +73,7 @@ export class CommandFilterService {
       if (char === '\\' && !inSingleQuote) {
         current += char
         escapeNext = true
+        lastCharWasUnescapedDollar = false
         i++
         continue
       }
@@ -78,6 +82,7 @@ export class CommandFilterService {
       if (char === "'" && !inDoubleQuote) {
         inSingleQuote = !inSingleQuote
         current += char
+        lastCharWasUnescapedDollar = false
         i++
         continue
       }
@@ -85,6 +90,7 @@ export class CommandFilterService {
       if (char === '"' && !inSingleQuote) {
         inDoubleQuote = !inDoubleQuote
         current += char
+        lastCharWasUnescapedDollar = false
         i++
         continue
       }
@@ -94,6 +100,7 @@ export class CommandFilterService {
       if (char === '$' && next === '(' && !inSingleQuote) {
         parenStack.push(inDoubleQuote)
         current += char + next
+        lastCharWasUnescapedDollar = false // Reset because we consumed both $ and (
         i += 2
         continue
       }
@@ -107,6 +114,7 @@ export class CommandFilterService {
           parenStack.pop()
         }
         current += char
+        lastCharWasUnescapedDollar = false
         i++
         continue
       }
@@ -114,12 +122,13 @@ export class CommandFilterService {
       // Track bare subshells: (cmd1 && cmd2) - only when not inside quotes
       // This prevents operators inside subshells from being treated as top-level separators
       if (char === '(' && !inSingleQuote && !inDoubleQuote) {
-        // Check if this is a bare ( (not part of $()
-        const prevChar = i > 0 ? command[i - 1] : ''
-        if (prevChar !== '$') {
+        // Check if previous token was an unescaped $ (making this a command substitution)
+        // We track this with a flag rather than checking raw prevChar to handle escaped \$
+        if (!lastCharWasUnescapedDollar) {
           subshellDepth++
         }
         current += char
+        lastCharWasUnescapedDollar = false
         i++
         continue
       }
@@ -129,6 +138,7 @@ export class CommandFilterService {
         // This ) belongs to a bare subshell (parenStack would have matched if it was $())
         subshellDepth--
         current += char
+        lastCharWasUnescapedDollar = false
         i++
         continue
       }
@@ -187,6 +197,10 @@ export class CommandFilterService {
           continue
         }
       }
+
+      // Update flag for next iteration: track if this char is an unescaped $
+      // (used to detect bare subshells vs command substitutions)
+      lastCharWasUnescapedDollar = (char === '$' && !inSingleQuote)
 
       current += char
       i++
