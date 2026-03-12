@@ -278,7 +278,8 @@ export class CommandFilterService {
         // Convert ** back to regex (matches any sequence)
         .replace(/__DOUBLESTAR__/g, '.*')
 
-      const regex = new RegExp(`^${regexPattern}$`, 'i')
+      // Use 's' flag so . matches newlines (for commands with heredocs)
+      const regex = new RegExp(`^${regexPattern}$`, 'is')
       const matches = regex.test(command)
 
       // Only log successful matches to reduce noise
