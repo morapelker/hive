@@ -12,6 +12,7 @@ import { createLogger } from './logger'
 import { CodexAppServerManager, type CodexManagerEvent } from './codex-app-server-manager'
 import { mapCodexEventToStreamEvents, contentStreamKindFromMethod } from './codex-event-mapper'
 import { asObject, asString } from './codex-utils'
+import { generateCodexSessionTitle } from './codex-session-title'
 import type { DatabaseService } from '../db/database'
 import { autoRenameWorktreeBranch } from './git-service'
 
@@ -28,6 +29,7 @@ export interface CodexSessionState {
   revertMessageID: string | null
   revertDiff: string | null
   titleGenerated: boolean
+  titleGenerationStarted: boolean
 }
 
 // ── Pending HITL entry (shared by questions and approvals) ────────
@@ -230,101 +232,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
     if (!targetSession) return
 
-    // 1. Update DB
-    if (this.dbService) {
-      this.dbService.updateSession(targetSession.hiveSessionId, { name: title })
-      log.info('handleProviderTitleUpdate: updated DB', {
-        hiveSessionId: targetSession.hiveSessionId,
-        title
-      })
-    }
-
-    // 2. Notify renderer
-    this.sendToRenderer('opencode:stream', {
-      type: 'session.updated',
-      sessionId: targetSession.hiveSessionId,
-      data: { title, info: { title } }
-    })
-
-    // 3. Auto-rename branch for the session's direct worktree
-    if (!this.dbService) return
-    const worktree = this.dbService.getWorktreeBySessionId(targetSession.hiveSessionId)
-    if (worktree && !worktree.branch_renamed) {
-      try {
-        const result = await autoRenameWorktreeBranch({
-          worktreeId: worktree.id,
-          worktreePath: worktree.path,
-          currentBranchName: worktree.branch_name,
-          sessionTitle: title,
-          db: this.dbService
-        })
-        if (result.renamed) {
-          this.sendToRenderer('worktree:branchRenamed', {
-            worktreeId: worktree.id,
-            newBranch: result.newBranch
-          })
-          log.info('handleProviderTitleUpdate: auto-renamed branch', {
-            oldBranch: worktree.branch_name,
-            newBranch: result.newBranch
-          })
-        } else if (result.error) {
-          log.warn('handleProviderTitleUpdate: rename failed', { error: result.error })
-        }
-      } catch (err) {
-        if (this.dbService) {
-          this.dbService.updateWorktree(worktree.id, { branch_renamed: 1 })
-        }
-        log.warn('handleProviderTitleUpdate: branch rename error', { err })
-      }
-    }
-
-    // 4. Auto-rename branches for all connection member worktrees
-    if (this.dbService) {
-      const dbSession = this.dbService.getSession(targetSession.hiveSessionId)
-      if (dbSession?.connection_id) {
-        const connection = this.dbService.getConnection(dbSession.connection_id)
-        if (connection) {
-          for (const member of connection.members) {
-            if (worktree && member.worktree_id === worktree.id) continue
-            try {
-              const memberWorktree = this.dbService.getWorktree(member.worktree_id)
-              if (!memberWorktree || memberWorktree.branch_renamed) continue
-
-              const result = await autoRenameWorktreeBranch({
-                worktreeId: memberWorktree.id,
-                worktreePath: memberWorktree.path,
-                currentBranchName: memberWorktree.branch_name,
-                sessionTitle: title,
-                db: this.dbService
-              })
-              if (result.renamed) {
-                this.sendToRenderer('worktree:branchRenamed', {
-                  worktreeId: memberWorktree.id,
-                  newBranch: result.newBranch
-                })
-                log.info('handleProviderTitleUpdate: auto-renamed connection member', {
-                  connectionId: dbSession.connection_id,
-                  worktreeId: memberWorktree.id,
-                  oldBranch: memberWorktree.branch_name,
-                  newBranch: result.newBranch
-                })
-              } else if (result.error) {
-                log.warn('handleProviderTitleUpdate: connection member rename failed', {
-                  connectionId: dbSession.connection_id,
-                  worktreeId: memberWorktree.id,
-                  error: result.error
-                })
-              }
-            } catch (err) {
-              log.warn('handleProviderTitleUpdate: connection member rename error', {
-                worktreeId: member.worktree_id,
-                err
-              })
-            }
-          }
-        }
-      }
-    }
+    await this.applyGeneratedTitle(targetSession, title)
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────
@@ -355,7 +263,8 @@ export class CodexImplementer implements AgentSdkImplementer {
       messages: [],
       revertMessageID: null,
       revertDiff: null,
-      titleGenerated: false
+      titleGenerated: false,
+      titleGenerationStarted: false
     }
     this.sessions.set(key, state)
 
@@ -418,7 +327,8 @@ export class CodexImplementer implements AgentSdkImplementer {
         messages: [],
         revertMessageID: null,
         revertDiff: null,
-        titleGenerated: true
+        titleGenerated: true,
+        titleGenerationStarted: true
       }
       this.sessions.set(newKey, state)
 
@@ -524,6 +434,11 @@ export class CodexImplementer implements AgentSdkImplementer {
           immediateTitle
         })
       }
+    }
+
+    if (!session.titleGenerationStarted) {
+      session.titleGenerationStarted = true
+      this.handleTitleGeneration(session, text).catch(() => {})
     }
 
     // Inject synthetic user message so getMessages() returns it
@@ -1387,7 +1302,8 @@ export class CodexImplementer implements AgentSdkImplementer {
         messages: [],
         revertMessageID: null,
         revertDiff: null,
-        titleGenerated: true
+        titleGenerated: true,
+        titleGenerationStarted: true
       }
 
       this.sessions.set(this.getSessionKey(worktreePath, threadId), recovered)
@@ -1407,6 +1323,136 @@ export class CodexImplementer implements AgentSdkImplementer {
         error: error instanceof Error ? error.message : String(error)
       })
       return null
+    }
+  }
+
+  private async handleTitleGeneration(
+    session: CodexSessionState,
+    userMessage: string
+  ): Promise<void> {
+    try {
+      const title = await generateCodexSessionTitle(userMessage, session.worktreePath)
+      if (!title) return
+      await this.applyGeneratedTitle(session, title)
+    } catch (err) {
+      log.warn('handleTitleGeneration: failed', {
+        hiveSessionId: session.hiveSessionId,
+        error: err instanceof Error ? err.message : String(err)
+      })
+    }
+  }
+
+  private async applyGeneratedTitle(
+    session: CodexSessionState,
+    title: string
+  ): Promise<void> {
+    const trimmedTitle = title.trim()
+    if (!trimmedTitle) return
+
+    let currentTitle: string | null = null
+    if (this.dbService) {
+      try {
+        currentTitle = this.dbService.getSession(session.hiveSessionId)?.name ?? null
+      } catch {
+        currentTitle = null
+      }
+    }
+
+    const titleChanged = currentTitle !== trimmedTitle
+
+    if (this.dbService && titleChanged) {
+      this.dbService.updateSession(session.hiveSessionId, { name: trimmedTitle })
+      log.info('applyGeneratedTitle: updated DB', {
+        hiveSessionId: session.hiveSessionId,
+        title: trimmedTitle
+      })
+    }
+
+    if (titleChanged) {
+      this.sendToRenderer('opencode:stream', {
+        type: 'session.updated',
+        sessionId: session.hiveSessionId,
+        data: { title: trimmedTitle, info: { title: trimmedTitle } }
+      })
+    } else {
+      log.debug('applyGeneratedTitle: title unchanged, skipping session rename event', {
+        hiveSessionId: session.hiveSessionId,
+        title: trimmedTitle
+      })
+    }
+
+    if (!this.dbService) return
+    const worktree = this.dbService.getWorktreeBySessionId(session.hiveSessionId)
+    if (worktree && !worktree.branch_renamed) {
+      try {
+        const result = await autoRenameWorktreeBranch({
+          worktreeId: worktree.id,
+          worktreePath: worktree.path,
+          currentBranchName: worktree.branch_name,
+          sessionTitle: trimmedTitle,
+          db: this.dbService
+        })
+        if (result.renamed) {
+          this.sendToRenderer('worktree:branchRenamed', {
+            worktreeId: worktree.id,
+            newBranch: result.newBranch
+          })
+          log.info('applyGeneratedTitle: auto-renamed branch', {
+            oldBranch: worktree.branch_name,
+            newBranch: result.newBranch
+          })
+        } else if (result.error) {
+          log.warn('applyGeneratedTitle: rename failed', { error: result.error })
+        }
+      } catch (err) {
+        this.dbService.updateWorktree(worktree.id, { branch_renamed: 1 })
+        log.warn('applyGeneratedTitle: branch rename error', { err })
+      }
+    }
+
+    const dbSession = this.dbService.getSession(session.hiveSessionId)
+    if (!dbSession?.connection_id) return
+
+    const connection = this.dbService.getConnection(dbSession.connection_id)
+    if (!connection) return
+
+    for (const member of connection.members) {
+      if (worktree && member.worktree_id === worktree.id) continue
+      try {
+        const memberWorktree = this.dbService.getWorktree(member.worktree_id)
+        if (!memberWorktree || memberWorktree.branch_renamed) continue
+
+        const result = await autoRenameWorktreeBranch({
+          worktreeId: memberWorktree.id,
+          worktreePath: memberWorktree.path,
+          currentBranchName: memberWorktree.branch_name,
+          sessionTitle: trimmedTitle,
+          db: this.dbService
+        })
+        if (result.renamed) {
+          this.sendToRenderer('worktree:branchRenamed', {
+            worktreeId: memberWorktree.id,
+            newBranch: result.newBranch
+          })
+          log.info('applyGeneratedTitle: auto-renamed connection member', {
+            connectionId: dbSession.connection_id,
+            worktreeId: memberWorktree.id,
+            oldBranch: memberWorktree.branch_name,
+            newBranch: result.newBranch
+          })
+        } else if (result.error) {
+          log.warn('applyGeneratedTitle: connection member rename failed', {
+            connectionId: dbSession.connection_id,
+            worktreeId: memberWorktree.id,
+            error: result.error
+          })
+        }
+      } catch (err) {
+        log.warn('applyGeneratedTitle: connection member rename error', {
+          worktreeId: member.worktree_id,
+          err
+        })
+      }
     }
   }
 

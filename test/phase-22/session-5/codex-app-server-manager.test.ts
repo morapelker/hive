@@ -245,4 +245,41 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
     const params = getTurnStartParams(messages)
     expect(params.collaborationMode.settings.reasoning_effort).toBe('medium')
   })
+
+  it('includes custom developer instructions and multi-part input for title generation', async () => {
+    const { context, stdin } = createTestContext()
+    seedSession(context)
+
+    const turnPromise = manager.sendTurn('thread-123', {
+      model: 'gpt-5.4',
+      reasoningEffort: 'low',
+      developerInstructions: 'Title only instructions',
+      input: [
+        { type: 'text', text: 'Generate a title for this conversation:\n' },
+        { type: 'text', text: 'Fix auth refresh token bug' }
+      ]
+    })
+
+    const messages = getWrittenMessages(stdin)
+    const turnStartMsg = messages.find((m: any) => m.method === 'turn/start')
+
+    manager.handleStdoutLine(
+      context,
+      JSON.stringify({ id: turnStartMsg.id, result: { turn: { id: 'turn-title' } } })
+    )
+
+    await turnPromise
+
+    const params = getTurnStartParams(messages)
+    expect(params.input).toEqual([
+      { type: 'text', text: 'Generate a title for this conversation:\n' },
+      { type: 'text', text: 'Fix auth refresh token bug' }
+    ])
+    expect(params.settings.reasoningEffort).toBe('low')
+    expect(params.collaborationMode.mode).toBe('default')
+    expect(params.collaborationMode.settings.developer_instructions).toBe(
+      'Title only instructions'
+    )
+    expect(params.collaborationMode.settings.reasoning_effort).toBe('low')
+  })
 })

@@ -103,9 +103,11 @@ export interface CodexStartSessionOptions {
 
 export interface CodexTurnInput {
   text?: string
+  input?: Array<{ type: string; text: string }>
   model?: string
   reasoningEffort?: string
   interactionMode?: 'default' | 'plan'
+  developerInstructions?: string
 }
 
 export interface CodexTurnStartResult {
@@ -541,10 +543,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     // Build the turn input array
-    const turnInput: Array<{ type: string; text: string }> = []
-    if (input.text) {
-      turnInput.push({ type: 'text', text: input.text })
-    }
+    const turnInput =
+      input.input && input.input.length > 0
+        ? input.input
+        : input.text
+          ? [{ type: 'text', text: input.text }]
+          : []
 
     const params: Record<string, unknown> = {
       threadId: context.session.threadId,
@@ -559,18 +563,21 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       params.settings = { reasoningEffort: input.reasoningEffort }
     }
 
-    if (input.interactionMode) {
+    if (input.interactionMode || input.developerInstructions) {
+      const mode = input.interactionMode ?? 'default'
+
       // collaborationMode is required for request_user_input availability;
       // its settings block independently specifies model/reasoning for this mode context
       params.collaborationMode = {
-        mode: input.interactionMode,
+        mode,
         settings: {
           model: input.model ?? context.session.model ?? CODEX_DEFAULT_MODEL,
           reasoning_effort: input.reasoningEffort ?? 'medium', // snake_case: Codex API uses snake_case for this field in the collaborationMode settings block
           developer_instructions:
-            input.interactionMode === 'plan'
+            input.developerInstructions ??
+            (mode === 'plan'
               ? CODEX_PLAN_DEVELOPER_INSTRUCTIONS
-              : CODEX_DEFAULT_DEVELOPER_INSTRUCTIONS
+              : CODEX_DEFAULT_DEVELOPER_INSTRUCTIONS)
         }
       }
     }
