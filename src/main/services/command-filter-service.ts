@@ -28,13 +28,18 @@ export class CommandFilterService {
    * Splits on ` && `, ` || `, `| ` (pipe), `;`, and unquoted newlines while respecting
    * quotes and command substitutions.
    *
-   * KNOWN LIMITATION: Complex nested command substitutions with mismatched quote contexts
-   * (e.g., "$(echo 'x)y')") may not parse perfectly. This is extremely rare in practice
-   * and does NOT introduce security bypasses because:
-   * 1. Commands with newlines after split are blocked (see matchesAnyPattern)
-   * 2. The parser errs on the side of over-splitting rather than under-splitting
+   * SECURITY MODEL:
+   * - Newlines inside quotes or $(...) are preserved (not split)
+   * - Newlines at the top level ARE split (prevents injection attacks)
+   * - If any part contains a newline after parsing, it indicates a parser limitation
+   *   and that part is defensively re-split on newlines
+   * - Parts with newlines won't match allowlist patterns (no normalization in matchesAnyPattern)
    *
-   * For 99%+ of real-world commands, parsing is correct.
+   * KNOWN LIMITATION: Top-level heredocs (not inside $() or quotes) are split line-by-line.
+   * This is acceptable because:
+   * 1. Top-level heredocs are rare in command approval contexts
+   * 2. Heredocs inside $() or quotes (the common case) work correctly
+   * 3. The security fallback handles edge cases defensively
    */
   splitBashChain(command: string): string[] {
     const parts: string[] = []
@@ -106,8 +111,10 @@ export class CommandFilterService {
       // Only split on operators and newlines when not inside quotes AND not inside command substitution
       if (!inSingleQuote && !inDoubleQuote && parenStack.length === 0) {
         // Check for newline (command separator) - prevents newline injection attacks
-        // Note: Heredocs inside $() or quotes won't split here (parenStack.length > 0 or inDoubleQuote)
-        // Heredocs at the top level WILL be split line-by-line (known limitation)
+        // Note: Newlines inside quotes or command substitutions ($(...)) are preserved
+        // and NOT split because we're tracking those contexts with inSingleQuote/inDoubleQuote/parenStack.
+        // Heredocs are NOT tracked as a special context - they're just text. Heredocs inside
+        // $() or quotes stay intact, but top-level heredocs WILL be split line-by-line.
         if (char === '\n') {
           if (current.trim()) parts.push(current.trim())
           current = ''
@@ -163,29 +170,36 @@ export class CommandFilterService {
     // Add the last part
     if (current.trim()) parts.push(current.trim())
 
-    // Security validation: Check if any part contains suspicious patterns that might
-    // indicate a parser bug or injection attempt (e.g., unquoted newlines that look
-    // like separate commands). This catches cases where parenStack bugs might leave
-    // multi-command strings un-split.
+    // Security validation: If any part contains a newline after parsing, it means either:
+    // 1. A parser limitation with complex nested structures, OR
+    // 2. An injection attempt that bypassed quote/substitution tracking
+    // Either way, we need to handle it defensively by splitting those parts further.
     const validatedParts = parts.filter((part) => {
-      // Check for patterns like: "cmd1\ncmd2" where cmd2 looks like a shell command
-      const suspiciousPattern = /\n\s*(rm|mv|dd|chmod|chown|sudo|curl|wget|bash|sh)\s+/
-      if (suspiciousPattern.test(part)) {
-        log.warn('CommandFilter: suspicious multi-command pattern detected, splitting on newlines', {
+      if (/\n/.test(part)) {
+        log.warn('CommandFilter: part contains newline after parsing - parser limitation or injection attempt', {
           part: part.substring(0, 100)
         })
-        // Force split on ALL newlines for this suspicious command
         return false
       }
       return true
     })
 
-    // If we filtered out suspicious parts, re-split the original on ALL newlines
+    // If we found parts with newlines, re-split ONLY those parts (not the entire command)
+    // to avoid breaking correctly-parsed parts with quoted arguments
     if (validatedParts.length < parts.length) {
-      return command
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean)
+      const result: string[] = []
+      for (const part of parts) {
+        if (/\n/.test(part)) {
+          // This part has a newline - split it for safety
+          // Note: This may split legitimate multi-line quoted strings, but that's acceptable
+          // because parts shouldn't have newlines unless the parser failed
+          result.push(...part.split('\n').map((s) => s.trim()).filter(Boolean))
+        } else {
+          // This part was parsed correctly - keep it intact
+          result.push(part)
+        }
+      }
+      return result
     }
 
     return parts
@@ -284,15 +298,14 @@ export class CommandFilterService {
 
   /**
    * Check if a command matches any pattern in a list
+   *
+   * SECURITY: Does NOT normalize newlines. If a command contains newlines after
+   * splitBashChain, it won't match any patterns and will require approval.
+   * This is intentional - newlines in parts after splitting indicate parser
+   * limitations or injection attempts, and should not be auto-approved.
    */
   matchesAnyPattern(command: string, patterns: string[]): boolean {
-    // Normalize newlines to spaces for pattern matching
-    // This is safe because: if a command contains newlines after splitBashChain,
-    // those newlines were inside quotes/substitutions (otherwise splitBashChain
-    // would have split on them). Normalizing allows patterns like "bash: git commit *"
-    // to match heredoc commands while maintaining security.
-    const normalizedCommand = command.replace(/\n/g, ' ')
-    return patterns.some((pattern) => this.matchPattern(normalizedCommand, pattern))
+    return patterns.some((pattern) => this.matchPattern(command, pattern))
   }
 
   /**
