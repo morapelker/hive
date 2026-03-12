@@ -251,8 +251,9 @@ function splitBashForDisplay(
       continue
     }
 
-    // Track bare subshells: (cmd1 && cmd2) - only when not inside quotes
-    if (char === '(' && !inSingleQuote && !inDoubleQuote) {
+    // Track bare subshells: (cmd1 && cmd2) - only when not inside quotes AND not inside command substitution
+    // We only track top-level bare subshells (parenStack.length === 0) to avoid cross-contamination
+    if (char === '(' && !inSingleQuote && !inDoubleQuote && parenStack.length === 0) {
       // Check if previous token was an unescaped $ (making this a command substitution)
       // We track this with a flag rather than checking raw prevChar to handle escaped \$
       if (!lastCharWasUnescapedDollar) {
@@ -325,7 +326,26 @@ function splitBashForDisplay(
   }
 
   if (current.trim()) parts.push({ cmd: current.trim() })
-  return parts
+
+  // Defensive fallback: if any part still contains a newline after parsing, it indicates
+  // a parser limitation or edge case. Split those parts on newlines to match backend behavior.
+  // This ensures the UI displays the same sub-command breakdown that the backend evaluates.
+  const result: typeof parts = []
+  for (const part of parts) {
+    if (/\n/.test(part.cmd)) {
+      // Split this part on newlines for display
+      const lines = part.cmd.split('\n').map(s => s.trim()).filter(Boolean)
+      lines.forEach((line, i) => {
+        result.push({
+          cmd: line,
+          separator: i < lines.length - 1 ? 'newline' : part.separator
+        })
+      })
+    } else {
+      result.push(part)
+    }
+  }
+  return result
 }
 
 /**

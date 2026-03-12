@@ -119,9 +119,10 @@ export class CommandFilterService {
         continue
       }
 
-      // Track bare subshells: (cmd1 && cmd2) - only when not inside quotes
+      // Track bare subshells: (cmd1 && cmd2) - only when not inside quotes AND not inside command substitution
       // This prevents operators inside subshells from being treated as top-level separators
-      if (char === '(' && !inSingleQuote && !inDoubleQuote) {
+      // We only track top-level bare subshells (parenStack.length === 0) to avoid cross-contamination
+      if (char === '(' && !inSingleQuote && !inDoubleQuote && parenStack.length === 0) {
         // Check if previous token was an unescaped $ (making this a command substitution)
         // We track this with a flag rather than checking raw prevChar to handle escaped \$
         if (!lastCharWasUnescapedDollar) {
