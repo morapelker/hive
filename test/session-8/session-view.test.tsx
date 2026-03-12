@@ -7,6 +7,7 @@ import {
   SessionViewState
 } from '../../src/renderer/src/components/sessions/SessionView'
 import { useSessionStore } from '../../src/renderer/src/stores/useSessionStore'
+import { lastSendMode } from '../../src/renderer/src/lib/message-send-times'
 
 // Mock clipboard API
 const mockWriteText = vi.fn().mockResolvedValue(undefined)
@@ -99,10 +100,70 @@ const mockDefaultOpenCodeTranscript = [
   }
 ]
 
+function createSessionRecord(
+  overrides: Partial<{
+    id: string
+    worktree_id: string | null
+    project_id: string
+    connection_id: string | null
+    name: string | null
+    status: 'active' | 'completed' | 'error'
+    opencode_session_id: string | null
+    agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+    mode: 'build' | 'plan'
+    model_provider_id: string | null
+    model_id: string | null
+    model_variant: string | null
+    created_at: string
+    updated_at: string
+    completed_at: string | null
+  }> = {}
+) {
+  return {
+    id: 'test-session-1',
+    worktree_id: 'wt-1',
+    project_id: 'proj-1',
+    connection_id: null,
+    name: 'Test Session',
+    status: 'active' as const,
+    opencode_session_id: 'opc-session-1',
+    agent_sdk: 'opencode' as const,
+    mode: 'build' as const,
+    model_provider_id: null,
+    model_id: null,
+    model_variant: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    completed_at: null,
+    ...overrides
+  }
+}
+
 // Setup and teardown
 beforeEach(() => {
   vi.clearAllMocks()
   mockConsoleInfo.mockReset()
+  lastSendMode.clear()
+
+  useSessionStore.setState({
+    sessionsByWorktree: new Map([['wt-1', [createSessionRecord()]]]),
+    tabOrderByWorktree: new Map([['wt-1', ['test-session-1']]]),
+    modeBySession: new Map([['test-session-1', 'build']]),
+    pendingMessages: new Map(),
+    pendingPlans: new Map(),
+    pendingFollowUpMessages: new Map(),
+    isLoading: false,
+    error: null,
+    activeSessionId: 'test-session-1',
+    activeWorktreeId: 'wt-1',
+    activeSessionByWorktree: { 'wt-1': 'test-session-1' },
+    sessionsByConnection: new Map(),
+    tabOrderByConnection: new Map(),
+    activeSessionByConnection: {},
+    activeConnectionId: null,
+    inlineConnectionSessionId: null,
+    closedTerminalSessionIds: new Set()
+  })
 
   // Mock window.db
   Object.defineProperty(window, 'db', {
@@ -316,6 +377,106 @@ describe('Session 8: Session View', () => {
       rerender(<SessionView sessionId="session-2" />)
 
       expect(screen.getByTestId('session-view')).toHaveAttribute('data-session-id', 'session-2')
+    })
+  })
+
+  describe('Plan-ready toolbox visibility', () => {
+    test('Codex hides the toolbox for a clarifying question pending plan', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'codex', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map([
+          [
+            'test-session-1',
+            {
+              requestId: 'plan-1',
+              planContent:
+                'Where should I add it?\n\n- New module\n- Existing utils\n\nConfirm your preference.',
+              toolUseID: 'tool-1'
+            }
+          ]
+        ])
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
+
+      expect(screen.getByTestId('plan-ready-implement-fab').className).toContain('opacity-0')
+      expect(screen.getByTestId('plan-ready-handoff-fab').className).toContain('opacity-0')
+    })
+
+    test('Codex shows the toolbox for a proposed plan pending plan', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'codex', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map([
+          [
+            'test-session-1',
+            {
+              requestId: 'plan-1',
+              planContent: 'Plan\n\n1. Add the function\n2. Add tests',
+              toolUseID: 'tool-1'
+            }
+          ]
+        ])
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('plan-ready-implement-fab')).toBeInTheDocument()
+        expect(screen.getByTestId('plan-ready-handoff-fab')).toBeInTheDocument()
+      })
+    })
+
+    test('Claude keeps showing the toolbox for any pending plan approval', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'claude-code', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map([
+          [
+            'test-session-1',
+            {
+              requestId: 'plan-1',
+              planContent: 'Where should I add it?\n\nPlease confirm.',
+              toolUseID: 'tool-1'
+            }
+          ]
+        ])
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('plan-ready-implement-fab')).toBeInTheDocument()
+      })
+    })
+
+    test('OpenCode keeps showing the toolbox after an idle plan-mode completion', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'opencode', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map()
+      })
+      lastSendMode.set('test-session-1', 'plan')
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('plan-ready-implement-fab')).toBeInTheDocument()
+        expect(screen.getByTestId('plan-ready-handoff-fab')).toBeInTheDocument()
+      })
     })
   })
 

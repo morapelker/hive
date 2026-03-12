@@ -44,7 +44,7 @@ import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcr
 import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { COMPLETION_WORDS, formatCompletionDuration, formatElapsedTimer } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
-import { buildPlanImplementationPrompt } from '@/lib/proposedPlan'
+import { buildPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import beeIcon from '@/assets/bee.png'
 
 // Stable empty array to avoid creating new references in selectors
@@ -3973,13 +3973,53 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         (streamingParts[streamingParts.length - 1].type === 'text' ||
           streamingParts[streamingParts.length - 1].type === 'tool_use')))
 
+  const codexPlanCandidate = useMemo(() => {
+    const pendingPlanText = pendingPlan?.planContent?.trim()
+    if (pendingPlanText) return pendingPlanText
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]
+      if (message.role !== 'assistant') continue
+
+      for (let j = (message.parts?.length ?? 0) - 1; j >= 0; j--) {
+        const part = message.parts?.[j]
+        const toolPlan =
+          part?.type === 'tool_use' && part.toolUse?.name === 'ExitPlanMode'
+            ? String(part.toolUse.input?.plan ?? '').trim()
+            : ''
+        if (toolPlan) return toolPlan
+      }
+
+      const messageText = message.content.trim()
+      if (messageText) return messageText
+    }
+
+    for (let i = streamingParts.length - 1; i >= 0; i--) {
+      const part = streamingParts[i]
+      const toolPlan =
+        part.type === 'tool_use' && part.toolUse?.name === 'ExitPlanMode'
+          ? String(part.toolUse.input?.plan ?? '').trim()
+          : ''
+      if (toolPlan) return toolPlan
+      if (part.type === 'text' && part.text?.trim()) return part.text.trim()
+    }
+
+    return ''
+  }, [messages, pendingPlan, streamingParts])
+
+  const hasCodexProposedPlan =
+    sessionRecord?.agent_sdk === 'codex' && looksLikeCodexProposedPlan(codexPlanCandidate)
+
   // Show the floating Implement FAB when:
   // 1. Claude Code sessions: ExitPlanMode is pending approval.
-  // 2. OpenCode sessions: legacy non-blocking plan mode completed.
+  // 2. Codex sessions: the pending plan content is a real <proposed_plan>.
+  // 3. OpenCode sessions: legacy non-blocking plan mode completed.
   const showPlanReadyImplementFab =
-    isClaudeCode || sessionRecord?.agent_sdk === 'codex'
+    isClaudeCode
       ? !!pendingPlan
-      : lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming && !pendingPlan
+      : sessionRecord?.agent_sdk === 'codex'
+        ? !!pendingPlan && hasCodexProposedPlan
+        : lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming && !pendingPlan
 
   const retrySecondsRemaining = useMemo(() => {
     if (!sessionRetry?.next) return null

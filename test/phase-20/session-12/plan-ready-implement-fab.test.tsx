@@ -86,19 +86,6 @@ describe('Session 12: Plan-ready implement FAB', () => {
       expect(source).toContain('visible={showPlanReadyImplementFab}')
     })
 
-    test('visibility is based only on lastSendMode=plan and idle', async () => {
-      const fs = await import('fs')
-      const path = await import('path')
-      const source = fs.readFileSync(
-        path.resolve(__dirname, '../../../src/renderer/src/components/sessions/SessionView.tsx'),
-        'utf-8'
-      )
-
-      expect(source).toContain(
-        "lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming"
-      )
-    })
-
     test('FAB action switches to build mode and sends plain Implement text', async () => {
       const fs = await import('fs')
       const path = await import('path')
@@ -111,7 +98,7 @@ describe('Session 12: Plan-ready implement FAB', () => {
       expect(source).toContain('buildPlanImplementationPrompt')
     })
 
-    test('visibility uses pendingPlan for codex pending-review flow', async () => {
+    test('SessionView contains codex proposed-plan detection for plan-ready visibility', async () => {
       const fs = await import('fs')
       const path = await import('path')
       const source = fs.readFileSync(
@@ -119,8 +106,9 @@ describe('Session 12: Plan-ready implement FAB', () => {
         'utf-8'
       )
 
+      expect(source).toContain('looksLikeCodexProposedPlan')
       expect(source).toContain("sessionRecord?.agent_sdk === 'codex'")
-      expect(source).toContain('? !!pendingPlan')
+      expect(source).toContain('hasCodexProposedPlan')
     })
 
     test('Handoff action opens a new build-mode session and sends handoff prompt', async () => {
