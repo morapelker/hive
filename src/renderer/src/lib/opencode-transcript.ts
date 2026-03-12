@@ -287,9 +287,6 @@ export function mapOpencodeMessagesToSessionViewMessages(messages: unknown[]): O
       if (a.sortTime !== undefined && b.sortTime === undefined) return -1
       if (a.sortTime === undefined && b.sortTime !== undefined) return 1
 
-      const idCompare = a.message.id.localeCompare(b.message.id)
-      if (idCompare !== 0) return idCompare
-
       return a.originalIndex - b.originalIndex
     })
     .map((item) => item.message)

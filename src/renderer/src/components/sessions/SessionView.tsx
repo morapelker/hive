@@ -41,6 +41,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
+import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { COMPLETION_WORDS, formatCompletionDuration, formatElapsedTimer } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { buildPlanImplementationPrompt } from '@/lib/proposedPlan'
@@ -1141,6 +1142,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
             ]
           })
+        }
+
+        if (streamedPartsSnapshot.length > 0 || streamedContentSnapshot.length > 0) {
+          setMessages((currentMessages) =>
+            appendStreamedAssistantFallback(currentMessages, {
+              streamedContent: streamedContentSnapshot,
+              streamedParts: streamedPartsSnapshot
+            })
+          )
         }
       } catch (error) {
         console.error('Failed to refresh messages after stream completion:', error)

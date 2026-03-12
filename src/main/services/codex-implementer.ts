@@ -480,29 +480,41 @@ export class CodexImplementer implements AgentSdkImplementer {
       // events stream asynchronously via the manager's event emitter)
       await this.waitForTurnCompletion(session, () => turnCompleted)
 
-      // Store assistant message
-      const assistantParts: unknown[] = []
-      if (assistantText) {
-        assistantParts.push({
-          type: 'text',
-          text: assistantText,
-          timestamp: new Date().toISOString()
+      // Read canonical thread for properly separated messages
+      try {
+        const threadSnapshot = await this.manager.readThread(session.threadId)
+        const parsed = this.parseThreadSnapshot(threadSnapshot)
+        if (parsed.length > 0) {
+          session.messages = parsed
+        }
+      } catch (readError) {
+        log.warn('prompt: readThread after turn failed, falling back to accumulated text', {
+          agentSessionId,
+          error: readError instanceof Error ? readError.message : String(readError)
         })
-      }
-      if (reasoningText) {
-        assistantParts.push({
-          type: 'reasoning',
-          text: reasoningText,
-          timestamp: new Date().toISOString()
-        })
-      }
-
-      if (assistantParts.length > 0) {
-        session.messages.push({
-          role: 'assistant',
-          parts: assistantParts,
-          timestamp: new Date().toISOString()
-        })
+        // Fallback: use accumulated text as single message
+        const assistantParts: unknown[] = []
+        if (assistantText) {
+          assistantParts.push({
+            type: 'text',
+            text: assistantText,
+            timestamp: new Date().toISOString()
+          })
+        }
+        if (reasoningText) {
+          assistantParts.push({
+            type: 'reasoning',
+            text: reasoningText,
+            timestamp: new Date().toISOString()
+          })
+        }
+        if (assistantParts.length > 0) {
+          session.messages.push({
+            role: 'assistant',
+            parts: assistantParts,
+            timestamp: new Date().toISOString()
+          })
+        }
       }
 
       // If no plan was detected from events, check accumulated assistant text
@@ -584,7 +596,12 @@ export class CodexImplementer implements AgentSdkImplementer {
 
   async getMessages(worktreePath: string, agentSessionId: string): Promise<unknown[]> {
     const key = this.getSessionKey(worktreePath, agentSessionId)
-    const session = this.sessions.get(key)
+    let session = this.sessions.get(key)
+    if (!session) {
+      const recoveredSession = await this.recoverSessionForRead(worktreePath, agentSessionId)
+      session = recoveredSession ?? undefined
+    }
+
     if (!session) {
       log.warn('getMessages: session not found', { worktreePath, agentSessionId })
       return []
@@ -1154,6 +1171,61 @@ export class CodexImplementer implements AgentSdkImplementer {
     return 'revert-0'
   }
 
+  private async recoverSessionForRead(
+    worktreePath: string,
+    agentSessionId: string
+  ): Promise<CodexSessionState | null> {
+    if (!this.dbService) {
+      return null
+    }
+
+    const persistedSession = this.dbService.getSessionByOpenCodeSessionId(agentSessionId)
+    if (!persistedSession || persistedSession.agent_sdk !== 'codex') {
+      return null
+    }
+
+    try {
+      const providerSession = await this.manager.startSession({
+        cwd: worktreePath,
+        model: resolveCodexModelSlug(persistedSession.model_id ?? this.selectedModel),
+        resumeThreadId: agentSessionId
+      })
+
+      const threadId = providerSession.threadId
+      if (!threadId) {
+        throw new Error('Codex session resumed for read but no thread ID was returned.')
+      }
+
+      const recovered: CodexSessionState = {
+        threadId,
+        hiveSessionId: persistedSession.id,
+        worktreePath,
+        status: this.mapProviderStatus(providerSession.status),
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
+      }
+
+      this.sessions.set(this.getSessionKey(worktreePath, threadId), recovered)
+
+      log.info('Recovered persisted Codex session for transcript read', {
+        worktreePath,
+        agentSessionId,
+        threadId,
+        hiveSessionId: persistedSession.id
+      })
+
+      return recovered
+    } catch (error) {
+      log.warn('Failed to recover persisted Codex session for transcript read', {
+        worktreePath,
+        agentSessionId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return null
+    }
+  }
+
   /** Parse a thread/read snapshot into a message array for getMessages() */
   private parseThreadSnapshot(snapshot: unknown): unknown[] {
     const obj = asObject(snapshot)
@@ -1163,10 +1235,116 @@ export class CodexImplementer implements AgentSdkImplementer {
     const turns = threadObj.turns as unknown[] | undefined
     if (!Array.isArray(turns)) return []
 
-    const messages: unknown[] = []
+    const messages: Array<{ message: unknown; sortTime: number; order: number }> = []
+    let order = 0
+    const pushMessage = (message: unknown, timestamp: string | null | undefined): void => {
+      const parsedTimestamp = timestamp ? Date.parse(timestamp) : Number.NaN
+      messages.push({
+        message,
+        sortTime: Number.isFinite(parsedTimestamp) ? parsedTimestamp : Number.MAX_SAFE_INTEGER,
+        order: order++
+      })
+    }
+
     for (const turn of turns) {
       const turnObj = asObject(turn)
       if (!turnObj) continue
+
+      const turnTimestamp = asString(turnObj.createdAt) ?? asString(turnObj.updatedAt)
+      const items = turnObj.items as unknown[] | undefined
+      if (Array.isArray(items) && items.length > 0) {
+        for (const item of items) {
+          const itemObj = asObject(item)
+          if (!itemObj) continue
+
+          const itemType = asString(itemObj.type)
+          const itemId = asString(itemObj.id)
+          const itemTimestamp = turnTimestamp ?? new Date().toISOString()
+
+          if (itemType === 'userMessage') {
+            const content = itemObj.content as unknown[] | undefined
+            const textParts: unknown[] = []
+
+            if (Array.isArray(content)) {
+              for (const entry of content) {
+                const entryObj = asObject(entry)
+                if (entryObj?.type === 'text' && typeof entryObj.text === 'string') {
+                  textParts.push({
+                    type: 'text',
+                    text: entryObj.text,
+                    timestamp: itemTimestamp
+                  })
+                }
+              }
+            }
+
+            if (textParts.length > 0) {
+              pushMessage(
+                {
+                  ...(itemId ? { id: itemId } : {}),
+                  role: 'user',
+                  parts: textParts,
+                  timestamp: itemTimestamp
+                },
+                itemTimestamp
+              )
+            }
+            continue
+          }
+
+          if (itemType === 'agentMessage' || itemType === 'plan') {
+            const text = asString(itemObj.text)
+            if (text) {
+              pushMessage(
+                {
+                  ...(itemId ? { id: itemId } : {}),
+                  role: 'assistant',
+                  parts: [
+                    {
+                      type: 'text',
+                      text,
+                      timestamp: itemTimestamp
+                    }
+                  ],
+                  timestamp: itemTimestamp
+                },
+                itemTimestamp
+              )
+            }
+            continue
+          }
+
+          if (itemType === 'reasoning') {
+            const summary = Array.isArray(itemObj.summary)
+              ? itemObj.summary.filter((entry): entry is string => typeof entry === 'string')
+              : []
+            const content = Array.isArray(itemObj.content)
+              ? itemObj.content.filter((entry): entry is string => typeof entry === 'string')
+              : []
+            const reasoningText = [...summary, ...content].join('\n').trim()
+
+            if (reasoningText) {
+              pushMessage(
+                {
+                  ...(itemId ? { id: itemId } : {}),
+                  role: 'assistant',
+                  parts: [
+                    {
+                      type: 'reasoning',
+                      text: reasoningText,
+                      timestamp: itemTimestamp
+                    }
+                  ],
+                  timestamp: itemTimestamp
+                },
+                itemTimestamp
+              )
+            }
+          }
+        }
+
+        continue
+      }
 
       // Extract user input
       const input = turnObj.input as unknown[] | undefined
@@ -1183,11 +1361,16 @@ export class CodexImplementer implements AgentSdkImplementer {
           }
         }
         if (textParts.length > 0) {
-          messages.push({
-            role: 'user',
-            parts: textParts,
-            timestamp: asString(turnObj.createdAt) ?? new Date().toISOString()
-          })
+          const timestamp = asString(turnObj.createdAt) ?? new Date().toISOString()
+          pushMessage(
+            {
+              ...(asString(turnObj.id) ? { id: `${asString(turnObj.id)}:user` } : {}),
+              role: 'user',
+              parts: textParts,
+              timestamp
+            },
+            timestamp
+          )
         }
       }
 
@@ -1195,17 +1378,22 @@ export class CodexImplementer implements AgentSdkImplementer {
       const output = turnObj.output as unknown[] | undefined
       const outputText = asString(turnObj.outputText)
       if (outputText) {
-        messages.push({
-          role: 'assistant',
-          parts: [
-            {
-              type: 'text',
-              text: outputText,
-              timestamp: asString(turnObj.updatedAt) ?? new Date().toISOString()
-            }
-          ],
-          timestamp: asString(turnObj.updatedAt) ?? new Date().toISOString()
-        })
+        const timestamp = asString(turnObj.updatedAt) ?? new Date().toISOString()
+        pushMessage(
+          {
+            ...(asString(turnObj.id) ? { id: `${asString(turnObj.id)}:assistant` } : {}),
+            role: 'assistant',
+            parts: [
+              {
+                type: 'text',
+                text: outputText,
+                timestamp
+              }
+            ],
+            timestamp
+          },
+          timestamp
+        )
       } else if (Array.isArray(output)) {
         const assistantParts: unknown[] = []
         for (const item of output) {
@@ -1220,15 +1408,25 @@ export class CodexImplementer implements AgentSdkImplementer {
           }
         }
         if (assistantParts.length > 0) {
-          messages.push({
-            role: 'assistant',
-            parts: assistantParts,
-            timestamp: asString(turnObj.updatedAt) ?? new Date().toISOString()
-          })
+          const timestamp = asString(turnObj.updatedAt) ?? new Date().toISOString()
+          pushMessage(
+            {
+              ...(asString(turnObj.id) ? { id: `${asString(turnObj.id)}:assistant` } : {}),
+              role: 'assistant',
+              parts: assistantParts,
+              timestamp
+            },
+            timestamp
+          )
         }
       }
     }
 
     return messages
+      .sort((a, b) => {
+        if (a.sortTime !== b.sortTime) return a.sortTime - b.sortTime
+        return a.order - b.order
+      })
+      .map((entry) => entry.message)
   }
 }

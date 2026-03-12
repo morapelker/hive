@@ -741,6 +741,14 @@ export class DatabaseService {
     return row ?? null
   }
 
+  getSessionByOpenCodeSessionId(opencodeSessionId: string): Session | null {
+    const db = this.getDb()
+    const row = db
+      .prepare('SELECT * FROM sessions WHERE opencode_session_id = ? LIMIT 1')
+      .get(opencodeSessionId) as Session | undefined
+    return row ?? null
+  }
+
   getAgentSdkForSession(
     agentSessionId: string
   ): 'opencode' | 'claude-code' | 'codex' | 'terminal' | null {

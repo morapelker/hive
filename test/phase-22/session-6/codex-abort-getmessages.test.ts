@@ -126,10 +126,13 @@ describe('Codex Abort & getMessages', () => {
       expect(requestWritten.params.turnId).toBe('turn-99')
 
       // Simulate response
-      manager.handleStdoutLine(context, JSON.stringify({
-        id: requestWritten.id,
-        result: { ok: true }
-      }))
+      manager.handleStdoutLine(
+        context,
+        JSON.stringify({
+          id: requestWritten.id,
+          result: { ok: true }
+        })
+      )
 
       await interruptPromise
     })
@@ -145,10 +148,13 @@ describe('Codex Abort & getMessages', () => {
       const requestWritten = JSON.parse((writeSpy.mock.calls[0][0] as string).trim())
       expect(requestWritten.params.turnId).toBe('turn-active-1')
 
-      manager.handleStdoutLine(context, JSON.stringify({
-        id: requestWritten.id,
-        result: { ok: true }
-      }))
+      manager.handleStdoutLine(
+        context,
+        JSON.stringify({
+          id: requestWritten.id,
+          result: { ok: true }
+        })
+      )
 
       await interruptPromise
     })
@@ -166,10 +172,13 @@ describe('Codex Abort & getMessages', () => {
       const interruptPromise = manager.interruptTurn('thread-abort-1')
       const requestWritten = JSON.parse((writeSpy.mock.calls[0][0] as string).trim())
 
-      manager.handleStdoutLine(context, JSON.stringify({
-        id: requestWritten.id,
-        result: { ok: true }
-      }))
+      manager.handleStdoutLine(
+        context,
+        JSON.stringify({
+          id: requestWritten.id,
+          result: { ok: true }
+        })
+      )
 
       await interruptPromise
 
@@ -190,10 +199,13 @@ describe('Codex Abort & getMessages', () => {
       const interruptPromise = manager.interruptTurn('thread-abort-1')
       const requestWritten = JSON.parse((writeSpy.mock.calls[0][0] as string).trim())
 
-      manager.handleStdoutLine(context, JSON.stringify({
-        id: requestWritten.id,
-        result: { ok: true }
-      }))
+      manager.handleStdoutLine(
+        context,
+        JSON.stringify({
+          id: requestWritten.id,
+          result: { ok: true }
+        })
+      )
 
       await interruptPromise
 
@@ -202,9 +214,7 @@ describe('Codex Abort & getMessages', () => {
     })
 
     it('throws when threadId is unknown', async () => {
-      await expect(
-        manager.interruptTurn('nonexistent')
-      ).rejects.toThrow('no session for threadId')
+      await expect(manager.interruptTurn('nonexistent')).rejects.toThrow('no session for threadId')
     })
   })
 
@@ -226,23 +236,26 @@ describe('Codex Abort & getMessages', () => {
       expect(requestWritten.params.includeTurns).toBe(true)
 
       // Simulate response with thread snapshot
-      manager.handleStdoutLine(context, JSON.stringify({
-        id: requestWritten.id,
-        result: {
-          thread: {
-            id: 'thread-abort-1',
-            turns: [
-              {
-                id: 'turn-1',
-                input: [{ type: 'text', text: 'Hello' }],
-                outputText: 'World',
-                createdAt: '2026-01-01T00:00:00Z',
-                updatedAt: '2026-01-01T00:00:01Z'
-              }
-            ]
+      manager.handleStdoutLine(
+        context,
+        JSON.stringify({
+          id: requestWritten.id,
+          result: {
+            thread: {
+              id: 'thread-abort-1',
+              turns: [
+                {
+                  id: 'turn-1',
+                  input: [{ type: 'text', text: 'Hello' }],
+                  outputText: 'World',
+                  createdAt: '2026-01-01T00:00:00Z',
+                  updatedAt: '2026-01-01T00:00:01Z'
+                }
+              ]
+            }
           }
-        }
-      }))
+        })
+      )
 
       const result = await readPromise
       expect(result).toBeDefined()
@@ -250,9 +263,7 @@ describe('Codex Abort & getMessages', () => {
     })
 
     it('throws when threadId is unknown', async () => {
-      await expect(
-        manager.readThread('nonexistent')
-      ).rejects.toThrow('no session for threadId')
+      await expect(manager.readThread('nonexistent')).rejects.toThrow('no session for threadId')
     })
   })
 
@@ -260,9 +271,7 @@ describe('Codex Abort & getMessages', () => {
 
   describe('CodexImplementer.abort', () => {
     it('calls manager.interruptTurn and updates status', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
       const mockWindow = {
@@ -276,7 +285,9 @@ describe('Codex Abort & getMessages', () => {
         hiveSessionId: 'hive-abort-1',
         worktreePath: '/test',
         status: 'running' as const,
-        messages: []
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
       }
       impl.getSessions().set('/test::thread-abort-1', session)
 
@@ -290,9 +301,7 @@ describe('Codex Abort & getMessages', () => {
     })
 
     it('emits idle status to renderer', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
       const mockWindow = {
@@ -306,7 +315,9 @@ describe('Codex Abort & getMessages', () => {
         hiveSessionId: 'hive-abort-1',
         worktreePath: '/test',
         status: 'running',
-        messages: []
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
       })
 
       internalManager.interruptTurn = vi.fn().mockResolvedValue(undefined)
@@ -324,9 +335,7 @@ describe('Codex Abort & getMessages', () => {
     })
 
     it('returns false for unknown session', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
 
       const result = await impl.abort('/unknown', 'thread-x')
@@ -334,9 +343,7 @@ describe('Codex Abort & getMessages', () => {
     })
 
     it('still succeeds even if interruptTurn throws', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
       const mockWindow = {
@@ -350,12 +357,12 @@ describe('Codex Abort & getMessages', () => {
         hiveSessionId: 'hive-abort-1',
         worktreePath: '/test',
         status: 'running',
-        messages: []
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
       })
 
-      internalManager.interruptTurn = vi.fn().mockRejectedValue(
-        new Error('Server not responding')
-      )
+      internalManager.interruptTurn = vi.fn().mockRejectedValue(new Error('Server not responding'))
 
       const result = await impl.abort('/test', 'thread-abort-1')
       expect(result).toBe(true) // Still succeeds
@@ -366,9 +373,7 @@ describe('Codex Abort & getMessages', () => {
 
   describe('CodexImplementer.getMessages', () => {
     it('returns in-memory messages first', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
 
       const session = {
@@ -379,7 +384,9 @@ describe('Codex Abort & getMessages', () => {
         messages: [
           { role: 'user', parts: [{ type: 'text', text: 'hi' }] },
           { role: 'assistant', parts: [{ type: 'text', text: 'hello' }] }
-        ]
+        ],
+        revertMessageID: null,
+        revertDiff: null
       }
       impl.getSessions().set('/test::thread-msg-1', session)
 
@@ -390,9 +397,7 @@ describe('Codex Abort & getMessages', () => {
     })
 
     it('falls back to readThread when in-memory is empty', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
 
@@ -401,7 +406,9 @@ describe('Codex Abort & getMessages', () => {
         hiveSessionId: 'hive-msg-1',
         worktreePath: '/test',
         status: 'ready',
-        messages: []
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
       })
 
       // Mock readThread to return a thread snapshot
@@ -431,9 +438,7 @@ describe('Codex Abort & getMessages', () => {
     })
 
     it('warms in-memory cache from readThread result', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
 
@@ -442,7 +447,9 @@ describe('Codex Abort & getMessages', () => {
         hiveSessionId: 'hive-msg-1',
         worktreePath: '/test',
         status: 'ready' as const,
-        messages: [] as unknown[]
+        messages: [] as unknown[],
+        revertMessageID: null,
+        revertDiff: null
       }
       impl.getSessions().set('/test::thread-msg-1', session)
 
@@ -468,9 +475,7 @@ describe('Codex Abort & getMessages', () => {
     })
 
     it('does not call readThread when session is closed', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
 
@@ -479,7 +484,9 @@ describe('Codex Abort & getMessages', () => {
         hiveSessionId: 'hive-msg-1',
         worktreePath: '/test',
         status: 'closed',
-        messages: []
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
       })
 
       internalManager.readThread = vi.fn()
@@ -490,10 +497,69 @@ describe('Codex Abort & getMessages', () => {
       expect(messages).toEqual([])
     })
 
+    it('recovers a persisted Codex session when no in-memory session exists', async () => {
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
+      const impl = new CodexImplementer()
+      const internalManager = impl.getManager() as any
+
+      impl.setDatabaseService({
+        getSessionByOpenCodeSessionId: vi.fn().mockReturnValue({
+          id: 'hive-msg-1',
+          opencode_session_id: 'thread-msg-1',
+          agent_sdk: 'codex',
+          model_id: null
+        })
+      } as any)
+
+      internalManager.startSession = vi.fn().mockResolvedValue({
+        threadId: 'thread-msg-1',
+        status: 'ready'
+      })
+      internalManager.readThread = vi.fn().mockResolvedValue({
+        thread: {
+          id: 'thread-msg-1',
+          turns: [
+            {
+              id: 'turn-1',
+              items: [
+                {
+                  type: 'userMessage',
+                  id: 'user-1',
+                  content: [{ type: 'text', text: 'Recovered question' }]
+                },
+                {
+                  type: 'agentMessage',
+                  id: 'assistant-1',
+                  text: 'Recovered answer'
+                }
+              ],
+              createdAt: '2026-01-01T00:00:00Z',
+              updatedAt: '2026-01-01T00:00:01Z'
+            }
+          ]
+        }
+      })
+
+      const messages = await impl.getMessages('/test', 'thread-msg-1')
+
+      expect(internalManager.startSession).toHaveBeenCalledWith({
+        cwd: '/test',
+        model: impl.getSelectedModel(),
+        resumeThreadId: 'thread-msg-1'
+      })
+      expect(internalManager.readThread).toHaveBeenCalledWith('thread-msg-1')
+      expect(messages).toHaveLength(2)
+      expect((messages[0] as any).parts[0].text).toBe('Recovered question')
+      expect((messages[1] as any).parts[0].text).toBe('Recovered answer')
+      expect(impl.getSessions().get('/test::thread-msg-1')).toMatchObject({
+        hiveSessionId: 'hive-msg-1',
+        threadId: 'thread-msg-1',
+        worktreePath: '/test'
+      })
+    })
+
     it('returns empty array for unknown session', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
 
       const messages = await impl.getMessages('/unknown', 'thread-x')
@@ -501,9 +567,7 @@ describe('Codex Abort & getMessages', () => {
     })
 
     it('returns empty array when readThread fails', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
 
@@ -512,21 +576,19 @@ describe('Codex Abort & getMessages', () => {
         hiveSessionId: 'hive-msg-1',
         worktreePath: '/test',
         status: 'ready',
-        messages: []
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
       })
 
-      internalManager.readThread = vi.fn().mockRejectedValue(
-        new Error('Server unavailable')
-      )
+      internalManager.readThread = vi.fn().mockRejectedValue(new Error('Server unavailable'))
 
       const messages = await impl.getMessages('/test', 'thread-msg-1')
       expect(messages).toEqual([])
     })
 
     it('parses thread snapshot with output array (no outputText)', async () => {
-      const { CodexImplementer } = await import(
-        '../../../src/main/services/codex-implementer'
-      )
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
 
@@ -535,7 +597,9 @@ describe('Codex Abort & getMessages', () => {
         hiveSessionId: 'hive-msg-1',
         worktreePath: '/test',
         status: 'ready',
-        messages: []
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
       })
 
       internalManager.readThread = vi.fn().mockResolvedValue({
@@ -558,6 +622,120 @@ describe('Codex Abort & getMessages', () => {
       expect(messages).toHaveLength(2)
       expect((messages[1] as any).role).toBe('assistant')
       expect((messages[1] as any).parts[0].text).toBe('Hi there')
+    })
+
+    it('parses real Codex thread/read turns with items arrays', async () => {
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
+      const impl = new CodexImplementer()
+      const internalManager = impl.getManager() as any
+
+      impl.getSessions().set('/test::thread-msg-1', {
+        threadId: 'thread-msg-1',
+        hiveSessionId: 'hive-msg-1',
+        worktreePath: '/test',
+        status: 'ready',
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
+      })
+
+      internalManager.readThread = vi.fn().mockResolvedValue({
+        thread: {
+          id: 'thread-msg-1',
+          turns: [
+            {
+              id: 'turn-1',
+              items: [
+                {
+                  type: 'userMessage',
+                  id: 'user-1',
+                  content: [{ type: 'text', text: 'Saved user message' }]
+                },
+                {
+                  type: 'agentMessage',
+                  id: 'assistant-1',
+                  text: 'Saved assistant reply'
+                }
+              ]
+            }
+          ]
+        }
+      })
+
+      const messages = await impl.getMessages('/test', 'thread-msg-1')
+
+      expect(messages).toHaveLength(2)
+      expect((messages[0] as any).role).toBe('user')
+      expect((messages[0] as any).parts[0].text).toBe('Saved user message')
+      expect((messages[1] as any).role).toBe('assistant')
+      expect((messages[1] as any).parts[0].text).toBe('Saved assistant reply')
+    })
+
+    it('returns recovered Codex messages in chronological order', async () => {
+      const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
+      const impl = new CodexImplementer()
+      const internalManager = impl.getManager() as any
+
+      impl.getSessions().set('/test::thread-msg-1', {
+        threadId: 'thread-msg-1',
+        hiveSessionId: 'hive-msg-1',
+        worktreePath: '/test',
+        status: 'ready',
+        messages: [],
+        revertMessageID: null,
+        revertDiff: null
+      })
+
+      internalManager.readThread = vi.fn().mockResolvedValue({
+        thread: {
+          id: 'thread-msg-1',
+          turns: [
+            {
+              id: 'turn-2',
+              items: [
+                {
+                  type: 'userMessage',
+                  id: 'user-2',
+                  content: [{ type: 'text', text: 'Second question' }]
+                },
+                {
+                  type: 'agentMessage',
+                  id: 'assistant-2',
+                  text: 'Second answer'
+                }
+              ],
+              createdAt: '2026-01-01T00:01:00Z',
+              updatedAt: '2026-01-01T00:01:10Z'
+            },
+            {
+              id: 'turn-1',
+              items: [
+                {
+                  type: 'userMessage',
+                  id: 'user-1',
+                  content: [{ type: 'text', text: 'First question' }]
+                },
+                {
+                  type: 'agentMessage',
+                  id: 'assistant-1',
+                  text: 'First answer'
+                }
+              ],
+              createdAt: '2026-01-01T00:00:00Z',
+              updatedAt: '2026-01-01T00:00:10Z'
+            }
+          ]
+        }
+      })
+
+      const messages = await impl.getMessages('/test', 'thread-msg-1')
+
+      expect(messages.map((message: any) => message.parts[0].text)).toEqual([
+        'First question',
+        'First answer',
+        'Second question',
+        'Second answer'
+      ])
     })
   })
 })

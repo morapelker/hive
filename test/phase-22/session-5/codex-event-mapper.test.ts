@@ -50,10 +50,13 @@ describe('mapCodexEventToStreamEvents', () => {
       expect(contentStreamKindFromMethod('item/fileChange/outputDelta')).toBe('file_change_output')
     })
 
+    it('classifies item/plan/delta as assistant', () => {
+      expect(contentStreamKindFromMethod('item/plan/delta')).toBe('assistant')
+    })
+
     it('returns null for unknown methods', () => {
       expect(contentStreamKindFromMethod('content.delta')).toBeNull()
       expect(contentStreamKindFromMethod('turn/started')).toBeNull()
-      expect(contentStreamKindFromMethod('item/plan/delta')).toBeNull()
     })
   })
 

@@ -30,6 +30,8 @@ export function contentStreamKindFromMethod(method: string): ContentStreamKind |
       return 'command_output'
     case 'item/fileChange/outputDelta':
       return 'file_change_output'
+    case 'item/plan/delta':
+      return 'assistant'
     default:
       return null
   }
@@ -270,20 +272,6 @@ export function mapCodexEventToStreamEvents(
           streamKind === 'reasoning' || streamKind === 'reasoning_summary'
             ? toReasoningPart(delta.text)
             : toTextPart(delta.text)
-      }
-    ]
-  }
-
-  // ── Plan deltas ───────────────────────────────────────────────
-  if (method === 'item/plan/delta') {
-    const delta = extractContentDelta(event)
-    if (!delta) return []
-
-    return [
-      {
-        type: 'message.part.updated',
-        sessionId: hiveSessionId,
-        data: toTextPart(delta.text)
       }
     ]
   }
