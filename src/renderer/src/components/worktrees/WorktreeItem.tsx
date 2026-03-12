@@ -20,7 +20,9 @@ import {
   Pin,
   PinOff,
   Unlink,
-  FileText
+  FileText,
+  Shield,
+  ShieldOff
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -69,6 +71,7 @@ interface Worktree {
   created_at: string
   last_accessed_at: string
   attachments: string // JSON array
+  docker_sandbox?: number
 }
 
 interface WorktreeItemProps {
@@ -127,6 +130,29 @@ export function WorktreeItem({
       await pinWorktree(worktree.id)
     }
   }, [isPinned, worktree.id, pinWorktree, unpinWorktree])
+
+  // Docker Sandbox state
+  const [sandboxAvailable, setSandboxAvailable] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    window.worktreeOps.detectDockerSandbox().then((result) => {
+      if (!cancelled) setSandboxAvailable(result.sandboxAvailable)
+    }).catch(() => {
+      if (!cancelled) setSandboxAvailable(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleToggleSandbox = useCallback(async (): Promise<void> => {
+    const newValue = !worktree.docker_sandbox
+    const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, newValue)
+    if (result.success) {
+      toast.success(newValue ? 'Docker Sandbox enabled' : 'Docker Sandbox disabled')
+    } else {
+      toast.error(result.error || 'Failed to toggle Docker Sandbox')
+    }
+  }, [worktree.id, worktree.docker_sandbox])
 
   const handleEditContext = useCallback(() => {
     useFileViewerStore.getState().openContextEditor(worktree.id)
@@ -576,6 +602,9 @@ export function WorktreeItem({
             ) : (
               <span className="text-sm truncate block" title={worktree.path}>
                 {displayName}
+                {!!worktree.docker_sandbox && (
+                  <Shield className="inline-block h-3 w-3 ml-1 text-blue-400" />
+                )}
               </span>
             )}
             <div className="flex items-center pr-1">
@@ -676,6 +705,16 @@ export function WorktreeItem({
                 {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
                 {isPinned ? 'Unpin' : 'Pin'}
               </DropdownMenuItem>
+              {sandboxAvailable && (
+                <DropdownMenuItem onClick={handleToggleSandbox}>
+                  {worktree.docker_sandbox ? (
+                    <ShieldOff className="h-4 w-4 mr-2" />
+                  ) : (
+                    <Shield className="h-4 w-4 mr-2" />
+                  )}
+                  {worktree.docker_sandbox ? 'Disable Sandbox' : 'Enable Sandbox'}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => enterConnectionMode(worktree.id)}>
                 <Link className="h-4 w-4 mr-2" />
@@ -781,6 +820,16 @@ export function WorktreeItem({
           {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
           {isPinned ? 'Unpin' : 'Pin'}
         </ContextMenuItem>
+        {sandboxAvailable && (
+          <ContextMenuItem onClick={handleToggleSandbox}>
+            {worktree.docker_sandbox ? (
+              <ShieldOff className="h-4 w-4 mr-2" />
+            ) : (
+              <Shield className="h-4 w-4 mr-2" />
+            )}
+            {worktree.docker_sandbox ? 'Disable Sandbox' : 'Enable Sandbox'}
+          </ContextMenuItem>
+        )}
         <ContextMenuSeparator />
         <ContextMenuItem onClick={() => enterConnectionMode(worktree.id)}>
           <Link className="h-4 w-4 mr-2" />
