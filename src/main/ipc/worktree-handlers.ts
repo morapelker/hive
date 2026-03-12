@@ -273,17 +273,26 @@ export function registerWorktreeHandlers(): void {
         const db = getDatabase()
         db.updateWorktreeDockerSandbox(worktreeId, enabled)
 
-        // If disabling, clean up the sandbox and wrapper script
+        // If disabling, clean up the sandbox and wrapper script (best-effort)
         if (!enabled) {
           const worktree = db.getWorktree(worktreeId)
           if (worktree) {
-            const { stopAndRemoveSandbox, removeSandboxWrapper } = await import(
-              '../services/docker-sandbox-service'
-            )
-            const safeBranch = worktree.branch_name.replace(/[^a-zA-Z0-9_.-]/g, '-')
-            const sandboxName = `hive-${safeBranch}`
-            stopAndRemoveSandbox(sandboxName)
-            removeSandboxWrapper(sandboxName)
+            try {
+              const { stopAndRemoveSandbox, removeSandboxWrapper } = await import(
+                '../services/docker-sandbox-service'
+              )
+              const safeBranch = worktree.branch_name.replace(/[^a-zA-Z0-9_.-]/g, '-')
+              const sandboxName = `hive-${safeBranch}`
+              stopAndRemoveSandbox(sandboxName)
+              removeSandboxWrapper(sandboxName)
+            } catch (cleanupError) {
+              log.warn('Sandbox cleanup failed during disable', {
+                worktreeId,
+                error: cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError)
+              })
+            }
           }
         }
 
