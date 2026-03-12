@@ -386,6 +386,20 @@ declare global {
         worktreeId: string,
         context: string | null
       ) => Promise<{ success: boolean; error?: string }>
+      toggleDockerSandbox: (
+        worktreeId: string,
+        enabled: boolean
+      ) => Promise<{ success: boolean; error?: string }>
+      detectDockerSandbox: () => Promise<{
+        dockerAvailable: boolean
+        sandboxAvailable: boolean
+      }>
+      listSandboxes: () => Promise<{
+        success: boolean
+        sandboxes: string[]
+        error?: string
+      }>
+      stopSandbox: (name: string) => Promise<{ success: boolean; error?: string }>
     }
     systemOps: {
       getLogDir: () => Promise<string>

@@ -372,7 +372,30 @@ const worktreeOps = {
 
   // Update worktree context
   updateContext: (worktreeId: string, context: string | null) =>
-    ipcRenderer.invoke('worktree:updateContext', worktreeId, context)
+    ipcRenderer.invoke('worktree:updateContext', worktreeId, context),
+
+  // Docker Sandbox
+  toggleDockerSandbox: (
+    worktreeId: string,
+    enabled: boolean
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('worktree:toggleDockerSandbox', worktreeId, enabled),
+
+  detectDockerSandbox: (): Promise<{
+    dockerAvailable: boolean
+    sandboxAvailable: boolean
+  }> => ipcRenderer.invoke('worktree:detectDockerSandbox'),
+
+  listSandboxes: (): Promise<{
+    success: boolean
+    sandboxes: string[]
+    error?: string
+  }> => ipcRenderer.invoke('worktree:listSandboxes'),
+
+  stopSandbox: (
+    name: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('worktree:stopSandbox', name)
 }
 
 // System operations API
