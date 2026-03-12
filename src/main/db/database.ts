@@ -416,8 +416,10 @@ export class DatabaseService {
       last_model_provider_id: null,
       last_model_id: null,
       last_model_variant: null,
+      attachments: '[]',
       pinned: 0,
       context: null,
+      docker_sandbox: 0,
       created_at: now,
       last_accessed_at: now
     }
