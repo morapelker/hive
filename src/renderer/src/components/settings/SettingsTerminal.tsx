@@ -62,6 +62,8 @@ export function SettingsTerminal(): React.JSX.Element {
     dockerAvailable: boolean
     sandboxAvailable: boolean
   } | null>(null)
+  const [tokenStatus, setTokenStatus] = useState<boolean | null>(null)
+  const [isRegenerating, setIsRegenerating] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -117,6 +119,29 @@ export function SettingsTerminal(): React.JSX.Element {
     })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    window.worktreeOps.hasSetupToken().then((result) => {
+      if (!cancelled) setTokenStatus(result.hasToken)
+    }).catch(() => {
+      if (!cancelled) setTokenStatus(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleRegenerateToken = async (): Promise<void> => {
+    setIsRegenerating(true)
+    try {
+      await window.worktreeOps.clearSetupToken()
+      const result = await window.worktreeOps.generateSetupToken()
+      setTokenStatus(result.success)
+    } catch {
+      setTokenStatus(false)
+    } finally {
+      setIsRegenerating(false)
+    }
+  }
 
   const isAvailable = (id: string): boolean => {
     if (id === 'custom') return true
@@ -359,6 +384,45 @@ export function SettingsTerminal(): React.JSX.Element {
               )}
             />
           </button>
+        </div>
+
+        {/* Setup Token Status */}
+        <div className="flex items-center justify-between px-3 py-2.5 rounded-md border border-transparent hover:bg-accent/50 mt-2">
+          <div>
+            <span className="text-sm">Setup Token</span>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Required for authenticating Claude Code inside the sandbox
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {tokenStatus === null ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+            ) : tokenStatus ? (
+              <span className="text-xs text-green-500">Configured</span>
+            ) : (
+              <span className="text-xs text-muted-foreground">Not configured</span>
+            )}
+            <button
+              onClick={handleRegenerateToken}
+              disabled={isRegenerating}
+              className={cn(
+                'text-xs px-2 py-1 rounded-md transition-colors',
+                'hover:bg-accent border border-transparent hover:border-border',
+                isRegenerating && 'opacity-50 cursor-not-allowed'
+              )}
+            >
+              {isRegenerating ? (
+                <span className="flex items-center gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Generating...
+                </span>
+              ) : tokenStatus ? (
+                'Regenerate'
+              ) : (
+                'Generate'
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Help text */}

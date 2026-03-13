@@ -57,6 +57,7 @@ import { PulseAnimation } from './PulseAnimation'
 import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 import { AddAttachmentDialog } from './AddAttachmentDialog'
+import { SandboxSetupDialog } from './SandboxSetupDialog'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 
 interface Worktree {
@@ -123,6 +124,9 @@ export function WorktreeItem({
   const pinWorktree = usePinnedStore((s) => s.pinWorktree)
   const unpinWorktree = usePinnedStore((s) => s.unpinWorktree)
 
+  // Sandbox setup dialog state
+  const [sandboxSetupOpen, setSandboxSetupOpen] = useState(false)
+
   const handleTogglePin = useCallback(async (): Promise<void> => {
     if (isPinned) {
       await unpinWorktree(worktree.id)
@@ -131,28 +135,65 @@ export function WorktreeItem({
     }
   }, [isPinned, worktree.id, pinWorktree, unpinWorktree])
 
-  // Docker Sandbox state
-  const [sandboxAvailable, setSandboxAvailable] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    window.worktreeOps.detectDockerSandbox().then((result) => {
-      if (!cancelled) setSandboxAvailable(result.sandboxAvailable)
-    }).catch(() => {
-      if (!cancelled) setSandboxAvailable(false)
-    })
-    return () => { cancelled = true }
-  }, [])
-
+  // Docker Sandbox toggle handler — re-detects availability on every click
   const handleToggleSandbox = useCallback(async (): Promise<void> => {
-    const newValue = !worktree.docker_sandbox
-    const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, newValue)
+    // If disabling, just toggle off directly
+    if (worktree.docker_sandbox) {
+      const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, false)
+      if (result.success) {
+        useWorktreeStore.getState().updateWorktreeDockerSandbox(worktree.id, false)
+        toast.success('Docker Sandbox disabled')
+      } else {
+        toast.error(result.error || 'Failed to disable Docker Sandbox')
+      }
+      return
+    }
+
+    // Enabling: check availability first
+    try {
+      const detection = await window.worktreeOps.detectDockerSandbox()
+      if (!detection.sandboxAvailable) {
+        toast.error('Docker Sandbox is not available. Install it via Docker Desktop.')
+        return
+      }
+    } catch {
+      toast.error('Failed to detect Docker Sandbox')
+      return
+    }
+
+    // Check if setup token exists
+    try {
+      const tokenResult = await window.worktreeOps.hasSetupToken()
+      if (!tokenResult.hasToken) {
+        // No token — show setup dialog
+        setSandboxSetupOpen(true)
+        return
+      }
+    } catch {
+      toast.error('Failed to check setup token')
+      return
+    }
+
+    // Token exists — enable directly
+    const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, true)
     if (result.success) {
-      toast.success(newValue ? 'Docker Sandbox enabled' : 'Docker Sandbox disabled')
+      useWorktreeStore.getState().updateWorktreeDockerSandbox(worktree.id, true)
+      toast.success('Docker Sandbox enabled')
     } else {
-      toast.error(result.error || 'Failed to toggle Docker Sandbox')
+      toast.error(result.error || 'Failed to enable Docker Sandbox')
     }
   }, [worktree.id, worktree.docker_sandbox])
+
+  const handleTokenGenerated = useCallback(async (): Promise<void> => {
+    // Token was just generated — now enable sandbox
+    const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, true)
+    if (result.success) {
+      useWorktreeStore.getState().updateWorktreeDockerSandbox(worktree.id, true)
+      toast.success('Docker Sandbox enabled')
+    } else {
+      toast.error(result.error || 'Failed to enable Docker Sandbox')
+    }
+  }, [worktree.id])
 
   const handleEditContext = useCallback(() => {
     useFileViewerStore.getState().openContextEditor(worktree.id)
@@ -705,16 +746,14 @@ export function WorktreeItem({
                 {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
                 {isPinned ? 'Unpin' : 'Pin'}
               </DropdownMenuItem>
-              {sandboxAvailable && (
-                <DropdownMenuItem onClick={handleToggleSandbox}>
-                  {worktree.docker_sandbox ? (
-                    <ShieldOff className="h-4 w-4 mr-2" />
-                  ) : (
-                    <Shield className="h-4 w-4 mr-2" />
-                  )}
-                  {worktree.docker_sandbox ? 'Disable Sandbox' : 'Enable Sandbox'}
-                </DropdownMenuItem>
-              )}
+              <DropdownMenuItem onClick={handleToggleSandbox}>
+                {worktree.docker_sandbox ? (
+                  <ShieldOff className="h-4 w-4 mr-2" />
+                ) : (
+                  <Shield className="h-4 w-4 mr-2" />
+                )}
+                {worktree.docker_sandbox ? 'Disable Sandbox' : 'Enable Sandbox'}
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => enterConnectionMode(worktree.id)}>
                 <Link className="h-4 w-4 mr-2" />
@@ -820,16 +859,14 @@ export function WorktreeItem({
           {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
           {isPinned ? 'Unpin' : 'Pin'}
         </ContextMenuItem>
-        {sandboxAvailable && (
-          <ContextMenuItem onClick={handleToggleSandbox}>
-            {worktree.docker_sandbox ? (
-              <ShieldOff className="h-4 w-4 mr-2" />
-            ) : (
-              <Shield className="h-4 w-4 mr-2" />
-            )}
-            {worktree.docker_sandbox ? 'Disable Sandbox' : 'Enable Sandbox'}
-          </ContextMenuItem>
-        )}
+        <ContextMenuItem onClick={handleToggleSandbox}>
+          {worktree.docker_sandbox ? (
+            <ShieldOff className="h-4 w-4 mr-2" />
+          ) : (
+            <Shield className="h-4 w-4 mr-2" />
+          )}
+          {worktree.docker_sandbox ? 'Disable Sandbox' : 'Enable Sandbox'}
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onClick={() => enterConnectionMode(worktree.id)}>
           <Link className="h-4 w-4 mr-2" />
@@ -868,6 +905,12 @@ export function WorktreeItem({
         onOpenChange={setAddAttachmentOpen}
         worktreeId={worktree.id}
         onAttachmentAdded={handleAttachmentAdded}
+      />
+
+      <SandboxSetupDialog
+        open={sandboxSetupOpen}
+        onOpenChange={setSandboxSetupOpen}
+        onTokenGenerated={handleTokenGenerated}
       />
     </ContextMenu>
   )
