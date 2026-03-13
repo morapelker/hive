@@ -350,7 +350,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
         >,
-    modelOverride?: { providerID: string; modelID: string; variant?: string }
+    modelOverride?: { providerID: string; modelID: string; variant?: string },
+    _options?: { codexFastMode?: boolean }
   ): Promise<void> {
     const session = this.getSession(worktreePath, agentSessionId)
     if (!session) {

@@ -11,6 +11,10 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
+vi.mock('../../../src/main/services/git-service', () => ({
+  autoRenameWorktreeBranch: vi.fn().mockResolvedValue({ success: true })
+}))
+
 // Track event listeners registered on the mock manager
 let eventListeners: Array<(event: any) => void> = []
 
@@ -584,6 +588,31 @@ describe('CodexImplementer.prompt()', () => {
     })
   })
 
+  it('maps codexFastMode to serviceTier fast', async () => {
+    seedSession()
+
+    simulateManagerEvents([
+      {
+        id: 'e1',
+        kind: 'notification',
+        provider: 'codex',
+        threadId: 'thread-1',
+        createdAt: new Date().toISOString(),
+        method: 'turn/completed',
+        payload: { turn: { status: 'completed' } }
+      }
+    ])
+
+    await impl.prompt('/test/project', 'thread-1', 'test', undefined, { codexFastMode: true })
+
+    expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
+      text: 'test',
+      model: 'gpt-5.4',
+      serviceTier: 'fast',
+      interactionMode: 'default'
+    })
+  })
+
   // ── plan mode interactionMode ───────────────────────────────
 
   describe('plan mode interactionMode', () => {
@@ -591,7 +620,8 @@ describe('CodexImplementer.prompt()', () => {
       seedSession()
 
       const mockDbService = {
-        getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', mode: 'plan' })
+        getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', mode: 'plan' }),
+        updateSession: vi.fn()
       } as any
       impl.setDatabaseService(mockDbService)
 
@@ -620,7 +650,8 @@ describe('CodexImplementer.prompt()', () => {
       seedSession()
 
       const mockDbService = {
-        getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', mode: 'build' })
+        getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', mode: 'build' }),
+        updateSession: vi.fn()
       } as any
       impl.setDatabaseService(mockDbService)
 
@@ -674,7 +705,8 @@ describe('CodexImplementer.prompt()', () => {
       seedSession()
 
       const mockDbService = {
-        getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', mode: 'plan' })
+        getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', mode: 'plan' }),
+        updateSession: vi.fn()
       } as any
       impl.setDatabaseService(mockDbService)
 
@@ -721,7 +753,8 @@ describe('CodexImplementer.prompt()', () => {
       seedSession()
 
       const mockDbService = {
-        getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', mode: 'plan' })
+        getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', mode: 'plan' }),
+        updateSession: vi.fn()
       } as any
       impl.setDatabaseService(mockDbService)
 

@@ -4,6 +4,7 @@ import { createLogger } from '../services/logger'
 import { telemetryService } from '../services/telemetry-service'
 import type { DatabaseService } from '../db/database'
 import type { AgentSdkManager } from '../services/agent-sdk-manager'
+import type { PromptOptions } from '../services/agent-sdk-types'
 import { ClaudeCodeImplementer } from '../services/claude-code-implementer'
 import { CodexImplementer } from '../services/codex-implementer'
 
@@ -102,6 +103,7 @@ export function registerOpenCodeHandlers(
       | string
       | Array<{ type: string; text?: string; mime?: string; url?: string; filename?: string }>
     let model: { providerID: string; modelID: string; variant?: string } | undefined
+    let options: PromptOptions | undefined
 
     // Support object-style call: { worktreePath, sessionId, parts }
     if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
@@ -124,6 +126,10 @@ export function registerOpenCodeHandlers(
           variant: typeof rawModel.variant === 'string' ? rawModel.variant : undefined
         }
       }
+      const rawOptions = obj.options as Record<string, unknown> | undefined
+      if (rawOptions && typeof rawOptions.codexFastMode === 'boolean') {
+        options = { codexFastMode: rawOptions.codexFastMode }
+      }
     } else {
       // Legacy positional args: (worktreePath, sessionId, message)
       worktreePath = args[0] as string
@@ -140,6 +146,10 @@ export function registerOpenCodeHandlers(
           modelID: rawModel.modelID,
           variant: typeof rawModel.variant === 'string' ? rawModel.variant : undefined
         }
+      }
+      const rawOptions = args[4] as Record<string, unknown> | undefined
+      if (rawOptions && typeof rawOptions.codexFastMode === 'boolean') {
+        options = { codexFastMode: rawOptions.codexFastMode }
       }
     }
 
@@ -201,7 +211,8 @@ export function registerOpenCodeHandlers(
       worktreePath,
       opencodeSessionId,
       partsCount: Array.isArray(messageOrParts) ? messageOrParts.length : 1,
-      model
+      model,
+      options
     })
     try {
       // SDK-aware dispatch: route non-OpenCode sessions to their implementer
@@ -209,7 +220,7 @@ export function registerOpenCodeHandlers(
         const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
         if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
           const impl = sdkManager.getImplementer(sdkId)
-          await impl.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
+          await impl.prompt(worktreePath, opencodeSessionId, messageOrParts, model, options)
           telemetryService.track('prompt_sent', { agent_sdk: sdkId })
           return { success: true }
         }

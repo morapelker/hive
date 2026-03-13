@@ -1035,7 +1035,8 @@ const opencodeOps = {
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
         >,
-    model?: { providerID: string; modelID: string; variant?: string }
+    model?: { providerID: string; modelID: string; variant?: string },
+    options?: { codexFastMode?: boolean }
   ): Promise<{ success: boolean; error?: string }> => {
     const parts =
       typeof messageOrParts === 'string'
@@ -1045,7 +1046,8 @@ const opencodeOps = {
       worktreePath,
       sessionId: opencodeSessionId,
       parts,
-      model
+      model,
+      options
     })
   },
 

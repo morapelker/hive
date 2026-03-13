@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron'
 
-import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
+import type { AgentSdkCapabilities, AgentSdkImplementer, PromptOptions } from './agent-sdk-types'
 import { CODEX_CAPABILITIES } from './agent-sdk-types'
 import {
   getAvailableCodexModels,
@@ -483,7 +483,8 @@ export class CodexImplementer implements AgentSdkImplementer {
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
         >,
-    modelOverride?: { providerID: string; modelID: string; variant?: string }
+    modelOverride?: { providerID: string; modelID: string; variant?: string },
+    options?: PromptOptions
   ): Promise<void> {
     const key = this.getSessionKey(worktreePath, agentSessionId)
     const session = this.sessions.get(key)
@@ -638,6 +639,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       await this.manager.sendTurn(session.threadId, {
         text,
         model,
+        ...(options?.codexFastMode ? { serviceTier: 'fast' } : {}),
         interactionMode
       })
 

@@ -137,10 +137,10 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
     expect(params.collaborationMode.settings).toBeDefined()
     expect(params.collaborationMode.settings.developer_instructions).toContain('plan')
     expect(params.collaborationMode.settings.developer_instructions).toContain(
-      'Do NOT make code changes'
+      'do NOT perform these actions'
     )
     expect(params.collaborationMode.settings.developer_instructions).toContain(
-      'present the plan and stop'
+      'Stop after producing the plan block'
     )
   })
 
@@ -244,5 +244,29 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
 
     const params = getTurnStartParams(messages)
     expect(params.collaborationMode.settings.reasoning_effort).toBe('medium')
+  })
+
+  it('includes serviceTier when provided', async () => {
+    const { context, stdin } = createTestContext()
+    seedSession(context)
+
+    const turnPromise = manager.sendTurn('thread-123', {
+      text: 'fast please',
+      model: 'gpt-5.4',
+      serviceTier: 'fast'
+    })
+
+    const messages = getWrittenMessages(stdin)
+    const turnStartMsg = messages.find((m: any) => m.method === 'turn/start')
+
+    manager.handleStdoutLine(
+      context,
+      JSON.stringify({ id: turnStartMsg.id, result: { turn: { id: 'turn-fast' } } })
+    )
+
+    await turnPromise
+
+    const params = getTurnStartParams(messages)
+    expect(params.serviceTier).toBe('fast')
   })
 })

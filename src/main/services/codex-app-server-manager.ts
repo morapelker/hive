@@ -105,6 +105,7 @@ export interface CodexTurnInput {
   text?: string
   model?: string
   reasoningEffort?: string
+  serviceTier?: string | null
   interactionMode?: 'default' | 'plan'
 }
 
@@ -557,6 +558,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     if (input.reasoningEffort) {
       params.settings = { reasoningEffort: input.reasoningEffort }
+    }
+
+    if (input.serviceTier !== undefined) {
+      params.serviceTier = input.serviceTier
     }
 
     if (input.interactionMode) {

@@ -28,7 +28,8 @@ describe('Backward compatibility: settings without codex field', () => {
     autoStartSession: true,
     defaultAgentSdk: 'opencode' as const,
     showModelIcons: false,
-    stripAtMentions: true
+    stripAtMentions: true,
+    codexFastMode: false
   }
 
   it('old persisted settings merge with defaults — missing fields get default values', () => {
@@ -45,6 +46,7 @@ describe('Backward compatibility: settings without codex field', () => {
     // New defaults fill in missing fields
     expect(merged.showModelIcons).toBe(false)
     expect(merged.stripAtMentions).toBe(true)
+    expect(merged.codexFastMode).toBe(false)
   })
 
   it('new persisted settings with codex as defaultAgentSdk override the default', () => {
@@ -58,6 +60,7 @@ describe('Backward compatibility: settings without codex field', () => {
 
     expect(merged.defaultAgentSdk).toBe('codex')
     expect(merged.showModelIcons).toBe(true)
+    expect(merged.codexFastMode).toBe(false)
   })
 
   it('availableAgentSdks null safely handles codex access via optional chaining', () => {

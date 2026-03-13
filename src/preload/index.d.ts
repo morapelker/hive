@@ -446,7 +446,8 @@ declare global {
         worktreePath: string,
         opencodeSessionId: string,
         messageOrParts: string | MessagePart[],
-        model?: { providerID: string; modelID: string; variant?: string }
+        model?: { providerID: string; modelID: string; variant?: string },
+        options?: { codexFastMode?: boolean }
       ) => Promise<{ success: boolean; error?: string }>
       // Abort a streaming session
       abort: (

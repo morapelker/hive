@@ -13,6 +13,10 @@ export interface AgentSdkCapabilities {
   supportsPartialStreaming: boolean
 }
 
+export interface PromptOptions {
+  codexFastMode?: boolean
+}
+
 export interface AgentSdkImplementer {
   readonly id: AgentSdkId
   readonly capabilities: AgentSdkCapabilities
@@ -41,7 +45,8 @@ export interface AgentSdkImplementer {
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
         >,
-    modelOverride?: { providerID: string; modelID: string; variant?: string }
+    modelOverride?: { providerID: string; modelID: string; variant?: string },
+    options?: PromptOptions
   ): Promise<void>
   abort(worktreePath: string, agentSessionId: string): Promise<boolean>
   getMessages(worktreePath: string, agentSessionId: string): Promise<unknown[]>

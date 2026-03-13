@@ -81,6 +81,7 @@ export interface AppSettings {
 
   // Chat
   stripAtMentions: boolean
+  codexFastMode: boolean
 
   // Updates
   updateChannel: 'stable' | 'canary'
@@ -114,6 +115,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showUsageIndicator: true,
   defaultAgentSdk: 'opencode',
   stripAtMentions: true,
+  codexFastMode: false,
   updateChannel: 'stable',
   skippedUpdateVersion: null,
   initialSetupComplete: false,
@@ -222,6 +224,7 @@ function extractSettings(state: SettingsState): AppSettings {
     showUsageIndicator: state.showUsageIndicator,
     defaultAgentSdk: state.defaultAgentSdk,
     stripAtMentions: state.stripAtMentions,
+    codexFastMode: state.codexFastMode,
     updateChannel: state.updateChannel,
     skippedUpdateVersion: state.skippedUpdateVersion,
     initialSetupComplete: state.initialSetupComplete,
@@ -402,6 +405,7 @@ export const useSettingsStore = create<SettingsState>()(
         defaultAgentSdk: state.defaultAgentSdk,
         activeSection: state.activeSection,
         stripAtMentions: state.stripAtMentions,
+        codexFastMode: state.codexFastMode,
         updateChannel: state.updateChannel,
         skippedUpdateVersion: state.skippedUpdateVersion,
         initialSetupComplete: state.initialSetupComplete,
