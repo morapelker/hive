@@ -1367,6 +1367,15 @@ export class DatabaseService {
       .all() as ProjectSpaceAssignment[]
   }
 
+  // Sandbox token helpers
+  getSandboxToken(): string | null {
+    return this.getSetting('docker_sandbox_token')
+  }
+
+  setSandboxToken(token: string): void {
+    this.setSetting('docker_sandbox_token', token)
+  }
+
   // Utility methods
   getSchemaVersion(): number {
     const version = this.getSetting('schema_version')
