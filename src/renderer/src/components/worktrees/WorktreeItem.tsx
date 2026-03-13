@@ -25,6 +25,7 @@ import {
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -135,6 +136,28 @@ export function WorktreeItem({
   const isInConnectionMode = connectionModeActive
   const isSource = connectionModeSourceId === worktree.id
   const isChecked = connectionModeSelectedIds.has(worktree.id)
+
+  const worktreeLabel = worktree.is_default
+    ? displayName
+    : `${displayName} - ${worktree.branch_name}`
+
+  const renderWorktreeName = (): React.JSX.Element => (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="text-sm truncate block cursor-default">{displayName}</span>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={8} className="max-w-[32rem] px-3.5 py-2.5 text-sm">
+          <div className="space-y-1.5">
+            <div className="font-medium leading-none">{worktreeLabel}</div>
+            <div className="font-mono text-xs leading-relaxed text-background/80 break-all">
+              {worktree.path}
+            </div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
 
   // Auto-refresh relative time every 60 seconds
   const [, setTick] = useState(0)
@@ -433,9 +456,7 @@ export function WorktreeItem({
 
           {/* Worktree Name + Status Line */}
           <div className="flex-1 min-w-0">
-            <span className="text-sm truncate block" title={worktree.path}>
-              {displayName}
-            </span>
+            {renderWorktreeName()}
             <div className="flex items-center pr-1">
               <ModelIcon worktreeId={worktree.id} className="h-2.5 w-2.5 mr-1 shrink-0" />
               <span className={cn('text-[11px]', statusClass)} data-testid="worktree-status-text">
@@ -574,9 +595,7 @@ export function WorktreeItem({
                 data-testid="branch-rename-input"
               />
             ) : (
-              <span className="text-sm truncate block" title={worktree.path}>
-                {displayName}
-              </span>
+              renderWorktreeName()
             )}
             <div className="flex items-center pr-1">
               <ModelIcon worktreeId={worktree.id} className="h-2.5 w-2.5 mr-1 shrink-0" />
