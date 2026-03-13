@@ -135,16 +135,35 @@ export function WorktreeItem({
     }
   }, [isPinned, worktree.id, pinWorktree, unpinWorktree])
 
+  // Enable sandbox — shared by handleToggleSandbox and handleTokenGenerated
+  const enableSandbox = useCallback(async (): Promise<void> => {
+    try {
+      const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, true)
+      if (result.success) {
+        useWorktreeStore.getState().updateWorktreeDockerSandbox(worktree.id, true)
+        toast.success('Docker Sandbox enabled')
+      } else {
+        toast.error(result.error || 'Failed to enable Docker Sandbox')
+      }
+    } catch {
+      toast.error('Failed to enable Docker Sandbox')
+    }
+  }, [worktree.id])
+
   // Docker Sandbox toggle handler — re-detects availability on every click
   const handleToggleSandbox = useCallback(async (): Promise<void> => {
     // If disabling, just toggle off directly
     if (worktree.docker_sandbox) {
-      const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, false)
-      if (result.success) {
-        useWorktreeStore.getState().updateWorktreeDockerSandbox(worktree.id, false)
-        toast.success('Docker Sandbox disabled')
-      } else {
-        toast.error(result.error || 'Failed to disable Docker Sandbox')
+      try {
+        const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, false)
+        if (result.success) {
+          useWorktreeStore.getState().updateWorktreeDockerSandbox(worktree.id, false)
+          toast.success('Docker Sandbox disabled')
+        } else {
+          toast.error(result.error || 'Failed to disable Docker Sandbox')
+        }
+      } catch {
+        toast.error('Failed to disable Docker Sandbox')
       }
       return
     }
@@ -175,25 +194,12 @@ export function WorktreeItem({
     }
 
     // Token exists — enable directly
-    const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, true)
-    if (result.success) {
-      useWorktreeStore.getState().updateWorktreeDockerSandbox(worktree.id, true)
-      toast.success('Docker Sandbox enabled')
-    } else {
-      toast.error(result.error || 'Failed to enable Docker Sandbox')
-    }
-  }, [worktree.id, worktree.docker_sandbox])
+    await enableSandbox()
+  }, [worktree.id, worktree.docker_sandbox, enableSandbox])
 
   const handleTokenGenerated = useCallback(async (): Promise<void> => {
-    // Token was just generated — now enable sandbox
-    const result = await window.worktreeOps.toggleDockerSandbox(worktree.id, true)
-    if (result.success) {
-      useWorktreeStore.getState().updateWorktreeDockerSandbox(worktree.id, true)
-      toast.success('Docker Sandbox enabled')
-    } else {
-      toast.error(result.error || 'Failed to enable Docker Sandbox')
-    }
-  }, [worktree.id])
+    await enableSandbox()
+  }, [enableSandbox])
 
   const handleEditContext = useCallback(() => {
     useFileViewerStore.getState().openContextEditor(worktree.id)

@@ -76,6 +76,10 @@ interface Worktree {
   last_model_provider_id: string | null
   last_model_id: string | null
   last_model_variant: string | null
+  attachments: string // JSON array of Attachment objects
+  pinned: number // 0 = not pinned, 1 = pinned
+  context: string | null
+  docker_sandbox: number // 0 = off, 1 = on
   created_at: string
   last_accessed_at: string
 }
@@ -126,6 +130,7 @@ interface WorktreeState {
     sourceWorktreePath: string
   ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
   updateWorktreeBranch: (worktreeId: string, newBranch: string) => void
+  updateWorktreeDockerSandbox: (worktreeId: string, enabled: boolean) => void
   updateWorktreeModel: (worktreeId: string, model: SelectedModel) => void
   reorderWorktrees: (projectId: string, fromIndex: number, toIndex: number) => void
   appendSessionTitle: (worktreeId: string, title: string) => void
@@ -551,6 +556,22 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           w.id === worktreeId
             ? { ...w, name: newBranch, branch_name: newBranch, branch_renamed: 1 }
             : w
+        )
+        if (updated.some((w, i) => w !== worktrees[i])) {
+          newMap.set(projectId, updated)
+        }
+      }
+      return { worktreesByProject: newMap }
+    })
+  },
+
+  // Update a worktree's docker_sandbox flag in the store
+  updateWorktreeDockerSandbox: (worktreeId: string, enabled: boolean) => {
+    set((state) => {
+      const newMap = new Map(state.worktreesByProject)
+      for (const [projectId, worktrees] of newMap.entries()) {
+        const updated = worktrees.map((w) =>
+          w.id === worktreeId ? { ...w, docker_sandbox: enabled ? 1 : 0 } : w
         )
         if (updated.some((w, i) => w !== worktrees[i])) {
           newMap.set(projectId, updated)
