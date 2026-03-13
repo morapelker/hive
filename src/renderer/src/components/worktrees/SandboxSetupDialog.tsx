@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -25,33 +25,60 @@ export function SandboxSetupDialog({
 }: SandboxSetupDialogProps): React.JSX.Element {
   const [state, setState] = useState<SetupState>('idle')
   const [errorMessage, setErrorMessage] = useState<string>('')
+  const autoCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const handleGenerate = async (): Promise<void> => {
-    setState('generating')
-    setErrorMessage('')
-
-    const result = await window.worktreeOps.generateSetupToken()
-    if (result.success) {
-      setState('success')
-      setTimeout(() => {
-        onOpenChange(false)
-        onTokenGenerated()
-        setState('idle')
-      }, 1500)
-    } else {
-      setState('error')
-      setErrorMessage(result.error || 'Failed to generate setup token')
+  // Clear auto-close timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoCloseTimer.current) {
+        clearTimeout(autoCloseTimer.current)
+      }
     }
-  }
+  }, [])
 
-  const handleClose = (newOpen: boolean): void => {
-    if (state === 'generating') return
-    onOpenChange(newOpen)
-    if (!newOpen) {
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (open) {
       setState('idle')
       setErrorMessage('')
     }
-  }
+  }, [open])
+
+  const handleGenerate = useCallback(async (): Promise<void> => {
+    setState('generating')
+    setErrorMessage('')
+
+    try {
+      const result = await window.worktreeOps.generateSetupToken()
+      if (result.success) {
+        setState('success')
+        autoCloseTimer.current = setTimeout(() => {
+          onOpenChange(false)
+          onTokenGenerated()
+          setState('idle')
+        }, 1500)
+      } else {
+        setState('error')
+        setErrorMessage(result.error || 'Failed to generate setup token')
+      }
+    } catch (err) {
+      setState('error')
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to generate setup token')
+    }
+  }, [onOpenChange, onTokenGenerated])
+
+  const handleClose = useCallback((newOpen: boolean): void => {
+    if (state === 'generating') return
+    onOpenChange(newOpen)
+    if (!newOpen) {
+      if (autoCloseTimer.current) {
+        clearTimeout(autoCloseTimer.current)
+        autoCloseTimer.current = null
+      }
+      setState('idle')
+      setErrorMessage('')
+    }
+  }, [state, onOpenChange])
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -90,11 +117,9 @@ export function SandboxSetupDialog({
           )}
 
           {state === 'error' && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-3 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{errorMessage}</span>
-              </div>
+            <div className="flex items-center gap-3 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{errorMessage}</span>
             </div>
           )}
         </div>
