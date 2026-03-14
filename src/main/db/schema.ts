@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 8
+export const CURRENT_SCHEMA_VERSION = 10
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS worktrees (
   attachments TEXT DEFAULT '[]',
   pinned INTEGER NOT NULL DEFAULT 0,
   context TEXT DEFAULT NULL,
+  docker_sandbox INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   last_accessed_at TEXT NOT NULL
 );
@@ -49,6 +50,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   name TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   opencode_session_id TEXT,
+  agent_sdk TEXT NOT NULL DEFAULT 'opencode',
+  execution_environment TEXT NOT NULL DEFAULT 'local',
   mode TEXT NOT NULL DEFAULT 'build',
   draft_input TEXT DEFAULT NULL,
   model_provider_id TEXT,
@@ -225,6 +228,18 @@ export const MIGRATIONS: Migration[] = [
     version: 8,
     name: 'add_worktree_context',
     up: `ALTER TABLE worktrees ADD COLUMN context TEXT DEFAULT NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 9,
+    name: 'add_worktree_docker_sandbox',
+    up: `ALTER TABLE worktrees ADD COLUMN docker_sandbox INTEGER NOT NULL DEFAULT 0`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 10,
+    name: 'add_session_execution_environment',
+    up: `ALTER TABLE sessions ADD COLUMN execution_environment TEXT NOT NULL DEFAULT 'local'`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

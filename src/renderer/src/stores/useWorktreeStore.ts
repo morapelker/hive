@@ -8,6 +8,48 @@ import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
 import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
 
+/** How long the sandbox deletion success/error dialog stays visible before auto-dismiss. */
+const SANDBOX_DIALOG_DISPLAY_MS = 1200
+
+/**
+ * Pre-delete a Docker sandbox before worktree archive/unbranch.
+ * Shows a deletion dialog, attempts removal, and auto-dismisses on success.
+ * On error the dialog stays visible for the user to dismiss manually.
+ */
+async function preDeleteSandbox(
+  worktreeId: string,
+  set: (partial: Partial<WorktreeState>) => void
+): Promise<void> {
+  const existsCheck = await window.worktreeOps.sandboxExists({ worktreeId })
+  if (!existsCheck.success || !existsCheck.exists) return
+
+  set({ sandboxDeletionStatus: 'deleting', sandboxDeletionError: null })
+  try {
+    const delResult = await window.worktreeOps.stopAndRemoveSandbox({ worktreeId })
+    if (!delResult.success) {
+      set({
+        sandboxDeletionStatus: 'error',
+        sandboxDeletionError: delResult.error || 'Failed to remove sandbox'
+      })
+    } else {
+      set({ sandboxDeletionStatus: 'success' })
+    }
+  } catch (err) {
+    set({
+      sandboxDeletionStatus: 'error',
+      sandboxDeletionError:
+        err instanceof Error ? err.message : 'Failed to remove sandbox'
+    })
+  }
+
+  // Auto-dismiss on success; leave error visible for manual dismiss
+  const currentStatus = useWorktreeStore.getState().sandboxDeletionStatus
+  if (currentStatus !== 'error') {
+    await new Promise((resolve) => setTimeout(resolve, SANDBOX_DIALOG_DISPLAY_MS))
+    set({ sandboxDeletionStatus: 'idle', sandboxDeletionError: null })
+  }
+}
+
 /** Fire-and-forget: run setup script for a worktree, subscribing to output events
  *  so output is captured even when SetupTab is not mounted. */
 export function fireSetupScript(projectId: string, worktreeId: string, cwd: string): void {
@@ -76,6 +118,10 @@ interface Worktree {
   last_model_provider_id: string | null
   last_model_id: string | null
   last_model_variant: string | null
+  attachments: string // JSON array of Attachment objects
+  pinned: number // 0 = not pinned, 1 = pinned
+  context: string | null
+  docker_sandbox: number // 0 = off, 1 = on
   created_at: string
   last_accessed_at: string
 }
@@ -91,6 +137,8 @@ interface WorktreeState {
   selectedWorktreeId: string | null
   creatingForProjectId: string | null
   archivingWorktreeIds: Set<string>
+  sandboxDeletionStatus: 'idle' | 'deleting' | 'success' | 'error'
+  sandboxDeletionError: string | null
 
   // Actions
   loadWorktrees: (projectId: string) => Promise<void>
@@ -126,6 +174,7 @@ interface WorktreeState {
     sourceWorktreePath: string
   ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
   updateWorktreeBranch: (worktreeId: string, newBranch: string) => void
+  updateWorktreeDockerSandbox: (worktreeId: string, enabled: boolean) => void
   updateWorktreeModel: (worktreeId: string, model: SelectedModel) => void
   reorderWorktrees: (projectId: string, fromIndex: number, toIndex: number) => void
   appendSessionTitle: (worktreeId: string, title: string) => void
@@ -158,6 +207,8 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   selectedWorktreeId: null,
   creatingForProjectId: null,
   archivingWorktreeIds: new Set(),
+  sandboxDeletionStatus: 'idle',
+  sandboxDeletionError: null,
 
   // Load worktrees for a project from database
   loadWorktrees: async (projectId: string) => {
@@ -278,7 +329,16 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         }
       }
 
-      // 3. Proceed with archive
+      // 3. Pre-delete sandbox if this worktree has one enabled
+      if (worktree?.docker_sandbox) {
+        await preDeleteSandbox(worktreeId, set)
+        // Clear any lingering error so it doesn't stay open after archive proceeds
+        if (get().sandboxDeletionStatus === 'error') {
+          set({ sandboxDeletionStatus: 'idle', sandboxDeletionError: null })
+        }
+      }
+
+      // 4. Proceed with archive
       const result = await window.worktreeOps.delete({
         worktreeId,
         worktreePath,
@@ -291,7 +351,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         return { success: false, error: result.error || 'Failed to archive worktree' }
       }
 
-      // 4. Clean up any connections referencing this worktree
+      // 5. Clean up any connections referencing this worktree
       try {
         await window.connectionOps.removeWorktreeFromAll(worktreeId)
         // Reload connections to reflect the change
@@ -360,6 +420,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     }))
 
     try {
+      // Pre-delete sandbox if this worktree has one enabled
+      if (worktree?.docker_sandbox) {
+        await preDeleteSandbox(worktreeId, set)
+        // Clear any lingering error so it doesn't stay open after unbranch proceeds
+        if (get().sandboxDeletionStatus === 'error') {
+          set({ sandboxDeletionStatus: 'idle', sandboxDeletionError: null })
+        }
+      }
+
       const result = await window.worktreeOps.delete({
         worktreeId,
         worktreePath,
@@ -551,6 +620,22 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           w.id === worktreeId
             ? { ...w, name: newBranch, branch_name: newBranch, branch_renamed: 1 }
             : w
+        )
+        if (updated.some((w, i) => w !== worktrees[i])) {
+          newMap.set(projectId, updated)
+        }
+      }
+      return { worktreesByProject: newMap }
+    })
+  },
+
+  // Update a worktree's docker_sandbox flag in the store
+  updateWorktreeDockerSandbox: (worktreeId: string, enabled: boolean) => {
+    set((state) => {
+      const newMap = new Map(state.worktreesByProject)
+      for (const [projectId, worktrees] of newMap.entries()) {
+        const updated = worktrees.map((w) =>
+          w.id === worktreeId ? { ...w, docker_sandbox: enabled ? 1 : 0 } : w
         )
         if (updated.some((w, i) => w !== worktrees[i])) {
           newMap.set(projectId, updated)

@@ -55,6 +55,7 @@ export interface Worktree {
   attachments: string // JSON array of Attachment objects
   pinned: number // 0 = not pinned, 1 = pinned
   context: string | null
+  docker_sandbox: number // 0 = off, 1 = on
   created_at: string
   last_accessed_at: string
 }
@@ -91,6 +92,7 @@ export interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  execution_environment: 'local' | 'docker-sandbox'
   mode: SessionMode
   model_provider_id: string | null
   model_id: string | null
@@ -107,6 +109,7 @@ export interface SessionCreate {
   name?: string | null
   opencode_session_id?: string | null
   agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  execution_environment?: 'local' | 'docker-sandbox'
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
@@ -117,6 +120,7 @@ export interface SessionUpdate {
   status?: 'active' | 'completed' | 'error'
   opencode_session_id?: string | null
   agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  execution_environment?: 'local' | 'docker-sandbox'
   mode?: SessionMode
   model_provider_id?: string | null
   model_id?: string | null

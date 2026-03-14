@@ -21,6 +21,8 @@ import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDial
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
+import { useSessionStore } from '@/stores/useSessionStore'
+import { SandboxCreatingDialog } from '@/components/worktrees/SandboxCreatingDialog'
 
 function GlobalProjectSettings(): React.JSX.Element | null {
   const settingsProjectId = useProjectStore((s) => s.settingsProjectId)
@@ -37,6 +39,58 @@ function GlobalProjectSettings(): React.JSX.Element | null {
         if (!open) closeProjectSettings()
       }}
     />
+  )
+}
+
+function SandboxCreatingDialogWrapper(): React.JSX.Element | null {
+  const sandboxStatus = useSessionStore((s) => s.sandboxCreationStatus)
+  const sandboxError = useSessionStore((s) => s.sandboxCreationError)
+
+  if (sandboxStatus === 'idle') return null
+
+  return (
+    <ErrorBoundary componentName="SandboxCreatingDialog" fallback={null}>
+      <SandboxCreatingDialog
+        open={sandboxStatus !== 'idle'}
+        onOpenChange={(open) => {
+          if (!open) {
+            useSessionStore.setState({
+              sandboxCreationStatus: 'idle',
+              sandboxCreationError: null
+            })
+          }
+        }}
+        mode="creating"
+        status={sandboxStatus}
+        errorMessage={sandboxError}
+      />
+    </ErrorBoundary>
+  )
+}
+
+function SandboxDeletingDialogWrapper(): React.JSX.Element | null {
+  const status = useWorktreeStore((s) => s.sandboxDeletionStatus)
+  const error = useWorktreeStore((s) => s.sandboxDeletionError)
+
+  if (status === 'idle') return null
+
+  return (
+    <ErrorBoundary componentName="SandboxDeletingDialog" fallback={null}>
+      <SandboxCreatingDialog
+        open={status !== 'idle'}
+        onOpenChange={(open) => {
+          if (!open) {
+            useWorktreeStore.setState({
+              sandboxDeletionStatus: 'idle',
+              sandboxDeletionError: null
+            })
+          }
+        }}
+        mode="deleting"
+        status={status}
+        errorMessage={error}
+      />
+    </ErrorBoundary>
   )
 }
 
@@ -121,6 +175,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
       </ErrorBoundary>
       <GlobalProjectSettings />
       <AgentSetupGuard />
+      <SandboxCreatingDialogWrapper />
+      <SandboxDeletingDialogWrapper />
     </div>
   )
 }

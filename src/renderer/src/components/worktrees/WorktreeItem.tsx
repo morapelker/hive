@@ -70,6 +70,7 @@ interface Worktree {
   created_at: string
   last_accessed_at: string
   attachments: string // JSON array
+  docker_sandbox?: number
 }
 
 interface WorktreeItemProps {

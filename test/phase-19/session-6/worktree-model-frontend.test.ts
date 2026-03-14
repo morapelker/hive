@@ -1,6 +1,7 @@
 import { vi, beforeEach, afterEach } from 'vitest'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStore'
+import { useSettingsStore } from '../../../src/renderer/src/stores/useSettingsStore'
 
 // Mock window.db.worktree.updateModel + window.db.session.create + window.db.session.update
 const mockUpdateModel = vi.fn().mockResolvedValue({ success: true })
@@ -30,6 +31,11 @@ beforeEach(() => {
     activeSessionId: null,
     activeWorktreeId: null,
     activeSessionByWorktree: {}
+  })
+
+  useSettingsStore.setState({
+    selectedModel: null,
+    selectedModelByProvider: {}
   })
 
   // Mock window APIs

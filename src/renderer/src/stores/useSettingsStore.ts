@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+
+const APP_SETTINGS_DB_KEY = 'app_settings'
 
 // ==========================================
 // Types
@@ -31,6 +32,8 @@ export interface CommandFilterSettings {
   defaultBehavior: 'ask' | 'allow' | 'block'
   enabled: boolean
 }
+
+export type SandboxAgent = 'claude' | 'codex' | 'copilot' | 'gemini' | 'opencode' | 'shell'
 
 export interface AppSettings {
   // General
@@ -75,6 +78,7 @@ export interface AppSettings {
 
   // Agent SDK
   defaultAgentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  preferSandboxSessions: boolean
 
   // Setup
   initialSetupComplete: boolean
@@ -89,6 +93,10 @@ export interface AppSettings {
 
   // Command Filter
   commandFilter: CommandFilterSettings
+
+  // Docker Sandbox
+  dockerSandboxAgent: SandboxAgent
+  dockerSandboxMountGitReadOnly: boolean
 
   // Privacy
   telemetryEnabled: boolean
@@ -114,6 +122,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showModelProvider: false,
   showUsageIndicator: true,
   defaultAgentSdk: 'opencode',
+  preferSandboxSessions: false,
   stripAtMentions: true,
   codexFastMode: false,
   updateChannel: 'stable',
@@ -135,6 +144,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     defaultBehavior: 'ask',
     enabled: false
   },
+  dockerSandboxAgent: 'claude',
+  dockerSandboxMountGitReadOnly: true,
   telemetryEnabled: true
 }
 
@@ -145,6 +156,7 @@ interface SettingsState extends AppSettings {
 
   // Cached SDK availability (non-persisted, re-detected each launch)
   availableAgentSdks: { opencode: boolean; claude: boolean; codex: boolean } | null
+  dockerSandboxAvailable: boolean | null
 
   // Actions
   openSettings: (section?: string) => void
@@ -166,6 +178,7 @@ interface SettingsState extends AppSettings {
   resetToDefaults: () => void
   loadFromDatabase: () => Promise<void>
   detectAvailableAgentSdks: () => Promise<void>
+  detectDockerSandbox: () => Promise<void>
 }
 
 async function saveToDatabase(settings: AppSettings): Promise<void> {
@@ -223,12 +236,15 @@ function extractSettings(state: SettingsState): AppSettings {
     showModelProvider: state.showModelProvider,
     showUsageIndicator: state.showUsageIndicator,
     defaultAgentSdk: state.defaultAgentSdk,
+    preferSandboxSessions: state.preferSandboxSessions,
     stripAtMentions: state.stripAtMentions,
     codexFastMode: state.codexFastMode,
     updateChannel: state.updateChannel,
     skippedUpdateVersion: state.skippedUpdateVersion,
     initialSetupComplete: state.initialSetupComplete,
     commandFilter: state.commandFilter,
+    dockerSandboxAgent: state.dockerSandboxAgent,
+    dockerSandboxMountGitReadOnly: state.dockerSandboxMountGitReadOnly,
     telemetryEnabled: state.telemetryEnabled
   }
 }
@@ -262,6 +278,7 @@ export const useSettingsStore = create<SettingsState>()(
       activeSection: 'appearance',
       isLoading: true,
       availableAgentSdks: null,
+      dockerSandboxAvailable: null,
 
       openSettings: (section?: string) => {
         set({ isOpen: true, activeSection: section || get().activeSection })
@@ -378,6 +395,15 @@ export const useSettingsStore = create<SettingsState>()(
           // Fail gracefully — context menu just won't show
           set({ availableAgentSdks: null })
         }
+      },
+
+      detectDockerSandbox: async () => {
+        try {
+          const result = await window.worktreeOps.detectDockerSandbox()
+          set({ dockerSandboxAvailable: result.sandboxAvailable })
+        } catch {
+          set({ dockerSandboxAvailable: false })
+        }
       }
     }),
     {
@@ -403,6 +429,7 @@ export const useSettingsStore = create<SettingsState>()(
         showModelProvider: state.showModelProvider,
         showUsageIndicator: state.showUsageIndicator,
         defaultAgentSdk: state.defaultAgentSdk,
+        preferSandboxSessions: state.preferSandboxSessions,
         activeSection: state.activeSection,
         stripAtMentions: state.stripAtMentions,
         codexFastMode: state.codexFastMode,
@@ -410,6 +437,8 @@ export const useSettingsStore = create<SettingsState>()(
         skippedUpdateVersion: state.skippedUpdateVersion,
         initialSetupComplete: state.initialSetupComplete,
         commandFilter: state.commandFilter,
+        dockerSandboxAgent: state.dockerSandboxAgent,
+        dockerSandboxMountGitReadOnly: state.dockerSandboxMountGitReadOnly,
         telemetryEnabled: state.telemetryEnabled
       })
     }
@@ -424,6 +453,7 @@ if (typeof window !== 'undefined') {
       .loadFromDatabase()
       .then(() => {
         useSettingsStore.getState().detectAvailableAgentSdks()
+        useSettingsStore.getState().detectDockerSandbox()
       })
   }, 200)
 

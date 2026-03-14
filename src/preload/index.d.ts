@@ -63,6 +63,7 @@ interface Worktree {
   attachments: string // JSON array of Attachment objects
   pinned: number // 0 = not pinned, 1 = pinned
   context: string | null
+  docker_sandbox: number // 0 = off, 1 = on
   created_at: string
   last_accessed_at: string
 }
@@ -76,6 +77,7 @@ interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  execution_environment?: 'local' | 'docker-sandbox'
   mode: 'build' | 'plan'
   model_provider_id: string | null
   model_id: string | null
@@ -227,6 +229,7 @@ declare global {
           name?: string | null
           opencode_session_id?: string | null
           agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+          execution_environment?: 'local' | 'docker-sandbox'
           model_provider_id?: string | null
           model_id?: string | null
           model_variant?: string | null
@@ -242,6 +245,7 @@ declare global {
             status?: 'active' | 'completed' | 'error'
             opencode_session_id?: string | null
             agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+            execution_environment?: 'local' | 'docker-sandbox'
             mode?: 'build' | 'plan'
             model_provider_id?: string | null
             model_id?: string | null
@@ -384,6 +388,34 @@ declare global {
       updateContext: (
         worktreeId: string,
         context: string | null
+      ) => Promise<{ success: boolean; error?: string }>
+      toggleDockerSandbox: (
+        worktreeId: string,
+        enabled: boolean
+      ) => Promise<{ success: boolean; error?: string }>
+      detectDockerSandbox: () => Promise<{
+        dockerAvailable: boolean
+        sandboxAvailable: boolean
+      }>
+      listSandboxes: () => Promise<{
+        success: boolean
+        sandboxes: string[]
+        error?: string
+      }>
+      stopSandbox: (name: string) => Promise<{ success: boolean; error?: string }>
+      hasSetupToken: () => Promise<{ success: boolean; hasToken: boolean; error?: string }>
+      generateSetupToken: () => Promise<{ success: boolean; error?: string }>
+      clearSetupToken: () => Promise<{ success: boolean; error?: string }>
+      ensureSandboxExists: (params: {
+        worktreeId: string
+        worktreePath: string
+        projectGitPath: string
+      }) => Promise<{ success: boolean; created: boolean; error?: string }>
+      sandboxExists: (
+        params: { worktreeId: string }
+      ) => Promise<{ success: boolean; exists: boolean; error?: string }>
+      stopAndRemoveSandbox: (
+        params: { worktreeId: string }
       ) => Promise<{ success: boolean; error?: string }>
     }
     systemOps: {

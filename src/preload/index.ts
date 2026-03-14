@@ -87,6 +87,7 @@ const db = {
       name?: string | null
       opencode_session_id?: string | null
       agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+      execution_environment?: 'local' | 'docker-sandbox'
       model_provider_id?: string | null
       model_id?: string | null
       model_variant?: string | null
@@ -104,6 +105,7 @@ const db = {
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
         agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+        execution_environment?: 'local' | 'docker-sandbox'
         mode?: 'build' | 'plan'
         model_provider_id?: string | null
         model_id?: string | null
@@ -372,7 +374,56 @@ const worktreeOps = {
 
   // Update worktree context
   updateContext: (worktreeId: string, context: string | null) =>
-    ipcRenderer.invoke('worktree:updateContext', worktreeId, context)
+    ipcRenderer.invoke('worktree:updateContext', worktreeId, context),
+
+  // Docker Sandbox
+  toggleDockerSandbox: (
+    worktreeId: string,
+    enabled: boolean
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('worktree:toggleDockerSandbox', worktreeId, enabled),
+
+  detectDockerSandbox: (): Promise<{
+    dockerAvailable: boolean
+    sandboxAvailable: boolean
+  }> => ipcRenderer.invoke('worktree:detectDockerSandbox'),
+
+  listSandboxes: (): Promise<{
+    success: boolean
+    sandboxes: string[]
+    error?: string
+  }> => ipcRenderer.invoke('worktree:listSandboxes'),
+
+  stopSandbox: (
+    name: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('worktree:stopSandbox', name),
+
+  hasSetupToken: (): Promise<{ success: boolean; hasToken: boolean; error?: string }> =>
+    ipcRenderer.invoke('sandbox:hasToken'),
+
+  generateSetupToken: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('sandbox:generateToken'),
+
+  clearSetupToken: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('sandbox:clearToken'),
+
+  ensureSandboxExists: (params: {
+    worktreeId: string
+    worktreePath: string
+    projectGitPath: string
+  }): Promise<{ success: boolean; created: boolean; error?: string }> =>
+    ipcRenderer.invoke('sandbox:ensureExists', params),
+
+  sandboxExists: (
+    params: { worktreeId: string }
+  ): Promise<{ success: boolean; exists: boolean; error?: string }> =>
+    ipcRenderer.invoke('sandbox:exists', params),
+
+  stopAndRemoveSandbox: (
+    params: { worktreeId: string }
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('sandbox:stopAndRemove', params)
 }
 
 // System operations API

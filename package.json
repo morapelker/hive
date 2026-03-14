@@ -57,7 +57,8 @@
     "release": "bash scripts/release.sh",
     "release:canary": "bash scripts/release-canary.sh",
     "install:mac": "bash scripts/install.sh",
-    "codegen": "graphql-codegen --config src/shared/codegen.ts"
+    "codegen": "graphql-codegen --config src/shared/codegen.ts",
+    "sandbox:test-sdk": "NODE_ENV=development node --experimental-strip-types --experimental-transform-types --experimental-specifier-resolution=node scripts/test-claude-sdk-docker-sandbox.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.76",

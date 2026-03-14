@@ -264,4 +264,309 @@ export function registerWorktreeHandlers(): void {
       }
     }
   )
+
+  // Toggle Docker sandbox for a worktree
+  ipcMain.handle(
+    'worktree:toggleDockerSandbox',
+    async (_event, worktreeId: string, enabled: boolean) => {
+      try {
+        const db = getDatabase()
+        db.updateWorktreeDockerSandbox(worktreeId, enabled)
+
+        // If disabling, clean up the sandbox and wrapper script (best-effort)
+        if (!enabled) {
+          const worktree = db.getWorktree(worktreeId)
+          if (worktree) {
+            try {
+              const {
+                stopAndRemoveSandboxAsync,
+                getSandboxNameForWorktree,
+                removeSandboxWrapper
+              } = await import('../services/docker-sandbox-service')
+              const sandboxName = getSandboxNameForWorktree(worktreeId)
+              await stopAndRemoveSandboxAsync(sandboxName)
+              removeSandboxWrapper(sandboxName)
+            } catch (cleanupError) {
+              log.warn('Sandbox cleanup failed during disable', {
+                worktreeId,
+                error: cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError)
+              })
+            }
+          }
+        }
+
+        return { success: true }
+      } catch (error) {
+        log.error('Failed to toggle Docker sandbox', {
+          worktreeId,
+          enabled,
+          error: error instanceof Error ? error.message : String(error)
+        })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  // Detect Docker sandbox availability
+  ipcMain.handle('worktree:detectDockerSandbox', async () => {
+    try {
+      const { detectDockerSandbox } = await import('../services/docker-sandbox-service')
+      return detectDockerSandbox()
+    } catch (error) {
+      log.error('Failed to detect Docker sandbox', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return { dockerAvailable: false, sandboxAvailable: false }
+    }
+  })
+
+  // List all running Docker sandboxes
+  ipcMain.handle('worktree:listSandboxes', async () => {
+    try {
+      const { listSandboxes } = await import('../services/docker-sandbox-service')
+      return { success: true, sandboxes: listSandboxes() }
+    } catch (error) {
+      log.error('Failed to list Docker sandboxes', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return {
+        success: false,
+        sandboxes: [],
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
+  // Stop and remove a Docker sandbox
+  ipcMain.handle('worktree:stopSandbox', async (_event, name: string) => {
+    try {
+      const { stopAndRemoveSandboxAsync } = await import('../services/docker-sandbox-service')
+      await stopAndRemoveSandboxAsync(name)
+      return { success: true }
+    } catch (error) {
+      log.error('Failed to stop Docker sandbox', {
+        name,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
+  // Check if a sandbox setup token exists
+  ipcMain.handle('sandbox:hasToken', async () => {
+    try {
+      const db = getDatabase()
+      const token = db.getSandboxToken()
+      return { success: true, hasToken: !!token }
+    } catch (error) {
+      log.error('Failed to check sandbox token', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return {
+        success: false,
+        hasToken: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
+  // Generate a sandbox setup token via claude setup-token.
+  //
+  // claude setup-token uses Ink (React terminal UI) which requires a TTY with
+  // raw mode support. Plain execFile/spawn don't allocate a PTY, so Ink crashes
+  // with "Raw mode is not supported on the current process.stdin". We use
+  // node-pty to give the command a proper pseudo-terminal.
+  ipcMain.handle('sandbox:generateToken', async () => {
+    try {
+      const { resolveClaudeBinaryPath } = await import('../services/claude-binary-resolver')
+      const claudeBinary = resolveClaudeBinaryPath()
+      if (!claudeBinary) {
+        return {
+          success: false,
+          error: 'Claude CLI not found. Please install Claude Code first.'
+        }
+      }
+
+      log.info('Starting sandbox token generation via claude setup-token (pty)')
+
+      const ptyMod = await import('node-pty')
+      const TOKEN_TIMEOUT_MS = 120_000
+
+      const token = await new Promise<string>((resolve, reject) => {
+        let output = ''
+        let settled = false
+
+        const ptyProc = ptyMod.spawn(claudeBinary, ['setup-token'], {
+          name: 'xterm-256color',
+          cols: 120,
+          rows: 30,
+          cwd: process.env.HOME || '/',
+          env: { ...process.env } as Record<string, string>
+        })
+
+        // Strip ANSI escape codes so we can reliably match token patterns
+        const stripAnsi = (str: string): string =>
+          str.replace(
+            // eslint-disable-next-line no-control-regex
+            /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nq-uy=><~]/g,
+            ''
+          )
+
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true
+            try { ptyProc.kill() } catch { /* ignore */ }
+            log.error('Sandbox token generation timed out', {
+              outputLength: output.length
+            })
+            reject(new Error('Token generation timed out. Please try again.'))
+          }
+        }, TOKEN_TIMEOUT_MS)
+
+        ptyProc.onData((data: string) => {
+          output += data
+          // Check accumulated output for the token pattern after stripping ANSI codes
+          const clean = stripAnsi(output)
+          const match = clean.match(/\bsk-ant-[A-Za-z0-9_-]+\b/)
+          if (match && !settled) {
+            settled = true
+            clearTimeout(timer)
+            log.info('Token found in pty output, killing process')
+            try { ptyProc.kill() } catch { /* ignore */ }
+            resolve(match[0])
+          }
+        })
+
+        ptyProc.onExit(({ exitCode }) => {
+          if (!settled) {
+            settled = true
+            clearTimeout(timer)
+            // One final check of the full output
+            const clean = stripAnsi(output)
+            const match = clean.match(/\bsk-ant-[A-Za-z0-9_-]+\b/)
+            if (match) {
+              resolve(match[0])
+            } else {
+              log.error('claude setup-token exited without producing a token', {
+                exitCode,
+                cleanOutputLength: clean.length
+              })
+              reject(new Error(
+                'claude setup-token exited without producing a token. Please try again.'
+              ))
+            }
+          }
+        })
+      })
+
+      const db = getDatabase()
+      db.setSandboxToken(token)
+      log.info('Sandbox setup token stored successfully')
+
+      return { success: true }
+    } catch (error) {
+      log.error('Failed to generate sandbox token', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
+  // Clear the stored sandbox setup token
+  ipcMain.handle('sandbox:clearToken', async () => {
+    try {
+      const db = getDatabase()
+      db.deleteSandboxToken()
+      log.info('Sandbox setup token cleared')
+      return { success: true }
+    } catch (error) {
+      log.error('Failed to clear sandbox token', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
+  // Pre-create Docker sandbox (async, non-blocking)
+  ipcMain.handle(
+    'sandbox:ensureExists',
+    async (
+      _event,
+      params: {
+        worktreeId: string
+        worktreePath: string
+        projectGitPath: string
+      }
+    ) => {
+      try {
+        const { ensureSandboxExistsAsync, getSandboxNameForWorktree } = await import(
+          '../services/docker-sandbox-service'
+        )
+        const sandboxName = getSandboxNameForWorktree(params.worktreeId)
+        const result = await ensureSandboxExistsAsync({
+          sandboxName,
+          worktreePath: params.worktreePath,
+          projectGitPath: params.projectGitPath
+        })
+        return { success: true, created: result.created }
+      } catch (error) {
+        log.error('Failed to ensure sandbox exists', {
+          worktreeId: params.worktreeId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+        return {
+          success: false,
+          created: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  ipcMain.handle('sandbox:exists', async (_event, params: { worktreeId: string }) => {
+    try {
+      const { sandboxExistsAsync, getSandboxNameForWorktree } = await import(
+        '../services/docker-sandbox-service'
+      )
+      const sandboxName = getSandboxNameForWorktree(params.worktreeId)
+      const exists = await sandboxExistsAsync(sandboxName)
+      return { success: true, exists }
+    } catch (error) {
+      return {
+        success: false,
+        exists: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+
+  ipcMain.handle('sandbox:stopAndRemove', async (_event, params: { worktreeId: string }) => {
+    try {
+      const { stopAndRemoveSandboxAsync, getSandboxNameForWorktree } = await import(
+        '../services/docker-sandbox-service'
+      )
+      const sandboxName = getSandboxNameForWorktree(params.worktreeId)
+      await stopAndRemoveSandboxAsync(sandboxName)
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
 }

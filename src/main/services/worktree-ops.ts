@@ -7,7 +7,7 @@ import { scriptRunner } from './script-runner'
 import { assignPort, releasePort } from './port-registry'
 import { createLogger } from './logger'
 import type { DatabaseService } from '../db/database'
-import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import { APP_SETTINGS_DB_KEY } from '../../shared/types/settings'
 
 const log = createLogger({ component: 'WorktreeOps' })
 
@@ -213,6 +213,18 @@ export async function deleteWorktreeOp(
 
     // Release any assigned port for this worktree
     releasePort(params.worktreePath)
+
+    try {
+      const { getSandboxNameForWorktree, stopAndRemoveSandboxAsync } = await import(
+        './docker-sandbox-service'
+      )
+      await stopAndRemoveSandboxAsync(getSandboxNameForWorktree(params.worktreeId))
+    } catch (error) {
+      log.warn('Failed to remove sandbox during worktree archive', {
+        worktreeId: params.worktreeId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
 
     // Update database - archive the worktree record
     db.archiveWorktree(params.worktreeId)

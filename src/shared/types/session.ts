@@ -7,6 +7,7 @@ export interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  execution_environment?: 'local' | 'docker-sandbox'
   mode: 'build' | 'plan'
   model_provider_id: string | null
   model_id: string | null
