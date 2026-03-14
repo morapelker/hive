@@ -133,6 +133,14 @@ export const useProjectStore = create<ProjectState>()(
             expandedProjectIds: new Set([...state.expandedProjectIds, project.id])
           }))
 
+          import('./useWorktreeStore')
+            .then(({ useWorktreeStore }) =>
+              useWorktreeStore.getState().syncWorktrees(project.id, validation.path!)
+            )
+            .catch(() => {
+              // Ignore initial sync errors
+            })
+
           return { success: true }
         } catch (error) {
           return {
