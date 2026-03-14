@@ -182,6 +182,7 @@ export class DatabaseService {
       'TEXT DEFAULT NULL REFERENCES connections(id) ON DELETE SET NULL'
     )
     this.safeAddColumn('sessions', 'agent_sdk', "TEXT NOT NULL DEFAULT 'opencode'")
+    this.safeAddColumn('sessions', 'execution_environment', "TEXT NOT NULL DEFAULT 'local'")
     this.safeAddColumn('connections', 'color', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'custom_name', 'TEXT DEFAULT NULL')
     this.safeAddColumn('worktrees', 'attachments', "TEXT DEFAULT '[]'")
@@ -712,6 +713,7 @@ export class DatabaseService {
       status: 'active',
       opencode_session_id: data.opencode_session_id ?? null,
       agent_sdk: data.agent_sdk ?? 'opencode',
+      execution_environment: data.execution_environment ?? 'local',
       mode: 'build',
       model_provider_id: data.model_provider_id ?? null,
       model_id: data.model_id ?? null,
@@ -722,8 +724,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, agent_sdk, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, agent_sdk, execution_environment, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -733,6 +735,7 @@ export class DatabaseService {
       session.status,
       session.opencode_session_id,
       session.agent_sdk,
+      session.execution_environment,
       session.mode,
       session.model_provider_id,
       session.model_id,
@@ -805,6 +808,10 @@ export class DatabaseService {
     if (data.agent_sdk !== undefined) {
       updates.push('agent_sdk = ?')
       values.push(data.agent_sdk)
+    }
+    if (data.execution_environment !== undefined) {
+      updates.push('execution_environment = ?')
+      values.push(data.execution_environment)
     }
     if (data.mode !== undefined) {
       updates.push('mode = ?')

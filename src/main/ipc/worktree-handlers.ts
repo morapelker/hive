@@ -377,7 +377,12 @@ export function registerWorktreeHandlers(): void {
     }
   })
 
-  // Generate a sandbox setup token via claude setup-token
+  // Generate a sandbox setup token via claude setup-token.
+  //
+  // claude setup-token uses Ink (React terminal UI) which requires a TTY with
+  // raw mode support. Plain execFile/spawn don't allocate a PTY, so Ink crashes
+  // with "Raw mode is not supported on the current process.stdin". We use
+  // node-pty to give the command a proper pseudo-terminal.
   ipcMain.handle('sandbox:generateToken', async () => {
     try {
       const { resolveClaudeBinaryPath } = await import('../services/claude-binary-resolver')
@@ -389,32 +394,78 @@ export function registerWorktreeHandlers(): void {
         }
       }
 
-      log.info('Starting sandbox token generation via claude setup-token')
+      log.info('Starting sandbox token generation via claude setup-token (pty)')
 
-      const { execFile } = await import('child_process')
-      const { promisify } = await import('util')
-      const execFileAsync = promisify(execFile)
+      const ptyMod = await import('node-pty')
+      const TOKEN_TIMEOUT_MS = 120_000
 
-      const { stdout } = await execFileAsync(claudeBinary, ['setup-token'], {
-        timeout: 120_000,
-        env: process.env,
-        encoding: 'utf-8'
+      const token = await new Promise<string>((resolve, reject) => {
+        let output = ''
+        let settled = false
+
+        const ptyProc = ptyMod.spawn(claudeBinary, ['setup-token'], {
+          name: 'xterm-256color',
+          cols: 120,
+          rows: 30,
+          cwd: process.env.HOME || '/',
+          env: { ...process.env } as Record<string, string>
+        })
+
+        // Strip ANSI escape codes so we can reliably match token patterns
+        const stripAnsi = (str: string): string =>
+          str.replace(
+            // eslint-disable-next-line no-control-regex
+            /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nq-uy=><~]/g,
+            ''
+          )
+
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true
+            try { ptyProc.kill() } catch { /* ignore */ }
+            log.error('Sandbox token generation timed out', {
+              outputLength: output.length
+            })
+            reject(new Error('Token generation timed out. Please try again.'))
+          }
+        }, TOKEN_TIMEOUT_MS)
+
+        ptyProc.onData((data: string) => {
+          output += data
+          // Check accumulated output for the token pattern after stripping ANSI codes
+          const clean = stripAnsi(output)
+          const match = clean.match(/\bsk-ant-[A-Za-z0-9_-]+\b/)
+          if (match && !settled) {
+            settled = true
+            clearTimeout(timer)
+            log.info('Token found in pty output, killing process')
+            try { ptyProc.kill() } catch { /* ignore */ }
+            resolve(match[0])
+          }
+        })
+
+        ptyProc.onExit(({ exitCode }) => {
+          if (!settled) {
+            settled = true
+            clearTimeout(timer)
+            // One final check of the full output
+            const clean = stripAnsi(output)
+            const match = clean.match(/\bsk-ant-[A-Za-z0-9_-]+\b/)
+            if (match) {
+              resolve(match[0])
+            } else {
+              log.error('claude setup-token exited without producing a token', {
+                exitCode,
+                cleanOutputLength: clean.length
+              })
+              reject(new Error(
+                'claude setup-token exited without producing a token. Please try again.'
+              ))
+            }
+          }
+        })
       })
 
-      // Parse the token from stdout — look for a line containing the OAuth token pattern
-      const lines = stdout.split('\n')
-      const tokenLine = lines.find((line) => line.trim().startsWith('sk-ant-'))
-      if (!tokenLine) {
-        log.error('Failed to parse token from claude setup-token output', {
-          lineCount: lines.length
-        })
-        return {
-          success: false,
-          error: 'Could not find token in claude setup-token output. Please try again.'
-        }
-      }
-
-      const token = tokenLine.trim()
       const db = getDatabase()
       db.setSandboxToken(token)
       log.info('Sandbox setup token stored successfully')

@@ -4,6 +4,11 @@ import { randomUUID } from 'node:crypto'
 import { createLogger } from './logger'
 import { notificationService } from './notification-service'
 import { loadClaudeSDK } from './claude-sdk-loader'
+import { resolveClaudeCliTransport } from './docker-claude-transport'
+import {
+  ensureSandboxExists,
+  getSandboxNameForWorktree
+} from './docker-sandbox-service'
 import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
 import type { DatabaseService } from '../db/database'
@@ -11,12 +16,17 @@ import { readClaudeTranscript, translateEntry } from './claude-transcript-reader
 import { generateSessionTitle } from './claude-session-title'
 import { autoRenameWorktreeBranch } from './git-service'
 import { getEventBus } from '../../server/event-bus'
-import { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk'
+import {
+  Options,
+  PermissionMode,
+  type SpawnOptions,
+  type SpawnedProcess
+} from '@anthropic-ai/claude-agent-sdk'
 import { CommandFilterService, type CommandFilterSettings } from './command-filter-service'
 import { createLspMcpServerConfig, LspService } from './lsp'
-import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
+const APP_SETTINGS_DB_KEY = 'app_settings'
 
 const CLAUDE_EFFORT_VARIANTS = { low: {}, medium: {}, high: {} }
 
@@ -498,35 +508,59 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         modelDef?.defaultVariant ??
         'high') as Options['effort']
 
-      // If worktree has Docker sandbox enabled, create a sandbox spawner
-      let sandboxSpawner: Options['spawnClaudeCodeProcess'] | null = null
+      let transportEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
+      }
+      let transportExecutablePath = this.claudeBinaryPath ?? undefined
+      let transportSpawnProcess:
+        | ((options: SpawnOptions) => SpawnedProcess)
+        | undefined
       if (this.dbService) {
         try {
+          const dbSession = this.dbService.getSession(session.hiveSessionId)
           const worktree = this.dbService.getWorktreeBySessionId(session.hiveSessionId)
-          if (worktree?.docker_sandbox) {
+          if (dbSession?.execution_environment === 'docker-sandbox' && worktree) {
             const sandboxToken = this.dbService.getSandboxToken()
             if (!sandboxToken) {
               log.warn(
-                'Docker sandbox enabled but no setup token found, falling back to non-sandbox mode'
+                'Claude Sandbox session has no setup token, falling back to local Claude'
+              )
+            } else if (contentBlocks) {
+              log.warn(
+                'Docker sandbox wrapper does not support attachment prompts yet, using local Claude binary'
               )
             } else {
-              const { createSandboxSpawner } = await import('./docker-sandbox-service')
-              const safeBranch = worktree.branch_name.replace(/[^a-zA-Z0-9_.-]/g, '-')
-              const sandboxName = `hive-${safeBranch}`
+              const sandboxName = getSandboxNameForWorktree(worktree.id)
               const project = this.dbService.getProject(worktree.project_id)
-              sandboxSpawner = createSandboxSpawner({
+              ensureSandboxExists({
+                sandboxName,
+                worktreePath: session.worktreePath,
+                projectGitPath: project ? `${project.path}/.git` : `${session.worktreePath}/.git`
+              })
+              const transport = resolveClaudeCliTransport({
+                enabled: true,
                 sandboxName,
                 worktreePath: session.worktreePath,
                 projectGitPath: project
                   ? `${project.path}/.git`
                   : `${session.worktreePath}/.git`,
-                token: sandboxToken
+                token: sandboxToken,
+                claudeBinaryPath: this.claudeBinaryPath,
+                env: transportEnv
               })
-              log.info('Using Docker sandbox spawner', { sandboxName })
+              transportEnv = transport.env
+              transportExecutablePath = transport.pathToClaudeCodeExecutable
+              transportSpawnProcess = transport.spawnClaudeCodeProcess
+              log.info('Using Docker sandbox Claude transport', {
+                sandboxName,
+                executablePath: transportExecutablePath,
+                usesCustomSpawner: !!transportSpawnProcess
+              })
             }
           }
         } catch (err) {
-          log.warn('Failed to set up Docker sandbox spawner, using default binary', {
+          log.warn('Failed to set up Docker sandbox transport, using default binary', {
             error: err instanceof Error ? err.message : String(err)
           })
         }
@@ -545,16 +579,13 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         extraArgs: { 'replay-user-messages': null },
         thinking: { type: 'adaptive' },
         effort: effortLevel,
-        env: {
-          ...process.env,
-          CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
-        },
+        env: transportEnv,
         canUseTool: this.createCanUseToolCallback(session),
-        ...(sandboxSpawner
-          ? { spawnClaudeCodeProcess: sandboxSpawner }
-          : this.claudeBinaryPath
-            ? { pathToClaudeCodeExecutable: this.claudeBinaryPath }
-            : {})
+        ...(transportSpawnProcess
+          ? { spawnClaudeCodeProcess: transportSpawnProcess }
+          : transportExecutablePath
+          ? { pathToClaudeCodeExecutable: transportExecutablePath }
+          : {})
       }
 
       // Attach LSP MCP server so Claude can query language servers (best-effort)
@@ -2322,7 +2353,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     // SDK messages nest content under `msg.message.content` for assistant/user,
     // and under `msg.result` for result messages (NOT top-level `msg.content`).
     const innerMessage = msg.message as Record<string, unknown> | undefined
-    const innerContent = innerMessage?.content as unknown[] | undefined
+    const innerContent =
+      (innerMessage?.content as unknown[] | undefined) ?? (msg.content as unknown[] | undefined)
 
     switch (msgType) {
       // ── Token-level streaming events (includePartialMessages: true) ──
@@ -2518,7 +2550,18 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         if (Array.isArray(innerContent)) {
           for (const block of innerContent) {
             const b = block as Record<string, unknown>
-            if (b.type === 'tool_use') {
+            if (b.type === 'text' && typeof b.text === 'string') {
+              this.sendToRenderer('opencode:stream', {
+                type: 'message.part.updated',
+                sessionId: hiveSessionId,
+                childSessionId,
+                data: {
+                  content: { type: 'text', text: b.text },
+                  part: { type: 'text', text: b.text },
+                  delta: b.text
+                }
+              })
+            } else if (b.type === 'tool_use') {
               this.sendToRenderer('opencode:stream', {
                 type: 'message.part.updated',
                 sessionId: hiveSessionId,
@@ -2742,6 +2785,51 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     targetUuid: string
   ): Promise<void | RewindFilesResult> {
     const sdk = await loadClaudeSDK()
+    let rewindTransportEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
+    }
+    let rewindExecutablePath = this.claudeBinaryPath ?? undefined
+    let rewindSpawnProcess:
+      | ((options: SpawnOptions) => SpawnedProcess)
+      | undefined
+
+    if (this.dbService) {
+      try {
+        const dbSession = this.dbService.getSession(session.hiveSessionId)
+        const worktree = this.dbService.getWorktreeBySessionId(session.hiveSessionId)
+        if (dbSession?.execution_environment === 'docker-sandbox' && worktree) {
+          const sandboxToken = this.dbService.getSandboxToken()
+          if (sandboxToken) {
+            const sandboxName = getSandboxNameForWorktree(worktree.id)
+            const project = this.dbService.getProject(worktree.project_id)
+            ensureSandboxExists({
+              sandboxName,
+              worktreePath: session.worktreePath,
+              projectGitPath: project ? `${project.path}/.git` : `${session.worktreePath}/.git`
+            })
+            const transport = resolveClaudeCliTransport({
+              enabled: true,
+              sandboxName,
+              worktreePath: session.worktreePath,
+              projectGitPath: project
+                ? `${project.path}/.git`
+                : `${session.worktreePath}/.git`,
+              token: sandboxToken,
+              claudeBinaryPath: this.claudeBinaryPath,
+              env: rewindTransportEnv
+            })
+            rewindTransportEnv = transport.env
+            rewindExecutablePath = transport.pathToClaudeCodeExecutable
+            rewindSpawnProcess = transport.spawnClaudeCodeProcess
+          }
+        }
+      } catch (error) {
+        log.warn('rewindWithResumedQuery: failed to configure Docker transport', {
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
 
     const rewindQueryRaw = sdk.query({
       prompt: '.',
@@ -2750,11 +2838,12 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         resume: session.claudeSessionId,
         enableFileCheckpointing: true,
         maxTurns: 1,
-        env: {
-          ...process.env,
-          CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
-        },
-        ...(this.claudeBinaryPath ? { pathToClaudeCodeExecutable: this.claudeBinaryPath } : {})
+        env: rewindTransportEnv,
+        ...(rewindSpawnProcess
+          ? { spawnClaudeCodeProcess: rewindSpawnProcess }
+          : rewindExecutablePath
+          ? { pathToClaudeCodeExecutable: rewindExecutablePath }
+          : {})
       }
     })
 

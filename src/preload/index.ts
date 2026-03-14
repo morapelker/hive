@@ -86,7 +86,8 @@ const db = {
       connection_id?: string | null
       name?: string | null
       opencode_session_id?: string | null
-      agent_sdk?: 'opencode' | 'claude-code'
+      agent_sdk?: 'opencode' | 'claude-code' | 'terminal'
+      execution_environment?: 'local' | 'docker-sandbox'
       model_provider_id?: string | null
       model_id?: string | null
       model_variant?: string | null
@@ -103,7 +104,8 @@ const db = {
         name?: string | null
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
-        agent_sdk?: 'opencode' | 'claude-code'
+        agent_sdk?: 'opencode' | 'claude-code' | 'terminal'
+        execution_environment?: 'local' | 'docker-sandbox'
         mode?: 'build' | 'plan'
         model_provider_id?: string | null
         model_id?: string | null

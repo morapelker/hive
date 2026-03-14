@@ -705,8 +705,13 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Handle creating a new session with a specific agent SDK (from context menu)
   const handleCreateSessionWithSdk = async (sdk: 'opencode' | 'claude-code' | 'terminal') => {
+    const createOptions =
+      sdk === 'claude-code'
+        ? { agentSdk: 'claude-code' as const, executionEnvironment: 'local' as const }
+        : sdk
+
     if (isConnectionMode && selectedConnectionId) {
-      const result = await createConnectionSession(selectedConnectionId, sdk)
+      const result = await createConnectionSession(selectedConnectionId, createOptions)
       if (!result.success) {
         toast.error(result.error || 'Failed to create session')
       }
@@ -715,9 +720,26 @@ export function SessionTabs(): React.JSX.Element | null {
 
     if (!selectedWorktreeId || !project) return
 
-    const result = await createSession(selectedWorktreeId, project.id, sdk)
+    const result = await createSession(selectedWorktreeId, project.id, createOptions)
     if (!result.success) {
       toast.error(result.error || 'Failed to create session')
+    }
+  }
+
+  const handleCreateClaudeSandboxSession = async () => {
+    if (isConnectionMode) {
+      toast.error('Claude Sandbox sessions are only available for worktrees')
+      return
+    }
+
+    if (!selectedWorktreeId || !project) return
+
+    const result = await createSession(selectedWorktreeId, project.id, {
+      agentSdk: 'claude-code',
+      executionEnvironment: 'docker-sandbox'
+    })
+    if (!result.success) {
+      toast.error(result.error || 'Failed to create Claude Sandbox session')
     }
   }
 
@@ -889,17 +911,24 @@ export function SessionTabs(): React.JSX.Element | null {
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          {availableAgentSdks?.opencode && (
+          {availableAgentSdks?.opencode !== false && (
             <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
               New OpenCode Session
             </ContextMenuItem>
           )}
-          {availableAgentSdks?.claude && (
+          {availableAgentSdks?.claude !== false && (
             <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
               New Claude Code Session
             </ContextMenuItem>
           )}
-          {(availableAgentSdks?.opencode || availableAgentSdks?.claude) && <ContextMenuSeparator />}
+          {!isConnectionMode && availableAgentSdks?.claude !== false && (
+            <ContextMenuItem onSelect={handleCreateClaudeSandboxSession}>
+              New Claude Sandbox Session
+            </ContextMenuItem>
+          )}
+          {(availableAgentSdks?.opencode !== false || availableAgentSdks?.claude !== false) && (
+            <ContextMenuSeparator />
+          )}
           <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
             <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
             New Terminal

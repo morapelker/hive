@@ -5,8 +5,14 @@ import type { BrowserWindow } from 'electron'
 const { mockQuery } = vi.hoisted(() => ({
   mockQuery: vi.fn()
 }))
+const { mockResolveClaudeCliTransport } = vi.hoisted(() => ({
+  mockResolveClaudeCliTransport: vi.fn()
+}))
 vi.mock('../../../src/main/services/claude-sdk-loader', () => ({
   loadClaudeSDK: vi.fn().mockResolvedValue({ query: mockQuery })
+}))
+vi.mock('../../../src/main/services/docker-claude-transport', () => ({
+  resolveClaudeCliTransport: mockResolveClaudeCliTransport
 }))
 
 vi.mock('../../../src/main/services/logger', () => ({
@@ -61,6 +67,12 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockResolveClaudeCliTransport.mockImplementation((options: { env?: NodeJS.ProcessEnv }) => ({
+      env: options.env ?? process.env,
+      pathToClaudeCodeExecutable: '/tmp/claude',
+      spawnClaudeCodeProcess: vi.fn(),
+      usesDockerWrapper: false
+    }))
     impl = new ClaudeCodeImplementer()
     sessions = (impl as any).sessions
     mockWindow = createMockWindow()
@@ -264,6 +276,46 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1)
       const callArgs = mockQuery.mock.calls[0][0]
       expect(callArgs.options.resume).toBe('real-sdk-id-1')
+    })
+
+    it('uses Docker transport only for docker-sandbox Claude sessions', async () => {
+      const mockDb = {
+        getSession: vi.fn().mockReturnValue({
+          mode: 'build',
+          execution_environment: 'docker-sandbox'
+        }),
+        getWorktreeBySessionId: vi.fn().mockReturnValue({
+          id: 'wt-docker-1',
+          branch_name: 'feature/docker-wrapper',
+          project_id: 'proj-1'
+        }),
+        getSandboxToken: vi.fn().mockReturnValue('sk-ant-test'),
+        getProject: vi.fn().mockReturnValue({ path: '/repo-root' }),
+        updateSession: vi.fn()
+      }
+      impl.setDatabaseService(mockDb as any)
+
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+      const iter = createMockQueryIterator([
+        {
+          type: 'assistant',
+          session_id: 'sdk-docker-1',
+          content: [{ type: 'text', text: 'SANDBOX_OK' }]
+        }
+      ])
+      mockQuery.mockReturnValue(iter)
+
+      await impl.prompt('/proj', sessionId, 'test docker wrapper')
+
+      const callArgs = mockQuery.mock.calls[0][0]
+      expect(mockResolveClaudeCliTransport).toHaveBeenCalled()
+      expect(mockResolveClaudeCliTransport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxName: 'wt-docker-1'
+        })
+      )
+      expect(callArgs.options.pathToClaudeCodeExecutable).toBeUndefined()
+      expect(callArgs.options.spawnClaudeCodeProcess).toBeDefined()
     })
   })
 

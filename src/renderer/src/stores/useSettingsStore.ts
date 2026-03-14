@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+
+const APP_SETTINGS_DB_KEY = 'app_settings'
 
 // ==========================================
 // Types
@@ -77,6 +78,7 @@ export interface AppSettings {
 
   // Agent SDK
   defaultAgentSdk: 'opencode' | 'claude-code' | 'terminal'
+  preferSandboxSessions: boolean
 
   // Setup
   initialSetupComplete: boolean
@@ -119,6 +121,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showModelProvider: false,
   showUsageIndicator: true,
   defaultAgentSdk: 'opencode',
+  preferSandboxSessions: false,
   stripAtMentions: true,
   updateChannel: 'stable',
   skippedUpdateVersion: null,
@@ -229,6 +232,7 @@ function extractSettings(state: SettingsState): AppSettings {
     showModelProvider: state.showModelProvider,
     showUsageIndicator: state.showUsageIndicator,
     defaultAgentSdk: state.defaultAgentSdk,
+    preferSandboxSessions: state.preferSandboxSessions,
     stripAtMentions: state.stripAtMentions,
     updateChannel: state.updateChannel,
     skippedUpdateVersion: state.skippedUpdateVersion,
@@ -410,6 +414,7 @@ export const useSettingsStore = create<SettingsState>()(
         showModelProvider: state.showModelProvider,
         showUsageIndicator: state.showUsageIndicator,
         defaultAgentSdk: state.defaultAgentSdk,
+        preferSandboxSessions: state.preferSandboxSessions,
         activeSection: state.activeSection,
         stripAtMentions: state.stripAtMentions,
         updateChannel: state.updateChannel,

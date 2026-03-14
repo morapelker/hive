@@ -5,7 +5,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { Transform } from 'stream'
 import type { SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk'
-import { createLogger } from './logger'
+import { createLogger } from './logger.ts'
 
 const log = createLogger({ component: 'DockerSandboxService' })
 
@@ -65,10 +65,16 @@ export interface SandboxSpawnerOptions {
   token?: string
 }
 
+export function getSandboxNameForWorktree(worktreeId: string): string {
+  const sandboxName = worktreeId.replace(/[^a-zA-Z0-9_.-]/g, '-')
+  validateSandboxName(sandboxName)
+  return sandboxName
+}
+
 /**
  * Check if a named sandbox already exists.
  */
-function sandboxExists(sandboxName: string): boolean {
+export function sandboxExists(sandboxName: string): boolean {
   try {
     const output = execFileSync('docker', ['sandbox', 'ls'], {
       encoding: 'utf-8',
@@ -79,6 +85,34 @@ function sandboxExists(sandboxName: string): boolean {
   } catch {
     return false
   }
+}
+
+export function ensureSandboxExists(options: {
+  sandboxName: string
+  worktreePath: string
+  projectGitPath: string
+  agent?: SandboxAgent
+}): { created: boolean } {
+  const { sandboxName, worktreePath, projectGitPath, agent = 'claude' } = options
+  validateSandboxName(sandboxName)
+
+  if (sandboxExists(sandboxName)) {
+    log.info('Reusing existing sandbox', { sandboxName })
+    return { created: false }
+  }
+
+  execFileSync(
+    'docker',
+    ['sandbox', 'create', '--name', sandboxName, agent, worktreePath, `${projectGitPath}:ro`],
+    {
+      encoding: 'utf-8',
+      timeout: 30000,
+      env: process.env
+    }
+  )
+
+  log.info('Created sandbox', { sandboxName, worktreePath, agent })
+  return { created: true }
 }
 
 /**
@@ -133,7 +167,7 @@ function createJsonLineFilter(): Transform {
  *
  * This replaces the bash wrapper approach. The SDK calls this function
  * instead of spawning the CLI directly, giving us full control over:
- * - Which args are forwarded to `docker sandbox run`
+ * - Which args are forwarded to `docker sandbox exec`
  * - stdin/stdout piping (no shell intermediary)
  * - OSC escape sequence stripping on stdout
  *
@@ -144,60 +178,62 @@ function createJsonLineFilter(): Transform {
 export function createSandboxSpawner(
   options: SandboxSpawnerOptions
 ): (spawnOptions: SpawnOptions) => SpawnedProcess {
-  const { sandboxName, worktreePath, projectGitPath, agent = 'claude', token } = options
+  const { sandboxName, token } = options
   validateSandboxName(sandboxName)
 
   return (spawnOptions: SpawnOptions): SpawnedProcess => {
-    // Filter out flags incompatible with Docker sandbox's bundled CLI.
-    // --include-partial-messages requires --print in the sandbox CLI,
-    // but --print expects all input upfront — incompatible with the SDK's
-    // streaming JSON-RPC protocol.
-    const filteredArgs = spawnOptions.args.filter(
-      (arg) => arg !== '--include-partial-messages'
-    )
+    // Two problems need fixing when forwarding SDK args to Docker sandbox:
+    //
+    // 1. CLI entry-point path: The SDK resolves pathToClaudeCodeExecutable
+    //    to its bundled cli.js and includes it as the first arg. Docker
+    //    sandbox already bundles its own Claude CLI — the local path doesn't
+    //    exist inside the container and breaks arg parsing.
+    //
+    // 2. TTY override: Docker sandbox always allocates a PTY for the agent,
+    //    so Claude Code sees isTTY=true and enters interactive TUI mode,
+    //    ignoring --output-format/--input-format. We must prepend --print
+    //    (-p) to explicitly force non-interactive mode. The SDK's
+    //    --input-format stream-json still works with --print — it overrides
+    //    the default "read all input upfront" behavior with streaming JSON.
+    //
+    // 3. --include-partial-messages requires --print in the sandbox CLI,
+    //    but the sandbox's bundled version may not support it.
+    const filteredArgs = spawnOptions.args.filter((arg) => {
+      if (arg === '--include-partial-messages') return false
+      // Strip the SDK's local CLI entry-point path (e.g. .../cli.js)
+      if (arg.endsWith('/cli.js') || arg.endsWith('/cli.mjs')) return false
+      return true
+    })
 
-    // Always stop/remove existing sandbox before creating fresh.
-    // Docker sandbox only forwards agent args on creation, not when
-    // reusing an existing sandbox (existing ones ignore -- AGENT_ARGS).
-    const exists = sandboxExists(sandboxName)
-    if (exists) {
-      log.info('Removing existing sandbox before fresh creation', { sandboxName })
-      try {
-        execFileSync('docker', ['sandbox', 'stop', sandboxName], {
-          encoding: 'utf-8', timeout: 15000, env: process.env
-        })
-      } catch { /* may already be stopped */ }
-      try {
-        execFileSync('docker', ['sandbox', 'rm', sandboxName], {
-          encoding: 'utf-8', timeout: 15000, env: process.env
-        })
-      } catch { /* may already be removed */ }
+    // Prepend --print to force non-interactive mode inside the sandbox PTY.
+    // Without this, Claude Code detects the PTY and launches the TUI,
+    // producing ANSI art instead of JSON-RPC output.
+    const sandboxArgs = ['--print', ...filteredArgs]
+
+    log.info('Docker sandbox arg filtering', {
+      originalArgs: spawnOptions.args.join(' '),
+      sandboxArgs: sandboxArgs.join(' '),
+      command: spawnOptions.command
+    })
+
+    const dockerArgs: string[] = ['sandbox', 'exec', '-i']
+    if (token) {
+      dockerArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${token}`)
     }
-
-    // Create fresh sandbox with name, agent, workspaces, and SDK args
-    const dockerArgs: string[] = [
-      'sandbox', 'run',
-      '--name', sandboxName,
-      agent,
-      worktreePath,
-      `${projectGitPath}:ro`,
-      '--', ...filteredArgs
-    ]
+    dockerArgs.push(sandboxName, 'claude', ...sandboxArgs)
 
     log.info('Spawning Docker sandbox process', {
       sandboxName,
       dockerArgCount: dockerArgs.length,
-      filteredOutArgs: spawnOptions.args.length - filteredArgs.length
+      filteredOutArgs: spawnOptions.args.length - filteredArgs.length,
+      dockerArgs: dockerArgs.map((arg) =>
+        arg.startsWith('CLAUDE_CODE_OAUTH_TOKEN=') ? 'CLAUDE_CODE_OAUTH_TOKEN=<redacted>' : arg
+      )
     })
-
-    const spawnEnv = { ...spawnOptions.env } as Record<string, string | undefined>
-    if (token) {
-      spawnEnv.CLAUDE_CODE_OAUTH_TOKEN = token
-    }
 
     const proc = spawn('docker', dockerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: spawnEnv as NodeJS.ProcessEnv,
+      env: spawnOptions.env as NodeJS.ProcessEnv,
       windowsHide: true
     })
 
@@ -210,6 +246,14 @@ export function createSandboxSpawner(
     proc.stderr.on('data', (data: Buffer) => {
       const msg = data.toString().trim()
       if (msg) log.info('Docker sandbox stderr', { sandboxName, message: msg })
+    })
+
+    proc.on('exit', (code, signal) => {
+      log.info('Docker sandbox process exited', {
+        sandboxName,
+        code,
+        signal
+      })
     })
 
     // Wire up abort signal
@@ -268,6 +312,9 @@ export function removeSandboxWrapper(sandboxName: string): void {
  */
 export function stopAndRemoveSandbox(sandboxName: string): void {
   validateSandboxName(sandboxName)
+  if (!sandboxExists(sandboxName)) {
+    return
+  }
   try {
     execFileSync('docker', ['sandbox', 'stop', sandboxName], {
       encoding: 'utf-8',

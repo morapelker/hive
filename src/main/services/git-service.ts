@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync, readd
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { tmpdir } from 'os'
-import { getImageMimeType } from '@shared/types/file-utils'
+import { getImageMimeType } from '../../shared/types/file-utils'
 import {
   selectUniqueBreedName,
   ALL_BREED_NAMES,

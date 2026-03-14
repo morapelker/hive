@@ -50,6 +50,7 @@ export function SettingsTerminal(): React.JSX.Element {
     customTerminalCommand,
     embeddedTerminalBackend,
     ghosttyFontSize,
+    preferSandboxSessions,
     dockerSandboxAgent,
     dockerSandboxMountGitReadOnly,
     updateSetting
@@ -310,8 +311,8 @@ export function SettingsTerminal(): React.JSX.Element {
       <div>
         <h3 className="text-base font-medium mb-1">Docker Sandbox</h3>
         <p className="text-sm text-muted-foreground mb-3">
-          Run AI agents inside isolated Docker sandbox microVMs. Enable per-worktree via the
-          worktree context menu.
+          Run Claude Sandbox sessions inside isolated Docker sandbox microVMs. Sandboxes are
+          created lazily per worktree and reused across later sandbox sessions.
         </p>
 
         {/* Detection status */}
@@ -331,6 +332,30 @@ export function SettingsTerminal(): React.JSX.Element {
           ) : (
             <span className="text-sm text-muted-foreground">Docker not found</span>
           )}
+        </div>
+
+        <div className="flex items-center justify-between px-3 py-2.5 rounded-md border border-transparent hover:bg-accent/50 mb-2">
+          <div>
+            <span className="text-sm">Prefer sandbox sessions</span>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Default new Claude Code sessions to Claude Sandbox when Docker Sandbox is available
+            </p>
+          </div>
+          <button
+            onClick={() => updateSetting('preferSandboxSessions', !preferSandboxSessions)}
+            className={cn(
+              'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+              preferSandboxSessions ? 'bg-primary' : 'bg-muted'
+            )}
+            data-testid="prefer-sandbox-sessions"
+          >
+            <span
+              className={cn(
+                'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow-lg ring-0 transition-transform',
+                preferSandboxSessions ? 'translate-x-4' : 'translate-x-0'
+              )}
+            />
+          </button>
         </div>
 
         {/* Default agent picker */}
@@ -431,9 +456,10 @@ export function SettingsTerminal(): React.JSX.Element {
         <div className="flex items-start gap-2 mt-3 p-2.5 rounded-md bg-muted/50 border border-border text-xs">
           <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
           <p className="text-muted-foreground">
-            Docker Sandbox is enabled per-worktree. Right-click a worktree and select
-            &quot;Enable Sandbox&quot; to activate. The agent runs inside an isolated microVM
-            where it can&apos;t access the host filesystem beyond the mounted directories.
+            Use the session plus-button menu to start a Claude Sandbox session explicitly, or turn
+            on &quot;Prefer sandbox sessions&quot; to make new Claude Code sessions use Docker
+            Sandbox by default. The agent runs inside an isolated microVM where it can&apos;t
+            access the host filesystem beyond the mounted directories.
           </p>
         </div>
       </div>

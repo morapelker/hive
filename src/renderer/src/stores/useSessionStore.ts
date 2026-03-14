@@ -6,6 +6,13 @@ import { useWorktreeStore } from './useWorktreeStore'
 
 // Session mode type
 export type SessionMode = 'build' | 'plan'
+export type SessionExecutionEnvironment = 'local' | 'docker-sandbox'
+export type SessionAgentSdk = 'opencode' | 'claude-code' | 'terminal'
+
+export interface CreateSessionOptions {
+  agentSdk?: SessionAgentSdk
+  executionEnvironment?: SessionExecutionEnvironment
+}
 
 // Pending plan approval state (from ExitPlanMode blocking tool)
 export interface PendingPlan {
@@ -23,7 +30,8 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code' | 'terminal'
+  agent_sdk: SessionAgentSdk
+  execution_environment?: SessionExecutionEnvironment
   mode: SessionMode
   model_provider_id: string | null
   model_id: string | null
@@ -76,7 +84,7 @@ interface SessionState {
   createSession: (
     worktreeId: string,
     projectId: string,
-    agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
+    options?: CreateSessionOptions | SessionAgentSdk
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -118,7 +126,7 @@ interface SessionState {
   loadConnectionSessions: (connectionId: string) => Promise<void>
   createConnectionSession: (
     connectionId: string,
-    agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
+    options?: CreateSessionOptions | SessionAgentSdk
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -145,6 +153,48 @@ function findSessionScope(
     }
   }
   return null
+}
+
+function normalizeCreateSessionOptions(
+  options?: CreateSessionOptions | SessionAgentSdk
+): CreateSessionOptions {
+  if (!options) return {}
+  if (typeof options === 'string') return { agentSdk: options }
+  return options
+}
+
+async function ensureDockerSandboxReady(): Promise<{ success: boolean; error?: string }> {
+  try {
+    const detection = await window.worktreeOps.detectDockerSandbox()
+    if (!detection.sandboxAvailable) {
+      return {
+        success: false,
+        error: 'Docker Sandbox is not available. Install it via Docker Desktop.'
+      }
+    }
+
+    const tokenResult = await window.worktreeOps.hasSetupToken()
+    if (!tokenResult.success) {
+      return { success: false, error: tokenResult.error || 'Failed to check setup token' }
+    }
+
+    if (!tokenResult.hasToken) {
+      const generated = await window.worktreeOps.generateSetupToken()
+      if (!generated.success) {
+        return {
+          success: false,
+          error: generated.error || 'Failed to generate setup token'
+        }
+      }
+    }
+
+    return { success: true }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to prepare Docker Sandbox'
+    }
+  }
 }
 
 export const useSessionStore = create<SessionState>()(
@@ -264,51 +314,61 @@ export const useSessionStore = create<SessionState>()(
       createSession: async (
         worktreeId: string,
         projectId: string,
-        agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
+        options?: CreateSessionOptions | SessionAgentSdk
       ) => {
         try {
+          const createOptions = normalizeCreateSessionOptions(options)
+
           // Resolve default agent SDK from settings
           const { useSettingsStore } = await import('./useSettingsStore')
+          const settingsState = useSettingsStore.getState()
           const defaultAgentSdk =
-            agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+            createOptions.agentSdk ?? settingsState.defaultAgentSdk ?? 'opencode'
+          const defaultExecutionEnvironment: SessionExecutionEnvironment =
+            createOptions.executionEnvironment ??
+            (defaultAgentSdk === 'claude-code' && settingsState.preferSandboxSessions
+              ? 'docker-sandbox'
+              : 'local')
 
           const isTerminal = defaultAgentSdk === 'terminal'
+          const executionEnvironment =
+            isTerminal || defaultAgentSdk !== 'claude-code' ? 'local' : defaultExecutionEnvironment
+
+          if (executionEnvironment === 'docker-sandbox') {
+            const readiness = await ensureDockerSandboxReady()
+            if (!readiness.success) {
+              return { success: false, error: readiness.error }
+            }
+          }
 
           // Terminal sessions skip model resolution entirely
           let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
 
           if (!isTerminal) {
             const { resolveModelForSdk } = await import('./useSettingsStore')
-
-            // Priority 1: per-provider default → (legacy) global default
-            defaultModel = resolveModelForSdk(defaultAgentSdk)
-
-            // Legacy worktree fallback only when per-provider feature not yet active
-            if (!defaultModel) {
-              const settingsState = useSettingsStore.getState()
-              const hasPerProviderDefaults =
-                Object.keys(settingsState.selectedModelByProvider).length > 0
-              if (!hasPerProviderDefaults) {
-                const worktree = useWorktreeStore.getState().worktreesByProject
-                let worktreeRecord:
-                  | {
-                      last_model_provider_id: string | null
-                      last_model_id: string | null
-                      last_model_variant: string | null
-                    }
-                  | undefined
-                for (const worktrees of worktree.values()) {
-                  worktreeRecord = worktrees.find((w) => w.id === worktreeId)
-                  if (worktreeRecord) break
+            const worktree = useWorktreeStore.getState().worktreesByProject
+            let worktreeRecord:
+              | {
+                  last_model_provider_id: string | null
+                  last_model_id: string | null
+                  last_model_variant: string | null
                 }
-                if (worktreeRecord?.last_model_id) {
-                  defaultModel = {
-                    providerID: worktreeRecord.last_model_provider_id!,
-                    modelID: worktreeRecord.last_model_id,
-                    variant: worktreeRecord.last_model_variant ?? undefined
-                  }
-                }
+              | undefined
+            for (const worktrees of worktree.values()) {
+              worktreeRecord = worktrees.find((w) => w.id === worktreeId)
+              if (worktreeRecord) break
+            }
+
+            if (worktreeRecord?.last_model_id) {
+              defaultModel = {
+                providerID: worktreeRecord.last_model_provider_id!,
+                modelID: worktreeRecord.last_model_id,
+                variant: worktreeRecord.last_model_variant ?? undefined
               }
+            } else if (settingsState.selectedModel) {
+              defaultModel = settingsState.selectedModel
+            } else {
+              defaultModel = resolveModelForSdk(defaultAgentSdk)
             }
           }
 
@@ -320,6 +380,7 @@ export const useSessionStore = create<SessionState>()(
             project_id: projectId,
             name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
             agent_sdk: defaultAgentSdk,
+            execution_environment: executionEnvironment,
             ...(defaultModel
               ? {
                   model_provider_id: defaultModel.providerID,
@@ -853,6 +914,7 @@ export const useSessionStore = create<SessionState>()(
         // skipBackendPush: we already pushed to the backend above
         try {
           const { useSettingsStore } = await import('./useSettingsStore')
+          useSettingsStore.setState({ selectedModel: model })
           useSettingsStore
             .getState()
             .setSelectedModelForSdk(agentSdk, model, { skipBackendPush: true })
@@ -1175,9 +1237,11 @@ export const useSessionStore = create<SessionState>()(
       // Create a session scoped to a connection
       createConnectionSession: async (
         connectionId: string,
-        agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
+        options?: CreateSessionOptions | SessionAgentSdk
       ) => {
         try {
+          const createOptions = normalizeCreateSessionOptions(options)
+
           // Look up the connection to get the first member's project_id
           const result = await window.connectionOps.get(connectionId)
           if (!result.success || !result.connection || result.connection.members.length === 0) {
@@ -1188,11 +1252,11 @@ export const useSessionStore = create<SessionState>()(
 
           // Determine default model and agent SDK from global settings
           let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
-          let defaultAgentSdk: 'opencode' | 'claude-code' | 'terminal' = 'opencode'
+          let defaultAgentSdk: SessionAgentSdk = 'opencode'
           try {
             const { useSettingsStore } = await import('./useSettingsStore')
             defaultAgentSdk =
-              agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+              createOptions.agentSdk ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
             // Terminal sessions skip model resolution
             if (defaultAgentSdk !== 'terminal') {
               const { resolveModelForSdk } = await import('./useSettingsStore')
@@ -1212,6 +1276,7 @@ export const useSessionStore = create<SessionState>()(
             connection_id: connectionId,
             name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
             agent_sdk: defaultAgentSdk,
+            execution_environment: 'local',
             ...(defaultModel
               ? {
                   model_provider_id: defaultModel.providerID,

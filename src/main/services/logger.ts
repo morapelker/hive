@@ -1,5 +1,5 @@
-import { app } from 'electron'
 import { join } from 'path'
+import { homedir } from 'os'
 import { existsSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync } from 'fs'
 
 export enum LogLevel {
@@ -47,7 +47,7 @@ class LoggerService {
 
   private constructor() {
     // Use ~/.hive/logs/ for logs
-    const homeDir = app.getPath('home')
+    const homeDir = homedir()
     this.logDir = join(homeDir, '.hive', LOG_DIR_NAME)
     this.ensureLogDir()
     this.currentLogFile = this.getLogFileName()

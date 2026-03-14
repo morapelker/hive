@@ -92,6 +92,7 @@ export interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'terminal'
+  execution_environment: 'local' | 'docker-sandbox'
   mode: SessionMode
   model_provider_id: string | null
   model_id: string | null
@@ -108,6 +109,7 @@ export interface SessionCreate {
   name?: string | null
   opencode_session_id?: string | null
   agent_sdk?: 'opencode' | 'claude-code' | 'terminal'
+  execution_environment?: 'local' | 'docker-sandbox'
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
@@ -118,6 +120,7 @@ export interface SessionUpdate {
   status?: 'active' | 'completed' | 'error'
   opencode_session_id?: string | null
   agent_sdk?: 'opencode' | 'claude-code' | 'terminal'
+  execution_environment?: 'local' | 'docker-sandbox'
   mode?: SessionMode
   model_provider_id?: string | null
   model_id?: string | null
