@@ -18,7 +18,8 @@ import {
   Loader2,
   AlertCircle,
   Check,
-  TerminalSquare
+  TerminalSquare,
+  Shield
 } from 'lucide-react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import {
@@ -62,6 +63,7 @@ interface SessionTabProps {
   worktreeId: string
   onCloseOthers: () => void
   onCloseToRight: () => void
+  executionEnvironment?: 'local' | 'docker-sandbox'
 }
 
 function SessionTab({
@@ -81,7 +83,8 @@ function SessionTab({
   isDragOver,
   worktreeId: _worktreeId,
   onCloseOthers,
-  onCloseToRight
+  onCloseToRight,
+  executionEnvironment
 }: SessionTabProps): React.JSX.Element {
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState(name)
@@ -201,6 +204,9 @@ function SessionTab({
             />
           ) : (
             <span className="truncate flex-1">{name || 'Untitled'}</span>
+          )}
+          {executionEnvironment === 'docker-sandbox' && (
+            <Shield className="h-3 w-3 text-primary flex-shrink-0" />
           )}
           <button
             onClick={onClose}
@@ -542,6 +548,7 @@ export function SessionTabs(): React.JSX.Element | null {
   // eliminate race conditions between the two async operations.
   const autoStartSession = useSettingsStore((state) => state.autoStartSession)
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
+  const dockerSandboxAvailable = useSettingsStore((state) => state.dockerSandboxAvailable)
   const autoStartedRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -922,13 +929,22 @@ export function SessionTabs(): React.JSX.Element | null {
             </ContextMenuItem>
           )}
           {!isConnectionMode && availableAgentSdks?.claude !== false && (
-            <ContextMenuItem onSelect={handleCreateClaudeSandboxSession}>
-              New Claude Sandbox Session
-            </ContextMenuItem>
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onSelect={handleCreateClaudeSandboxSession}
+                disabled={dockerSandboxAvailable === false}
+              >
+                New Claude Code Session
+                {dockerSandboxAvailable === false ? (
+                  <span className="text-muted-foreground ml-1">(sandbox — requires Docker Desktop)</span>
+                ) : (
+                  <span className="text-primary ml-1 italic">(sandbox)</span>
+                )}
+              </ContextMenuItem>
+            </>
           )}
-          {(availableAgentSdks?.opencode !== false || availableAgentSdks?.claude !== false) && (
-            <ContextMenuSeparator />
-          )}
+          <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
             <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
             New Terminal
@@ -1030,6 +1046,7 @@ export function SessionTabs(): React.JSX.Element | null {
                     ? closeConnectionSessionsToRight(scopeId, session.id)
                     : closeSessionsToRight(scopeId, session.id)
                 }
+                executionEnvironment={session.execution_environment}
               />
             ))}
             {/* File viewer tabs */}

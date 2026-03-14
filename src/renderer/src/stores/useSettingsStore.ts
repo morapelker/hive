@@ -154,6 +154,7 @@ interface SettingsState extends AppSettings {
 
   // Cached SDK availability (non-persisted, re-detected each launch)
   availableAgentSdks: { opencode: boolean; claude: boolean } | null
+  dockerSandboxAvailable: boolean | null
 
   // Actions
   openSettings: (section?: string) => void
@@ -175,6 +176,7 @@ interface SettingsState extends AppSettings {
   resetToDefaults: () => void
   loadFromDatabase: () => Promise<void>
   detectAvailableAgentSdks: () => Promise<void>
+  detectDockerSandbox: () => Promise<void>
 }
 
 async function saveToDatabase(settings: AppSettings): Promise<void> {
@@ -273,6 +275,7 @@ export const useSettingsStore = create<SettingsState>()(
       activeSection: 'appearance',
       isLoading: true,
       availableAgentSdks: null,
+      dockerSandboxAvailable: null,
 
       openSettings: (section?: string) => {
         set({ isOpen: true, activeSection: section || get().activeSection })
@@ -389,6 +392,15 @@ export const useSettingsStore = create<SettingsState>()(
           // Fail gracefully — context menu just won't show
           set({ availableAgentSdks: null })
         }
+      },
+
+      detectDockerSandbox: async () => {
+        try {
+          const result = await window.worktreeOps.detectDockerSandbox()
+          set({ dockerSandboxAvailable: result.sandboxAvailable })
+        } catch {
+          set({ dockerSandboxAvailable: false })
+        }
       }
     }),
     {
@@ -437,6 +449,7 @@ if (typeof window !== 'undefined') {
       .loadFromDatabase()
       .then(() => {
         useSettingsStore.getState().detectAvailableAgentSdks()
+        useSettingsStore.getState().detectDockerSandbox()
       })
   }, 200)
 
