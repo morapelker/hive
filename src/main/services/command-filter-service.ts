@@ -2,9 +2,28 @@ import { createLogger } from './logger'
 
 const log = createLogger({ component: 'CommandFilterService' })
 
-// Regex patterns for detecting multi-line command structures
-// These are used to distinguish legitimate multi-line content from suspicious injection attempts
-const COMMAND_SUBSTITUTION_PATTERN = /\$\(/
+/**
+ * Check if a string contains an unescaped command substitution $(...)
+ * Must properly handle escape sequences: \$( is NOT a substitution, \\$( IS a substitution
+ */
+function hasUnescapedCommandSubstitution(str: string): boolean {
+  let i = 0
+  while (i < str.length - 1) {
+    if (str[i] === '\\') {
+      // Skip the next character (it's escaped)
+      i += 2
+      continue
+    }
+    if (str[i] === '$' && str[i + 1] === '(') {
+      return true
+    }
+    i++
+  }
+  return false
+}
+
+// Regex pattern for detecting heredoc markers
+// More permissive to catch various heredoc formats
 const HEREDOC_PATTERN = /<<-?['"]?\w+['"]?/
 
 export interface CommandFilterSettings {
@@ -73,9 +92,10 @@ export class CommandFilterService {
     let inSingleQuote = false
     let inDoubleQuote = false
     let escapeNext = false
-    // Stack to track command substitutions: each entry records whether it was opened inside double quotes
-    const parenStack: boolean[] = []
-    // Counter to track bare subshells: (cmd1 && cmd2)
+    // Stack to track command substitutions: [wasInDoubleQuote, parenBalanceInside]
+    // parenBalanceInside tracks bare ( ) pairs inside the $(...) to avoid premature popping
+    const parenStack: Array<{ wasInDoubleQuote: boolean; parenBalance: number }> = []
+    // Counter to track bare subshells: (cmd1 && cmd2) at TOP level only
     // Prevents operators inside subshells from being treated as top-level separators
     let subshellDepth = 0
     // Track if the last processed character was an unescaped $ (for bare subshell detection)
@@ -124,7 +144,7 @@ export class CommandFilterService {
       // Track command substitutions $(...) - push current quote state onto stack
       // Only when not inside single quotes (single quotes prevent substitution)
       if (char === '$' && next === '(' && !inSingleQuote) {
-        parenStack.push(inDoubleQuote)
+        parenStack.push({ wasInDoubleQuote: inDoubleQuote, parenBalance: 0 })
         current += char + next
         lastCharWasUnescapedDollar = false // Reset because we consumed both $ and (
         i += 2
@@ -132,12 +152,20 @@ export class CommandFilterService {
       }
 
       // Track closing ) of command substitution
-      // Match ) with the most recent $( by checking if we're in the same quote context
+      // IMPORTANT: Must handle bare parens inside $(...) correctly to avoid premature pop
+      // Example: $(cmd (inner)) - the first ) closes (inner), not $(
       if (char === ')' && parenStack.length > 0 && !inSingleQuote) {
-        const openedInDoubleQuote = parenStack[parenStack.length - 1]
-        // Only close if we're in the same quote context as when it opened
-        if (inDoubleQuote === openedInDoubleQuote) {
-          parenStack.pop()
+        const topEntry = parenStack[parenStack.length - 1]
+        // Only close command substitution if we're in the same quote context AND
+        // all nested bare parens inside it have been closed (parenBalance === 0)
+        if (inDoubleQuote === topEntry.wasInDoubleQuote) {
+          if (topEntry.parenBalance > 0) {
+            // This ) closes a bare subshell inside the command substitution
+            topEntry.parenBalance--
+          } else {
+            // This ) closes the command substitution itself
+            parenStack.pop()
+          }
         }
         current += char
         lastCharWasUnescapedDollar = false
@@ -145,14 +173,20 @@ export class CommandFilterService {
         continue
       }
 
-      // Track bare subshells: (cmd1 && cmd2) - only when not inside quotes AND not inside command substitution
-      // This prevents operators inside subshells from being treated as top-level separators
-      // We only track top-level bare subshells (parenStack.length === 0) to avoid cross-contamination
-      if (char === '(' && !inSingleQuote && !inDoubleQuote && parenStack.length === 0) {
+      // Track bare subshells: (cmd1 && cmd2)
+      // If we're at top level (not in command substitution), track with subshellDepth
+      // If we're inside command substitution, track with parenBalance in the stack entry
+      if (char === '(' && !inSingleQuote && !inDoubleQuote) {
         // Check if previous token was an unescaped $ (making this a command substitution)
         // We track this with a flag rather than checking raw prevChar to handle escaped \$
         if (!lastCharWasUnescapedDollar) {
-          subshellDepth++
+          if (parenStack.length > 0) {
+            // Inside command substitution: increment paren balance
+            parenStack[parenStack.length - 1].parenBalance++
+          } else {
+            // Top level: increment subshell depth
+            subshellDepth++
+          }
         }
         current += char
         lastCharWasUnescapedDollar = false
@@ -160,9 +194,10 @@ export class CommandFilterService {
         continue
       }
 
-      // Track closing ) of bare subshell - only if not closing a command substitution
-      if (char === ')' && subshellDepth > 0 && !inSingleQuote && !inDoubleQuote) {
-        // This ) belongs to a bare subshell (parenStack would have matched if it was $())
+      // Track closing ) of bare subshell at TOP level only
+      // (Inside command substitutions, closing ) is handled by the earlier parenStack logic)
+      if (char === ')' && subshellDepth > 0 && !inSingleQuote && !inDoubleQuote && parenStack.length === 0) {
+        // This ) belongs to a top-level bare subshell
         subshellDepth--
         current += char
         lastCharWasUnescapedDollar = false
@@ -246,21 +281,21 @@ export class CommandFilterService {
     // 1. Legitimate: heredoc inside command substitution (e.g., git commit -m "$(cat <<'EOF'\n...\nEOF\n)")
     // 2. Suspicious: simple string with newlines (possible injection attempt)
     //
-    // Strategy: If the part contains command substitution markers ($() or heredoc markers (<<),
-    // trust the parser. The parser correctly preserves newlines inside $() for heredocs and
-    // multi-line commands. Only re-split parts that have newlines WITHOUT these markers.
+    // Strategy: Check for UNESCAPED command substitution markers $() or heredoc markers <<
+    // - Escaped \$( is NOT a command substitution and should be split
+    // - Unescaped $( indicates legitimate multi-line context
     //
-    // Note: We use simple prefix checks ($( and <<) rather than full matching to avoid issues
-    // with nested command substitutions. The presence of these markers indicates legitimate
-    // multi-line context, even if the full structure is complex.
+    // CRITICAL: Must properly handle escape sequences to avoid false positives
+    // - \$( is escaped, NOT a command substitution → SPLIT
+    // - \\$( has escaped backslash, so $( is NOT escaped → KEEP INTACT
     const result: string[] = []
     for (const part of parts) {
       if (/\n/.test(part)) {
         // Part contains newline(s) - check if it's a command substitution or heredoc
-        const hasCommandSubstitution = COMMAND_SUBSTITUTION_PATTERN.test(part)
+        const hasCommandSub = hasUnescapedCommandSubstitution(part)
         const hasHeredoc = HEREDOC_PATTERN.test(part)
 
-        if (hasCommandSubstitution || hasHeredoc) {
+        if (hasCommandSub || hasHeredoc) {
           // Legitimate: heredoc or multi-line command inside $() - keep intact
           log.debug('CommandFilter: part contains newline but has command substitution/heredoc - keeping intact', {
             part: part.substring(0, 100)
@@ -268,6 +303,11 @@ export class CommandFilterService {
           result.push(part)
         } else {
           // Suspicious: newline without command substitution context - split for safety
+          // Note: This will split even if newline is inside quotes, creating fragments with
+          // dangling quotes like ['echo "line1', 'line2"']. This is acceptable because:
+          // 1. Such fragments won't match allowlist patterns (security goal achieved)
+          // 2. User will see the fragments and can approve individually or fix the command
+          // 3. Legitimate multi-line quoted strings should use command substitution + heredoc
           log.warn('CommandFilter: part contains newline without command substitution - splitting for security', {
             part: part.substring(0, 100)
           })
@@ -392,11 +432,11 @@ export class CommandFilterService {
    * This allows heredocs and multi-line commands inside $() to match wildcard patterns.
    *
    * Strategy:
-   * - If command contains $(...) or heredoc markers: collapse ALL newlines to spaces
+   * - If command contains UNESCAPED $(...) or heredoc markers: collapse ALL newlines to spaces
    * - Otherwise: leave as-is (suspicious newlines won't match patterns)
    *
    * IMPORTANT: This is an intentional over-normalization for simplicity and security.
-   * If a command contains $() ANYWHERE, all newlines in the ENTIRE command are collapsed,
+   * If a command contains unescaped $() ANYWHERE, all newlines in the ENTIRE command are collapsed,
    * even those outside the command substitution. This is acceptable because:
    * 1. Commands reaching this point already passed splitBashChain's newline security checks
    * 2. The goal is pattern matching, not execution - we're checking intent, not structure
@@ -407,10 +447,10 @@ export class CommandFilterService {
    * benefit is minimal since splitBashChain already provides the primary defense.
    */
   private normalizeCommandForMatching(command: string): string {
-    const hasCommandSubstitution = COMMAND_SUBSTITUTION_PATTERN.test(command)
+    const hasCommandSub = hasUnescapedCommandSubstitution(command)
     const hasHeredoc = HEREDOC_PATTERN.test(command)
 
-    if (hasCommandSubstitution || hasHeredoc) {
+    if (hasCommandSub || hasHeredoc) {
       // Legitimate multi-line command - collapse newlines for pattern matching
       return command.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
     }

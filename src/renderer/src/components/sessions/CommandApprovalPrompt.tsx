@@ -21,9 +21,27 @@ import type {
   SubCommandSuggestions
 } from '@/stores/useCommandApprovalStore'
 
-// Regex patterns for detecting multi-line command structures
-// IMPORTANT: Must match the patterns in command-filter-service.ts for consistency
-const COMMAND_SUBSTITUTION_PATTERN = /\$\(/
+/**
+ * Check if a string contains an unescaped command substitution $(...)
+ * IMPORTANT: Must match the logic in command-filter-service.ts for consistency
+ */
+function hasUnescapedCommandSubstitution(str: string): boolean {
+  let i = 0
+  while (i < str.length - 1) {
+    if (str[i] === '\\') {
+      // Skip the next character (it's escaped)
+      i += 2
+      continue
+    }
+    if (str[i] === '$' && str[i + 1] === '(') {
+      return true
+    }
+    i++
+  }
+  return false
+}
+
+// Regex pattern for detecting heredoc markers
 const HEREDOC_PATTERN = /<<-?['"]?\w+['"]?/
 
 interface CommandApprovalPromptProps {
@@ -198,9 +216,9 @@ function splitBashForDisplay(
   let inSingleQuote = false
   let inDoubleQuote = false
   let escapeNext = false
-  // Stack to track command substitutions: each entry records whether it was opened inside double quotes
-  const parenStack: boolean[] = []
-  // Counter to track bare subshells: (cmd1 && cmd2)
+  // Stack to track command substitutions: [wasInDoubleQuote, parenBalanceInside]
+  const parenStack: Array<{ wasInDoubleQuote: boolean; parenBalance: number }> = []
+  // Counter to track bare subshells: (cmd1 && cmd2) at TOP level only
   let subshellDepth = 0
   // Track if the last processed character was an unescaped $ (for bare subshell detection)
   let lastCharWasUnescapedDollar = false
@@ -245,7 +263,7 @@ function splitBashForDisplay(
 
     // Track command substitutions $(...) - push current quote state onto stack
     if (char === '$' && next === '(' && !inSingleQuote) {
-      parenStack.push(inDoubleQuote)
+      parenStack.push({ wasInDoubleQuote: inDoubleQuote, parenBalance: 0 })
       current += char + next
       lastCharWasUnescapedDollar = false // Reset because we consumed both $ and (
       i += 2
@@ -253,12 +271,17 @@ function splitBashForDisplay(
     }
 
     // Track closing ) of command substitution
-    // Match ) with the most recent $( by checking if we're in the same quote context
+    // Must handle bare parens inside $(...) correctly to avoid premature pop
     if (char === ')' && parenStack.length > 0 && !inSingleQuote) {
-      const openedInDoubleQuote = parenStack[parenStack.length - 1]
-      // Only close if we're in the same quote context as when it opened
-      if (inDoubleQuote === openedInDoubleQuote) {
-        parenStack.pop()
+      const topEntry = parenStack[parenStack.length - 1]
+      if (inDoubleQuote === topEntry.wasInDoubleQuote) {
+        if (topEntry.parenBalance > 0) {
+          // This ) closes a bare subshell inside the command substitution
+          topEntry.parenBalance--
+        } else {
+          // This ) closes the command substitution itself
+          parenStack.pop()
+        }
       }
       current += char
       lastCharWasUnescapedDollar = false
@@ -266,13 +289,17 @@ function splitBashForDisplay(
       continue
     }
 
-    // Track bare subshells: (cmd1 && cmd2) - only when not inside quotes AND not inside command substitution
-    // We only track top-level bare subshells (parenStack.length === 0) to avoid cross-contamination
-    if (char === '(' && !inSingleQuote && !inDoubleQuote && parenStack.length === 0) {
-      // Check if previous token was an unescaped $ (making this a command substitution)
-      // We track this with a flag rather than checking raw prevChar to handle escaped \$
+    // Track bare subshells: (cmd1 && cmd2)
+    // If at top level, track with subshellDepth; if inside command substitution, track with parenBalance
+    if (char === '(' && !inSingleQuote && !inDoubleQuote) {
       if (!lastCharWasUnescapedDollar) {
-        subshellDepth++
+        if (parenStack.length > 0) {
+          // Inside command substitution: increment paren balance
+          parenStack[parenStack.length - 1].parenBalance++
+        } else {
+          // Top level: increment subshell depth
+          subshellDepth++
+        }
       }
       current += char
       lastCharWasUnescapedDollar = false
@@ -280,8 +307,8 @@ function splitBashForDisplay(
       continue
     }
 
-    // Track closing ) of bare subshell
-    if (char === ')' && subshellDepth > 0 && !inSingleQuote && !inDoubleQuote) {
+    // Track closing ) of bare subshell at TOP level only
+    if (char === ')' && subshellDepth > 0 && !inSingleQuote && !inDoubleQuote && parenStack.length === 0) {
       subshellDepth--
       current += char
       lastCharWasUnescapedDollar = false
@@ -352,17 +379,17 @@ function splitBashForDisplay(
   // (command substitution or heredoc) or suspicious (simple string with newlines).
   // This must match the backend logic in command-filter-service.ts for consistency.
   //
-  // Note: We use simple prefix checks ($( and <<) rather than full matching to avoid issues
-  // with nested command substitutions. The presence of these markers indicates legitimate
-  // multi-line context, even if the full structure is complex.
+  // CRITICAL: Must check for UNESCAPED command substitutions to avoid false positives
+  // - \$( is escaped, NOT a command substitution → SPLIT
+  // - \\$( has escaped backslash, so $( is NOT escaped → KEEP INTACT
   const result: typeof parts = []
   for (const part of parts) {
     if (/\n/.test(part.cmd)) {
       // Part contains newline(s) - check if it's a command substitution or heredoc
-      const hasCommandSubstitution = COMMAND_SUBSTITUTION_PATTERN.test(part.cmd)
+      const hasCommandSub = hasUnescapedCommandSubstitution(part.cmd)
       const hasHeredoc = HEREDOC_PATTERN.test(part.cmd)
 
-      if (hasCommandSubstitution || hasHeredoc) {
+      if (hasCommandSub || hasHeredoc) {
         // Legitimate: heredoc or multi-line command inside $() - keep intact
         result.push(part)
       } else {

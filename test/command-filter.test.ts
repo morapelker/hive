@@ -420,5 +420,94 @@ line2"`
       )
       expect(result2).toBe('ask')
     })
+
+    test('escaped \\$( is NOT treated as command substitution', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Escaped command substitution with newline - should be split
+      const cmd = `echo "line1
+line2 \\$(date)"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'ask' because \\$( is escaped (not a command substitution),
+      // so the newline causes splitting, and fragments don't match patterns
+      expect(result).toBe('ask')
+    })
+
+    test('double-escaped \\\\$( IS treated as command substitution', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Double-escaped backslash, so $( is NOT escaped - IS a command substitution
+      const cmd = `echo "$(cat <<EOF
+line1
+line2 \\\\$(date)
+EOF
+)"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'allow' because \\\\$( has escaped backslash, leaving $( as valid substitution
+      expect(result).toBe('allow')
+    })
+  })
+
+  describe('nested parentheses handling', () => {
+    test('bare parens inside command substitution do not cause premature close', () => {
+      // $(cmd (inner)) - the first ) should close (inner), not $(
+      const cmd = 'echo $(echo (date) | cat)'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command, not split
+      expect(result).toEqual([cmd])
+    })
+
+    test('multiple nested bare parens inside command substitution', () => {
+      const cmd = 'echo $(cmd1 (a) && cmd2 (b) || cmd3 (c))'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command, operators inside $() should not cause splitting
+      expect(result).toEqual([cmd])
+    })
+
+    test('nested command substitutions', () => {
+      const cmd = 'echo $(outer $(inner))'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command
+      expect(result).toEqual([cmd])
+    })
+
+    test('deeply nested command substitutions', () => {
+      const cmd = 'echo $(level1 $(level2 $(level3)))'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command
+      expect(result).toEqual([cmd])
+    })
+
+    test('mixed: bare parens and command substitutions', () => {
+      const cmd = 'echo $(cmd1 (sub1 $(nested)) && cmd2 (sub2))'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command
+      expect(result).toEqual([cmd])
+    })
+
+    test('top-level bare parens still work correctly', () => {
+      const cmd = '(cd dir && make) || exit 1'
+      const result = service.splitBashChain(cmd)
+
+      // Should split on || but not on && inside (...)
+      expect(result).toEqual(['(cd dir && make)', 'exit 1'])
+    })
   })
 })
