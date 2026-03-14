@@ -411,7 +411,9 @@ declare global {
         worktreePath: string
         projectGitPath: string
       }) => Promise<{ success: boolean; created: boolean; error?: string }>
-      sandboxExists: (params: { worktreeId: string }) => Promise<{ success: boolean; exists: boolean; error?: string }>
+      sandboxExists: (
+        params: { worktreeId: string }
+      ) => Promise<{ success: boolean; exists: boolean; error?: string }>
     }
     systemOps: {
       getLogDir: () => Promise<string>

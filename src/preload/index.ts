@@ -415,7 +415,9 @@ const worktreeOps = {
   }): Promise<{ success: boolean; created: boolean; error?: string }> =>
     ipcRenderer.invoke('sandbox:ensureExists', params),
 
-  sandboxExists: (params: { worktreeId: string }): Promise<{ success: boolean; exists: boolean; error?: string }> =>
+  sandboxExists: (
+    params: { worktreeId: string }
+  ): Promise<{ success: boolean; exists: boolean; error?: string }> =>
     ipcRenderer.invoke('sandbox:exists', params)
 }
 

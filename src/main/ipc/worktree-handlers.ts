@@ -545,7 +545,11 @@ export function registerWorktreeHandlers(): void {
       const exists = await sandboxExistsAsync(sandboxName)
       return { success: true, exists }
     } catch (error) {
-      return { success: false, exists: false, error: error.message }
+      return {
+        success: false,
+        exists: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
     }
   })
 }
