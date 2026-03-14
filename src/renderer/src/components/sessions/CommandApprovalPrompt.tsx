@@ -324,7 +324,8 @@ function splitBashForDisplay(
 
     // Update flag for next iteration: track if this char is an unescaped $
     // (used to detect bare subshells vs command substitutions)
-    lastCharWasUnescapedDollar = (char === '$' && !inSingleQuote)
+    // Must be outside both single AND double quotes - a $ inside "..." followed by ( outside is not $(...)
+    lastCharWasUnescapedDollar = (char === '$' && !inSingleQuote && !inDoubleQuote)
 
     current += char
     i++
