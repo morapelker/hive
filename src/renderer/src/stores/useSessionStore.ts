@@ -54,6 +54,9 @@ interface SessionState {
   pendingPlans: Map<string, PendingPlan>
   // Pending follow-up messages - keyed by session ID, ordered queue of messages to auto-send
   pendingFollowUpMessages: Map<string, string[]>
+  // Sandbox creation state (drives SandboxCreatingDialog)
+  sandboxCreationStatus: 'idle' | 'creating' | 'success' | 'error'
+  sandboxCreationError: string | null
   isLoading: boolean
   error: string | null
 
@@ -207,6 +210,8 @@ export const useSessionStore = create<SessionState>()(
       pendingMessages: new Map(),
       pendingPlans: new Map(),
       pendingFollowUpMessages: new Map(),
+      sandboxCreationStatus: 'idle',
+      sandboxCreationError: null,
       isLoading: false,
       error: null,
       activeSessionId: null,
@@ -338,6 +343,54 @@ export const useSessionStore = create<SessionState>()(
             const readiness = await ensureDockerSandboxReady()
             if (!readiness.success) {
               return { success: false, error: readiness.error }
+            }
+
+            // Pre-create sandbox asynchronously with status tracking
+            const worktrees = useWorktreeStore.getState().worktreesByProject
+            let worktreePath: string | null = null
+            let projectPath: string | null = null
+            for (const wts of worktrees.values()) {
+              const wt = wts.find((w) => w.id === worktreeId)
+              if (wt) {
+                worktreePath = wt.path
+                // Look up project path
+                const { useProjectStore } = await import('./useProjectStore')
+                const project = useProjectStore.getState().projects.find((p) => p.id === projectId)
+                projectPath = project?.path ?? null
+                break
+              }
+            }
+
+            if (worktreePath && projectPath) {
+              // Fast async check — skip modal if sandbox already exists
+              const existsCheck = await window.worktreeOps.sandboxExists({ worktreeId })
+              const alreadyExists = existsCheck.success && existsCheck.exists
+
+              if (!alreadyExists) {
+                set({ sandboxCreationStatus: 'creating', sandboxCreationError: null })
+              }
+
+              try {
+                const result = await window.worktreeOps.ensureSandboxExists({
+                  worktreeId,
+                  worktreePath,
+                  projectGitPath: `${projectPath}/.git`
+                })
+                if (!result.success) {
+                  set({
+                    sandboxCreationStatus: 'error',
+                    sandboxCreationError: result.error || 'Failed to create sandbox'
+                  })
+                  return { success: false, error: result.error || 'Failed to create sandbox' }
+                }
+                if (!alreadyExists) {
+                  set({ sandboxCreationStatus: 'success' })
+                }
+              } catch (error) {
+                const msg = error instanceof Error ? error.message : 'Failed to create sandbox'
+                set({ sandboxCreationStatus: 'error', sandboxCreationError: msg })
+                return { success: false, error: msg }
+              }
             }
           }
 

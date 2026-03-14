@@ -406,7 +406,17 @@ const worktreeOps = {
     ipcRenderer.invoke('sandbox:generateToken'),
 
   clearSetupToken: (): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('sandbox:clearToken')
+    ipcRenderer.invoke('sandbox:clearToken'),
+
+  ensureSandboxExists: (params: {
+    worktreeId: string
+    worktreePath: string
+    projectGitPath: string
+  }): Promise<{ success: boolean; created: boolean; error?: string }> =>
+    ipcRenderer.invoke('sandbox:ensureExists', params),
+
+  sandboxExists: (params: { worktreeId: string }): Promise<{ success: boolean; exists: boolean; error?: string }> =>
+    ipcRenderer.invoke('sandbox:exists', params)
 }
 
 // System operations API

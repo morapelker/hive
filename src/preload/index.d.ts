@@ -406,6 +406,12 @@ declare global {
       hasSetupToken: () => Promise<{ success: boolean; hasToken: boolean; error?: string }>
       generateSetupToken: () => Promise<{ success: boolean; error?: string }>
       clearSetupToken: () => Promise<{ success: boolean; error?: string }>
+      ensureSandboxExists: (params: {
+        worktreeId: string
+        worktreePath: string
+        projectGitPath: string
+      }) => Promise<{ success: boolean; created: boolean; error?: string }>
+      sandboxExists: (params: { worktreeId: string }) => Promise<{ success: boolean; exists: boolean; error?: string }>
     }
     systemOps: {
       getLogDir: () => Promise<string>

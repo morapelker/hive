@@ -499,4 +499,53 @@ export function registerWorktreeHandlers(): void {
       }
     }
   })
+
+  // Pre-create Docker sandbox (async, non-blocking)
+  ipcMain.handle(
+    'sandbox:ensureExists',
+    async (
+      _event,
+      params: {
+        worktreeId: string
+        worktreePath: string
+        projectGitPath: string
+      }
+    ) => {
+      try {
+        const { ensureSandboxExistsAsync, getSandboxNameForWorktree } = await import(
+          '../services/docker-sandbox-service'
+        )
+        const sandboxName = getSandboxNameForWorktree(params.worktreeId)
+        const result = await ensureSandboxExistsAsync({
+          sandboxName,
+          worktreePath: params.worktreePath,
+          projectGitPath: params.projectGitPath
+        })
+        return { success: true, created: result.created }
+      } catch (error) {
+        log.error('Failed to ensure sandbox exists', {
+          worktreeId: params.worktreeId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+        return {
+          success: false,
+          created: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
+  ipcMain.handle('sandbox:exists', async (_event, params: { worktreeId: string }) => {
+    try {
+      const { sandboxExistsAsync, getSandboxNameForWorktree } = await import(
+        '../services/docker-sandbox-service'
+      )
+      const sandboxName = getSandboxNameForWorktree(params.worktreeId)
+      const exists = await sandboxExistsAsync(sandboxName)
+      return { success: true, exists }
+    } catch (error) {
+      return { success: false, exists: false, error: error.message }
+    }
+  })
 }
