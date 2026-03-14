@@ -332,6 +332,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       // 3. Pre-delete sandbox if this worktree has one enabled
       if (worktree?.docker_sandbox) {
         await preDeleteSandbox(worktreeId, set)
+        // Clear any lingering error so it doesn't stay open after archive proceeds
+        if (get().sandboxDeletionStatus === 'error') {
+          set({ sandboxDeletionStatus: 'idle', sandboxDeletionError: null })
+        }
       }
 
       // 4. Proceed with archive
@@ -419,6 +423,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       // Pre-delete sandbox if this worktree has one enabled
       if (worktree?.docker_sandbox) {
         await preDeleteSandbox(worktreeId, set)
+        // Clear any lingering error so it doesn't stay open after unbranch proceeds
+        if (get().sandboxDeletionStatus === 'error') {
+          set({ sandboxDeletionStatus: 'idle', sandboxDeletionError: null })
+        }
       }
 
       const result = await window.worktreeOps.delete({
