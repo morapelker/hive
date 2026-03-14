@@ -367,13 +367,36 @@ export class CommandFilterService {
   /**
    * Check if a command matches any pattern in a list
    *
-   * SECURITY: Does NOT normalize newlines. If a command contains newlines after
-   * splitBashChain, it won't match any patterns and will require approval.
-   * This is intentional - newlines in parts after splitting indicate parser
-   * limitations or injection attempts, and should not be auto-approved.
+   * SECURITY: Normalizes legitimate heredocs (inside command substitutions) before matching
+   * so they can match wildcard patterns. Suspicious newlines (outside command substitutions)
+   * remain as-is and won't match patterns.
    */
   matchesAnyPattern(command: string, patterns: string[]): boolean {
-    return patterns.some((pattern) => this.matchPattern(command, pattern))
+    // Normalize heredocs for pattern matching: collapse newlines inside command substitutions
+    // This allows "git commit -m "$(cat <<EOF...)" to match "bash: git commit *"
+    const normalized = this.normalizeCommandForMatching(command)
+    return patterns.some((pattern) => this.matchPattern(normalized, pattern))
+  }
+
+  /**
+   * Normalize a command for pattern matching by collapsing newlines in legitimate contexts.
+   * This allows heredocs and multi-line commands inside $() to match wildcard patterns.
+   *
+   * Strategy:
+   * - If command contains $(...) or heredoc markers: collapse all newlines to spaces
+   * - Otherwise: leave as-is (suspicious newlines won't match patterns)
+   */
+  private normalizeCommandForMatching(command: string): string {
+    const hasCommandSubstitution = /\$\([^)]*\)/s.test(command)
+    const hasHeredoc = /<<['"]?\w+['"]?/.test(command)
+
+    if (hasCommandSubstitution || hasHeredoc) {
+      // Legitimate multi-line command - collapse newlines for pattern matching
+      return command.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
+    }
+
+    // Simple command - leave as-is
+    return command
   }
 
   /**

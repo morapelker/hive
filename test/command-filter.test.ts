@@ -336,38 +336,86 @@ EOF
     })
   })
 
-  describe('pattern matching does not normalize newlines (security)', () => {
-    test('commands with newlines do not match patterns', () => {
+  describe('pattern matching normalizes heredocs but not suspicious newlines', () => {
+    test('heredocs in command substitutions match wildcard patterns', () => {
       const settings = {
-        allowlist: ['bash: *'],
+        allowlist: ['bash: git commit *'],
         blocklist: [],
         defaultBehavior: 'ask' as const,
         enabled: true
       }
 
-      // Command with newline injection should not match even wildcard pattern
-      // because splitBashChain splits it into parts, and each part is evaluated separately
-      const result = service.evaluateToolUse(
-        'Bash',
-        { command: 'ls\nrm -rf /' },
-        settings
-      )
-      // Should be 'allow' because each part ('ls' and 'rm -rf /') matches 'bash: *'
-      expect(result).toBe('allow')
+      // Heredoc inside command substitution should match "bash: git commit *"
+      const cmd = `git commit -m "$(cat <<'EOF'
+Fix HealthCheckPolicy port rendering
+Problem: - Previous fix used | int filter
+Solution: - Apply | int filter
+EOF
+)"`
 
-      // But if only one part matches
-      const settings2 = {
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+      // Should be 'allow' - heredoc is normalized for pattern matching
+      expect(result).toBe('allow')
+    })
+
+    test('suspicious simple strings with newlines do NOT match patterns', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Simple string with newline (no command substitution) - suspicious
+      const cmd = 'echo "line1\nline2"'
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'ask' because the command is split into parts that don't match individually
+      // After splitting: ['echo "line1', 'line2"'] - neither matches 'bash: echo *' cleanly
+      expect(result).toBe('ask')
+    })
+
+    test('command with newline injection is split and checked separately', () => {
+      const settings = {
         allowlist: ['bash: ls *'],
         blocklist: [],
         defaultBehavior: 'ask' as const,
         enabled: true
       }
-      const result2 = service.evaluateToolUse(
+
+      // Injection attempt: ls\nrm -rf /
+      const result = service.evaluateToolUse(
         'Bash',
         { command: 'ls\nrm -rf /' },
-        settings2
+        settings
       )
+
       // Should be 'ask' because 'rm -rf /' doesn't match 'bash: ls *'
+      expect(result).toBe('ask')
+    })
+
+    test('all parts must match allowlist for multi-command chains', () => {
+      const settings = {
+        allowlist: ['bash: git *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Both commands match the pattern
+      const result1 = service.evaluateToolUse(
+        'Bash',
+        { command: 'git add . && git commit -m "test"' },
+        settings
+      )
+      expect(result1).toBe('allow')
+
+      // Only one command matches
+      const result2 = service.evaluateToolUse(
+        'Bash',
+        { command: 'git add . && npm install' },
+        settings
+      )
       expect(result2).toBe('ask')
     })
   })
