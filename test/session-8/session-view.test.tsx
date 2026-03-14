@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, cleanup, waitFor, act } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   SessionView,
@@ -535,6 +535,62 @@ describe('Session 8: Session View', () => {
         expect(assistantMessages[0]).toBeInTheDocument()
         // Assistant messages should not have user background
         expect(assistantMessages[0]).not.toHaveClass('bg-muted/30')
+      })
+    })
+
+    test('scroll FAB stays hidden for non-manual scroll events but appears after wheel intent', async () => {
+      let scrollTopValue = 100
+      let scrollHeightValue = 500
+      const clientHeightValue = 400
+
+      ;(window.opencodeOps.prompt as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise(() => {})
+      )
+
+      const user = userEvent.setup()
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
+      const messageList = screen.getByTestId('message-list')
+      const fab = screen.getByTestId('scroll-to-bottom-fab')
+
+      Object.defineProperty(messageList, 'scrollTop', {
+        configurable: true,
+        get: () => scrollTopValue,
+        set: (value: number) => {
+          scrollTopValue = value
+        }
+      })
+      Object.defineProperty(messageList, 'scrollHeight', {
+        configurable: true,
+        get: () => scrollHeightValue
+      })
+      Object.defineProperty(messageList, 'clientHeight', {
+        configurable: true,
+        get: () => clientHeightValue
+      })
+
+      await user.type(screen.getByTestId('message-input'), 'Keep streaming')
+      await user.click(screen.getByTestId('send-button'))
+
+      await waitFor(() => {
+        expect(window.opencodeOps.prompt).toHaveBeenCalled()
+      })
+
+      scrollHeightValue = 900
+      scrollTopValue = 20
+      fireEvent.scroll(messageList)
+      expect(fab.className).toContain('opacity-0')
+
+      fireEvent.wheel(messageList)
+      fireEvent.scroll(messageList)
+
+      await waitFor(() => {
+        expect(fab.className).toContain('opacity-100')
       })
     })
   })

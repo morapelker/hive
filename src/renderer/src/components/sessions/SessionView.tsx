@@ -450,9 +450,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const isAutoScrollEnabledRef = useRef(true)
   const [showScrollFab, setShowScrollFab] = useState(false)
   const lastScrollTopRef = useRef(0)
-  const scrollCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const isScrollCooldownActiveRef = useRef(false)
   const userHasScrolledUpRef = useRef(false)
+  const isProgrammaticScrollRef = useRef(false)
+  const programmaticScrollResetRef = useRef<number | null>(null)
+  const manualScrollIntentRef = useRef(false)
+  const pointerDownInScrollerRef = useRef(false)
 
   // Streaming rAF ref (frame-synced flushing for text updates)
   const rafRef = useRef<number | null>(null)
@@ -583,77 +585,104 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     )
   }, [])
 
-  // Auto-scroll to bottom when new messages arrive or streaming updates
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const markProgrammaticScroll = useCallback(() => {
+    isProgrammaticScrollRef.current = true
+    if (programmaticScrollResetRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollResetRef.current)
+    }
+    programmaticScrollResetRef.current = requestAnimationFrame(() => {
+      programmaticScrollResetRef.current = requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false
+        programmaticScrollResetRef.current = null
+      })
+    })
   }, [])
 
-  // Smart auto-scroll: detect upward scroll and lock out auto-scroll with cooldown
-  const SCROLL_COOLDOWN_MS = 2000
+  const resetAutoScrollState = useCallback(() => {
+    if (programmaticScrollResetRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollResetRef.current)
+      programmaticScrollResetRef.current = null
+    }
+    isProgrammaticScrollRef.current = false
+    manualScrollIntentRef.current = false
+    pointerDownInScrollerRef.current = false
+    isAutoScrollEnabledRef.current = true
+    setShowScrollFab(false)
+    userHasScrolledUpRef.current = false
+    const el = scrollContainerRef.current
+    if (el) {
+      lastScrollTopRef.current = el.scrollTop
+    }
+  }, [])
+
+  // Auto-scroll to bottom when new messages arrive or streaming updates
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = isStreaming ? 'instant' : 'smooth') => {
+      if (!messagesEndRef.current) return
+      markProgrammaticScroll()
+      messagesEndRef.current.scrollIntoView({ behavior })
+    },
+    [isStreaming, markProgrammaticScroll]
+  )
 
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current
     if (!el) return
 
     const currentScrollTop = el.scrollTop
-    const scrollingUp = currentScrollTop < lastScrollTopRef.current
     lastScrollTopRef.current = currentScrollTop
 
     const distanceFromBottom = el.scrollHeight - currentScrollTop - el.clientHeight
     const isNearBottom = distanceFromBottom < 80
+    const hasManualIntent = manualScrollIntentRef.current || pointerDownInScrollerRef.current
 
-    // Upward scroll during streaming → mark as intentional, disable + start cooldown
-    if (scrollingUp && (isSending || isStreaming)) {
-      userHasScrolledUpRef.current = true
-      isAutoScrollEnabledRef.current = false
-      setShowScrollFab(true)
-      isScrollCooldownActiveRef.current = true
-
-      // Reset cooldown timer
-      if (scrollCooldownRef.current !== null) {
-        clearTimeout(scrollCooldownRef.current)
-      }
-      scrollCooldownRef.current = setTimeout(() => {
-        scrollCooldownRef.current = null
-        isScrollCooldownActiveRef.current = false
-        // After cooldown, check if user has scrolled back to bottom
-        const elNow = scrollContainerRef.current
-        if (elNow) {
-          const dist = elNow.scrollHeight - elNow.scrollTop - elNow.clientHeight
-          if (dist < 80) {
-            isAutoScrollEnabledRef.current = true
-            setShowScrollFab(false)
-            userHasScrolledUpRef.current = false
-          }
-        }
-      }, SCROLL_COOLDOWN_MS)
+    if (isProgrammaticScrollRef.current) {
+      manualScrollIntentRef.current = false
       return
     }
 
-    // Near bottom and no active cooldown → re-enable auto-scroll
-    if (isNearBottom && !isScrollCooldownActiveRef.current) {
+    if (isNearBottom && hasManualIntent) {
       isAutoScrollEnabledRef.current = true
       setShowScrollFab(false)
       userHasScrolledUpRef.current = false
-    } else if (!isNearBottom && (isSending || isStreaming) && userHasScrolledUpRef.current) {
-      // Far from bottom during streaming, but only if user intentionally scrolled up
+      manualScrollIntentRef.current = false
+      return
+    }
+
+    if (!hasManualIntent) {
+      return
+    }
+
+    if (!isNearBottom && (isSending || isStreaming)) {
+      userHasScrolledUpRef.current = true
       isAutoScrollEnabledRef.current = false
       setShowScrollFab(true)
     }
+    manualScrollIntentRef.current = false
   }, [isSending, isStreaming])
 
-  // Handle FAB click — cancel cooldown, re-enable auto-scroll, scroll to bottom
   const handleScrollToBottomClick = useCallback(() => {
-    if (scrollCooldownRef.current !== null) {
-      clearTimeout(scrollCooldownRef.current)
-      scrollCooldownRef.current = null
-    }
-    isScrollCooldownActiveRef.current = false
-    isAutoScrollEnabledRef.current = true
-    setShowScrollFab(false)
-    userHasScrolledUpRef.current = false
-    scrollToBottom()
-  }, [scrollToBottom])
+    resetAutoScrollState()
+    scrollToBottom('smooth')
+  }, [resetAutoScrollState, scrollToBottom])
+
+  const handleScrollWheel = useCallback(() => {
+    manualScrollIntentRef.current = true
+  }, [])
+
+  const handleScrollPointerDown = useCallback(() => {
+    pointerDownInScrollerRef.current = true
+  }, [])
+
+  const handleScrollPointerUp = useCallback(() => {
+    pointerDownInScrollerRef.current = false
+    manualScrollIntentRef.current = false
+  }, [])
+
+  const handleScrollPointerCancel = useCallback(() => {
+    pointerDownInScrollerRef.current = false
+    manualScrollIntentRef.current = false
+  }, [])
 
   // Conditional auto-scroll: only scroll when enabled
   useEffect(() => {
@@ -664,15 +693,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Reset auto-scroll state on session switch
   useEffect(() => {
-    if (scrollCooldownRef.current !== null) {
-      clearTimeout(scrollCooldownRef.current)
-      scrollCooldownRef.current = null
-    }
-    isScrollCooldownActiveRef.current = false
-    isAutoScrollEnabledRef.current = true
-    setShowScrollFab(false)
-    userHasScrolledUpRef.current = false
-  }, [sessionId])
+    resetAutoScrollState()
+  }, [resetAutoScrollState, sessionId])
 
   // Instant scroll to bottom when session view becomes connected with messages.
   // This must wait for viewState === 'connected' because the message list DOM
@@ -680,7 +702,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   useEffect(() => {
     if (viewState.status === 'connected' && messages.length > 0) {
       requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
+        scrollToBottom('instant')
       })
     }
     // Only trigger on viewState and sessionId changes, NOT on every messages update
@@ -767,14 +789,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [activePermission, sessionId])
 
-  // Clean up rAF and scroll cooldown on unmount
+  // Clean up rAF-based streaming and scroll guards on unmount
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current)
       }
-      if (scrollCooldownRef.current !== null) {
-        clearTimeout(scrollCooldownRef.current)
+      if (programmaticScrollResetRef.current !== null) {
+        cancelAnimationFrame(programmaticScrollResetRef.current)
       }
     }
   }, [])
@@ -2942,15 +2964,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           hasFinalizedCurrentResponseRef.current = false
           setIsSending(true)
 
-          // Handle scroll behavior
-          if (scrollCooldownRef.current !== null) {
-            clearTimeout(scrollCooldownRef.current)
-            scrollCooldownRef.current = null
-          }
-          isScrollCooldownActiveRef.current = false
-          isAutoScrollEnabledRef.current = true
-          setShowScrollFab(false)
-          userHasScrolledUpRef.current = false
+          resetAutoScrollState()
 
           // Start completion badge timer
           messageSendTimes.set(sessionId, Date.now())
@@ -3030,15 +3044,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       window.db.session.updateDraft(sessionId, null)
 
-      // User just sent a message — cancel any scroll cooldown and resume auto-scroll
-      if (scrollCooldownRef.current !== null) {
-        clearTimeout(scrollCooldownRef.current)
-        scrollCooldownRef.current = null
-      }
-      isScrollCooldownActiveRef.current = false
-      isAutoScrollEnabledRef.current = true
-      setShowScrollFab(false)
-      userHasScrolledUpRef.current = false
+      resetAutoScrollState()
 
       // Clear any stale command approvals from previous turns
       useCommandApprovalStore.getState().clearSession(sessionId)
@@ -3263,6 +3269,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       refreshMessagesFromOpenCode,
       getModelForRequests,
       fileMentions,
+      resetAutoScrollState,
       stripAtMentions
     ]
   )
@@ -4105,6 +4112,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           ref={scrollContainerRef}
           className="h-full overflow-y-auto"
           onScroll={handleScroll}
+          onWheel={handleScrollWheel}
+          onPointerDown={handleScrollPointerDown}
+          onPointerUp={handleScrollPointerUp}
+          onPointerCancel={handleScrollPointerCancel}
           data-testid="message-list"
         >
           {visibleMessages.length === 0 && !hasStreamingContent ? (
