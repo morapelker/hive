@@ -8,6 +8,48 @@ import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
 import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
 
+/** How long the sandbox deletion success/error dialog stays visible before auto-dismiss. */
+const SANDBOX_DIALOG_DISPLAY_MS = 1200
+
+/**
+ * Pre-delete a Docker sandbox before worktree archive/unbranch.
+ * Shows a deletion dialog, attempts removal, and auto-dismisses on success.
+ * On error the dialog stays visible for the user to dismiss manually.
+ */
+async function preDeleteSandbox(
+  worktreeId: string,
+  set: (partial: Partial<WorktreeState>) => void
+): Promise<void> {
+  const existsCheck = await window.worktreeOps.sandboxExists({ worktreeId })
+  if (!existsCheck.success || !existsCheck.exists) return
+
+  set({ sandboxDeletionStatus: 'deleting', sandboxDeletionError: null })
+  try {
+    const delResult = await window.worktreeOps.stopAndRemoveSandbox({ worktreeId })
+    if (!delResult.success) {
+      set({
+        sandboxDeletionStatus: 'error',
+        sandboxDeletionError: delResult.error || 'Failed to remove sandbox'
+      })
+    } else {
+      set({ sandboxDeletionStatus: 'success' })
+    }
+  } catch (err) {
+    set({
+      sandboxDeletionStatus: 'error',
+      sandboxDeletionError:
+        err instanceof Error ? err.message : 'Failed to remove sandbox'
+    })
+  }
+
+  // Auto-dismiss on success; leave error visible for manual dismiss
+  const currentStatus = useWorktreeStore.getState().sandboxDeletionStatus
+  if (currentStatus !== 'error') {
+    await new Promise((resolve) => setTimeout(resolve, SANDBOX_DIALOG_DISPLAY_MS))
+    set({ sandboxDeletionStatus: 'idle', sandboxDeletionError: null })
+  }
+}
+
 /** Fire-and-forget: run setup script for a worktree, subscribing to output events
  *  so output is captured even when SetupTab is not mounted. */
 export function fireSetupScript(projectId: string, worktreeId: string, cwd: string): void {
@@ -289,26 +331,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       // 3. Pre-delete sandbox if this worktree has one enabled
       if (worktree?.docker_sandbox) {
-        const existsCheck = await window.worktreeOps.sandboxExists({ worktreeId })
-        if (existsCheck.success && existsCheck.exists) {
-          set({ sandboxDeletionStatus: 'deleting', sandboxDeletionError: null })
-          try {
-            const delResult = await window.worktreeOps.stopAndRemoveSandbox({ worktreeId })
-            if (!delResult.success) {
-              set({
-                sandboxDeletionStatus: 'error',
-                sandboxDeletionError: delResult.error || 'Failed'
-              })
-            } else {
-              set({ sandboxDeletionStatus: 'success' })
-            }
-          } catch {
-            // Non-critical: proceed with archive
-          }
-          // Let dialog show briefly, then reset
-          await new Promise((resolve) => setTimeout(resolve, 1200))
-          set({ sandboxDeletionStatus: 'idle', sandboxDeletionError: null })
-        }
+        await preDeleteSandbox(worktreeId, set)
       }
 
       // 4. Proceed with archive
@@ -395,26 +418,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     try {
       // Pre-delete sandbox if this worktree has one enabled
       if (worktree?.docker_sandbox) {
-        const existsCheck = await window.worktreeOps.sandboxExists({ worktreeId })
-        if (existsCheck.success && existsCheck.exists) {
-          set({ sandboxDeletionStatus: 'deleting', sandboxDeletionError: null })
-          try {
-            const delResult = await window.worktreeOps.stopAndRemoveSandbox({ worktreeId })
-            if (!delResult.success) {
-              set({
-                sandboxDeletionStatus: 'error',
-                sandboxDeletionError: delResult.error || 'Failed'
-              })
-            } else {
-              set({ sandboxDeletionStatus: 'success' })
-            }
-          } catch {
-            // Non-critical: proceed with archive
-          }
-          // Let dialog show briefly, then reset
-          await new Promise((resolve) => setTimeout(resolve, 1200))
-          set({ sandboxDeletionStatus: 'idle', sandboxDeletionError: null })
-        }
+        await preDeleteSandbox(worktreeId, set)
       }
 
       const result = await window.worktreeOps.delete({
