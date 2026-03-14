@@ -16,10 +16,12 @@ export function SettingsGeneral(): React.JSX.Element {
     showModelProvider,
     showUsageIndicator,
     defaultAgentSdk,
+    preferSandboxSessions,
     stripAtMentions,
     updateSetting,
     resetToDefaults
   } = useSettingsStore()
+  const dockerSandboxAvailable = useSettingsStore((s) => s.dockerSandboxAvailable)
   const { resetToDefaults: resetShortcuts } = useShortcutStore()
 
   const handleResetAll = (): void => {
@@ -195,6 +197,38 @@ export function SettingsGeneral(): React.JSX.Element {
           </p>
         )}
       </div>
+
+      {/* Default to sandbox mode — only shown when Claude Code is selected */}
+      {defaultAgentSdk === 'claude-code' && (
+        <div className="flex items-center justify-between">
+          <div>
+            <label className="text-sm font-medium">Default to sandbox mode</label>
+            <p className="text-xs text-muted-foreground">
+              New Claude Code sessions will run in a Docker sandbox by default. Requires Docker
+              Desktop.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={preferSandboxSessions}
+            onClick={() => updateSetting('preferSandboxSessions', !preferSandboxSessions)}
+            disabled={dockerSandboxAvailable !== true}
+            className={cn(
+              'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+              preferSandboxSessions ? 'bg-primary' : 'bg-muted',
+              dockerSandboxAvailable !== true && 'opacity-50 cursor-not-allowed'
+            )}
+            data-testid="prefer-sandbox-sessions-toggle"
+          >
+            <span
+              className={cn(
+                'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
+                preferSandboxSessions ? 'translate-x-4' : 'translate-x-0'
+              )}
+            />
+          </button>
+        </div>
+      )}
 
       {/* Strip @ from file mentions */}
       <div className="flex items-center justify-between">
