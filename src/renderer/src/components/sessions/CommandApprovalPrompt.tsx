@@ -323,14 +323,24 @@ function splitBashForDisplay(
     }
 
     // Track bare subshells: (cmd1 && cmd2)
-    // CRITICAL: Must track ( inside command substitutions even when inside double quotes
-    // Example: "$(cmd (sub))" - the (sub) parens MUST be tracked even though inDoubleQuote=true
+    // CRITICAL SECURITY: Must distinguish between:
+    // - $(cmd (sub)) → bare parens for subshell → TRACK with parenBalance
+    // - $(echo "(x)") → parens inside string literal → DO NOT TRACK
+    //
+    // If we track string-literal parens, the closing ) of the $(...) will decrement
+    // parenBalance instead of popping the stack, leaving parenStack non-empty.
+    // This causes newlines not to split, and false-positive heredoc detection.
+    //
+    // Attack: $(echo "(x)")\nrm -rf / <<M
     // Must match backend logic in command-filter-service.ts
     if (char === '(' && !inSingleQuote) {
       if (!lastCharWasUnescapedDollar) {
         if (parenStack.length > 0) {
-          // Inside command substitution: increment paren balance
-          parenStack[parenStack.length - 1].parenBalance++
+          // Inside command substitution: only track BARE parens, not string-literal parens
+          // Must check !inDoubleQuote to avoid tracking "(x)" as a subshell
+          if (!inDoubleQuote) {
+            parenStack[parenStack.length - 1].parenBalance++
+          }
         } else if (!inDoubleQuote) {
           // Top level AND not in double quotes: increment subshell depth
           subshellDepth++

@@ -108,7 +108,9 @@ function hasUnescapedHeredocMarker(str: string): boolean {
 
     // Track bare subshells/parens inside command substitutions: $(cmd (inner))
     // Must track these to avoid prematurely closing the command substitution
-    if (char === '(' && parenStack.length > 0 && !inSingleQuote) {
+    // CRITICAL SECURITY: Only track BARE parens, not string-literal parens
+    // Must check !inDoubleQuote to avoid tracking "(x)" as a subshell
+    if (char === '(' && parenStack.length > 0 && !inSingleQuote && !inDoubleQuote) {
       parenStack[parenStack.length - 1].parenBalance++
       i++
       continue
@@ -429,19 +431,28 @@ export class CommandFilterService {
       }
 
       // Track bare subshells: (cmd1 && cmd2)
-      // CRITICAL: Must track ( inside command substitutions even when inside double quotes
-      // Example: "$(cmd (sub))" - the (sub) parens MUST be tracked even though inDoubleQuote=true
+      // CRITICAL SECURITY: Must distinguish between:
+      // - $(cmd (sub)) → bare parens for subshell → TRACK with parenBalance
+      // - $(echo "(x)") → parens inside string literal → DO NOT TRACK
       //
-      // If we're at top level (not in command substitution), track with subshellDepth
-      // If we're inside command substitution, track with parenBalance in the stack entry
+      // If we track string-literal parens, the closing ) of the $(...) will decrement
+      // parenBalance instead of popping the stack, leaving parenStack non-empty.
+      // This causes:
+      // 1. Newlines not split (thinks we're still in substitution)
+      // 2. False-positive heredoc detection on trailing <<WORD
+      // 3. Security gate bypassed → auto-approval
+      //
+      // Attack: $(echo "(x)")\nrm -rf / <<M
       if (char === '(' && !inSingleQuote) {
         // Check if previous token was an unescaped $ (making this a command substitution)
         // We track this with a flag rather than checking raw prevChar to handle escaped \$
         if (!lastCharWasUnescapedDollar) {
           if (parenStack.length > 0) {
-            // Inside command substitution: increment paren balance
-            // This handles "$(cmd (sub))" where the (sub) parens are inside double quotes
-            parenStack[parenStack.length - 1].parenBalance++
+            // Inside command substitution: only track BARE parens, not string-literal parens
+            // Must check !inDoubleQuote to avoid tracking "(x)" as a subshell
+            if (!inDoubleQuote) {
+              parenStack[parenStack.length - 1].parenBalance++
+            }
           } else if (!inDoubleQuote) {
             // Top level AND not in double quotes: increment subshell depth
             // We check !inDoubleQuote here because top-level bare subshells like (cmd1 && cmd2)

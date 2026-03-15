@@ -961,6 +961,55 @@ EOF
       // Should be 'allow' - real heredoc marker detected
       expect(result).toBe('allow')
     })
+
+    test('ATTACK BLOCKED: String-literal parens must not increment parenBalance', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // CRITICAL ATTACK VECTOR: $(echo "(x)")\nrm -rf / <<M
+      // The "(x)" is a string literal, not a bare subshell
+      // Previous bug: ( inside string incremented parenBalance
+      // This caused:
+      // 1. Closing ) of $(...) to decrement parenBalance instead of popping
+      // 2. parenStack stays non-empty
+      // 3. Newline not split (thinks we're still in substitution)
+      // 4. <<M detected as false-positive heredoc
+      // 5. Security gate bypassed → auto-approved
+      const cmd = `$(echo "(x)")
+rm -rf / <<M`
+
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // MUST return 'ask' - the newline should split into two sub-commands
+      // First: $(echo "(x)") - doesn't match allowlist (needs $(echo, not echo)
+      // Second: rm -rf / <<M - doesn't match allowlist
+      // Result: not all sub-commands match → 'ask'
+      expect(result).toBe('ask')
+    })
+
+    test('LEGITIMATE: Bare parens inside substitution still work', () => {
+      const settings = {
+        allowlist: ['bash: git commit *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Real bare parens (not in string) inside substitution
+      const cmd = `git commit -m "$(cat <<EOF
+Fix bug
+EOF
+)"`
+
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'allow' - legitimate heredoc
+      expect(result).toBe('allow')
+    })
   })
 
   describe('CRITICAL SECURITY: hasUnescapedCommandSubstitution quote-blindness fix', () => {
