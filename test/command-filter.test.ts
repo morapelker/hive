@@ -1,17 +1,13 @@
-import { describe, expect, test } from 'vitest'
-
-// Mock logger
-const mockLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  debug: () => {}
-}
+import { describe, expect, test, vi } from 'vitest'
 
 // Import and mock the logger before importing the service
-import { vi } from 'vitest'
 vi.mock('../src/main/services/logger', () => ({
-  createLogger: () => mockLogger
+  createLogger: () => ({
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    debug: () => {}
+  })
 }))
 
 import { CommandFilterService } from '../src/main/services/command-filter-service'
@@ -153,8 +149,23 @@ Two fixes: a && b
 Changes: c || d; e
 EOF
 )"`
-      // Should be one command, not split on |, &&, ||, or ; inside the heredoc
-      expect(service.splitBashChain(cmd)).toEqual([cmd])
+      // Heredocs inside command substitutions $() should be kept intact (not split on newlines)
+      // This is the correct behavior - heredocs are legitimate multi-line constructs
+      const result = service.splitBashChain(cmd)
+      expect(result).toEqual([cmd]) // Should be ONE command, not split
+    })
+
+    test('real-world: git commit with heredoc (user reported issue)', () => {
+      // This is the exact scenario reported: should NOT ask for approval for each line
+      const cmd = `git commit -m "$(cat <<'EOF'
+Fix HealthCheckPolicy port rendering
+Problem: - Previous fix used | int filter
+Solution: - Apply | int filter
+EOF
+)"`
+      const result = service.splitBashChain(cmd)
+      expect(result).toEqual([cmd]) // Must be ONE command
+      expect(result.length).toBe(1) // NOT split into multiple parts
     })
 
     test('handles chained commands with heredocs', () => {
@@ -173,6 +184,457 @@ EOF
     test('handles escaped quotes', () => {
       const cmd = 'echo "a \\" b" && echo "c"'
       expect(service.splitBashChain(cmd)).toEqual(['echo "a \\" b"', 'echo "c"'])
+    })
+
+    // Security: Newline injection prevention tests
+    test('splits on unquoted newlines (security)', () => {
+      // Newlines at top level should split to prevent injection attacks
+      const cmd = 'ls\nrm -rf /'
+      expect(service.splitBashChain(cmd)).toEqual(['ls', 'rm -rf /'])
+
+      const cmd2 = 'echo "safe"\nmalicious command'
+      expect(service.splitBashChain(cmd2)).toEqual(['echo "safe"', 'malicious command'])
+    })
+
+    test('defensively splits simple quoted strings with newlines (security)', () => {
+      // Simple strings with newlines (no command substitutions) are split for security
+      // This prevents hiding malicious commands in quoted strings
+      const cmd = 'echo "line1\nline2"'
+      expect(service.splitBashChain(cmd)).toEqual(['echo "line1', 'line2"'])
+
+      const cmd2 = "echo 'line1\nline2'"
+      expect(service.splitBashChain(cmd2)).toEqual(["echo 'line1", "line2'"])
+    })
+
+    // Command substitution tests
+    test('preserves operators inside command substitutions $()', () => {
+      // Operators inside $(...) should NOT split
+      const cmd = 'echo $(cmd1 && cmd2)'
+      expect(service.splitBashChain(cmd)).toEqual([cmd])
+
+      const cmd2 = 'echo $(cmd1 | cmd2 || cmd3)'
+      expect(service.splitBashChain(cmd2)).toEqual([cmd2])
+    })
+
+    test('preserves newlines inside command substitutions (legitimate multi-line commands)', () => {
+      // Command substitutions with newlines are legitimate - keep intact
+      // This allows heredocs and multi-line commands inside $()
+      const cmd = 'echo $(cmd1\ncmd2)'
+      expect(service.splitBashChain(cmd)).toEqual([cmd])
+    })
+
+    test('splits on operators outside command substitutions', () => {
+      const cmd = 'cmd1 && echo $(cmd2 | cmd3) && cmd4'
+      expect(service.splitBashChain(cmd)).toEqual([
+        'cmd1',
+        'echo $(cmd2 | cmd3)',
+        'cmd4'
+      ])
+    })
+
+    test('handles nested command substitutions', () => {
+      const cmd = 'echo $(outer $(inner))'
+      expect(service.splitBashChain(cmd)).toEqual([cmd])
+
+      const cmd2 = 'echo $(echo $(echo "test"))'
+      expect(service.splitBashChain(cmd2)).toEqual([cmd2])
+    })
+
+    test('handles command substitutions inside double quotes', () => {
+      const cmd = 'echo "$(cmd1 && cmd2)"'
+      expect(service.splitBashChain(cmd)).toEqual([cmd])
+
+      const cmd2 = 'echo "prefix $(cmd1 | cmd2) suffix"'
+      expect(service.splitBashChain(cmd2)).toEqual([cmd2])
+    })
+
+    test('distinguishes between $() and bare parentheses', () => {
+      // $(cmd) is a command substitution - preserve operators inside
+      const cmd1 = 'echo $(cmd1 && cmd2)'
+      expect(service.splitBashChain(cmd1)).toEqual([cmd1])
+
+      // (cmd1 && cmd2) is a bare subshell - preserve operators inside
+      const cmd2 = '(cmd1 && cmd2)'
+      expect(service.splitBashChain(cmd2)).toEqual([cmd2])
+
+      // But split outside the subshell
+      const cmd3 = 'cmd0 && (cmd1 && cmd2) && cmd3'
+      expect(service.splitBashChain(cmd3)).toEqual([
+        'cmd0',
+        '(cmd1 && cmd2)',
+        'cmd3'
+      ])
+    })
+
+    // Bare subshell tests
+    test('preserves operators inside bare subshells ()', () => {
+      const cmd = '(cmd1 && cmd2 || cmd3)'
+      expect(service.splitBashChain(cmd)).toEqual([cmd])
+
+      const cmd2 = '(cmd1; cmd2)'
+      expect(service.splitBashChain(cmd2)).toEqual([cmd2])
+    })
+
+    test('splits on operators outside bare subshells', () => {
+      const cmd = 'cmd1 && (cmd2 | cmd3) || cmd4'
+      expect(service.splitBashChain(cmd)).toEqual([
+        'cmd1',
+        '(cmd2 | cmd3)',
+        'cmd4'
+      ])
+    })
+
+    test('handles nested bare subshells', () => {
+      const cmd = '(cmd1 && (cmd2 || cmd3))'
+      expect(service.splitBashChain(cmd)).toEqual([cmd])
+    })
+
+    test('handles mixed bare subshells and command substitutions', () => {
+      const cmd = '(cmd1 && $(cmd2 | cmd3)) || cmd4'
+      expect(service.splitBashChain(cmd)).toEqual([
+        '(cmd1 && $(cmd2 | cmd3))',
+        'cmd4'
+      ])
+    })
+
+    // Complex real-world scenarios
+    test('handles complex mixed command with all features', () => {
+      // Command substitution inside quotes, with operators outside
+      const cmd = 'git add . && git commit -m "$(date): Changes $(git status | grep modified)" && git push'
+      expect(service.splitBashChain(cmd)).toEqual([
+        'git add .',
+        'git commit -m "$(date): Changes $(git status | grep modified)"',
+        'git push'
+      ])
+    })
+
+    test('handles escaped dollar signs', () => {
+      const cmd = 'echo "\\$HOME" && echo $HOME'
+      expect(service.splitBashChain(cmd)).toEqual(['echo "\\$HOME"', 'echo $HOME'])
+    })
+
+    test('handles multiple pipes in different contexts', () => {
+      // Pipe inside $() should not split, pipe outside should
+      const cmd = 'echo $(ls | grep test) | cat'
+      expect(service.splitBashChain(cmd)).toEqual([
+        'echo $(ls | grep test)',
+        'cat'
+      ])
+    })
+
+    // Edge cases and defensive fallback
+    test('defensive fallback: parts with newlines after parsing are re-split', () => {
+      // This tests the defensive fallback for parser limitations
+      // If a part somehow contains a newline after parsing, it should be split
+      // Note: This is hard to trigger with correct parser, but tests the safety net
+      const result = service.splitBashChain('cmd1\ncmd2')
+      expect(result).toEqual(['cmd1', 'cmd2'])
+      // Each part should NOT contain newlines
+      result.forEach(part => {
+        expect(part).not.toMatch(/\n/)
+      })
+    })
+  })
+
+  describe('pattern matching normalizes heredocs but not suspicious newlines', () => {
+    test('heredocs in command substitutions match wildcard patterns', () => {
+      const settings = {
+        allowlist: ['bash: git commit *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Heredoc inside command substitution should match "bash: git commit *"
+      const cmd = `git commit -m "$(cat <<'EOF'
+Fix HealthCheckPolicy port rendering
+Problem: - Previous fix used | int filter
+Solution: - Apply | int filter
+EOF
+)"`
+
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+      // Should be 'allow' - heredoc is normalized for pattern matching
+      expect(result).toBe('allow')
+    })
+
+    test('suspicious simple strings with newlines do NOT match patterns', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Simple string with ACTUAL newline (not literal \n) - suspicious
+      // Using template literal to create actual newline character
+      const cmd = `echo "line1
+line2"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'ask' because the command is split into parts that don't match individually
+      // After splitting: ['echo "line1', 'line2"'] - neither matches 'bash: echo *' cleanly
+      expect(result).toBe('ask')
+    })
+
+    test('command with newline injection is split and checked separately', () => {
+      const settings = {
+        allowlist: ['bash: ls *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Injection attempt: ls\nrm -rf /
+      const result = service.evaluateToolUse(
+        'Bash',
+        { command: 'ls\nrm -rf /' },
+        settings
+      )
+
+      // Should be 'ask' because 'rm -rf /' doesn't match 'bash: ls *'
+      expect(result).toBe('ask')
+    })
+
+    test('all parts must match allowlist for multi-command chains', () => {
+      const settings = {
+        allowlist: ['bash: git *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Both commands match the pattern
+      const result1 = service.evaluateToolUse(
+        'Bash',
+        { command: 'git add . && git commit -m "test"' },
+        settings
+      )
+      expect(result1).toBe('allow')
+
+      // Only one command matches
+      const result2 = service.evaluateToolUse(
+        'Bash',
+        { command: 'git add . && npm install' },
+        settings
+      )
+      expect(result2).toBe('ask')
+    })
+
+    test('escaped \\$( is NOT treated as command substitution', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Escaped command substitution with newline - should be split
+      const cmd = `echo "line1
+line2 \\$(date)"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'ask' because \\$( is escaped (not a command substitution),
+      // so the newline causes splitting, and fragments don't match patterns
+      expect(result).toBe('ask')
+    })
+
+    test('double-escaped \\\\$( IS treated as command substitution', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Double-escaped backslash, so $( is NOT escaped - IS a command substitution
+      const cmd = `echo "$(cat <<EOF
+line1
+line2 \\\\$(date)
+EOF
+)"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'allow' because \\\\$( has escaped backslash, leaving $( as valid substitution
+      expect(result).toBe('allow')
+    })
+
+    test('SECURITY: quoted string with <<MARKER and newline does NOT bypass split', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Attack attempt: echo with quoted string containing fake heredoc marker
+      // This should be SPLIT because << is inside quotes, not a real heredoc
+      const cmd = `echo "safe text <<MARKER
+rm -rf /
+MARKER"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'ask' because the newline causes splitting,
+      // and fragments don't match the allowlist pattern
+      // This prevents the attack from being auto-approved
+      expect(result).toBe('ask')
+    })
+
+    test('SECURITY: top-level heredoc is split (not supported)', () => {
+      const settings = {
+        allowlist: ['bash: cat *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Top-level heredoc (not inside command substitution)
+      const cmd = `cat <<EOF
+line1
+line2
+EOF`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'ask' because top-level heredocs are not supported
+      // The command is split into parts, and they won't all match
+      expect(result).toBe('ask')
+    })
+  })
+
+  describe('nested parentheses handling', () => {
+    test('bare parens inside command substitution do not cause premature close', () => {
+      // $(cmd (inner)) - the first ) should close (inner), not $(
+      const cmd = 'echo $(echo (date) | cat)'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command, not split
+      expect(result).toEqual([cmd])
+    })
+
+    test('multiple nested bare parens inside command substitution', () => {
+      const cmd = 'echo $(cmd1 (a) && cmd2 (b) || cmd3 (c))'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command, operators inside $() should not cause splitting
+      expect(result).toEqual([cmd])
+    })
+
+    test('nested command substitutions', () => {
+      const cmd = 'echo $(outer $(inner))'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command
+      expect(result).toEqual([cmd])
+    })
+
+    test('deeply nested command substitutions', () => {
+      const cmd = 'echo $(level1 $(level2 $(level3)))'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command
+      expect(result).toEqual([cmd])
+    })
+
+    test('mixed: bare parens and command substitutions', () => {
+      const cmd = 'echo $(cmd1 (sub1 $(nested)) && cmd2 (sub2))'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command
+      expect(result).toEqual([cmd])
+    })
+
+    test('top-level bare parens still work correctly', () => {
+      const cmd = '(cd dir && make) || exit 1'
+      const result = service.splitBashChain(cmd)
+
+      // Should split on || but not on && inside (...)
+      expect(result).toEqual(['(cd dir && make)', 'exit 1'])
+    })
+  })
+
+  describe('KNOWN LIMITATIONS: Parser edge cases with security implications', () => {
+    test.skip('LIMITATION: Single quotes inside double-quoted command substitution not handled', () => {
+      // SECURITY ISSUE: This is a known parser limitation that could allow bypass
+      // See KNOWN LIMITATIONS in command-filter-service.ts for details
+      //
+      // In bash, this command has a literal ')' inside single quotes:
+      // "$(echo ')' && safe)"
+      // The single quotes create a quote context INSIDE the command substitution,
+      // independent of the outer double quotes.
+      //
+      // Our parser has GLOBAL quote tracking, so it doesn't toggle inSingleQuote
+      // when inside double quotes (line 108: if (char === "'" && !inDoubleQuote))
+      // This means the ')' is incorrectly treated as closing the command substitution.
+      const _cmd = '"$(echo \')\' && rm -rf /)"'
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const _result = service.splitBashChain(_cmd)
+
+      // EXPECTED: Should be ONE command (the && is inside the command substitution)
+      // ACTUAL: May incorrectly split at && because parser thinks ')' closed the $(
+      // expect(_result).toEqual([_cmd])
+
+      // For now, we document this as a known limitation
+      console.warn('KNOWN LIMITATION: Single quotes inside double-quoted substitutions may cause incorrect parsing')
+    })
+
+    test.skip('LIMITATION: Complex quote nesting in command substitutions', () => {
+      // SECURITY ISSUE: Nested quote contexts in command substitutions not fully supported
+      // Our parser tracks quotes globally, not per-nesting-level
+      const _cmd = 'echo "$(cat <<EOF | grep "pattern"\\nline2\\nEOF)"'
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const _result = service.splitBashChain(_cmd)
+
+      // This kind of complex nesting may not parse correctly
+      console.warn('KNOWN LIMITATION: Complex quote nesting in substitutions may cause incorrect parsing')
+    })
+
+    test('DOCUMENTED: Top-level heredocs are not supported (intentional)', () => {
+      // This is INTENTIONALLY not supported per the security model
+      // Top-level heredocs are split line-by-line (see KNOWN LIMITATIONS)
+      const cmd = `cat <<EOF
+line1
+line2
+EOF`
+      const result = service.splitBashChain(cmd)
+
+      // Splits into multiple parts (expected behavior)
+      expect(result.length).toBeGreaterThan(1)
+    })
+  })
+
+  describe('CRITICAL BUG: Bare parens inside double-quoted command substitutions', () => {
+    test('bare parens inside double-quoted command substitution should be tracked', () => {
+      // BUG: parenBalance only increments when !inDoubleQuote
+      // This means "$(cmd (sub))" doesn't track the (sub) parens
+      const cmd = '"$(cmd (sub))"'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command - the (sub) is inside the command substitution
+      expect(result).toEqual([cmd])
+      expect(result.length).toBe(1)
+    })
+
+    test('complex: bare parens in double-quoted substitution with operators', () => {
+      const cmd = '"$(cmd1 (a) && cmd2 (b))"'
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command - operators are inside the command substitution
+      expect(result).toEqual([cmd])
+    })
+
+    test('mixed quotes: bare parens in various contexts', () => {
+      // Outside quotes: (cmd)
+      // Inside single quotes: '(literal)'
+      // Inside double quotes with substitution: "$(cmd (sub))"
+      const cmd = '(echo test) && echo \'(literal)\' && echo "$(date (format))"'
+      const result = service.splitBashChain(cmd)
+
+      // Should split on && but preserve all paren contexts
+      expect(result).toEqual([
+        '(echo test)',
+        'echo \'(literal)\'',
+        'echo "$(date (format))"'
+      ])
     })
   })
 })

@@ -21,6 +21,26 @@ import type {
   SubCommandSuggestions
 } from '@/stores/useCommandApprovalStore'
 
+/**
+ * Check if a string contains an unescaped command substitution $(...)
+ * IMPORTANT: Must match the logic in command-filter-service.ts for consistency
+ */
+function hasUnescapedCommandSubstitution(str: string): boolean {
+  let i = 0
+  while (i < str.length - 1) {
+    if (str[i] === '\\') {
+      // Skip the next character (it's escaped)
+      i += 2
+      continue
+    }
+    if (str[i] === '$' && str[i + 1] === '(') {
+      return true
+    }
+    i++
+  }
+  return false
+}
+
 interface CommandApprovalPromptProps {
   request: CommandApprovalRequest
   onReply: (
@@ -67,7 +87,8 @@ function getToolDisplay(toolName: string): {
 /**
  * Pattern picker for a bash && chain: shows one radio group per sub-command.
  * Each sub-command has its own set of progressively broader patterns to choose from.
- * Default selection is the second option (one wildcard step up from exact).
+ * Default selection is the LAST pattern (most specific wildcard) to avoid overly broad permissions.
+ * Patterns are ordered broad→specific: ["exact", "cmd *", "cmd sub *", "cmd sub args *"]
  */
 function SubCommandPatternPicker({
   subCommandPatterns,
@@ -172,6 +193,227 @@ function FlatPatternPicker({
 }
 
 /**
+ * Split a bash command for display, respecting quotes and command substitutions.
+ *
+ * ⚠️ IMPORTANT: This function MUST mirror the backend logic in:
+ * src/main/services/command-filter-service.ts → splitBashChain()
+ *
+ * Any changes to parsing logic MUST be synchronized between both implementations
+ * to ensure the UI displays the exact same command breakdown that the backend evaluates.
+ *
+ * Differences:
+ * - Backend returns string[] - Frontend returns Array<{cmd, separator}>
+ * - Frontend tracks separators for display (&&, ||, |, ;, newline)
+ * - Both use identical parsing rules for quotes, substitutions, and operators
+ */
+function splitBashForDisplay(
+  command: string
+): Array<{ cmd: string; separator?: string }> {
+  const parts: Array<{ cmd: string; separator?: string }> = []
+  let current = ''
+  let inSingleQuote = false
+  let inDoubleQuote = false
+  let escapeNext = false
+  // Stack to track command substitutions: [wasInDoubleQuote, parenBalanceInside]
+  const parenStack: Array<{ wasInDoubleQuote: boolean; parenBalance: number }> = []
+  // Counter to track bare subshells: (cmd1 && cmd2) at TOP level only
+  let subshellDepth = 0
+  // Track if the last processed character was an unescaped $ (for bare subshell detection)
+  let lastCharWasUnescapedDollar = false
+  let i = 0
+
+  while (i < command.length) {
+    const char = command[i]
+    const next = command[i + 1]
+
+    if (escapeNext) {
+      current += char
+      escapeNext = false
+      lastCharWasUnescapedDollar = false
+      i++
+      continue
+    }
+
+    if (char === '\\' && !inSingleQuote) {
+      current += char
+      escapeNext = true
+      lastCharWasUnescapedDollar = false
+      i++
+      continue
+    }
+
+    // Handle quotes
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote
+      current += char
+      lastCharWasUnescapedDollar = false
+      i++
+      continue
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote
+      current += char
+      lastCharWasUnescapedDollar = false
+      i++
+      continue
+    }
+
+    // Track command substitutions $(...) - push current quote state onto stack
+    if (char === '$' && next === '(' && !inSingleQuote) {
+      parenStack.push({ wasInDoubleQuote: inDoubleQuote, parenBalance: 0 })
+      current += char + next
+      lastCharWasUnescapedDollar = false // Reset because we consumed both $ and (
+      i += 2
+      continue
+    }
+
+    // Track closing ) of command substitution
+    // Must handle bare parens inside $(...) correctly to avoid premature pop
+    if (char === ')' && parenStack.length > 0 && !inSingleQuote) {
+      const topEntry = parenStack[parenStack.length - 1]
+      if (inDoubleQuote === topEntry.wasInDoubleQuote) {
+        if (topEntry.parenBalance > 0) {
+          // This ) closes a bare subshell inside the command substitution
+          topEntry.parenBalance--
+        } else {
+          // This ) closes the command substitution itself
+          parenStack.pop()
+        }
+      }
+      current += char
+      lastCharWasUnescapedDollar = false
+      i++
+      continue
+    }
+
+    // Track bare subshells: (cmd1 && cmd2)
+    // CRITICAL: Must track ( inside command substitutions even when inside double quotes
+    // Example: "$(cmd (sub))" - the (sub) parens MUST be tracked even though inDoubleQuote=true
+    // Must match backend logic in command-filter-service.ts
+    if (char === '(' && !inSingleQuote) {
+      if (!lastCharWasUnescapedDollar) {
+        if (parenStack.length > 0) {
+          // Inside command substitution: increment paren balance
+          parenStack[parenStack.length - 1].parenBalance++
+        } else if (!inDoubleQuote) {
+          // Top level AND not in double quotes: increment subshell depth
+          subshellDepth++
+        }
+      }
+      current += char
+      lastCharWasUnescapedDollar = false
+      i++
+      continue
+    }
+
+    // Track closing ) of bare subshell at TOP level only
+    if (char === ')' && subshellDepth > 0 && !inSingleQuote && !inDoubleQuote && parenStack.length === 0) {
+      subshellDepth--
+      current += char
+      lastCharWasUnescapedDollar = false
+      i++
+      continue
+    }
+
+    // Only split when not inside quotes or command substitutions or subshells
+    if (!inSingleQuote && !inDoubleQuote && parenStack.length === 0 && subshellDepth === 0) {
+      // Check for newline (command separator)
+      if (char === '\n') {
+        if (current.trim()) parts.push({ cmd: current.trim(), separator: 'newline' })
+        current = ''
+        lastCharWasUnescapedDollar = false
+        i++
+        continue
+      }
+
+      if (char === '&' && next === '&') {
+        if (current.trim()) parts.push({ cmd: current.trim(), separator: '&&' })
+        current = ''
+        lastCharWasUnescapedDollar = false
+        i += 2
+        while (i < command.length && /\s/.test(command[i])) i++
+        continue
+      }
+
+      if (char === '|' && next === '|') {
+        if (current.trim()) parts.push({ cmd: current.trim(), separator: '||' })
+        current = ''
+        lastCharWasUnescapedDollar = false
+        i += 2
+        while (i < command.length && /\s/.test(command[i])) i++
+        continue
+      }
+
+      if (char === '|' && next !== '|') {
+        if (current.trim()) parts.push({ cmd: current.trim(), separator: '|' })
+        current = ''
+        lastCharWasUnescapedDollar = false
+        i++
+        while (i < command.length && /\s/.test(command[i])) i++
+        continue
+      }
+
+      if (char === ';') {
+        if (current.trim()) parts.push({ cmd: current.trim(), separator: ';' })
+        current = ''
+        lastCharWasUnescapedDollar = false
+        i++
+        while (i < command.length && /\s/.test(command[i])) i++
+        continue
+      }
+    }
+
+    // Update flag for next iteration: track if this char is an unescaped $
+    // (used to detect bare subshells vs command substitutions)
+    // Must be outside both single AND double quotes - a $ inside "..." followed by ( outside is not $(...)
+    lastCharWasUnescapedDollar = (char === '$' && !inSingleQuote && !inDoubleQuote)
+
+    current += char
+    i++
+  }
+
+  if (current.trim()) parts.push({ cmd: current.trim() })
+
+  // Defensive fallback: if any part contains newlines, check if it's legitimate
+  // (inside command substitution) or suspicious (simple string with newlines).
+  // This must match the backend logic in command-filter-service.ts for consistency.
+  //
+  // CRITICAL: Must check for UNESCAPED command substitutions to avoid false positives
+  // - \$( is escaped, NOT a command substitution → SPLIT
+  // - \\$( has escaped backslash, so $( is NOT escaped → KEEP INTACT
+  //
+  // SECURITY: We do NOT check for heredoc markers (<<) separately because:
+  // 1. Creates false positives on quoted strings: echo "text <<MARKER\nmalicious"
+  // 2. Only command substitutions indicate legitimate multi-line content
+  // 3. Top-level heredocs are not supported in the security model
+  const result: typeof parts = []
+  for (const part of parts) {
+    if (/\n/.test(part.cmd)) {
+      // Part contains newline(s) - check if it's inside a command substitution
+      const hasCommandSub = hasUnescapedCommandSubstitution(part.cmd)
+
+      if (hasCommandSub) {
+        // Legitimate: multi-line command inside $() - keep intact for display
+        result.push(part)
+      } else {
+        // Suspicious: newline without command substitution context - split for display
+        const lines = part.cmd.split('\n').map(s => s.trim()).filter(Boolean)
+        lines.forEach((line, i) => {
+          result.push({
+            cmd: line,
+            separator: i < lines.length - 1 ? 'newline' : part.separator
+          })
+        })
+      }
+    } else {
+      result.push(part)
+    }
+  }
+  return result
+}
+
+/**
  * Display a bash command, splitting on && / || / ; into labelled rows.
  * For non-bash or single commands: shows the plain command string.
  */
@@ -186,19 +428,9 @@ function CommandDisplay({ commandStr }: { commandStr: string }) {
   }
 
   const command = commandStr.slice(prefix.length)
-  const parts = command.split(/(\s+&&\s+|\s+\|\|\s+|\s+\|\s+|\s*;\s+)/)
-  const subCmds: string[] = []
-  const seps: string[] = []
+  const parts = splitBashForDisplay(command)
 
-  for (const part of parts) {
-    if (/^\s*(&&|\|\||\||;)\s*$/.test(part)) {
-      seps.push(part.trim())
-    } else if (part.trim()) {
-      subCmds.push(part.trim())
-    }
-  }
-
-  if (subCmds.length <= 1) {
+  if (parts.length <= 1) {
     return (
       <div className="text-xs font-mono px-2 py-1.5 rounded bg-muted/50 text-foreground break-all max-h-32 overflow-y-auto">
         {commandStr}
@@ -208,16 +440,16 @@ function CommandDisplay({ commandStr }: { commandStr: string }) {
 
   return (
     <div className="max-h-40 overflow-y-auto space-y-0.5">
-      {subCmds.map((sub, idx) => (
+      {parts.map((part, idx) => (
         <div key={idx}>
           <div className="text-xs font-mono px-2 py-1.5 rounded bg-muted/50 text-foreground break-all">
-            {sub}
+            {part.cmd}
           </div>
-          {idx < subCmds.length - 1 && (
+          {part.separator && (
             <div className="flex items-center gap-1 py-0.5 px-2">
               <div className="h-px flex-1 bg-border/40" />
               <span className="text-[10px] font-mono text-muted-foreground/60">
-                {seps[idx] ?? '&&'}
+                {part.separator === 'newline' ? '↵' : part.separator}
               </span>
               <div className="h-px flex-1 bg-border/40" />
             </div>
@@ -228,11 +460,17 @@ function CommandDisplay({ commandStr }: { commandStr: string }) {
   )
 }
 
-/** Build initial per-sub-command selected patterns: pick index 1 (one wildcard step up) or index 0 */
+/**
+ * Build initial per-sub-command selected patterns.
+ * Since patterns are now ordered broad→specific (e.g., ["exact", "gh *", "gh pr *", "gh pr create *"]),
+ * we default to the LAST pattern (most specific wildcard) to avoid granting overly broad permissions.
+ */
 function buildDefaultSubPatterns(groups: SubCommandSuggestions[]): Record<number, string> {
   const defaults: Record<number, string> = {}
   groups.forEach((group, idx) => {
-    defaults[idx] = group.patterns[1] ?? group.patterns[0] ?? ''
+    // Pick the last pattern (most specific wildcard), or fallback to exact if only 1 pattern
+    const lastIdx = group.patterns.length - 1
+    defaults[idx] = group.patterns[lastIdx] ?? ''
   })
   return defaults
 }
@@ -321,6 +559,7 @@ export function CommandApprovalPrompt({ request, onReply }: CommandApprovalPromp
     selectedSubPatterns,
     selectedFlatPattern,
     approvedSubCommands,
+    uniqueSubCommandPatterns,
     onReply
   ])
 

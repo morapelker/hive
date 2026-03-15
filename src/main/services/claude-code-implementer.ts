@@ -2009,6 +2009,15 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       input
     )
 
+    // Check if already aborted before showing dialog
+    if (options.signal.aborted) {
+      log.info('handleCommandApproval: signal already aborted, auto-denying', { requestId })
+      return {
+        behavior: 'deny' as const,
+        message: 'Command rejected: session was aborted'
+      }
+    }
+
     const approvalRequest = {
       id: requestId,
       sessionID: session.hiveSessionId,
@@ -2028,34 +2037,64 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     })
 
     // Block execution with a Promise that waits for user response
-    const userResponse = await new Promise<{
-      approved: boolean
-      remember?: 'allow' | 'block'
-      pattern?: string
-      patterns?: string[]
-    }>((resolve) => {
-      this.pendingApprovals.set(requestId, {
-        resolve: (response) => resolve(response),
-        toolName,
-        input,
-        commandStr
-      })
+    // Add 5-minute timeout to prevent infinite waiting if dialog fails to show
 
-      // If the session is aborted while waiting, auto-deny
-      const onAbort = (): void => {
-        if (this.pendingApprovals.has(requestId)) {
-          log.info('handleCommandApproval: session aborted while approval pending, auto-denying', {
-            requestId
-          })
-          this.pendingApprovals.delete(requestId)
-          resolve({ approved: false })
+    let timeoutHandle: NodeJS.Timeout | undefined
+    // Store abort handler reference for cleanup
+    let onAbort: (() => void) | undefined
+
+    const userResponse = await Promise.race([
+      new Promise<{
+        approved: boolean
+        remember?: 'allow' | 'block'
+        pattern?: string
+        patterns?: string[]
+      }>((resolve) => {
+        this.pendingApprovals.set(requestId, {
+          resolve: (response) => {
+            // Clear timeout on user response
+            if (timeoutHandle) clearTimeout(timeoutHandle)
+            resolve(response)
+          },
+          toolName,
+          input,
+          commandStr
+        })
+
+        // If the session is aborted while waiting, auto-deny
+        onAbort = (): void => {
+          if (this.pendingApprovals.has(requestId)) {
+            log.info('handleCommandApproval: session aborted while approval pending, auto-denying', {
+              requestId
+            })
+            if (timeoutHandle) clearTimeout(timeoutHandle)
+            this.pendingApprovals.delete(requestId)
+            resolve({ approved: false })
+          }
         }
-      }
-      options.signal.addEventListener('abort', onAbort, { once: true })
-    })
+        options.signal.addEventListener('abort', onAbort, { once: true })
+      }),
+      // 5-minute timeout - auto-deny if no response
+      new Promise<{ approved: boolean }>((resolve) => {
+        timeoutHandle = setTimeout(() => {
+          if (this.pendingApprovals.has(requestId)) {
+            log.warn('handleCommandApproval: timeout waiting for user response, auto-denying', {
+              requestId,
+              commandStr
+            })
+            this.pendingApprovals.delete(requestId)
+          }
+          // Always resolve even if already handled - prevents permanently pending Promise
+          resolve({ approved: false })
+        }, 5 * 60 * 1000) // 5 minutes
+      })
+    ])
 
-    // Clean up tracking state
+    // Clean up all resources
     this.pendingApprovals.delete(requestId)
+    if (timeoutHandle) clearTimeout(timeoutHandle)
+    // Remove abort listener to prevent memory leak (if not already fired)
+    if (onAbort) options.signal.removeEventListener('abort', onAbort)
 
     // Handle "remember" choice - update settings with user-selected pattern(s)
     if (userResponse.remember) {
