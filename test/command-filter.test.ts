@@ -644,6 +644,66 @@ EOF
     })
   })
 
+  describe('CRITICAL SECURITY: hasUnescapedCommandSubstitution quote-blindness fix', () => {
+    test('SECURITY BYPASS: $( inside single quotes is literal, NOT a command substitution', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // ATTACK VECTOR: Literal $( inside single quotes with newline injection
+      // In bash, single quotes make EVERYTHING literal (no substitution)
+      const cmd = `echo 'literal $(date)
+rm -rf /'`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'ask' because $( inside single quotes is literal (not a substitution)
+      // so the newline should cause splitting, and fragments won't match patterns
+      // This MUST be 'ask' to prevent the attack!
+      expect(result).toBe('ask')
+    })
+
+    test('LEGITIMATE: $( inside double quotes IS a command substitution', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Legitimate use: Command substitution inside double quotes
+      const cmd = `echo "result: $(cat <<'EOF'
+line1
+line2
+EOF
+)"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'allow' because $( inside double quotes IS a substitution
+      // so the newline is legitimate and the whole command matches the pattern
+      expect(result).toBe('allow')
+    })
+
+    test('EDGE CASE: escaped \\$( inside single quotes', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Inside single quotes, backslashes are literal too
+      const cmd = `echo '\\\\$(date)
+test'`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'ask' - inside single quotes, everything is literal
+      expect(result).toBe('ask')
+    })
+  })
+
   describe('CRITICAL BUG: Bare parens inside double-quoted command substitutions', () => {
     test('bare parens inside double-quoted command substitution should be tracked', () => {
       // BUG: parenBalance only increments when !inDoubleQuote

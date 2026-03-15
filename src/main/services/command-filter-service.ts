@@ -4,19 +4,50 @@ const log = createLogger({ component: 'CommandFilterService' })
 
 /**
  * Check if a string contains an unescaped command substitution $(...)
- * Must properly handle escape sequences: \$( is NOT a substitution, \\$( IS a substitution
+ * Must properly handle:
+ * - Escape sequences: \$( is NOT a substitution, \\$( IS a substitution
+ * - Single quotes: '$(' inside single quotes is NOT a substitution (literal text)
+ * - Double quotes: "$(" inside double quotes IS a substitution
+ *
+ * CRITICAL SECURITY: This function must track quote state to avoid false positives.
+ * Example: echo 'text $(date)\nmalicious' - the $( is literal, NOT a substitution
  */
 function hasUnescapedCommandSubstitution(str: string): boolean {
   let i = 0
+  let inSingleQuote = false
+  let inDoubleQuote = false
+
   while (i < str.length - 1) {
-    if (str[i] === '\\') {
+    const char = str[i]
+    const next = str[i + 1]
+
+    // Handle backslash escapes (not inside single quotes)
+    if (char === '\\' && !inSingleQuote) {
       // Skip the next character (it's escaped)
       i += 2
       continue
     }
-    if (str[i] === '$' && str[i + 1] === '(') {
+
+    // Track single quotes (they disable ALL substitutions)
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote
+      i++
+      continue
+    }
+
+    // Track double quotes (substitutions work inside these)
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote
+      i++
+      continue
+    }
+
+    // Check for $( only when NOT inside single quotes
+    // Single quotes make everything literal, including $(
+    if (char === '$' && next === '(' && !inSingleQuote) {
       return true
     }
+
     i++
   }
   return false
