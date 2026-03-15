@@ -107,6 +107,40 @@ export class CommandFilterService {
    * - Using more specific allowlist patterns (avoid broad wildcards)
    * - Manually reviewing commands with complex nesting
    * - Avoiding single quotes inside double-quoted command substitutions in trusted commands
+   *
+   * BREAKING CHANGE - Top-Level Heredocs:
+   * ⚠️ Top-level heredocs (not inside command substitutions) are NO LONGER supported.
+   * Previous behavior: May have worked in some cases
+   * New behavior: Split line-by-line (each line requires approval)
+   *
+   * Example that now requires multiple approvals:
+   *   cat <<EOF
+   *   line1
+   *   line2
+   *   EOF
+   *
+   * Workaround: Use command substitution with heredoc:
+   *   cat "$(cat <<'EOF'
+   *   line1
+   *   line2
+   *   EOF
+   *   )"
+   *
+   * Rationale: Top-level heredocs create security risks (newline injection vectors)
+   * and are difficult to distinguish from attack patterns. Command substitutions
+   * provide a clear signal of legitimate multi-line content.
+   *
+   * PATTERN MATCHING BEHAVIOR:
+   * ⚠️ normalizeCommandForMatching() collapses ALL newlines when $(…) is present
+   * This is intentional but non-obvious to users writing allowlist patterns.
+   *
+   * Example: A command like "git commit -m \"$(cat <<EOF\nFix bug\nEOF)\"" will be
+   * normalized to "git commit -m \"$(cat <<EOF Fix bug EOF)\"" for pattern matching.
+   *
+   * This means:
+   * - Pattern "bash: git commit *" WILL match multi-line commit messages in $(...)
+   * - The user sees multi-line content, but pattern matching sees collapsed version
+   * - This is a trade-off for simplicity and security (see normalizeCommandForMatching)
    */
   splitBashChain(command: string): string[] {
     const parts: string[] = []

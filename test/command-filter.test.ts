@@ -600,17 +600,47 @@ EOF`
       console.warn('KNOWN LIMITATION: Complex quote nesting in substitutions may cause incorrect parsing')
     })
 
-    test('DOCUMENTED: Top-level heredocs are not supported (intentional)', () => {
-      // This is INTENTIONALLY not supported per the security model
-      // Top-level heredocs are split line-by-line (see KNOWN LIMITATIONS)
+    test('BREAKING CHANGE: Top-level heredocs are no longer supported', () => {
+      // ⚠️ BREAKING CHANGE: Top-level heredocs now split line-by-line
+      // This is a security-driven design decision (see KNOWN LIMITATIONS)
+      //
+      // Previous behavior: May have worked in some cases
+      // New behavior: Each line requires separate approval
+      //
+      // Workaround: Use command substitution:
+      //   cat "$(cat <<'EOF'
+      //   line1
+      //   line2
+      //   EOF
+      //   )"
       const cmd = `cat <<EOF
 line1
 line2
 EOF`
       const result = service.splitBashChain(cmd)
 
-      // Splits into multiple parts (expected behavior)
+      // Splits into multiple parts (breaking change, but intentional)
       expect(result.length).toBeGreaterThan(1)
+
+      // Each line becomes a separate part
+      expect(result).toContain('cat <<EOF')
+      expect(result).toContain('line1')
+      expect(result).toContain('line2')
+      expect(result).toContain('EOF')
+    })
+
+    test('DOCUMENTED: Workaround for multi-line content - use command substitution', () => {
+      // ✅ RECOMMENDED APPROACH: Use command substitution with heredoc
+      const cmd = `cat "$(cat <<'EOF'
+line1
+line2
+EOF
+)"`
+      const result = service.splitBashChain(cmd)
+
+      // Should be ONE command (heredoc inside command substitution is supported)
+      expect(result).toEqual([cmd])
+      expect(result.length).toBe(1)
     })
   })
 
