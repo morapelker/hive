@@ -35,6 +35,9 @@ function parseToolPart(activity: SessionActivity): StreamingPart | null {
     item?.input && typeof item.input === 'object' && !Array.isArray(item.input)
       ? (item.input as Record<string, unknown>)
       : {}
+  const input = Array.isArray(item?.changes)
+    ? { ...rawInput, changes: item.changes }
+    : rawInput
   const output = item?.output ?? payload?.output ?? item?.aggregatedOutput ?? payload?.aggregatedOutput
 
   return {
@@ -42,7 +45,7 @@ function parseToolPart(activity: SessionActivity): StreamingPart | null {
     toolUse: {
       id: activity.item_id ?? activity.id,
       name: toolName,
-      input: rawInput,
+      input,
       status:
         activity.kind === 'tool.completed'
           ? 'success'

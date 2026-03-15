@@ -86,12 +86,14 @@ function normalizeToolInput(
     normalizeCommandValue(item?.command) ??
     normalizeCommandValue(inputRecord?.command) ??
     normalizeCommandValue(payload?.command)
+  const changes = Array.isArray(item?.changes) ? item.changes : undefined
 
-  if (!command) return rawInput
+  if (!command && !changes) return rawInput
 
   return {
     ...(inputRecord ?? {}),
-    command
+    ...(command ? { command } : {}),
+    ...(changes ? { changes } : {})
   }
 }
 

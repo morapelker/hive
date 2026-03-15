@@ -42,6 +42,7 @@ import {
   getLspOperationColor,
   getLspResultCount
 } from './tools/LspToolView'
+import { FileChangeToolView } from './tools/FileChangeToolView'
 import { ToolCallContextMenu } from './ToolCallContextMenu'
 import { extractCommandText } from '@/lib/tool-input-utils'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -77,6 +78,12 @@ const FIGMA_ICON_COLOR = 'text-[#a259ff]'
 /** Check if a tool name refers to a Figma MCP tool */
 function isFigmaTool(name: string): boolean {
   return name.toLowerCase().startsWith('mcp__figma__')
+}
+
+/** Check if a tool name refers to a Codex file change tool */
+function isFileChangeTool(name: string): boolean {
+  const lower = name.toLowerCase()
+  return lower === 'filechange' || lower === 'file_change' || lower === 'apply_patch'
 }
 
 /** Extract the operation name from a Figma tool name */
@@ -140,6 +147,9 @@ function getToolIcon(name: string): React.JSX.Element {
   if (lowerName.includes('write') || lowerName === 'create') {
     return <FilePlus className={iconClass} />
   }
+  if (isFileChangeTool(lowerName)) {
+    return <Pencil className={iconClass} />
+  }
   if (lowerName.includes('edit') || lowerName.includes('replace') || lowerName.includes('patch')) {
     return <Pencil className={iconClass} />
   }
@@ -186,6 +196,18 @@ function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string
     const todos = Array.isArray(input.todos) ? (input.todos as Array<{ status: string }>) : []
     const completed = todos.filter((t) => t.status === 'completed').length
     return `${completed}/${todos.length} completed`
+  }
+
+  // Show file path for fileChange (Codex) — must be before generic file ops check
+  if (isFileChangeTool(lowerName)) {
+    const changes = Array.isArray(input.changes)
+      ? (input.changes as Array<{ path: string }>)
+      : []
+    if (changes.length > 0) {
+      const firstPath = changes[0]?.path || ''
+      const label = shortenPath(firstPath, cwd)
+      return changes.length > 1 ? `${label} +${changes.length - 1} more` : label
+    }
   }
 
   // Show file path for file operations
@@ -320,7 +342,10 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   WebFetch: WebFetchToolView,
   webfetch: WebFetchToolView,
   web_fetch: WebFetchToolView,
-  'mcp__hive-lsp__lsp': LspToolView
+  'mcp__hive-lsp__lsp': LspToolView,
+  fileChange: FileChangeToolView,
+  file_change: FileChangeToolView,
+  apply_patch: FileChangeToolView
 }
 
 /** Resolve a tool name to its rich renderer, falling back to FallbackToolView */
@@ -332,6 +357,7 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (lower.includes('todowrite') || lower.includes('todo_write')) return TodoWriteToolView
   if (lower.includes('read') || lower === 'cat' || lower === 'view') return ReadToolView
   if (lower.includes('write') || lower === 'create') return WriteToolView
+  if (isFileChangeTool(lower)) return FileChangeToolView
   if (lower.includes('edit') || lower.includes('replace') || lower.includes('patch'))
     return EditToolView
   if (lower.includes('bash') || lower.includes('shell') || lower.includes('exec'))
@@ -448,6 +474,31 @@ function CollapsedContent({
         </span>
         {lineCount !== null && (
           <span className="text-muted-foreground/60 shrink-0 text-[10px]">{lineCount} lines</span>
+        )}
+      </>
+    )
+  }
+
+  // FileChange (Codex) — must be before Edit/Replace/Patch to avoid 'apply_patch' shadowing
+  if (isFileChangeTool(lowerName)) {
+    const changes = Array.isArray(input.changes)
+      ? (input.changes as Array<{ path: string; kind: { type: string } }>)
+      : []
+    const firstPath = changes[0]?.path || ''
+    const changeCount = changes.length
+    return (
+      <>
+        <span className="text-muted-foreground shrink-0">
+          <Pencil className="h-3.5 w-3.5" />
+        </span>
+        <span className="font-medium text-foreground shrink-0">Edit</span>
+        <span className="font-mono text-muted-foreground truncate min-w-0">
+          {shortenPath(firstPath, cwd)}
+        </span>
+        {changeCount > 1 && (
+          <span className="text-[10px] bg-blue-500/15 text-blue-500 dark:text-blue-400 rounded px-1 py-0.5 font-medium shrink-0">
+            +{changeCount - 1} more
+          </span>
         )}
       </>
     )
@@ -684,6 +735,7 @@ function isSkillTool(name: string): boolean {
 /** Detect file operation tools that should use the compact inline layout */
 export function isFileOperation(name: string): boolean {
   if (isTodoWriteTool(name)) return false
+  if (isFileChangeTool(name)) return true
   const lower = name.toLowerCase()
   return (
     lower.includes('read') ||
@@ -733,6 +785,7 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
   const isSkill = isSkillTool(toolUse.name)
   const isLsp = isLspTool(toolUse.name)
   const isFigma = isFigmaTool(toolUse.name)
+  const isFileChange = isFileChangeTool(toolUse.name)
   const filePath = (toolUse.input.filePath ||
     toolUse.input.file_path ||
     toolUse.input.path ||
@@ -745,11 +798,17 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
   const isRunning = toolUse.status === 'pending' || toolUse.status === 'running'
   const isError = toolUse.status === 'error'
   const hasOutput = !!(toolUse.output || toolUse.error)
+  // FileChange tools carry their content in input.changes, not output
+  const hasExpandableContent =
+    hasOutput ||
+    (isFileChange &&
+      Array.isArray(toolUse.input.changes) &&
+      (toolUse.input.changes as unknown[]).length > 0)
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
-  // Use CollapsedContent for search, LSP, and Figma tools (they have rich collapsed headers)
-  const useCollapsedContent = isSearch || isLsp || isFigma
+  // Use CollapsedContent for search, LSP, Figma, and fileChange tools (they have rich collapsed headers)
+  const useCollapsedContent = isSearch || isLsp || isFigma || isFileChange
 
   const icon = useMemo(() => {
     if (isExpanded) {
@@ -783,13 +842,14 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
     >
       {/* Compact single-line header */}
       <button
-        onClick={() => hasOutput && setIsExpanded(!isExpanded)}
+        onClick={() => hasExpandableContent && setIsExpanded(!isExpanded)}
         className={cn(
           'flex items-center gap-1.5 w-full py-0.5 text-left text-xs',
-          hasOutput && 'cursor-pointer hover:bg-accent/50 transition-colors rounded-sm',
-          !hasOutput && !isRunning && 'cursor-default'
+          hasExpandableContent &&
+            'cursor-pointer hover:bg-accent/50 transition-colors rounded-sm',
+          !hasExpandableContent && !isRunning && 'cursor-default'
         )}
-        disabled={!hasOutput && !isRunning}
+        disabled={!hasExpandableContent && !isRunning}
       >
         {icon}
         {useCollapsedContent ? (
@@ -811,7 +871,7 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
       </button>
 
       {/* Expanded content */}
-      {isExpanded && hasOutput && (
+      {isExpanded && hasExpandableContent && (
         <div className="ml-5 mt-0.5 mb-1" data-testid="tool-output">
           <Renderer
             name={toolUse.name}
