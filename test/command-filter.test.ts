@@ -762,6 +762,95 @@ EOF
       // Users should use deny rules for protection:
       // blocklist: ['bash: rm -rf *']
     })
+
+    test('ATTACK BLOCKED: Fake heredoc marker inside double quotes should NOT bypass security', () => {
+      const settings = {
+        allowlist: ['bash: git commit *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // ATTACK VECTOR: <<WORD inside quotes is literal text, NOT a heredoc marker
+      // This should be treated as suspicious (no real heredoc) and require manual approval
+      const cmd = `git commit -m "Documentation says: use <<NOTE for comments
+rm -rf /"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // MUST return 'ask' - no REAL heredoc marker (it's inside quotes)
+      // The context-unaware regex /<<-?['"]?\w+['"]?/ would incorrectly match this
+      expect(result).toBe('ask')
+    })
+
+    test('ATTACK BLOCKED: Fake heredoc marker inside single quotes should NOT bypass security', () => {
+      const settings = {
+        allowlist: ['bash: git commit *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // <<WORD inside single quotes is literal text
+      const cmd = `git commit -m 'Examples: <<EOF or <<NOTE
+malicious'`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // MUST return 'ask' - no real heredoc marker
+      expect(result).toBe('ask')
+    })
+
+    test('ATTACK BLOCKED: Escaped heredoc marker should NOT bypass security', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // \<< is escaped, not a heredoc marker
+      const cmd = `echo "Text with \\<<EOF marker
+malicious"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // MUST return 'ask' - escaped << is not a real heredoc
+      expect(result).toBe('ask')
+    })
+
+    test('LEGITIMATE: Real heredoc marker outside quotes still works', () => {
+      const settings = {
+        allowlist: ['bash: git commit *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Real heredoc: << appears outside quotes
+      const cmd = `git commit -m "$(cat <<EOF
+Fix bug
+EOF
+)"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // Should be 'allow' - real heredoc marker detected
+      expect(result).toBe('allow')
+    })
+
+    test('SECURITY: Mixed quote contexts - heredoc marker must be outside ALL quotes', () => {
+      const settings = {
+        allowlist: ['bash: echo *'],
+        blocklist: [],
+        defaultBehavior: 'ask' as const,
+        enabled: true
+      }
+
+      // Complex case: command substitution inside double quotes with fake heredoc text
+      const cmd = `echo "$(echo 'fake <<EOF marker'
+malicious)"`
+      const result = service.evaluateToolUse('Bash', { command: cmd }, settings)
+
+      // MUST return 'ask' - heredoc marker is inside single quotes (inside the substitution)
+      expect(result).toBe('ask')
+    })
   })
 
   describe('CRITICAL SECURITY: hasUnescapedCommandSubstitution quote-blindness fix', () => {

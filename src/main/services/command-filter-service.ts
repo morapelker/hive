@@ -53,6 +53,106 @@ function hasUnescapedCommandSubstitution(str: string): boolean {
   return false
 }
 
+/**
+ * Check if a string contains an unescaped heredoc marker (<<WORD or <<-WORD)
+ * Must properly handle:
+ * - Escape sequences: \<< is NOT a heredoc marker
+ * - Single quotes: '<<EOF' inside single quotes is NOT a heredoc marker (literal text)
+ * - Double quotes: "<<EOF" inside double quotes is NOT a heredoc marker (literal text)
+ * - Command substitutions: "$(cat <<EOF...)" - heredoc IS valid inside $() even when $() is in quotes
+ *
+ * CRITICAL SECURITY: This function must track quote state to avoid false positives.
+ * Example: git commit -m "text <<NOTE\nmalicious" - the << is literal, NOT a heredoc
+ * But: git commit -m "$(cat <<EOF\ntext\nEOF)" - the << IS a real heredoc (inside command substitution)
+ *
+ * Heredoc marker pattern: << followed by optional -, optional quotes, and word characters
+ * Examples: <<EOF, <<-EOF, <<'EOF', <<"EOF"
+ */
+function hasUnescapedHeredocMarker(str: string): boolean {
+  let i = 0
+  let inSingleQuote = false
+  let inDoubleQuote = false
+  const parenStack: Array<{ wasInDoubleQuote: boolean }> = []
+
+  while (i < str.length - 1) {
+    const char = str[i]
+    const next = str[i + 1]
+
+    // Handle backslash escapes (not inside single quotes)
+    if (char === '\\' && !inSingleQuote) {
+      // Skip the next character (it's escaped)
+      i += 2
+      continue
+    }
+
+    // Track command substitutions $(...)
+    // This is important because heredocs work inside $() even when $() is inside quotes
+    if (char === '$' && next === '(' && !inSingleQuote) {
+      parenStack.push({ wasInDoubleQuote: inDoubleQuote })
+      i += 2
+      continue
+    }
+
+    // Track closing ) of command substitution
+    if (char === ')' && parenStack.length > 0 && !inSingleQuote) {
+      const topEntry = parenStack[parenStack.length - 1]
+      if (inDoubleQuote === topEntry.wasInDoubleQuote) {
+        parenStack.pop()
+      }
+      i++
+      continue
+    }
+
+    // Track single quotes
+    // Inside command substitutions, single quotes work normally even when $() is in double quotes
+    const insideCommandSubstitution = parenStack.length > 0
+    if (char === "'" && (!inDoubleQuote || insideCommandSubstitution)) {
+      inSingleQuote = !inSingleQuote
+      i++
+      continue
+    }
+
+    // Track double quotes
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote
+      i++
+      continue
+    }
+
+    // Check for << heredoc marker
+    // Heredocs work in two contexts:
+    // 1. Outside all quotes (top level): cat <<EOF
+    // 2. Inside command substitutions: "$(cat <<EOF...)" - even when $() is in quotes
+    const atTopLevel = !inSingleQuote && !inDoubleQuote && parenStack.length === 0
+    const inCommandSubstitution = parenStack.length > 0 && !inSingleQuote
+
+    if (char === '<' && next === '<' && (atTopLevel || inCommandSubstitution)) {
+      // Found << in a context where heredocs work
+      // Check if it's followed by heredoc marker pattern: -?['"]?\w+
+      let j = i + 2
+
+      // Optional dash (<<- variant for tab-stripping)
+      if (j < str.length && str[j] === '-') {
+        j++
+      }
+
+      // Optional opening quote (single or double)
+      if (j < str.length && (str[j] === '"' || str[j] === "'")) {
+        j++
+      }
+
+      // Must be followed by at least one word character (marker name)
+      if (j < str.length && /\w/.test(str[j])) {
+        // This looks like a heredoc marker
+        return true
+      }
+    }
+
+    i++
+  }
+  return false
+}
+
 export interface CommandFilterSettings {
   allowlist: string[]
   blocklist: string[]
@@ -496,8 +596,11 @@ export class CommandFilterService {
       // - Can be bypassed: $(cat <<EOF\ntext\nEOF; rm -rf /)
       // - BUT: Still requires matching allowlist pattern (defense-in-depth)
       // - Users should use specific patterns, not broad wildcards like "bash: *"
+      //
+      // CRITICAL: Must use quote-aware heredoc detection to avoid false positives
+      // from quoted strings like: git commit -m "text <<NOTE\nmalicious"
       if (hasUnescapedCommandSubstitution(command) && /\n/.test(command)) {
-        const hasHeredocMarker = /<<-?['"]?\w+['"]?/.test(command)
+        const hasHeredocMarker = hasUnescapedHeredocMarker(command)
 
         if (!hasHeredocMarker) {
           // No heredoc marker - newlines are likely command separators
