@@ -70,10 +70,15 @@ function detectTrigger(inputValue: string, cursorPosition: number): TriggerState
   return closed
 }
 
+// Maximum number of suggestions to show (performance optimization for large repos)
+const MAX_SUGGESTIONS = 200
+
 function filterSuggestions(flatFiles: FlatFile[], query: string): FlatFile[] {
   if (query === '') {
-    // Return first 5 files alphabetically by relativePath
-    return [...flatFiles].sort((a, b) => a.relativePath.localeCompare(b.relativePath)).slice(0, 5)
+    // Return up to MAX_SUGGESTIONS files alphabetically by relativePath
+    return [...flatFiles]
+      .sort((a, b) => a.relativePath.localeCompare(b.relativePath))
+      .slice(0, MAX_SUGGESTIONS)
   }
 
   // Score and filter
@@ -84,7 +89,7 @@ function filterSuggestions(flatFiles: FlatFile[], query: string): FlatFile[] {
       if (b.score !== a.score) return b.score - a.score
       return a.file.relativePath.localeCompare(b.file.relativePath)
     })
-    .slice(0, 5)
+    .slice(0, MAX_SUGGESTIONS) // Cap results for performance
 
   return scored.map(({ file }) => file)
 }
@@ -102,12 +107,6 @@ export function useFileMentions(inputValue: string, cursorPosition: number, flat
 
   const { isOpen, query, triggerIndex } = trigger
 
-  // Filter suggestions
-  const suggestions = useMemo(
-    () => (isOpen ? filterSuggestions(flatFiles, query) : []),
-    [isOpen, flatFiles, query]
-  )
-
   // Reset selectedIndex when query changes
   useEffect(() => {
     if (query !== prevQueryRef.current) {
@@ -115,20 +114,6 @@ export function useFileMentions(inputValue: string, cursorPosition: number, flat
       prevQueryRef.current = query
     }
   }, [query])
-
-  // Keyboard navigation
-  const moveSelection = useCallback(
-    (direction: 'up' | 'down') => {
-      if (suggestions.length === 0) return
-      setSelectedIndex((prev) => {
-        if (direction === 'down') {
-          return (prev + 1) % suggestions.length
-        }
-        return (prev - 1 + suggestions.length) % suggestions.length
-      })
-    },
-    [suggestions.length]
-  )
 
   // Select a file — returns insertion data
   const selectFile = useCallback(
@@ -175,6 +160,20 @@ export function useFileMentions(inputValue: string, cursorPosition: number, flat
   const effectiveSuggestions = useMemo(
     () => (effectiveIsOpen ? filterSuggestions(flatFiles, query) : []),
     [effectiveIsOpen, flatFiles, query]
+  )
+
+  // Keyboard navigation
+  const moveSelection = useCallback(
+    (direction: 'up' | 'down') => {
+      if (effectiveSuggestions.length === 0) return
+      setSelectedIndex((prev) => {
+        if (direction === 'down') {
+          return (prev + 1) % effectiveSuggestions.length
+        }
+        return (prev - 1 + effectiveSuggestions.length) % effectiveSuggestions.length
+      })
+    },
+    [effectiveSuggestions.length]
   )
 
   // Update mention indices when the input text changes
