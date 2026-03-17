@@ -906,10 +906,11 @@ export const useSessionStore = create<SessionState>()(
         // Import settings store dynamically to avoid circular deps
         const { useSettingsStore } = await import('./useSettingsStore')
 
-        // Check if there's a mode-specific default for the new mode
-        const newModeDefault = useSettingsStore.getState().getModelForMode(newMode)
+        // Check mode-specific default first, then fall back to global default
+        const settings = useSettingsStore.getState()
+        const newModeDefault = settings.getModelForMode(newMode) ?? settings.selectedModel
         if (!newModeDefault) {
-          // No default configured for this mode, keep current model
+          // No mode default and no global default configured, keep current model
           return
         }
 

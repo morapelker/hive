@@ -3136,7 +3136,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
           // Use the ask-specific model if configured, otherwise use session model
           const { useSettingsStore } = await import('@/stores/useSettingsStore')
-          const askModel = useSettingsStore.getState().getModelForMode('ask')
+          const settings = useSettingsStore.getState()
+          const askModel = settings.getModelForMode('ask') ?? settings.selectedModel
           const selectedModel = askModel || getModelForRequests()
 
           // Prefix with ASK_MODE_PREFIX to prevent code changes
