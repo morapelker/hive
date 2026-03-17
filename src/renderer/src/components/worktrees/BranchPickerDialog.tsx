@@ -255,24 +255,30 @@ export function BranchPickerDialog({
                   <button
                     key={pr.number}
                     className={cn(
-                      'flex items-center gap-2 w-full px-3 py-2 text-sm text-left',
+                      'flex items-start gap-2 w-full px-3 py-2 text-sm text-left',
                       'hover:bg-accent hover:text-accent-foreground transition-colors',
                       'focus:bg-accent focus:text-accent-foreground focus:outline-none'
                     )}
                     onClick={() => handlePRSelect(pr)}
                   >
-                    <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="flex-1 min-w-0">
-                      <span className="font-medium text-muted-foreground mr-1.5">#{pr.number}</span>
-                      <span className="truncate">{pr.title}</span>
-                    </span>
-                    <span className="text-[10px] text-muted-foreground shrink-0 max-w-[120px] truncate">
-                      {pr.author}
-                    </span>
-                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground shrink-0 max-w-[140px] truncate">
-                      <GitBranch className="h-2.5 w-2.5 shrink-0" />
-                      {pr.headRefName}
-                    </span>
+                    <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-muted-foreground shrink-0">
+                          #{pr.number}
+                        </span>
+                        <span className="truncate">{pr.title}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[11px] text-muted-foreground truncate">
+                          {pr.author}
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground max-w-[200px] truncate">
+                          <GitBranch className="h-2.5 w-2.5 shrink-0" />
+                          {pr.headRefName}
+                        </span>
+                      </div>
+                    </div>
                   </button>
                 ))}
               </div>
