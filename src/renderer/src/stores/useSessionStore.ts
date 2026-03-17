@@ -280,15 +280,15 @@ export const useSessionStore = create<SessionState>()(
           if (!isTerminal) {
             const { resolveModelForSdk } = await import('./useSettingsStore')
 
-            // Priority 1: per-provider default → (legacy) global default
-            defaultModel = resolveModelForSdk(defaultAgentSdk)
+            // Priority 1: mode-specific default (build mode for new sessions)
+            const modeModel = useSettingsStore.getState().getModelForMode('build')
+            if (modeModel) {
+              defaultModel = modeModel
+            }
 
-            // Priority 2: mode-specific default (build mode for new sessions)
+            // Priority 2: per-provider default → (legacy) global default
             if (!defaultModel) {
-              const modeModel = useSettingsStore.getState().getModelForMode('build')
-              if (modeModel) {
-                defaultModel = modeModel
-              }
+              defaultModel = resolveModelForSdk(defaultAgentSdk)
             }
 
             // Legacy worktree fallback only when per-provider feature not yet active
@@ -1236,15 +1236,16 @@ export const useSessionStore = create<SessionState>()(
               agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
             // Terminal sessions skip model resolution
             if (defaultAgentSdk !== 'terminal') {
-              const { resolveModelForSdk } = await import('./useSettingsStore')
-              defaultModel = resolveModelForSdk(defaultAgentSdk)
+              // Priority 1: mode-specific default (build mode for new sessions)
+              const modeModel = useSettingsStore.getState().getModelForMode('build')
+              if (modeModel) {
+                defaultModel = modeModel
+              }
 
-              // Priority 2: mode-specific default (build mode for new sessions)
+              // Priority 2: per-provider default → (legacy) global default
               if (!defaultModel) {
-                const modeModel = useSettingsStore.getState().getModelForMode('build')
-                if (modeModel) {
-                  defaultModel = modeModel
-                }
+                const { resolveModelForSdk } = await import('./useSettingsStore')
+                defaultModel = resolveModelForSdk(defaultAgentSdk)
               }
             }
           } catch {
