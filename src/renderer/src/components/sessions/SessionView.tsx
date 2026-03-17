@@ -548,21 +548,65 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const inputValueRef = useRef('')
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Flat file index for file mentions and search — keyed by worktree path.
-  // Uses git ls-files for a complete, gitignore-respecting file list.
-  // Ensure the index is loaded when worktreePath is resolved — SessionView cannot
-  // rely on the FileTree sidebar component having already populated the store
-  // (sidebar may be collapsed, on a different tab, or targeting a different worktree).
-  const fileIndex = useFileTreeStore((state) =>
-    worktreePath
-      ? (state.fileIndexByWorktree.get(worktreePath) ?? EMPTY_FILE_INDEX)
-      : EMPTY_FILE_INDEX
-  )
-  useEffect(() => {
-    if (worktreePath && fileIndex === EMPTY_FILE_INDEX) {
-      useFileTreeStore.getState().loadFileIndex(worktreePath)
+  // Connection path resolution error state
+  const [connectionPathError, setConnectionPathError] = useState<string | null>(null)
+
+  // Flat file index for file mentions and search.
+  // For worktree sessions: use worktreePath as key
+  // For connection sessions: use `connection:${connectionId}` as key and aggregate from all members
+  const fileIndex = useFileTreeStore((state) => {
+    if (worktreeId) {
+      // Regular worktree session
+      return worktreePath
+        ? (state.fileIndexByWorktree.get(worktreePath) ?? EMPTY_FILE_INDEX)
+        : EMPTY_FILE_INDEX
+    } else if (connectionId) {
+      // Connection session - use connectionId as key
+      const cacheKey = `connection:${connectionId}`
+      return state.fileIndexByWorktree.get(cacheKey) ?? EMPTY_FILE_INDEX
     }
-  }, [worktreePath, fileIndex])
+    return EMPTY_FILE_INDEX
+  })
+
+  // Subscribe to connection data for connection sessions
+  const activeConnection = useConnectionStore((state) =>
+    connectionId ? state.connections.find((c) => c.id === connectionId) : undefined
+  )
+
+  useEffect(() => {
+    if (worktreeId && worktreePath && fileIndex === EMPTY_FILE_INDEX) {
+      // Regular worktree session - load from single worktree
+      console.log('[SessionView] Loading file index for worktree:', worktreePath)
+      useFileTreeStore.getState().loadFileIndex(worktreePath)
+    } else if (connectionId && fileIndex === EMPTY_FILE_INDEX) {
+      // Connection session - load from all member worktrees
+      // Use the subscribed activeConnection instead of imperative getState()
+      if (activeConnection && activeConnection.members.length > 0) {
+        const members = activeConnection.members.map((m) => ({
+          symlinkName: m.symlink_name,
+          worktreePath: m.worktree_path
+        }))
+        console.log(
+          '[SessionView] Loading file index for connection:',
+          connectionId,
+          'from',
+          members.length,
+          'members'
+        )
+        useFileTreeStore.getState().loadFileIndexForConnection(connectionId, members)
+      } else if (!activeConnection) {
+        console.warn('[SessionView] Connection not found for file index loading', {
+          sessionId,
+          connectionId
+        })
+      } else {
+        console.warn('[SessionView] Connection has no members - file mentions disabled', {
+          sessionId,
+          connectionId
+        })
+      }
+    }
+  }, [worktreeId, worktreePath, connectionId, fileIndex, sessionId, activeConnection])
 
   // File mentions hook
   const fileMentions = useFileMentions(inputValue, cursorPosition, fileIndex)
@@ -2264,16 +2308,28 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         } else if (session.connection_id) {
           // Connection session: resolve the connection folder path
           setConnectionId(session.connection_id)
+          setConnectionPathError(null) // Clear any previous error
           try {
             const connResult = await window.connectionOps.get(session.connection_id)
             if (shouldAbortInit()) return
+
             if (connResult.success && connResult.connection) {
               wtPath = connResult.connection.path
               setWorktreePath(wtPath)
               transcriptSourceRef.current.worktreePath = wtPath
+              setConnectionPathError(null) // Explicitly clear on success
+            } else {
+              // Connection lookup failed or returned no connection
+              const errorMsg = connResult.error || 'Connection not found'
+              console.error('Failed to resolve connection path:', errorMsg, 'connectionId:', session.connection_id)
+              setConnectionPathError(errorMsg)
+              toast.error(`Failed to load connection: ${errorMsg}`)
             }
-          } catch {
-            console.warn('Failed to resolve connection path for session')
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+            console.error('Exception resolving connection path:', error, 'connectionId:', session.connection_id)
+            setConnectionPathError(errorMsg)
+            toast.error(`Failed to load connection: ${errorMsg}`)
           }
         }
 
@@ -4542,6 +4598,30 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
             {/* Attachment previews */}
             <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
+
+            {/* Connection error banner */}
+            {connectionPathError && (
+              <div className="mx-3 mb-2 p-3 rounded-md bg-destructive/10 border border-destructive/20 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-destructive font-medium">Connection Error</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Failed to load connection path: {connectionPathError}. File mentions (@) will not work.
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    // Retry connection loading by reinitializing the session
+                    initializeSession()
+                  }}
+                  className="shrink-0"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
 
             {/* Middle: textarea */}
             <textarea
