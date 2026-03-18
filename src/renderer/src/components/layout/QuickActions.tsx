@@ -284,6 +284,8 @@ const TERMINAL_LABELS: Record<TerminalOption, string> = {
   alacritty: 'Alacritty',
   kitty: 'Kitty',
   ghostty: 'Ghostty',
+  powershell: 'PowerShell',
+  cmd: 'CMD',
   custom: 'Terminal'
 }
 

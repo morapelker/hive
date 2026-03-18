@@ -14,6 +14,8 @@ export type TerminalOption =
   | 'alacritty'
   | 'kitty'
   | 'ghostty'
+  | 'powershell'
+  | 'cmd'
   | 'custom'
 export type EmbeddedTerminalBackend = 'xterm' | 'ghostty'
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { isMac as isMacPlatform } from '@/lib/platform'
+import { isMac as isMacPlatform, isWindows as isWindowsPlatform } from '@/lib/platform'
 import {
   useSettingsStore,
   type TerminalOption,
@@ -16,7 +16,7 @@ interface DetectedTerminal {
   available: boolean
 }
 
-const TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
+const MAC_TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
   { id: 'terminal', label: 'Terminal' },
   { id: 'iterm', label: 'iTerm2' },
   { id: 'warp', label: 'Warp' },
@@ -25,6 +25,26 @@ const TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
   { id: 'ghostty', label: 'Ghostty' },
   { id: 'custom', label: 'Custom Command' }
 ]
+
+const WINDOWS_TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
+  { id: 'terminal', label: 'Windows Terminal' },
+  { id: 'powershell', label: 'PowerShell' },
+  { id: 'cmd', label: 'Command Prompt' },
+  { id: 'custom', label: 'Custom Command' }
+]
+
+const LINUX_TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
+  { id: 'terminal', label: 'Default Terminal' },
+  { id: 'alacritty', label: 'Alacritty' },
+  { id: 'kitty', label: 'kitty' },
+  { id: 'custom', label: 'Custom Command' }
+]
+
+function getTerminalOptions(): { id: TerminalOption; label: string }[] {
+  if (isWindowsPlatform()) return WINDOWS_TERMINAL_OPTIONS
+  if (isMacPlatform()) return MAC_TERMINAL_OPTIONS
+  return LINUX_TERMINAL_OPTIONS
+}
 
 const BACKEND_OPTIONS: {
   id: EmbeddedTerminalBackend
@@ -217,7 +237,7 @@ export function SettingsTerminal(): React.JSX.Element {
           </div>
         ) : (
           <div className="space-y-1">
-            {TERMINAL_OPTIONS.map((opt) => {
+            {getTerminalOptions().map((opt) => {
               const available = isAvailable(opt.id)
               return (
                 <button

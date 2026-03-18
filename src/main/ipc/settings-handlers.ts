@@ -166,9 +166,20 @@ export function registerSettingsHandlers(): void {
           }
         } else if (currentPlatform === 'win32') {
           switch (terminalId) {
-            case 'terminal':
-              spawn('wt.exe', ['-d', worktreePath], { detached: true, stdio: 'ignore' })
+            case 'terminal': {
+              // Windows Terminal may not be installed; fall back to PowerShell
+              const terminals = detectTerminals()
+              const wt = terminals.find((t) => t.id === 'terminal')
+              if (wt?.available) {
+                spawn('wt.exe', ['-d', worktreePath], { detached: true, stdio: 'ignore' })
+              } else {
+                spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`], {
+                  detached: true,
+                  stdio: 'ignore'
+                })
+              }
               break
+            }
             case 'powershell':
               spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`], {
                 detached: true,
