@@ -94,6 +94,7 @@ function SessionTab({
   const inputRef = useRef<HTMLInputElement>(null)
 
   const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const hintMode = useHintStore((s) => s.mode)
   const hintPendingChar = useHintStore((s) => s.pendingChar)
 
@@ -212,7 +213,7 @@ function SessionTab({
           ) : (
             <span className="truncate flex-1">{name || 'Untitled'}</span>
           )}
-          {hintCode && vimMode === 'normal' && (
+          {hintCode && vimModeEnabled && vimMode === 'normal' && (
             <HintBadge code={hintCode} mode={hintMode} pendingChar={hintPendingChar} />
           )}
           <button
@@ -869,6 +870,7 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Vim/hint state for session tab hints
   const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const setSessionHints = useHintStore((s) => s.setSessionHints)
   const clearSessionHints = useHintStore((s) => s.clearSessionHints)
 
@@ -878,7 +880,7 @@ export function SessionTabs(): React.JSX.Element | null {
   )
 
   useEffect(() => {
-    if (vimMode === 'normal') {
+    if (vimModeEnabled && vimMode === 'normal') {
       setSessionHints(sessionHints.sessionHintMap, sessionHints.sessionHintTargetMap)
     } else {
       clearSessionHints()
@@ -886,7 +888,7 @@ export function SessionTabs(): React.JSX.Element | null {
     return () => {
       clearSessionHints()
     }
-  }, [vimMode, sessionHints, setSessionHints, clearSessionHints])
+  }, [vimModeEnabled, vimMode, sessionHints, setSessionHints, clearSessionHints])
 
   // Don't render if nothing is selected
   if (!selectedWorktreeId && !selectedConnectionId) {

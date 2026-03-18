@@ -572,6 +572,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const codexFastMode = useSettingsStore((state) => state.codexFastMode)
   const codexFastModeAccepted = useSettingsStore((state) => state.codexFastModeAccepted)
   const updateSetting = useSettingsStore((state) => state.updateSetting)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
 
   const codexPromptOptions = useMemo(
     () => (sessionAgentSdk === 'codex' ? { codexFastMode } : undefined),
@@ -794,12 +795,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // The textarea only exists in the DOM when viewState is 'connected',
   // so we need to re-trigger focus when transitioning from 'connecting' → 'connected'.
   useEffect(() => {
+    if (vimModeEnabled) return
     if (textareaRef.current) {
       requestAnimationFrame(() => {
         textareaRef.current?.focus()
       })
     }
-  }, [sessionId, viewState.status])
+  }, [sessionId, viewState.status, vimModeEnabled])
 
   // Push per-session model to OpenCode on tab switch
   useEffect(() => {

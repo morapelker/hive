@@ -44,6 +44,7 @@ export function BottomPanel({
     selectedWorktreeId ? (s.scriptStates[selectedWorktreeId]?.runOutputVersion ?? 0) : 0
   )
   const customChromeCommand = useSettingsStore((s) => s.customChromeCommand)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
 
   // Per-worktree detected URLs so switching worktrees shows the correct port instantly.
   const [detectedUrls, setDetectedUrls] = useState<Record<string, string>>({})
@@ -90,7 +91,7 @@ export function BottomPanel({
             data-testid={`bottom-panel-tab-${tab.id}`}
             data-active={effectiveTab === tab.id}
           >
-            <span className="text-primary">{tab.keybind}</span>{tab.label.slice(1)}
+            {vimModeEnabled ? <><span className="text-primary">{tab.keybind}</span>{tab.label.slice(1)}</> : tab.label}
             {effectiveTab === tab.id && (
               <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
             )}

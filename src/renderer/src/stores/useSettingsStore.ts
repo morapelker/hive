@@ -42,6 +42,7 @@ export interface AppSettings {
   // General
   autoStartSession: boolean
   breedType: 'dogs' | 'cats'
+  vimModeEnabled: boolean
 
   // Editor
   defaultEditor: EditorOption
@@ -105,6 +106,7 @@ export interface AppSettings {
 const DEFAULT_SETTINGS: AppSettings = {
   autoStartSession: true,
   breedType: 'dogs',
+  vimModeEnabled: false,
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
@@ -218,6 +220,7 @@ function extractSettings(state: SettingsState): AppSettings {
   return {
     autoStartSession: state.autoStartSession,
     breedType: state.breedType,
+    vimModeEnabled: state.vimModeEnabled,
     defaultEditor: state.defaultEditor,
     customEditorCommand: state.customEditorCommand,
     defaultTerminal: state.defaultTerminal,
@@ -422,6 +425,7 @@ export const useSettingsStore = create<SettingsState>()(
       partialize: (state) => ({
         autoStartSession: state.autoStartSession,
         breedType: state.breedType,
+        vimModeEnabled: state.vimModeEnabled,
         defaultEditor: state.defaultEditor,
         customEditorCommand: state.customEditorCommand,
         defaultTerminal: state.defaultTerminal,

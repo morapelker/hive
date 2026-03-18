@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useHintStore } from '@/stores/useHintStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -75,6 +76,7 @@ function ShortcutRow({
 // ---------------------------------------------------------------------------
 
 export function HelpOverlay(): React.JSX.Element | null {
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const helpOverlayOpen = useVimModeStore((s) => s.helpOverlayOpen)
   const mode = useVimModeStore((s) => s.mode)
   const hintMap = useHintStore((s) => s.hintMap)
@@ -153,7 +155,7 @@ export function HelpOverlay(): React.JSX.Element | null {
     return groups
   }, [])
 
-  if (!helpOverlayOpen) return null
+  if (!vimModeEnabled || !helpOverlayOpen) return null
 
   return (
     <>

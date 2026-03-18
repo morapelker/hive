@@ -72,6 +72,7 @@ export function Header(): React.JSX.Element {
   const setPendingMessage = useSessionStore((s) => s.setPendingMessage)
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
   const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const [conflictFixFlow, setConflictFixFlow] = useState<ConflictFixFlow | null>(null)
 
   // Monitor PR session stream events for PR URL detection
@@ -422,17 +423,19 @@ export function Header(): React.JSX.Element {
         ) : (
           <span className="text-sm font-medium">Hive</span>
         )}
-        <span
-          className={cn(
-            'text-[10px] font-mono px-1.5 py-0.5 rounded border select-none',
-            vimMode === 'normal'
-              ? 'text-muted-foreground bg-muted/50 border-border/50'
-              : 'text-primary bg-primary/10 border-primary/30'
-          )}
-          data-testid="vim-mode-pill"
-        >
-          {vimMode === 'normal' ? 'NORMAL' : 'INSERT'}
-        </span>
+        {vimModeEnabled && (
+          <span
+            className={cn(
+              'text-[10px] font-mono px-1.5 py-0.5 rounded border select-none',
+              vimMode === 'normal'
+                ? 'text-muted-foreground bg-muted/50 border-border/50'
+                : 'text-primary bg-primary/10 border-primary/30'
+            )}
+            data-testid="vim-mode-pill"
+          >
+            {vimMode === 'normal' ? 'NORMAL' : 'INSERT'}
+          </span>
+        )}
       </div>
       {/* Center: Quick Actions */}
       <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>

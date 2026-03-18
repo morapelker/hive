@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { Loader2, FolderPlus } from 'lucide-react'
-import { useProjectStore, useSpaceStore, useWorktreeStore, useHintStore, useVimModeStore } from '@/stores'
+import { useProjectStore, useSpaceStore, useWorktreeStore, useHintStore, useVimModeStore, useSettingsStore } from '@/stores'
 import { ProjectItem } from './ProjectItem'
 import { subsequenceMatch } from '@/lib/subsequence-match'
 import { assignHints, buildNormalModeTargets, type HintTarget } from '@/lib/hint-utils'
@@ -15,6 +15,7 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
   const { setHints, clearHints, setFilterActive } = useHintStore()
   const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
 
   // Drag state for project reordering
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
@@ -123,7 +124,7 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
       return assignHints(targets, lastChar)
     }
 
-    if (vimMode === 'normal') {
+    if (vimModeEnabled && vimMode === 'normal') {
       // Normal mode (no filter): project targets + worktree targets for expanded projects only
       const targets = buildNormalModeTargets(
         filteredProjects.map((fp) => fp.project),
@@ -134,7 +135,7 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
     }
 
     return { hintMap: new Map<string, string>(), hintTargetMap: new Map<string, HintTarget>() }
-  }, [filteredProjects, worktreesByProject, filterQuery, vimMode, expandedProjectIds])
+  }, [filteredProjects, worktreesByProject, filterQuery, vimModeEnabled, vimMode, expandedProjectIds])
 
   // Immediately set filterActive when filter text changes — this drives project expansion
   // independently of worktree loading (breaking the circular dependency)
@@ -146,7 +147,7 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
   }, [filterQuery, setFilterActive])
 
   useEffect(() => {
-    if (filterQuery.trim() || vimMode === 'normal') {
+    if (filterQuery.trim() || (vimModeEnabled && vimMode === 'normal')) {
       setHints(computedHintMap, computedHintTargetMap)
     } else {
       clearHints()
@@ -154,7 +155,7 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
     // No cleanup here: when computedHintMap changes (worktrees loading), setHints
     // immediately overwrites — running clearHints() in cleanup would reset mode:'idle'
     // mid-navigation and break the two-char hint flow.
-  }, [computedHintMap, computedHintTargetMap, filterQuery, vimMode, setHints, clearHints])
+  }, [computedHintMap, computedHintTargetMap, filterQuery, vimModeEnabled, vimMode, setHints, clearHints])
 
   // Clear all hint state on unmount only
   useEffect(() => {

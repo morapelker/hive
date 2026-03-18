@@ -46,7 +46,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent
 } from '@/components/ui/dropdown-menu'
-import { useWorktreeStore, useProjectStore, useConnectionStore, usePinnedStore, useHintStore, useVimModeStore } from '@/stores'
+import { useWorktreeStore, useProjectStore, useConnectionStore, usePinnedStore, useHintStore, useVimModeStore, useSettingsStore } from '@/stores'
 import { HintBadge } from '@/components/ui/HintBadge'
 import { useGitStore } from '@/stores/useGitStore'
 import { useScriptStore } from '@/stores/useScriptStore'
@@ -127,6 +127,7 @@ export function WorktreeItem({
   const hintPendingChar = useHintStore((s) => s.pendingChar)
   const inputFocused = useHintStore((s) => s.inputFocused)
   const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
 
   const handleTogglePin = useCallback(async (): Promise<void> => {
     if (isPinned) {
@@ -636,7 +637,7 @@ export function WorktreeItem({
           </div>
 
           {/* Hint Badge (visible when filter is active and search field is focused) */}
-          {hint && (inputFocused || vimMode === 'normal') && <HintBadge code={hint} mode={hintMode} pendingChar={hintPendingChar} />}
+          {hint && (inputFocused || (vimModeEnabled && vimMode === 'normal')) && <HintBadge code={hint} mode={hintMode} pendingChar={hintPendingChar} />}
 
           {/* Unread dot badge */}
           {worktreeStatus === 'unread' && (

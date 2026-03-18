@@ -5,6 +5,7 @@ import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useHintStore } from '@/stores/useHintStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { dispatchHintAction } from '@/lib/hint-utils'
 
 const SIDEBAR_SCROLL_STEP = 80
@@ -27,7 +28,11 @@ function isInsideRadixOverlay(el: Element | null): boolean {
 }
 
 export function useVimNavigation(): void {
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+
   useEffect(() => {
+    if (!vimModeEnabled) return
+
     // --- Scroll helpers ---
 
     function scrollSidebar(delta: number): void {
@@ -245,5 +250,5 @@ export function useVimNavigation(): void {
       document.removeEventListener('focusin', handleFocusIn, true)
       document.removeEventListener('focusout', handleFocusOut, true)
     }
-  }, [])
+  }, [vimModeEnabled])
 }
