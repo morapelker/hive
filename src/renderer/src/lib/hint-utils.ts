@@ -118,6 +118,10 @@ export function shouldShowHintBadge(
 export function dispatchHintAction(key: string): void {
   if (key.startsWith('plus:')) {
     const projectId = key.slice('plus:'.length)
+    const { expandedProjectIds, toggleProjectExpanded } = useProjectStore.getState()
+    if (!expandedProjectIds.has(projectId)) {
+      toggleProjectExpanded(projectId)
+    }
     window.dispatchEvent(new CustomEvent('hive:hint-plus', { detail: { projectId } }))
   } else if (key.startsWith('project:')) {
     const projectId = key.slice('project:'.length)

@@ -26,6 +26,7 @@ vi.mock('@/stores/useWorktreeStore', () => {
 vi.mock('@/stores/useProjectStore', () => {
   const store = {
     getState: vi.fn(() => ({
+      expandedProjectIds: new Set<string>(),
       selectProject: vi.fn(),
       toggleProjectExpanded: vi.fn()
     }))
@@ -100,6 +101,32 @@ describe('hint-utils extensions', () => {
         })
       )
       dispatchSpy.mockRestore()
+    })
+
+    it('expands the project when dispatching plus: hint if collapsed', async () => {
+      const { useProjectStore } = await import('@/stores/useProjectStore')
+      const toggleFn = vi.fn()
+      vi.mocked(useProjectStore.getState).mockReturnValue({
+        expandedProjectIds: new Set<string>(),
+        toggleProjectExpanded: toggleFn,
+        selectProject: vi.fn()
+      } as any)
+
+      dispatchHintAction('plus:p1')
+      expect(toggleFn).toHaveBeenCalledWith('p1')
+    })
+
+    it('does NOT toggle the project when dispatching plus: hint if already expanded', async () => {
+      const { useProjectStore } = await import('@/stores/useProjectStore')
+      const toggleFn = vi.fn()
+      vi.mocked(useProjectStore.getState).mockReturnValue({
+        expandedProjectIds: new Set(['p1']),
+        toggleProjectExpanded: toggleFn,
+        selectProject: vi.fn()
+      } as any)
+
+      dispatchHintAction('plus:p1')
+      expect(toggleFn).not.toHaveBeenCalled()
     })
 
     it('calls toggleProjectExpanded for project: keys', async () => {
