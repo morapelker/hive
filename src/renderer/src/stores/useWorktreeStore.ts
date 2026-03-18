@@ -427,6 +427,17 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       get().touchWorktree(id)
       // Deconflict: clear any selected connection synchronously (same tick)
       clearConnectionSelection()
+
+      // Auto-detect language from worktree folder when project has none (fire-and-forget)
+      const worktrees = Array.from(get().worktreesByProject.values()).flat()
+      const worktree = worktrees.find((w) => w.id === id)
+      if (worktree) {
+        const ps = useProjectStore.getState()
+        const project = ps.projects.find((p) => p.id === worktree.project_id)
+        if (project && !project.language && !project.custom_icon) {
+          ps.refreshLanguage(project.id, worktree.path)
+        }
+      }
     }
   },
 
