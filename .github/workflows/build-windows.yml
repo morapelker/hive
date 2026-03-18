@@ -51,7 +51,7 @@ jobs:
 
             Built on `main` push — run #${{ github.run_number }}
           draft: false
-          prerelease: false
+          prerelease: true
           files: |
             dist/*.exe
             dist/*.yaml

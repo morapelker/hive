@@ -339,8 +339,9 @@ function registerSystemHandlers(): void {
         const scriptContent = `@echo off\r\n"${execPath}" --headless %*\r\n`
         writeFileSync(targetPath, scriptContent)
 
-        // Add to user PATH via PowerShell
-        const psCmd = `[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';${installDir}', 'User')`
+        // Add to user PATH via PowerShell (escape single quotes for safe interpolation)
+        const escapedDir = installDir.replace(/'/g, "''")
+        const psCmd = `$d='${escapedDir}'; [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User')+';'+$d,'User')`
         await execAsync(`powershell -Command "${psCmd}"`, { timeout: 15000 })
 
         return { success: true, path: targetPath }
@@ -393,8 +394,9 @@ function registerSystemHandlers(): void {
         const { unlinkSync } = await import('fs')
         unlinkSync(targetPath)
 
-        // Remove from user PATH via PowerShell
-        const psCmd = `$p = [Environment]::GetEnvironmentVariable('Path', 'User'); [Environment]::SetEnvironmentVariable('Path', ($p -split ';' | Where-Object { $_ -ne '${installDir}' }) -join ';', 'User')`
+        // Remove from user PATH via PowerShell (escape single quotes for safe interpolation)
+        const escapedDir = installDir.replace(/'/g, "''")
+        const psCmd = `$d='${escapedDir}'; $p = [Environment]::GetEnvironmentVariable('Path','User'); [Environment]::SetEnvironmentVariable('Path', ($p -split ';' | Where-Object { $_ -ne $d }) -join ';','User')`
         await execAsync(`powershell -Command "${psCmd}"`, { timeout: 15000 })
 
         return { success: true }

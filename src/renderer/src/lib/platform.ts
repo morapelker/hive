@@ -5,7 +5,8 @@ export async function initPlatform(): Promise<void> {
     _platform = await window.systemOps.getPlatform()
   } catch {
     // Fallback: detect from navigator as best-effort
-    _platform = navigator.platform.toLowerCase().includes('win') ? 'win32' : 'darwin'
+    const nav = navigator.platform.toLowerCase()
+    _platform = nav.includes('win') ? 'win32' : nav.includes('linux') ? 'linux' : 'darwin'
   }
 }
 
