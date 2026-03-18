@@ -1,4 +1,19 @@
 import { cn } from '@/lib/utils'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+
+function MnemonicLabel({ letter, label }: { letter: string; label: string }): React.JSX.Element {
+  const index = label.toLowerCase().indexOf(letter.toLowerCase())
+  if (index === -1) return <span>{label}</span>
+  return (
+    <span>
+      {label.slice(0, index)}
+      <span className="font-semibold underline underline-offset-2 decoration-2">
+        {label[index]}
+      </span>
+      {label.slice(index + 1)}
+    </span>
+  )
+}
 
 interface PlanReadyImplementFabProps {
   onImplement: () => void
@@ -19,6 +34,8 @@ export function PlanReadyImplementFab({
   superpowersAvailable,
   isConnectionSession
 }: PlanReadyImplementFabProps): React.JSX.Element {
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+
   return (
     <div
       className={cn(
@@ -41,7 +58,7 @@ export function PlanReadyImplementFab({
         aria-label="Handoff plan"
         data-testid="plan-ready-handoff-fab"
       >
-        Handoff
+        {vimModeEnabled ? <MnemonicLabel letter="a" label="Handoff" /> : 'Handoff'}
       </button>
       {superpowersAvailable && !isConnectionSession && onSuperpowersLocal && (
         <button
@@ -57,7 +74,7 @@ export function PlanReadyImplementFab({
           aria-label="Supercharge plan locally"
           data-testid="plan-ready-supercharge-local-fab"
         >
-          Supercharge locally
+          {vimModeEnabled ? <MnemonicLabel letter="o" label="Supercharge locally" /> : 'Supercharge locally'}
         </button>
       )}
       {superpowersAvailable && onSuperpowers && (
@@ -74,7 +91,7 @@ export function PlanReadyImplementFab({
           aria-label="Supercharge plan"
           data-testid="plan-ready-supercharge-fab"
         >
-          Supercharge
+          {vimModeEnabled ? <MnemonicLabel letter="u" label="Supercharge" /> : 'Supercharge'}
         </button>
       )}
       <button
@@ -90,7 +107,7 @@ export function PlanReadyImplementFab({
         aria-label="Implement plan"
         data-testid="plan-ready-implement-fab"
       >
-        Implement
+        {vimModeEnabled ? <MnemonicLabel letter="m" label="Implement" /> : 'Implement'}
       </button>
     </div>
   )

@@ -61,6 +61,25 @@ export function useVimNavigation(): void {
       setActiveFile(keys[newIndex])
     }
 
+    // --- Plan FAB helper: click a plan action button by vim key ---
+
+    function clickPlanFabButton(key: string): boolean {
+      const keyToTestId: Record<string, string> = {
+        m: 'plan-ready-implement-fab',
+        a: 'plan-ready-handoff-fab',
+        u: 'plan-ready-supercharge-fab',
+        o: 'plan-ready-supercharge-local-fab'
+      }
+      const testId = keyToTestId[key]
+      if (!testId) return false
+      const btn = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`)
+      if (!btn) return false
+      const container = btn.parentElement
+      if (!container || container.className.includes('pointer-events-none')) return false
+      btn.click()
+      return true
+    }
+
     // --- Key handler ---
 
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -130,6 +149,14 @@ export function useVimNavigation(): void {
         hint.exitPending()
         event.preventDefault()
         return
+      }
+
+      // --- Plan FAB shortcuts: activate plan action buttons ---
+      if (event.key === 'm' || event.key === 'u' || event.key === 'o' || event.key === 'a') {
+        if (clickPlanFabButton(event.key)) {
+          event.preventDefault()
+          return
+        }
       }
 
       if (event.key === 'i' || event.key === 'I') {
