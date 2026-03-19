@@ -161,9 +161,20 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     useFileViewerStore.getState().cancelCloseFile()
   }, [])
 
-  // Subscribe to file watcher for external change detection
+  // Subscribe to file watcher for external change detection and deletion
   useEffect(() => {
     const unsubscribe = window.fileTreeOps.onChange((event) => {
+      // Check if the current file was deleted
+      const wasDeleted = event.events.some(
+        (e) => e.changedPath === filePath && e.eventType === 'unlink'
+      )
+      if (wasDeleted) {
+        setError('File was deleted from disk')
+        setContent(null)
+        setImageDataUri(null)
+        return
+      }
+
       const hasChange = event.events.some(
         (e) => e.changedPath === filePath && e.eventType === 'change'
       )
@@ -213,6 +224,18 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
       setViewMode('source')
     }
   }, [filePath])
+
+  // Regenerate SVG data URI from edited content when switching to preview
+  useEffect(() => {
+    if (isSvg && viewMode === 'preview') {
+      const svgContent = latestContentRef.current ?? content
+      if (svgContent) {
+        setImageDataUri(
+          `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgContent)))}`
+        )
+      }
+    }
+  }, [viewMode, isSvg, content])
 
   if (isLoading) {
     return (
@@ -296,7 +319,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
           className="flex-1 overflow-auto p-6 prose prose-sm dark:prose-invert max-w-none"
           data-testid="file-viewer-markdown-preview"
         >
-          <MarkdownRenderer content={content!} />
+          <MarkdownRenderer content={latestContentRef.current ?? content!} />
         </div>
       ) : (
         <CodeMirrorEditor
