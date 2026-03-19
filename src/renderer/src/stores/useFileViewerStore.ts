@@ -43,6 +43,7 @@ interface FileViewerState {
   dirtyFiles: Set<string>
   originalContents: Map<string, string>
   pendingClose: string | null
+  externallyChanged: Set<string>
 
   contextEditorWorktreeId: string | null
   openContextEditor: (worktreeId: string) => void
@@ -68,6 +69,8 @@ interface FileViewerState {
   requestCloseFile: (path: string) => void
   confirmCloseFile: (path: string) => void
   cancelCloseFile: () => void
+  markExternallyChanged: (path: string) => void
+  clearExternallyChanged: (path: string) => void
 }
 
 export const useFileViewerStore = create<FileViewerState>((set, get) => ({
@@ -77,6 +80,7 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
   dirtyFiles: new Set(),
   originalContents: new Map(),
   pendingClose: null,
+  externallyChanged: new Set(),
   contextEditorWorktreeId: null,
 
   openContextEditor: (worktreeId: string) => {
@@ -164,7 +168,8 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
       contextEditorWorktreeId: null,
       dirtyFiles: new Set(),
       originalContents: new Map(),
-      pendingClose: null
+      pendingClose: null,
+      externallyChanged: new Set()
     })
   },
 
@@ -233,13 +238,15 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
       const newMap = new Map<string, TabEntry>()
       const kept = state.openFiles.get(keepKey)
       if (kept) newMap.set(keepKey, kept)
-      // Clean up dirty and original for closed files
+      // Clean up dirty, original, and externallyChanged for closed files
       const newDirty = new Set(state.dirtyFiles)
       const newOriginal = new Map(state.originalContents)
+      const newExtChanged = new Set(state.externallyChanged)
       for (const key of state.openFiles.keys()) {
         if (!newMap.has(key)) {
           newDirty.delete(key)
           newOriginal.delete(key)
+          newExtChanged.delete(key)
         }
       }
       // Clear contextEditorWorktreeId if the context tab was closed
@@ -253,7 +260,8 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
         activeDiff: kept?.type === 'diff' ? state.activeDiff : null,
         contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null,
         dirtyFiles: newDirty,
-        originalContents: newOriginal
+        originalContents: newOriginal,
+        externallyChanged: newExtChanged
       }
     })
   },
@@ -268,12 +276,14 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
         const entry = state.openFiles.get(keys[i])
         if (entry) newMap.set(keys[i], entry)
       }
-      // Clean up dirty and original for closed files
+      // Clean up dirty, original, and externallyChanged for closed files
       const newDirty = new Set(state.dirtyFiles)
       const newOriginal = new Map(state.originalContents)
+      const newExtChanged = new Set(state.externallyChanged)
       for (const key of keys.slice(index + 1)) {
         newDirty.delete(key)
         newOriginal.delete(key)
+        newExtChanged.delete(key)
       }
       // If active file was to the right and got closed, activate the fromKey
       const activeStillOpen = newMap.has(state.activeFilePath || '')
@@ -287,7 +297,8 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
         activeFilePath: activeStillOpen ? state.activeFilePath : fromKey,
         contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null,
         dirtyFiles: newDirty,
-        originalContents: newOriginal
+        originalContents: newOriginal,
+        externallyChanged: newExtChanged
       }
     })
   },
@@ -333,11 +344,13 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
       set({ pendingClose: path, activeFilePath: path, activeDiff: null })
     } else {
       get().closeFile(path)
-      // Clean up original content for non-dirty files
+      // Clean up original content and externallyChanged for non-dirty files
       set((s) => {
         const newOriginal = new Map(s.originalContents)
         newOriginal.delete(path)
-        return { originalContents: newOriginal }
+        const newExtChanged = new Set(s.externallyChanged)
+        newExtChanged.delete(path)
+        return { originalContents: newOriginal, externallyChanged: newExtChanged }
       })
     }
   },
@@ -348,10 +361,13 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
       newDirty.delete(path)
       const newOriginal = new Map(state.originalContents)
       newOriginal.delete(path)
+      const newExtChanged = new Set(state.externallyChanged)
+      newExtChanged.delete(path)
       return {
         dirtyFiles: newDirty,
         originalContents: newOriginal,
-        pendingClose: null
+        pendingClose: null,
+        externallyChanged: newExtChanged
       }
     })
     get().closeFile(path)
@@ -359,5 +375,23 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
 
   cancelCloseFile: () => {
     set({ pendingClose: null })
+  },
+
+  markExternallyChanged: (path: string) => {
+    set((state) => {
+      if (state.externallyChanged.has(path)) return state
+      const newSet = new Set(state.externallyChanged)
+      newSet.add(path)
+      return { externallyChanged: newSet }
+    })
+  },
+
+  clearExternallyChanged: (path: string) => {
+    set((state) => {
+      if (!state.externallyChanged.has(path)) return state
+      const newSet = new Set(state.externallyChanged)
+      newSet.delete(path)
+      return { externallyChanged: newSet }
+    })
   }
 }))

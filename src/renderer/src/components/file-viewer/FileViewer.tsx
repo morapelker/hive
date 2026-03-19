@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
 import { ImagePreview } from './ImagePreview'
 import { UnsavedChangesDialog } from './UnsavedChangesDialog'
+import { ExternalChangesBanner } from './ExternalChangesBanner'
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
@@ -75,11 +76,19 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     }
   }, [filePath, isBinaryImage, isSvg])
 
+  const [reloadKey, setReloadKey] = useState(0)
+  const lastSaveTimestampRef = useRef<number>(0)
+
+  const isExternallyChanged = useFileViewerStore((s) => s.externallyChanged.has(filePath))
+  const markExternallyChanged = useFileViewerStore((s) => s.markExternallyChanged)
+  const clearExternallyChanged = useFileViewerStore((s) => s.clearExternallyChanged)
+
   const pendingClose = useFileViewerStore((s) => s.pendingClose)
   const latestContentRef = useRef<string | null>(null)
 
   const handleSave = useCallback(
     async (newContent: string) => {
+      lastSaveTimestampRef.current = Date.now()
       const result = await window.fileOps.writeFile(filePath, newContent)
       if (result.success) {
         toast.success('File saved')
@@ -146,6 +155,50 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   const handleDialogCancel = useCallback(() => {
     useFileViewerStore.getState().cancelCloseFile()
   }, [])
+
+  // Subscribe to file watcher for external change detection
+  useEffect(() => {
+    const unsubscribe = window.fileTreeOps.onChange((event) => {
+      const hasChange = event.events.some(
+        (e) => e.changedPath === filePath && e.eventType === 'change'
+      )
+      if (!hasChange) return
+      // Suppress if this was our own save
+      if (Date.now() - lastSaveTimestampRef.current < 500) return
+      // Re-read from disk and compare with original
+      window.fileOps.readFile(filePath).then((result) => {
+        if (!result.success || result.content === undefined) return
+        const original = useFileViewerStore.getState().getOriginalContent(filePath)
+        if (original !== undefined && result.content !== original) {
+          markExternallyChanged(filePath)
+        }
+      })
+    })
+    return () => {
+      unsubscribe()
+    }
+  }, [filePath, markExternallyChanged])
+
+  const handleReload = useCallback(async () => {
+    const result = await window.fileOps.readFile(filePath)
+    if (result.success && result.content !== undefined) {
+      setContent(result.content)
+      const store = useFileViewerStore.getState()
+      store.setOriginalContent(filePath, result.content)
+      store.markClean(filePath)
+      clearExternallyChanged(filePath)
+      setReloadKey((k) => k + 1)
+    }
+  }, [filePath, clearExternallyChanged])
+
+  const handleKeepMine = useCallback(async () => {
+    clearExternallyChanged(filePath)
+    // Update originalContents to disk content so future changes are detected correctly
+    const result = await window.fileOps.readFile(filePath)
+    if (result.success && result.content !== undefined) {
+      useFileViewerStore.getState().setOriginalContent(filePath, result.content)
+    }
+  }, [filePath, clearExternallyChanged])
 
   // Reset view mode when file changes
   useEffect(() => {
@@ -219,6 +272,11 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
         )}
       </div>
 
+      {/* External changes banner */}
+      {isExternallyChanged && (
+        <ExternalChangesBanner onReload={handleReload} onKeepMine={handleKeepMine} />
+      )}
+
       {/* Content area */}
       {isBinaryImage && imageDataUri ? (
         <div className="flex-1 overflow-auto" data-testid="file-viewer-image">
@@ -237,7 +295,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
         </div>
       ) : (
         <CodeMirrorEditor
-          key={filePath}
+          key={`${filePath}-${reloadKey}`}
           content={content!}
           filePath={filePath}
           onContentChange={handleContentChange}
