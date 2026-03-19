@@ -67,9 +67,7 @@ export class GitHubService {
     }
 
     // HTTPS: https://github.com/owner/repo.git
-    const httpsMatch = remoteUrl.match(
-      /github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/
-    )
+    const httpsMatch = remoteUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/)
     if (httpsMatch) {
       return { owner: httpsMatch[1], repo: httpsMatch[2] }
     }
@@ -99,15 +97,12 @@ export class GitHubService {
       const headCommitSha = pr.head.sha
 
       // Fetch all review comments with pagination
-      const rawComments = await octokit.paginate(
-        octokit.pulls.listReviewComments,
-        {
-          owner,
-          repo,
-          pull_number: prNumber,
-          per_page: 100
-        }
-      )
+      const rawComments = await octokit.paginate(octokit.pulls.listReviewComments, {
+        owner,
+        repo,
+        pull_number: prNumber,
+        per_page: 100
+      })
 
       const now = new Date().toISOString()
 

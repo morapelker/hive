@@ -740,9 +740,11 @@ export class DatabaseService {
     const db = this.getDb()
     const row = db.prepare('SELECT id FROM worktrees WHERE id = ?').get(worktreeId)
     if (!row) return { success: false, error: 'Worktree not found' }
-    db.prepare(
-      'UPDATE worktrees SET github_pr_number = ?, github_pr_url = ? WHERE id = ?'
-    ).run(prNumber, prUrl, worktreeId)
+    db.prepare('UPDATE worktrees SET github_pr_number = ?, github_pr_url = ? WHERE id = ?').run(
+      prNumber,
+      prUrl,
+      worktreeId
+    )
     return { success: true }
   }
 
@@ -1571,9 +1573,10 @@ export class DatabaseService {
   ): void {
     const db = this.getDb()
     const tx = db.transaction(() => {
-      db.prepare(
-        'DELETE FROM pr_review_comments WHERE worktree_id = ? AND pull_number = ?'
-      ).run(worktreeId, pullNumber)
+      db.prepare('DELETE FROM pr_review_comments WHERE worktree_id = ? AND pull_number = ?').run(
+        worktreeId,
+        pullNumber
+      )
 
       const stmt = db.prepare(
         `INSERT INTO pr_review_comments (

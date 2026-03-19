@@ -75,8 +75,7 @@ const db = {
       ipcRenderer.invoke('db:worktree:removeAttachment', { worktreeId, attachmentId }),
     attachPR: (worktreeId: string, prNumber: number, prUrl: string) =>
       ipcRenderer.invoke('db:worktree:attachPR', { worktreeId, prNumber, prUrl }),
-    detachPR: (worktreeId: string) =>
-      ipcRenderer.invoke('db:worktree:detachPR', { worktreeId }),
+    detachPR: (worktreeId: string) => ipcRenderer.invoke('db:worktree:detachPR', { worktreeId }),
     setPinned: (worktreeId: string, pinned: boolean) =>
       ipcRenderer.invoke('db:worktree:setPinned', { worktreeId, pinned }),
     getPinned: () => ipcRenderer.invoke('db:worktree:getPinned')
@@ -1683,8 +1682,7 @@ const prCommentOps = {
     ipcRenderer.invoke('pr-comments:fetch', { worktreeId, worktreePath, prNumber }),
   get: (worktreeId: string, prNumber: number) =>
     ipcRenderer.invoke('pr-comments:get', { worktreeId, prNumber }),
-  clear: (worktreeId: string) =>
-    ipcRenderer.invoke('pr-comments:clear', { worktreeId })
+  clear: (worktreeId: string) => ipcRenderer.invoke('pr-comments:clear', { worktreeId })
 }
 
 const usageOps = {

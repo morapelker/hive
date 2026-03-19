@@ -268,9 +268,7 @@ declare global {
           prNumber: number,
           prUrl: string
         ) => Promise<{ success: boolean; error?: string }>
-        detachPR: (
-          worktreeId: string
-        ) => Promise<{ success: boolean; error?: string }>
+        detachPR: (worktreeId: string) => Promise<{ success: boolean; error?: string }>
         setPinned: (
           worktreeId: string,
           pinned: boolean

@@ -343,7 +343,10 @@ function registerSystemHandlers(): void {
 
     if (process.platform === 'win32') {
       try {
-        const installDir = join(process.env.LOCALAPPDATA || join(app.getPath('home'), 'AppData', 'Local'), 'Hive')
+        const installDir = join(
+          process.env.LOCALAPPDATA || join(app.getPath('home'), 'AppData', 'Local'),
+          'Hive'
+        )
         mkdirSync(installDir, { recursive: true })
         const targetPath = join(installDir, 'hive-server.cmd')
         const scriptContent = `@echo off\r\n"${execPath}" --headless %*\r\n`
@@ -395,7 +398,10 @@ function registerSystemHandlers(): void {
 
     if (process.platform === 'win32') {
       try {
-        const installDir = join(process.env.LOCALAPPDATA || join(app.getPath('home'), 'AppData', 'Local'), 'Hive')
+        const installDir = join(
+          process.env.LOCALAPPDATA || join(app.getPath('home'), 'AppData', 'Local'),
+          'Hive'
+        )
         const targetPath = join(installDir, 'hive-server.cmd')
         if (!existsSync(targetPath)) {
           return { success: false, error: 'hive-server is not installed' }

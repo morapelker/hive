@@ -207,9 +207,7 @@ export function Header(): React.JSX.Element {
     Array<{ number: number; title: string; author: string; headRefName: string }>
   >([])
   const [prListLoading, setPrListLoading] = useState(false)
-  const [prLiveState, setPrLiveState] = useState<
-    { state?: string; title?: string } | null
-  >(null)
+  const [prLiveState, setPrLiveState] = useState<{ state?: string; title?: string } | null>(null)
 
   useEffect(() => {
     if (!selectedWorktree?.path) {
@@ -228,33 +226,42 @@ export function Header(): React.JSX.Element {
     if (!prPickerOpen || !selectedProject?.path) return
     setPrListLoading(true)
 
-    const fetchPRs = window.gitOps.listPRs(selectedProject.path).then((res) => {
-      if (res.success) {
-        // Sort: branch-matching PR first, then by number descending
-        const currentBranch = branchInfo?.name ?? ''
-        const sorted = [...res.prs].sort((a, b) => {
-          const aMatch = a.headRefName === currentBranch ? 1 : 0
-          const bMatch = b.headRefName === currentBranch ? 1 : 0
-          if (aMatch !== bMatch) return bMatch - aMatch
-          return b.number - a.number
-        })
-        setPrList(sorted)
-      } else {
-        toast.error(res.error || 'Failed to load PRs')
+    const fetchPRs = window.gitOps
+      .listPRs(selectedProject.path)
+      .then((res) => {
+        if (res.success) {
+          // Sort: branch-matching PR first, then by number descending
+          const currentBranch = branchInfo?.name ?? ''
+          const sorted = [...res.prs].sort((a, b) => {
+            const aMatch = a.headRefName === currentBranch ? 1 : 0
+            const bMatch = b.headRefName === currentBranch ? 1 : 0
+            if (aMatch !== bMatch) return bMatch - aMatch
+            return b.number - a.number
+          })
+          setPrList(sorted)
+        } else {
+          toast.error(res.error || 'Failed to load PRs')
+          setPrPickerOpen(false)
+        }
+      })
+      .catch(() => {
+        toast.error('Failed to load PRs')
         setPrPickerOpen(false)
-      }
-    }).catch(() => {
-      toast.error('Failed to load PRs')
-      setPrPickerOpen(false)
-    })
+      })
 
-    const fetchState = attachedPR && selectedProject?.path
-      ? window.gitOps.getPRState(selectedProject.path, attachedPR.number).then((res) => {
-          if (res.success) {
-            setPrLiveState({ state: res.state, title: res.title })
-          }
-        }).catch(() => { /* non-critical */ })
-      : Promise.resolve()
+    const fetchState =
+      attachedPR && selectedProject?.path
+        ? window.gitOps
+            .getPRState(selectedProject.path, attachedPR.number)
+            .then((res) => {
+              if (res.success) {
+                setPrLiveState({ state: res.state, title: res.title })
+              }
+            })
+            .catch(() => {
+              /* non-critical */
+            })
+        : Promise.resolve()
 
     Promise.all([fetchPRs, fetchState]).finally(() => setPrListLoading(false))
   }, [prPickerOpen, selectedProject?.path, attachedPR, branchInfo?.name])
@@ -716,10 +723,12 @@ export function Header(): React.JSX.Element {
                       onClick={() => handleSelectPR(pr)}
                       data-testid={`pr-picker-item-${pr.number}`}
                     >
-                      <span className={cn(
-                        'text-xs font-mono shrink-0',
-                        pr.number === attachedPR!.number && 'text-primary font-bold'
-                      )}>
+                      <span
+                        className={cn(
+                          'text-xs font-mono shrink-0',
+                          pr.number === attachedPR!.number && 'text-primary font-bold'
+                        )}
+                      >
                         {pr.number === attachedPR!.number ? '●' : ' '} #{pr.number}
                       </span>
                       <span className="truncate">{pr.title}</span>

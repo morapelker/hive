@@ -897,10 +897,9 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     ): Promise<{ success: boolean; state?: string; title?: string; error?: string }> => {
       log.info('Getting PR state via gh CLI', { projectPath, prNumber })
       try {
-        const { stdout } = await execAsync(
-          `gh pr view ${prNumber} --json state,title`,
-          { cwd: projectPath }
-        )
+        const { stdout } = await execAsync(`gh pr view ${prNumber} --json state,title`, {
+          cwd: projectPath
+        })
         const data = JSON.parse(stdout) as { state: string; title: string }
         return { success: true, state: data.state, title: data.title }
       } catch (error) {

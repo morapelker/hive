@@ -214,16 +214,13 @@ export function registerDatabaseHandlers(): void {
     }
   )
 
-  ipcMain.handle(
-    'db:worktree:detachPR',
-    (_event, { worktreeId }: { worktreeId: string }) => {
-      try {
-        return getDatabase().detachPR(worktreeId)
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
+  ipcMain.handle('db:worktree:detachPR', (_event, { worktreeId }: { worktreeId: string }) => {
+    try {
+      return getDatabase().detachPR(worktreeId)
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
     }
-  )
+  })
 
   ipcMain.handle(
     'db:worktree:setPinned',

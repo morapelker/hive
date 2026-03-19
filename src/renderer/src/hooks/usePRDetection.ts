@@ -17,9 +17,7 @@ export const PR_URL_PATTERN = /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/
  * typically contains the PR URL before the assistant's text summary does).
  */
 export function usePRDetection(worktreeId: string | null): void {
-  const prCreation = useGitStore((s) =>
-    worktreeId ? s.prCreation.get(worktreeId) : undefined
-  )
+  const prCreation = useGitStore((s) => (worktreeId ? s.prCreation.get(worktreeId) : undefined))
   const setPrCreation = useGitStore((s) => s.setPrCreation)
   const attachPR = useGitStore((s) => s.attachPR)
 
@@ -76,11 +74,7 @@ export function usePRDetection(worktreeId: string | null): void {
     const unsubscribe = window.opencodeOps?.onStream
       ? window.opencodeOps.onStream((event) => {
           const currentCreation = prCreationRef.current
-          if (
-            !currentCreation ||
-            !currentCreation.creating ||
-            !currentCreation.sessionId
-          ) {
+          if (!currentCreation || !currentCreation.creating || !currentCreation.sessionId) {
             return
           }
 
@@ -137,13 +131,7 @@ export function usePRDetection(worktreeId: string | null): void {
 
   // Backstop: poll transcript while creating in case stream event payload shapes vary.
   useEffect(() => {
-    if (
-      !worktreeId ||
-      !prCreation ||
-      !prCreation.creating ||
-      !worktreePath ||
-      !opencodeSessionId
-    ) {
+    if (!worktreeId || !prCreation || !prCreation.creating || !worktreePath || !opencodeSessionId) {
       return
     }
 

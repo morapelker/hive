@@ -98,8 +98,12 @@ export function registerPRCommentHandlers(): void {
         )
 
         // Detect specific error types
-        if (message.includes('ENOENT') || message.includes('not found') ||
-            message.includes('command not found') || message.includes('not recognized')) {
+        if (
+          message.includes('ENOENT') ||
+          message.includes('not found') ||
+          message.includes('command not found') ||
+          message.includes('not recognized')
+        ) {
           return {
             success: false,
             error: 'GitHub CLI (gh) not found. Install it from https://cli.github.com',
@@ -107,8 +111,12 @@ export function registerPRCommentHandlers(): void {
           }
         }
 
-        if (message.includes('auth') || message.includes('401') ||
-            message.includes('403') || message.includes('credential')) {
+        if (
+          message.includes('auth') ||
+          message.includes('401') ||
+          message.includes('403') ||
+          message.includes('credential')
+        ) {
           return {
             success: false,
             error: 'GitHub authentication failed. Run `gh auth login` to authenticate.',
@@ -153,10 +161,7 @@ export function registerPRCommentHandlers(): void {
   // Delete cached comments for a worktree
   ipcMain.handle(
     'pr-comments:clear',
-    async (
-      _event,
-      { worktreeId }: { worktreeId: string }
-    ): Promise<{ success: boolean }> => {
+    async (_event, { worktreeId }: { worktreeId: string }): Promise<{ success: boolean }> => {
       try {
         getDatabase().deletePRReviewComments(worktreeId)
         log.info('Cleared PR review comments', { worktreeId })

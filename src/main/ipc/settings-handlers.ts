@@ -173,18 +173,26 @@ export function registerSettingsHandlers(): void {
               if (wt?.available) {
                 spawn('wt.exe', ['-d', worktreePath], { detached: true, stdio: 'ignore' })
               } else {
-                spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`], {
-                  detached: true,
-                  stdio: 'ignore'
-                })
+                spawn(
+                  'powershell.exe',
+                  ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`],
+                  {
+                    detached: true,
+                    stdio: 'ignore'
+                  }
+                )
               }
               break
             }
             case 'powershell':
-              spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`], {
-                detached: true,
-                stdio: 'ignore'
-              })
+              spawn(
+                'powershell.exe',
+                ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`],
+                {
+                  detached: true,
+                  stdio: 'ignore'
+                }
+              )
               break
             case 'cmd':
               spawn('cmd.exe', ['/k', `cd /d "${worktreePath}"`], {

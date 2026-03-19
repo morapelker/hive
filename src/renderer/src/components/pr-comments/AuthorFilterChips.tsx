@@ -5,7 +5,9 @@ interface AuthorFilterChipsProps {
   worktreeId: string
 }
 
-export function AuthorFilterChips({ worktreeId }: AuthorFilterChipsProps): React.JSX.Element | null {
+export function AuthorFilterChips({
+  worktreeId
+}: AuthorFilterChipsProps): React.JSX.Element | null {
   const authors = usePRCommentStore((s) => s.getUniqueAuthors(worktreeId))
   const disabledAuthors = usePRCommentStore((s) => s.disabledAuthors)
   const toggleAuthorFilter = usePRCommentStore((s) => s.toggleAuthorFilter)

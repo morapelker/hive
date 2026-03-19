@@ -14,11 +14,7 @@ interface PRCommentStoreState {
   disabledAuthors: Set<string> // author logins to hide
 
   // Actions
-  fetchComments: (
-    worktreeId: string,
-    worktreePath: string,
-    prNumber: number
-  ) => Promise<void>
+  fetchComments: (worktreeId: string, worktreePath: string, prNumber: number) => Promise<void>
   loadCachedComments: (worktreeId: string, prNumber: number) => Promise<void>
   clearComments: (worktreeId: string) => void
   toggleThreadSelection: (rootCommentId: number) => void

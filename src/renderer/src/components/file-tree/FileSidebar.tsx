@@ -58,12 +58,7 @@ export function FileSidebar({
     const handler = (e: Event): void => {
       if (!vimModeEnabled) return
       const tab = (e as CustomEvent).detail?.tab
-      if (
-        tab === 'changes' ||
-        tab === 'files' ||
-        tab === 'diffs' ||
-        tab === 'comments'
-      ) {
+      if (tab === 'changes' || tab === 'files' || tab === 'diffs' || tab === 'comments') {
         setActiveTab(tab)
       }
     }

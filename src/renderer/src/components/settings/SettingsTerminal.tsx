@@ -273,7 +273,11 @@ export function SettingsTerminal(): React.JSX.Element {
             <Input
               value={customTerminalCommand}
               onChange={(e) => updateSetting('customTerminalCommand', e.target.value)}
-              placeholder={isMacPlatform() ? 'e.g., /usr/local/bin/alacritty' : 'e.g., C:\\Program Files\\Alacritty\\alacritty.exe'}
+              placeholder={
+                isMacPlatform()
+                  ? 'e.g., /usr/local/bin/alacritty'
+                  : 'e.g., C:\\Program Files\\Alacritty\\alacritty.exe'
+              }
               className="font-mono text-sm"
               data-testid="custom-terminal-command"
             />

@@ -127,30 +127,33 @@ export default function MonacoDiffView({
   }, [worktreePath])
 
   // Handle Monaco mount
-  const handleEditorDidMount = useCallback((editor: editor.IStandaloneDiffEditor) => {
-    diffEditorRef.current = editor
-    modifiedEditorRef.current = editor.getModifiedEditor()
+  const handleEditorDidMount = useCallback(
+    (editor: editor.IStandaloneDiffEditor) => {
+      diffEditorRef.current = editor
+      modifiedEditorRef.current = editor.getModifiedEditor()
 
-    // Get initial diff changes
-    const changes = editor.getLineChanges()
-    setHunks(parseHunks(changes))
+      // Get initial diff changes
+      const changes = editor.getLineChanges()
+      setHunks(parseHunks(changes))
 
-    // Listen for diff updates
-    editor.onDidUpdateDiff(() => {
-      const newChanges = editor.getLineChanges()
-      setHunks(parseHunks(newChanges))
-    })
-
-    // Scroll to specific line if requested (e.g. from review tab)
-    if (scrollToLine) {
-      const modEditor = editor.getModifiedEditor()
-      // Small delay to let the diff compute before scrolling
-      requestAnimationFrame(() => {
-        modEditor.revealLineInCenter(scrollToLine)
-        modEditor.setPosition({ lineNumber: scrollToLine, column: 1 })
+      // Listen for diff updates
+      editor.onDidUpdateDiff(() => {
+        const newChanges = editor.getLineChanges()
+        setHunks(parseHunks(newChanges))
       })
-    }
-  }, [scrollToLine])
+
+      // Scroll to specific line if requested (e.g. from review tab)
+      if (scrollToLine) {
+        const modEditor = editor.getModifiedEditor()
+        // Small delay to let the diff compute before scrolling
+        requestAnimationFrame(() => {
+          modEditor.revealLineInCenter(scrollToLine)
+          modEditor.setPosition({ lineNumber: scrollToLine, column: 1 })
+        })
+      }
+    },
+    [scrollToLine]
+  )
 
   // Register theme before Monaco loads
   const handleBeforeMount = useCallback((monaco: Monaco) => {

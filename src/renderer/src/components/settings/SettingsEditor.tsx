@@ -106,7 +106,11 @@ export function SettingsEditor(): React.JSX.Element {
           <Input
             value={customEditorCommand}
             onChange={(e) => updateSetting('customEditorCommand', e.target.value)}
-            placeholder={isMac() ? 'e.g., /usr/local/bin/code' : 'e.g., C:\\Program Files\\Microsoft VS Code\\code.exe'}
+            placeholder={
+              isMac()
+                ? 'e.g., /usr/local/bin/code'
+                : 'e.g., C:\\Program Files\\Microsoft VS Code\\code.exe'
+            }
             className="font-mono text-sm"
             data-testid="custom-editor-command"
           />
