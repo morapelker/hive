@@ -40,6 +40,10 @@ interface FileViewerState {
   activeFilePath: string | null
   activeDiff: ActiveDiff | null
 
+  dirtyFiles: Set<string>
+  originalContents: Map<string, string>
+  pendingClose: string | null
+
   contextEditorWorktreeId: string | null
   openContextEditor: (worktreeId: string) => void
   closeContextEditor: () => void
@@ -55,12 +59,24 @@ interface FileViewerState {
   activateDiffTab: (tabKey: string) => void
   closeOtherFiles: (keepKey: string) => void
   closeFilesToRight: (fromKey: string) => void
+
+  markDirty: (path: string) => void
+  markClean: (path: string) => void
+  isDirty: (path: string) => boolean
+  setOriginalContent: (path: string, content: string) => void
+  getOriginalContent: (path: string) => string | undefined
+  requestCloseFile: (path: string) => void
+  confirmCloseFile: (path: string) => void
+  cancelCloseFile: () => void
 }
 
-export const useFileViewerStore = create<FileViewerState>((set) => ({
+export const useFileViewerStore = create<FileViewerState>((set, get) => ({
   openFiles: new Map(),
   activeFilePath: null,
   activeDiff: null,
+  dirtyFiles: new Set(),
+  originalContents: new Map(),
+  pendingClose: null,
   contextEditorWorktreeId: null,
 
   openContextEditor: (worktreeId: string) => {
@@ -251,5 +267,73 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
         contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null
       }
     })
+  },
+
+  markDirty: (path: string) => {
+    set((state) => {
+      if (state.dirtyFiles.has(path)) return state
+      const newDirty = new Set(state.dirtyFiles)
+      newDirty.add(path)
+      return { dirtyFiles: newDirty }
+    })
+  },
+
+  markClean: (path: string) => {
+    set((state) => {
+      if (!state.dirtyFiles.has(path)) return state
+      const newDirty = new Set(state.dirtyFiles)
+      newDirty.delete(path)
+      return { dirtyFiles: newDirty }
+    })
+  },
+
+  isDirty: (path: string) => {
+    return get().dirtyFiles.has(path)
+  },
+
+  setOriginalContent: (path: string, content: string) => {
+    set((state) => {
+      const newOriginal = new Map(state.originalContents)
+      newOriginal.set(path, content)
+      return { originalContents: newOriginal }
+    })
+  },
+
+  getOriginalContent: (path: string) => {
+    return get().originalContents.get(path)
+  },
+
+  requestCloseFile: (path: string) => {
+    const state = get()
+    if (state.dirtyFiles.has(path)) {
+      set({ pendingClose: path })
+    } else {
+      get().closeFile(path)
+      // Clean up original content for non-dirty files
+      set((s) => {
+        const newOriginal = new Map(s.originalContents)
+        newOriginal.delete(path)
+        return { originalContents: newOriginal }
+      })
+    }
+  },
+
+  confirmCloseFile: (path: string) => {
+    set((state) => {
+      const newDirty = new Set(state.dirtyFiles)
+      newDirty.delete(path)
+      const newOriginal = new Map(state.originalContents)
+      newOriginal.delete(path)
+      return {
+        dirtyFiles: newDirty,
+        originalContents: newOriginal,
+        pendingClose: null
+      }
+    })
+    get().closeFile(path)
+  },
+
+  cancelCloseFile: () => {
+    set({ pendingClose: null })
   }
 }))

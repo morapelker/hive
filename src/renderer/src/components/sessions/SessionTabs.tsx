@@ -268,6 +268,8 @@ function FileTab({
   onCloseToRight,
   relativePath
 }: FileTabProps): React.JSX.Element {
+  const isDirty = useFileViewerStore((s) => s.dirtyFiles.has(filePath))
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -291,16 +293,32 @@ function FileTab({
         >
           <FileCode className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
           <span className="truncate flex-1">{name}</span>
-          <button
-            onClick={onClose}
-            className={cn(
-              'p-0.5 rounded hover:bg-accent transition-opacity',
-              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-            )}
-            data-testid={`close-file-tab-${name}`}
-          >
-            <X className="h-3 w-3" />
-          </button>
+          {isDirty ? (
+            <>
+              <span
+                className="w-2 h-2 rounded-full bg-current group-hover:hidden"
+                data-testid={`dirty-indicator-${name}`}
+              />
+              <button
+                onClick={onClose}
+                className="hidden group-hover:block p-0.5 rounded hover:bg-accent"
+                data-testid={`close-file-tab-${name}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={onClose}
+              className={cn(
+                'p-0.5 rounded hover:bg-accent transition-opacity',
+                isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              )}
+              data-testid={`close-file-tab-${name}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
           {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
         </div>
       </ContextMenuTrigger>
@@ -514,9 +532,9 @@ export function SessionTabs(): React.JSX.Element | null {
     openFiles,
     activeFilePath,
     setActiveFile,
-    closeFile,
     closeOtherFiles,
-    closeFilesToRight
+    closeFilesToRight,
+    requestCloseFile
   } = useFileViewerStore()
 
   const { selectedWorktreeId } = useWorktreeStore()
@@ -787,7 +805,7 @@ export function SessionTabs(): React.JSX.Element | null {
   // Handle closing a file tab
   const handleCloseFileTab = (e: React.MouseEvent, filePath: string) => {
     e.stopPropagation()
-    closeFile(filePath)
+    requestCloseFile(filePath)
   }
 
   // Handle clicking a diff tab - restore activeDiff for the viewer

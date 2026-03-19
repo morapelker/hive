@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Loader2 } from 'lucide-react'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
 import { ImagePreview } from './ImagePreview'
+import { UnsavedChangesDialog } from './UnsavedChangesDialog'
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
@@ -56,6 +57,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
         if (cancelled) return
         if (result.success && result.content !== undefined) {
           setContent(result.content)
+          useFileViewerStore.getState().setOriginalContent(filePath, result.content)
           if (isSvg) {
             setImageDataUri(
               `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(result.content)))}`
@@ -73,12 +75,18 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     }
   }, [filePath, isBinaryImage, isSvg])
 
+  const pendingClose = useFileViewerStore((s) => s.pendingClose)
+  const latestContentRef = useRef<string | null>(null)
+
   const handleSave = useCallback(
     async (newContent: string) => {
       const result = await window.fileOps.writeFile(filePath, newContent)
       if (result.success) {
         toast.success('File saved')
-        const tab = useFileViewerStore.getState().openFiles.get(filePath)
+        const store = useFileViewerStore.getState()
+        store.markClean(filePath)
+        store.setOriginalContent(filePath, newContent)
+        const tab = store.openFiles.get(filePath)
         if (tab && tab.type === 'file') {
           const worktree = useWorktreeStore
             .getState()
@@ -93,6 +101,51 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     },
     [filePath]
   )
+
+  const handleContentChange = useCallback(
+    (newContent: string) => {
+      latestContentRef.current = newContent
+      const original = useFileViewerStore.getState().getOriginalContent(filePath)
+      if (original !== undefined && newContent !== original) {
+        useFileViewerStore.getState().markDirty(filePath)
+      } else {
+        useFileViewerStore.getState().markClean(filePath)
+      }
+    },
+    [filePath]
+  )
+
+  const handleDialogSave = useCallback(async () => {
+    if (pendingClose && latestContentRef.current !== null) {
+      const result = await window.fileOps.writeFile(pendingClose, latestContentRef.current)
+      if (result.success) {
+        toast.success('File saved')
+        const tab = useFileViewerStore.getState().openFiles.get(pendingClose)
+        if (tab && tab.type === 'file') {
+          const worktree = useWorktreeStore
+            .getState()
+            .worktrees.find((w) => w.id === tab.worktreeId)
+          if (worktree?.path) {
+            useGitStore.getState().refreshStatuses(worktree.path)
+          }
+        }
+      } else {
+        toast.error('Failed to save: ' + result.error)
+        return
+      }
+      useFileViewerStore.getState().confirmCloseFile(pendingClose)
+    }
+  }, [pendingClose])
+
+  const handleDialogDontSave = useCallback(() => {
+    if (pendingClose) {
+      useFileViewerStore.getState().confirmCloseFile(pendingClose)
+    }
+  }, [pendingClose])
+
+  const handleDialogCancel = useCallback(() => {
+    useFileViewerStore.getState().cancelCloseFile()
+  }, [])
 
   // Reset view mode when file changes
   useEffect(() => {
@@ -183,7 +236,23 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
           <MarkdownRenderer content={content!} />
         </div>
       ) : (
-        <CodeMirrorEditor key={filePath} content={content!} filePath={filePath} onSave={handleSave} />
+        <CodeMirrorEditor
+          key={filePath}
+          content={content!}
+          filePath={filePath}
+          onContentChange={handleContentChange}
+          onSave={handleSave}
+        />
+      )}
+
+      {pendingClose && (
+        <UnsavedChangesDialog
+          open={!!pendingClose}
+          fileName={pendingClose.substring(pendingClose.lastIndexOf('/') + 1)}
+          onSave={handleDialogSave}
+          onDontSave={handleDialogDontSave}
+          onCancel={handleDialogCancel}
+        />
       )}
     </div>
   )
