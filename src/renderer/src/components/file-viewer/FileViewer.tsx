@@ -45,6 +45,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     setError(null)
     setContent(null)
     setImageDataUri(null)
+    latestContentRef.current = null
 
     if (isBinaryImage) {
       const mimeType = getImageMimeType(filePath) || 'image/png'
@@ -172,6 +173,10 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
         setError('File was deleted from disk')
         setContent(null)
         setImageDataUri(null)
+        // Clean up store metadata so dirty indicator and dialogs don't fire
+        const store = useFileViewerStore.getState()
+        store.markClean(filePath)
+        store.clearExternallyChanged(filePath)
         return
       }
 
@@ -225,7 +230,9 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     }
   }, [filePath])
 
-  // Regenerate SVG data URI from edited content when switching to preview
+  // Regenerate SVG data URI from edited content when switching to preview.
+  // Triggers on viewMode change (not on every keystroke) — latestContentRef is
+  // read at effect-run time so the preview reflects the latest editor content.
   useEffect(() => {
     if (isSvg && viewMode === 'preview') {
       const svgContent = latestContentRef.current ?? content
