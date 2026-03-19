@@ -37,7 +37,15 @@ export function CodeMirrorEditor({
 }: CodeMirrorEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const onContentChangeRef = useRef(onContentChange)
+  onContentChangeRef.current = onContentChange
 
+  // Initializes the EditorView once on mount and cleans it up on unmount.
+  // The parent component keys this component by filePath, so a new file
+  // causes a full remount. content, filePath, and onContentChange are
+  // intentionally excluded — they are only needed at initialization time
+  // (content/filePath captured in the closure, onContentChange accessed
+  // via onContentChangeRef to always use the latest callback).
   useEffect(() => {
     if (!containerRef.current) return
 
@@ -54,8 +62,8 @@ export function CodeMirrorEditor({
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         getLanguageExtension(filePath),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged && onContentChange) {
-            onContentChange(update.state.doc.toString())
+          if (update.docChanged && onContentChangeRef.current) {
+            onContentChangeRef.current(update.state.doc.toString())
           }
         })
       ]
@@ -72,7 +80,6 @@ export function CodeMirrorEditor({
       view.destroy()
       viewRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
