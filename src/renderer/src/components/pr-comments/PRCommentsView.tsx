@@ -5,6 +5,7 @@ import { usePRCommentStore } from '@/stores/usePRCommentStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { AuthorFilterChips } from './AuthorFilterChips'
 import { PRCommentThreadView } from './PRCommentThread'
+import { PRCommentsActionBar } from './PRCommentsActionBar'
 import type { PRReviewThread } from '@shared/types/pr-comment'
 
 interface PRCommentsViewProps {
@@ -188,6 +189,9 @@ export function PRCommentsView({ worktreeId }: PRCommentsViewProps): React.JSX.E
           })
         )}
       </div>
+
+      {/* Action bar for selected threads */}
+      <PRCommentsActionBar worktreeId={worktreeId} />
     </div>
   )
 }

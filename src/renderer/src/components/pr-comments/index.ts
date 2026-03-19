@@ -1,4 +1,5 @@
 export { PRCommentsView } from './PRCommentsView'
 export { PRCommentThreadView } from './PRCommentThread'
+export { PRCommentsActionBar } from './PRCommentsActionBar'
 export { AuthorFilterChips } from './AuthorFilterChips'
 export { ReviewTabView } from './ReviewTabView'
