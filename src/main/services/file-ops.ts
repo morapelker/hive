@@ -91,8 +91,15 @@ export function writeFile(filePath: string, content: string): { success: boolean
     if (!filePath || typeof filePath !== 'string') {
       return { success: false, error: 'Invalid file path' }
     }
+    if (typeof content !== 'string') {
+      return { success: false, error: 'Invalid content' }
+    }
     if (!existsSync(filePath)) {
       return { success: false, error: 'File does not exist' }
+    }
+    const stat = statSync(filePath)
+    if (stat.isDirectory()) {
+      return { success: false, error: 'Path is a directory' }
     }
     writeFileSync(filePath, content, 'utf-8')
     return { success: true }
