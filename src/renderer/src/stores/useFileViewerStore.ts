@@ -161,7 +161,10 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
       openFiles: new Map(),
       activeFilePath: null,
       activeDiff: null,
-      contextEditorWorktreeId: null
+      contextEditorWorktreeId: null,
+      dirtyFiles: new Set(),
+      originalContents: new Map(),
+      pendingClose: null
     })
   },
 
@@ -230,6 +233,15 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
       const newMap = new Map<string, TabEntry>()
       const kept = state.openFiles.get(keepKey)
       if (kept) newMap.set(keepKey, kept)
+      // Clean up dirty and original for closed files
+      const newDirty = new Set(state.dirtyFiles)
+      const newOriginal = new Map(state.originalContents)
+      for (const key of state.openFiles.keys()) {
+        if (!newMap.has(key)) {
+          newDirty.delete(key)
+          newOriginal.delete(key)
+        }
+      }
       // Clear contextEditorWorktreeId if the context tab was closed
       const contextTabKey = state.contextEditorWorktreeId
         ? `context:${state.contextEditorWorktreeId}`
@@ -239,7 +251,9 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
         openFiles: newMap,
         activeFilePath: kept ? keepKey : null,
         activeDiff: kept?.type === 'diff' ? state.activeDiff : null,
-        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null
+        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null,
+        dirtyFiles: newDirty,
+        originalContents: newOriginal
       }
     })
   },
@@ -254,6 +268,13 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
         const entry = state.openFiles.get(keys[i])
         if (entry) newMap.set(keys[i], entry)
       }
+      // Clean up dirty and original for closed files
+      const newDirty = new Set(state.dirtyFiles)
+      const newOriginal = new Map(state.originalContents)
+      for (const key of keys.slice(index + 1)) {
+        newDirty.delete(key)
+        newOriginal.delete(key)
+      }
       // If active file was to the right and got closed, activate the fromKey
       const activeStillOpen = newMap.has(state.activeFilePath || '')
       // Clear contextEditorWorktreeId if the context tab was closed
@@ -264,7 +285,9 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
       return {
         openFiles: newMap,
         activeFilePath: activeStillOpen ? state.activeFilePath : fromKey,
-        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null
+        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null,
+        dirtyFiles: newDirty,
+        originalContents: newOriginal
       }
     })
   },
@@ -306,7 +329,8 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
   requestCloseFile: (path: string) => {
     const state = get()
     if (state.dirtyFiles.has(path)) {
-      set({ pendingClose: path })
+      // Switch to the dirty tab so the correct FileViewer renders the dialog
+      set({ pendingClose: path, activeFilePath: path, activeDiff: null })
     } else {
       get().closeFile(path)
       // Clean up original content for non-dirty files

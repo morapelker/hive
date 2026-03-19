@@ -185,7 +185,7 @@ export function useKeyboardShortcuts(): void {
 
       // Priority 2: Close active file tab
       if (activeFilePath) {
-        useFileViewerStore.getState().closeFile(activeFilePath)
+        useFileViewerStore.getState().requestCloseFile(activeFilePath)
         return
       }
 
@@ -256,7 +256,7 @@ function getShortcutHandlers(
 
         // Priority 2: Close active file tab
         if (activeFilePath) {
-          useFileViewerStore.getState().closeFile(activeFilePath)
+          useFileViewerStore.getState().requestCloseFile(activeFilePath)
           return
         }
 
