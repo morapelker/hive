@@ -1375,10 +1375,12 @@ const scriptOps = {
     ipcRenderer.invoke('port:get', { cwd })
 }
 
-// File operations API (read-only file viewer)
+// File operations API
 const fileOps = {
   readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
     ipcRenderer.invoke('file:read', filePath),
+  writeFile: (filePath: string, content: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('file:write', filePath, content),
   readPrompt: (
     promptName: string
   ): Promise<{ success: boolean; content?: string; error?: string }> =>

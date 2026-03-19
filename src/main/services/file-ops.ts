@@ -88,6 +88,12 @@ export function readPromptFile(promptName: string): {
 
 export function writeFile(filePath: string, content: string): { success: boolean; error?: string } {
   try {
+    if (!filePath || typeof filePath !== 'string') {
+      return { success: false, error: 'Invalid file path' }
+    }
+    if (!existsSync(filePath)) {
+      return { success: false, error: 'File does not exist' }
+    }
     writeFileSync(filePath, content, 'utf-8')
     return { success: true }
   } catch (error) {

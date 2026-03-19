@@ -710,6 +710,10 @@ declare global {
         content?: string
         error?: string
       }>
+      writeFile: (filePath: string, content: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
       readPrompt: (promptName: string) => Promise<{
         success: boolean
         content?: string

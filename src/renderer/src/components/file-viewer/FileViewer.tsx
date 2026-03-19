@@ -1,9 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Loader2 } from 'lucide-react'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
 import { ImagePreview } from './ImagePreview'
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
 import { cn } from '@/lib/utils'
+import { toast } from '@/lib/toast'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useGitStore } from '@/stores/useGitStore'
 import { isBinaryImageFile, isSvgFile, getImageMimeType } from '@shared/types/file-utils'
 
 export function isMarkdownFile(filePath: string): boolean {
@@ -68,6 +72,27 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
       cancelled = true
     }
   }, [filePath, isBinaryImage, isSvg])
+
+  const handleSave = useCallback(
+    async (newContent: string) => {
+      const result = await window.fileOps.writeFile(filePath, newContent)
+      if (result.success) {
+        toast.success('File saved')
+        const tab = useFileViewerStore.getState().openFiles.get(filePath)
+        if (tab && tab.type === 'file') {
+          const worktree = useWorktreeStore
+            .getState()
+            .worktrees.find((w) => w.id === tab.worktreeId)
+          if (worktree?.path) {
+            useGitStore.getState().refreshStatuses(worktree.path)
+          }
+        }
+      } else {
+        toast.error('Failed to save: ' + result.error)
+      }
+    },
+    [filePath]
+  )
 
   // Reset view mode when file changes
   useEffect(() => {
@@ -158,7 +183,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
           <MarkdownRenderer content={content!} />
         </div>
       ) : (
-        <CodeMirrorEditor key={filePath} content={content!} filePath={filePath} />
+        <CodeMirrorEditor key={filePath} content={content!} filePath={filePath} onSave={handleSave} />
       )}
     </div>
   )

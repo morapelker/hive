@@ -11,6 +11,7 @@ interface CodeMirrorEditorProps {
   content: string
   filePath: string
   onContentChange?: (content: string) => void
+  onSave?: (content: string) => void
 }
 
 const editorTheme = EditorView.theme({
@@ -33,12 +34,15 @@ const editorTheme = EditorView.theme({
 export function CodeMirrorEditor({
   content,
   filePath,
-  onContentChange
+  onContentChange,
+  onSave
 }: CodeMirrorEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onContentChangeRef = useRef(onContentChange)
   onContentChangeRef.current = onContentChange
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
 
   // Initializes the EditorView once on mount and cleans it up on unmount.
   // The parent component keys this component by filePath, so a new file
@@ -59,7 +63,19 @@ export function CodeMirrorEditor({
         bracketMatching(),
         history(),
         indentOnInput(),
-        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+        keymap.of([
+          {
+            key: 'Mod-s',
+            run: (view) => {
+              onSaveRef.current?.(view.state.doc.toString())
+              return true
+            }
+          },
+          ...defaultKeymap,
+          ...historyKeymap,
+          ...searchKeymap,
+          indentWithTab
+        ]),
         getLanguageExtension(filePath),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && onContentChangeRef.current) {
