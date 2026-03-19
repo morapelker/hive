@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 10
+export const CURRENT_SCHEMA_VERSION = 11
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -289,5 +289,47 @@ export const MIGRATIONS: Migration[] = [
     up: `ALTER TABLE worktrees ADD COLUMN github_pr_number INTEGER DEFAULT NULL;
          ALTER TABLE worktrees ADD COLUMN github_pr_url TEXT DEFAULT NULL`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 11,
+    name: 'add_pr_review_comments',
+    up: `
+      CREATE TABLE IF NOT EXISTS pr_review_comments (
+        id INTEGER PRIMARY KEY,
+        worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE CASCADE,
+        pull_number INTEGER NOT NULL,
+        node_id TEXT NOT NULL,
+        diff_hunk TEXT,
+        path TEXT NOT NULL,
+        position INTEGER,
+        line INTEGER,
+        original_line INTEGER,
+        side TEXT NOT NULL DEFAULT 'RIGHT',
+        start_line INTEGER,
+        start_side TEXT,
+        in_reply_to_id INTEGER,
+        body TEXT NOT NULL,
+        author_login TEXT NOT NULL,
+        author_avatar_url TEXT NOT NULL,
+        commit_id TEXT NOT NULL,
+        original_commit_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        is_outdated INTEGER NOT NULL DEFAULT 0,
+        fetched_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pr_comments_worktree
+        ON pr_review_comments(worktree_id);
+      CREATE INDEX IF NOT EXISTS idx_pr_comments_pull
+        ON pr_review_comments(worktree_id, pull_number);
+      CREATE INDEX IF NOT EXISTS idx_pr_comments_reply
+        ON pr_review_comments(in_reply_to_id);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_pr_comments_reply;
+      DROP INDEX IF EXISTS idx_pr_comments_pull;
+      DROP INDEX IF EXISTS idx_pr_comments_worktree;
+      DROP TABLE IF EXISTS pr_review_comments;
+    `
   }
 ]

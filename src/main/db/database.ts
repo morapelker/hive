@@ -33,6 +33,7 @@ import type {
   ConnectionMemberCreate,
   ConnectionWithMembers
 } from './types'
+import type { PRReviewComment } from '../../shared/types/pr-comment'
 
 export class DatabaseService {
   private db: Database.Database | null = null
@@ -219,6 +220,39 @@ export class DatabaseService {
         ON session_activities(session_id, created_at, id);
       CREATE INDEX IF NOT EXISTS idx_session_activities_session_turn
         ON session_activities(session_id, turn_id, created_at);
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pr_review_comments (
+        id INTEGER PRIMARY KEY,
+        worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE CASCADE,
+        pull_number INTEGER NOT NULL,
+        node_id TEXT NOT NULL,
+        diff_hunk TEXT,
+        path TEXT NOT NULL,
+        position INTEGER,
+        line INTEGER,
+        original_line INTEGER,
+        side TEXT NOT NULL DEFAULT 'RIGHT',
+        start_line INTEGER,
+        start_side TEXT,
+        in_reply_to_id INTEGER,
+        body TEXT NOT NULL,
+        author_login TEXT NOT NULL,
+        author_avatar_url TEXT NOT NULL,
+        commit_id TEXT NOT NULL,
+        original_commit_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        is_outdated INTEGER NOT NULL DEFAULT 0,
+        fetched_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pr_comments_worktree
+        ON pr_review_comments(worktree_id);
+      CREATE INDEX IF NOT EXISTS idx_pr_comments_pull
+        ON pr_review_comments(worktree_id, pull_number);
+      CREATE INDEX IF NOT EXISTS idx_pr_comments_reply
+        ON pr_review_comments(in_reply_to_id);
     `)
   }
 
@@ -1522,6 +1556,90 @@ export class DatabaseService {
     return db
       .prepare('SELECT project_id, space_id FROM project_spaces')
       .all() as ProjectSpaceAssignment[]
+  }
+
+  // PR Review Comment operations
+
+  /**
+   * Replace all PR review comments for a worktree+pull_number pair.
+   * Uses a transaction: DELETE existing, then bulk INSERT.
+   */
+  upsertPRReviewComments(
+    worktreeId: string,
+    pullNumber: number,
+    comments: PRReviewComment[]
+  ): void {
+    const db = this.getDb()
+    const tx = db.transaction(() => {
+      db.prepare(
+        'DELETE FROM pr_review_comments WHERE worktree_id = ? AND pull_number = ?'
+      ).run(worktreeId, pullNumber)
+
+      const stmt = db.prepare(
+        `INSERT INTO pr_review_comments (
+          id, worktree_id, pull_number, node_id, diff_hunk, path,
+          position, line, original_line, side, start_line, start_side,
+          in_reply_to_id, body, author_login, author_avatar_url,
+          commit_id, original_commit_id, created_at, updated_at,
+          is_outdated, fetched_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+
+      for (const c of comments) {
+        stmt.run(
+          c.id,
+          worktreeId,
+          pullNumber,
+          c.node_id,
+          c.diff_hunk,
+          c.path,
+          c.position,
+          c.line,
+          c.original_line,
+          c.side,
+          c.start_line,
+          c.start_side,
+          c.in_reply_to_id,
+          c.body,
+          c.author_login,
+          c.author_avatar_url,
+          c.commit_id,
+          c.original_commit_id,
+          c.created_at,
+          c.updated_at,
+          c.is_outdated ? 1 : 0,
+          c.fetched_at
+        )
+      }
+    })
+    tx()
+  }
+
+  /**
+   * Get all PR review comments for a worktree+pull_number, ordered by path, line, created_at.
+   */
+  getPRReviewComments(worktreeId: string, pullNumber: number): PRReviewComment[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        `SELECT * FROM pr_review_comments
+         WHERE worktree_id = ? AND pull_number = ?
+         ORDER BY path ASC, line ASC, created_at ASC`
+      )
+      .all(worktreeId, pullNumber) as Array<Record<string, unknown>>
+
+    return rows.map((row) => ({
+      ...row,
+      is_outdated: !!(row.is_outdated as number)
+    })) as PRReviewComment[]
+  }
+
+  /**
+   * Delete all PR review comments for a worktree (used on PR detach).
+   */
+  deletePRReviewComments(worktreeId: string): void {
+    const db = this.getDb()
+    db.prepare('DELETE FROM pr_review_comments WHERE worktree_id = ?').run(worktreeId)
   }
 
   // Utility methods
