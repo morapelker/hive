@@ -181,7 +181,7 @@ export function PRCommentsView({ worktreeId }: PRCommentsViewProps): React.JSX.E
                 </button>
                 {!isCollapsed &&
                   threads.map((thread) => (
-                    <PRCommentThreadView key={thread.rootComment.id} thread={thread} />
+                    <PRCommentThreadView key={thread.rootComment.id} thread={thread} worktreeId={worktreeId} />
                   ))}
               </div>
             )

@@ -8,13 +8,18 @@ import { isImageFile } from '@shared/types/file-utils'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
-import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useFileViewerStore, type ReviewTab as ReviewTabType } from '@/stores/useFileViewerStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 
 const MonacoDiffView = lazy(() => import('@/components/diff/MonacoDiffView'))
 const WorktreeContextEditor = lazy(() =>
   import('@/components/worktrees/WorktreeContextEditor').then((m) => ({
     default: m.WorktreeContextEditor
+  }))
+)
+const ReviewTabView = lazy(() =>
+  import('@/components/pr-comments/ReviewTabView').then((m) => ({
+    default: m.ReviewTabView
   }))
 )
 
@@ -31,6 +36,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const activeFilePath = useFileViewerStore((state) => state.activeFilePath)
   const activeDiff = useFileViewerStore((state) => state.activeDiff)
   const contextEditorWorktreeId = useFileViewerStore((state) => state.contextEditorWorktreeId)
+  const openFiles = useFileViewerStore((state) => state.openFiles)
+  const closeReviewTab = useFileViewerStore((state) => state.closeReviewTab)
   const closedTerminalSessionIds = useSessionStore((state) => state.closedTerminalSessionIds)
   const ghosttyOverlaySuppressed = useLayoutStore((state) => state.ghosttyOverlaySuppressed)
 
@@ -237,6 +244,27 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       )
     }
 
+    // Review tab is active
+    if (activeFilePath?.startsWith('review:')) {
+      const tab = openFiles.get(activeFilePath)
+      if (tab?.type === 'review') {
+        return (
+          <Suspense
+            fallback={
+              <div className="flex-1 flex items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            }
+          >
+            <ReviewTabView
+              tab={tab as ReviewTabType}
+              onClose={() => closeReviewTab(activeFilePath)}
+            />
+          </Suspense>
+        )
+      }
+    }
+
     // Context editor is active
     if (contextEditorWorktreeId && activeFilePath?.startsWith('context:')) {
       return (
@@ -252,8 +280,13 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       )
     }
 
-    // File viewer tab is active - render FileViewer (skip diff tab keys)
-    if (activeFilePath && !activeFilePath.startsWith('diff:')) {
+    // File viewer tab is active - render FileViewer (skip diff/review/context tab keys)
+    if (
+      activeFilePath &&
+      !activeFilePath.startsWith('diff:') &&
+      !activeFilePath.startsWith('review:') &&
+      !activeFilePath.startsWith('context:')
+    ) {
       return <FileViewer filePath={activeFilePath} />
     }
 

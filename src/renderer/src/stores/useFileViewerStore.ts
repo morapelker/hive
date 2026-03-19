@@ -23,7 +23,18 @@ export interface ContextTab {
   worktreeId: string
 }
 
-export type TabEntry = FileViewerTab | DiffTab | ContextTab
+export interface ReviewTab {
+  type: 'review'
+  worktreePath: string
+  filePath: string
+  fileName: string
+  line: number | null
+  compareBranch: string
+  threadRootId: number
+  worktreeId: string
+}
+
+export type TabEntry = FileViewerTab | DiffTab | ContextTab | ReviewTab
 
 export interface ActiveDiff {
   worktreePath: string
@@ -53,6 +64,9 @@ interface FileViewerState {
   clearActiveDiff: () => void
   closeDiffTab: (tabKey: string) => void
   activateDiffTab: (tabKey: string) => void
+  openReviewTab: (tab: Omit<ReviewTab, 'type'>) => void
+  closeReviewTab: (tabKey: string) => void
+  activateReviewTab: (tabKey: string) => void
   closeOtherFiles: (keepKey: string) => void
   closeFilesToRight: (fromKey: string) => void
 }
@@ -206,6 +220,41 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
           compareBranch: tab.compareBranch
         }
       }
+    })
+  },
+
+  openReviewTab: (tab: Omit<ReviewTab, 'type'>) => {
+    const tabKey = `review:${tab.filePath}:${tab.threadRootId}`
+    set((state) => {
+      const openFiles = new Map(state.openFiles)
+      openFiles.set(tabKey, { type: 'review', ...tab })
+      return { openFiles, activeFilePath: tabKey, activeDiff: null }
+    })
+  },
+
+  closeReviewTab: (tabKey: string) => {
+    set((state) => {
+      const openFiles = new Map(state.openFiles)
+      openFiles.delete(tabKey)
+      const isActive = state.activeFilePath === tabKey
+      let newActivePath = state.activeFilePath
+      if (isActive) {
+        const paths = Array.from(openFiles.keys())
+        newActivePath = paths.length > 0 ? paths[paths.length - 1] : null
+      }
+      return {
+        openFiles,
+        activeFilePath: newActivePath,
+        activeDiff: isActive ? null : state.activeDiff
+      }
+    })
+  },
+
+  activateReviewTab: (tabKey: string) => {
+    set((state) => {
+      const tab = state.openFiles.get(tabKey)
+      if (!tab || tab.type !== 'review') return state
+      return { activeFilePath: tabKey, activeDiff: null }
     })
   },
 

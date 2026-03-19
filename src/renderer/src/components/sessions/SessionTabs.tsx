@@ -15,6 +15,7 @@ import {
   FileCode,
   FileText,
   GitCompareArrows,
+  MessageSquare,
   Loader2,
   AlertCircle,
   Check,
@@ -25,7 +26,8 @@ import {
   useFileViewerStore,
   type FileViewerTab,
   type DiffTab,
-  type ContextTab
+  type ContextTab,
+  type ReviewTab
 } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -400,6 +402,73 @@ function DiffTabItem({
         <ContextMenuItem onSelect={() => copyToClipboard(absolutePath)}>
           Copy Absolute Path
         </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+interface ReviewTabItemProps {
+  tabKey: string
+  tab: ReviewTab
+  isActive: boolean
+  onActivate: () => void
+  onClose: (e: React.MouseEvent) => void
+  onCloseOthers: () => void
+  onCloseToRight: () => void
+}
+
+function ReviewTabItem({
+  tabKey,
+  tab,
+  isActive,
+  onActivate,
+  onClose,
+  onCloseOthers,
+  onCloseToRight
+}: ReviewTabItemProps): React.JSX.Element {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          data-testid={`review-tab-${tab.fileName}`}
+          onClick={onActivate}
+          onMouseDown={(e) => {
+            if (e.button === 1) {
+              e.preventDefault()
+              onClose(e)
+            }
+          }}
+          className={cn(
+            'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
+            'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
+            isActive
+              ? 'bg-background text-foreground'
+              : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+          )}
+          title={`${tab.filePath} (review)`}
+        >
+          <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-purple-400" />
+          <span className="truncate flex-1">{tab.fileName}</span>
+          <button
+            onClick={onClose}
+            className={cn(
+              'p-0.5 rounded hover:bg-accent transition-opacity',
+              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            )}
+            data-testid={`close-review-tab-${tabKey}`}
+          >
+            <X className="h-3 w-3" />
+          </button>
+          {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={(e) => onClose(e as unknown as React.MouseEvent)}>
+          Close
+          <ContextMenuShortcut>&#8984;W</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>
+        <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   )
@@ -801,6 +870,17 @@ export function SessionTabs(): React.JSX.Element | null {
     useFileViewerStore.getState().closeDiffTab(tabKey)
   }
 
+  // Handle clicking a review tab
+  const handleReviewTabClick = (tabKey: string) => {
+    useFileViewerStore.getState().activateReviewTab(tabKey)
+  }
+
+  // Handle closing a review tab
+  const handleCloseReviewTab = (e: React.MouseEvent, tabKey: string) => {
+    e.stopPropagation()
+    useFileViewerStore.getState().closeReviewTab(tabKey)
+  }
+
   // Drag and drop handlers
   const handleDragStart = (e: React.DragEvent, sessionId: string) => {
     setDraggedTabId(sessionId)
@@ -921,6 +1001,11 @@ export function SessionTabs(): React.JSX.Element | null {
     (entry): entry is [string, ContextTab] => entry[1].type === 'context'
   )
 
+  // Get review tabs from openFiles
+  const reviewTabs = Array.from(openFiles.entries()).filter(
+    (entry): entry is [string, ReviewTab] => entry[1].type === 'review'
+  )
+
   // Determine if a file/diff tab is the active one
   const isFileTabActive = activeFilePath !== null
 
@@ -995,6 +1080,7 @@ export function SessionTabs(): React.JSX.Element | null {
         fileTabs.length === 0 &&
         diffTabs.length === 0 &&
         contextTabs.length === 0 &&
+        reviewTabs.length === 0 &&
         !(
           !isConnectionMode &&
           connectionsForWorktree.some((c) => (sessionsByConnection.get(c.id) || []).length > 0)
@@ -1148,6 +1234,19 @@ export function SessionTabs(): React.JSX.Element | null {
                   <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                 )}
               </div>
+            ))}
+            {/* Review tabs */}
+            {reviewTabs.map(([key, tab]) => (
+              <ReviewTabItem
+                key={key}
+                tabKey={key}
+                tab={tab}
+                isActive={isFileTabActive && activeFilePath === key}
+                onActivate={() => handleReviewTabClick(key)}
+                onClose={(e) => handleCloseReviewTab(e, key)}
+                onCloseOthers={() => closeOtherFiles(key)}
+                onCloseToRight={() => closeFilesToRight(key)}
+              />
             ))}
           </>
         )}

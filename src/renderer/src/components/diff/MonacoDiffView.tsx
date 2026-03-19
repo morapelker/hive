@@ -18,6 +18,7 @@ interface MonacoDiffViewProps {
   isNewFile?: boolean
   compareBranch?: string
   onClose: () => void
+  scrollToLine?: number
 }
 
 export default function MonacoDiffView({
@@ -27,7 +28,8 @@ export default function MonacoDiffView({
   staged,
   isUntracked,
   compareBranch,
-  onClose
+  onClose,
+  scrollToLine
 }: MonacoDiffViewProps): React.JSX.Element {
   const [originalContent, setOriginalContent] = useState<string | null>(null)
   const [modifiedContent, setModifiedContent] = useState<string | null>(null)
@@ -138,7 +140,17 @@ export default function MonacoDiffView({
       const newChanges = editor.getLineChanges()
       setHunks(parseHunks(newChanges))
     })
-  }, [])
+
+    // Scroll to specific line if requested (e.g. from review tab)
+    if (scrollToLine) {
+      const modEditor = editor.getModifiedEditor()
+      // Small delay to let the diff compute before scrolling
+      requestAnimationFrame(() => {
+        modEditor.revealLineInCenter(scrollToLine)
+        modEditor.setPosition({ lineNumber: scrollToLine, column: 1 })
+      })
+    }
+  }, [scrollToLine])
 
   // Register theme before Monaco loads
   const handleBeforeMount = useCallback((monaco: Monaco) => {

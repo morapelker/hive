@@ -1,5 +1,7 @@
 import { cn } from '@/lib/utils'
 import { usePRCommentStore } from '@/stores/usePRCommentStore'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
 import type { PRReviewComment, PRReviewThread } from '@shared/types/pr-comment'
 
@@ -62,36 +64,78 @@ function CommentBody({ comment, isRoot }: CommentBodyProps): React.JSX.Element {
 
 interface PRCommentThreadProps {
   thread: PRReviewThread
+  worktreeId?: string
+  showCheckbox?: boolean
 }
 
-export function PRCommentThreadView({ thread }: PRCommentThreadProps): React.JSX.Element {
+export function PRCommentThreadView({
+  thread,
+  worktreeId,
+  showCheckbox = true
+}: PRCommentThreadProps): React.JSX.Element {
   const selectedThreadIds = usePRCommentStore((s) => s.selectedThreadIds)
   const toggleThreadSelection = usePRCommentStore((s) => s.toggleThreadSelection)
   const isSelected = selectedThreadIds.has(thread.rootComment.id)
+
+  const handleThreadClick = (): void => {
+    if (!worktreeId) return
+
+    // Look up worktree path
+    const worktreeState = useWorktreeStore.getState()
+    let worktreePath = ''
+    for (const wts of worktreeState.worktreesByProject.values()) {
+      const found = wts.find((w) => w.id === worktreeId)
+      if (found) {
+        worktreePath = found.path
+        break
+      }
+    }
+    if (!worktreePath) return
+
+    const root = thread.rootComment
+    const compareBranch =
+      usePRCommentStore.getState().baseBranchByWorktree.get(worktreeId)
+    if (!compareBranch) return
+
+    useFileViewerStore.getState().openReviewTab({
+      worktreePath,
+      filePath: root.path,
+      fileName: root.path.split('/').pop() || root.path,
+      line: root.line,
+      compareBranch,
+      threadRootId: root.id,
+      worktreeId
+    })
+  }
 
   return (
     <div
       className={cn(
         'border-b border-border last:border-b-0 py-2 px-3',
-        isSelected && 'bg-primary/5'
+        isSelected && 'bg-primary/5',
+        worktreeId && 'cursor-pointer hover:bg-muted/50'
       )}
+      onClick={worktreeId ? handleThreadClick : undefined}
     >
       {/* Root comment with checkbox */}
       <div className="flex gap-2">
-        <div className="flex-shrink-0 pt-0.5">
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={() => toggleThreadSelection(thread.rootComment.id)}
-            className="w-3.5 h-3.5 rounded border-border cursor-pointer accent-primary"
-          />
-        </div>
+        {showCheckbox && (
+          <div className="flex-shrink-0 pt-0.5">
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => toggleThreadSelection(thread.rootComment.id)}
+              onClick={(e) => e.stopPropagation()}
+              className="w-3.5 h-3.5 rounded border-border cursor-pointer accent-primary"
+            />
+          </div>
+        )}
         <CommentBody comment={thread.rootComment} isRoot />
       </div>
 
       {/* Replies */}
       {thread.replies.length > 0 && (
-        <div className="ml-6 mt-1.5 pl-3 border-l-2 border-border space-y-2">
+        <div className={cn('mt-1.5 pl-3 border-l-2 border-border space-y-2', showCheckbox && 'ml-6')}>
           {thread.replies.map((reply) => (
             <CommentBody key={reply.id} comment={reply} />
           ))}
