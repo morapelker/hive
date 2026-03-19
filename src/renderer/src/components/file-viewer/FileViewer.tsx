@@ -12,6 +12,10 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { isBinaryImageFile, isSvgFile, getImageMimeType } from '@shared/types/file-utils'
 
+// Time window after a save during which file watcher events are suppressed
+// to avoid treating our own writes as external changes.
+const OWN_SAVE_SUPPRESSION_MS = 500
+
 export function isMarkdownFile(filePath: string): boolean {
   const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase()
   return ext === '.md' || ext === '.mdx'
@@ -126,6 +130,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
 
   const handleDialogSave = useCallback(async () => {
     if (pendingClose && latestContentRef.current !== null) {
+      lastSaveTimestampRef.current = Date.now()
       const result = await window.fileOps.writeFile(pendingClose, latestContentRef.current)
       if (result.success) {
         toast.success('File saved')
@@ -164,7 +169,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
       )
       if (!hasChange) return
       // Suppress if this was our own save
-      if (Date.now() - lastSaveTimestampRef.current < 500) return
+      if (Date.now() - lastSaveTimestampRef.current < OWN_SAVE_SUPPRESSION_MS) return
       // Re-read from disk and compare with original
       window.fileOps.readFile(filePath).then((result) => {
         if (!result.success || result.content === undefined) return
