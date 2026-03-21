@@ -43,6 +43,11 @@ export function splitBashCommand(cmd: string): string[] {
   let inHeredoc = false
   let heredocDelimiter = ''
 
+  // Stack to track quote state at each command substitution level
+  // When we enter $(, we push current quote state and start fresh
+  // When we exit ), we restore the previous quote state
+  const quoteStack: Array<{inSingleQuote: boolean; inDoubleQuote: boolean}> = []
+
   while (i < cmd.length) {
     const char = cmd[i]
     const nextChar = cmd[i + 1]
@@ -148,7 +153,7 @@ export function splitBashCommand(cmd: string): string[] {
     }
 
     // Handle single quotes
-    if (char === "'" && prevChar !== '\\' && !inDoubleQuote && !inBacktick && commandSubDepth === 0) {
+    if (char === "'" && prevChar !== '\\' && !inDoubleQuote && !inBacktick) {
       inSingleQuote = !inSingleQuote
       current += char
       i++
@@ -174,14 +179,24 @@ export function splitBashCommand(cmd: string): string[] {
     // Handle command substitution start: $(
     if (char === '$' && nextChar === '(' && !inSingleQuote) {
       commandSubDepth++
+      // Push current quote state onto stack and reset quotes for the new context
+      quoteStack.push({inSingleQuote, inDoubleQuote})
+      inSingleQuote = false
+      inDoubleQuote = false
       current += char
       i++
       continue
     }
 
     // Handle command substitution end: )
-    if (char === ')' && commandSubDepth > 0 && !inSingleQuote) {
+    if (char === ')' && commandSubDepth > 0 && !inSingleQuote && !inDoubleQuote) {
       commandSubDepth--
+      // Restore quote state from before entering this command substitution
+      const restored = quoteStack.pop()
+      if (restored) {
+        inSingleQuote = restored.inSingleQuote
+        inDoubleQuote = restored.inDoubleQuote
+      }
       current += char
       i++
       continue

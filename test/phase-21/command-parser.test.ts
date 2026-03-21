@@ -277,6 +277,76 @@ EOF
     })
   })
 
+  describe('P1 Security Fixes', () => {
+    it('P1-1: should not close command substitution on ) inside double quotes', () => {
+      // Test the fix for: ) inside double-quoted strings within $() should not decrement commandSubDepth
+      const command = 'echo $(cmd "with ) paren" && malicious_cmd) && done'
+      const result = service.splitBashChain(command)
+
+      // Should split at the correct top-level && (after the closing paren of $())
+      // NOT at the fake && inside the $()
+      expect(result).toEqual([
+        'echo $(cmd "with ) paren" && malicious_cmd)',
+        'done'
+      ])
+    })
+
+    it('P1-1: should handle nested ) in double quotes correctly', () => {
+      const command = 'echo $(echo "test ) here" && echo ok) && final'
+      const result = service.splitBashChain(command)
+
+      expect(result).toEqual([
+        'echo $(echo "test ) here" && echo ok)',
+        'final'
+      ])
+    })
+
+    it('P1-2: should handle ) inside single quotes within $() correctly', () => {
+      // Test the fix for: single quotes should be tracked inside $()
+      const command = "echo $(cmd 'with ) paren' && malicious_cmd) && done"
+      const result = service.splitBashChain(command)
+
+      // Should split at the correct top-level && (after the closing paren of $())
+      // NOT at the fake && inside the $()
+      expect(result).toEqual([
+        "echo $(cmd 'with ) paren' && malicious_cmd)",
+        'done'
+      ])
+    })
+
+    it('P1-2: should handle nested single quotes in $() correctly', () => {
+      const command = "echo $(echo 'test ) here' && echo ok) && final"
+      const result = service.splitBashChain(command)
+
+      expect(result).toEqual([
+        "echo $(echo 'test ) here' && echo ok)",
+        'final'
+      ])
+    })
+
+    it('P1: should handle complex nested quotes and parens in $() correctly', () => {
+      // Mix of both issues: both single and double quotes with ) inside $()
+      const command = `echo $(test "a ) b" && test 'c ) d') && final`
+      const result = service.splitBashChain(command)
+
+      expect(result).toEqual([
+        `echo $(test "a ) b" && test 'c ) d')`,
+        'final'
+      ])
+    })
+
+    it('P1: should correctly handle actual top-level ) that closes $()', () => {
+      // Verify we still correctly close $() when NOT inside quotes
+      const command = 'echo $(cmd arg) && final'
+      const result = service.splitBashChain(command)
+
+      expect(result).toEqual([
+        'echo $(cmd arg)',
+        'final'
+      ])
+    })
+  })
+
   describe('Pattern matching with wildcards', () => {
     it('should match patterns with wildcards', () => {
       const settings = {
