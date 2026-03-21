@@ -1,11 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import {
-  AlertCircle,
-  Link,
-  Loader2,
-  Map as MapIcon,
-  Zap
-} from 'lucide-react'
+import { AlertCircle, Link, Loader2, Map as MapIcon, Zap } from 'lucide-react'
 import { cn, parseColorQuad } from '@/lib/utils'
 import {
   useProjectStore,
@@ -155,9 +149,7 @@ function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       <LanguageIcon language={project.language} customIcon={project.custom_icon} />
 
       {/* Status indicators (heartbeat + AI status) */}
-      {isRunProcessAlive && (
-        <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />
-      )}
+      {isRunProcessAlive && <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />}
       {(worktreeStatus === 'working' || worktreeStatus === 'planning') && (
         <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
       )}
@@ -180,16 +172,18 @@ function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       </div>
 
       {/* Unread dot */}
-      {worktreeStatus === 'unread' && (
-        <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
-      )}
+      {worktreeStatus === 'unread' && <span className="h-2 w-2 rounded-full bg-primary shrink-0" />}
     </div>
   )
 }
 
 // ── Connection item ────────────────────────────────────────────
 
-function RecentConnectionItem({ connectionId }: { connectionId: string }): React.JSX.Element | null {
+function RecentConnectionItem({
+  connectionId
+}: {
+  connectionId: string
+}): React.JSX.Element | null {
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectConnection = useConnectionStore((s) => s.selectConnection)
 
@@ -197,20 +191,16 @@ function RecentConnectionItem({ connectionId }: { connectionId: string }): React
   const isSelected = selectedConnectionId === connectionId
 
   // The store holds connection objects with members and custom_name
-  const connection = useConnectionStore((s) =>
-    s.connections.find((c) => c.id === connectionId)
-  )
+  const connection = useConnectionStore((s) => s.connections.find((c) => c.id === connectionId))
 
   if (!connection) return null
 
   // Access members and custom_name from the store's enriched Connection type (Fix #3)
-  const projectNames =
-    [...new Set(connection.members?.map((m: { project_name: string }) => m.project_name) || [])].join(' + ')
+  const projectNames = [
+    ...new Set(connection.members?.map((m: { project_name: string }) => m.project_name) || [])
+  ].join(' + ')
 
-  const displayName = connection.custom_name
-    || projectNames
-    || connection.name
-    || 'Connection'
+  const displayName = connection.custom_name || projectNames || connection.name || 'Connection'
 
   const handleClick = (): void => {
     selectConnection(connectionId)

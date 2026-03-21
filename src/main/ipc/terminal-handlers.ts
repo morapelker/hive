@@ -67,7 +67,11 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
               dataBuffers.delete(worktreeId)
               if (buffered && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send(`terminal:data:${worktreeId}`, buffered)
-                try { getEventBus().emit('terminal:data', worktreeId, buffered) } catch { /* EventBus not available */ }
+                try {
+                  getEventBus().emit('terminal:data', worktreeId, buffered)
+                } catch {
+                  /* EventBus not available */
+                }
               }
             })
           }
@@ -77,7 +81,11 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
         const removeExit = ptyService.onExit(worktreeId, (code) => {
           if (!mainWindow.isDestroyed()) {
             mainWindow.webContents.send(`terminal:exit:${worktreeId}`, code)
-            try { getEventBus().emit('terminal:exit', worktreeId, code) } catch { /* EventBus not available */ }
+            try {
+              getEventBus().emit('terminal:exit', worktreeId, code)
+            } catch {
+              /* EventBus not available */
+            }
           }
           // Clean up listener tracking on exit
           listenerCleanups.delete(worktreeId)

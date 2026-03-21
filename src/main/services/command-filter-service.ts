@@ -287,12 +287,21 @@ export class CommandFilterService {
       }
 
       // Allowlist: ALL sub-commands must be covered
-      if (
-        subCommands.length > 0 &&
-        subCommands.every((sub) => this.matchesAnyPattern(`bash: ${sub}`, settings.allowlist))
-      ) {
-        log.info('CommandFilter: all sub-commands allowed by allowlist', { subCommands })
-        return 'allow'
+      if (subCommands.length > 0) {
+        const allMatch = subCommands.every((sub) => {
+          const formatted = `bash: ${sub}`
+          const matches = this.matchesAnyPattern(formatted, settings.allowlist)
+          log.info('CommandFilter: checking sub-command against allowlist', {
+            subCommand: sub,
+            formatted,
+            matches
+          })
+          return matches
+        })
+        if (allMatch) {
+          log.info('CommandFilter: all sub-commands allowed by allowlist', { subCommands })
+          return 'allow'
+        }
       }
 
       log.info('CommandFilter: bash chain not fully covered, using default', {
@@ -307,8 +316,8 @@ export class CommandFilterService {
     log.info('CommandFilter: evaluating tool use', {
       toolName,
       commandStr,
-      allowlist: settings.allowlist,
-      blocklist: settings.blocklist,
+      allowlistCount: settings.allowlist.length,
+      blocklistCount: settings.blocklist.length,
       defaultBehavior: settings.defaultBehavior,
       enabled: settings.enabled
     })
@@ -373,6 +382,7 @@ export class CommandFilterService {
       const regex = new RegExp(`^${regexPattern}$`, 'is')
       const matches = regex.test(command)
 
+      // Only log successful matches to reduce noise
       if (matches) {
         log.info('CommandFilter: pattern matched', { command, pattern })
       }

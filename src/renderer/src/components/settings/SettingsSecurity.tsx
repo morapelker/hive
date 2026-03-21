@@ -96,7 +96,9 @@ export function SettingsSecurity(): React.JSX.Element {
     <div className="space-y-6" style={{ overflow: 'hidden' }}>
       <div>
         <h3 className="text-base font-medium mb-1">Security</h3>
-        <p className="text-sm text-muted-foreground">Control which commands Claude can execute</p>
+        <p className="text-sm text-muted-foreground">
+          Control command filtering for approval-based agent sessions
+        </p>
       </div>
 
       {/* Enable/Disable */}
@@ -104,7 +106,7 @@ export function SettingsSecurity(): React.JSX.Element {
         <div>
           <label className="text-sm font-medium">Enable command filtering</label>
           <p className="text-xs text-muted-foreground">
-            Control which tools and commands Claude can use during sessions
+            Control which tools and commands approval-based agents can use during sessions
           </p>
         </div>
         <button
@@ -145,9 +147,7 @@ export function SettingsSecurity(): React.JSX.Element {
       {/* Default Behavior */}
       <div className={cn('space-y-2', !isEnabled && 'opacity-50 pointer-events-none')}>
         <label className="text-sm font-medium">Default behavior for unlisted commands</label>
-        <p className="text-xs text-muted-foreground">
-          How to handle commands not on either list
-        </p>
+        <p className="text-xs text-muted-foreground">How to handle commands not on either list</p>
         <div className="flex gap-2">
           <button
             onClick={() => handleSetDefaultBehavior('ask')}
@@ -366,7 +366,12 @@ export function SettingsSecurity(): React.JSX.Element {
               >
                 <code
                   className="text-xs font-mono"
-                  style={{ flex: '1 1 0', minWidth: 0, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}
+                  style={{
+                    flex: '1 1 0',
+                    minWidth: 0,
+                    wordBreak: 'break-all',
+                    whiteSpace: 'pre-wrap'
+                  }}
                   title={pattern}
                 >
                   {pattern}
@@ -391,7 +396,12 @@ export function SettingsSecurity(): React.JSX.Element {
               >
                 <code
                   className="text-xs font-mono"
-                  style={{ flex: '1 1 0', minWidth: 0, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}
+                  style={{
+                    flex: '1 1 0',
+                    minWidth: 0,
+                    wordBreak: 'break-all',
+                    whiteSpace: 'pre-wrap'
+                  }}
                   title={pattern}
                 >
                   {pattern}

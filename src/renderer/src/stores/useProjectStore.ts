@@ -55,7 +55,7 @@ interface ProjectState {
   expandAllProjects: () => void
   setEditingProject: (id: string | null) => void
   touchProject: (id: string) => Promise<void>
-  refreshLanguage: (projectId: string) => Promise<void>
+  refreshLanguage: (projectId: string, detectionPath?: string) => Promise<void>
   reorderProjects: (fromIndex: number, toIndex: number) => void
   sortProjectsByLastMessage: () => Promise<void>
   openProjectSettings: (projectId: string) => void
@@ -132,6 +132,14 @@ export const useProjectStore = create<ProjectState>()(
             selectedProjectId: project.id,
             expandedProjectIds: new Set([...state.expandedProjectIds, project.id])
           }))
+
+          import('./useWorktreeStore')
+            .then(({ useWorktreeStore }) =>
+              useWorktreeStore.getState().syncWorktrees(project.id, validation.path!)
+            )
+            .catch(() => {
+              // Ignore initial sync errors
+            })
 
           return { success: true }
         } catch (error) {
@@ -264,11 +272,11 @@ export const useProjectStore = create<ProjectState>()(
       },
 
       // Re-detect and update project language
-      refreshLanguage: async (projectId: string) => {
+      refreshLanguage: async (projectId: string, detectionPath?: string) => {
         const project = get().projects.find((p) => p.id === projectId)
         if (!project) return
         try {
-          const language = await window.projectOps.detectLanguage(project.path)
+          const language = await window.projectOps.detectLanguage(detectionPath ?? project.path)
           await window.db.project.update(projectId, { language })
           set((state) => ({
             projects: state.projects.map((p) => (p.id === projectId ? { ...p, language } : p))

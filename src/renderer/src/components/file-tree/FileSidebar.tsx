@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { FileTree } from './FileTree'
 import { ChangesView } from './ChangesView'
 import { BranchDiffView } from './BranchDiffView'
@@ -29,6 +30,19 @@ export function FileSidebar({
   className
 }: FileSidebarProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<'changes' | 'files' | 'diffs'>('changes')
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      if (!vimModeEnabled) return
+      const tab = (e as CustomEvent).detail?.tab
+      if (tab === 'changes' || tab === 'files' || tab === 'diffs') {
+        setActiveTab(tab)
+      }
+    }
+    window.addEventListener('hive:right-sidebar-tab', handler)
+    return () => window.removeEventListener('hive:right-sidebar-tab', handler)
+  }, [vimModeEnabled])
 
   return (
     <div className={cn('flex flex-col h-full', className)}>
@@ -42,7 +56,13 @@ export function FileSidebar({
           )}
           onClick={() => setActiveTab('changes')}
         >
-          Changes
+          {vimModeEnabled ? (
+            <>
+              <span className="text-primary">C</span>hanges
+            </>
+          ) : (
+            'Changes'
+          )}
           {activeTab === 'changes' && (
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}
@@ -56,7 +76,13 @@ export function FileSidebar({
           )}
           onClick={() => setActiveTab('files')}
         >
-          Files
+          {vimModeEnabled ? (
+            <>
+              <span className="text-primary">F</span>iles
+            </>
+          ) : (
+            'Files'
+          )}
           {activeTab === 'files' && (
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}
@@ -70,7 +96,13 @@ export function FileSidebar({
           )}
           onClick={() => setActiveTab('diffs')}
         >
-          Diffs
+          {vimModeEnabled ? (
+            <>
+              <span className="text-primary">D</span>iffs
+            </>
+          ) : (
+            'Diffs'
+          )}
           {activeTab === 'diffs' && (
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}

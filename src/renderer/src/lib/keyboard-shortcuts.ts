@@ -1,6 +1,4 @@
-// Platform detection
-const isMac =
-  typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
+import { isMac as isMacFn } from './platform'
 
 // ==========================================
 // Types
@@ -55,7 +53,7 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     label: 'Run Project',
     description: 'Start or stop the project run script',
     category: 'session',
-    defaultBinding: { key: 'r', modifiers: [isMac ? 'meta' : 'ctrl'] }
+    defaultBinding: { key: 'r', modifiers: ['meta'] }
   },
   {
     id: 'model:cycle-variant',
@@ -118,10 +116,10 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     defaultBinding: { key: 'l', modifiers: ['meta', 'shift'] }
   },
   {
-    id: 'git:merge',
-    label: 'Merge',
-    description: 'Merge selected branch',
-    category: 'git',
+    id: 'nav:filter-projects',
+    label: 'Filter Projects',
+    description: 'Focus the project filter input',
+    category: 'navigation',
     defaultBinding: { key: 'g', modifiers: ['meta'] }
   },
 
@@ -179,23 +177,24 @@ DEFAULT_SHORTCUTS.forEach((s) => shortcutMap.set(s.id, s))
  * Serialize a KeyBinding to a display string, e.g. "⌘N" or "Ctrl+Shift+N"
  */
 export function formatBinding(binding: KeyBinding): string {
+  const mac = isMacFn()
   const modSymbols = binding.modifiers.map((mod) => {
     switch (mod) {
       case 'meta':
-        return isMac ? '\u2318' : 'Ctrl'
+        return mac ? '\u2318' : 'Ctrl'
       case 'ctrl':
-        return isMac ? '\u2303' : 'Ctrl'
+        return mac ? '\u2303' : 'Ctrl'
       case 'alt':
-        return isMac ? '\u2325' : 'Alt'
+        return mac ? '\u2325' : 'Alt'
       case 'shift':
-        return isMac ? '\u21E7' : 'Shift'
+        return mac ? '\u21E7' : 'Shift'
       default:
         return mod
     }
   })
 
   const keyDisplay = binding.key.length === 1 ? binding.key.toUpperCase() : binding.key
-  return [...modSymbols, keyDisplay].join(isMac ? '' : '+')
+  return [...modSymbols, keyDisplay].join(mac ? '' : '+')
 }
 
 /**

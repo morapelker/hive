@@ -23,7 +23,7 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code' | 'terminal'
+  agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   mode: SessionMode
   model_provider_id: string | null
   model_id: string | null
@@ -76,7 +76,8 @@ interface SessionState {
   createSession: (
     worktreeId: string,
     projectId: string,
-    agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
+    agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
+    initialMode?: SessionMode
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -92,7 +93,11 @@ interface SessionState {
   getSessionMode: (sessionId: string) => SessionMode
   toggleSessionMode: (sessionId: string) => Promise<void>
   setSessionMode: (sessionId: string, mode: SessionMode) => Promise<void>
-  setSessionModel: (sessionId: string, model: SelectedModel) => Promise<void>
+  setSessionModel: (
+    sessionId: string,
+    model: SelectedModel,
+    options?: { skipGlobalUpdate?: boolean }
+  ) => Promise<void>
   setOpenCodeSessionId: (sessionId: string, opencodeSessionId: string | null) => void
   setPendingMessage: (sessionId: string, message: string) => void
   dequeuePendingMessage: (sessionId: string) => string | null
@@ -118,7 +123,8 @@ interface SessionState {
   loadConnectionSessions: (connectionId: string) => Promise<void>
   createConnectionSession: (
     connectionId: string,
-    agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
+    agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
+    initialMode?: SessionMode
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -264,7 +270,8 @@ export const useSessionStore = create<SessionState>()(
       createSession: async (
         worktreeId: string,
         projectId: string,
-        agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
+        agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
+        initialMode?: SessionMode
       ) => {
         try {
           // Resolve default agent SDK from settings
@@ -279,9 +286,21 @@ export const useSessionStore = create<SessionState>()(
 
           if (!isTerminal) {
             const { resolveModelForSdk } = await import('./useSettingsStore')
+            const configuredDefaultSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
 
-            // Priority 1: per-provider default → (legacy) global default
-            defaultModel = resolveModelForSdk(defaultAgentSdk)
+            // Priority 1: mode-specific default (only when session SDK matches the
+            // configured default — mode defaults are set in that SDK's context)
+            if (defaultAgentSdk === configuredDefaultSdk) {
+              const modeModel = useSettingsStore.getState().getModelForMode(initialMode ?? 'build')
+              if (modeModel) {
+                defaultModel = modeModel
+              }
+            }
+
+            // Priority 2: per-provider default → (legacy) global default
+            if (!defaultModel) {
+              defaultModel = resolveModelForSdk(defaultAgentSdk)
+            }
 
             // Legacy worktree fallback only when per-provider feature not yet active
             if (!defaultModel) {
@@ -510,9 +529,9 @@ export const useSessionStore = create<SessionState>()(
 
           // If this session was a PR-creating session, cancel the PR flow
           const gitStore = useGitStore.getState()
-          for (const [worktreeId, prInfo] of gitStore.prInfo.entries()) {
-            if (prInfo.sessionId === sessionId && prInfo.state === 'creating') {
-              gitStore.setPrState(worktreeId, { state: 'none' })
+          for (const [worktreeId, creation] of gitStore.prCreation.entries()) {
+            if (creation.sessionId === sessionId && creation.creating) {
+              gitStore.setPrCreation(worktreeId, null)
               break
             }
           }
@@ -731,6 +750,19 @@ export const useSessionStore = create<SessionState>()(
         return get().modeBySession.get(sessionId) || 'build'
       },
 
+      // Get session by ID from either worktree or connection sessions
+      getSessionById: (sessionId: string): Session | null => {
+        for (const sessions of get().sessionsByWorktree.values()) {
+          const found = sessions.find((s) => s.id === sessionId)
+          if (found) return found
+        }
+        for (const sessions of get().sessionsByConnection.values()) {
+          const found = sessions.find((s) => s.id === sessionId)
+          if (found) return found
+        }
+        return null
+      },
+
       // Toggle session mode between build and plan
       toggleSessionMode: async (sessionId: string) => {
         const currentMode = get().modeBySession.get(sessionId) || 'build'
@@ -749,9 +781,12 @@ export const useSessionStore = create<SessionState>()(
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
+
+        // Auto-apply mode-specific model if configured
+        await get().applyModeDefaultModel(sessionId, newMode)
       },
 
-      // Set session mode explicitly
+      // Set session mode explicitly (also applies mode-specific model default)
       setSessionMode: async (sessionId: string, mode: SessionMode) => {
         set((state) => {
           const newModeMap = new Map(state.modeBySession)
@@ -764,10 +799,17 @@ export const useSessionStore = create<SessionState>()(
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
+
+        // Apply mode-specific default model (same as toggleSessionMode)
+        await get().applyModeDefaultModel(sessionId, mode)
       },
 
       // Set model for a specific session (per-session model selection, scope-agnostic)
-      setSessionModel: async (sessionId: string, model: SelectedModel) => {
+      setSessionModel: async (
+        sessionId: string,
+        model: SelectedModel,
+        options?: { skipGlobalUpdate?: boolean }
+      ) => {
         // Update local state immediately (search both maps)
         set((state) => {
           const newWorktreeSessionsMap = new Map(state.sessionsByWorktree)
@@ -822,7 +864,7 @@ export const useSessionStore = create<SessionState>()(
         }
 
         // Find the session's SDK to route correctly (search both scopes)
-        let agentSdk: 'opencode' | 'claude-code' | 'terminal' = 'opencode'
+        let agentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal' = 'opencode'
         for (const sessions of get().sessionsByWorktree.values()) {
           const found = sessions.find((s) => s.id === sessionId)
           if (found?.agent_sdk) {
@@ -850,12 +892,16 @@ export const useSessionStore = create<SessionState>()(
         }
 
         // Update per-provider last-used model so new worktrees inherit it
-        // skipBackendPush: we already pushed to the backend above
-        try {
-          const { useSettingsStore } = await import('./useSettingsStore')
-          useSettingsStore.getState().setSelectedModelForSdk(agentSdk, model, { skipBackendPush: true })
-        } catch {
-          /* non-critical */
+        // Skip when auto-applying mode defaults — those shouldn't rewrite global preferences
+        if (!options?.skipGlobalUpdate) {
+          try {
+            const { useSettingsStore } = await import('./useSettingsStore')
+            useSettingsStore
+              .getState()
+              .setSelectedModelForSdk(agentSdk, model, { skipBackendPush: true })
+          } catch {
+            /* non-critical */
+          }
         }
 
         // Also persist as the worktree's last-used model (only for worktree sessions)
@@ -873,6 +919,32 @@ export const useSessionStore = create<SessionState>()(
             /* non-critical */
           }
         }
+      },
+
+      // Apply mode-specific default model when toggling modes
+      applyModeDefaultModel: async (sessionId: string, newMode: SessionMode) => {
+        // Import settings store dynamically to avoid circular deps
+        const { useSettingsStore, resolveModelForSdk } = await import('./useSettingsStore')
+
+        const session = get().getSessionById(sessionId)
+        const settings = useSettingsStore.getState()
+        const sessionSdk = session?.agent_sdk ?? settings.defaultAgentSdk ?? 'opencode'
+        if (sessionSdk === 'terminal') return
+
+        const configuredDefaultSdk = settings.defaultAgentSdk ?? 'opencode'
+
+        // Mode defaults are configured in the context of the default SDK.
+        // Only apply them when the session SDK matches; otherwise fall back to per-SDK default.
+        const modeDefault =
+          sessionSdk === configuredDefaultSdk ? settings.getModelForMode(newMode) : null
+        const newModeDefault = modeDefault ?? resolveModelForSdk(sessionSdk, settings)
+        if (!newModeDefault) {
+          // No defaults configured, keep current model
+          return
+        }
+
+        // Apply the new mode's default model (without rewriting global preferences)
+        await get().setSessionModel(sessionId, newModeDefault, { skipGlobalUpdate: true })
       },
 
       // Keep opencode_session_id in sync in-memory after connect/reconnect (scope-agnostic)
@@ -1173,7 +1245,8 @@ export const useSessionStore = create<SessionState>()(
       // Create a session scoped to a connection
       createConnectionSession: async (
         connectionId: string,
-        agentSdkOverride?: 'opencode' | 'claude-code' | 'terminal'
+        agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
+        initialMode?: SessionMode
       ) => {
         try {
           // Look up the connection to get the first member's project_id
@@ -1186,15 +1259,31 @@ export const useSessionStore = create<SessionState>()(
 
           // Determine default model and agent SDK from global settings
           let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
-          let defaultAgentSdk: 'opencode' | 'claude-code' | 'terminal' = 'opencode'
+          let defaultAgentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal' = 'opencode'
           try {
             const { useSettingsStore } = await import('./useSettingsStore')
             defaultAgentSdk =
               agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
             // Terminal sessions skip model resolution
             if (defaultAgentSdk !== 'terminal') {
-              const { resolveModelForSdk } = await import('./useSettingsStore')
-              defaultModel = resolveModelForSdk(defaultAgentSdk)
+              const configuredDefaultSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+
+              // Priority 1: mode-specific default (only when session SDK matches the
+              // configured default — mode defaults are set in that SDK's context)
+              if (defaultAgentSdk === configuredDefaultSdk) {
+                const modeModel = useSettingsStore
+                  .getState()
+                  .getModelForMode(initialMode ?? 'build')
+                if (modeModel) {
+                  defaultModel = modeModel
+                }
+              }
+
+              // Priority 2: per-provider default → (legacy) global default
+              if (!defaultModel) {
+                const { resolveModelForSdk } = await import('./useSettingsStore')
+                defaultModel = resolveModelForSdk(defaultAgentSdk)
+              }
             }
           } catch {
             /* non-critical */

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { isMac } from '@/lib/platform'
 import {
   PanelRightClose,
   PanelRightOpen,
@@ -10,7 +11,8 @@ import {
   GitMerge,
   Archive,
   ChevronDown,
-  FileSearch
+  FileSearch,
+  X
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,7 +21,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem
 } from '@/components/ui/dropdown-menu'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { toast } from '@/lib/toast'
+import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useSessionHistoryStore } from '@/stores/useSessionHistoryStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -29,6 +33,7 @@ import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useVimModeStore } from '@/stores/useVimModeStore'
 import { QuickActions } from './QuickActions'
 import { usePRDetection } from '@/hooks/usePRDetection'
 import hiveLogo from '@/assets/icon.png'
@@ -69,6 +74,9 @@ export function Header(): React.JSX.Element {
   const updateSessionName = useSessionStore((s) => s.updateSessionName)
   const setPendingMessage = useSessionStore((s) => s.setPendingMessage)
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
+  const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+  const showVimHints = vimModeEnabled && vimMode === 'normal'
   const [conflictFixFlow, setConflictFixFlow] = useState<ConflictFixFlow | null>(null)
 
   // Monitor PR session stream events for PR URL detection
@@ -115,11 +123,15 @@ export function Header(): React.JSX.Element {
     : undefined
   const isOperating = useGitStore((state) => state.isPushing || state.isPulling)
 
-  // PR lifecycle state
-  const prInfo = useGitStore((s) =>
-    selectedWorktreeId ? s.prInfo.get(selectedWorktreeId) : undefined
+  // PR lifecycle state (new persistent model)
+  const prCreation = useGitStore((s) =>
+    selectedWorktreeId ? s.prCreation.get(selectedWorktreeId) : undefined
   )
-  const prState = prInfo?.state ?? 'none'
+  const attachedPR = useGitStore((s) =>
+    selectedWorktreeId ? s.attachedPR.get(selectedWorktreeId) : undefined
+  )
+  const isCreatingPR = prCreation?.creating ?? false
+  const hasAttachedPR = !!attachedPR
 
   // Clean tree detection for merge button visibility
   const fileStatuses = useGitStore((s) =>
@@ -189,6 +201,16 @@ export function Header(): React.JSX.Element {
   const [isMergingPR, setIsMergingPR] = useState(false)
   const [isArchivingWorktree, setIsArchivingWorktree] = useState(false)
 
+  // PR picker popover state
+  const [prPickerOpen, setPrPickerOpen] = useState(false)
+  const [prList, setPrList] = useState<
+    Array<{ number: number; title: string; author: string; headRefName: string }>
+  >([])
+  const [prListLoading, setPrListLoading] = useState(false)
+  const [prLiveState, setPrLiveState] = useState<
+    { state?: string; title?: string } | null
+  >(null)
+
   useEffect(() => {
     if (!selectedWorktree?.path) {
       setRemoteBranches([])
@@ -200,6 +222,47 @@ export function Header(): React.JSX.Element {
       }
     })
   }, [selectedWorktree?.path])
+
+  // Fetch PR list + live state when picker opens
+  useEffect(() => {
+    if (!prPickerOpen || !selectedProject?.path) return
+    setPrListLoading(true)
+
+    const fetchPRs = window.gitOps.listPRs(selectedProject.path).then((res) => {
+      if (res.success) {
+        // Sort: branch-matching PR first, then by number descending
+        const currentBranch = branchInfo?.name ?? ''
+        const sorted = [...res.prs].sort((a, b) => {
+          const aMatch = a.headRefName === currentBranch ? 1 : 0
+          const bMatch = b.headRefName === currentBranch ? 1 : 0
+          if (aMatch !== bMatch) return bMatch - aMatch
+          return b.number - a.number
+        })
+        setPrList(sorted)
+      } else {
+        toast.error(res.error || 'Failed to load PRs')
+        setPrPickerOpen(false)
+      }
+    }).catch(() => {
+      toast.error('Failed to load PRs')
+      setPrPickerOpen(false)
+    })
+
+    const fetchState = attachedPR && selectedProject?.path
+      ? window.gitOps.getPRState(selectedProject.path, attachedPR.number).then((res) => {
+          if (res.success) {
+            setPrLiveState({ state: res.state, title: res.title })
+          }
+        }).catch(() => { /* non-critical */ })
+      : Promise.resolve()
+
+    Promise.all([fetchPRs, fetchState]).finally(() => setPrListLoading(false))
+  }, [prPickerOpen, selectedProject?.path, attachedPR, branchInfo?.name])
+
+  // Clear live state when attached PR changes
+  useEffect(() => {
+    setPrLiveState(null)
+  }, [attachedPR?.number])
 
   const handleCreatePR = useCallback(async () => {
     if (!selectedWorktree?.path) return
@@ -244,10 +307,9 @@ export function Header(): React.JSX.Element {
     )
 
     // Tag this session as a PR session for detection
-    useGitStore.getState().setPrState(wtId, {
-      state: 'creating',
-      sessionId: result.session.id,
-      targetBranch
+    useGitStore.getState().setPrCreation(wtId, {
+      creating: true,
+      sessionId: result.session.id
     })
   }, [selectedWorktree?.path, selectedWorktreeId, prTargetBranch, branchInfo])
 
@@ -317,15 +379,15 @@ export function Header(): React.JSX.Element {
 
   const handleMergePR = useCallback(async () => {
     if (!selectedWorktree?.path || !selectedWorktreeId) return
-    const pr = useGitStore.getState().prInfo.get(selectedWorktreeId)
-    if (!pr?.prNumber) return
+    const pr = useGitStore.getState().attachedPR.get(selectedWorktreeId)
+    if (!pr?.number) return
 
     setIsMergingPR(true)
     try {
-      const result = await window.gitOps.prMerge(selectedWorktree.path, pr.prNumber)
+      const result = await window.gitOps.prMerge(selectedWorktree.path, pr.number)
       if (result.success) {
         toast.success('PR merged successfully')
-        useGitStore.getState().setPrState(selectedWorktreeId, { ...pr, state: 'merged' })
+        setPrLiveState({ state: 'MERGED', title: prLiveState?.title })
       } else {
         toast.error(`Merge failed: ${result.error}`)
       }
@@ -334,7 +396,7 @@ export function Header(): React.JSX.Element {
     } finally {
       setIsMergingPR(false)
     }
-  }, [selectedWorktree?.path, selectedWorktreeId])
+  }, [selectedWorktree?.path, selectedWorktreeId, prLiveState?.title])
 
   const handleArchiveWorktree = useCallback(async () => {
     if (!selectedWorktreeId || !selectedWorktree || !selectedProject) return
@@ -356,6 +418,25 @@ export function Header(): React.JSX.Element {
       setIsArchivingWorktree(false)
     }
   }, [selectedWorktreeId, selectedWorktree, selectedProject])
+
+  const handleSelectPR = useCallback(
+    (pr: { number: number; headRefName: string }) => {
+      if (!selectedWorktreeId || !remoteInfo?.url) return
+      // Construct PR URL from remote URL + number
+      const cleanUrl = remoteInfo.url.replace(/\.git$/, '')
+      const prUrl = `${cleanUrl}/pull/${pr.number}`
+      useGitStore.getState().attachPR(selectedWorktreeId, pr.number, prUrl)
+      setPrPickerOpen(false)
+    },
+    [selectedWorktreeId, remoteInfo?.url]
+  )
+
+  const handleDetachPR = useCallback(() => {
+    if (!selectedWorktreeId) return
+    useGitStore.getState().detachPR(selectedWorktreeId)
+    setPrPickerOpen(false)
+    setPrLiveState(null)
+  }, [selectedWorktreeId])
 
   const handleFixConflicts = async () => {
     if (!selectedWorktreeId || !selectedProjectId || !selectedWorktree?.path) return
@@ -398,7 +479,7 @@ export function Header(): React.JSX.Element {
       data-testid="header"
     >
       {/* Spacer for macOS traffic lights */}
-      <div className="w-16 flex-shrink-0" />
+      {isMac() && <div className="w-16 flex-shrink-0" />}
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <img src={hiveLogo} alt="Hive" className="h-5 w-5 shrink-0 rounded" draggable={false} />
         {isConnectionMode && selectedConnection ? (
@@ -418,6 +499,19 @@ export function Header(): React.JSX.Element {
           </span>
         ) : (
           <span className="text-sm font-medium">Hive</span>
+        )}
+        {vimModeEnabled && (
+          <span
+            className={cn(
+              'text-[10px] font-mono px-1.5 py-0.5 rounded border select-none',
+              vimMode === 'normal'
+                ? 'text-muted-foreground bg-muted/50 border-border/50'
+                : 'text-primary bg-primary/10 border-primary/30'
+            )}
+            data-testid="vim-mode-pill"
+          >
+            {vimMode === 'normal' ? 'NORMAL' : 'INSERT'}
+          </span>
         )}
       </div>
       {/* Center: Quick Actions */}
@@ -448,42 +542,67 @@ export function Header(): React.JSX.Element {
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        {!isConnectionMode && isGitHub && prState === 'merged' && (
-          <Button
-            size="sm"
-            variant="destructive"
-            className="h-7 text-xs"
-            onClick={handleArchiveWorktree}
-            disabled={isArchivingWorktree}
-            title="Archive worktree"
-            data-testid="pr-archive-button"
-          >
-            {isArchivingWorktree ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-            ) : (
-              <Archive className="h-3.5 w-3.5 mr-1" />
-            )}
-            {isArchivingWorktree ? 'Archiving...' : 'Archive'}
-          </Button>
-        )}
-        {!isConnectionMode && isGitHub && prState === 'created' && isCleanTree && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs bg-emerald-600/10 border-emerald-600/30 text-emerald-500 hover:bg-emerald-600/20"
-            onClick={handleMergePR}
-            disabled={isMergingPR}
-            title="Merge Pull Request"
-            data-testid="pr-merge-button"
-          >
-            {isMergingPR ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-            ) : (
-              <GitMerge className="h-3.5 w-3.5 mr-1" />
-            )}
-            {isMergingPR ? 'Merging...' : 'Merge PR'}
-          </Button>
-        )}
+        {!isConnectionMode &&
+          isGitHub &&
+          hasAttachedPR &&
+          prLiveState?.state === 'MERGED' &&
+          !selectedWorktree?.is_default && (
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 text-xs"
+              onClick={handleArchiveWorktree}
+              disabled={isArchivingWorktree}
+              title="Archive worktree"
+              data-testid="pr-archive-button"
+            >
+              {isArchivingWorktree ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              ) : (
+                <Archive className="h-3.5 w-3.5 mr-1" />
+              )}
+              {isArchivingWorktree ? (
+                'Archiving...'
+              ) : showVimHints ? (
+                <span>
+                  <span className="text-primary font-bold">A</span>rchive
+                </span>
+              ) : (
+                'Archive'
+              )}
+            </Button>
+          )}
+        {!isConnectionMode &&
+          isGitHub &&
+          hasAttachedPR &&
+          prLiveState?.state !== 'MERGED' &&
+          prLiveState?.state !== 'CLOSED' &&
+          isCleanTree && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs bg-emerald-600/10 border-emerald-600/30 text-emerald-500 hover:bg-emerald-600/20"
+              onClick={handleMergePR}
+              disabled={isMergingPR}
+              title="Merge Pull Request"
+              data-testid="pr-merge-button"
+            >
+              {isMergingPR ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              ) : (
+                <GitMerge className="h-3.5 w-3.5 mr-1" />
+              )}
+              {isMergingPR ? (
+                'Merging...'
+              ) : showVimHints ? (
+                <span>
+                  <span className="text-primary font-bold">M</span>erge PR
+                </span>
+              ) : (
+                'Merge PR'
+              )}
+            </Button>
+          )}
         {!isConnectionMode && selectedWorktree && (
           <>
             <Button
@@ -496,7 +615,13 @@ export function Header(): React.JSX.Element {
               data-testid="review-button"
             >
               <FileSearch className="h-3.5 w-3.5 mr-1" />
-              Review
+              {showVimHints ? (
+                <span>
+                  <span className="text-primary font-bold">R</span>eview
+                </span>
+              ) : (
+                'Review'
+              )}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -518,8 +643,7 @@ export function Header(): React.JSX.Element {
                     <DropdownMenuItem
                       key={branch.name}
                       onClick={() =>
-                        selectedWorktreeId &&
-                        setReviewTargetBranch(selectedWorktreeId, branch.name)
+                        selectedWorktreeId && setReviewTargetBranch(selectedWorktreeId, branch.name)
                       }
                       data-testid={`review-target-branch-${branch.name}`}
                     >
@@ -531,60 +655,158 @@ export function Header(): React.JSX.Element {
             </DropdownMenu>
           </>
         )}
-        {!isConnectionMode &&
-          isGitHub &&
-          (prState === 'none' ||
-            prState === 'creating' ||
-            (prState === 'created' && !isCleanTree)) && (
-            <>
+        {/* PR Badge with Popover Picker — shown when a PR is attached and not creating */}
+        {!isConnectionMode && isGitHub && hasAttachedPR && !isCreatingPR && (
+          <Popover open={prPickerOpen} onOpenChange={setPrPickerOpen}>
+            <PopoverTrigger asChild>
               <Button
                 size="sm"
                 variant="outline"
                 className="h-7 text-xs"
-                onClick={handleCreatePR}
-                disabled={isOperating || prState === 'creating'}
-                title="Create Pull Request"
-                data-testid="pr-button"
+                title={`PR #${attachedPR!.number}`}
+                data-testid="pr-badge"
               >
-                {prState === 'creating' ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                ) : (
-                  <GitPullRequest className="h-3.5 w-3.5 mr-1" />
+                <GitPullRequest className="h-3.5 w-3.5 mr-1" />
+                PR #{attachedPR!.number}
+                {prLiveState?.state === 'MERGED' && (
+                  <span className="text-muted-foreground ml-1">· merged</span>
                 )}
-                PR
+                {prLiveState?.state === 'CLOSED' && (
+                  <span className="text-muted-foreground ml-1">· closed</span>
+                )}
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-xs text-muted-foreground px-2 h-7"
-                    data-testid="pr-target-branch-trigger"
-                  >
-                    → {prTargetBranch || branchInfo?.tracking || 'origin/main'}
-                    <ChevronDown className="h-3 w-3 ml-1" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="max-h-60 overflow-y-auto">
-                  {remoteBranches.length === 0 ? (
-                    <DropdownMenuItem disabled>No remote branches</DropdownMenuItem>
-                  ) : (
-                    remoteBranches.map((branch) => (
-                      <DropdownMenuItem
-                        key={branch.name}
-                        onClick={() =>
-                          selectedWorktreeId && setPrTargetBranch(selectedWorktreeId, branch.name)
-                        }
-                        data-testid={`pr-target-branch-${branch.name}`}
-                      >
-                        {branch.name}
-                      </DropdownMenuItem>
-                    ))
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </>
-          )}
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 p-0">
+              {/* Attached PR header */}
+              <div className="px-3 py-2 border-b">
+                <div className="text-xs font-medium text-muted-foreground">
+                  Attached: #{attachedPR!.number}
+                </div>
+                {prLiveState?.title && (
+                  <div className="text-sm truncate">
+                    {prLiveState.title}
+                    {prLiveState.state && (
+                      <span className="text-muted-foreground ml-1 text-xs">
+                        ({prLiveState.state.toLowerCase()})
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* PR list */}
+              <div className="max-h-48 overflow-y-auto">
+                {prListLoading ? (
+                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />
+                    Loading PRs...
+                  </div>
+                ) : prList.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                    No open PRs found
+                  </div>
+                ) : (
+                  prList.map((pr) => (
+                    <button
+                      key={pr.number}
+                      className={cn(
+                        'w-full text-left px-3 py-2 text-sm hover:bg-accent cursor-pointer',
+                        'flex items-center gap-2',
+                        pr.number === attachedPR!.number && 'bg-accent/50'
+                      )}
+                      onClick={() => handleSelectPR(pr)}
+                      data-testid={`pr-picker-item-${pr.number}`}
+                    >
+                      <span className={cn(
+                        'text-xs font-mono shrink-0',
+                        pr.number === attachedPR!.number && 'text-primary font-bold'
+                      )}>
+                        {pr.number === attachedPR!.number ? '●' : ' '} #{pr.number}
+                      </span>
+                      <span className="truncate">{pr.title}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+              {/* Detach action */}
+              <div className="border-t">
+                <button
+                  className="w-full text-left px-3 py-2 text-sm text-destructive hover:bg-destructive/10 cursor-pointer flex items-center gap-1"
+                  onClick={handleDetachPR}
+                  data-testid="pr-detach-button"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Detach PR
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+        {/* Creating PR spinner */}
+        {!isConnectionMode && isGitHub && isCreatingPR && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            disabled
+            data-testid="pr-creating-button"
+          >
+            <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+            PR
+          </Button>
+        )}
+        {/* Create PR button — shown when no PR attached and not creating */}
+        {!isConnectionMode && isGitHub && !hasAttachedPR && !isCreatingPR && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={handleCreatePR}
+              disabled={isOperating}
+              title="Create Pull Request"
+              data-testid="pr-button"
+            >
+              <GitPullRequest className="h-3.5 w-3.5 mr-1" />
+              {showVimHints ? (
+                <span>
+                  <span className="text-primary font-bold">P</span>R
+                </span>
+              ) : (
+                'PR'
+              )}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-xs text-muted-foreground px-2 h-7"
+                  data-testid="pr-target-branch-trigger"
+                >
+                  → {prTargetBranch || branchInfo?.tracking || 'origin/main'}
+                  <ChevronDown className="h-3 w-3 ml-1" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-60 overflow-y-auto">
+                {remoteBranches.length === 0 ? (
+                  <DropdownMenuItem disabled>No remote branches</DropdownMenuItem>
+                ) : (
+                  remoteBranches.map((branch) => (
+                    <DropdownMenuItem
+                      key={branch.name}
+                      onClick={() =>
+                        selectedWorktreeId && setPrTargetBranch(selectedWorktreeId, branch.name)
+                      }
+                      data-testid={`pr-target-branch-${branch.name}`}
+                    >
+                      {branch.name}
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        )}
         <Button
           variant="ghost"
           size="icon"

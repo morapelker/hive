@@ -1,9 +1,9 @@
-import fixPath from 'fix-path'
+import { loadShellEnv } from './services/shell-env'
 import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
-import { spawn, exec, execFileSync } from 'child_process'
+import { spawn, exec } from 'child_process'
 import { promisify } from 'util'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
 import {
@@ -30,10 +30,12 @@ import {
 import { buildMenu, updateMenuState } from './menu'
 import type { MenuState } from './menu'
 import { createLogger, getLogDir } from './services/logger'
+import { detectAgentSdks } from './services/system-info'
 import { createResponseLog, appendResponseLog } from './services/response-logger'
 import { notificationService } from './services/notification-service'
 import { updaterService } from './services/updater'
 import { ClaudeCodeImplementer } from './services/claude-code-implementer'
+import { CodexImplementer } from './services/codex-implementer'
 import { AgentSdkManager } from './services/agent-sdk-manager'
 import { resolveClaudeBinaryPath } from './services/claude-binary-resolver'
 import type { AgentSdkImplementer } from './services/agent-sdk-types'
@@ -50,9 +52,7 @@ const isHeadless = cliArgs.includes('--headless')
 const headlessPort = cliArgs.includes('--port')
   ? parseInt(cliArgs[cliArgs.indexOf('--port') + 1])
   : undefined
-const headlessBind = cliArgs.includes('--bind')
-  ? cliArgs[cliArgs.indexOf('--bind') + 1]
-  : undefined
+const headlessBind = cliArgs.includes('--bind') ? cliArgs[cliArgs.indexOf('--bind') + 1] : undefined
 const isRotateKey = cliArgs.includes('--rotate-key')
 const isRegenCerts = cliArgs.includes('--regen-certs')
 const isShowStatus = cliArgs.includes('--show-status')
@@ -128,8 +128,12 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 15, y: 10 },
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 15, y: 10 }
+        }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -267,10 +271,34 @@ function registerSystemHandlers(): void {
     try {
       switch (appName) {
         case 'cursor':
-          spawn('open', ['-a', 'Cursor', path], { detached: true, stdio: 'ignore' })
+          if (process.platform === 'darwin') {
+            spawn('open', ['-a', 'Cursor', path], { detached: true, stdio: 'ignore' })
+          } else if (process.platform === 'win32') {
+            spawn('cmd', ['/c', 'start', '', 'cursor', path], {
+              detached: true,
+              stdio: 'ignore'
+            })
+          } else {
+            spawn('cursor', [path], { detached: true, stdio: 'ignore' })
+          }
           break
         case 'ghostty':
+          if (process.platform === 'win32') {
+            return { success: false, error: 'Ghostty is not available on Windows' }
+          }
           spawn('open', ['-a', 'Ghostty', path], { detached: true, stdio: 'ignore' })
+          break
+        case 'android-studio':
+          if (process.platform === 'darwin') {
+            spawn('open', ['-a', 'Android Studio', path], { detached: true, stdio: 'ignore' })
+          } else if (process.platform === 'win32') {
+            spawn('cmd', ['/c', 'start', '', 'studio64.exe', path], {
+              detached: true,
+              stdio: 'ignore'
+            })
+          } else {
+            spawn('studio', [path], { detached: true, stdio: 'ignore' })
+          }
           break
         case 'copy-path':
           clipboard.writeText(path)
@@ -289,24 +317,7 @@ function registerSystemHandlers(): void {
 
   // Detect which agent SDKs are installed on the system (first-launch setup)
   ipcMain.handle('system:detectAgentSdks', () => {
-    const whichCmd = process.platform === 'win32' ? 'where' : 'which'
-    const check = (binary: string): boolean => {
-      try {
-        const result = execFileSync(whichCmd, [binary], {
-          encoding: 'utf-8',
-          timeout: 5000,
-          env: process.env
-        }).trim()
-        const resolved = result.split('\n')[0].trim()
-        return !!resolved && existsSync(resolved)
-      } catch {
-        return false
-      }
-    }
-    return {
-      opencode: check('opencode'),
-      claude: check('claude')
-    }
+    return detectAgentSdks()
   })
 
   // Quit the app (needed for macOS where window.close() doesn't quit)
@@ -319,19 +330,46 @@ function registerSystemHandlers(): void {
     return app.isPackaged
   })
 
-  // Install hive-server shell wrapper to /usr/local/bin
-  ipcMain.handle('system:installServerToPath', async () => {
-    const targetPath = '/usr/local/bin/hive-server'
-    const execAsync = promisify(exec)
+  // Get the current platform (darwin, win32, linux)
+  ipcMain.handle('system:getPlatform', () => {
+    return process.platform
+  })
 
+  // Install hive-server shell wrapper to PATH
+  ipcMain.handle('system:installServerToPath', async () => {
+    const execAsync = promisify(exec)
+    const execPath = process.execPath
+
+    if (process.platform === 'win32') {
+      try {
+        const installDir = join(process.env.LOCALAPPDATA || join(app.getPath('home'), 'AppData', 'Local'), 'Hive')
+        mkdirSync(installDir, { recursive: true })
+        const targetPath = join(installDir, 'hive-server.cmd')
+        const scriptContent = `@echo off\r\n"${execPath}" --headless %*\r\n`
+        writeFileSync(targetPath, scriptContent)
+
+        // Add to user PATH via PowerShell if not already present (escape single quotes for safe interpolation)
+        const escapedDir = installDir.replace(/'/g, "''")
+        const psCmd = `$d='${escapedDir}'; $p=[Environment]::GetEnvironmentVariable('Path','User'); if($p -split ';' -notcontains $d){ [Environment]::SetEnvironmentVariable('Path',$p+';'+$d,'User') }`
+        await execAsync(`powershell -Command "${psCmd}"`, { timeout: 15000 })
+
+        return { success: true, path: targetPath }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { success: false, error: message }
+      }
+    }
+
+    // macOS / Linux
+    const targetPath = '/usr/local/bin/hive-server'
     try {
-      const execPath = process.execPath
-      const scriptContent = [
-        '#!/bin/bash',
-        '# hive-server — Hive headless mode launcher',
-        '# Installed by Hive.app',
-        `exec "${execPath}" --headless "$@"`
-      ].join('\n') + '\n'
+      const scriptContent =
+        [
+          '#!/bin/bash',
+          '# hive-server — Hive headless mode launcher',
+          '# Installed by Hive.app',
+          `exec "${execPath}" --headless "$@"`
+        ].join('\n') + '\n'
 
       // Write to a temp file first (no admin needed), then move with elevation
       const tmpPath = join(app.getPath('temp'), 'hive-server-install')
@@ -343,7 +381,6 @@ function registerSystemHandlers(): void {
       return { success: true, path: targetPath }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      // User cancelled the admin dialog
       if (message.includes('User canceled') || message.includes('-128')) {
         return { success: false, error: 'Installation cancelled' }
       }
@@ -351,11 +388,34 @@ function registerSystemHandlers(): void {
     }
   })
 
-  // Uninstall hive-server from /usr/local/bin
+  // Uninstall hive-server from PATH
   ipcMain.handle('system:uninstallServerFromPath', async () => {
-    const targetPath = '/usr/local/bin/hive-server'
     const execAsync = promisify(exec)
 
+    if (process.platform === 'win32') {
+      try {
+        const installDir = join(process.env.LOCALAPPDATA || join(app.getPath('home'), 'AppData', 'Local'), 'Hive')
+        const targetPath = join(installDir, 'hive-server.cmd')
+        if (!existsSync(targetPath)) {
+          return { success: false, error: 'hive-server is not installed' }
+        }
+
+        unlinkSync(targetPath)
+
+        // Remove from user PATH via PowerShell (escape single quotes for safe interpolation)
+        const escapedDir = installDir.replace(/'/g, "''")
+        const psCmd = `$d='${escapedDir}'; $p = [Environment]::GetEnvironmentVariable('Path','User'); [Environment]::SetEnvironmentVariable('Path', ($p -split ';' | Where-Object { $_ -ne $d }) -join ';','User')`
+        await execAsync(`powershell -Command "${psCmd}"`, { timeout: 15000 })
+
+        return { success: true }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { success: false, error: message }
+      }
+    }
+
+    // macOS / Linux
+    const targetPath = '/usr/local/bin/hive-server'
     try {
       if (!existsSync(targetPath)) {
         return { success: false, error: 'hive-server is not installed' }
@@ -390,11 +450,11 @@ function registerLoggingHandlers(): void {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
-  // Fix PATH for macOS when launched from Finder/Dock/Spotlight.
-  // Must run before any child process spawning (opencode, scripts).
-  fixPath()
+  // Load full shell environment for macOS when launched from Finder/Dock/Spotlight.
+  // Must run before any child process spawning (opencode, scripts, Claude Code SDK).
+  loadShellEnv()
 
-  // Resolve system-wide Claude binary (must run after fixPath)
+  // Resolve system-wide Claude binary (must run after loadShellEnv)
   const claudeBinaryPath = resolveClaudeBinaryPath()
 
   log.info('App starting', {
@@ -528,7 +588,9 @@ app.whenReady().then(async () => {
       renameSession: async () => {},
       setMainWindow: () => {}
     } satisfies AgentSdkImplementer
-    const sdkManager = new AgentSdkManager(openCodePlaceholder, claudeImpl)
+    const codexImpl = new CodexImplementer()
+    codexImpl.setDatabaseService(getDatabase())
+    const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
     sdkManager.setMainWindow(mainWindow)
 
     const databaseService = getDatabase()
@@ -578,6 +640,8 @@ app.on('window-all-closed', () => {
 
 // Cleanup when app is about to quit
 app.on('will-quit', async () => {
+  // Cleanup updater timers
+  updaterService.cleanup()
   // Cleanup terminal PTYs
   cleanupTerminals()
   // Cleanup running scripts

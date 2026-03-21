@@ -212,7 +212,7 @@ const CONNECTION_COLOR_QUADS: ConnectionColorQuad[] = [
 
   // ── Stones (warm neutral) ─────────────────────────────
   ['#d6d3d1', '#57534e', '#1c1917', '#ffffff'], // stone light
-  ['#e7e5e4', '#78716c', '#292524', '#ffffff']  // stone medium
+  ['#e7e5e4', '#78716c', '#292524', '#ffffff'] // stone medium
 ]
 
 export function generateConnectionColor(): string {

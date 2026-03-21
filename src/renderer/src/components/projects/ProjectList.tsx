@@ -1,17 +1,38 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { Loader2, FolderPlus } from 'lucide-react'
-import { useProjectStore, useSpaceStore } from '@/stores'
+import {
+  useProjectStore,
+  useSpaceStore,
+  useWorktreeStore,
+  useHintStore,
+  useVimModeStore,
+  useSettingsStore,
+  usePinnedStore,
+  useConnectionStore
+} from '@/stores'
 import { ProjectItem } from './ProjectItem'
-import { ProjectFilter } from './ProjectFilter'
 import { subsequenceMatch } from '@/lib/subsequence-match'
+import {
+  assignHints,
+  buildNormalModeTargets,
+  buildPinnedAndConnectionTargets,
+  type HintTarget
+} from '@/lib/hint-utils'
 
 interface ProjectListProps {
   onAddProject: () => void
+  filterQuery: string
 }
 
-export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Element {
+export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): React.JSX.Element {
   const { projects, isLoading, error, loadProjects, reorderProjects } = useProjectStore()
-  const [filterQuery, setFilterQuery] = useState('')
+  const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
+  const { setHints, clearHints, setFilterActive } = useHintStore()
+  const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+  const pinnedWorktreeIds = usePinnedStore((s) => s.pinnedWorktreeIds)
+  const pinnedConnectionIds = usePinnedStore((s) => s.pinnedConnectionIds)
+  const connections = useConnectionStore((s) => s.connections)
 
   // Drag state for project reordering
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
@@ -102,6 +123,93 @@ export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Eleme
       })
   }, [projects, filterQuery, activeSpaceId, projectSpaceMap])
 
+  // Build hint assignments when filter is active
+  const { hintMap: computedHintMap, hintTargetMap: computedHintTargetMap } = useMemo(() => {
+    if (filterQuery.trim()) {
+      // Filter mode: existing behavior (plus + worktree targets)
+      const targets: HintTarget[] = []
+      for (const { project } of filteredProjects) {
+        const wts = worktreesByProject.get(project.id) ?? []
+        if (wts.length > 0) {
+          targets.push({ kind: 'plus', projectId: project.id })
+          for (const wt of wts) {
+            targets.push({ kind: 'worktree', worktreeId: wt.id, projectId: project.id })
+          }
+        }
+      }
+      const lastChar = filterQuery.trim().slice(-1).toUpperCase()
+      return assignHints(targets, lastChar)
+    }
+
+    if (vimModeEnabled && vimMode === 'normal') {
+      // Normal mode (no filter): pinned/connection targets + project/worktree targets
+      const worktreeProjectMap = new Map<string, string>()
+      for (const [projectId, wts] of worktreesByProject) {
+        for (const wt of wts) {
+          worktreeProjectMap.set(wt.id, projectId)
+        }
+      }
+      const pinnedAndConnectionTargets = buildPinnedAndConnectionTargets(
+        pinnedWorktreeIds,
+        pinnedConnectionIds,
+        connections.map((c) => c.id),
+        worktreeProjectMap
+      )
+      const projectTargets = buildNormalModeTargets(
+        filteredProjects.map((fp) => fp.project),
+        worktreesByProject
+      )
+      const allTargets = [...pinnedAndConnectionTargets, ...projectTargets]
+      return assignHints(allTargets, undefined, 'S')
+    }
+
+    return { hintMap: new Map<string, string>(), hintTargetMap: new Map<string, HintTarget>() }
+  }, [
+    filteredProjects,
+    worktreesByProject,
+    filterQuery,
+    vimModeEnabled,
+    vimMode,
+    pinnedWorktreeIds,
+    pinnedConnectionIds,
+    connections
+  ])
+
+  // Immediately set filterActive when filter text changes — this drives project expansion
+  // independently of worktree loading (breaking the circular dependency)
+  useEffect(() => {
+    setFilterActive(!!filterQuery.trim())
+    return () => {
+      setFilterActive(false)
+    }
+  }, [filterQuery, setFilterActive])
+
+  useEffect(() => {
+    if (filterQuery.trim() || (vimModeEnabled && vimMode === 'normal')) {
+      setHints(computedHintMap, computedHintTargetMap)
+    } else {
+      clearHints()
+    }
+    // No cleanup here: when computedHintMap changes (worktrees loading), setHints
+    // immediately overwrites — running clearHints() in cleanup would reset mode:'idle'
+    // mid-navigation and break the two-char hint flow.
+  }, [
+    computedHintMap,
+    computedHintTargetMap,
+    filterQuery,
+    vimModeEnabled,
+    vimMode,
+    setHints,
+    clearHints
+  ])
+
+  // Clear all hint state on unmount only
+  useEffect(() => {
+    return () => {
+      useHintStore.getState().clearHints()
+    }
+  }, [])
+
   // Loading state
   if (isLoading && projects.length === 0) {
     return (
@@ -154,7 +262,6 @@ export function ProjectList({ onAddProject }: ProjectListProps): React.JSX.Eleme
   // Project list
   return (
     <div data-testid="project-list">
-      {projects.length > 1 && <ProjectFilter value={filterQuery} onChange={setFilterQuery} />}
       <div className="space-y-0.5">
         {filteredProjects.map((item) => (
           <ProjectItem

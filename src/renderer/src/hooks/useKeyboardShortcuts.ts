@@ -185,7 +185,7 @@ export function useKeyboardShortcuts(): void {
 
       // Priority 2: Close active file tab
       if (activeFilePath) {
-        useFileViewerStore.getState().closeFile(activeFilePath)
+        useFileViewerStore.getState().requestCloseFile(activeFilePath)
         return
       }
 
@@ -256,7 +256,7 @@ function getShortcutHandlers(
 
         // Priority 2: Close active file tab
         if (activeFilePath) {
-          useFileViewerStore.getState().closeFile(activeFilePath)
+          useFileViewerStore.getState().requestCloseFile(activeFilePath)
           return
         }
 
@@ -340,6 +340,25 @@ function getShortcutHandlers(
       allowInInput: false,
       handler: () => {
         toast.info('Use the + button in the sidebar to create a new worktree')
+      }
+    },
+    {
+      id: 'nav:filter-projects',
+      binding: getEffectiveBinding('nav:filter-projects'),
+      allowInInput: true,
+      handler: () => {
+        // Open left sidebar if collapsed
+        const { leftSidebarCollapsed, setLeftSidebarCollapsed } = useLayoutStore.getState()
+        if (leftSidebarCollapsed) {
+          setLeftSidebarCollapsed(false)
+        }
+        // Dispatch focus event (allow a tick for sidebar to render)
+        setTimeout(
+          () => {
+            window.dispatchEvent(new CustomEvent('hive:focus-project-filter'))
+          },
+          leftSidebarCollapsed ? 100 : 0
+        )
       }
     },
 

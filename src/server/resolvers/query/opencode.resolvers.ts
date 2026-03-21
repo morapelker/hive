@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Resolvers } from '../../__generated__/resolvers-types'
 import { openCodeService } from '../../../main/services/opencode-service'
-import { withSdkDispatch } from '../helpers/sdk-dispatch'
+import { withSdkDispatch, mapGraphQLSdkToInternal } from '../helpers/sdk-dispatch'
 
 export const opencodeQueryResolvers: Resolvers = {
   Query: {
@@ -46,8 +46,9 @@ export const opencodeQueryResolvers: Resolvers = {
 
     opencodeModels: async (_parent, { agentSdk }, ctx) => {
       try {
-        if (agentSdk === 'claude_code' && ctx.sdkManager) {
-          const impl = ctx.sdkManager.getImplementer('claude-code')
+        if (agentSdk && agentSdk !== 'opencode' && ctx.sdkManager) {
+          const internalId = mapGraphQLSdkToInternal(agentSdk)
+          const impl = ctx.sdkManager.getImplementer(internalId)
           const providers = await impl.getAvailableModels()
           return { success: true, providers }
         }
@@ -64,8 +65,9 @@ export const opencodeQueryResolvers: Resolvers = {
 
     opencodeModelInfo: async (_parent, { worktreePath, modelId, agentSdk }, ctx) => {
       try {
-        if (agentSdk === 'claude_code' && ctx.sdkManager) {
-          const impl = ctx.sdkManager.getImplementer('claude-code')
+        if (agentSdk && agentSdk !== 'opencode' && ctx.sdkManager) {
+          const internalId = mapGraphQLSdkToInternal(agentSdk)
+          const impl = ctx.sdkManager.getImplementer(internalId)
           const model = await impl.getModelInfo(worktreePath, modelId)
           if (!model) return { success: false, error: 'Model not found' }
           return { success: true, model }
@@ -85,8 +87,8 @@ export const opencodeQueryResolvers: Resolvers = {
       try {
         if (ctx.sdkManager && ctx.db && sessionId) {
           const sdkId = ctx.db.getAgentSdkForSession(sessionId)
-          if (sdkId === 'claude-code') {
-            const impl = ctx.sdkManager.getImplementer('claude-code')
+          if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
+            const impl = ctx.sdkManager.getImplementer(sdkId)
             const commands = await impl.listCommands(worktreePath)
             return { success: true, commands: commands as any[] }
           }
@@ -120,10 +122,25 @@ export const opencodeQueryResolvers: Resolvers = {
       }
     },
 
-    opencodePermissionList: async (_parent, { worktreePath }) => {
+    opencodePermissionList: async (_parent, { worktreePath }, ctx) => {
       try {
         const permissions = await openCodeService.permissionList(worktreePath)
-        return { success: true, permissions: permissions as any[] }
+        const allPermissions = [...(permissions as any[])]
+
+        // Also collect permissions from non-OpenCode implementers
+        if (ctx.sdkManager) {
+          for (const sdkId of ['claude-code', 'codex'] as const) {
+            try {
+              const impl = ctx.sdkManager.getImplementer(sdkId)
+              const sdkPerms = await impl.permissionList(worktreePath)
+              allPermissions.push(...(sdkPerms as any[]))
+            } catch {
+              // Implementer may not exist or may throw — skip
+            }
+          }
+        }
+
+        return { success: true, permissions: allPermissions }
       } catch (error) {
         return {
           success: false,
@@ -131,6 +148,6 @@ export const opencodeQueryResolvers: Resolvers = {
           error: error instanceof Error ? error.message : 'Unknown error'
         }
       }
-    },
+    }
   }
 }

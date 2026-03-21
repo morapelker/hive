@@ -89,11 +89,7 @@ function filterSuggestions(flatFiles: FlatFile[], query: string): FlatFile[] {
   return scored.map(({ file }) => file)
 }
 
-export function useFileMentions(
-  inputValue: string,
-  cursorPosition: number,
-  flatFiles: FlatFile[]
-) {
+export function useFileMentions(inputValue: string, cursorPosition: number, flatFiles: FlatFile[]) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [mentions, setMentions] = useState<FileMention[]>([])
   const prevQueryRef = useRef('')

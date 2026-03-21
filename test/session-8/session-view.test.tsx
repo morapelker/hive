@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, cleanup, waitFor, act } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   SessionView,
@@ -7,6 +7,8 @@ import {
   SessionViewState
 } from '../../src/renderer/src/components/sessions/SessionView'
 import { useSessionStore } from '../../src/renderer/src/stores/useSessionStore'
+import { lastSendMode } from '../../src/renderer/src/lib/message-send-times'
+import { useWorktreeStatusStore } from '../../src/renderer/src/stores/useWorktreeStatusStore'
 
 // Mock clipboard API
 const mockWriteText = vi.fn().mockResolvedValue(undefined)
@@ -99,10 +101,71 @@ const mockDefaultOpenCodeTranscript = [
   }
 ]
 
+function createSessionRecord(
+  overrides: Partial<{
+    id: string
+    worktree_id: string | null
+    project_id: string
+    connection_id: string | null
+    name: string | null
+    status: 'active' | 'completed' | 'error'
+    opencode_session_id: string | null
+    agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+    mode: 'build' | 'plan'
+    model_provider_id: string | null
+    model_id: string | null
+    model_variant: string | null
+    created_at: string
+    updated_at: string
+    completed_at: string | null
+  }> = {}
+) {
+  return {
+    id: 'test-session-1',
+    worktree_id: 'wt-1',
+    project_id: 'proj-1',
+    connection_id: null,
+    name: 'Test Session',
+    status: 'active' as const,
+    opencode_session_id: 'opc-session-1',
+    agent_sdk: 'opencode' as const,
+    mode: 'build' as const,
+    model_provider_id: null,
+    model_id: null,
+    model_variant: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    completed_at: null,
+    ...overrides
+  }
+}
+
 // Setup and teardown
 beforeEach(() => {
   vi.clearAllMocks()
   mockConsoleInfo.mockReset()
+  lastSendMode.clear()
+
+  useSessionStore.setState({
+    sessionsByWorktree: new Map([['wt-1', [createSessionRecord()]]]),
+    tabOrderByWorktree: new Map([['wt-1', ['test-session-1']]]),
+    modeBySession: new Map([['test-session-1', 'build']]),
+    pendingMessages: new Map(),
+    pendingPlans: new Map(),
+    pendingFollowUpMessages: new Map(),
+    isLoading: false,
+    error: null,
+    activeSessionId: 'test-session-1',
+    activeWorktreeId: 'wt-1',
+    activeSessionByWorktree: { 'wt-1': 'test-session-1' },
+    sessionsByConnection: new Map(),
+    tabOrderByConnection: new Map(),
+    activeSessionByConnection: {},
+    activeConnectionId: null,
+    inlineConnectionSessionId: null,
+    closedTerminalSessionIds: new Set()
+  })
+  useWorktreeStatusStore.setState({ sessionStatuses: {}, lastMessageTimeByWorktree: {} })
 
   // Mock window.db
   Object.defineProperty(window, 'db', {
@@ -319,6 +382,278 @@ describe('Session 8: Session View', () => {
     })
   })
 
+  describe('Plan-ready toolbox visibility', () => {
+    test('Codex hides the toolbox for a clarifying question pending plan', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'codex', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map([
+          [
+            'test-session-1',
+            {
+              requestId: 'plan-1',
+              planContent:
+                'Where should I add it?\n\n- New module\n- Existing utils\n\nConfirm your preference.',
+              toolUseID: 'tool-1'
+            }
+          ]
+        ])
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
+
+      expect(screen.getByTestId('plan-ready-implement-fab').className).toContain('opacity-0')
+      expect(screen.getByTestId('plan-ready-handoff-fab').className).toContain('opacity-0')
+    })
+
+    test('Codex shows the toolbox for a proposed plan pending plan', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'codex', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map([
+          [
+            'test-session-1',
+            {
+              requestId: 'plan-1',
+              planContent: 'Plan\n\n1. Add the function\n2. Add tests',
+              toolUseID: 'tool-1'
+            }
+          ]
+        ])
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('plan-ready-implement-fab')).toBeInTheDocument()
+        expect(screen.getByTestId('plan-ready-handoff-fab')).toBeInTheDocument()
+      })
+    })
+
+    test('Codex rehydrates the toolbox from restored ExitPlanMode transcript data', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'codex', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map()
+      })
+
+      Object.assign(window.db, {
+        sessionMessage: {
+          list: vi.fn().mockResolvedValue([
+            {
+              id: 'db-user-1',
+              session_id: 'test-session-1',
+              role: 'user',
+              content: 'Plan this change',
+              opencode_message_id: 'turn-1:user',
+              opencode_message_json: null,
+              opencode_parts_json: JSON.stringify([
+                { type: 'text', text: 'Plan this change' }
+              ]),
+              opencode_timeline_json: null,
+              created_at: new Date(Date.now() - 2000).toISOString()
+            },
+            {
+              id: 'db-assistant-1',
+              session_id: 'test-session-1',
+              role: 'assistant',
+              content: '',
+              opencode_message_id: 'turn-1:assistant',
+              opencode_message_json: null,
+              opencode_parts_json: JSON.stringify([
+                {
+                  type: 'tool_use',
+                  toolUse: {
+                    id: 'tool-1',
+                    name: 'ExitPlanMode',
+                    input: { plan: 'Plan\n\n1. Add the function\n2. Add tests' },
+                    status: 'success',
+                    startTime: Date.now() - 1000
+                  }
+                }
+              ]),
+              opencode_timeline_json: null,
+              created_at: new Date(Date.now() - 1000).toISOString()
+            }
+          ])
+        },
+        sessionActivity: {
+          list: vi.fn().mockResolvedValue([])
+        }
+      })
+
+      vi.mocked(window.opencodeOps.getMessages).mockResolvedValue({
+        success: true,
+        messages: [
+          {
+            info: {
+              id: 'turn-1:user',
+              role: 'user',
+              time: { created: Date.now() - 2000 }
+            },
+            parts: [{ type: 'text', text: 'Plan this change' }]
+          },
+          {
+            info: {
+              id: 'turn-1:assistant',
+              role: 'assistant',
+              time: { created: Date.now() - 1000 }
+            },
+            parts: [
+              {
+                type: 'tool_use',
+                id: 'tool-1',
+                name: 'ExitPlanMode',
+                input: { plan: 'Plan\n\n1. Add the function\n2. Add tests' },
+                status: 'success'
+              }
+            ]
+          }
+        ]
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(useSessionStore.getState().getPendingPlan('test-session-1')).toEqual({
+          requestId: 'tool-1',
+          planContent: 'Plan\n\n1. Add the function\n2. Add tests',
+          toolUseID: 'tool-1'
+        })
+      })
+
+      expect(screen.getByTestId('plan-ready-implement-fab').className).not.toContain('opacity-0')
+    })
+
+    test('Codex implement sends a single upstream-style follow-up message', async () => {
+      const user = userEvent.setup()
+
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'codex', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map([
+          [
+            'test-session-1',
+            {
+              requestId: 'plan-1',
+              planContent: 'Plan\n\n1. Add the function\n2. Add tests',
+              toolUseID: 'tool-1'
+            }
+          ]
+        ])
+      })
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'plan',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-codex-plan',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        messages: []
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('plan-ready-implement-fab').className).not.toContain(
+          'opacity-0'
+        )
+      })
+
+      await user.click(screen.getByTestId('plan-ready-implement-fab'))
+
+      await waitFor(() => {
+        expect(window.opencodeOps.prompt).toHaveBeenCalledTimes(1)
+      })
+
+      expect(useSessionStore.getState().getSessionMode('test-session-1')).toBe('build')
+
+      const promptArgs = vi.mocked(window.opencodeOps.prompt).mock.calls[0]
+      expect(promptArgs?.[0]).toBe('/tmp/worktree-codex-plan')
+      expect(promptArgs?.[1]).toBe('opc-session-1')
+      expect(promptArgs?.[2]).toEqual([{ type: 'text', text: 'Implement the plan.' }])
+      expect(JSON.stringify(promptArgs?.[2])).not.toContain('PLEASE IMPLEMENT THIS PLAN:')
+      expect(screen.queryByTestId('queued-message-bubble')).not.toBeInTheDocument()
+    })
+
+    test('Claude keeps showing the toolbox for any pending plan approval', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'claude-code', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map([
+          [
+            'test-session-1',
+            {
+              requestId: 'plan-1',
+              planContent: 'Where should I add it?\n\nPlease confirm.',
+              toolUseID: 'tool-1'
+            }
+          ]
+        ])
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('plan-ready-implement-fab')).toBeInTheDocument()
+      })
+    })
+
+    test('OpenCode keeps showing the toolbox after an idle plan-mode completion', async () => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'opencode', mode: 'plan' })]]
+        ]),
+        modeBySession: new Map([['test-session-1', 'plan']]),
+        pendingPlans: new Map()
+      })
+      lastSendMode.set('test-session-1', 'plan')
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('plan-ready-implement-fab')).toBeInTheDocument()
+        expect(screen.getByTestId('plan-ready-handoff-fab')).toBeInTheDocument()
+      })
+    })
+  })
+
   describe('Message List', () => {
     test('Session opening does not emit tool spacing debug logs', async () => {
       render(<SessionView sessionId="test-session-1" />)
@@ -372,6 +707,62 @@ describe('Session 8: Session View', () => {
         expect(assistantMessages[0]).toBeInTheDocument()
         // Assistant messages should not have user background
         expect(assistantMessages[0]).not.toHaveClass('bg-muted/30')
+      })
+    })
+
+    test('scroll FAB stays hidden for non-manual scroll events but appears after wheel intent', async () => {
+      let scrollTopValue = 100
+      let scrollHeightValue = 500
+      const clientHeightValue = 400
+
+      ;(window.opencodeOps.prompt as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise(() => {})
+      )
+
+      const user = userEvent.setup()
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
+      const messageList = screen.getByTestId('message-list')
+      const fab = screen.getByTestId('scroll-to-bottom-fab')
+
+      Object.defineProperty(messageList, 'scrollTop', {
+        configurable: true,
+        get: () => scrollTopValue,
+        set: (value: number) => {
+          scrollTopValue = value
+        }
+      })
+      Object.defineProperty(messageList, 'scrollHeight', {
+        configurable: true,
+        get: () => scrollHeightValue
+      })
+      Object.defineProperty(messageList, 'clientHeight', {
+        configurable: true,
+        get: () => clientHeightValue
+      })
+
+      await user.type(screen.getByTestId('message-input'), 'Keep streaming')
+      await user.click(screen.getByTestId('send-button'))
+
+      await waitFor(() => {
+        expect(window.opencodeOps.prompt).toHaveBeenCalled()
+      })
+
+      scrollHeightValue = 900
+      scrollTopValue = 20
+      fireEvent.scroll(messageList)
+      expect(fab.className).toContain('opacity-0')
+
+      fireEvent.wheel(messageList)
+      fireEvent.scroll(messageList)
+
+      await waitFor(() => {
+        expect(fab.className).toContain('opacity-100')
       })
     })
   })
@@ -1034,6 +1425,103 @@ describe('Session 8: Session View', () => {
       })
 
       expect(streamCallback).not.toBeNull()
+      await act(async () => {
+        streamCallback?.({
+          sessionId: 'test-session-1',
+          type: 'session.status',
+          statusPayload: { type: 'idle' },
+          data: { status: { type: 'idle' } }
+        })
+      })
+
+      await waitFor(() => {
+        expect(getMessagesMock).toHaveBeenCalledTimes(2)
+      })
+
+      expect(window.opencodeOps.getMessages).toHaveBeenCalled()
+    })
+
+    test('Codex idle finalization refreshes without throwing', async () => {
+      let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+      const getMessagesMock = vi.fn().mockResolvedValue({
+        success: true,
+        messages: [
+          {
+            info: {
+              id: 'codex-user-1',
+              role: 'user',
+              time: { created: Date.now() - 2000 }
+            },
+            parts: [{ type: 'text', text: 'Question' }]
+          },
+          {
+            info: {
+              id: 'codex-assistant-1',
+              role: 'assistant',
+              time: { created: Date.now() - 1000 }
+            },
+            parts: [{ type: 'text', text: 'Answer' }]
+          }
+        ]
+      })
+
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'codex', mode: 'build' })]]
+        ])
+      })
+
+      Object.assign(window.db, {
+        sessionMessage: {
+          list: vi.fn().mockResolvedValue([])
+        },
+        sessionActivity: {
+          list: vi.fn().mockResolvedValue([])
+        }
+      })
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        agent_sdk: 'codex',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-codex-finalize',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        sessionStatus: 'busy'
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockImplementation(
+        getMessagesMock
+      )
+      ;(window.opencodeOps.onStream as ReturnType<typeof vi.fn>).mockImplementation((callback) => {
+        streamCallback = callback as (event: Record<string, unknown>) => void
+        return () => {}
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(getMessagesMock).toHaveBeenCalledTimes(1)
+      })
+
       streamCallback?.({
         sessionId: 'test-session-1',
         type: 'session.status',
@@ -1044,8 +1532,157 @@ describe('Session 8: Session View', () => {
       await waitFor(() => {
         expect(getMessagesMock).toHaveBeenCalledTimes(2)
       })
+    })
 
-      expect(window.opencodeOps.getMessages).toHaveBeenCalled()
+    test('Codex idle finalization waits for durable interleaved ordering', async () => {
+      let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+      let sessionMessageListCalls = 0
+
+      const groupedRows = [
+        {
+          id: 'db-user-1',
+          session_id: 'test-session-1',
+          role: 'user',
+          content: 'First question',
+          opencode_message_id: 'turn-1:user',
+          opencode_message_json: null,
+          opencode_parts_json: JSON.stringify([{ type: 'text', text: 'First question' }]),
+          opencode_timeline_json: null,
+          created_at: '2026-03-14T10:00:00.000Z'
+        },
+        {
+          id: 'db-user-2',
+          session_id: 'test-session-1',
+          role: 'user',
+          content: 'Second question',
+          opencode_message_id: 'turn-2:user',
+          opencode_message_json: null,
+          opencode_parts_json: JSON.stringify([{ type: 'text', text: 'Second question' }]),
+          opencode_timeline_json: null,
+          created_at: '2026-03-14T10:00:01.000Z'
+        },
+        {
+          id: 'db-assistant-1',
+          session_id: 'test-session-1',
+          role: 'assistant',
+          content: 'First answer',
+          opencode_message_id: 'turn-1:assistant',
+          opencode_message_json: null,
+          opencode_parts_json: JSON.stringify([{ type: 'text', text: 'First answer' }]),
+          opencode_timeline_json: null,
+          created_at: '2026-03-14T10:00:02.000Z'
+        },
+        {
+          id: 'db-assistant-2',
+          session_id: 'test-session-1',
+          role: 'assistant',
+          content: 'Second answer',
+          opencode_message_id: 'turn-2:assistant',
+          opencode_message_json: null,
+          opencode_parts_json: JSON.stringify([{ type: 'text', text: 'Second answer' }]),
+          opencode_timeline_json: null,
+          created_at: '2026-03-14T10:00:03.000Z'
+        }
+      ]
+      const interleavedRows = [
+        groupedRows[0],
+        {
+          ...groupedRows[2],
+          created_at: '2026-03-14T10:00:00.500Z'
+        },
+        {
+          ...groupedRows[1],
+          created_at: '2026-03-14T10:00:01.000Z'
+        },
+        groupedRows[3]
+      ]
+
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          ['wt-1', [createSessionRecord({ agent_sdk: 'codex', mode: 'build' })]]
+        ])
+      })
+
+      Object.assign(window.db, {
+        sessionMessage: {
+          list: vi.fn().mockImplementation(async () => {
+            sessionMessageListCalls += 1
+            return sessionMessageListCalls >= 3 ? interleavedRows : groupedRows
+          })
+        },
+        sessionActivity: {
+          list: vi.fn().mockResolvedValue([])
+        }
+      })
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        agent_sdk: 'codex',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-codex-ordering',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        sessionStatus: 'busy'
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        messages: []
+      })
+      ;(window.opencodeOps.onStream as ReturnType<typeof vi.fn>).mockImplementation((callback) => {
+        streamCallback = callback as (event: Record<string, unknown>) => void
+        return () => {}
+      })
+
+      const { container } = render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByText('First question')).toBeInTheDocument()
+      })
+
+      await act(async () => {
+        streamCallback?.({
+          sessionId: 'test-session-1',
+          type: 'session.status',
+          statusPayload: { type: 'idle' },
+          data: { status: { type: 'idle' } }
+        })
+      })
+
+      await waitFor(() => {
+        expect(sessionMessageListCalls).toBeGreaterThanOrEqual(3)
+      })
+
+      await waitFor(() => {
+        const orderedMessages = Array.from(
+          container.querySelectorAll('[data-testid="message-user"], [data-testid="message-assistant"]')
+        ).map((element) => element.textContent ?? '')
+
+        expect(orderedMessages).toEqual([
+          expect.stringContaining('First question'),
+          expect.stringContaining('First answer'),
+          expect.stringContaining('Second question'),
+          expect.stringContaining('Second answer')
+        ])
+      })
     })
 
     test('Initial hydration keeps view connected when OpenCode transcript fetch fails', async () => {
@@ -1088,6 +1725,200 @@ describe('Session 8: Session View', () => {
       })
 
       expect(window.opencodeOps.getMessages).toHaveBeenCalledTimes(1)
+    })
+
+    test('Busy remount restores a text-only streaming draft without double-rendering the last assistant message', async () => {
+      useWorktreeStatusStore.getState().setSessionStatus('test-session-1', 'working')
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-live-text',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        sessionStatus: 'busy'
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        messages: [
+          {
+            info: {
+              id: 'opc-user-live-1',
+              role: 'user',
+              time: { created: Date.now() - 1000 }
+            },
+            parts: [{ type: 'text', text: 'Question' }]
+          },
+          {
+            info: {
+              id: 'opc-live-1',
+              role: 'assistant',
+              time: { created: Date.now() }
+            },
+            parts: [{ type: 'text', text: 'Partial Codex answer' }]
+          }
+        ]
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Partial Codex answer')).toBeInTheDocument()
+      })
+
+      expect(screen.getAllByTestId('message-assistant')).toHaveLength(1)
+      expect(screen.queryByTestId('typing-indicator')).toBeInTheDocument()
+    })
+
+    test('Busy remount restores tool parts and clears the overlay after idle refresh without duplicating the final assistant message', async () => {
+      let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+      useWorktreeStatusStore.getState().setSessionStatus('test-session-1', 'working')
+
+      ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'test-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'Test Session',
+        status: 'active',
+        opencode_session_id: 'opc-session-1',
+        mode: 'build',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        completed_at: null
+      })
+      ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        id: 'wt-1',
+        project_id: 'proj-1',
+        name: 'WT',
+        branch_name: 'main',
+        path: '/tmp/worktree-live-tool',
+        status: 'active',
+        is_default: true,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      })
+      ;(window.opencodeOps.reconnect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        sessionStatus: 'busy'
+      })
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          success: true,
+          messages: [
+            {
+              info: {
+                id: 'opc-user-tool-1',
+                role: 'user',
+                time: { created: Date.now() - 1000 }
+              },
+              parts: [{ type: 'text', text: 'Run a command' }]
+            },
+            {
+              info: {
+                id: 'opc-live-tool-1',
+                role: 'assistant',
+                time: { created: Date.now() }
+              },
+              parts: [
+                { type: 'text', text: 'Running now' },
+                {
+                  type: 'tool',
+                  callID: 'tool-live-1',
+                  tool: 'bash',
+                  state: {
+                    status: 'completed',
+                    input: { command: 'ls' },
+                    output: 'file-a\nfile-b'
+                  }
+                }
+              ]
+            }
+          ]
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          messages: [
+            {
+              info: {
+                id: 'opc-user-tool-1',
+                role: 'user',
+                time: { created: Date.now() - 1000 }
+              },
+              parts: [{ type: 'text', text: 'Run a command' }]
+            },
+            {
+              info: {
+                id: 'opc-final-tool-1',
+                role: 'assistant',
+                time: { created: Date.now() }
+              },
+              parts: [
+                { type: 'text', text: 'Running now' },
+                {
+                  type: 'tool',
+                  callID: 'tool-live-1',
+                  tool: 'bash',
+                  state: {
+                    status: 'completed',
+                    input: { command: 'ls' },
+                    output: 'file-a\nfile-b'
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      ;(window.opencodeOps.onStream as ReturnType<typeof vi.fn>).mockImplementation((callback) => {
+        streamCallback = callback as (event: Record<string, unknown>) => void
+        return () => {}
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Running now')).toBeInTheDocument()
+      })
+
+      expect(screen.getAllByTestId('message-assistant')).toHaveLength(1)
+      expect(screen.getByText('bash')).toBeInTheDocument()
+
+      act(() => {
+        streamCallback?.({
+          sessionId: 'test-session-1',
+          type: 'session.status',
+          statusPayload: { type: 'idle' },
+          data: { status: { type: 'idle' } }
+        })
+      })
+
+      await waitFor(() => {
+        expect((window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+          2
+        )
+      })
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('message-assistant')).toHaveLength(1)
+      })
     })
 
     test('Canonical refresh replaces in-memory messages instead of merging by id', async () => {
@@ -1402,7 +2233,7 @@ describe('Session 8: Session View', () => {
       render(<SessionView sessionId="test-session-1" />)
 
       await waitFor(() => {
-        expect(screen.getByText(/Enter to send/i)).toBeInTheDocument()
+        expect(screen.getByText(/to change variant/i)).toBeInTheDocument()
       })
     })
 

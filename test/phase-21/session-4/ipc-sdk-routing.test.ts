@@ -62,7 +62,7 @@ describe('AgentSdkManager SDK dispatch', () => {
   beforeEach(() => {
     mockOC = createMockOpenCodeImpl()
     claude = new ClaudeCodeImplementer()
-    manager = new AgentSdkManager(mockOC, claude)
+    manager = new AgentSdkManager([mockOC, claude])
   })
 
   it('getImplementer("opencode") returns OpenCode implementer', () => {

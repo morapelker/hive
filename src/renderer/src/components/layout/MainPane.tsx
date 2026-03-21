@@ -3,7 +3,8 @@ import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
 import { SessionTerminalView } from '@/components/sessions/SessionTerminalView'
 import { FileViewer } from '@/components/file-viewer'
-import { InlineDiffViewer } from '@/components/diff'
+import { InlineDiffViewer, ImageDiffView } from '@/components/diff'
+import { isImageFile } from '@shared/types/file-utils'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -183,6 +184,21 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
 
     // Diff viewer is active
     if (activeDiff) {
+      // Image files get their own viewer (binary diffs don't work in text editors)
+      if (isImageFile(activeDiff.filePath)) {
+        return (
+          <ImageDiffView
+            worktreePath={activeDiff.worktreePath}
+            filePath={activeDiff.filePath}
+            fileName={activeDiff.fileName}
+            staged={activeDiff.staged}
+            isUntracked={activeDiff.isUntracked}
+            isNewFile={activeDiff.isNewFile}
+            compareBranch={activeDiff.compareBranch}
+            onClose={handleCloseDiff}
+          />
+        )
+      }
       // New/untracked files use the syntax highlighter view (but not in branch mode —
       // branch diffs always use Monaco since we have an empty original to compare against)
       if ((activeDiff.isNewFile || activeDiff.isUntracked) && !activeDiff.compareBranch) {

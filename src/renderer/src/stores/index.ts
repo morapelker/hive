@@ -31,14 +31,19 @@ export { useContextStore } from './useContextStore'
 export { useFileSearchStore } from './useFileSearchStore'
 export { useQuestionStore } from './useQuestionStore'
 export { usePermissionStore } from './usePermissionStore'
-export {
-  useCommandApprovalStore,
-  type CommandApprovalRequest
-} from './useCommandApprovalStore'
+export { useCommandApprovalStore, type CommandApprovalRequest } from './useCommandApprovalStore'
 export { usePromptHistoryStore } from './usePromptHistoryStore'
 export { useSpaceStore } from './useSpaceStore'
 export { useTerminalStore, type TerminalStatus, type TerminalInfo } from './useTerminalStore'
 export { useConnectionStore } from './useConnectionStore'
 export { useRecentStore } from './useRecentStore'
 export { usePinnedStore } from './usePinnedStore'
-export { useUsageStore, type UsageData } from './useUsageStore'
+export {
+  useUsageStore,
+  type UsageData,
+  type UsageProvider,
+  resolveUsageProvider,
+  normalizeUsage
+} from './useUsageStore'
+export { useHintStore } from './useHintStore'
+export { useVimModeStore } from './useVimModeStore'

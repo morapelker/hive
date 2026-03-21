@@ -2,10 +2,20 @@ import simpleGit, { SimpleGit, BranchSummary } from 'simple-git'
 import { app } from 'electron'
 import { join, basename, dirname } from 'path'
 import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync, readdirSync } from 'fs'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import { tmpdir } from 'os'
-import { selectUniqueBreedName, ALL_BREED_NAMES, LEGACY_CITY_NAMES, type BreedType } from './breed-names'
+import { getImageMimeType } from '@shared/types/file-utils'
+import {
+  selectUniqueBreedName,
+  ALL_BREED_NAMES,
+  LEGACY_CITY_NAMES,
+  type BreedType
+} from './breed-names'
 import { createLogger } from './logger'
+import { normalizeWorktreePath } from './path-utils'
 
+const execFileAsync = promisify(execFile)
 const log = createLogger({ component: 'GitService' })
 
 export interface WorktreeInfo {
@@ -215,6 +225,7 @@ export class GitService {
     try {
       const result = await this.git.raw(['worktree', 'list', '--porcelain'])
       const worktrees: WorktreeInfo[] = []
+      const normalizedRepoPath = normalizeWorktreePath(this.repoPath)
 
       const lines = result.split('\n')
       let currentWorktree: Partial<WorktreeInfo> = {}
@@ -226,12 +237,17 @@ export class GitService {
           // Format: branch refs/heads/branch-name
           const branchRef = line.replace('branch ', '')
           currentWorktree.branch = branchRef.replace('refs/heads/', '')
+        } else if (line === 'detached') {
+          currentWorktree.branch = ''
         } else if (line === '') {
-          if (currentWorktree.path && currentWorktree.branch) {
+          const worktreePath = currentWorktree.path
+          const worktreeBranch = currentWorktree.branch
+
+          if (worktreePath && worktreeBranch !== undefined) {
             worktrees.push({
-              path: currentWorktree.path,
-              branch: currentWorktree.branch,
-              isMain: currentWorktree.path === this.repoPath
+              path: worktreePath,
+              branch: worktreeBranch,
+              isMain: normalizeWorktreePath(worktreePath) === normalizedRepoPath
             })
           }
           currentWorktree = {}
@@ -271,17 +287,23 @@ export class GitService {
         // Also scan the filesystem to catch path collisions from incomplete cleanups
         let existingDirs: string[] = []
         try {
-          existingDirs = readdirSync(projectWorktreesDir)
+          existingDirs = readdirSync(projectWorktreesDir).map((d) =>
+            d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
+          )
         } catch {
           // directory may not exist yet; ignore
         }
 
         // Combine all existing names to avoid
-        const existingNames = new Set([...existingBranches, ...existingWorktreeBranches, ...existingDirs])
+        const existingNames = new Set([
+          ...existingBranches,
+          ...existingWorktreeBranches,
+          ...existingDirs
+        ])
 
         // Select a unique breed name
         const breedName = selectUniqueBreedName(existingNames, breedType)
-        const worktreePath = join(projectWorktreesDir, breedName)
+        const worktreePath = join(projectWorktreesDir, `${projectName}--${breedName}`)
 
         // Create the worktree with a new branch
         await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, defaultBranch])
@@ -925,17 +947,59 @@ export class GitService {
   }
 
   /**
+   * Get file content from a specific git ref as base64 (for binary files like images).
+   * Uses execFile with buffer encoding to avoid corrupting binary data.
+   * @param ref - Git ref: 'HEAD' for HEAD version, '' (empty string) for index/staged version
+   * @param filePath - Relative path to the file
+   */
+  async getRefContentBase64(
+    ref: string,
+    filePath: string
+  ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> {
+    try {
+      const refSpec = ref ? `${ref}:${filePath}` : `:${filePath}`
+      const { stdout } = await execFileAsync('git', ['show', refSpec], {
+        encoding: 'buffer',
+        cwd: this.repoPath,
+        maxBuffer: 1024 * 1024 // 1MB limit, matching readFileAsBase64
+      })
+      const data = stdout.toString('base64')
+      const mimeType = getImageMimeType(filePath) ?? undefined
+      return { success: true, data, mimeType }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error(
+        'Failed to get ref content as base64',
+        error instanceof Error ? error : new Error(message),
+        {
+          ref,
+          filePath,
+          repoPath: this.repoPath
+        }
+      )
+      return { success: false, error: message }
+    }
+  }
+
+  /**
    * Write patch content to a temp file, run git apply, then clean up.
    * simple-git's applyPatch() treats the first arg as a file path,
    * so we must write the patch string to disk first.
    */
   private async applyPatchString(patch: string, options: string[]): Promise<void> {
-    const tmpFile = join(tmpdir(), `hive-patch-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`)
+    const tmpFile = join(
+      tmpdir(),
+      `hive-patch-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`
+    )
     try {
       writeFileSync(tmpFile, patch, 'utf-8')
       await this.git.applyPatch(tmpFile, options)
     } finally {
-      try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
+      try {
+        unlinkSync(tmpFile)
+      } catch {
+        /* ignore cleanup errors */
+      }
     }
   }
 
@@ -1024,7 +1088,7 @@ export class GitService {
           }
         }
         newBranchName = `${baseName}-v${maxVersion + 1}`
-        worktreePath = join(projectWorktreesDir, newBranchName)
+        worktreePath = join(projectWorktreesDir, `${projectName}--${newBranchName}`)
 
         try {
           await this.git.raw(['worktree', 'add', '-b', newBranchName, worktreePath, sourceBranch])
@@ -1210,9 +1274,7 @@ export class GitService {
           const branch = lines
             .find((l) => l.startsWith('branch '))
             ?.replace('branch refs/heads/', '')
-          const wtPath = lines
-            .find((l) => l.startsWith('worktree '))
-            ?.replace('worktree ', '')
+          const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
           if (branch === branchName && wtPath) {
             // Already checked out — duplicate it
             return this.duplicateWorktree(branchName, wtPath, projectName)
@@ -1237,7 +1299,9 @@ export class GitService {
         // Also scan the filesystem to catch path collisions from incomplete cleanups
         let existingDirs: string[] = []
         try {
-          existingDirs = readdirSync(projectWorktreesDir)
+          existingDirs = readdirSync(projectWorktreesDir).map((d) =>
+            d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
+          )
         } catch {
           // directory may not exist yet; ignore
         }
@@ -1250,7 +1314,7 @@ export class GitService {
 
         // Select a unique breed name
         const breedName = selectUniqueBreedName(existingNames, breedType)
-        const worktreePath = join(projectWorktreesDir, breedName)
+        const worktreePath = join(projectWorktreesDir, `${projectName}--${breedName}`)
 
         try {
           if (prNumber != null) {
@@ -1452,9 +1516,11 @@ export class GitService {
    * Get list of files changed between the current worktree and a branch
    * Uses git diff --name-status to get file paths and their change status
    */
-  async getBranchDiffFiles(
-    branch: string
-  ): Promise<{ success: boolean; files?: { relativePath: string; status: string }[]; error?: string }> {
+  async getBranchDiffFiles(branch: string): Promise<{
+    success: boolean
+    files?: { relativePath: string; status: string }[]
+    error?: string
+  }> {
     if (!branch || branch.startsWith('-')) {
       return { success: false, error: 'Invalid branch name' }
     }
@@ -1536,12 +1602,8 @@ export function canonicalizeBranchName(title: string): string {
 export function isAutoNamedBranch(branchName: string): boolean {
   const lower = branchName.toLowerCase()
   return (
-    ALL_BREED_NAMES.some(
-      (b) => b === lower || new RegExp(`^${b}-(?:v)?\\d+$`).test(lower)
-    ) ||
-    LEGACY_CITY_NAMES.some(
-      (c) => c === lower || new RegExp(`^${c}-(?:v)?\\d+$`).test(lower)
-    )
+    ALL_BREED_NAMES.some((b) => b === lower || new RegExp(`^${b}-(?:v)?\\d+$`).test(lower)) ||
+    LEGACY_CITY_NAMES.some((c) => c === lower || new RegExp(`^${c}-(?:v)?\\d+$`).test(lower))
   )
 }
 

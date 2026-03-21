@@ -1,26 +1,25 @@
 import { type Command, type CommandCategory } from '@/stores/useCommandPaletteStore'
 
-// Platform detection for shortcut display
-const isMac =
-  typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
+import { isMac as isMacFn } from './platform'
 
 // Helper to format shortcuts for display
 export function formatShortcut(key: string, modifiers: string[] = []): string {
+  const mac = isMacFn()
   const modSymbols = modifiers.map((mod) => {
     switch (mod) {
       case 'meta':
-        return isMac ? '⌘' : 'Ctrl'
+        return mac ? '⌘' : 'Ctrl'
       case 'ctrl':
-        return isMac ? '⌃' : 'Ctrl'
+        return mac ? '⌃' : 'Ctrl'
       case 'alt':
-        return isMac ? '⌥' : 'Alt'
+        return mac ? '⌥' : 'Alt'
       case 'shift':
-        return isMac ? '⇧' : 'Shift'
+        return mac ? '⇧' : 'Shift'
       default:
         return mod
     }
   })
-  return [...modSymbols, key.toUpperCase()].join(isMac ? '' : '+')
+  return [...modSymbols, key.toUpperCase()].join(mac ? '' : '+')
 }
 
 // Command registry - holds all available commands

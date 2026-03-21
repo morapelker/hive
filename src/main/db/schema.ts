@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 8
+export const CURRENT_SCHEMA_VERSION = 10
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS worktrees (
   attachments TEXT DEFAULT '[]',
   pinned INTEGER NOT NULL DEFAULT 0,
   context TEXT DEFAULT NULL,
+  github_pr_number INTEGER DEFAULT NULL,
+  github_pr_url TEXT DEFAULT NULL,
   created_at TEXT NOT NULL,
   last_accessed_at TEXT NOT NULL
 );
@@ -74,6 +76,22 @@ CREATE TABLE IF NOT EXISTS session_messages (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS session_activities (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  agent_session_id TEXT,
+  thread_id TEXT,
+  turn_id TEXT,
+  item_id TEXT,
+  request_id TEXT,
+  kind TEXT NOT NULL,
+  tone TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  payload_json TEXT,
+  sequence INTEGER,
+  created_at TEXT NOT NULL
+);
+
 -- Settings table
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
@@ -107,6 +125,10 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_opencode
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_opencode_unique
   ON session_messages(session_id, opencode_message_id)
   WHERE opencode_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_session_activities_session_created
+  ON session_activities(session_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_session_activities_session_turn
+  ON session_activities(session_id, turn_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
 CREATE INDEX IF NOT EXISTS idx_projects_accessed ON projects(last_accessed_at);
 CREATE INDEX IF NOT EXISTS idx_project_spaces_space ON project_spaces(space_id);
@@ -133,12 +155,15 @@ export const MIGRATIONS: Migration[] = [
       DROP INDEX IF EXISTS idx_messages_session_opencode_unique;
       DROP INDEX IF EXISTS idx_messages_session_opencode;
       DROP INDEX IF EXISTS idx_messages_session;
+      DROP INDEX IF EXISTS idx_session_activities_session_turn;
+      DROP INDEX IF EXISTS idx_session_activities_session_created;
       DROP INDEX IF EXISTS idx_sessions_project;
       DROP INDEX IF EXISTS idx_sessions_worktree;
       DROP INDEX IF EXISTS idx_worktrees_project;
       DROP TABLE IF EXISTS project_spaces;
       DROP TABLE IF EXISTS spaces;
       DROP TABLE IF EXISTS settings;
+      DROP TABLE IF EXISTS session_activities;
       DROP TABLE IF EXISTS session_messages;
       DROP TABLE IF EXISTS sessions;
       DROP TABLE IF EXISTS worktrees;
@@ -225,6 +250,44 @@ export const MIGRATIONS: Migration[] = [
     version: 8,
     name: 'add_worktree_context',
     up: `ALTER TABLE worktrees ADD COLUMN context TEXT DEFAULT NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 9,
+    name: 'add_session_activities',
+    up: `
+      CREATE TABLE IF NOT EXISTS session_activities (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        agent_session_id TEXT,
+        thread_id TEXT,
+        turn_id TEXT,
+        item_id TEXT,
+        request_id TEXT,
+        kind TEXT NOT NULL,
+        tone TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        payload_json TEXT,
+        sequence INTEGER,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_session_activities_session_created
+        ON session_activities(session_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS idx_session_activities_session_turn
+        ON session_activities(session_id, turn_id, created_at);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_session_activities_session_turn;
+      DROP INDEX IF EXISTS idx_session_activities_session_created;
+      DROP TABLE IF EXISTS session_activities;
+    `
+  },
+  {
+    version: 10,
+    name: 'add_worktree_github_pr',
+    up: `ALTER TABLE worktrees ADD COLUMN github_pr_number INTEGER DEFAULT NULL;
+         ALTER TABLE worktrees ADD COLUMN github_pr_url TEXT DEFAULT NULL`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

@@ -16,8 +16,8 @@ export function UserBubble({ content, isPlanMode, isAskMode }: UserBubbleProps):
           isPlanMode
             ? 'bg-purple-500/10 text-foreground'
             : isAskMode
-            ? 'bg-amber-500/10 text-foreground'
-            : 'bg-primary/10 text-foreground'
+              ? 'bg-amber-500/10 text-foreground'
+              : 'bg-primary/10 text-foreground'
         )}
       >
         {isPlanMode && (

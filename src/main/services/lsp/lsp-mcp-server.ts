@@ -159,9 +159,7 @@ export function createLspToolHandler(lspService: LspService) {
           break
         default:
           return {
-            content: [
-              { type: 'text', text: `Unknown operation: ${operation}` }
-            ],
+            content: [{ type: 'text', text: `Unknown operation: ${operation}` }],
             isError: true
           }
       }
@@ -190,9 +188,7 @@ export function createLspToolHandler(lspService: LspService) {
  * Dynamically imports the SDK since it's ESM-only.
  */
 export async function createLspMcpServerConfig(lspService: LspService) {
-  const { createSdkMcpServer, tool } = await import(
-    '@anthropic-ai/claude-agent-sdk'
-  )
+  const { createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk')
   const { z } = await import('zod')
 
   const handler = createLspToolHandler(lspService)
@@ -202,17 +198,9 @@ export async function createLspMcpServerConfig(lspService: LspService) {
     LSP_TOOL_DESCRIPTION,
     {
       operation: z.enum(LSP_OPERATIONS as unknown as [string, ...string[]]),
-      filePath: z
-        .string()
-        .describe('Absolute or project-relative path to the file'),
-      line: z
-        .number()
-        .optional()
-        .describe('1-based line number'),
-      character: z
-        .number()
-        .optional()
-        .describe('1-based character position')
+      filePath: z.string().describe('Absolute or project-relative path to the file'),
+      line: z.number().optional().describe('1-based line number'),
+      character: z.number().optional().describe('1-based character position')
     },
     async (args) => handler(args as LspToolArgs),
     { annotations: { readOnly: true } }

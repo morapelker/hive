@@ -1,6 +1,8 @@
 import { existsSync } from 'fs'
+import { basename } from 'path'
 import { createGitService, isAutoNamedBranch } from './git-service'
 import { type BreedType } from './breed-names'
+import { normalizeWorktreePath } from './path-utils'
 import { scriptRunner } from './script-runner'
 import { assignPort, releasePort } from './port-registry'
 import { createLogger } from './logger'
@@ -73,6 +75,10 @@ export interface WorktreeResult {
 export interface SimpleResult {
   success: boolean
   error?: string
+}
+
+function getImportedWorktreeName(branch: string, worktreePath: string): string {
+  return branch || basename(worktreePath)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -227,29 +233,89 @@ export async function syncWorktreesOp(
 ): Promise<SimpleResult> {
   try {
     const gitService = createGitService(params.projectPath)
+    const normalizedProjectPath = normalizeWorktreePath(params.projectPath)
+    const project = db.getProject(params.projectId)
 
     // Get actual worktrees from git
     const gitWorktrees = await gitService.listWorktrees()
-    const gitWorktreePaths = new Set(gitWorktrees.map((w) => w.path))
+    const normalizedGitWorktrees = gitWorktrees.map((worktree) => ({
+      ...worktree,
+      normalizedPath: normalizeWorktreePath(worktree.path)
+    }))
+    const gitWorktreePaths = new Set(normalizedGitWorktrees.map((w) => w.normalizedPath))
 
     // Get database worktrees
     const dbWorktrees = db.getActiveWorktreesByProject(params.projectId)
+    const dbWorktreePaths = new Set(dbWorktrees.map((w) => normalizeWorktreePath(w.path)))
+
+    for (const gitWorktree of normalizedGitWorktrees) {
+      if (
+        gitWorktree.normalizedPath === normalizedProjectPath ||
+        dbWorktreePaths.has(gitWorktree.normalizedPath)
+      ) {
+        continue
+      }
+
+      if (!existsSync(gitWorktree.path)) {
+        log.info('Skipping missing git worktree during sync', {
+          projectId: params.projectId,
+          path: gitWorktree.path,
+          branch: gitWorktree.branch
+        })
+        continue
+      }
+
+      const importedName = getImportedWorktreeName(gitWorktree.branch, gitWorktree.path)
+
+      log.info('Importing git worktree into database', {
+        projectId: params.projectId,
+        path: gitWorktree.path,
+        branch: gitWorktree.branch,
+        name: importedName
+      })
+
+      const importedWorktree = db.createWorktree({
+        project_id: params.projectId,
+        name: importedName,
+        branch_name: gitWorktree.branch,
+        path: gitWorktree.path
+      })
+
+      if (project?.auto_assign_port) {
+        const port = assignPort(importedWorktree.path)
+        log.info('Auto-assigned port to imported worktree', {
+          worktreeId: importedWorktree.id,
+          path: importedWorktree.path,
+          port
+        })
+      }
+    }
 
     // Build a map of git worktree path -> branch for quick lookup
-    const gitBranchByPath = new Map(gitWorktrees.map((w) => [w.path, w.branch]))
+    const gitBranchByPath = new Map(normalizedGitWorktrees.map((w) => [w.normalizedPath, w.branch]))
 
     // Check each database worktree
     for (const dbWorktree of dbWorktrees) {
       // If worktree path doesn't exist in git worktrees or on disk
-      if (!gitWorktreePaths.has(dbWorktree.path) && !existsSync(dbWorktree.path)) {
+      const normalizedDbWorktreePath = normalizeWorktreePath(dbWorktree.path)
+
+      if (!gitWorktreePaths.has(normalizedDbWorktreePath) && !existsSync(dbWorktree.path)) {
+        if (dbWorktree.is_default) {
+          continue
+        }
+
         // Mark as archived (worktree was removed outside of Hive)
         db.archiveWorktree(dbWorktree.id)
         continue
       }
 
       // Sync branch name if it was renamed outside of Hive
-      const gitBranch = gitBranchByPath.get(dbWorktree.path)
-      if (gitBranch && gitBranch !== dbWorktree.branch_name && !dbWorktree.branch_renamed) {
+      const gitBranch = gitBranchByPath.get(normalizedDbWorktreePath)
+      if (
+        gitBranch !== undefined &&
+        gitBranch !== dbWorktree.branch_name &&
+        !dbWorktree.branch_renamed
+      ) {
         log.info('Branch renamed externally, updating DB', {
           worktreeId: dbWorktree.id,
           oldBranch: dbWorktree.branch_name,
@@ -261,9 +327,10 @@ export async function syncWorktreesOp(
         const worktreeName = dbWorktree.name.toLowerCase()
         const isAutoName = isAutoNamedBranch(worktreeName)
         const shouldUpdateName = nameMatchesBranch || isAutoName
+        const syncedName = getImportedWorktreeName(gitBranch, dbWorktree.path)
         db.updateWorktree(dbWorktree.id, {
           branch_name: gitBranch,
-          ...(shouldUpdateName ? { name: gitBranch } : {})
+          ...(shouldUpdateName ? { name: syncedName } : {})
         })
       }
     }
@@ -289,6 +356,14 @@ export async function duplicateWorktreeOp(
     sourceBranch: params.sourceBranch,
     projectName: params.projectName
   })
+
+  if (!params.sourceBranch) {
+    return {
+      success: false,
+      error: 'Detached HEAD worktrees cannot be duplicated'
+    }
+  }
+
   try {
     const gitService = createGitService(params.projectPath)
     const result = await gitService.duplicateWorktree(
@@ -337,11 +412,9 @@ export async function duplicateWorktreeOp(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'
-    log.error(
-      'Worktree duplication error',
-      error instanceof Error ? error : new Error(message),
-      { params }
-    )
+    log.error('Worktree duplication error', error instanceof Error ? error : new Error(message), {
+      params
+    })
     return {
       success: false,
       error: message
@@ -358,6 +431,14 @@ export async function renameWorktreeBranchOp(
     oldBranch: params.oldBranch,
     newBranch: params.newBranch
   })
+
+  if (!params.oldBranch) {
+    return {
+      success: false,
+      error: 'Detached HEAD worktrees cannot be renamed'
+    }
+  }
+
   try {
     const gitService = createGitService(params.worktreePath)
     const result = await gitService.renameBranch(

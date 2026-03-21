@@ -133,7 +133,7 @@ describe('Session 1: Markdown Code Block Fix', () => {
       // And CodeBlock preserves whitespace via <pre> tag
       const codeBlock = readCodeBlock()
       expect(codeBlock).toContain('<pre')
-      expect(codeBlock).toContain('<code>{code}</code>')
+      expect(codeBlock).toContain('<code>{containsAnsi(code) ? <Ansi>{code}</Ansi> : code}</code>')
     })
   })
 })

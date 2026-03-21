@@ -142,6 +142,30 @@ describe('Session 10: Tool Message Rendering', () => {
       expect(screen.getAllByText('npm run build').length).toBeGreaterThan(0)
     })
 
+    test('Bash tool shows command when input.command is an array', () => {
+      render(
+        <ToolCard
+          toolUse={makeToolUse({
+            name: 'Bash',
+            input: { command: ['/bin/zsh', '-lc', 'pnpm test'] as unknown as string }
+          })}
+        />
+      )
+      expect(screen.getAllByText('/bin/zsh -lc pnpm test').length).toBeGreaterThan(0)
+    })
+
+    test('Bash tool shows command when input is a raw string', () => {
+      render(
+        <ToolCard
+          toolUse={makeToolUse({
+            name: 'Bash',
+            input: 'pnpm lint' as unknown as Record<string, unknown>
+          })}
+        />
+      )
+      expect(screen.getAllByText('pnpm lint').length).toBeGreaterThan(0)
+    })
+
     test('Edit tool shows file path', () => {
       render(
         <ToolCard

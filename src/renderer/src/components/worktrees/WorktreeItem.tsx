@@ -1,4 +1,5 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
+import { revealLabel } from '@/lib/platform'
 import {
   AlertCircle,
   GitBranch,
@@ -25,6 +26,7 @@ import {
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -45,7 +47,16 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent
 } from '@/components/ui/dropdown-menu'
-import { useWorktreeStore, useProjectStore, useConnectionStore, usePinnedStore } from '@/stores'
+import {
+  useWorktreeStore,
+  useProjectStore,
+  useConnectionStore,
+  usePinnedStore,
+  useHintStore,
+  useVimModeStore,
+  useSettingsStore
+} from '@/stores'
+import { HintBadge } from '@/components/ui/HintBadge'
 import { useGitStore } from '@/stores/useGitStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -120,6 +131,14 @@ export function WorktreeItem({
   const pinWorktree = usePinnedStore((s) => s.pinWorktree)
   const unpinWorktree = usePinnedStore((s) => s.unpinWorktree)
 
+  const hint = useHintStore((s) => s.hintMap.get(worktree.id))
+  const hintMode = useHintStore((s) => s.mode)
+  const hintPendingChar = useHintStore((s) => s.pendingChar)
+  const hintActionMode = useHintStore((s) => s.actionMode)
+  const inputFocused = useHintStore((s) => s.inputFocused)
+  const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+
   const handleTogglePin = useCallback(async (): Promise<void> => {
     if (isPinned) {
       await unpinWorktree(worktree.id)
@@ -135,6 +154,30 @@ export function WorktreeItem({
   const isInConnectionMode = connectionModeActive
   const isSource = connectionModeSourceId === worktree.id
   const isChecked = connectionModeSelectedIds.has(worktree.id)
+  const hasNamedBranch = Boolean(worktree.branch_name)
+
+  const worktreeLabel =
+    worktree.is_default || !worktree.branch_name || displayName === worktree.branch_name
+      ? displayName
+      : `${displayName} - ${worktree.branch_name}`
+
+  const renderWorktreeName = (): React.JSX.Element => (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="text-sm truncate block cursor-default">{displayName}</span>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={8} className="max-w-[32rem] px-3.5 py-2.5 text-sm">
+          <div className="space-y-1.5">
+            <div className="font-medium leading-none">{worktreeLabel}</div>
+            <div className="font-mono text-xs leading-relaxed text-background/80 break-all">
+              {worktree.path}
+            </div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
 
   // Auto-refresh relative time every 60 seconds
   const [, setTick] = useState(0)
@@ -216,23 +259,46 @@ export function WorktreeItem({
   const [isRenamingBranch, setIsRenamingBranch] = useState(false)
   const [branchNameInput, setBranchNameInput] = useState('')
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const intentionalCloseRef = useRef(false)
+  const renameStartTimeRef = useRef<number>(0)
 
   // Auto-focus the rename input when it appears (deferred to run after menu closes)
   useEffect(() => {
     if (isRenamingBranch) {
-      requestAnimationFrame(() => {
-        renameInputRef.current?.focus()
-        renameInputRef.current?.select()
-      })
+      // Focus function
+      const focusInput = () => {
+        if (renameInputRef.current && document.activeElement !== renameInputRef.current) {
+          renameInputRef.current.focus()
+          renameInputRef.current.select()
+        }
+      }
+
+      // Use requestAnimationFrame to focus after menu closes
+      requestAnimationFrame(focusInput)
     }
   }, [isRenamingBranch])
 
+  // Cleanup blur timer on unmount
+  useEffect(() => {
+    return () => {
+      if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+    }
+  }, [])
+
   const startBranchRename = useCallback((): void => {
+    if (!hasNamedBranch) return
+
+    intentionalCloseRef.current = false
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current) // Clear any pending blur timer
+    renameStartTimeRef.current = Date.now() // Record time before setting state
     setBranchNameInput(worktree.branch_name)
     setIsRenamingBranch(true)
-  }, [worktree.branch_name])
+  }, [hasNamedBranch, worktree.branch_name])
 
   const handleBranchRename = useCallback(async (): Promise<void> => {
+    intentionalCloseRef.current = true
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
     const trimmed = branchNameInput.trim()
     if (!trimmed || trimmed === worktree.branch_name) {
       setIsRenamingBranch(false)
@@ -361,13 +427,22 @@ export function WorktreeItem({
       projectPath
     )
     if (result.success) {
-      gitToast.worktreeUnbranched(worktree.name)
+      if (hasNamedBranch) {
+        gitToast.worktreeUnbranched(worktree.name)
+      } else {
+        toast.success(`Worktree "${worktree.name}" removed`)
+      }
     } else {
       gitToast.operationFailed('unbranch worktree', result.error, handleUnbranch)
     }
-  }, [unbranchWorktree, worktree, projectPath])
+  }, [hasNamedBranch, unbranchWorktree, worktree, projectPath])
 
   const handleDuplicate = useCallback(async (): Promise<void> => {
+    if (!hasNamedBranch) {
+      toast.error('Detached HEAD worktrees cannot be duplicated')
+      return
+    }
+
     const project = useProjectStore.getState().projects.find((p) => p.id === worktree.project_id)
     if (!project) return
     const result = await useWorktreeStore
@@ -384,7 +459,7 @@ export function WorktreeItem({
     } else {
       toast.error(result.error || 'Failed to duplicate worktree')
     }
-  }, [worktree])
+  }, [hasNamedBranch, worktree])
 
   // --- Connection mode rendering (simplified, no menus) ---
   if (isInConnectionMode) {
@@ -412,9 +487,7 @@ export function WorktreeItem({
 
           {/* Worktree Name + Status Line */}
           <div className="flex-1 min-w-0">
-            <span className="text-sm truncate block" title={worktree.path}>
-              {displayName}
-            </span>
+            {renderWorktreeName()}
             <div className="flex items-center pr-1">
               <ModelIcon worktreeId={worktree.id} className="h-2.5 w-2.5 mr-1 shrink-0" />
               <span className={cn('text-[11px]', statusClass)} data-testid="worktree-status-text">
@@ -505,18 +578,55 @@ export function WorktreeItem({
                 value={branchNameInput}
                 onChange={(e) => setBranchNameInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleBranchRename()
-                  if (e.key === 'Escape') setIsRenamingBranch(false)
+                  if (e.key === 'Enter') {
+                    handleBranchRename()
+                  }
+                  if (e.key === 'Escape') {
+                    intentionalCloseRef.current = true
+                    if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+                    setIsRenamingBranch(false)
+                  }
                 }}
-                onBlur={() => setIsRenamingBranch(false)}
+                onBlur={() => {
+                  // Skip scheduling timer if we're intentionally closing via Escape/Enter
+                  if (intentionalCloseRef.current) {
+                    intentionalCloseRef.current = false
+                    return
+                  }
+
+                  // Ignore blur events that happen too soon after starting rename (menu closing)
+                  const timeSinceStart = Date.now() - renameStartTimeRef.current
+                  if (timeSinceStart < 500) {
+                    // Always refocus during the first 500ms (menu closing period)
+                    // User can press Escape to cancel if needed
+                    setTimeout(() => {
+                      if (
+                        renameInputRef.current &&
+                        document.activeElement !== renameInputRef.current
+                      ) {
+                        renameInputRef.current.focus()
+                        renameInputRef.current.select()
+                      }
+                    }, 0)
+                    return
+                  }
+
+                  // Delay blur to allow for normal focus changes
+                  if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+                  blurTimerRef.current = setTimeout(() => {
+                    blurTimerRef.current = null
+                    // Only close if the input is still not focused
+                    if (document.activeElement !== renameInputRef.current) {
+                      setIsRenamingBranch(false)
+                    }
+                  }, 100)
+                }}
                 onClick={(e) => e.stopPropagation()}
                 className="bg-background border border-border rounded px-1.5 py-0.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring"
                 data-testid="branch-rename-input"
               />
             ) : (
-              <span className="text-sm truncate block" title={worktree.path}>
-                {displayName}
-              </span>
+              renderWorktreeName()
             )}
             <div className="flex items-center pr-1">
               <ModelIcon worktreeId={worktree.id} className="h-2.5 w-2.5 mr-1 shrink-0" />
@@ -535,6 +645,16 @@ export function WorktreeItem({
               )}
             </div>
           </div>
+
+          {/* Hint Badge (visible when filter is active and search field is focused) */}
+          {hint && (inputFocused || (vimModeEnabled && vimMode === 'normal')) && (
+            <HintBadge
+              code={hint}
+              mode={hintMode}
+              pendingChar={hintPendingChar}
+              actionMode={hintActionMode}
+            />
+          )}
 
           {/* Unread dot badge */}
           {worktreeStatus === 'unread' && (
@@ -606,18 +726,14 @@ export function WorktreeItem({
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleOpenInFinder}>
                 <ExternalLink className="h-4 w-4 mr-2" />
-                Open in Finder
+                {revealLabel(true)}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleCopyPath}>
                 <Copy className="h-4 w-4 mr-2" />
                 Copy Path
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleTogglePin}>
-                {isPinned ? (
-                  <PinOff className="h-4 w-4 mr-2" />
-                ) : (
-                  <Pin className="h-4 w-4 mr-2" />
-                )}
+                {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
                 {isPinned ? 'Unpin' : 'Pin'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -627,28 +743,44 @@ export function WorktreeItem({
               </DropdownMenuItem>
               {!worktree.is_default && (
                 <>
-                  <DropdownMenuItem onClick={startBranchRename}>
-                    <Pencil className="h-4 w-4 mr-2" />
-                    Rename Branch
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleDuplicate}>
-                    <GitBranchPlus className="h-4 w-4 mr-2" />
-                    Duplicate
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleUnbranch}>
-                    <GitBranchPlus className="h-4 w-4 mr-2" />
-                    Unbranch
-                    <span className="ml-auto text-xs text-muted-foreground">Keep branch</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={handleArchive}
-                    className="text-destructive focus:text-destructive focus:bg-destructive/10"
-                  >
-                    <Archive className="h-4 w-4 mr-2" />
-                    Archive
-                    <span className="ml-auto text-xs text-muted-foreground">Delete branch</span>
-                  </DropdownMenuItem>
+                  {hasNamedBranch ? (
+                    <>
+                      <DropdownMenuItem onClick={startBranchRename}>
+                        <Pencil className="h-4 w-4 mr-2" />
+                        Rename Branch
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={handleDuplicate}>
+                        <GitBranchPlus className="h-4 w-4 mr-2" />
+                        Duplicate
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={handleUnbranch}>
+                        <GitBranchPlus className="h-4 w-4 mr-2" />
+                        Unbranch
+                        <span className="ml-auto text-xs text-muted-foreground">Keep branch</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={handleArchive}
+                        className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                      >
+                        <Archive className="h-4 w-4 mr-2" />
+                        Archive
+                        <span className="ml-auto text-xs text-muted-foreground">Delete branch</span>
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={handleUnbranch}
+                        className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                      >
+                        <Archive className="h-4 w-4 mr-2" />
+                        Remove Worktree
+                        <span className="ml-auto text-xs text-muted-foreground">Detached HEAD</span>
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </>
               )}
             </DropdownMenuContent>
@@ -722,11 +854,7 @@ export function WorktreeItem({
           Copy Path
         </ContextMenuItem>
         <ContextMenuItem onClick={handleTogglePin}>
-          {isPinned ? (
-            <PinOff className="h-4 w-4 mr-2" />
-          ) : (
-            <Pin className="h-4 w-4 mr-2" />
-          )}
+          {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
           {isPinned ? 'Unpin' : 'Pin'}
         </ContextMenuItem>
         <ContextMenuSeparator />
@@ -736,28 +864,44 @@ export function WorktreeItem({
         </ContextMenuItem>
         {!worktree.is_default && (
           <>
-            <ContextMenuItem onClick={startBranchRename}>
-              <Pencil className="h-4 w-4 mr-2" />
-              Rename Branch
-            </ContextMenuItem>
-            <ContextMenuItem onClick={handleDuplicate}>
-              <GitBranchPlus className="h-4 w-4 mr-2" />
-              Duplicate
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onClick={handleUnbranch}>
-              <GitBranchPlus className="h-4 w-4 mr-2" />
-              Unbranch
-              <span className="ml-auto text-xs text-muted-foreground">Keep branch</span>
-            </ContextMenuItem>
-            <ContextMenuItem
-              onClick={handleArchive}
-              className="text-destructive focus:text-destructive focus:bg-destructive/10"
-            >
-              <Archive className="h-4 w-4 mr-2" />
-              Archive
-              <span className="ml-auto text-xs text-muted-foreground">Delete branch</span>
-            </ContextMenuItem>
+            {hasNamedBranch ? (
+              <>
+                <ContextMenuItem onClick={startBranchRename}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Rename Branch
+                </ContextMenuItem>
+                <ContextMenuItem onClick={handleDuplicate}>
+                  <GitBranchPlus className="h-4 w-4 mr-2" />
+                  Duplicate
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onClick={handleUnbranch}>
+                  <GitBranchPlus className="h-4 w-4 mr-2" />
+                  Unbranch
+                  <span className="ml-auto text-xs text-muted-foreground">Keep branch</span>
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onClick={handleArchive}
+                  className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                >
+                  <Archive className="h-4 w-4 mr-2" />
+                  Archive
+                  <span className="ml-auto text-xs text-muted-foreground">Delete branch</span>
+                </ContextMenuItem>
+              </>
+            ) : (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onClick={handleUnbranch}
+                  className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                >
+                  <Archive className="h-4 w-4 mr-2" />
+                  Remove Worktree
+                  <span className="ml-auto text-xs text-muted-foreground">Detached HEAD</span>
+                </ContextMenuItem>
+              </>
+            )}
           </>
         )}
       </ContextMenuContent>

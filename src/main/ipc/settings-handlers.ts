@@ -164,8 +164,46 @@ export function registerSettingsHandlers(): void {
             default:
               spawn('open', ['-a', 'Terminal', worktreePath], { detached: true })
           }
+        } else if (currentPlatform === 'win32') {
+          switch (terminalId) {
+            case 'terminal': {
+              // Windows Terminal may not be installed; fall back to PowerShell
+              const terminals = detectTerminals()
+              const wt = terminals.find((t) => t.id === 'terminal')
+              if (wt?.available) {
+                spawn('wt.exe', ['-d', worktreePath], { detached: true, stdio: 'ignore' })
+              } else {
+                spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`], {
+                  detached: true,
+                  stdio: 'ignore'
+                })
+              }
+              break
+            }
+            case 'powershell':
+              spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`], {
+                detached: true,
+                stdio: 'ignore'
+              })
+              break
+            case 'cmd':
+              spawn('cmd.exe', ['/k', `cd /d "${worktreePath}"`], {
+                detached: true,
+                stdio: 'ignore'
+              })
+              break
+            default: {
+              const terminals = detectTerminals()
+              const terminal = terminals.find((t) => t.id === terminalId)
+              if (terminal?.available) {
+                spawn(terminal.command, [], { cwd: worktreePath, detached: true, stdio: 'ignore' })
+              } else {
+                return { success: false, error: 'Terminal not found' }
+              }
+            }
+          }
         } else {
-          // Fallback for other platforms
+          // Fallback for Linux and other platforms
           const terminals = detectTerminals()
           const terminal = terminals.find((t) => t.id === terminalId)
           if (terminal?.available) {

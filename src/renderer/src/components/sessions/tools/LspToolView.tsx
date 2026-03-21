@@ -84,7 +84,8 @@ function symbolKindLabel(kind: number): string {
 function symbolKindColor(kind: number): string {
   if ([5, 11, 23].includes(kind)) return 'bg-purple-500/15 text-purple-500 dark:text-purple-400' // class/interface/struct
   if ([6, 9, 12].includes(kind)) return 'bg-blue-500/15 text-blue-500 dark:text-blue-400' // method/constructor/function
-  if ([7, 8, 13, 14].includes(kind)) return 'bg-emerald-500/15 text-emerald-500 dark:text-emerald-400' // property/field/variable/constant
+  if ([7, 8, 13, 14].includes(kind))
+    return 'bg-emerald-500/15 text-emerald-500 dark:text-emerald-400' // property/field/variable/constant
   if ([10, 22].includes(kind)) return 'bg-amber-500/15 text-amber-500 dark:text-amber-400' // enum/enum member
   if ([2, 3, 4].includes(kind)) return 'bg-cyan-500/15 text-cyan-500 dark:text-cyan-400' // module/namespace/package
   return 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400'
@@ -248,7 +249,9 @@ function CallHierarchyList({
 }) {
   const calls = items.map((item) => {
     const obj = item as Record<string, unknown>
-    const target = (direction === 'incoming' ? obj.from : obj.to) as Record<string, unknown> | undefined
+    const target = (direction === 'incoming' ? obj.from : obj.to) as
+      | Record<string, unknown>
+      | undefined
     const name = (target?.name || 'unknown') as string
     const uri = (target?.uri || '') as string
     const range = (target?.range || target?.selectionRange || {}) as Record<string, unknown>
@@ -280,12 +283,7 @@ function CallHierarchyList({
         ))}
       </div>
       {needsTruncation && (
-        <ShowAllButton
-          showAll={showAll}
-          count={calls.length}
-          label="calls"
-          onToggle={onToggle}
-        />
+        <ShowAllButton showAll={showAll} count={calls.length} label="calls" onToggle={onToggle} />
       )}
     </div>
   )
@@ -372,7 +370,11 @@ function flattenSymbols(
     const locStart = (locRange.start || {}) as Record<string, number>
 
     const line =
-      start.line !== undefined ? start.line + 1 : locStart.line !== undefined ? locStart.line + 1 : null
+      start.line !== undefined
+        ? start.line + 1
+        : locStart.line !== undefined
+          ? locStart.line + 1
+          : null
     const path = locUri ? uriToPath(locUri) : null
 
     result.push({ name, kind, line, path, depth })
@@ -386,9 +388,7 @@ function flattenSymbols(
 }
 
 /** Flatten diagnostics into a renderable list grouped by file */
-function flattenDiagnostics(
-  data: Record<string, unknown[]>
-): Array<{
+function flattenDiagnostics(data: Record<string, unknown[]>): Array<{
   filePath: string
   severity: number
   message: string
@@ -541,11 +541,7 @@ export function LspToolView({ input, output, error }: ToolViewProps) {
     case 'goToImplementation':
       return (
         <div data-testid="lsp-tool-view">
-          <LocationList
-            items={parsed as unknown[]}
-            showAll={showAll}
-            onToggle={toggleShowAll}
-          />
+          <LocationList items={parsed as unknown[]} showAll={showAll} onToggle={toggleShowAll} />
         </div>
       )
 

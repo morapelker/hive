@@ -56,7 +56,7 @@ describe('AgentSdkManager', () => {
   beforeEach(() => {
     mockOpencode = createMockImplementer('opencode')
     mockClaudeCode = createMockImplementer('claude-code')
-    manager = new AgentSdkManager(mockOpencode, mockClaudeCode)
+    manager = new AgentSdkManager([mockOpencode, mockClaudeCode])
   })
 
   describe('getImplementer', () => {

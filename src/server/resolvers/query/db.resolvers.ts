@@ -58,6 +58,8 @@ function mapSession(row: any) {
     name: row.name,
     status: row.status,
     opencodeSessionId: row.opencode_session_id,
+    // Only claude-code needs hyphen→underscore conversion (claude-code → claude_code).
+    // Other SDK values (opencode, codex, terminal) pass through as-is.
     agentSdk: row.agent_sdk === 'claude-code' ? 'claude_code' : row.agent_sdk,
     mode: row.mode,
     modelProviderId: row.model_provider_id,

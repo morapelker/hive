@@ -804,20 +804,11 @@ const FileRow = memo(function FileRow({
                 }}
                 title={file.staged ? 'Unstage' : 'Stage'}
               >
-                {file.staged ? (
-                  <Minus className="h-3.5 w-3.5" />
-                ) : (
-                  <Plus className="h-3.5 w-3.5" />
-                )}
+                {file.staged ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
               </button>
             </div>
           ) : (
-            <FileIcon
-              name={fileName}
-              extension={ext}
-              isDirectory={false}
-              className="h-3.5 w-3.5"
-            />
+            <FileIcon name={fileName} extension={ext} isDirectory={false} className="h-3.5 w-3.5" />
           )}
           <span className="text-xs truncate flex-1" title={file.relativePath}>
             {file.relativePath}

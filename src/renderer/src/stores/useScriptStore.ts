@@ -122,8 +122,7 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
         const handle = requestAnimationFrame(() => {
           pendingVersionBumps.delete(worktreeId)
           set((state) => {
-            const existing =
-              state.scriptStates[worktreeId] || createDefaultScriptState()
+            const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
             return {
               scriptStates: {
                 ...state.scriptStates,
@@ -246,10 +245,7 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
         }
         break
       case 'error':
-        s.appendRunOutput(
-          worktreeId,
-          `\x00ERR:Process exited with code ${event.exitCode}`
-        )
+        s.appendRunOutput(worktreeId, `\x00ERR:Process exited with code ${event.exitCode}`)
         s.setRunRunning(worktreeId, false)
         s.setRunPid(worktreeId, null)
         runSubscriptions.delete(worktreeId)

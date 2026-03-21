@@ -29,6 +29,8 @@ export function formatElapsedTimer(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
+import { stripAnsi } from './ansi-utils'
+
 export const COMPLETION_WORDS = [
   'Swarmed',
   'Buzzed',
@@ -55,7 +57,7 @@ export function extractDevServerUrl(output: string[]): string | null {
   // Scan last 50 entries for a dev server URL.
   // Each entry is a single line of output after line splitting.
   for (let i = output.length - 1; i >= Math.max(0, output.length - 50); i--) {
-    const match = output[i].match(DEV_SERVER_URL_PATTERN)
+    const match = stripAnsi(output[i]).match(DEV_SERVER_URL_PATTERN)
     if (match) return match[0]
   }
   return null

@@ -83,9 +83,9 @@ export default function MonacoDiffView({
       } else {
         // Unstaged diff: original = Index (or HEAD if nothing staged), modified = Working tree
         const [origResult, modResult] = await Promise.all([
-          window.gitOps.getRefContent(worktreePath, '', filePath).catch(() =>
-            window.gitOps.getRefContent(worktreePath, 'HEAD', filePath)
-          ),
+          window.gitOps
+            .getRefContent(worktreePath, '', filePath)
+            .catch(() => window.gitOps.getRefContent(worktreePath, 'HEAD', filePath)),
           window.gitOps.getFileContent(worktreePath, filePath)
         ])
 
@@ -125,23 +125,20 @@ export default function MonacoDiffView({
   }, [worktreePath])
 
   // Handle Monaco mount
-  const handleEditorDidMount = useCallback(
-    (editor: editor.IStandaloneDiffEditor) => {
-      diffEditorRef.current = editor
-      modifiedEditorRef.current = editor.getModifiedEditor()
+  const handleEditorDidMount = useCallback((editor: editor.IStandaloneDiffEditor) => {
+    diffEditorRef.current = editor
+    modifiedEditorRef.current = editor.getModifiedEditor()
 
-      // Get initial diff changes
-      const changes = editor.getLineChanges()
-      setHunks(parseHunks(changes))
+    // Get initial diff changes
+    const changes = editor.getLineChanges()
+    setHunks(parseHunks(changes))
 
-      // Listen for diff updates
-      editor.onDidUpdateDiff(() => {
-        const newChanges = editor.getLineChanges()
-        setHunks(parseHunks(newChanges))
-      })
-    },
-    []
-  )
+    // Listen for diff updates
+    editor.onDidUpdateDiff(() => {
+      const newChanges = editor.getLineChanges()
+      setHunks(parseHunks(newChanges))
+    })
+  }, [])
 
   // Register theme before Monaco loads
   const handleBeforeMount = useCallback((monaco: Monaco) => {
@@ -301,8 +298,7 @@ export default function MonacoDiffView({
             scrollBeyondLastLine: false,
             fontSize: 12,
             lineHeight: 20,
-            fontFamily:
-              'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
             automaticLayout: true,
             scrollbar: {
               verticalScrollbarSize: 10,

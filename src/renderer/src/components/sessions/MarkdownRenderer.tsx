@@ -1,5 +1,7 @@
+import Ansi from 'ansi-to-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { containsAnsi } from '@/lib/ansi-utils'
 import { CodeBlock } from './CodeBlock'
 import type { Components } from 'react-markdown'
 
@@ -62,6 +64,14 @@ const components: Components = {
 }
 
 export function MarkdownRenderer({ content }: MarkdownRendererProps): React.JSX.Element {
+  if (containsAnsi(content)) {
+    return (
+      <div className="whitespace-pre-wrap text-sm font-mono">
+        <Ansi>{content}</Ansi>
+      </div>
+    )
+  }
+
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
       {content}

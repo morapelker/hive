@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
+import Ansi from 'ansi-to-react'
+import { containsAnsi, stripAnsi } from '@/lib/ansi-utils'
 
 interface CodeBlockProps {
   code: string
@@ -13,7 +15,7 @@ export function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): Re
 
   const handleCopy = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(code)
+      await navigator.clipboard.writeText(stripAnsi(code))
       setCopied(true)
       toast.success('Code copied to clipboard')
       setTimeout(() => setCopied(false), 2000)
@@ -44,7 +46,7 @@ export function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): Re
         </Button>
       </div>
       <pre className="p-4 overflow-x-auto text-sm font-mono text-zinc-100">
-        <code>{code}</code>
+        <code>{containsAnsi(code) ? <Ansi>{code}</Ansi> : code}</code>
       </pre>
     </div>
   )

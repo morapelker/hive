@@ -27,8 +27,8 @@ export function MessageRenderer({
   const displayContent = isPlanMode
     ? message.content.slice(PLAN_MODE_PREFIX.length)
     : isAskMode
-    ? message.content.slice(ASK_MODE_PREFIX.length)
-    : message.content
+      ? message.content.slice(ASK_MODE_PREFIX.length)
+      : message.content
   const isAssistantMessage = message.role === 'assistant' && !isStreaming
 
   return (

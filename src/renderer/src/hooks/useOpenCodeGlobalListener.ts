@@ -6,10 +6,9 @@ import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { useContextStore } from '@/stores/useContextStore'
+import { useContextStore, type TokenInfo, type SessionModelRef } from '@/stores/useContextStore'
 import { useRecentStore } from '@/stores/useRecentStore'
-import { useUsageStore } from '@/stores'
-import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useUsageStore, resolveUsageProvider } from '@/stores'
 import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '@/lib/token-utils'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes } from '@/lib/message-send-times'
@@ -203,6 +202,29 @@ export function useOpenCodeGlobalListener(): void {
             return
           }
 
+          // Handle context usage from Codex sessions
+          if (event.type === 'session.context_usage') {
+            const { tokens, model, contextWindow } = event.data as {
+              tokens: TokenInfo
+              model: SessionModelRef
+              contextWindow: number
+            }
+            useContextStore.getState().setSessionTokens(sessionId, tokens, model)
+            if (contextWindow > 0 && model) {
+              useContextStore
+                .getState()
+                .setModelLimit(model.modelID, contextWindow, model.providerID)
+              useContextStore.getState().setModelLimit(model.modelID, contextWindow)
+            }
+            return
+          }
+
+          // Handle context compaction from Codex sessions
+          if (event.type === 'session.context_compacted') {
+            useContextStore.getState().clearSessionTokenSnapshot(sessionId)
+            return
+          }
+
           // Handle message.updated for background sessions — extract title + tokens
           if (event.type === 'message.updated' && sessionId !== activeId) {
             // Child/subagent message.updated events are metadata for nested work;
@@ -387,7 +409,34 @@ export function useOpenCodeGlobalListener(): void {
           if (status?.type !== 'idle') return
 
           if (useSettingsStore.getState().showUsageIndicator) {
-            useUsageStore.getState().fetchUsage()
+            const sessionState = useSessionStore.getState()
+            let idleSession: {
+              agent_sdk?: string | null
+              model_provider_id?: string | null
+              model_id?: string | null
+            } | null = null
+            for (const sessions of sessionState.sessionsByWorktree.values()) {
+              const found = sessions.find((s) => s.id === sessionId)
+              if (found) {
+                idleSession = found
+                break
+              }
+            }
+            if (!idleSession) {
+              for (const sessions of sessionState.sessionsByConnection.values()) {
+                const found = sessions.find((s) => s.id === sessionId)
+                if (found) {
+                  idleSession = found
+                  break
+                }
+              }
+            }
+            if (idleSession) {
+              const provider = resolveUsageProvider(idleSession)
+              useUsageStore.getState().fetchUsageForProvider(provider)
+            } else {
+              useUsageStore.getState().fetchUsage()
+            }
           }
 
           // Don't overwrite plan_ready — session is blocked waiting for plan approval

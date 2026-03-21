@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useProjectStore, useConnectionStore } from '@/stores'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -13,6 +13,7 @@ import {
 } from '@/components/projects'
 import { ConnectionList } from '@/components/connections'
 import { SpacesTabBar } from '@/components/spaces'
+import { ProjectFilter } from '@/components/projects/ProjectFilter'
 import { UsageIndicator } from './UsageIndicator'
 import { PinnedList } from './PinnedList'
 import { RecentList } from './RecentList'
@@ -20,7 +21,9 @@ import { RecentList } from './RecentList'
 export function LeftSidebar(): React.JSX.Element {
   const { leftSidebarWidth, leftSidebarCollapsed, setLeftSidebarWidth } = useLayoutStore()
   const expandAllProjects = useProjectStore((s) => s.expandAllProjects)
+  const projectCount = useProjectStore((s) => s.projects.length)
   const showUsageIndicator = useSettingsStore((s) => s.showUsageIndicator)
+  const [filterQuery, setFilterQuery] = useState('')
 
   // Connection mode state
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
@@ -37,6 +40,13 @@ export function LeftSidebar(): React.JSX.Element {
       expandAllProjects()
     }
   }, [connectionModeActive, expandAllProjects])
+
+  // Clear filter when entering connection mode
+  useEffect(() => {
+    if (connectionModeActive) {
+      setFilterQuery('')
+    }
+  }, [connectionModeActive])
 
   // Escape key exits connection mode
   useEffect(() => {
@@ -137,15 +147,18 @@ export function LeftSidebar(): React.JSX.Element {
             </div>
           </div>
         )}
-        <div className="flex-1 overflow-auto p-2">
+        {!connectionModeActive && projectCount > 1 && (
+          <div className="px-3 py-2 border-b">
+            <ProjectFilter value={filterQuery} onChange={setFilterQuery} />
+          </div>
+        )}
+        <div className="flex-1 overflow-auto p-2" data-testid="sidebar-scroll-container">
           <PinnedList />
           <RecentList />
           <ConnectionList />
-          <ProjectList onAddProject={handleAddProject} />
+          <ProjectList onAddProject={handleAddProject} filterQuery={filterQuery} />
         </div>
-        {!connectionModeActive && (
-          showUsageIndicator ? <UsageIndicator /> : <SpacesTabBar />
-        )}
+        {!connectionModeActive && (showUsageIndicator ? <UsageIndicator /> : <SpacesTabBar />)}
       </aside>
       <ResizeHandle onResize={handleResize} direction="left" />
     </div>

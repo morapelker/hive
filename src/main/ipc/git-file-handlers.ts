@@ -4,6 +4,7 @@ import { promisify } from 'util'
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { readFileAsBase64 } from '../services/file-ops'
 import { telemetryService } from '../services/telemetry-service'
 import { openPathWithPreferredEditor } from './settings-handlers'
 import {
@@ -525,6 +526,54 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 
+  // Get raw file content from disk as base64 (for binary/image files)
+  ipcMain.handle(
+    'git:getFileContentBase64',
+    async (
+      _event,
+      { worktreePath, filePath }: { worktreePath: string; filePath: string }
+    ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> => {
+      log.info('Getting file content as base64', { worktreePath, filePath })
+      try {
+        const fullPath = join(worktreePath, filePath)
+        return readFileAsBase64(fullPath)
+      } catch (error) {
+        const errMessage = error instanceof Error ? error.message : String(error)
+        log.error(
+          'Failed to get file content as base64',
+          error instanceof Error ? error : new Error(errMessage),
+          { worktreePath, filePath }
+        )
+        return { success: false, error: errMessage }
+      }
+    }
+  )
+
+  // Get file content from a specific git ref as base64 (for binary/image files)
+  ipcMain.handle(
+    'git:getRefContentBase64',
+    async (
+      _event,
+      worktreePath: string,
+      ref: string,
+      filePath: string
+    ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> => {
+      log.info('Getting ref content as base64', { worktreePath, ref, filePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.getRefContentBase64(ref, filePath)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to get ref content as base64',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath, ref, filePath }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
+
   // Get diff stat (additions/deletions per file) for all uncommitted changes
   ipcMain.handle(
     'git:diffStat',
@@ -581,10 +630,14 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
           })
         }
 
-        if (mainWindow) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('git:statusChanged', { worktreePath })
         }
-        try { getEventBus().emit('git:statusChanged', { worktreePath }) } catch { /* EventBus not available */ }
+        try {
+          getEventBus().emit('git:statusChanged', { worktreePath })
+        } catch {
+          /* EventBus not available */
+        }
 
         return { success: true }
       } catch (error) {
@@ -671,11 +724,7 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
   // Stage a single hunk by applying a patch to the index
   ipcMain.handle(
     'git:stageHunk',
-    async (
-      _event,
-      worktreePath: string,
-      patch: string
-    ): Promise<GitOperationResult> => {
+    async (_event, worktreePath: string, patch: string): Promise<GitOperationResult> => {
       log.info('Staging hunk', { worktreePath })
       try {
         const gitService = createGitService(worktreePath)
@@ -693,11 +742,7 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
   // Unstage a single hunk by reverse-applying a patch from the index
   ipcMain.handle(
     'git:unstageHunk',
-    async (
-      _event,
-      worktreePath: string,
-      patch: string
-    ): Promise<GitOperationResult> => {
+    async (_event, worktreePath: string, patch: string): Promise<GitOperationResult> => {
       log.info('Unstaging hunk', { worktreePath })
       try {
         const gitService = createGitService(worktreePath)
@@ -715,11 +760,7 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
   // Revert a single hunk in the working tree
   ipcMain.handle(
     'git:revertHunk',
-    async (
-      _event,
-      worktreePath: string,
-      patch: string
-    ): Promise<GitOperationResult> => {
+    async (_event, worktreePath: string, patch: string): Promise<GitOperationResult> => {
       log.info('Reverting hunk', { worktreePath })
       try {
         const gitService = createGitService(worktreePath)
@@ -741,7 +782,11 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       _event,
       worktreePath: string,
       branch: string
-    ): Promise<{ success: boolean; files?: { relativePath: string; status: string }[]; error?: string }> => {
+    ): Promise<{
+      success: boolean
+      files?: { relativePath: string; status: string }[]
+      error?: string
+    }> => {
       try {
         const gitService = createGitService(worktreePath)
         return await gitService.getBranchDiffFiles(branch)
@@ -821,11 +866,9 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         return { success: true, prs }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        log.error(
-          'Failed to list PRs',
-          error instanceof Error ? error : new Error(message),
-          { projectPath }
-        )
+        log.error('Failed to list PRs', error instanceof Error ? error : new Error(message), {
+          projectPath
+        })
 
         if (message.includes('gh: command not found') || message.includes('not found')) {
           return { success: false, prs: [], error: 'GitHub CLI (gh) is not installed' }
@@ -841,6 +884,32 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
           }
         }
         return { success: false, prs: [], error: message }
+      }
+    }
+  )
+
+  // Get the state of a specific PR via gh CLI
+  ipcMain.handle(
+    'git:getPRState',
+    async (
+      _event,
+      { projectPath, prNumber }: { projectPath: string; prNumber: number }
+    ): Promise<{ success: boolean; state?: string; title?: string; error?: string }> => {
+      log.info('Getting PR state via gh CLI', { projectPath, prNumber })
+      try {
+        const { stdout } = await execAsync(
+          `gh pr view ${prNumber} --json state,title`,
+          { cwd: projectPath }
+        )
+        const data = JSON.parse(stdout) as { state: string; title: string }
+        return { success: true, state: data.state, title: data.title }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error('Failed to get PR state', error instanceof Error ? error : new Error(message), {
+          projectPath,
+          prNumber
+        })
+        return { success: false, error: message }
       }
     }
   )

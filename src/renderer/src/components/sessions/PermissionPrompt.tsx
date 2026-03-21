@@ -164,30 +164,28 @@ export function PermissionPrompt({ request, onReply }: PermissionPromptProps) {
           {request.patterns.length > 0 && (
             // Scrollable container: caps height so long patterns don't overflow the dialog
             <div className="max-h-40 overflow-y-auto space-y-1">
-              {request.permission === 'bash' ? (
-                // Bash: split each pattern by && / || / ; with visual separators
-                request.patterns.map((pattern, i) => (
-                  <BashPatternView
-                    key={i}
-                    pattern={pattern}
-                    commandFilterAllowlist={commandFilter.allowlist}
-                  />
-                ))
-              ) : (
-                // Other permissions: plain pattern list
-                request.patterns.map((pattern, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      'text-xs font-mono px-2 py-1.5 rounded',
-                      'bg-muted/50 text-foreground',
-                      'break-all'
-                    )}
-                  >
-                    {pattern}
-                  </div>
-                ))
-              )}
+              {request.permission === 'bash'
+                ? // Bash: split each pattern by && / || / ; with visual separators
+                  request.patterns.map((pattern, i) => (
+                    <BashPatternView
+                      key={i}
+                      pattern={pattern}
+                      commandFilterAllowlist={commandFilter.allowlist}
+                    />
+                  ))
+                : // Other permissions: plain pattern list
+                  request.patterns.map((pattern, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        'text-xs font-mono px-2 py-1.5 rounded',
+                        'bg-muted/50 text-foreground',
+                        'break-all'
+                      )}
+                    >
+                      {pattern}
+                    </div>
+                  ))}
             </div>
           )}
 

@@ -1,0 +1,9 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
+  "include": ["scripts/**/*.ts"],
+  "compilerOptions": {
+    "module": "CommonJS",
+    "rootDir": ".",
+    "types": ["node"]
+  }
+}

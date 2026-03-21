@@ -141,7 +141,11 @@ export class ScriptRunner {
   private sendEvent(eventKey: string, event: ScriptEvent): void {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return
     this.mainWindow.webContents.send(eventKey, event)
-    try { getEventBus().emit('script:output', eventKey, event) } catch { /* EventBus not available */ }
+    try {
+      getEventBus().emit('script:output', eventKey, event)
+    } catch {
+      /* EventBus not available */
+    }
   }
 
   private scheduleOutputFlush(eventKey: string): void {

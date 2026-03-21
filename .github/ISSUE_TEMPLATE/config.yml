@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a Question
+    url: https://github.com/morapelker/hive/discussions/new?category=q-a
+    about: Ask questions and get help from the community
+  - name: Feature Discussion
+    url: https://github.com/morapelker/hive/discussions/new?category=ideas
+    about: Discuss feature ideas with the community before creating a request
+  - name: Show and Tell
+    url: https://github.com/morapelker/hive/discussions/new?category=show-and-tell
+    about: Share your Hive workflows, tips, and tricks
+  - name: Security Issue
+    url: https://github.com/morapelker/hive/security/policy
+    about: Please report security vulnerabilities according to our security policy

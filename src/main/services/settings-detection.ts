@@ -33,7 +33,9 @@ export function detectEditors(): DetectedApp[] {
       commands:
         currentPlatform === 'darwin'
           ? ['/usr/local/bin/cursor', '/Applications/Cursor.app/Contents/Resources/app/bin/cursor']
-          : ['cursor']
+          : currentPlatform === 'win32'
+            ? ['cursor.cmd', 'cursor']
+            : ['cursor']
     },
     {
       id: 'sublime',
@@ -54,7 +56,9 @@ export function detectEditors(): DetectedApp[] {
       commands:
         currentPlatform === 'darwin'
           ? ['/usr/local/bin/webstorm', '/Applications/WebStorm.app/Contents/MacOS/webstorm']
-          : ['webstorm']
+          : currentPlatform === 'win32'
+            ? ['webstorm64.exe', 'webstorm.cmd']
+            : ['webstorm']
     },
     {
       id: 'zed',
@@ -62,7 +66,9 @@ export function detectEditors(): DetectedApp[] {
       commands:
         currentPlatform === 'darwin'
           ? ['/usr/local/bin/zed', '/Applications/Zed.app/Contents/MacOS/zed']
-          : ['zed']
+          : currentPlatform === 'win32'
+            ? ['zed.exe']
+            : ['zed']
     }
   ]
 
@@ -84,7 +90,7 @@ export function detectEditors(): DetectedApp[] {
         }).trim()
         if (result) {
           available = true
-          resolvedCommand = result.split('\n')[0]
+          resolvedCommand = result.split('\n')[0].replace(/\r$/, '')
           break
         }
       } catch {
@@ -136,6 +142,7 @@ export function detectTerminals(): DetectedApp[] {
       : currentPlatform === 'win32'
         ? [
             { id: 'terminal', name: 'Windows Terminal', commands: ['wt.exe'] },
+            { id: 'powershell', name: 'PowerShell', commands: ['pwsh.exe', 'powershell.exe'] },
             { id: 'cmd', name: 'Command Prompt', commands: ['cmd.exe'] }
           ]
         : [
@@ -161,7 +168,7 @@ export function detectTerminals(): DetectedApp[] {
         }).trim()
         if (result) {
           available = true
-          resolvedCommand = result.split('\n')[0]
+          resolvedCommand = result.split('\n')[0].replace(/\r$/, '')
           break
         }
       } catch {

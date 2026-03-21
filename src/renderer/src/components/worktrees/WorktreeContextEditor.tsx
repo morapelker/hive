@@ -55,10 +55,7 @@ export function WorktreeContextEditor({
   const handleSave = useCallback(async () => {
     setIsSaving(true)
     try {
-      const result = await window.worktreeOps.updateContext(
-        worktreeId,
-        content || null
-      )
+      const result = await window.worktreeOps.updateContext(worktreeId, content || null)
       if (result.success) {
         setSavedContent(content)
         toast.success('Context saved')
@@ -115,7 +112,10 @@ export function WorktreeContextEditor({
         <FileText className="h-4 w-4 text-emerald-400 flex-shrink-0" />
         <span className="text-sm font-bold">Worktree Context</span>
         {hasUnsavedChanges && isEditing && (
-          <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" title="Unsaved changes" />
+          <span
+            className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0"
+            title="Unsaved changes"
+          />
         )}
 
         {/* Spacer */}
@@ -170,7 +170,8 @@ export function WorktreeContextEditor({
           </div>
         ) : (
           <div className="flex items-center justify-center h-full text-sm text-muted-foreground px-8 text-center">
-            No worktree context set. Click Edit to add context that will be injected into AI sessions.
+            No worktree context set. Click Edit to add context that will be injected into AI
+            sessions.
           </div>
         )}
       </div>

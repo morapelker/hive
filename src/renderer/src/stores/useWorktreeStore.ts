@@ -3,6 +3,7 @@ import { useProjectStore } from './useProjectStore'
 import { useScriptStore, killRunScript } from './useScriptStore'
 import { useSessionStore } from './useSessionStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
+import { useGitStore } from './useGitStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
@@ -78,6 +79,8 @@ interface Worktree {
   last_model_variant: string | null
   created_at: string
   last_accessed_at: string
+  github_pr_number: number | null
+  github_pr_url: string | null
 }
 
 interface WorktreeState {
@@ -181,6 +184,17 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       for (const wt of sortedWorktrees) {
         if (wt.last_message_at) {
           statusStore.setLastMessageTime(wt.id, wt.last_message_at)
+        }
+      }
+
+      // Hydrate attached PRs from DB into the git store
+      const gitStore = useGitStore.getState()
+      for (const wt of sortedWorktrees) {
+        if (wt.github_pr_number && wt.github_pr_url) {
+          gitStore.setAttachedPR(wt.id, {
+            number: wt.github_pr_number,
+            url: wt.github_pr_url
+          })
         }
       }
     } catch (error) {
@@ -427,6 +441,17 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       get().touchWorktree(id)
       // Deconflict: clear any selected connection synchronously (same tick)
       clearConnectionSelection()
+
+      // Auto-detect language from worktree folder when project has none (fire-and-forget)
+      const worktrees = Array.from(get().worktreesByProject.values()).flat()
+      const worktree = worktrees.find((w) => w.id === id)
+      if (worktree) {
+        const ps = useProjectStore.getState()
+        const project = ps.projects.find((p) => p.id === worktree.project_id)
+        if (project && !project.language && !project.custom_icon) {
+          ps.refreshLanguage(project.id, worktree.path)
+        }
+      }
     }
   },
 

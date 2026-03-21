@@ -77,9 +77,9 @@ export async function fetchClaudeUsage(): Promise<UsageResult> {
     const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         'anthropic-beta': 'oauth-2025-04-20',
-        'Accept': 'application/json',
+        Accept: 'application/json',
         'Content-Type': 'application/json'
       },
       signal: controller.signal

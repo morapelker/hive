@@ -7,7 +7,7 @@ const log = createLogger({ component: 'ClaudeBinaryResolver' })
 /**
  * Resolve the system-wide Claude Code binary path.
  *
- * Must be called AFTER fixPath() so the full shell PATH is available
+ * Must be called AFTER loadShellEnv() so the full shell PATH is available
  * (macOS GUI apps don't inherit shell PATH by default).
  *
  * When the app is packaged into an ASAR archive, the SDK's bundled cli.js
@@ -22,7 +22,7 @@ export function resolveClaudeBinaryPath(): string | null {
     const result = execFileSync(command, [binary], {
       encoding: 'utf-8',
       timeout: 5000,
-      // Inherit the (fixPath-corrected) environment
+      // Inherit the (loadShellEnv-corrected) environment
       env: process.env
     }).trim()
 

@@ -1,0 +1,97 @@
+name: Build Windows Native Modules
+
+on:
+  workflow_dispatch:
+  # Also run when native deps change
+  push:
+    paths:
+      - 'pnpm-lock.yaml'
+    branches:
+      - windows-release-artifact
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies (compiles native modules for Windows)
+        run: pnpm install --frozen-lockfile
+
+      - name: Collect native .node binaries
+        shell: bash
+        run: |
+          mkdir -p win-natives
+
+          # better-sqlite3 (-L follows pnpm symlinks)
+          SQLITE_NODE=$(find -L node_modules/better-sqlite3 -name "better_sqlite3.node" | head -1)
+          if [ -n "$SQLITE_NODE" ]; then
+            cp "$SQLITE_NODE" win-natives/better_sqlite3.node
+            echo "✓ better_sqlite3.node ($(du -h win-natives/better_sqlite3.node | cut -f1))"
+          else
+            echo "✗ better_sqlite3.node not found!" && exit 1
+          fi
+
+          # node-pty
+          PTY_NODE=$(find -L node_modules/node-pty -name "pty.node" -o -name "conpty.node" | head -1)
+          if [ -n "$PTY_NODE" ]; then
+            BASENAME=$(basename "$PTY_NODE")
+            cp "$PTY_NODE" "win-natives/$BASENAME"
+            echo "✓ $BASENAME ($(du -h "win-natives/$BASENAME" | cut -f1))"
+          else
+            echo "✗ node-pty .node not found!" && exit 1
+          fi
+
+          # Also grab the winpty-agent.exe and winpty.dll if they exist (node-pty needs these on older Windows)
+          find -L node_modules/node-pty -name "*.exe" -o -name "*.dll" | while read f; do
+            cp "$f" "win-natives/$(basename "$f")"
+            echo "✓ $(basename "$f")"
+          done
+
+          ls -la win-natives/
+
+      - name: Save Electron version for compatibility check
+        shell: bash
+        run: |
+          ELECTRON_VER=$(node -p "require('./node_modules/electron/package.json').version")
+          NODE_ABI=$(node -p "require('./node_modules/electron/package.json').version")
+          echo "electron=$ELECTRON_VER" > win-natives/versions.txt
+          echo "node=$(node -v)" >> win-natives/versions.txt
+          cat win-natives/versions.txt
+
+      - name: Upload Windows native binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-natives
+          path: win-natives/
+          retention-days: 90
+
+      # Also upload to a GitHub Release for stable caching
+      - name: Upload to win-natives release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          cd win-natives
+          tar czf ../win-natives.tar.gz .
+          cd ..
+
+          # Create or update the release
+          gh release create win-natives-v1 \
+            --title "Windows Native Modules" \
+            --notes "Prebuilt Windows native .node binaries for cross-compilation from macOS" \
+            --prerelease 2>/dev/null || true
+
+          gh release upload win-natives-v1 win-natives.tar.gz --clobber

@@ -12,7 +12,9 @@ export interface MenuState {
 let _mainWindow: BrowserWindow | null = null
 
 function send(channel: string): void {
-  _mainWindow?.webContents.send(channel)
+  if (_mainWindow && !_mainWindow.isDestroyed()) {
+    _mainWindow.webContents.send(channel)
+  }
 }
 
 const sessionItemIds = [
@@ -232,7 +234,7 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
           id: 'check-for-updates',
           label: 'Check for Updates...',
           click: () => {
-            updaterService.checkForUpdates()
+            updaterService.checkForUpdates({ manual: true })
           }
         },
         { type: 'separator' },

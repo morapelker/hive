@@ -14,6 +14,7 @@ import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
 import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { toast } from '@/lib/toast'
+import { revealLabel, isMac, isWindows } from '@/lib/platform'
 
 /**
  * Hook that registers all available commands and returns filtered commands
@@ -331,8 +332,8 @@ export function useCommands() {
       },
       {
         id: 'action:reveal-in-finder',
-        label: 'Reveal in Finder',
-        description: 'Show the current worktree in Finder/Explorer',
+        label: revealLabel(true),
+        description: `Show the current worktree in ${isMac() ? 'Finder' : 'Explorer'}`,
         category: 'action',
         icon: 'FolderOpen',
         keywords: ['finder', 'explorer', 'reveal', 'show'],
@@ -345,7 +346,7 @@ export function useCommands() {
           try {
             await window.projectOps.showInFolder(worktreePath)
           } catch {
-            toast.error('Failed to reveal in Finder')
+            toast.error(`Failed to reveal in ${isMac() ? 'Finder' : 'Explorer'}`)
           }
           closeCommandPalette()
         },
@@ -571,7 +572,9 @@ export function useCommands() {
       {
         id: 'action:install-server',
         label: "Install 'hive-server' Command in PATH",
-        description: 'Install the hive-server CLI to /usr/local/bin',
+        description: isWindows()
+          ? 'Install the hive-server CLI to %LOCALAPPDATA%\\Hive'
+          : 'Install the hive-server CLI to /usr/local/bin',
         category: 'action',
         icon: 'Terminal',
         keywords: ['install', 'server', 'path', 'headless', 'cli', 'terminal'],
@@ -593,7 +596,9 @@ export function useCommands() {
       {
         id: 'action:uninstall-server',
         label: "Uninstall 'hive-server' Command from PATH",
-        description: 'Remove the hive-server CLI from /usr/local/bin',
+        description: isWindows()
+          ? 'Remove the hive-server CLI from %LOCALAPPDATA%\\Hive'
+          : 'Remove the hive-server CLI from /usr/local/bin',
         category: 'action',
         icon: 'Trash2',
         keywords: ['uninstall', 'remove', 'server', 'path', 'cli'],

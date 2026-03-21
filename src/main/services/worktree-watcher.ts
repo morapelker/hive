@@ -89,7 +89,11 @@ function resolveCommonGitDir(gitDir: string): string {
 function emitGitStatusChanged(worktreePath: string): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.webContents.send('git:statusChanged', { worktreePath })
-  try { getEventBus().emit('git:statusChanged', { worktreePath }) } catch { /* EventBus not available */ }
+  try {
+    getEventBus().emit('git:statusChanged', { worktreePath })
+  } catch {
+    /* EventBus not available */
+  }
 }
 
 function scheduleGitRefresh(entry: WatcherEntry, worktreePath: string): void {

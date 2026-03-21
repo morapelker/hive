@@ -1,12 +1,5 @@
 import { useCallback } from 'react'
-import {
-  ChevronUp,
-  ChevronDown,
-  Columns2,
-  AlignJustify,
-  Copy,
-  X
-} from 'lucide-react'
+import { ChevronUp, ChevronDown, Columns2, AlignJustify, Copy, X } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 
