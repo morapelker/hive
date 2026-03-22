@@ -508,25 +508,23 @@ export function ConnectionItem({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
-        {hasCustomName && projectDetails.length > 0 ? (
-          <Tooltip>
-            <TooltipTrigger asChild>{mainContent}</TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8} className="max-w-xs">
-              <div className="space-y-1">
-                {projectDetails.map((detail, idx) => (
-                  <div key={idx} className="text-[11px] font-mono">
-                    <div className="font-medium">{detail.project}</div>
-                    <div className="text-muted-foreground text-[10px]">→ {detail.branch}</div>
-                  </div>
-                ))}
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        ) : (
-          mainContent
+      <Tooltip>
+        <ContextMenuTrigger asChild>
+          <TooltipTrigger asChild>{mainContent}</TooltipTrigger>
+        </ContextMenuTrigger>
+        {hasCustomName && projectDetails.length > 0 && (
+          <TooltipContent side="right" sideOffset={8} className="max-w-xs">
+            <div className="space-y-1">
+              {projectDetails.map((detail, idx) => (
+                <div key={idx} className="text-[11px] font-mono">
+                  <div className="font-medium">{detail.project}</div>
+                  <div className="text-muted-foreground text-[10px]">→ {detail.branch}</div>
+                </div>
+              ))}
+            </div>
+          </TooltipContent>
         )}
-      </ContextMenuTrigger>
+      </Tooltip>
 
       {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">{menuItems}</ContextMenuContent>
