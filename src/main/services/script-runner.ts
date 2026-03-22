@@ -22,10 +22,11 @@ interface RunAndWaitResult {
 }
 
 interface ScriptEvent {
-  type: 'command-start' | 'output' | 'error' | 'done'
+  type: 'command-start' | 'output' | 'error' | 'done' | 'long-running'
   command?: string
   data?: string
   exitCode?: number
+  elapsed?: number  // For long-running events
 }
 
 function getColorEnv(): NodeJS.ProcessEnv {
@@ -250,10 +251,11 @@ export class ScriptRunner {
             elapsed: 5000,
             eventKey
           })
-          // Send long-running notification event
+          // Send dedicated long-running event (not mixed with output)
           this.sendEvent(eventKey, {
-            type: 'output',
-            data: `\n[Notice] Command is taking longer than expected (5+ seconds)...\n`
+            type: 'long-running',
+            command,
+            elapsed: 5000
           })
         }
       }, 5000)
@@ -402,13 +404,12 @@ export class ScriptRunner {
       const notificationTimer = setTimeout(() => {
         if (!settled && !notificationSent) {
           notificationSent = true
-          log.info('Command is taking longer than expected', {
+          // Just log for this method since we can't emit events without eventKey
+          log.info('Command is taking longer than expected (execCommandWithCapture)', {
             command,
             elapsed: 5000,
             cwd
           })
-          // Note: Since this method doesn't have eventKey, we just log
-          // For methods with eventKey, we could emit an event
         }
       }, 5000)
 

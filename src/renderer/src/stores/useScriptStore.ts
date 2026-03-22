@@ -244,6 +244,10 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
           }
         }
         break
+      case 'long-running':
+        // Show notification in output as a special marker (not mixed with actual output)
+        s.appendRunOutput(worktreeId, `\x00NOTICE:Command is taking longer than expected (${event.elapsed}ms): ${event.command}`)
+        break
       case 'error':
         s.appendRunOutput(worktreeId, `\x00ERR:Process exited with code ${event.exitCode}`)
         s.setRunRunning(worktreeId, false)

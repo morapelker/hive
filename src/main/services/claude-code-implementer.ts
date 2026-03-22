@@ -2041,6 +2041,83 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   }
 
   /**
+   * Generate a safer pattern suggestion for allowlisting
+   * Avoids overly broad patterns like "git *" which would allow all git commands
+   */
+  private generateSaferPatternSuggestion(commandStr: string): string {
+    const parts = commandStr.split(' ')
+    const command = parts[0]
+    const subcommand = parts[1]
+    const flag = parts[2]
+
+    // For certain safe commands, we can suggest broader patterns
+    const safeForBroadPattern = ['kubectl', 'npm', 'pnpm', 'yarn', 'ls', 'cat', 'echo', 'pwd']
+    if (safeForBroadPattern.includes(command)) {
+      return `${command} *`
+    }
+
+    // Git commands need special handling - be very specific
+    if (command === 'git') {
+      if (!subcommand) {
+        return commandStr  // Just "git" alone - use exact
+      }
+
+      // Safe git subcommands that can have broad patterns
+      const safeGitSubcommands = ['status', 'log', 'diff', 'show', 'branch', 'remote', 'fetch']
+      if (safeGitSubcommands.includes(subcommand)) {
+        return `git ${subcommand} *`
+      }
+
+      // For git commit, be very specific about the flags
+      if (subcommand === 'commit') {
+        if (flag === '-m' || flag === '--message') {
+          return `git commit -m *`  // Only allow commit with message flag
+        }
+        // For other commit variations (--amend, --no-verify, etc), use exact command
+        // This prevents dangerous operations
+        return commandStr
+      }
+
+      // For git push/pull, include the operation but not force flags
+      if (subcommand === 'push' || subcommand === 'pull') {
+        if (flag === '--force' || flag === '-f') {
+          return commandStr  // Don't suggest pattern for force push
+        }
+        return `git ${subcommand} *`
+      }
+
+      // For git checkout/reset, be very careful
+      if (subcommand === 'checkout' || subcommand === 'reset') {
+        return commandStr  // Always use exact for these dangerous operations
+      }
+
+      // For other git subcommands, use subcommand + first flag if present
+      if (flag) {
+        return `git ${subcommand} ${flag} *`
+      }
+      return `git ${subcommand} *`
+    }
+
+    // For other potentially dangerous commands, be specific
+    const dangerousCommands = ['rm', 'mv', 'cp', 'chmod', 'chown', 'sudo', 'docker']
+    if (dangerousCommands.includes(command)) {
+      // For rm, never suggest patterns with -rf
+      if (command === 'rm' && (parts.includes('-rf') || parts.includes('-fr'))) {
+        return commandStr  // Use exact command for dangerous rm operations
+      }
+
+      if (subcommand) {
+        return `${command} ${subcommand} *`
+      }
+      return commandStr  // Use exact if no subcommand
+    }
+
+    // For other commands, suggest the exact command
+    // This is the safest default
+    return commandStr
+  }
+
+  /**
    * Handle command approval flow for tool uses requiring user permission
    * Blocks execution until user approves or denies, optionally adding to allowlist/blocklist
    */
@@ -2115,13 +2192,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           this.pendingApprovals.delete(requestId)
 
           // Send notification about security system issue with helpful suggestion
+          const suggestedPattern = this.generateSaferPatternSuggestion(commandStr)
           this.sendToRenderer('opencode:stream', {
             type: 'command.approval_problem',
             sessionId: session.hiveSessionId,
             data: {
               requestId,
               commandStr,
-              message: `Security approval did not complete after 60 seconds. The approval dialog may not have appeared. Try temporarily disabling security in Settings > Security, or add "${commandStr.split(' ')[0]} *" to your allowlist.`,
+              message: `Security approval did not complete after 60 seconds. The approval dialog may not have appeared. Try temporarily disabling security in Settings > Security, or add "${suggestedPattern}" to your allowlist.`,
               suggestion: 'disable_security_temporarily'
             }
           })
@@ -2161,9 +2239,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     // Check if request timed out
     if (userResponse.timeout) {
       log.warn('APPROVAL FLOW: Command denied - approval dialog likely did not appear', { requestId, commandStr })
+      const suggestedPattern = this.generateSaferPatternSuggestion(commandStr)
       return {
         behavior: 'deny' as const,
-        message: `Security approval failed after 60 seconds - the approval dialog may not have appeared. To fix this: (1) Try disabling security temporarily in Settings > Security, or (2) Add "${commandStr.split(' ')[0]} *" to your allowlist. Command not executed: ${commandStr}`
+        message: `Security approval failed after 60 seconds - the approval dialog may not have appeared. To fix this: (1) Try disabling security temporarily in Settings > Security, or (2) Add "${suggestedPattern}" to your allowlist. Command not executed: ${commandStr}`
       }
     }
 
