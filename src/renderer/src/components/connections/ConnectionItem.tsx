@@ -33,6 +33,12 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from '@/components/ui/tooltip'
+import {
   useConnectionStore,
   usePinnedStore,
   useHintStore,
@@ -168,13 +174,13 @@ export function ConnectionItem({
     if (blurTimerRef.current) clearTimeout(blurTimerRef.current) // Clear any pending blur timer
     renameStartTimeRef.current = Date.now() // Record time before setting state
     setNameInput(connection.custom_name || '')
+    renameStartTimeRef.current = Date.now()
     setIsRenaming(true)
   }, [connection.custom_name])
 
   const handleSaveRename = useCallback(async (): Promise<void> => {
     intentionalCloseRef.current = true
     if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
-    setIsRenaming(false)
     const trimmed = nameInput.trim()
     // Empty string clears the custom name (revert to default)
     const newCustomName = trimmed || null
@@ -182,6 +188,7 @@ export function ConnectionItem({
     if (newCustomName !== (connection.custom_name || null)) {
       await renameConnection(connection.id, newCustomName)
     }
+    setIsRenaming(false)
   }, [nameInput, connection.id, connection.custom_name, renameConnection])
 
   const handleRenameKeyDown = useCallback(
@@ -259,6 +266,12 @@ export function ConnectionItem({
   const projectNames = [...new Set(connection.members?.map((m) => m.project_name) || [])].join(
     ' + '
   )
+
+  // Build detailed project info for tooltip (project name + branch)
+  const projectDetails = connection.members?.map((m) => ({
+    project: m.project_name,
+    branch: m.worktree_branch
+  })) || []
 
   // Display logic: custom name takes priority over project names
   const hasCustomName = !!connection.custom_name
@@ -389,36 +402,73 @@ export function ConnectionItem({
               />
             ) : (
               <>
-                <div
-                  className="overflow-hidden"
-                  ref={containerRef}
-                  onMouseEnter={handleMouseEnter}
-                  onMouseLeave={handleMouseLeave}
-                >
-                  <span
-                    ref={textRef}
-                    className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
-                    style={
-                      isAnimating
-                        ? ({
-                            '--scroll-distance': `${scrollDistance}px`,
-                            animation: `marquee-scroll ${animationDuration}s linear infinite`
-                          } as React.CSSProperties)
-                        : undefined
-                    }
-                    title={displayName}
+                {hasCustomName && projectDetails.length > 0 ? (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div
+                          className="overflow-hidden"
+                          ref={containerRef}
+                          onMouseEnter={handleMouseEnter}
+                          onMouseLeave={handleMouseLeave}
+                        >
+                          <span
+                            ref={textRef}
+                            className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
+                            style={
+                              isAnimating
+                                ? ({
+                                    '--scroll-distance': `${scrollDistance}px`,
+                                    animation: `marquee-scroll ${animationDuration}s linear infinite`
+                                  } as React.CSSProperties)
+                                : undefined
+                            }
+                          >
+                            {displayName}
+                          </span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" sideOffset={8} className="max-w-xs">
+                        <div className="space-y-1">
+                          {projectDetails.map((detail, idx) => (
+                            <div key={idx} className="text-[11px] font-mono">
+                              <div className="font-medium">{detail.project}</div>
+                              <div className="text-muted-foreground text-[10px]">→ {detail.branch}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <div
+                    className="overflow-hidden"
+                    ref={containerRef}
+                    onMouseEnter={handleMouseEnter}
+                    onMouseLeave={handleMouseLeave}
                   >
-                    {displayName}
-                  </span>
-                </div>
+                    <span
+                      ref={textRef}
+                      className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
+                      style={
+                        isAnimating
+                          ? ({
+                              '--scroll-distance': `${scrollDistance}px`,
+                              animation: `marquee-scroll ${animationDuration}s linear infinite`
+                            } as React.CSSProperties)
+                          : undefined
+                      }
+                      title={displayName}
+                    >
+                      {displayName}
+                    </span>
+                  </div>
+                )}
                 <span
                   className={cn('text-[11px]', statusClass)}
                   data-testid="connection-status-text"
                 >
                   {displayStatus}
-                  {hasCustomName && projectNames && (
-                    <span className="text-muted-foreground font-normal"> · {projectNames}</span>
-                  )}
                 </span>
               </>
             )}
