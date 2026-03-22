@@ -1890,16 +1890,32 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         // Continue to existing AskUserQuestion handling below...
       } else {
         // For all other tools, evaluate against command filter
+        const commandStr = this.commandFilterService.formatCommandString(toolName, input)
+        log.info('SECURITY CHECK: Evaluating tool use', {
+          toolName,
+          commandStr,
+          sessionId: session.hiveSessionId
+        })
+
         const settings = await this.getCommandFilterSettings()
         const action = this.commandFilterService.evaluateToolUse(toolName, input, settings)
 
+        log.info('SECURITY CHECK: Evaluation result', {
+          toolName,
+          commandStr,
+          action,
+          enabled: settings.enabled,
+          defaultBehavior: settings.defaultBehavior,
+          sessionId: session.hiveSessionId
+        })
+
         if (action === 'allow') {
+          log.info('SECURITY CHECK: Tool allowed', { toolName, commandStr })
           return { behavior: 'allow' as const, updatedInput: input }
         }
 
         if (action === 'block') {
-          const commandStr = this.commandFilterService.formatCommandString(toolName, input)
-          log.info('canUseTool: tool blocked by command filter', {
+          log.info('SECURITY CHECK: Tool blocked by command filter', {
             toolName,
             commandStr,
             sessionId: session.hiveSessionId
@@ -1911,6 +1927,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         }
 
         // action === 'ask' - show approval prompt
+        log.info('SECURITY CHECK: Requesting user approval', {
+          toolName,
+          commandStr,
+          sessionId: session.hiveSessionId
+        })
         return this.handleCommandApproval(session, toolName, input, options)
       }
 
@@ -2020,6 +2041,83 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   }
 
   /**
+   * Generate a safer pattern suggestion for allowlisting
+   * Avoids overly broad patterns like "git *" which would allow all git commands
+   */
+  private generateSaferPatternSuggestion(commandStr: string): string {
+    const parts = commandStr.split(' ')
+    const command = parts[0]
+    const subcommand = parts[1]
+    const flag = parts[2]
+
+    // For certain safe commands, we can suggest broader patterns
+    const safeForBroadPattern = ['kubectl', 'npm', 'pnpm', 'yarn', 'ls', 'cat', 'echo', 'pwd']
+    if (safeForBroadPattern.includes(command)) {
+      return `${command} *`
+    }
+
+    // Git commands need special handling - be very specific
+    if (command === 'git') {
+      if (!subcommand) {
+        return commandStr  // Just "git" alone - use exact
+      }
+
+      // Safe git subcommands that can have broad patterns
+      const safeGitSubcommands = ['status', 'log', 'diff', 'show', 'branch', 'remote', 'fetch']
+      if (safeGitSubcommands.includes(subcommand)) {
+        return `git ${subcommand} *`
+      }
+
+      // For git commit, be very specific about the flags
+      if (subcommand === 'commit') {
+        if (flag === '-m' || flag === '--message') {
+          return `git commit -m *`  // Only allow commit with message flag
+        }
+        // For other commit variations (--amend, --no-verify, etc), use exact command
+        // This prevents dangerous operations
+        return commandStr
+      }
+
+      // For git push/pull, include the operation but not force flags
+      if (subcommand === 'push' || subcommand === 'pull') {
+        if (flag === '--force' || flag === '-f') {
+          return commandStr  // Don't suggest pattern for force push
+        }
+        return `git ${subcommand} *`
+      }
+
+      // For git checkout/reset, be very careful
+      if (subcommand === 'checkout' || subcommand === 'reset') {
+        return commandStr  // Always use exact for these dangerous operations
+      }
+
+      // For other git subcommands, use subcommand + first flag if present
+      if (flag) {
+        return `git ${subcommand} ${flag} *`
+      }
+      return `git ${subcommand} *`
+    }
+
+    // For other potentially dangerous commands, be specific
+    const dangerousCommands = ['rm', 'mv', 'cp', 'chmod', 'chown', 'sudo', 'docker']
+    if (dangerousCommands.includes(command)) {
+      // For rm, never suggest patterns with -rf
+      if (command === 'rm' && (parts.includes('-rf') || parts.includes('-fr'))) {
+        return commandStr  // Use exact command for dangerous rm operations
+      }
+
+      if (subcommand) {
+        return `${command} ${subcommand} *`
+      }
+      return commandStr  // Use exact if no subcommand
+    }
+
+    // For other commands, suggest the exact command
+    // This is the safest default
+    return commandStr
+  }
+
+  /**
    * Handle command approval flow for tool uses requiring user permission
    * Blocks execution until user approves or denies, optionally adding to allowlist/blocklist
    */
@@ -2035,7 +2133,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     const requestId = `approval-${Date.now()}-${randomUUID().slice(0, 8)}`
     const commandStr = this.commandFilterService.formatCommandString(toolName, input)
 
-    log.info('handleCommandApproval: awaiting user decision', {
+    log.info('APPROVAL FLOW: Starting approval request', {
       requestId,
       toolName,
       commandStr,
@@ -2060,21 +2158,62 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }
 
     // Emit command.approval_needed event to renderer
+    log.info('APPROVAL FLOW: Sending event to renderer', { requestId, sessionId: session.hiveSessionId })
     this.sendToRenderer('opencode:stream', {
       type: 'command.approval_needed',
       sessionId: session.hiveSessionId,
       data: approvalRequest
     })
 
-    // Block execution with a Promise that waits for user response
+    // Log timestamp for debugging approval dialog issues
+    log.info('APPROVAL FLOW: Waiting for user response', {
+      requestId,
+      commandStr,
+      waitStartTime: new Date().toISOString(),
+      maxWaitTime: '60 seconds'
+    })
+
+    // Block execution with a Promise that waits for user response OR timeout
     const userResponse = await new Promise<{
       approved: boolean
       remember?: 'allow' | 'block'
       pattern?: string
       patterns?: string[]
+      timeout?: boolean
     }>((resolve) => {
+      // Set up timeout (60 seconds) - likely means approval dialog didn't appear
+      const timeoutId = setTimeout(() => {
+        if (this.pendingApprovals.has(requestId)) {
+          log.error('APPROVAL FLOW: Timeout - approval dialog likely did not appear', {
+            requestId,
+            commandStr,
+            elapsed: '60 seconds'
+          })
+          this.pendingApprovals.delete(requestId)
+
+          // Send notification about security system issue with helpful suggestion
+          const suggestedPattern = this.generateSaferPatternSuggestion(commandStr)
+          this.sendToRenderer('opencode:stream', {
+            type: 'command.approval_problem',
+            sessionId: session.hiveSessionId,
+            data: {
+              requestId,
+              commandStr,
+              message: `Security approval did not complete after 60 seconds. The approval dialog may not have appeared. Try temporarily disabling security in Settings > Security, or add "${suggestedPattern}" to your allowlist.`,
+              suggestion: 'disable_security_temporarily'
+            }
+          })
+
+          resolve({ approved: false, timeout: true })
+        }
+      }, 60000)  // 60 second timeout
+
       this.pendingApprovals.set(requestId, {
-        resolve: (response) => resolve(response),
+        resolve: (response) => {
+          clearTimeout(timeoutId)  // Clear timeout if user responds
+          log.info('APPROVAL FLOW: User response received', { requestId, approved: response.approved })
+          resolve(response)
+        },
         toolName,
         input,
         commandStr
@@ -2083,9 +2222,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       // If the session is aborted while waiting, auto-deny
       const onAbort = (): void => {
         if (this.pendingApprovals.has(requestId)) {
-          log.info('handleCommandApproval: session aborted while approval pending, auto-denying', {
+          log.info('APPROVAL FLOW: Session aborted while approval pending, auto-denying', {
             requestId
           })
+          clearTimeout(timeoutId)
           this.pendingApprovals.delete(requestId)
           resolve({ approved: false })
         }
@@ -2095,6 +2235,16 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
     // Clean up tracking state
     this.pendingApprovals.delete(requestId)
+
+    // Check if request timed out
+    if (userResponse.timeout) {
+      log.warn('APPROVAL FLOW: Command denied - approval dialog likely did not appear', { requestId, commandStr })
+      const suggestedPattern = this.generateSaferPatternSuggestion(commandStr)
+      return {
+        behavior: 'deny' as const,
+        message: `Security approval failed after 60 seconds - the approval dialog may not have appeared. To fix this: (1) Try disabling security temporarily in Settings > Security, or (2) Add "${suggestedPattern}" to your allowlist. Command not executed: ${commandStr}`
+      }
+    }
 
     // Handle "remember" choice - update settings with user-selected pattern(s)
     if (userResponse.remember) {
@@ -2111,14 +2261,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }
 
     if (!userResponse.approved) {
-      log.info('handleCommandApproval: user denied command', { requestId, commandStr })
+      log.info('APPROVAL FLOW: User denied command', { requestId, commandStr })
       return {
         behavior: 'deny' as const,
         message: `Command rejected by user: ${commandStr}`
       }
     }
 
-    log.info('handleCommandApproval: user approved command', { requestId, commandStr })
+    log.info('APPROVAL FLOW: User approved command', { requestId, commandStr })
     return { behavior: 'allow' as const, updatedInput: input }
   }
 
