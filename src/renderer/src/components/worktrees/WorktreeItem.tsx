@@ -26,7 +26,7 @@ import {
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -162,21 +162,19 @@ export function WorktreeItem({
       : `${displayName} - ${worktree.branch_name}`
 
   const renderWorktreeName = (): React.JSX.Element => (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="text-sm truncate block cursor-default">{displayName}</span>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={8} className="max-w-[32rem] px-3.5 py-2.5 text-sm">
-          <div className="space-y-1.5">
-            <div className="font-medium leading-none">{worktreeLabel}</div>
-            <div className="font-mono text-xs leading-relaxed text-background/80 break-all">
-              {worktree.path}
-            </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="text-sm truncate block cursor-default">{displayName}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8} className="max-w-[32rem] px-3.5 py-2.5 text-sm">
+        <div className="space-y-1.5">
+          <div className="font-medium leading-none">{worktreeLabel}</div>
+          <div className="font-mono text-xs leading-relaxed text-background/80 break-all">
+            {worktree.path}
           </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 
   // Auto-refresh relative time every 60 seconds
