@@ -13,6 +13,7 @@ import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes } from '@/lib/message-send-times'
 import { checkAutoApprove } from '@/lib/permissionUtils'
+import { toast } from '@/lib/toast'
 
 interface PromptDispatchContext {
   worktreePath: string
@@ -340,6 +341,41 @@ export function useOpenCodeGlobalListener(): void {
                   .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
               }
             }
+            return
+          }
+
+          // Handle command approval timeout/problem - when approval dialog doesn't appear
+          if (event.type === 'command.approval_problem') {
+            const data = event.data as {
+              requestId?: string
+              commandStr?: string
+              message?: string
+              suggestion?: string
+            } | undefined
+
+            const message = data?.message ||
+              `Security approval failed after 60 seconds. The approval dialog may not have appeared. Try disabling security temporarily in Settings > Security.`
+
+            const commandStr = data?.commandStr
+
+            // Show warning toast with action to open security settings
+            toast.warning(message, {
+              duration: 10000,  // Show for 10 seconds since it's an important issue
+              action: {
+                label: 'Open Settings',
+                onClick: () => {
+                  // Navigate directly to security settings
+                  useSettingsStore.getState().openSettings('Security')
+                }
+              },
+              description: commandStr ? `Command: ${commandStr}` : undefined
+            })
+
+            console.warn('Command approval problem:', {
+              sessionId,
+              requestId: data?.requestId,
+              commandStr: data?.commandStr
+            })
             return
           }
 

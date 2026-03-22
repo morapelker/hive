@@ -224,14 +224,39 @@ export class ScriptRunner {
     extraEnv?: Record<string, string>
   ): Promise<{ exitCode: number }> {
     return new Promise((resolve) => {
+      let settled = false
+      let notificationSent = false
+
       const proc = spawn('sh', ['-c', command], {
         cwd,
         env: { ...getColorEnv(), ...extraEnv },
-        stdio: ['ignore', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe']  // Fixed: Allow piped commands to work
       })
+
+      // Immediately close stdin to prevent hanging on commands that wait for input
+      if (proc.stdin) {
+        proc.stdin.end()
+      }
 
       // Track process for cleanup
       this.runningProcesses.set(eventKey, proc)
+
+      // Add 5-second notification timer for long-running commands
+      const notificationTimer = setTimeout(() => {
+        if (!settled && !notificationSent) {
+          notificationSent = true
+          log.info('Command is taking longer than expected', {
+            command,
+            elapsed: 5000,
+            eventKey
+          })
+          // Send long-running notification event
+          this.sendEvent(eventKey, {
+            type: 'output',
+            data: `\n[Notice] Command is taking longer than expected (5+ seconds)...\n`
+          })
+        }
+      }, 5000)
 
       proc.stdout?.on('data', (chunk: Buffer) => {
         this.queueOutput(eventKey, chunk.toString())
@@ -242,6 +267,10 @@ export class ScriptRunner {
       })
 
       proc.on('error', (err) => {
+        if (!settled) {
+          settled = true
+          clearTimeout(notificationTimer)
+        }
         log.error('Process spawn error', err, { command })
         this.flushOutputBuffer(eventKey)
         this.clearCurrentProcess(eventKey, proc)
@@ -249,6 +278,10 @@ export class ScriptRunner {
       })
 
       proc.on('close', (code) => {
+        if (!settled) {
+          settled = true
+          clearTimeout(notificationTimer)
+        }
         this.flushOutputBuffer(eventKey)
         this.clearCurrentProcess(eventKey, proc)
         resolve({ exitCode: code ?? 1 })
@@ -274,9 +307,14 @@ export class ScriptRunner {
     const proc = spawn('sh', ['-c', combined], {
       cwd,
       env: { ...getColorEnv(), ...extraEnv },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],  // Fixed: Allow piped commands to work
       detached: process.platform !== 'win32'
     })
+
+    // Immediately close stdin to prevent hanging on commands that wait for input
+    if (proc.stdin) {
+      proc.stdin.end()
+    }
 
     this.runningProcesses.set(eventKey, proc)
 
@@ -347,16 +385,37 @@ export class ScriptRunner {
     return new Promise((resolve) => {
       let output = ''
       let settled = false
+      let notificationSent = false
 
       const proc = spawn('sh', ['-c', command], {
         cwd,
         env: getColorEnv(),
-        stdio: ['ignore', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe']  // Fixed: Allow piped commands to work
       })
+
+      // Immediately close stdin to prevent hanging on commands that wait for input
+      if (proc.stdin) {
+        proc.stdin.end()
+      }
+
+      // Add 5-second notification timer for long-running commands
+      const notificationTimer = setTimeout(() => {
+        if (!settled && !notificationSent) {
+          notificationSent = true
+          log.info('Command is taking longer than expected', {
+            command,
+            elapsed: 5000,
+            cwd
+          })
+          // Note: Since this method doesn't have eventKey, we just log
+          // For methods with eventKey, we could emit an event
+        }
+      }, 5000)
 
       const timer = setTimeout(() => {
         if (!settled) {
           settled = true
+          clearTimeout(notificationTimer)
           proc.kill('SIGTERM')
           setTimeout(() => {
             try {
@@ -385,6 +444,7 @@ export class ScriptRunner {
         if (!settled) {
           settled = true
           clearTimeout(timer)
+          clearTimeout(notificationTimer)
           resolve({ success: false, output, error: err.message })
         }
       })
@@ -393,6 +453,7 @@ export class ScriptRunner {
         if (!settled) {
           settled = true
           clearTimeout(timer)
+          clearTimeout(notificationTimer)
           if (code === 0) {
             resolve({ success: true, output })
           } else {
