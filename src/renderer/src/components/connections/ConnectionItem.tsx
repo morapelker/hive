@@ -33,6 +33,11 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from '@/components/ui/tooltip'
+import {
   useConnectionStore,
   usePinnedStore,
   useHintStore,
@@ -174,13 +179,16 @@ export function ConnectionItem({
   const handleSaveRename = useCallback(async (): Promise<void> => {
     intentionalCloseRef.current = true
     if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
-    setIsRenaming(false)
-    const trimmed = nameInput.trim()
-    // Empty string clears the custom name (revert to default)
-    const newCustomName = trimmed || null
-    // Only save if the value actually changed
-    if (newCustomName !== (connection.custom_name || null)) {
-      await renameConnection(connection.id, newCustomName)
+    try {
+      const trimmed = nameInput.trim()
+      // Empty string clears the custom name (revert to default)
+      const newCustomName = trimmed || null
+      // Only save if the value actually changed
+      if (newCustomName !== (connection.custom_name || null)) {
+        await renameConnection(connection.id, newCustomName)
+      }
+    } finally {
+      setIsRenaming(false)
     }
   }, [nameInput, connection.id, connection.custom_name, renameConnection])
 
@@ -260,6 +268,12 @@ export function ConnectionItem({
     ' + '
   )
 
+  // Build detailed project info for tooltip (project name + branch)
+  const projectDetails = connection.members?.map((m) => ({
+    project: m.project_name,
+    branch: m.worktree_branch
+  })) || []
+
   // Display logic: custom name takes priority over project names
   const hasCustomName = !!connection.custom_name
   const displayName = hasCustomName
@@ -308,17 +322,15 @@ export function ConnectionItem({
     </>
   )
 
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          className={cn(
-            'group flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
-            isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
-          )}
-          onClick={handleClick}
-          data-testid={`connection-item-${connection.id}`}
-        >
+  const mainContent = (
+    <div
+      className={cn(
+        'group flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
+        isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+      )}
+      onClick={handleClick}
+      data-testid={`connection-item-${connection.id}`}
+    >
           {/* Connection color indicator — always visible */}
           {connection.color ? (
             <span
@@ -416,9 +428,6 @@ export function ConnectionItem({
                   data-testid="connection-status-text"
                 >
                   {displayStatus}
-                  {hasCustomName && projectNames && (
-                    <span className="text-muted-foreground font-normal"> · {projectNames}</span>
-                  )}
                 </span>
               </>
             )}
@@ -495,7 +504,27 @@ export function ConnectionItem({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </ContextMenuTrigger>
+  )
+
+  return (
+    <ContextMenu>
+      <Tooltip>
+        <ContextMenuTrigger asChild>
+          <TooltipTrigger asChild>{mainContent}</TooltipTrigger>
+        </ContextMenuTrigger>
+        {hasCustomName && projectDetails.length > 0 && (
+          <TooltipContent side="right" sideOffset={8} className="max-w-xs">
+            <div className="space-y-1">
+              {projectDetails.map((detail, idx) => (
+                <div key={idx} className="text-[11px] font-mono">
+                  <div className="font-medium">{detail.project}</div>
+                  <div className="text-muted-foreground text-[10px]">→ {detail.branch}</div>
+                </div>
+              ))}
+            </div>
+          </TooltipContent>
+        )}
+      </Tooltip>
 
       {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">{menuItems}</ContextMenuContent>

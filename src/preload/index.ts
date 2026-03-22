@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 // Typed database API for renderer
 const db = {
@@ -1414,7 +1414,8 @@ const fileOps = {
   readImageAsBase64: (
     filePath: string
   ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> =>
-    ipcRenderer.invoke('file:readImageAsBase64', filePath)
+    ipcRenderer.invoke('file:readImageAsBase64', filePath),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file)
 }
 
 // Settings operations API

@@ -24,105 +24,243 @@ export interface SubCommandSuggestions {
  */
 export class CommandFilterService {
   /**
-   * Split a bash command chain into individual sub-commands.
-   * Splits on ` && `, ` || `, `| ` (pipe), and `; ` while respecting quotes and heredocs.
+   * Legacy method - kept for comparison/rollback
+   * Split a bash command chain into individual sub-commands using simple regex.
+   * Splits on ` && `, ` || `, `| ` (pipe), and `; ` (space-delimited to avoid
+   * splitting inside quoted strings or URLs).
    * Note: `||` is matched before `|` so the OR operator is not mis-split as two pipes.
    */
+  splitBashChainLegacy(command: string): string[] {
+    return command
+      .split(/\s+&&\s+|\s+\|\|\s+|\s+\|\s+|\s*;\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }
+
+  /**
+   * Split a bash command chain into individual sub-commands.
+   * Properly handles quotes, heredocs, command substitutions, and escapes.
+   * Only splits on && at the top level (not inside strings or command substitutions).
+   *
+   * Handles:
+   * - Single quotes ('...')
+   * - Double quotes ("...")
+   * - Command substitutions ($(...) and `...`)
+   * - Heredocs (<<EOF...EOF and <<'EOF'...EOF)
+   * - Escaped characters (\&&)
+   * - Nested command substitutions
+   */
   splitBashChain(command: string): string[] {
-    const parts: string[] = []
+    const result: string[] = []
     let current = ''
+    let i = 0
+
+    // Parse state
     let inSingleQuote = false
     let inDoubleQuote = false
-    let escapeNext = false
-    let i = 0
+    let inBacktick = false
+    let commandSubDepth = 0  // Tracks $(...) nesting depth
+    let inHeredoc = false
+    let heredocDelimiter = ''
+    let heredocIndented = false  // For <<- style heredocs
+
+    // Stack to track quote state at each command substitution level
+    // When we enter $(, we push current quote state and start fresh
+    // When we exit ), we restore the previous quote state
+    const quoteStack: Array<{inSingleQuote: boolean; inDoubleQuote: boolean}> = []
 
     while (i < command.length) {
       const char = command[i]
-      const next = command[i + 1]
-      const next2 = command[i + 2]
+      const nextChar = command[i + 1]
+      const prevChar = i > 0 ? command[i - 1] : ''
 
-      // Handle escape sequences (only in double quotes or unquoted context)
-      // In single quotes, backslash is literal
-      if (escapeNext) {
+      // Check for heredoc start (only outside quotes, but can be inside command substitutions)
+      if (!inSingleQuote && !inDoubleQuote && !inBacktick && !inHeredoc) {
+        // Look for << or <<-
+        if (char === '<' && nextChar === '<') {
+          const isIndented = command[i + 2] === '-'
+          const heredocStart = i + (isIndented ? 3 : 2)
+
+          // Extract the delimiter
+          let delimEnd = heredocStart
+          let quoted = false
+
+          // Skip whitespace
+          while (delimEnd < command.length && /\s/.test(command[delimEnd])) {
+            delimEnd++
+          }
+
+          // Check if delimiter is quoted
+          if (command[delimEnd] === "'" || command[delimEnd] === '"') {
+            quoted = true
+            const quoteChar = command[delimEnd]
+            delimEnd++
+            const delimStart = delimEnd
+            while (delimEnd < command.length && command[delimEnd] !== quoteChar) {
+              delimEnd++
+            }
+            if (delimEnd < command.length) {
+              heredocDelimiter = command.slice(delimStart, delimEnd)
+              delimEnd++ // Skip closing quote
+            }
+          } else {
+            // Unquoted delimiter - ends at whitespace or special chars
+            const delimStart = delimEnd
+            while (delimEnd < command.length &&
+                   !/[\s<>|;&()]/.test(command[delimEnd])) {
+              delimEnd++
+            }
+            heredocDelimiter = command.slice(delimStart, delimEnd)
+          }
+
+          if (heredocDelimiter) {
+            inHeredoc = true
+            heredocIndented = isIndented
+            // Add the heredoc start to current command
+            current += command.slice(i, delimEnd)
+            i = delimEnd
+            continue
+          }
+        }
+      }
+
+      // Handle heredoc content
+      if (inHeredoc) {
+        // Check if we're at the start of a line (after a newline)
+        if (i > 0 && command[i - 1] === '\n') {
+          // Check if this line starts with the heredoc delimiter
+          let delimiterEnd = i
+
+          // Try to match the delimiter at the start of this line
+          let matchesDelimiter = true
+          for (let j = 0; j < heredocDelimiter.length; j++) {
+            if (i + j >= command.length || command[i + j] !== heredocDelimiter[j]) {
+              matchesDelimiter = false
+              break
+            }
+          }
+          delimiterEnd = i + heredocDelimiter.length
+
+          // If it matches, check that it's followed by whitespace, newline, or special char (not more text)
+          if (matchesDelimiter && delimiterEnd <= command.length) {
+            const charAfterDelim = command[delimiterEnd]
+            if (!charAfterDelim || charAfterDelim === '\n' || /[\s;&|]/.test(charAfterDelim)) {
+              // Found the end delimiter
+              inHeredoc = false
+              // Add only the delimiter to current (newline was already added in previous iteration)
+              current += command.slice(i, delimiterEnd)
+              heredocDelimiter = ''
+              heredocIndented = false
+              i = delimiterEnd
+              continue
+            }
+          }
+        }
+
+        // Still in heredoc, just add the character
         current += char
-        escapeNext = false
         i++
         continue
       }
 
-      if (char === '\\' && !inSingleQuote) {
+      // Handle escape sequences (not in single quotes)
+      if (!inSingleQuote && prevChar === '\\') {
+        // Previous char was escape, this char is escaped
         current += char
-        escapeNext = true
         i++
         continue
       }
 
-      // Handle quotes
-      if (char === "'" && !inDoubleQuote) {
+      // Skip the backslash itself when it's escaping something
+      if (!inSingleQuote && char === '\\' && nextChar) {
+        current += char
+        i++
+        continue
+      }
+
+      // Handle single quotes (not escaped, not in double quotes)
+      if (char === "'" && prevChar !== '\\' && !inDoubleQuote && !inBacktick) {
         inSingleQuote = !inSingleQuote
         current += char
         i++
         continue
       }
 
-      if (char === '"' && !inSingleQuote) {
+      // Handle double quotes (not escaped, not in single quotes)
+      if (char === '"' && prevChar !== '\\' && !inSingleQuote && !inBacktick) {
         inDoubleQuote = !inDoubleQuote
         current += char
         i++
         continue
       }
 
-      // Only split on operators when not inside quotes
-      if (!inSingleQuote && !inDoubleQuote) {
-        // Check for &&
-        if (char === '&' && next === '&') {
-          if (current.trim()) parts.push(current.trim())
-          current = ''
-          i += 2
-          // Skip whitespace after operator
-          while (i < command.length && /\s/.test(command[i])) i++
-          continue
-        }
-
-        // Check for ||
-        if (char === '|' && next === '|') {
-          if (current.trim()) parts.push(current.trim())
-          current = ''
-          i += 2
-          // Skip whitespace after operator
-          while (i < command.length && /\s/.test(command[i])) i++
-          continue
-        }
-
-        // Check for single | (pipe)
-        if (char === '|' && next !== '|') {
-          if (current.trim()) parts.push(current.trim())
-          current = ''
-          i++
-          // Skip whitespace after operator
-          while (i < command.length && /\s/.test(command[i])) i++
-          continue
-        }
-
-        // Check for ;
-        if (char === ';') {
-          if (current.trim()) parts.push(current.trim())
-          current = ''
-          i++
-          // Skip whitespace after operator
-          while (i < command.length && /\s/.test(command[i])) i++
-          continue
-        }
+      // Handle backticks (not escaped, not in quotes)
+      if (char === '`' && prevChar !== '\\' && !inSingleQuote) {
+        inBacktick = !inBacktick
+        current += char
+        i++
+        continue
       }
 
+      // Handle command substitution start: $(
+      if (char === '$' && nextChar === '(' && !inSingleQuote) {
+        commandSubDepth++
+        // Push current quote state onto stack and reset quotes for the new context
+        quoteStack.push({inSingleQuote, inDoubleQuote})
+        inSingleQuote = false
+        inDoubleQuote = false
+        current += char
+        i++
+        continue
+      }
+
+      // Handle command substitution end: )
+      if (char === ')' && commandSubDepth > 0 && !inSingleQuote && !inDoubleQuote) {
+        commandSubDepth--
+        // Restore quote state from before entering this command substitution
+        const restored = quoteStack.pop()
+        if (restored) {
+          inSingleQuote = restored.inSingleQuote
+          inDoubleQuote = restored.inDoubleQuote
+        }
+        current += char
+        i++
+        continue
+      }
+
+      // Check for && operator (only when not in quotes/substitutions/heredocs)
+      if (char === '&' && nextChar === '&' &&
+          !inSingleQuote && !inDoubleQuote && !inBacktick &&
+          commandSubDepth === 0 && !inHeredoc) {
+        // Found a top-level &&
+        // Add current command if not empty
+        const trimmed = current.trim()
+        if (trimmed && trimmed !== '&&') { // Don't add standalone && as a command
+          result.push(trimmed)
+        }
+        // Reset for next command
+        current = ''
+        // Skip the && and any surrounding whitespace
+        i += 2
+        while (i < command.length && /\s/.test(command[i])) {
+          i++
+        }
+        continue
+      }
+
+      // Add character to current command
       current += char
       i++
     }
 
-    // Add the last part
-    if (current.trim()) parts.push(current.trim())
+    // Add the last command if not empty
+    const trimmed = current.trim()
+    if (trimmed && trimmed !== '&&') { // Don't add standalone && as a command
+      result.push(trimmed)
+    }
 
-    return parts
+    // Return the result - an empty array is valid if the command only contained operators
+    return result
   }
 
   /**
@@ -255,7 +393,8 @@ export class CommandFilterService {
         // Convert ** back to regex (matches any sequence)
         .replace(/__DOUBLESTAR__/g, '.*')
 
-      const regex = new RegExp(`^${regexPattern}$`, 'i')
+      // Use 'is' flags: i=case-insensitive, s=dotall (. matches newlines for heredocs)
+      const regex = new RegExp(`^${regexPattern}$`, 'is')
       const matches = regex.test(command)
 
       // Only log successful matches to reduce noise
@@ -375,6 +514,14 @@ export class CommandFilterService {
   /**
    * Generate progressive bash command pattern suggestions for a SINGLE command (no &&).
    * Used internally by both generateBashSuggestions and generateSubCommandSuggestions.
+   *
+   * Returns exactly 4 options (or fewer for short commands):
+   * 1. First word + * (most general) - e.g., "bash: git *"
+   * 2. First two words + * - e.g., "bash: git commit *"
+   * 3. First three words + * - e.g., "bash: git commit -m *"
+   * 4. Exact match (most specific)
+   *
+   * Patterns are ordered from most general to most specific.
    */
   private generateSingleCommandSuggestions(commandStr: string): string[] {
     const prefix = 'bash: '
@@ -386,18 +533,21 @@ export class CommandFilterService {
     const parts = command.split(/\s+/)
     if (parts.length <= 1) return [commandStr]
 
-    const suggestions: string[] = [commandStr]
+    const suggestions: string[] = []
 
-    // Generate progressively broader patterns by trimming from the right
-    // e.g. "gcloud compute list --project x" → "gcloud compute list *" → "gcloud compute *" → "gcloud *"
-    for (let i = parts.length - 1; i >= 1; i--) {
+    // Generate up to 3 progressive patterns from most general to more specific
+    // Start with first word + *, then first 2 words + *, then first 3 words + *
+    const maxWildcardPatterns = Math.min(3, parts.length - 1)
+    for (let i = 1; i <= maxWildcardPatterns; i++) {
       const pattern = `${prefix}${parts.slice(0, i).join(' ')} *`
-      if (!suggestions.includes(pattern)) {
-        suggestions.push(pattern)
-      }
+      suggestions.push(pattern)
     }
 
-    return suggestions
+    // Add the exact match as the final (most specific) option
+    suggestions.push(commandStr)
+
+    // Return maximum of 4 options
+    return suggestions.slice(0, 4)
   }
 
   /**

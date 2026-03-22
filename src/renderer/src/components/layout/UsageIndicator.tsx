@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useUsageStore, useSessionStore, resolveUsageProvider, normalizeUsage } from '@/stores'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
@@ -128,40 +128,38 @@ export function UsageIndicator(): React.JSX.Element | null {
   const tooltipTitle = activeProvider === 'anthropic' ? 'Claude API Usage' : 'OpenAI API Usage'
 
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div
-            className="border-t px-3 py-1.5 space-y-0.5 cursor-default"
-            data-testid="usage-indicator"
-          >
-            <div className="flex items-center gap-1.5">
-              <img src={providerIcon} alt={providerLabel} className="h-3 w-3 shrink-0 opacity-50" />
-              <div className="flex-1 space-y-0.5">
-                <UsageRow label="5h" percent={fiveHourPercent} resetTime={fiveHourReset} />
-                <UsageRow label="7d" percent={sevenDayPercent} resetTime={sevenDayReset} />
-              </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className="border-t px-3 py-1.5 space-y-0.5 cursor-default"
+          data-testid="usage-indicator"
+        >
+          <div className="flex items-center gap-1.5">
+            <img src={providerIcon} alt={providerLabel} className="h-3 w-3 shrink-0 opacity-50" />
+            <div className="flex-1 space-y-0.5">
+              <UsageRow label="5h" percent={fiveHourPercent} resetTime={fiveHourReset} />
+              <UsageRow label="7d" percent={sevenDayPercent} resetTime={sevenDayReset} />
             </div>
           </div>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={8}>
-          <div className="space-y-1">
-            <div className="font-medium">{tooltipTitle}</div>
-            <div className="text-[10px]">
-              5-hour: {Math.round(fiveHourPercent)}% (resets {fiveHourReset})
-            </div>
-            <div className="text-[10px]">
-              7-day: {Math.round(sevenDayPercent)}% (resets {sevenDayReset})
-            </div>
-            {activeProvider === 'anthropic' && extra?.is_enabled && (
-              <div className="border-t border-background/20 pt-1 text-[10px]">
-                Extra: ${(extra.used_credits ?? 0).toFixed(2)} / ${(extra.monthly_limit ?? 0).toFixed(2)} used (
-                {Math.round(extra.utilization ?? 0)}%)
-              </div>
-            )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8}>
+        <div className="space-y-1">
+          <div className="font-medium">{tooltipTitle}</div>
+          <div className="text-[10px]">
+            5-hour: {Math.round(fiveHourPercent)}% (resets {fiveHourReset})
           </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+          <div className="text-[10px]">
+            7-day: {Math.round(sevenDayPercent)}% (resets {sevenDayReset})
+          </div>
+          {activeProvider === 'anthropic' && extra?.is_enabled && (
+            <div className="border-t border-background/20 pt-1 text-[10px]">
+              Extra: ${(extra.used_credits ?? 0).toFixed(2)} / ${(extra.monthly_limit ?? 0).toFixed(2)} used (
+              {Math.round(extra.utilization ?? 0)}%)
+            </div>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }

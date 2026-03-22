@@ -725,6 +725,7 @@ declare global {
         mimeType?: string
         error?: string
       }>
+      getPathForFile: (file: File) => string
     }
     settingsOps: {
       detectEditors: () => Promise<DetectedApp[]>

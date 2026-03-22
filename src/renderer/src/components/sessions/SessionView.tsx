@@ -12,6 +12,7 @@ import { AttachmentButton } from './AttachmentButton'
 import { AttachmentPreview } from './AttachmentPreview'
 import { CodexFastToggle } from './CodexFastToggle'
 import type { Attachment } from './AttachmentPreview'
+import { buildMessageParts, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
 import { SlashCommandPopover } from './SlashCommandPopover'
 import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
@@ -37,7 +38,7 @@ import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
-import { useWorktreeStore } from '@/stores'
+import { useWorktreeStore, useDropAttachmentStore } from '@/stores'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { usePRReviewStore } from '@/stores/usePRReviewStore'
@@ -424,6 +425,29 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }>
   >([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
+
+  // Consume files dropped from Finder via the global drop zone
+  const pendingDropFiles = useDropAttachmentStore((s) => s.pending)
+
+  useEffect(() => {
+    if (pendingDropFiles.length === 0) return
+    const items = useDropAttachmentStore.getState().consume()
+    setAttachments((prev) => {
+      const remaining = MAX_ATTACHMENTS - prev.length
+      if (remaining <= 0) {
+        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+        return prev
+      }
+      if (items.length > remaining) {
+        toast.warning(
+          `Only ${remaining} of ${items.length} files attached (maximum ${MAX_ATTACHMENTS})`
+        )
+      }
+      const toAdd = items.slice(0, remaining)
+      return [...prev, ...toAdd.map((item) => ({ id: crypto.randomUUID(), ...item }))]
+    })
+  }, [pendingDropFiles])
+
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([])
   const [showSlashCommands, setShowSlashCommands] = useState(false)
   const [revertMessageID, setRevertMessageID] = useState<string | null>(null)
@@ -3239,15 +3263,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           }
 
           // Build message parts (support file attachments if any)
-          const parts: MessagePart[] = [
-            ...attachments.map((a) => ({
-              type: 'file' as const,
-              mime: a.mime,
-              url: a.dataUrl,
-              filename: a.name
-            })),
-            { type: 'text' as const, text: prefixedQuestion }
-          ]
+          const parts = buildMessageParts(attachments, prefixedQuestion)
           setAttachments([])
           usePRReviewStore.getState().clearAttachments()
 
@@ -3442,15 +3458,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
               const promptMessage = prContext + modePrefix + trimmedValue
               lastSentPromptRef.current = promptMessage
-              const parts: MessagePart[] = [
-                ...attachments.map((a) => ({
-                  type: 'file' as const,
-                  mime: a.mime,
-                  url: a.dataUrl,
-                  filename: a.name
-                })),
-                { type: 'text' as const, text: promptMessage }
-              ]
+              const parts = buildMessageParts(attachments, promptMessage)
               setAttachments([])
               usePRReviewStore.getState().clearAttachments()
               const result = await window.opencodeOps.prompt(
@@ -3487,15 +3495,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // of the user message (the SDK often re-emits the prompt without a
             // role field, making it indistinguishable from assistant text).
             lastSentPromptRef.current = promptMessage
-            const parts: MessagePart[] = [
-              ...attachments.map((a) => ({
-                type: 'file' as const,
-                mime: a.mime,
-                url: a.dataUrl,
-                filename: a.name
-              })),
-              { type: 'text' as const, text: promptMessage }
-            ]
+            const parts = buildMessageParts(attachments, promptMessage)
             setAttachments([])
             usePRReviewStore.getState().clearAttachments()
             const result = await window.opencodeOps.prompt(
@@ -4032,7 +4032,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   )
 
   // Attachment handlers
-  const handleAttach = useCallback((file: { name: string; mime: string; dataUrl: string }) => {
+  const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
     setAttachments((prev) => [...prev, { id: crypto.randomUUID(), ...file }])
   }, [])
 
@@ -4126,6 +4126,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           const reader = new FileReader()
           reader.onload = () => {
             handleAttach({
+              kind: 'data',
               name: file.name || 'pasted-image.png',
               mime: file.type,
               dataUrl: reader.result as string

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { getModelLimitKey, useContextStore } from '@/stores/useContextStore'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 interface ContextIndicatorProps {
@@ -59,52 +59,50 @@ export function ContextIndicator({
   if (!limit && used === 0) return null
 
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div className="w-[120px] flex-shrink-0 cursor-default" data-testid="context-indicator">
-            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-              <div
-                className={cn(
-                  'h-full rounded-full transition-all duration-300',
-                  getBarColor(percentForBar)
-                )}
-                style={{ width: `${Math.min(100, Math.max(0, percentForBar))}%` }}
-                data-testid="context-bar"
-              />
-            </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="w-[120px] flex-shrink-0 cursor-default" data-testid="context-indicator">
+          <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+            <div
+              className={cn(
+                'h-full rounded-full transition-all duration-300',
+                getBarColor(percentForBar)
+              )}
+              style={{ width: `${Math.min(100, Math.max(0, percentForBar))}%` }}
+              data-testid="context-bar"
+            />
           </div>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={8} className="max-w-[260px]">
-          <div className="space-y-1.5">
-            <div className="font-medium">Context Window</div>
-            {typeof limit === 'number' ? (
-              <div>
-                {formatNumber(used)} / {formatNumber(limit)} tokens ({percent ?? 0}%)
-              </div>
-            ) : (
-              <div>{formatNumber(used)} tokens (limit unavailable)</div>
-            )}
-            <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-80">
-              <div>Input: {formatNumber(tokens.input)}</div>
-              <div>Cache read: {formatNumber(tokens.cacheRead)}</div>
-              <div>Cache write: {formatNumber(tokens.cacheWrite)}</div>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8} className="max-w-[260px]">
+        <div className="space-y-1.5">
+          <div className="font-medium">Context Window</div>
+          {typeof limit === 'number' ? (
+            <div>
+              {formatNumber(used)} / {formatNumber(limit)} tokens ({percent ?? 0}%)
             </div>
-            {(tokens.output > 0 || tokens.reasoning > 0) && (
-              <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-60">
-                <div className="opacity-100 text-[10px]">Generated (not in context)</div>
-                {tokens.output > 0 && <div>Output: {formatNumber(tokens.output)}</div>}
-                {tokens.reasoning > 0 && <div>Reasoning: {formatNumber(tokens.reasoning)}</div>}
-              </div>
-            )}
-            {cost > 0 && (
-              <div className="border-t border-background/20 pt-1.5">
-                <div>Session cost: ${cost.toFixed(4)}</div>
-              </div>
-            )}
+          ) : (
+            <div>{formatNumber(used)} tokens (limit unavailable)</div>
+          )}
+          <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-80">
+            <div>Input: {formatNumber(tokens.input)}</div>
+            <div>Cache read: {formatNumber(tokens.cacheRead)}</div>
+            <div>Cache write: {formatNumber(tokens.cacheWrite)}</div>
           </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+          {(tokens.output > 0 || tokens.reasoning > 0) && (
+            <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-60">
+              <div className="opacity-100 text-[10px]">Generated (not in context)</div>
+              {tokens.output > 0 && <div>Output: {formatNumber(tokens.output)}</div>}
+              {tokens.reasoning > 0 && <div>Reasoning: {formatNumber(tokens.reasoning)}</div>}
+            </div>
+          )}
+          {cost > 0 && (
+            <div className="border-t border-background/20 pt-1.5">
+              <div>Session cost: ${cost.toFixed(4)}</div>
+            </div>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }

@@ -1,12 +1,9 @@
 import { X, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
-export interface Attachment {
-  id: string
-  name: string
-  mime: string
-  dataUrl: string
-}
+export type Attachment =
+  | { kind: 'data'; id: string; name: string; mime: string; dataUrl: string }
+  | { kind: 'path'; id: string; name: string; mime: string; filePath: string }
 
 interface AttachmentPreviewProps {
   attachments: Attachment[]
@@ -23,8 +20,9 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
           key={attachment.id}
           className="relative flex-shrink-0 group"
           data-testid="attachment-item"
+          title={attachment.kind === 'path' ? attachment.filePath : undefined}
         >
-          {attachment.mime.startsWith('image/') ? (
+          {attachment.kind === 'data' && attachment.mime.startsWith('image/') ? (
             <img
               src={attachment.dataUrl}
               alt={attachment.name}

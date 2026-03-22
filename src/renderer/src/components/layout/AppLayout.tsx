@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { Header } from './Header'
 import { LeftSidebar } from './LeftSidebar'
 import { MainPane } from './MainPane'
@@ -23,6 +23,13 @@ import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDial
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
+import { useSessionStore } from '@/stores/useSessionStore'
+import { useDropZone } from '@/hooks/useDropZone'
+import { DropOverlay } from './DropOverlay'
+import { toast } from '@/lib/toast'
+import { useDropAttachmentStore } from '@/stores'
+import { MAX_ATTACHMENTS, isImageMime } from '@/lib/file-attachment-utils'
+import type { Attachment } from '@/components/sessions/AttachmentPreview'
 
 function GlobalProjectSettings(): React.JSX.Element | null {
   const settingsProjectId = useProjectStore((s) => s.settingsProjectId)
@@ -63,6 +70,78 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useConnectionWatcher()
   // Auto-update notifications
   useAutoUpdate()
+
+  // Drag-and-drop from Finder
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
+
+  const handleFileDrop = useCallback((files: FileList) => {
+    const sessionId = useSessionStore.getState().activeSessionId
+    if (!sessionId) {
+      toast.warning('Open a session to attach files')
+      return
+    }
+
+    const allFiles = Array.from(files)
+
+    // Filter out directories (in Electron, directories have type '' and size 0)
+    const validFiles = allFiles.filter((f) => {
+      if (f.type === '' && f.size === 0) {
+        return false
+      }
+      return true
+    })
+
+    if (validFiles.length < allFiles.length) {
+      toast.warning('Folders cannot be attached. Drop individual files instead.')
+    }
+
+    if (validFiles.length === 0) return
+
+    // Truncate to max
+    const filesToProcess =
+      validFiles.length > MAX_ATTACHMENTS
+        ? (toast.warning(`Maximum ${MAX_ATTACHMENTS} files per drop`),
+          validFiles.slice(0, MAX_ATTACHMENTS))
+        : validFiles
+
+    // Process files
+    const promises = filesToProcess.map((file) => {
+      if (isImageMime(file.type)) {
+        return new Promise<Omit<Attachment, 'id'>>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            resolve({
+              kind: 'data' as const,
+              name: file.name,
+              mime: file.type,
+              dataUrl: reader.result as string
+            })
+          }
+          reader.onerror = () => {
+            reject(new Error(`Failed to read file: ${file.name}`))
+          }
+          reader.readAsDataURL(file)
+        })
+      }
+      return Promise.resolve({
+        kind: 'path' as const,
+        name: file.name,
+        mime: file.type || 'application/octet-stream',
+        filePath: window.fileOps.getPathForFile(file)
+      } as Omit<Attachment, 'id'>)
+    })
+
+    Promise.all(promises)
+      .then((items) => {
+        useDropAttachmentStore.getState().push(items)
+      })
+      .catch((err) => {
+        console.error('Failed to process dropped files:', err)
+        toast.error('Failed to read one or more dropped files')
+      })
+  }, [])
+
+  const { isDragging } = useDropZone({ onDrop: handleFileDrop })
 
   // Check remote info on worktree selection (for PR feature)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
@@ -111,6 +190,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
         </ErrorBoundary>
       </div>
       <Toaster />
+      {isDragging && <DropOverlay variant={activeSessionId ? 'normal' : 'warning'} />}
       <ErrorBoundary componentName="SessionHistory" fallback={null}>
         <SessionHistory />
       </ErrorBoundary>
