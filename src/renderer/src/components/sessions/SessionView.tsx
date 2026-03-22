@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
-import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square, X } from 'lucide-react'
+import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square, X, Github } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
@@ -373,29 +373,38 @@ function PrCommentAttachments(): React.JSX.Element | null {
   if (attachedComments.length === 0) return null
 
   return (
-    <div className="flex flex-wrap gap-1.5 px-3 pb-1">
-      {attachedComments.map((c) => (
-        <div
-          key={c.id}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-500/10 border border-violet-500/20 text-xs text-violet-300 max-w-[300px]"
-        >
-          <span className="font-medium">@{c.user.login}</span>
-          <span className="text-muted-foreground">&bull;</span>
-          <span className="truncate">
-            {c.path}:{c.line ?? '?'}
-          </span>
-          <span className="text-muted-foreground">&mdash;</span>
-          <span className="truncate">
-            &ldquo;{c.body.length > 40 ? c.body.slice(0, 40) + '...' : c.body}&rdquo;
-          </span>
-          <button
-            onClick={() => removeAttachment(c.id)}
-            className="ml-1 hover:text-foreground transition-colors"
+    <div className="flex flex-wrap gap-2 mb-2">
+      {attachedComments.map((c) => {
+        const fileName = c.path.split('/').pop() ?? c.path
+        return (
+          <div
+            key={c.id}
+            className="group relative flex flex-col gap-1 px-3 py-2 rounded-lg bg-background border border-border text-sm max-w-[400px] min-w-[220px]"
           >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      ))}
+            <div className="flex items-center gap-2">
+              <Github className="h-3.5 w-3.5 shrink-0 text-foreground" />
+              <img
+                src={c.user.avatarUrl}
+                alt={c.user.login}
+                className="h-4 w-4 rounded-full shrink-0"
+              />
+              <span className="font-medium text-foreground truncate">{c.user.login}</span>
+              <button
+                onClick={() => removeAttachment(c.id)}
+                className="ml-auto shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <span className="text-xs text-muted-foreground truncate">
+              {fileName}:{c.line ?? '?'}
+            </span>
+            <span className="text-xs text-muted-foreground line-clamp-2">
+              {c.body.length > 80 ? c.body.slice(0, 80) + '...' : c.body}
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -4616,6 +4625,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             onClose={fileMentions.dismiss}
             onNavigate={fileMentions.moveSelection}
           />
+          {/* PR review comment attachments — above the input container */}
+          <PrCommentAttachments />
           <div
             className={cn(
               'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
@@ -4631,9 +4642,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
             {/* Attachment previews */}
             <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
-
-            {/* PR review comment attachments */}
-            <PrCommentAttachments />
 
             {/* Middle: textarea */}
             <textarea

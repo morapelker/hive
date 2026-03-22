@@ -197,11 +197,12 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
 
       {/* Sticky footer — only visible when comments are selected */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center justify-between px-3 py-2 border-t border-border bg-muted/30">
+        <div className="flex flex-col gap-2 px-3 py-2.5 border-t border-border bg-muted/30">
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
               {selectedIds.size} selected
             </span>
+            <span className="text-muted-foreground/40">·</span>
             <button
               onClick={() => selectAll(worktreeId)}
               className="text-xs text-violet-400 hover:text-violet-300 transition-colors"
@@ -217,8 +218,13 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
           </div>
           <Button
             size="sm"
-            className="h-7 text-xs bg-violet-600 hover:bg-violet-700 text-white"
-            onClick={() => attachSelectedToChat(worktreeId)}
+            className="w-full h-7 text-xs bg-violet-600 hover:bg-violet-700 text-white"
+            onClick={() => {
+              attachSelectedToChat(worktreeId)
+              // Refocus the session view so the user sees the attached comments
+              useFileViewerStore.getState().setActiveFile(null)
+              useFileViewerStore.getState().clearActiveDiff()
+            }}
           >
             Add to chat
           </Button>

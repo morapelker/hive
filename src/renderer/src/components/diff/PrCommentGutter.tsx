@@ -75,6 +75,12 @@ export function PrCommentGutter({
     modifiedEditor.changeViewZones((acc) => {
       for (const thread of threads) {
         const domNode = document.createElement('div')
+        // Monaco view-zone DOM nodes sit behind overlay layers by default.
+        // Force pointer-events so interactive HTML elements (<details>,
+        // <a>, etc.) inside the rendered bodyHTML are clickable.
+        domNode.style.pointerEvents = 'auto'
+        domNode.style.position = 'relative'
+        domNode.style.zIndex = '1'
 
         // Estimate height from content length so the zone starts close to right
         const bodyLines = Math.max(1, Math.ceil(thread.rootComment.body.length / 70))
@@ -100,32 +106,49 @@ export function PrCommentGutter({
     zonesRef.current = newZones
     setPortalTargets(newZones.map((z) => ({ domNode: z.domNode, thread: z.thread })))
 
-    // Use ResizeObserver to fix zone heights after React renders actual content.
-    // Signal onZonesReady once the first observer fires (all fire in the same
-    // microtask, so line positions are accurate by the time React processes it).
+    // Correct zone heights after React renders portal content.
+    // We measure firstElementChild.offsetHeight (the React content's natural
+    // height) instead of the domNode's contentRect because Monaco sizes the
+    // domNode to match the zone — creating a circular reference that prevents
+    // the ResizeObserver alone from ever detecting overestimates.
     let readyFired = false
-    const observers: ResizeObserver[] = newZones.map((z) => {
-      const observer = new ResizeObserver((entries) => {
+    const observers = newZones.map((z) => {
+      const measureAndAdjust = (): void => {
         if (disposedRef.current) return
-        for (const entry of entries) {
-          const actualHeight = entry.contentRect.height
-          if (actualHeight > 0 && Math.abs(actualHeight - z.zone.heightInPx) > 2) {
-            z.zone.heightInPx = actualHeight + 4
-            modifiedEditor.changeViewZones((acc) => acc.layoutZone(z.zoneId))
-          }
+        const child = z.domNode.firstElementChild as HTMLElement | null
+        if (!child) return
+        const actualHeight = child.offsetHeight
+        if (actualHeight > 0 && Math.abs(actualHeight - z.zone.heightInPx) > 2) {
+          z.zone.heightInPx = actualHeight + 4
+          // Preserve scroll position so zone resizes (e.g. <details> toggle)
+          // don't cause the editor to jump.
+          const scrollTop = modifiedEditor.getScrollTop()
+          modifiedEditor.changeViewZones((acc) => acc.layoutZone(z.zoneId))
+          modifiedEditor.setScrollTop(scrollTop)
         }
         if (!readyFired) {
           readyFired = true
           onZonesReadyRef.current?.()
         }
-      })
-      observer.observe(z.domNode)
-      return observer
+      }
+
+      // MutationObserver detects portal render and <details> toggles
+      const mutation = new MutationObserver(measureAndAdjust)
+      mutation.observe(z.domNode, { childList: true, subtree: true, attributes: true })
+
+      // ResizeObserver detects content reflows (images loading, fonts, etc.)
+      const resize = new ResizeObserver(measureAndAdjust)
+      resize.observe(z.domNode)
+
+      return { mutation, resize }
     })
 
     return () => {
       disposedRef.current = true
-      observers.forEach((o) => o.disconnect())
+      observers.forEach((o) => {
+        o.mutation.disconnect()
+        o.resize.disconnect()
+      })
       modifiedEditor.changeViewZones((acc) => {
         for (const z of newZones) acc.removeZone(z.zoneId)
       })
@@ -170,6 +193,24 @@ function CommentZoneContent({
           ? 'border-violet-500/50 bg-violet-950/40'
           : 'border-blue-500/30 bg-blue-950/30'
       )}
+      onMouseDown={(e) => {
+        // preventDefault stops the browser from changing focus/selection,
+        // which is what causes Monaco to scroll. stopImmediatePropagation
+        // on the native event prevents Monaco from seeing it at the DOM level
+        // (React synthetic stopPropagation only stops within React's tree).
+        e.preventDefault()
+        e.stopPropagation()
+        e.nativeEvent.stopImmediatePropagation()
+      }}
+      onClick={(e) => {
+        e.stopPropagation()
+        // Open links in external browser instead of navigating the Electron window
+        const anchor = (e.target as HTMLElement).closest('a')
+        if (anchor?.href) {
+          e.preventDefault()
+          window.open(anchor.href, '_blank')
+        }
+      }}
     >
       {/* Root comment */}
       <div className="px-3 py-1.5">

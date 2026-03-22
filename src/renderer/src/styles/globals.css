@@ -453,3 +453,25 @@
   max-width: 100%;
   border-radius: 4px;
 }
+.pr-comment-html details {
+  margin: 0.5em 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.pr-comment-html details summary {
+  cursor: pointer;
+  padding: 0.25em 0.5em;
+  font-size: 0.9em;
+  color: var(--muted-foreground);
+  user-select: none;
+}
+.pr-comment-html details summary:hover {
+  color: var(--foreground);
+}
+.pr-comment-html details[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+.pr-comment-html details > *:not(summary) {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
