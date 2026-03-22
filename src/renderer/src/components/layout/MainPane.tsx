@@ -17,7 +17,6 @@ const WorktreeContextEditor = lazy(() =>
     default: m.WorktreeContextEditor
   }))
 )
-
 interface MainPaneProps {
   children?: React.ReactNode
 }
@@ -224,6 +223,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
           }
         >
           <MonacoDiffView
+            key={`${activeDiff.filePath}|${activeDiff.compareBranch ?? ''}|${activeDiff.staged}|${activeDiff.prReviewWorktreeId ?? ''}`}
             worktreePath={activeDiff.worktreePath}
             filePath={activeDiff.filePath}
             fileName={activeDiff.fileName}
@@ -231,6 +231,9 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
             isUntracked={activeDiff.isUntracked}
             isNewFile={activeDiff.isNewFile}
             compareBranch={activeDiff.compareBranch}
+            scrollToLine={activeDiff.scrollToLine}
+            scrollTrigger={activeDiff.scrollTrigger}
+            prReviewWorktreeId={activeDiff.prReviewWorktreeId}
             onClose={handleCloseDiff}
           />
         </Suspense>

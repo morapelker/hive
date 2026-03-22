@@ -16,6 +16,7 @@ export interface DiffTab {
   isUntracked: boolean
   isNewFile?: boolean
   compareBranch?: string
+  prReviewWorktreeId?: string
 }
 
 export interface ContextTab {
@@ -33,6 +34,9 @@ export interface ActiveDiff {
   isUntracked: boolean
   isNewFile?: boolean
   compareBranch?: string
+  scrollToLine?: number
+  scrollTrigger?: number
+  prReviewWorktreeId?: string
 }
 
 interface FileViewerState {
@@ -191,9 +195,19 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
         staged: diff.staged,
         isUntracked: diff.isUntracked,
         isNewFile: diff.isNewFile,
-        compareBranch: diff.compareBranch
+        compareBranch: diff.compareBranch,
+        prReviewWorktreeId: diff.prReviewWorktreeId
       })
-      return { activeDiff: diff, activeFilePath: tabKey, openFiles }
+      // Increment scrollTrigger so the scroll effect re-fires even when
+      // scrollToLine hasn't changed (e.g. same comment clicked twice)
+      const scrollTrigger = diff.scrollToLine != null
+        ? (state.activeDiff?.scrollTrigger ?? 0) + 1
+        : undefined
+      return {
+        activeDiff: { ...diff, scrollTrigger },
+        activeFilePath: tabKey,
+        openFiles
+      }
     })
   },
 
@@ -227,7 +241,8 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
           staged: tab.staged,
           isUntracked: tab.isUntracked,
           isNewFile: tab.isNewFile,
-          compareBranch: tab.compareBranch
+          compareBranch: tab.compareBranch,
+          prReviewWorktreeId: tab.prReviewWorktreeId
         }
       }
     })

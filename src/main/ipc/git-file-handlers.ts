@@ -7,6 +7,7 @@ import { join } from 'path'
 import { readFileAsBase64 } from '../services/file-ops'
 import { telemetryService } from '../services/telemetry-service'
 import { openPathWithPreferredEditor } from './settings-handlers'
+import type { PRReviewComment } from '@shared/types/git'
 import {
   createGitService,
   parseWorktreeForBranch,
@@ -58,6 +59,31 @@ export interface GitBranchInfoResult {
   success: boolean
   branch?: GitBranchInfo
   error?: string
+}
+
+// GraphQL query to fetch review threads (inline file comments only)
+const PR_REVIEW_THREADS_QUERY = `query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){baseRefName reviewThreads(first:100){nodes{isResolved isOutdated diffSide comments(first:50){nodes{databaseId body bodyHTML author{login avatarUrl}path line originalLine diffHunk createdAt updatedAt subjectType pullRequestReview{databaseId}}}}}}}}` as const
+
+interface GQLReviewThread {
+  isResolved: boolean
+  isOutdated: boolean
+  diffSide: 'LEFT' | 'RIGHT'
+  comments: {
+    nodes: Array<{
+      databaseId: number
+      body: string
+      bodyHTML: string
+      author: { login: string; avatarUrl: string } | null
+      path: string
+      line: number | null
+      originalLine: number | null
+      diffHunk: string
+      createdAt: string
+      updatedAt: string
+      subjectType: 'LINE' | 'FILE'
+      pullRequestReview: { databaseId: number } | null
+    }>
+  }
 }
 
 export function registerGitFileHandlers(window: BrowserWindow): void {
@@ -909,6 +935,88 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
           projectPath,
           prNumber
         })
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Fetch inline review comments for a PR (file-level review threads only)
+  ipcMain.handle(
+    'git:getPRReviewComments',
+    async (
+      _event,
+      { projectPath, prNumber }: { projectPath: string; prNumber: number }
+    ): Promise<{ success: boolean; comments?: PRReviewComment[]; error?: string }> => {
+      log.info('Fetching PR review comments via GraphQL', { projectPath, prNumber })
+      try {
+        const { stdout: repoInfo } = await execAsync(
+          "gh repo view --json nameWithOwner -q '.nameWithOwner'",
+          { cwd: projectPath }
+        )
+        const [owner, repo] = repoInfo.trim().split('/')
+
+        const { stdout } = await execAsync(
+          `gh api graphql -f query='${PR_REVIEW_THREADS_QUERY}' -F owner='${owner}' -F repo='${repo}' -F pr=${prNumber}`,
+          { cwd: projectPath, maxBuffer: 10 * 1024 * 1024 }
+        )
+
+        const response = JSON.parse(stdout)
+        if (response.errors?.length) {
+          return { success: false, error: response.errors[0].message }
+        }
+
+        const pullRequest = response.data?.repository?.pullRequest
+        const baseBranch: string | undefined = pullRequest?.baseRefName ?? undefined
+        const threads: GQLReviewThread[] =
+          pullRequest?.reviewThreads?.nodes ?? []
+        const comments: PRReviewComment[] = []
+
+        for (const thread of threads) {
+          const nodes = thread.comments?.nodes
+          if (!nodes?.length) continue
+          const rootId = nodes[0].databaseId
+
+          for (let i = 0; i < nodes.length; i++) {
+            const c = nodes[i]
+            comments.push({
+              id: c.databaseId,
+              body: c.body ?? '',
+              bodyHTML: c.bodyHTML ?? '',
+              path: c.path ?? '',
+              line: c.line ?? null,
+              originalLine: c.originalLine ?? null,
+              side: thread.diffSide ?? 'RIGHT',
+              diffHunk: c.diffHunk ?? '',
+              user: {
+                login: c.author?.login ?? 'ghost',
+                avatarUrl: c.author?.avatarUrl ?? ''
+              },
+              createdAt: c.createdAt ?? '',
+              updatedAt: c.updatedAt ?? '',
+              inReplyToId: i === 0 ? null : rootId,
+              pullRequestReviewId: c.pullRequestReview?.databaseId ?? null,
+              subjectType: c.subjectType === 'FILE' ? 'file' : 'line'
+            })
+          }
+        }
+
+        return { success: true, comments, baseBranch }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error(
+          'Failed to fetch PR review comments',
+          error instanceof Error ? error : new Error(message),
+          { projectPath, prNumber }
+        )
+        if (message.includes('gh: command not found') || message.includes('not found'))
+          return { success: false, error: 'GitHub CLI (gh) is not installed' }
+        if (message.includes('Could not resolve to a Repository'))
+          return {
+            success: false,
+            error: 'Not a GitHub repository or not authenticated with gh'
+          }
+        if (message.includes('404'))
+          return { success: false, error: 'PR not found' }
         return { success: false, error: message }
       }
     }

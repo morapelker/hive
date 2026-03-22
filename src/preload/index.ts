@@ -963,6 +963,32 @@ const gitOps = {
   ): Promise<{ success: boolean; state?: string; title?: string; error?: string }> =>
     ipcRenderer.invoke('git:getPRState', { projectPath, prNumber }),
 
+  // Fetch inline review comments for a PR
+  getPRReviewComments: (
+    projectPath: string,
+    prNumber: number
+  ): Promise<{
+    success: boolean
+    comments?: Array<{
+      id: number
+      body: string
+      bodyHTML: string
+      path: string
+      line: number | null
+      originalLine: number | null
+      side: 'LEFT' | 'RIGHT'
+      diffHunk: string
+      user: { login: string; avatarUrl: string }
+      createdAt: string
+      updatedAt: string
+      inReplyToId: number | null
+      pullRequestReviewId: number | null
+      subjectType: 'line' | 'file'
+    }>
+    baseBranch?: string
+    error?: string
+  }> => ipcRenderer.invoke('git:getPRReviewComments', { projectPath, prNumber }),
+
   // Get file content from a specific git ref (HEAD, index)
   getRefContent: (
     worktreePath: string,
