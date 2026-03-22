@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AppLayout } from '@/components/layout'
 import { ErrorBoundary } from '@/components/error'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { initPlatform } from '@/lib/platform'
 
 function App(): React.JSX.Element {
@@ -14,7 +15,9 @@ function App(): React.JSX.Element {
 
   return (
     <ErrorBoundary componentName="App">
-      <AppLayout />
+      <TooltipProvider delayDuration={200}>
+        <AppLayout />
+      </TooltipProvider>
     </ErrorBoundary>
   )
 }
