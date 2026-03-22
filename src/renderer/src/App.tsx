@@ -15,7 +15,7 @@ function App(): React.JSX.Element {
 
   return (
     <ErrorBoundary componentName="App">
-      <TooltipProvider delayDuration={200}>
+      <TooltipProvider delayDuration={350}>
         <AppLayout />
       </TooltipProvider>
     </ErrorBoundary>
