@@ -322,17 +322,15 @@ export function ConnectionItem({
     </>
   )
 
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          className={cn(
-            'group flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
-            isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
-          )}
-          onClick={handleClick}
-          data-testid={`connection-item-${connection.id}`}
-        >
+  const mainContent = (
+    <div
+      className={cn(
+        'group flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
+        isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+      )}
+      onClick={handleClick}
+      data-testid={`connection-item-${connection.id}`}
+    >
           {/* Connection color indicator — always visible */}
           {connection.color ? (
             <span
@@ -403,67 +401,28 @@ export function ConnectionItem({
               />
             ) : (
               <>
-                {hasCustomName && projectDetails.length > 0 ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div
-                        className="overflow-hidden"
-                        ref={containerRef}
-                        onMouseEnter={handleMouseEnter}
-                        onMouseLeave={handleMouseLeave}
-                      >
-                        <span
-                          ref={textRef}
-                          className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
-                          style={
-                            isAnimating
-                              ? ({
-                                  '--scroll-distance': `${scrollDistance}px`,
-                                  animation: `marquee-scroll ${animationDuration}s linear infinite`
-                                } as React.CSSProperties)
-                              : undefined
-                          }
-                          title={displayName}
-                        >
-                          {displayName}
-                        </span>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="right" sideOffset={8} className="max-w-xs">
-                      <div className="space-y-1">
-                        {projectDetails.map((detail, idx) => (
-                          <div key={idx} className="text-[11px] font-mono">
-                            <div className="font-medium">{detail.project}</div>
-                            <div className="text-muted-foreground text-[10px]">→ {detail.branch}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  <div
-                    className="overflow-hidden"
-                    ref={containerRef}
-                    onMouseEnter={handleMouseEnter}
-                    onMouseLeave={handleMouseLeave}
+                <div
+                  className="overflow-hidden"
+                  ref={containerRef}
+                  onMouseEnter={handleMouseEnter}
+                  onMouseLeave={handleMouseLeave}
+                >
+                  <span
+                    ref={textRef}
+                    className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
+                    style={
+                      isAnimating
+                        ? ({
+                            '--scroll-distance': `${scrollDistance}px`,
+                            animation: `marquee-scroll ${animationDuration}s linear infinite`
+                          } as React.CSSProperties)
+                        : undefined
+                    }
+                    title={displayName}
                   >
-                    <span
-                      ref={textRef}
-                      className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
-                      style={
-                        isAnimating
-                          ? ({
-                              '--scroll-distance': `${scrollDistance}px`,
-                              animation: `marquee-scroll ${animationDuration}s linear infinite`
-                            } as React.CSSProperties)
-                          : undefined
-                      }
-                      title={displayName}
-                    >
-                      {displayName}
-                    </span>
-                  </div>
-                )}
+                    {displayName}
+                  </span>
+                </div>
                 <span
                   className={cn('text-[11px]', statusClass)}
                   data-testid="connection-status-text"
@@ -545,6 +504,28 @@ export function ConnectionItem({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+  )
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        {hasCustomName && projectDetails.length > 0 ? (
+          <Tooltip>
+            <TooltipTrigger asChild>{mainContent}</TooltipTrigger>
+            <TooltipContent side="right" sideOffset={8} className="max-w-xs">
+              <div className="space-y-1">
+                {projectDetails.map((detail, idx) => (
+                  <div key={idx} className="text-[11px] font-mono">
+                    <div className="font-medium">{detail.project}</div>
+                    <div className="text-muted-foreground text-[10px]">→ {detail.branch}</div>
+                  </div>
+                ))}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          mainContent
+        )}
       </ContextMenuTrigger>
 
       {/* Context Menu (right-click) */}
