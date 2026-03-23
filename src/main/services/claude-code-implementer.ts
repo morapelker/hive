@@ -2193,10 +2193,19 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
       // If the session is aborted while waiting, auto-deny
       const onAbort = (): void => {
-        if (this.pendingApprovals.has(requestId)) {
+        const pending = this.pendingApprovals.get(requestId)
+        if (pending) {
           log.info('APPROVAL FLOW: Session aborted while approval pending, auto-denying', {
             requestId
           })
+
+          // Send command.approval_replied event to clear the UI state
+          this.sendToRenderer('opencode:stream', {
+            type: 'command.approval_replied',
+            sessionId: pending.hiveSessionId,
+            data: { requestId, id: requestId, approved: false }
+          })
+
           this.pendingApprovals.delete(requestId)
           resolve({ approved: false })
         }

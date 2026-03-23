@@ -426,6 +426,10 @@ export function useOpenCodeGlobalListener(): void {
             // Don't overwrite plan_ready — session is blocked waiting for plan approval
             if (useSessionStore.getState().getPendingPlan(sessionId)) return
 
+            // Don't overwrite command_approval — session is blocked waiting for command approval
+            const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+            if (currentStatus?.status === 'command_approval') return
+
             if (sessionId !== activeId) {
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
               useWorktreeStatusStore
@@ -488,6 +492,10 @@ export function useOpenCodeGlobalListener(): void {
           // Don't overwrite plan_ready — session is blocked waiting for plan approval
           if (useSessionStore.getState().getPendingPlan(sessionId)) return
 
+          // Don't overwrite command_approval — session is blocked waiting for command approval
+          const statusForIdle = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+          if (statusForIdle?.status === 'command_approval') return
+
           // Active session is handled by SessionView.
           if (sessionId === activeId) return
 
@@ -545,6 +553,10 @@ export function useOpenCodeGlobalListener(): void {
 
                 // Don't overwrite plan_ready — session is blocked waiting for plan approval
                 if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
+                // Don't overwrite command_approval — session is blocked waiting for command approval
+                const followUpStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+                if (followUpStatus?.status === 'command_approval') return
 
                 const nextFollowUp = useSessionStore.getState().dequeueFollowUpMessage(sessionId)
                 if (nextFollowUp) {
