@@ -1,12 +1,24 @@
-# Hive
-
 <div align="center">
+  <img src="resources/icon.png" alt="Hive" width="128" />
+  <h1>Hive</h1>
+  <p><strong>一个开源的 AI Agent 编排器，用来在多个项目和多个分支之间并行编码。</strong></p>
+  <p>在一个窗口里同时运行 Claude Code、OpenCode 和 Codex。每个会话都绑定独立的 git worktree，减少分支切换和上下文混乱。</p>
   <p><a href="README.md"><strong>English</strong></a> | <a href="README.zh-CN.md"><strong>简体中文</strong></a></p>
+
+  <p>
+    <a href="https://github.com/morapelker/hive/releases/latest"><img src="https://img.shields.io/github/v/release/morapelker/hive?style=flat-square&logo=github&label=version" alt="Latest Release" /></a>
+    <a href="https://github.com/morapelker/hive/releases"><img src="https://img.shields.io/github/downloads/morapelker/hive/total?style=flat-square&logo=github" alt="Downloads" /></a>
+    <a href="https://github.com/morapelker/hive/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/morapelker/hive/release.yml?style=flat-square&logo=github-actions&label=build" alt="Build Status" /></a>
+    <a href="#"><img src="https://img.shields.io/badge/macOS-only-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS" /></a>
+    <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" /></a>
+    <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/electron-33-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron" /></a>
+    <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/typescript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
+    <a href="https://github.com/morapelker/hive/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" /></a>
+  </p>
 </div>
 
-一个开源的 AI Agent 编排器，用来在多个项目和多个分支之间并行编码。
-
-在一个窗口里同时运行 Claude Code、OpenCode 和 Codex。每个会话都绑定独立的 git worktree，减少分支切换和上下文混乱。
+---
 
 ## Hive 是什么
 
