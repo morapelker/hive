@@ -14,7 +14,6 @@ import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes } from '@/lib/message-send-times'
 import { checkAutoApprove } from '@/lib/permissionUtils'
-import { toast } from '@/lib/toast'
 
 interface PromptDispatchContext {
   worktreePath: string
@@ -389,40 +388,6 @@ export function useOpenCodeGlobalListener(): void {
             return
           }
 
-          // Handle command approval timeout/problem - when approval dialog doesn't appear
-          if (event.type === 'command.approval_problem') {
-            const data = event.data as {
-              requestId?: string
-              commandStr?: string
-              message?: string
-              suggestion?: string
-            } | undefined
-
-            const message = data?.message ||
-              `Command approval timed out. The command was not executed.`
-
-            const commandStr = data?.commandStr
-
-            // Show info toast about timeout
-            toast.info(message, {
-              duration: 5000,  // Show for 5 seconds
-              action: {
-                label: 'Open Settings',
-                onClick: () => {
-                  // Navigate directly to security settings
-                  useSettingsStore.getState().openSettings('Security')
-                }
-              },
-              description: commandStr ? `Command: ${commandStr}` : undefined
-            })
-
-            console.warn('Command approval problem:', {
-              sessionId,
-              requestId: data?.requestId,
-              commandStr: data?.commandStr
-            })
-            return
-          }
 
           // Handle plan approval events globally so pending state survives tab switches.
           if (event.type === 'plan.ready') {

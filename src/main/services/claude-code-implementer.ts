@@ -165,6 +165,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       toolName: string
       input: Record<string, unknown>
       commandStr: string
+      hiveSessionId: string
     }
   >()
 
@@ -2186,7 +2187,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         },
         toolName,
         input,
-        commandStr
+        commandStr,
+        hiveSessionId: session.hiveSessionId
       })
 
       // If the session is aborted while waiting, auto-deny
@@ -2366,24 +2368,13 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       patterns
     })
 
-    // Find the session ID for this approval request to send the replied event
-    let sessionId: string | null = null
-    for (const [key, state] of this.sessions) {
-      // Check if this session has any pending approvals
-      if (this.pendingApprovals.has(requestId)) {
-        sessionId = state.hiveSessionId
-        break
-      }
-    }
-
     // Send command.approval_replied event to renderer so it can clear the pending approval
-    if (sessionId) {
-      this.sendToRenderer('opencode:stream', {
-        type: 'command.approval_replied',
-        sessionId,
-        data: { requestId, id: requestId, approved }
-      })
-    }
+    // We know which session this approval belongs to from the stored data
+    this.sendToRenderer('opencode:stream', {
+      type: 'command.approval_replied',
+      sessionId: pendingApproval.hiveSessionId,
+      data: { requestId, id: requestId, approved }
+    })
 
     pendingApproval.resolve({ approved, remember, pattern, patterns })
   }
