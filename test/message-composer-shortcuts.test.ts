@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { isComposingKeyboardEvent } from '../src/renderer/src/lib/message-composer-shortcuts'
 
 describe('isComposingKeyboardEvent', () => {
+  it('returns the fallback when nativeEvent is undefined and fallback is false', () => {
+    expect(isComposingKeyboardEvent(undefined, false)).toBe(false)
+  })
+
+  it('returns the fallback when nativeEvent is undefined and fallback is true', () => {
+    expect(isComposingKeyboardEvent(undefined, true)).toBe(true)
+  })
+
   it('returns false when no composition signals are present', () => {
     expect(isComposingKeyboardEvent({ isComposing: false, keyCode: 13 }, false)).toBe(false)
   })
