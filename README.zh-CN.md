@@ -1,6 +1,8 @@
 # Hive
 
-> [English README](./README.md)
+<div align="center">
+  <p><a href="README.md"><strong>English</strong></a> | <a href="README.zh-CN.md"><strong>简体中文</strong></a></p>
+</div>
 
 一个开源的 AI Agent 编排器，用来在多个项目和多个分支之间并行编码。
 
