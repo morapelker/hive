@@ -48,6 +48,7 @@ import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
 import { COMPLETION_WORDS, formatCompletionDuration, formatElapsedTimer } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { buildPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import beeIcon from '@/assets/bee.png'
 
@@ -611,6 +612,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const cursorPositionRef = useRef(0)
   const [cursorPosition, setCursorPosition] = useState(0)
   const isPastingRef = useRef(false)
+  const isImeComposingRef = useRef(false)
 
   // Draft persistence refs
   const inputValueRef = useRef('')
@@ -3930,6 +3932,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
       }
 
+      if (
+        e.key === 'Enter' &&
+        isComposingKeyboardEvent(
+          e.nativeEvent as KeyboardEvent & { keyCode?: number },
+          isImeComposingRef.current
+        )
+      ) {
+        return
+      }
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         // When a plan is pending, sending text rejects the plan with feedback
@@ -4663,6 +4675,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 setCursorPosition(pos)
               }}
               onKeyDown={handleKeyDown}
+              onCompositionStart={() => {
+                isImeComposingRef.current = true
+              }}
+              onCompositionEnd={() => {
+                isImeComposingRef.current = false
+              }}
               onPaste={handlePaste}
               disabled={!!activePermission}
               placeholder={
