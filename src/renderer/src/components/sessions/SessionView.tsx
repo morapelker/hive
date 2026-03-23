@@ -1586,6 +1586,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
             if (requestId) {
               useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
+              // Reset status if no more pending approvals (handles transition from background to active)
+              const remaining = useCommandApprovalStore.getState().getApprovals(sessionId)
+              if (remaining.length === 0) {
+                const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+                if (currentStatus?.status === 'command_approval') {
+                  const mode = useSessionStore.getState().getSessionMode(sessionId)
+                  useWorktreeStatusStore
+                    .getState()
+                    .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+                }
+              }
             }
             return
           }
