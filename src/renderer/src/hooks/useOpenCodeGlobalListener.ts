@@ -399,13 +399,13 @@ export function useOpenCodeGlobalListener(): void {
             } | undefined
 
             const message = data?.message ||
-              `Security approval failed after 60 seconds. The approval dialog may not have appeared. Try disabling security temporarily in Settings > Security.`
+              `Command approval timed out. The command was not executed.`
 
             const commandStr = data?.commandStr
 
-            // Show warning toast with action to open security settings
-            toast.warning(message, {
-              duration: 10000,  // Show for 10 seconds since it's an important issue
+            // Show info toast about timeout
+            toast.info(message, {
+              duration: 5000,  // Show for 5 seconds
               action: {
                 label: 'Open Settings',
                 onClick: () => {

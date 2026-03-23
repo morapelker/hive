@@ -2170,7 +2170,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       requestId,
       commandStr,
       waitStartTime: new Date().toISOString(),
-      maxWaitTime: '60 seconds'
+      maxWaitTime: '5 minutes'
     })
 
     // Block execution with a Promise that waits for user response OR timeout
@@ -2181,17 +2181,17 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       patterns?: string[]
       timeout?: boolean
     }>((resolve) => {
-      // Set up timeout (60 seconds) - likely means approval dialog didn't appear
+      // Set up timeout (5 minutes) - safety net in case user doesn't respond
       const timeoutId = setTimeout(() => {
         if (this.pendingApprovals.has(requestId)) {
-          log.error('APPROVAL FLOW: Timeout - approval dialog likely did not appear', {
+          log.warn('APPROVAL FLOW: Timeout - user did not respond to approval dialog', {
             requestId,
             commandStr,
-            elapsed: '60 seconds'
+            elapsed: '5 minutes'
           })
           this.pendingApprovals.delete(requestId)
 
-          // Send notification about security system issue with helpful suggestion
+          // Send notification that the command was auto-denied due to timeout
           const suggestedPattern = this.generateSaferPatternSuggestion(commandStr)
           this.sendToRenderer('opencode:stream', {
             type: 'command.approval_problem',
@@ -2199,14 +2199,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             data: {
               requestId,
               commandStr,
-              message: `Security approval did not complete after 60 seconds. The approval dialog may not have appeared. Try temporarily disabling security in Settings > Security, or add "${suggestedPattern}" to your allowlist.`,
-              suggestion: 'disable_security_temporarily'
+              message: `Command approval timed out after 5 minutes. The command was not executed. To auto-approve similar commands in the future, add "${suggestedPattern}" to your allowlist in Settings > Security.`,
+              suggestion: 'add_to_allowlist'
             }
           })
 
           resolve({ approved: false, timeout: true })
         }
-      }, 60000)  // 60 second timeout
+      }, 300000)  // 5 minute timeout
 
       this.pendingApprovals.set(requestId, {
         resolve: (response) => {
@@ -2238,11 +2238,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
     // Check if request timed out
     if (userResponse.timeout) {
-      log.warn('APPROVAL FLOW: Command denied - approval dialog likely did not appear', { requestId, commandStr })
+      log.warn('APPROVAL FLOW: Command denied - user did not respond within timeout', { requestId, commandStr })
       const suggestedPattern = this.generateSaferPatternSuggestion(commandStr)
       return {
         behavior: 'deny' as const,
-        message: `Security approval failed after 60 seconds - the approval dialog may not have appeared. To fix this: (1) Try disabling security temporarily in Settings > Security, or (2) Add "${suggestedPattern}" to your allowlist. Command not executed: ${commandStr}`
+        message: `Command approval timed out after 5 minutes. To auto-approve similar commands in the future, add "${suggestedPattern}" to your allowlist in Settings > Security. Command not executed: ${commandStr}`
       }
     }
 
