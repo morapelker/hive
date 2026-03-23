@@ -2169,48 +2169,18 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     log.info('APPROVAL FLOW: Waiting for user response', {
       requestId,
       commandStr,
-      waitStartTime: new Date().toISOString(),
-      maxWaitTime: '5 minutes'
+      waitStartTime: new Date().toISOString()
     })
 
-    // Block execution with a Promise that waits for user response OR timeout
+    // Block execution with a Promise that waits for user response (no timeout, like questions)
     const userResponse = await new Promise<{
       approved: boolean
       remember?: 'allow' | 'block'
       pattern?: string
       patterns?: string[]
-      timeout?: boolean
     }>((resolve) => {
-      // Set up timeout (5 minutes) - safety net in case user doesn't respond
-      const timeoutId = setTimeout(() => {
-        if (this.pendingApprovals.has(requestId)) {
-          log.warn('APPROVAL FLOW: Timeout - user did not respond to approval dialog', {
-            requestId,
-            commandStr,
-            elapsed: '5 minutes'
-          })
-          this.pendingApprovals.delete(requestId)
-
-          // Send notification that the command was auto-denied due to timeout
-          const suggestedPattern = this.generateSaferPatternSuggestion(commandStr)
-          this.sendToRenderer('opencode:stream', {
-            type: 'command.approval_problem',
-            sessionId: session.hiveSessionId,
-            data: {
-              requestId,
-              commandStr,
-              message: `Command approval timed out after 5 minutes. The command was not executed. To auto-approve similar commands in the future, add "${suggestedPattern}" to your allowlist in Settings > Security.`,
-              suggestion: 'add_to_allowlist'
-            }
-          })
-
-          resolve({ approved: false, timeout: true })
-        }
-      }, 300000)  // 5 minute timeout
-
       this.pendingApprovals.set(requestId, {
         resolve: (response) => {
-          clearTimeout(timeoutId)  // Clear timeout if user responds
           log.info('APPROVAL FLOW: User response received', { requestId, approved: response.approved })
           resolve(response)
         },
@@ -2225,7 +2195,6 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
           log.info('APPROVAL FLOW: Session aborted while approval pending, auto-denying', {
             requestId
           })
-          clearTimeout(timeoutId)
           this.pendingApprovals.delete(requestId)
           resolve({ approved: false })
         }
@@ -2235,16 +2204,6 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
     // Clean up tracking state
     this.pendingApprovals.delete(requestId)
-
-    // Check if request timed out
-    if (userResponse.timeout) {
-      log.warn('APPROVAL FLOW: Command denied - user did not respond within timeout', { requestId, commandStr })
-      const suggestedPattern = this.generateSaferPatternSuggestion(commandStr)
-      return {
-        behavior: 'deny' as const,
-        message: `Command approval timed out after 5 minutes. To auto-approve similar commands in the future, add "${suggestedPattern}" to your allowlist in Settings > Security. Command not executed: ${commandStr}`
-      }
-    }
 
     // Handle "remember" choice - update settings with user-selected pattern(s)
     if (userResponse.remember) {
