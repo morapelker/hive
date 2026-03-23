@@ -3,6 +3,7 @@
   <h1>Hive</h1>
   <p><strong>An open-source AI agent orchestrator for parallel coding across projects.</strong></p>
   <p>Run Claude Code, OpenCode, and Codex sessions in parallel. One window. Isolated branches. Zero tab chaos.</p>
+  <p><a href="README.md"><strong>English</strong></a> | <a href="README.zh-CN.md"><strong>简体中文</strong></a></p>
 
   <p>
     <a href="https://github.com/morapelker/hive/releases/latest"><img src="https://img.shields.io/github/v/release/morapelker/hive?style=flat-square&logo=github&label=version" alt="Latest Release" /></a>
