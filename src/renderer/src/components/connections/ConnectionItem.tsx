@@ -118,17 +118,19 @@ export function ConnectionItem({
   const { displayStatus, statusClass } =
     connectionStatus === 'answering'
       ? { displayStatus: 'Answer questions', statusClass: 'font-semibold text-amber-500' }
-      : connectionStatus === 'permission'
-        ? { displayStatus: 'Permission', statusClass: 'font-semibold text-amber-500' }
-        : connectionStatus === 'planning'
-          ? { displayStatus: 'Planning', statusClass: 'font-semibold text-blue-400' }
-          : connectionStatus === 'working'
-            ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
-            : connectionStatus === 'plan_ready'
-              ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
-              : connectionStatus === 'completed'
-                ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
-                : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+      : connectionStatus === 'command_approval'
+        ? { displayStatus: 'Approve command', statusClass: 'font-semibold text-orange-500' }
+        : connectionStatus === 'permission'
+          ? { displayStatus: 'Permission', statusClass: 'font-semibold text-amber-500' }
+          : connectionStatus === 'planning'
+            ? { displayStatus: 'Planning', statusClass: 'font-semibold text-blue-400' }
+            : connectionStatus === 'working'
+              ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
+              : connectionStatus === 'plan_ready'
+                ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
+                : connectionStatus === 'completed'
+                  ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
+                  : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
   // Marquee animation state for overflowing display name
   const containerRef = useRef<HTMLDivElement>(null)

@@ -190,17 +190,19 @@ export function WorktreeItem({
     ? { displayStatus: 'Archiving', statusClass: 'font-semibold text-muted-foreground' }
     : worktreeStatus === 'answering'
       ? { displayStatus: 'Answer questions', statusClass: 'font-semibold text-amber-500' }
-      : worktreeStatus === 'permission'
-        ? { displayStatus: 'Permission', statusClass: 'font-semibold text-amber-500' }
-        : worktreeStatus === 'planning'
-          ? { displayStatus: 'Planning', statusClass: 'font-semibold text-blue-400' }
-          : worktreeStatus === 'working'
-            ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
-            : worktreeStatus === 'plan_ready'
-              ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
-              : worktreeStatus === 'completed'
-                ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
-                : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+      : worktreeStatus === 'command_approval'
+        ? { displayStatus: 'Approve command', statusClass: 'font-semibold text-orange-500' }
+        : worktreeStatus === 'permission'
+          ? { displayStatus: 'Permission', statusClass: 'font-semibold text-amber-500' }
+          : worktreeStatus === 'planning'
+            ? { displayStatus: 'Planning', statusClass: 'font-semibold text-blue-400' }
+            : worktreeStatus === 'working'
+              ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
+              : worktreeStatus === 'plan_ready'
+                ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
+                : worktreeStatus === 'completed'
+                  ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
+                  : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
   // Archive confirmation state
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)

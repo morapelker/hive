@@ -2406,6 +2406,26 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       pattern,
       patterns
     })
+
+    // Find the session ID for this approval request to send the replied event
+    let sessionId: string | null = null
+    for (const [key, state] of this.sessions) {
+      // Check if this session has any pending approvals
+      if (this.pendingApprovals.has(requestId)) {
+        sessionId = state.hiveSessionId
+        break
+      }
+    }
+
+    // Send command.approval_replied event to renderer so it can clear the pending approval
+    if (sessionId) {
+      this.sendToRenderer('opencode:stream', {
+        type: 'command.approval_replied',
+        sessionId,
+        data: { requestId, id: requestId, approved }
+      })
+    }
+
     pendingApproval.resolve({ approved, remember, pattern, patterns })
   }
 

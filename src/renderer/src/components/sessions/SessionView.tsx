@@ -1581,6 +1581,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
+          // Handle command approval replies
+          if (event.type === 'command.approval_replied') {
+            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+            if (requestId) {
+              useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
+            }
+            return
+          }
+
           // Handle plan events (ExitPlanMode blocking tool)
           if (event.type === 'plan.ready') {
             const data = event.data as {

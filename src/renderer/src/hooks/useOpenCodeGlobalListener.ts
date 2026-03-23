@@ -5,6 +5,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
+import { useCommandApprovalStore, type CommandApprovalRequest } from '@/stores/useCommandApprovalStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useContextStore, type TokenInfo, type SessionModelRef } from '@/stores/useContextStore'
 import { useRecentStore } from '@/stores/useRecentStore'
@@ -335,6 +336,50 @@ export function useOpenCodeGlobalListener(): void {
               // Revert to working/planning if no more pending permissions
               const remaining = usePermissionStore.getState().pendingBySession.get(sessionId)
               if (!remaining || remaining.length === 0) {
+                const mode = useSessionStore.getState().getSessionMode(sessionId)
+                useWorktreeStatusStore
+                  .getState()
+                  .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+              }
+            }
+            return
+          }
+
+          // Handle command approval events for background sessions (command filter system)
+          if (event.type === 'command.approval_needed' && sessionId !== activeId) {
+            const request = event.data
+            if (request?.id && request?.toolName) {
+              // Check if we should auto-approve based on allowlist
+              const { commandFilter } = useSettingsStore.getState()
+
+              // For command approvals, we check if security is disabled
+              // Note: Command approvals don't have the same auto-approve pattern matching as permissions
+              if (!commandFilter.enabled) {
+                // Auto-approve if security is disabled
+                window.opencodeOps
+                  .commandApprovalReply(request.id, true)
+                  .catch((err: unknown) => {
+                    console.warn('Auto-approve commandApprovalReply (background) failed:', err)
+                  })
+                return
+              }
+
+              // Add to approval store so dialog appears
+              useCommandApprovalStore.getState().addApproval(sessionId, request)
+              // Update status to show command approval needed
+              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'command_approval')
+            }
+            return
+          }
+
+          // Handle command approval replies for background sessions
+          if (event.type === 'command.approval_replied' && sessionId !== activeId) {
+            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+            if (requestId) {
+              useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
+              // Revert to working/planning if no more pending approvals
+              const remaining = useCommandApprovalStore.getState().getApprovals(sessionId)
+              if (remaining.length === 0) {
                 const mode = useSessionStore.getState().getSessionMode(sessionId)
                 useWorktreeStatusStore
                   .getState()
