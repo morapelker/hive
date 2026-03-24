@@ -540,6 +540,30 @@ export const messages: Record<AppLocale, MessageTree> = {
         noDiffContent: 'No diff content',
         noChanges: 'No file changes'
       },
+      edit: {
+        lineCount: '{count} {label}',
+        lineSingular: 'line',
+        linePlural: 'lines',
+        moreRemoved: '... {count} more removed',
+        moreAdded: '... {count} more added',
+        noChanges: 'No changes'
+      },
+      fallback: {
+        todo: 'TODO',
+        error: 'Error',
+        input: 'Input',
+        output: 'Output',
+        note: 'No custom renderer - showing raw data'
+      },
+      skill: {
+        loading: 'Loading skill...'
+      },
+      exitPlan: {
+        empty: 'No plan content available.'
+      },
+      todo: {
+        empty: 'No tasks'
+      },
       task: {
         defaultTitle: 'Sub-agent',
         prompt: 'Prompt'
@@ -1386,6 +1410,30 @@ export const messages: Record<AppLocale, MessageTree> = {
         moreLines: '... 还有 {count} 行',
         noDiffContent: '没有 diff 内容',
         noChanges: '没有文件变更'
+      },
+      edit: {
+        lineCount: '{count} {label}',
+        lineSingular: '行',
+        linePlural: '行',
+        moreRemoved: '... 还有 {count} 行被移除',
+        moreAdded: '... 还有 {count} 行被新增',
+        noChanges: '没有变更'
+      },
+      fallback: {
+        todo: '待完善',
+        error: '错误',
+        input: '输入',
+        output: '输出',
+        note: '暂无自定义渲染器，当前显示原始数据'
+      },
+      skill: {
+        loading: '正在加载技能内容...'
+      },
+      exitPlan: {
+        empty: '没有可用的计划内容。'
+      },
+      todo: {
+        empty: '没有任务'
       },
       task: {
         defaultTitle: '子代理',

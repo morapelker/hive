@@ -213,6 +213,10 @@ describe('Settings i18n', () => {
       '第 10-20 行'
     )
     expect(translate('zh-CN', 'toolViews.task.defaultTitle')).toBe('子代理')
+    expect(translate('zh-CN', 'toolViews.edit.moreAdded', { count: 4 })).toBe('... 还有 4 行被新增')
+    expect(translate('zh-CN', 'toolViews.fallback.note')).toBe('暂无自定义渲染器，当前显示原始数据')
+    expect(translate('zh-CN', 'toolViews.skill.loading')).toBe('正在加载技能内容...')
+    expect(translate('zh-CN', 'toolViews.todo.empty')).toBe('没有任务')
     expect(translate('zh-CN', 'contextIndicator.title')).toBe('上下文窗口')
     expect(translate('zh-CN', 'contextIndicator.cost.session', { cost: '$1.2345' })).toBe(
       '会话成本：$1.2345'

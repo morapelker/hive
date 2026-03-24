@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/useI18n'
 import type { ToolViewProps } from './types'
 
 const MAX_PREVIEW_LINES = 20
 
 export function EditToolView({ input, error }: ToolViewProps) {
+  const { t } = useI18n()
   const [showAll, setShowAll] = useState(false)
 
   const oldString = (input.oldString || input.old_string || '') as string
@@ -38,12 +40,26 @@ export function EditToolView({ input, error }: ToolViewProps) {
         <div className="text-[10px] mb-1.5 flex items-center gap-2">
           {oldLines.length > 0 && (
             <span className="text-red-400/70">
-              -{oldLines.length} {oldLines.length === 1 ? 'line' : 'lines'}
+              -
+              {t('toolViews.edit.lineCount', {
+                count: oldLines.length,
+                label:
+                  oldLines.length === 1
+                    ? t('toolViews.edit.lineSingular')
+                    : t('toolViews.edit.linePlural')
+              })}
             </span>
           )}
           {newLines.length > 0 && (
             <span className="text-green-400/70">
-              +{newLines.length} {newLines.length === 1 ? 'line' : 'lines'}
+              +
+              {t('toolViews.edit.lineCount', {
+                count: newLines.length,
+                label:
+                  newLines.length === 1
+                    ? t('toolViews.edit.lineSingular')
+                    : t('toolViews.edit.linePlural')
+              })}
             </span>
           )}
         </div>
@@ -68,7 +84,7 @@ export function EditToolView({ input, error }: ToolViewProps) {
           ))}
           {needsTruncation && !showAll && displayedOld.length < oldLines.length && (
             <div className="px-3 py-0.5 text-zinc-600 text-[10px]">
-              ... {oldLines.length - displayedOld.length} more removed
+              {t('toolViews.edit.moreRemoved', { count: oldLines.length - displayedOld.length })}
             </div>
           )}
 
@@ -88,7 +104,7 @@ export function EditToolView({ input, error }: ToolViewProps) {
           ))}
           {needsTruncation && !showAll && displayedNew.length < newLines.length && (
             <div className="px-3 py-0.5 text-zinc-600 text-[10px]">
-              ... {newLines.length - displayedNew.length} more added
+              {t('toolViews.edit.moreAdded', { count: newLines.length - displayedNew.length })}
             </div>
           )}
         </div>
@@ -96,7 +112,7 @@ export function EditToolView({ input, error }: ToolViewProps) {
 
       {/* Empty diff */}
       {oldLines.length === 0 && newLines.length === 0 && (
-        <div className="text-muted-foreground text-xs italic">No changes</div>
+        <div className="text-muted-foreground text-xs italic">{t('toolViews.edit.noChanges')}</div>
       )}
 
       {/* Show all button */}
@@ -109,7 +125,9 @@ export function EditToolView({ input, error }: ToolViewProps) {
           <ChevronDown
             className={cn('h-3 w-3 transition-transform duration-150', showAll && 'rotate-180')}
           />
-          {showAll ? 'Show less' : `Show all ${totalLines} lines`}
+          {showAll
+            ? t('toolViews.common.showLess')
+            : t('toolViews.common.showAllLines', { count: totalLines })}
         </button>
       )}
     </div>

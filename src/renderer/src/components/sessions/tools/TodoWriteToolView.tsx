@@ -9,6 +9,7 @@ import {
   CircleX
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/useI18n'
 import type { ToolViewProps } from './types'
 
 interface TodoItem {
@@ -50,6 +51,7 @@ function PriorityBadge({ priority }: { priority: TodoItem['priority'] }) {
 }
 
 export function TodoWriteToolView({ input, error }: ToolViewProps) {
+  const { t } = useI18n()
   const todoInput = input as unknown as TodoInput
   const todos = useMemo(
     () => (Array.isArray(todoInput?.todos) ? todoInput.todos : []),
@@ -59,7 +61,7 @@ export function TodoWriteToolView({ input, error }: ToolViewProps) {
   if (todos.length === 0) {
     return (
       <div data-testid="todowrite-tool-view" className="text-xs text-muted-foreground">
-        No tasks
+        {t('toolViews.todo.empty')}
       </div>
     )
   }
