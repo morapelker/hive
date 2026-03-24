@@ -8,6 +8,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
+import { useI18n } from '@/i18n/useI18n'
 import type { PRReviewComment } from '@shared/types/git'
 
 /** Strip HTML tags and collapse whitespace to get a plain-text snippet. */
@@ -53,15 +54,16 @@ export function PrCommentCard({
   onToggleSelect,
   onNavigate
 }: PrCommentCardProps): React.JSX.Element {
+  const { t } = useI18n()
   const isOutdated = comment.line === null && comment.originalLine !== null
   const snippet = snippetFromHtml(comment.bodyHTML, comment.body)
   const line = comment.line ?? comment.originalLine ?? '?'
 
   const handleCopyRaw = useCallback(() => {
     navigator.clipboard.writeText(comment.bodyHTML || comment.body).then(() => {
-      toast.success('Raw comment HTML copied')
+      toast.success(t('prReview.commentCard.copied'))
     })
-  }, [comment.bodyHTML, comment.body])
+  }, [comment.bodyHTML, comment.body, t])
 
   return (
     <ContextMenu>
@@ -69,9 +71,7 @@ export function PrCommentCard({
         <div
           className={cn(
             'flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors cursor-pointer group',
-            isSelected
-              ? 'bg-violet-500/10'
-              : 'hover:bg-accent/40'
+            isSelected ? 'bg-violet-500/10' : 'hover:bg-accent/40'
           )}
           onClick={() => onNavigate(comment)}
         >
@@ -91,7 +91,7 @@ export function PrCommentCard({
           </span>
           {isOutdated && (
             <span className="px-1 py-px rounded text-[9px] font-medium bg-yellow-500/10 text-yellow-500 shrink-0">
-              old
+              {t('prReview.commentCard.outdated')}
             </span>
           )}
           <span className="text-[11px] text-muted-foreground truncate min-w-0 flex-1">
@@ -108,7 +108,7 @@ export function PrCommentCard({
       <ContextMenuContent>
         <ContextMenuItem onClick={handleCopyRaw}>
           <Copy className="h-3.5 w-3.5 mr-2" />
-          Copy raw HTML
+          {t('prReview.commentCard.copyRawHtml')}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

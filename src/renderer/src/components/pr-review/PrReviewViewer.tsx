@@ -8,6 +8,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { PrReviewFileGroup } from './PrReviewFileGroup'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/useI18n'
 import type { PRReviewComment } from '@shared/types/git'
 
 const EMPTY_COMMENTS: PRReviewComment[] = []
@@ -17,6 +18,7 @@ interface PrReviewViewerProps {
 }
 
 export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.Element {
+  const { t } = useI18n()
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
   const projects = useProjectStore((s) => s.projects)
   const attachedPR = useGitStore((s) => s.attachedPR.get(worktreeId))
@@ -107,7 +109,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground">
         <Loader2 className="h-8 w-8 animate-spin" />
-        <span className="text-sm">Loading review comments...</span>
+        <span className="text-sm">{t('prReview.viewer.loading')}</span>
       </div>
     )
   }
@@ -120,7 +122,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
         <span className="text-sm text-destructive">{error}</span>
         <Button size="sm" variant="outline" onClick={handleRefresh}>
           <RefreshCw className="h-3.5 w-3.5 mr-1" />
-          Retry
+          {t('prReview.viewer.retry')}
         </Button>
       </div>
     )
@@ -131,7 +133,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground">
         <MessageSquareCode className="h-8 w-8" />
-        <span className="text-sm">No review comments on this PR</span>
+        <span className="text-sm">{t('prReview.viewer.empty')}</span>
       </div>
     )
   }
@@ -140,9 +142,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Toolbar — always visible when comments exist */}
       <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-muted/30">
-        {prNumber && (
-          <span className="text-xs text-muted-foreground shrink-0">#{prNumber}</span>
-        )}
+        {prNumber && <span className="text-xs text-muted-foreground shrink-0">#{prNumber}</span>}
         <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
           {reviewers.map(({ login, count }) => (
             <button
@@ -154,7 +154,11 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
                   ? 'bg-muted/50 text-muted-foreground line-through opacity-50'
                   : 'bg-muted text-foreground'
               )}
-              title={hiddenReviewers.has(login) ? `Show ${login}'s comments` : `Hide ${login}'s comments`}
+              title={
+                hiddenReviewers.has(login)
+                  ? t('prReview.viewer.reviewer.show', { login })
+                  : t('prReview.viewer.reviewer.hide', { login })
+              }
             >
               @{login}
               <span className="text-[10px] text-muted-foreground">{count}</span>
@@ -167,7 +171,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
           className="h-6 w-6 p-0 shrink-0"
           onClick={handleRefresh}
           disabled={loading}
-          title="Refresh comments"
+          title={t('prReview.viewer.refresh')}
         >
           <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} />
         </Button>
@@ -178,7 +182,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
         {grouped.size === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
             <MessageSquareCode className="h-6 w-6" />
-            <span className="text-xs">All comments hidden by filters</span>
+            <span className="text-xs">{t('prReview.viewer.allHidden')}</span>
           </div>
         ) : (
           Array.from(grouped.entries()).map(([filePath, fileComments]) => (
@@ -200,20 +204,20 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
         <div className="flex flex-col gap-2 px-3 py-2.5 border-t border-border bg-muted/30">
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
-              {selectedIds.size} selected
+              {t('prReview.viewer.selectedCount', { count: selectedIds.size })}
             </span>
             <span className="text-muted-foreground/40">·</span>
             <button
               onClick={() => selectAll(worktreeId)}
               className="text-xs text-violet-400 hover:text-violet-300 transition-colors"
             >
-              Select all
+              {t('prReview.viewer.selectAll')}
             </button>
             <button
               onClick={deselectAll}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              Deselect
+              {t('prReview.viewer.deselect')}
             </button>
           </div>
           <Button
@@ -226,7 +230,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
               useFileViewerStore.getState().clearActiveDiff()
             }}
           >
-            Add to chat
+            {t('prReview.viewer.addToChat')}
           </Button>
         </div>
       )}

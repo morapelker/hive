@@ -477,6 +477,28 @@ export const messages: Record<AppLocale, MessageTree> = {
         selectWorktree: 'Select a worktree to open a terminal'
       }
     },
+    prReview: {
+      viewer: {
+        loading: 'Loading review comments...',
+        retry: 'Retry',
+        empty: 'No review comments on this PR',
+        refresh: 'Refresh comments',
+        allHidden: 'All comments hidden by filters',
+        selectedCount: '{count} selected',
+        selectAll: 'Select all',
+        deselect: 'Deselect',
+        addToChat: 'Add to chat',
+        reviewer: {
+          show: "Show {login}'s comments",
+          hide: "Hide {login}'s comments"
+        }
+      },
+      commentCard: {
+        copied: 'Raw comment HTML copied',
+        outdated: 'old',
+        copyRawHtml: 'Copy raw HTML'
+      }
+    },
     commandPalette: {
       ariaLabel: 'Command palette',
       commandLabel: 'Command palette',
@@ -1218,6 +1240,28 @@ export const messages: Record<AppLocale, MessageTree> = {
     terminalManager: {
       empty: {
         selectWorktree: '选择一个 worktree 以打开终端'
+      }
+    },
+    prReview: {
+      viewer: {
+        loading: '正在加载审查评论...',
+        retry: '重试',
+        empty: '这个 PR 还没有审查评论',
+        refresh: '刷新评论',
+        allHidden: '所有评论都已被筛选器隐藏',
+        selectedCount: '已选择 {count} 条',
+        selectAll: '全选',
+        deselect: '取消选择',
+        addToChat: '添加到聊天',
+        reviewer: {
+          show: '显示 {login} 的评论',
+          hide: '隐藏 {login} 的评论'
+        }
+      },
+      commentCard: {
+        copied: '已复制原始评论 HTML',
+        outdated: '旧',
+        copyRawHtml: '复制原始 HTML'
       }
     },
     commandPalette: {
