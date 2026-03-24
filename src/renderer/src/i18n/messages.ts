@@ -288,6 +288,25 @@ export const messages: Record<AppLocale, MessageTree> = {
         stagedSuffix: ' (staged)'
       }
     },
+    terminalToolbar: {
+      status: {
+        starting: 'Starting...',
+        terminal: 'Terminal',
+        ghostty: 'Ghostty',
+        exited: 'Exited ({code})'
+      },
+      search: {
+        placeholder: 'Search...',
+        previous: 'Previous match (Shift+Enter)',
+        next: 'Next match (Enter)',
+        close: 'Close search (Escape)'
+      },
+      actions: {
+        search: 'Search (Cmd+F)',
+        clear: 'Clear terminal (Cmd+K)',
+        restart: 'Restart terminal'
+      }
+    },
     commandPalette: {
       ariaLabel: 'Command palette',
       commandLabel: 'Command palette',
@@ -840,6 +859,25 @@ export const messages: Record<AppLocale, MessageTree> = {
         untracked: '未跟踪',
         conflicted: '有冲突',
         stagedSuffix: '（已暂存）'
+      }
+    },
+    terminalToolbar: {
+      status: {
+        starting: '启动中...',
+        terminal: '终端',
+        ghostty: 'Ghostty',
+        exited: '已退出（{code}）'
+      },
+      search: {
+        placeholder: '搜索...',
+        previous: '上一个匹配（Shift+Enter）',
+        next: '下一个匹配（Enter）',
+        close: '关闭搜索（Escape）'
+      },
+      actions: {
+        search: '搜索（Cmd+F）',
+        clear: '清空终端（Cmd+K）',
+        restart: '重启终端'
       }
     },
     commandPalette: {

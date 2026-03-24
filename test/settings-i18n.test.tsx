@@ -167,6 +167,8 @@ describe('Settings i18n', () => {
     expect(translate('zh-CN', 'fileSearch.placeholder')).toBe('按文件名或路径搜索...')
     expect(translate('zh-CN', 'fileTree.gitStatus.conflicted')).toBe('有冲突')
     expect(translate('zh-CN', 'fileTree.gitStatus.stagedSuffix')).toBe('（已暂存）')
+    expect(translate('zh-CN', 'terminalToolbar.status.exited', { code: 1 })).toBe('已退出（1）')
+    expect(translate('zh-CN', 'terminalToolbar.actions.clear')).toBe('清空终端（Cmd+K）')
     expect(translate('zh-CN', 'commandPalette.hints.goBack')).toBe('返回')
     expect(translate('zh-CN', 'recent.status.planReady')).toBe('计划已就绪')
     expect(translate('zh-CN', 'dialogs.gitInit.title')).toBe('不是 Git 仓库')
