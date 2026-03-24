@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { ChevronUp, ChevronDown, X } from 'lucide-react'
 import { stripAnsi } from '@/lib/ansi-utils'
 import type { OutputRingBuffer } from '@/lib/output-ring-buffer'
+import { useI18n } from '@/i18n/useI18n'
 
 export interface RunSearchMatch {
   /** The line index in the ring buffer (as returned by buffer.get(index)) */
@@ -58,6 +59,7 @@ export function RunOutputSearch({
   onMatchesChange,
   onClose
 }: RunOutputSearchProps): React.JSX.Element {
+  const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [matches, setMatches] = useState<RunSearchMatch[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -143,7 +145,7 @@ export function RunOutputSearch({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Find in output..."
+        placeholder={t('runOutputSearch.placeholder')}
         className="flex-1 bg-input border border-border rounded px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-ring min-w-0"
         data-testid="run-search-input"
       />
@@ -152,16 +154,16 @@ export function RunOutputSearch({
         data-testid="run-search-count"
       >
         {matches.length > 0
-          ? `${currentIndex + 1} of ${matches.length}`
+          ? t('runOutputSearch.count', { current: currentIndex + 1, total: matches.length })
           : query
-            ? 'No results'
+            ? t('runOutputSearch.noResults')
             : ''}
       </span>
       <button
         onClick={() => goToMatch(currentIndex - 1)}
         disabled={matches.length === 0}
         className="p-1 rounded hover:bg-accent disabled:opacity-30 transition-colors"
-        title="Previous match (Shift+Enter)"
+        title={t('runOutputSearch.previous')}
         data-testid="run-search-prev"
       >
         <ChevronUp className="h-3.5 w-3.5" />
@@ -170,7 +172,7 @@ export function RunOutputSearch({
         onClick={() => goToMatch(currentIndex + 1)}
         disabled={matches.length === 0}
         className="p-1 rounded hover:bg-accent disabled:opacity-30 transition-colors"
-        title="Next match (Enter)"
+        title={t('runOutputSearch.next')}
         data-testid="run-search-next"
       >
         <ChevronDown className="h-3.5 w-3.5" />
@@ -178,7 +180,7 @@ export function RunOutputSearch({
       <button
         onClick={onClose}
         className="p-1 rounded hover:bg-accent transition-colors"
-        title="Close (Escape)"
+        title={t('runOutputSearch.close')}
         data-testid="run-search-close"
       >
         <X className="h-3.5 w-3.5" />

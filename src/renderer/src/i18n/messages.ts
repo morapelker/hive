@@ -307,6 +307,14 @@ export const messages: Record<AppLocale, MessageTree> = {
         restart: 'Restart terminal'
       }
     },
+    runOutputSearch: {
+      placeholder: 'Find in output...',
+      count: '{current} of {total}',
+      noResults: 'No results',
+      previous: 'Previous match (Shift+Enter)',
+      next: 'Next match (Enter)',
+      close: 'Close (Escape)'
+    },
     commandPalette: {
       ariaLabel: 'Command palette',
       commandLabel: 'Command palette',
@@ -879,6 +887,14 @@ export const messages: Record<AppLocale, MessageTree> = {
         clear: '清空终端（Cmd+K）',
         restart: '重启终端'
       }
+    },
+    runOutputSearch: {
+      placeholder: '在输出中查找...',
+      count: '{current} / {total}',
+      noResults: '没有结果',
+      previous: '上一个匹配（Shift+Enter）',
+      next: '下一个匹配（Enter）',
+      close: '关闭（Escape）'
     },
     commandPalette: {
       ariaLabel: '命令面板',
