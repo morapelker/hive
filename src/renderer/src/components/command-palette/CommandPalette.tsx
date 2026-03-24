@@ -8,6 +8,7 @@ import { useCommands, useGhosttySuppression } from '@/hooks'
 import { categoryLabels } from '@/lib/command-registry'
 import { CommandItem } from './CommandItem'
 import { ArrowLeft, Search } from 'lucide-react'
+import { useI18n } from '@/i18n/useI18n'
 
 export function CommandPalette() {
   const {
@@ -25,6 +26,7 @@ export function CommandPalette() {
 
   const { filteredCommands, recentCommands, executeCommand } = useCommands()
   useGhosttySuppression('command-palette', isOpen)
+  const { t } = useI18n()
 
   // Cmd/Ctrl+P is handled centrally by useKeyboardShortcuts
 
@@ -166,13 +168,13 @@ export function CommandPalette() {
         className="fixed left-1/2 top-[20%] -translate-x-1/2 w-full max-w-xl z-50"
         data-testid="command-palette"
         role="dialog"
-        aria-label="Command palette"
+        aria-label={t('commandPalette.ariaLabel')}
         aria-modal="true"
       >
         <Command
           className="rounded-lg border border-border bg-popover shadow-xl overflow-hidden"
           shouldFilter={false}
-          label="Command palette"
+          label={t('commandPalette.commandLabel')}
         >
           {/* Search input */}
           <div className="flex items-center border-b border-border px-3">
@@ -180,7 +182,7 @@ export function CommandPalette() {
               <button
                 onClick={popCommandLevel}
                 className="mr-2 p-1 rounded hover:bg-muted"
-                aria-label="Go back"
+                aria-label={t('commandPalette.backAriaLabel')}
               >
                 <ArrowLeft className="w-4 h-4 text-muted-foreground" />
               </button>
@@ -192,8 +194,8 @@ export function CommandPalette() {
               onValueChange={setSearchQuery}
               placeholder={
                 currentParent
-                  ? `Search in ${currentParent.label}...`
-                  : 'Type a command or search...'
+                  ? t('commandPalette.placeholderIn', { label: currentParent.label })
+                  : t('commandPalette.placeholderRoot')
               }
               className="flex-1 h-12 bg-transparent border-0 outline-none text-sm placeholder:text-muted-foreground"
               autoFocus
@@ -205,7 +207,7 @@ export function CommandPalette() {
           <Command.List className="max-h-[300px] overflow-y-auto p-2">
             {totalCommands === 0 && (
               <Command.Empty className="py-6 text-center text-sm text-muted-foreground">
-                No commands found.
+                {t('commandPalette.empty')}
               </Command.Empty>
             )}
 
@@ -214,9 +216,11 @@ export function CommandPalette() {
               const label =
                 category === 'results'
                   ? commandStack.length > 0
-                    ? currentParent?.label || 'Results'
-                    : 'Results'
-                  : categoryLabels[category as keyof typeof categoryLabels] || category
+                    ? currentParent?.label || t('commandPalette.results')
+                    : t('commandPalette.results')
+                  : t(`commandPalette.categories.${category}`) ||
+                    categoryLabels[category as keyof typeof categoryLabels] ||
+                    category
 
               return (
                 <Command.Group key={category} heading={label} className="mb-2">
@@ -257,21 +261,22 @@ export function CommandPalette() {
             <div className="flex items-center gap-4">
               <span>
                 <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↑↓</kbd>{' '}
-                navigate
+                {t('commandPalette.hints.navigate')}
               </span>
               <span>
-                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↵</kbd> select
+                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↵</kbd>{' '}
+                {t('commandPalette.hints.select')}
               </span>
               <span>
                 <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">esc</kbd>{' '}
-                close
+                {t('commandPalette.hints.close')}
               </span>
             </div>
             {commandStack.length > 0 && (
               <span>
                 <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">esc</kbd> or{' '}
-                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">←</kbd> go
-                back
+                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">←</kbd>{' '}
+                {t('commandPalette.hints.goBack')}
               </span>
             )}
           </div>

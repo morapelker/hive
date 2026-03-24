@@ -2,10 +2,12 @@ import { useState, useCallback } from 'react'
 import { ArrowDownUp, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectStore } from '@/stores'
+import { useI18n } from '@/i18n/useI18n'
 
 export function SortProjectsButton(): React.JSX.Element {
   const [isSorting, setIsSorting] = useState(false)
   const sortProjectsByLastMessage = useProjectStore((s) => s.sortProjectsByLastMessage)
+  const { t } = useI18n()
 
   const handleSort = useCallback(async (): Promise<void> => {
     if (isSorting) return
@@ -22,7 +24,7 @@ export function SortProjectsButton(): React.JSX.Element {
       variant="ghost"
       size="icon"
       className="h-6 w-6"
-      title="Sort by last message"
+      title={t('sidebar.sortProjectsTitle')}
       onClick={handleSort}
       disabled={isSorting}
       data-testid="sort-projects-button"

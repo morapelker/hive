@@ -1,10 +1,12 @@
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { Info } from 'lucide-react'
+import { useI18n } from '@/i18n/useI18n'
 
 export function SettingsModels(): React.JSX.Element {
   const defaultAgentSdk = useSettingsStore((s) => s.defaultAgentSdk) ?? 'opencode'
   const supportsModes = defaultAgentSdk === 'claude-code' || defaultAgentSdk === 'codex'
+  const { t } = useI18n()
   // Show the effective model for the current SDK (what new sessions will actually use)
   const effectiveModel = useSettingsStore((s) =>
     resolveModelForSdk(defaultAgentSdk === 'terminal' ? 'opencode' : defaultAgentSdk, s)
@@ -17,10 +19,8 @@ export function SettingsModels(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-base font-medium mb-1">Default Models</h3>
-        <p className="text-sm text-muted-foreground">
-          Configure which AI models to use for different modes and commands
-        </p>
+        <h3 className="text-base font-medium mb-1">{t('settings.models.title')}</h3>
+        <p className="text-sm text-muted-foreground">{t('settings.models.description')}</p>
       </div>
 
       {/* Info box explaining priority */}
@@ -28,24 +28,24 @@ export function SettingsModels(): React.JSX.Element {
         <Info className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" />
         <div className="text-xs text-muted-foreground space-y-1">
           <p>
-            <strong>Model selection priority:</strong>
+            <strong>{t('settings.models.priority.title')}</strong>
           </p>
           <ol className="list-decimal list-inside space-y-0.5 ml-2">
-            <li>Worktree's last-used model (if any)</li>
-            {supportsModes && <li>Mode-specific default (configured below)</li>}
-            <li>Global default model</li>
-            <li>System fallback (Claude Opus 4.5)</li>
+            <li>{t('settings.models.priority.worktree')}</li>
+            {supportsModes && <li>{t('settings.models.priority.mode')}</li>}
+            <li>{t('settings.models.priority.global')}</li>
+            <li>{t('settings.models.priority.fallback')}</li>
           </ol>
         </div>
       </div>
 
       {/* Global default */}
       <div className="space-y-2">
-        <label className="text-sm font-medium">Global Default Model</label>
+        <label className="text-sm font-medium">{t('settings.models.global.label')}</label>
         <p className="text-xs text-muted-foreground">
           {supportsModes
-            ? 'Fallback model used when no mode-specific default is configured'
-            : 'Model used for all new sessions'}
+            ? t('settings.models.global.fallbackDescription')
+            : t('settings.models.global.sessionDescription')}
         </p>
         <div className="flex items-center gap-2">
           <ModelSelector
@@ -67,7 +67,7 @@ export function SettingsModels(): React.JSX.Element {
               }}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              Clear
+              {t('settings.models.global.clear')}
             </button>
           )}
         </div>
@@ -79,9 +79,9 @@ export function SettingsModels(): React.JSX.Element {
 
           {/* Build mode */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Build Mode Default</label>
+            <label className="text-sm font-medium">{t('settings.models.build.label')}</label>
             <p className="text-xs text-muted-foreground">
-              Model used for new build mode sessions (normal coding)
+              {t('settings.models.build.description')}
             </p>
             <div className="flex items-center gap-2">
               <ModelSelector
@@ -93,7 +93,7 @@ export function SettingsModels(): React.JSX.Element {
                   onClick={() => setModeDefaultModel('build', null)}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  Use global
+                  {t('settings.models.useGlobal')}
                 </button>
               )}
             </div>
@@ -101,10 +101,8 @@ export function SettingsModels(): React.JSX.Element {
 
           {/* Plan mode */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Plan Mode Default</label>
-            <p className="text-xs text-muted-foreground">
-              Model used for new plan mode sessions (design and planning)
-            </p>
+            <label className="text-sm font-medium">{t('settings.models.plan.label')}</label>
+            <p className="text-xs text-muted-foreground">{t('settings.models.plan.description')}</p>
             <div className="flex items-center gap-2">
               <ModelSelector
                 value={defaultModels?.plan || null}
@@ -115,7 +113,7 @@ export function SettingsModels(): React.JSX.Element {
                   onClick={() => setModeDefaultModel('plan', null)}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  Use global
+                  {t('settings.models.useGlobal')}
                 </button>
               )}
             </div>
@@ -123,10 +121,8 @@ export function SettingsModels(): React.JSX.Element {
 
           {/* Ask command */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">/ask Command Default</label>
-            <p className="text-xs text-muted-foreground">
-              Model used when you run the /ask command for quick questions
-            </p>
+            <label className="text-sm font-medium">{t('settings.models.ask.label')}</label>
+            <p className="text-xs text-muted-foreground">{t('settings.models.ask.description')}</p>
             <div className="flex items-center gap-2">
               <ModelSelector
                 value={defaultModels?.ask || null}
@@ -137,7 +133,7 @@ export function SettingsModels(): React.JSX.Element {
                   onClick={() => setModeDefaultModel('ask', null)}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  Use global
+                  {t('settings.models.useGlobal')}
                 </button>
               )}
             </div>

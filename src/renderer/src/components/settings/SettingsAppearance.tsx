@@ -2,6 +2,7 @@ import { Check } from 'lucide-react'
 import { THEME_PRESETS, type ThemePreset } from '@/lib/themes'
 import { useThemeStore } from '@/stores/useThemeStore'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/useI18n'
 
 function ThemeCard({
   preset,
@@ -64,6 +65,7 @@ function ThemeCard({
 
 export function SettingsAppearance(): React.JSX.Element {
   const themeId = useThemeStore((s) => s.themeId)
+  const { t } = useI18n()
 
   const darkThemes = THEME_PRESETS.filter((p) => p.type === 'dark')
   const lightThemes = THEME_PRESETS.filter((p) => p.type === 'light')
@@ -71,8 +73,8 @@ export function SettingsAppearance(): React.JSX.Element {
   return (
     <div className="space-y-6" data-testid="settings-appearance">
       <div>
-        <h2 className="text-lg font-semibold mb-1">Appearance</h2>
-        <p className="text-sm text-muted-foreground">Choose a theme for the application.</p>
+        <h2 className="text-lg font-semibold mb-1">{t('settings.appearance.title')}</h2>
+        <p className="text-sm text-muted-foreground">{t('settings.appearance.description')}</p>
       </div>
 
       {/* Dark Themes */}
@@ -81,7 +83,7 @@ export function SettingsAppearance(): React.JSX.Element {
           className="text-sm font-medium text-muted-foreground mb-3"
           data-testid="dark-themes-header"
         >
-          Dark Themes
+          {t('settings.appearance.darkThemes')}
         </h3>
         <div className="grid grid-cols-3 gap-3" data-testid="dark-themes-grid">
           {darkThemes.map((preset) => (
@@ -96,7 +98,7 @@ export function SettingsAppearance(): React.JSX.Element {
           className="text-sm font-medium text-muted-foreground mb-3"
           data-testid="light-themes-header"
         >
-          Light Themes
+          {t('settings.appearance.lightThemes')}
         </h3>
         <div className="grid grid-cols-3 gap-3" data-testid="light-themes-grid">
           {lightThemes.map((preset) => (

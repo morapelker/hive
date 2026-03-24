@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { Check, Loader2 } from 'lucide-react'
 import { isMac } from '@/lib/platform'
+import { useI18n } from '@/i18n/useI18n'
 
 interface DetectedEditor {
   id: string
@@ -12,19 +13,20 @@ interface DetectedEditor {
   available: boolean
 }
 
-const EDITOR_OPTIONS: { id: EditorOption; label: string }[] = [
-  { id: 'vscode', label: 'Visual Studio Code' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'sublime', label: 'Sublime Text' },
-  { id: 'webstorm', label: 'WebStorm' },
-  { id: 'zed', label: 'Zed' },
-  { id: 'custom', label: 'Custom Command' }
-]
-
 export function SettingsEditor(): React.JSX.Element {
   const { defaultEditor, customEditorCommand, updateSetting } = useSettingsStore()
   const [detectedEditors, setDetectedEditors] = useState<DetectedEditor[]>([])
   const [isDetecting, setIsDetecting] = useState(true)
+  const { t } = useI18n()
+
+  const editorOptions: { id: EditorOption; label: string }[] = [
+    { id: 'vscode', label: 'Visual Studio Code' },
+    { id: 'cursor', label: 'Cursor' },
+    { id: 'sublime', label: 'Sublime Text' },
+    { id: 'webstorm', label: 'WebStorm' },
+    { id: 'zed', label: 'Zed' },
+    { id: 'custom', label: t('settings.editor.customCommand.optionLabel') }
+  ]
 
   useEffect(() => {
     let cancelled = false
@@ -57,20 +59,18 @@ export function SettingsEditor(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-base font-medium mb-1">Editor</h3>
-        <p className="text-sm text-muted-foreground">
-          Choose which editor to use for &quot;Open in Editor&quot; actions
-        </p>
+        <h3 className="text-base font-medium mb-1">{t('settings.editor.title')}</h3>
+        <p className="text-sm text-muted-foreground">{t('settings.editor.description')}</p>
       </div>
 
       {isDetecting ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Detecting installed editors...
+          {t('settings.editor.detecting')}
         </div>
       ) : (
         <div className="space-y-1">
-          {EDITOR_OPTIONS.map((opt) => {
+          {editorOptions.map((opt) => {
             const available = isAvailable(opt.id)
             return (
               <button
@@ -89,7 +89,9 @@ export function SettingsEditor(): React.JSX.Element {
                 <div className="flex items-center gap-2">
                   <span>{opt.label}</span>
                   {!available && opt.id !== 'custom' && (
-                    <span className="text-xs text-muted-foreground">(not found)</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t('settings.editor.notFound')}
+                    </span>
                   )}
                 </div>
                 {defaultEditor === opt.id && <Check className="h-4 w-4 text-primary" />}
@@ -102,16 +104,20 @@ export function SettingsEditor(): React.JSX.Element {
       {/* Custom command input */}
       {defaultEditor === 'custom' && (
         <div className="space-y-2">
-          <label className="text-sm font-medium">Custom Editor Command</label>
+          <label className="text-sm font-medium">{t('settings.editor.customCommand.label')}</label>
           <Input
             value={customEditorCommand}
             onChange={(e) => updateSetting('customEditorCommand', e.target.value)}
-            placeholder={isMac() ? 'e.g., /usr/local/bin/code' : 'e.g., C:\\Program Files\\Microsoft VS Code\\code.exe'}
+            placeholder={
+              isMac()
+                ? 'e.g., /usr/local/bin/code'
+                : 'e.g., C:\\Program Files\\Microsoft VS Code\\code.exe'
+            }
             className="font-mono text-sm"
             data-testid="custom-editor-command"
           />
           <p className="text-xs text-muted-foreground">
-            The command will be called with the worktree path as an argument.
+            {t('settings.editor.customCommand.description')}
           </p>
         </div>
       )}

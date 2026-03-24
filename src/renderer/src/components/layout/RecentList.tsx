@@ -14,6 +14,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { ModelIcon } from '@/components/worktrees/ModelIcon'
 import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
 import { LanguageIcon } from '@/components/projects/LanguageIcon'
+import { useI18n } from '@/i18n/useI18n'
 
 type RecentItem =
   | { kind: 'worktree'; id: string; timestamp: number }
@@ -23,6 +24,7 @@ export function RecentList(): React.JSX.Element | null {
   const recentVisible = useRecentStore((s) => s.recentVisible)
   const recentWorktreeIds = useRecentStore((s) => s.recentWorktreeIds)
   const recentConnectionIds = useRecentStore((s) => s.recentConnectionIds)
+  const { t } = useI18n()
 
   // Subscribe reactively so useMemo re-computes when timestamps change (Fix #1)
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
@@ -78,7 +80,7 @@ export function RecentList(): React.JSX.Element | null {
     <div className="mb-1" data-testid="recent-list">
       <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-muted-foreground">
         <Zap className="h-3 w-3" />
-        <span>Recent</span>
+        <span>{t('recent.title')}</span>
       </div>
       {items.map((item) =>
         item.kind === 'worktree' ? (
@@ -102,6 +104,7 @@ function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const worktreeStatus = useWorktreeStatusStore((s) => s.getWorktreeStatus(worktreeId))
   const isSelected = selectedWorktreeId === worktreeId
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktreeId]?.runRunning ?? false)
+  const { t } = useI18n()
 
   // Look up worktree and project
   const worktree = useWorktreeStore((s) => {
@@ -167,7 +170,7 @@ function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
         </span>
         <div className="flex items-center">
           <ModelIcon worktreeId={worktreeId} className="h-2.5 w-2.5 mr-1 shrink-0" />
-          <StatusText status={worktreeStatus} />
+          <StatusText status={worktreeStatus} t={t} />
         </div>
       </div>
 
@@ -189,6 +192,7 @@ function RecentConnectionItem({
 
   const connectionStatus = useWorktreeStatusStore((s) => s.getConnectionStatus(connectionId))
   const isSelected = selectedConnectionId === connectionId
+  const { t } = useI18n()
 
   // The store holds connection objects with members and custom_name
   const connection = useConnectionStore((s) => s.connections.find((c) => c.id === connectionId))
@@ -200,7 +204,8 @@ function RecentConnectionItem({
     ...new Set(connection.members?.map((m: { project_name: string }) => m.project_name) || [])
   ].join(' + ')
 
-  const displayName = connection.custom_name || projectNames || connection.name || 'Connection'
+  const displayName =
+    connection.custom_name || projectNames || connection.name || t('recent.connectionFallback')
 
   const handleClick = (): void => {
     selectConnection(connectionId)
@@ -242,7 +247,7 @@ function RecentConnectionItem({
         <span className="text-sm truncate block" title={displayName}>
           {displayName}
         </span>
-        <StatusText status={connectionStatus} />
+        <StatusText status={connectionStatus} t={t} />
       </div>
 
       {/* Unread dot */}
@@ -257,21 +262,27 @@ function RecentConnectionItem({
 
 type StatusType = string | null
 
-function StatusText({ status }: { status: StatusType }): React.JSX.Element {
+function StatusText({
+  status,
+  t
+}: {
+  status: StatusType
+  t: (key: string) => string
+}): React.JSX.Element {
   const { text, className } =
     status === 'answering'
-      ? { text: 'Answer questions', className: 'font-semibold text-amber-500' }
+      ? { text: t('recent.status.answering'), className: 'font-semibold text-amber-500' }
       : status === 'permission'
-        ? { text: 'Permission', className: 'font-semibold text-amber-500' }
+        ? { text: t('recent.status.permission'), className: 'font-semibold text-amber-500' }
         : status === 'planning'
-          ? { text: 'Planning', className: 'font-semibold text-blue-400' }
+          ? { text: t('recent.status.planning'), className: 'font-semibold text-blue-400' }
           : status === 'working'
-            ? { text: 'Working', className: 'font-semibold text-primary' }
+            ? { text: t('recent.status.working'), className: 'font-semibold text-primary' }
             : status === 'plan_ready'
-              ? { text: 'Plan ready', className: 'font-semibold text-blue-400' }
+              ? { text: t('recent.status.planReady'), className: 'font-semibold text-blue-400' }
               : status === 'completed'
-                ? { text: 'Ready', className: 'font-semibold text-green-400' }
-                : { text: 'Ready', className: 'text-muted-foreground' }
+                ? { text: t('recent.status.ready'), className: 'font-semibold text-green-400' }
+                : { text: t('recent.status.ready'), className: 'text-muted-foreground' }
 
   return (
     <span className={cn('text-[11px]', className)} data-testid="recent-status-text">

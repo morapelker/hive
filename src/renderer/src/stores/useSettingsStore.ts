@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import { DEFAULT_LOCALE, type AppLocale } from '@/i18n/messages'
 
 // ==========================================
 // Types
@@ -42,6 +43,7 @@ export interface CommandFilterSettings {
 
 export interface AppSettings {
   // General
+  locale: AppLocale
   autoStartSession: boolean
   breedType: 'dogs' | 'cats'
   vimModeEnabled: boolean
@@ -106,6 +108,7 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
+  locale: DEFAULT_LOCALE,
   autoStartSession: true,
   breedType: 'dogs',
   vimModeEnabled: false,
@@ -223,6 +226,7 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
 
 function extractSettings(state: SettingsState): AppSettings {
   return {
+    locale: state.locale,
     autoStartSession: state.autoStartSession,
     breedType: state.breedType,
     vimModeEnabled: state.vimModeEnabled,
@@ -432,6 +436,7 @@ export const useSettingsStore = create<SettingsState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         autoStartSession: state.autoStartSession,
+        locale: state.locale,
         breedType: state.breedType,
         vimModeEnabled: state.vimModeEnabled,
         defaultEditor: state.defaultEditor,

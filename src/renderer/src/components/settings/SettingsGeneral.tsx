@@ -6,10 +6,13 @@ import { Button } from '@/components/ui/button'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { DEFAULT_THEME_ID } from '@/lib/themes'
 import { toast } from '@/lib/toast'
+import { DEFAULT_LOCALE } from '@/i18n/messages'
+import { useI18n } from '@/i18n/useI18n'
 
 export function SettingsGeneral(): React.JSX.Element {
   const { setTheme } = useThemeStore()
   const {
+    locale,
     autoStartSession,
     vimModeEnabled,
     breedType,
@@ -22,27 +25,50 @@ export function SettingsGeneral(): React.JSX.Element {
     resetToDefaults
   } = useSettingsStore()
   const { resetToDefaults: resetShortcuts } = useShortcutStore()
+  const { t } = useI18n()
 
   const handleResetAll = (): void => {
     resetToDefaults()
     resetShortcuts()
     setTheme(DEFAULT_THEME_ID)
-    toast.success('All settings reset to defaults')
+    toast.success(t('settings.general.resetAll.success'))
   }
 
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-base font-medium mb-1">General</h3>
-        <p className="text-sm text-muted-foreground">Basic application settings</p>
+        <h3 className="text-base font-medium mb-1">{t('settings.general.title')}</h3>
+        <p className="text-sm text-muted-foreground">{t('settings.general.description')}</p>
+      </div>
+
+      {/* Language */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium" htmlFor="settings-language">
+          {t('settings.general.language.label')}
+        </label>
+        <p className="text-xs text-muted-foreground">
+          {t('settings.general.language.description')}
+        </p>
+        <select
+          id="settings-language"
+          value={locale ?? DEFAULT_LOCALE}
+          onChange={(event) => updateSetting('locale', event.target.value as 'en' | 'zh-CN')}
+          className="h-9 min-w-[200px] rounded-md border border-input bg-background px-3 text-sm"
+          data-testid="settings-language-select"
+        >
+          <option value="en">{t('settings.general.language.options.en')}</option>
+          <option value="zh-CN">{t('settings.general.language.options.zhCN')}</option>
+        </select>
       </div>
 
       {/* Auto-start session */}
       <div className="flex items-center justify-between">
         <div>
-          <label className="text-sm font-medium">Auto-start session</label>
+          <label className="text-sm font-medium">
+            {t('settings.general.autoStartSession.label')}
+          </label>
           <p className="text-xs text-muted-foreground">
-            Automatically create a session when selecting a worktree with none
+            {t('settings.general.autoStartSession.description')}
           </p>
         </div>
         <button
@@ -67,9 +93,9 @@ export function SettingsGeneral(): React.JSX.Element {
       {/* Vim mode */}
       <div className="flex items-center justify-between">
         <div>
-          <label className="text-sm font-medium">Vim mode</label>
+          <label className="text-sm font-medium">{t('settings.general.vimMode.label')}</label>
           <p className="text-xs text-muted-foreground">
-            Enable vim-style keyboard navigation with hints, hjkl scrolling, and mode switching
+            {t('settings.general.vimMode.description')}
           </p>
         </div>
         <button
@@ -94,9 +120,9 @@ export function SettingsGeneral(): React.JSX.Element {
       {/* Model icons */}
       <div className="flex items-center justify-between">
         <div>
-          <label className="text-sm font-medium">Model icons</label>
+          <label className="text-sm font-medium">{t('settings.general.modelIcons.label')}</label>
           <p className="text-xs text-muted-foreground">
-            Show the model icon (Claude, OpenAI) next to the worktree status
+            {t('settings.general.modelIcons.description')}
           </p>
         </div>
         <button
@@ -121,9 +147,9 @@ export function SettingsGeneral(): React.JSX.Element {
       {/* Show model provider */}
       <div className="flex items-center justify-between">
         <div>
-          <label className="text-sm font-medium">Show model provider</label>
+          <label className="text-sm font-medium">{t('settings.general.modelProvider.label')}</label>
           <p className="text-xs text-muted-foreground">
-            Display the provider name (e.g. ANTHROPIC) next to the model in the selector pill
+            {t('settings.general.modelProvider.description')}
           </p>
         </div>
         <button
@@ -148,9 +174,11 @@ export function SettingsGeneral(): React.JSX.Element {
       {/* Usage indicator */}
       <div className="flex items-center justify-between">
         <div>
-          <label className="text-sm font-medium">Show usage indicator</label>
+          <label className="text-sm font-medium">
+            {t('settings.general.usageIndicator.label')}
+          </label>
           <p className="text-xs text-muted-foreground">
-            Show Claude API usage bars below projects. When off, shows spaces tab instead.
+            {t('settings.general.usageIndicator.description')}
           </p>
         </div>
         <button
@@ -174,10 +202,9 @@ export function SettingsGeneral(): React.JSX.Element {
 
       {/* Default Agent SDK */}
       <div className="space-y-2">
-        <label className="text-sm font-medium">AI Provider</label>
+        <label className="text-sm font-medium">{t('settings.general.aiProvider.label')}</label>
         <p className="text-xs text-muted-foreground">
-          Choose which AI coding agent to use for new sessions. Existing sessions keep their
-          original provider.
+          {t('settings.general.aiProvider.description')}
         </p>
         <div className="flex gap-2">
           <button
@@ -231,7 +258,7 @@ export function SettingsGeneral(): React.JSX.Element {
         </div>
         {defaultAgentSdk === 'terminal' && (
           <p className="text-xs text-muted-foreground/70 italic">
-            Opens a terminal window. Run any AI tool manually (claude, aider, cursor, etc.)
+            {t('settings.general.aiProvider.terminalHint')}
           </p>
         )}
       </div>
@@ -239,9 +266,11 @@ export function SettingsGeneral(): React.JSX.Element {
       {/* Strip @ from file mentions */}
       <div className="flex items-center justify-between">
         <div>
-          <label className="text-sm font-medium">Strip @ from file mentions</label>
+          <label className="text-sm font-medium">
+            {t('settings.general.stripAtMentions.label')}
+          </label>
           <p className="text-xs text-muted-foreground">
-            Remove the @ symbol from file references inserted via the file picker before sending
+            {t('settings.general.stripAtMentions.description')}
           </p>
         </div>
         <button
@@ -265,9 +294,9 @@ export function SettingsGeneral(): React.JSX.Element {
 
       {/* Branch naming */}
       <div className="space-y-2">
-        <label className="text-sm font-medium">Branch Naming</label>
+        <label className="text-sm font-medium">{t('settings.general.branchNaming.label')}</label>
         <p className="text-xs text-muted-foreground">
-          Choose the naming theme for auto-generated worktree branches
+          {t('settings.general.branchNaming.description')}
         </p>
         <div className="flex gap-2">
           <button
@@ -280,7 +309,7 @@ export function SettingsGeneral(): React.JSX.Element {
             )}
             data-testid="breed-type-dogs"
           >
-            Dogs
+            {t('settings.general.branchNaming.options.dogs')}
           </button>
           <button
             onClick={() => updateSetting('breedType', 'cats')}
@@ -292,7 +321,7 @@ export function SettingsGeneral(): React.JSX.Element {
             )}
             data-testid="breed-type-cats"
           >
-            Cats
+            {t('settings.general.branchNaming.options.cats')}
           </button>
         </div>
       </div>
@@ -307,10 +336,10 @@ export function SettingsGeneral(): React.JSX.Element {
           data-testid="reset-all-settings"
         >
           <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-          Reset All to Defaults
+          {t('settings.general.resetAll.label')}
         </Button>
         <p className="text-xs text-muted-foreground mt-1">
-          This will reset all settings, theme, and keyboard shortcuts to their defaults.
+          {t('settings.general.resetAll.description')}
         </p>
       </div>
     </div>

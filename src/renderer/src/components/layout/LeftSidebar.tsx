@@ -17,6 +17,7 @@ import { ProjectFilter } from '@/components/projects/ProjectFilter'
 import { UsageIndicator } from './UsageIndicator'
 import { PinnedList } from './PinnedList'
 import { RecentList } from './RecentList'
+import { useI18n } from '@/i18n/useI18n'
 
 export function LeftSidebar(): React.JSX.Element {
   const { leftSidebarWidth, leftSidebarCollapsed, setLeftSidebarWidth } = useLayoutStore()
@@ -24,6 +25,7 @@ export function LeftSidebar(): React.JSX.Element {
   const projectCount = useProjectStore((s) => s.projects.length)
   const showUsageIndicator = useSettingsStore((s) => s.showUsageIndicator)
   const [filterQuery, setFilterQuery] = useState('')
+  const { t } = useI18n()
 
   // Connection mode state
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
@@ -102,7 +104,7 @@ export function LeftSidebar(): React.JSX.Element {
           <div className="p-3 border-b flex items-center justify-between bg-muted/50">
             <div className="flex items-center gap-2 text-sm font-medium min-w-0">
               <Link className="h-4 w-4 text-primary shrink-0" />
-              <span className="truncate">Select worktrees</span>
+              <span className="truncate">{t('sidebar.connectionMode.selectWorktrees')}</span>
               <span className="text-xs text-muted-foreground shrink-0">
                 ({connectionModeSelectedIds.size})
               </span>
@@ -115,7 +117,7 @@ export function LeftSidebar(): React.JSX.Element {
                 onClick={exitConnectionMode}
                 disabled={connectionModeSubmitting}
               >
-                Cancel
+                {t('sidebar.connectionMode.cancel')}
               </Button>
               <Button
                 size="sm"
@@ -126,10 +128,10 @@ export function LeftSidebar(): React.JSX.Element {
                 {connectionModeSubmitting ? (
                   <>
                     <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                    Connecting...
+                    {t('sidebar.connectionMode.connecting')}
                   </>
                 ) : (
-                  'Connect'
+                  t('sidebar.connectionMode.connect')
                 )}
               </Button>
             </div>
@@ -138,7 +140,7 @@ export function LeftSidebar(): React.JSX.Element {
           <div className="p-3 border-b flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm font-medium">
               <FolderGit2 className="h-4 w-4" />
-              <span>Projects</span>
+              <span>{t('sidebar.projects')}</span>
             </div>
             <div className="flex items-center gap-1">
               <RecentToggleButton />

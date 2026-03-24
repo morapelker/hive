@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Search, X } from 'lucide-react'
 import { useHintStore } from '@/stores'
 import { dispatchHintAction } from '@/lib/hint-utils'
+import { useI18n } from '@/i18n/useI18n'
 
 interface ProjectFilterProps {
   value: string
@@ -10,6 +11,7 @@ interface ProjectFilterProps {
 
 export function ProjectFilter({ value, onChange }: ProjectFilterProps): React.JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null)
+  const { t } = useI18n()
 
   useEffect(() => {
     const handleFocus = (): void => {
@@ -103,7 +105,7 @@ export function ProjectFilter({ value, onChange }: ProjectFilterProps): React.JS
         onKeyDown={handleKeyDown}
         onFocus={handleFocus}
         onBlur={handleBlur}
-        placeholder="Filter projects..."
+        placeholder={t('sidebar.filterProjects')}
         className="h-8 w-full text-sm px-2 pl-8 pr-12 rounded-md border border-input bg-transparent placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         data-testid="project-filter-input"
       />

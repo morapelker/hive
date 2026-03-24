@@ -8,6 +8,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { Check, Loader2, Info } from 'lucide-react'
+import { useI18n } from '@/i18n/useI18n'
 
 interface DetectedTerminal {
   id: string
@@ -15,55 +16,6 @@ interface DetectedTerminal {
   command: string
   available: boolean
 }
-
-const MAC_TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
-  { id: 'terminal', label: 'Terminal' },
-  { id: 'iterm', label: 'iTerm2' },
-  { id: 'warp', label: 'Warp' },
-  { id: 'alacritty', label: 'Alacritty' },
-  { id: 'kitty', label: 'kitty' },
-  { id: 'ghostty', label: 'Ghostty' },
-  { id: 'custom', label: 'Custom Command' }
-]
-
-const WINDOWS_TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
-  { id: 'terminal', label: 'Windows Terminal' },
-  { id: 'powershell', label: 'PowerShell' },
-  { id: 'cmd', label: 'Command Prompt' },
-  { id: 'custom', label: 'Custom Command' }
-]
-
-const LINUX_TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
-  { id: 'terminal', label: 'Default Terminal' },
-  { id: 'alacritty', label: 'Alacritty' },
-  { id: 'kitty', label: 'kitty' },
-  { id: 'custom', label: 'Custom Command' }
-]
-
-function getTerminalOptions(): { id: TerminalOption; label: string }[] {
-  if (isWindowsPlatform()) return WINDOWS_TERMINAL_OPTIONS
-  if (isMacPlatform()) return MAC_TERMINAL_OPTIONS
-  return LINUX_TERMINAL_OPTIONS
-}
-
-const BACKEND_OPTIONS: {
-  id: EmbeddedTerminalBackend
-  label: string
-  description: string
-  macOnly?: boolean
-}[] = [
-  {
-    id: 'xterm',
-    label: 'Built-in (xterm.js)',
-    description: 'Cross-platform terminal emulator. Always available.'
-  },
-  {
-    id: 'ghostty',
-    label: 'Ghostty (native)',
-    description: 'Native Metal rendering on macOS. Requires Ghostty.',
-    macOnly: true
-  }
-]
 
 export function SettingsTerminal(): React.JSX.Element {
   const {
@@ -77,6 +29,55 @@ export function SettingsTerminal(): React.JSX.Element {
   const [isDetecting, setIsDetecting] = useState(true)
   const [ghosttyAvailable, setGhosttyAvailable] = useState<boolean | null>(null)
   const [isMac, setIsMac] = useState(false)
+  const { t } = useI18n()
+
+  const terminalOptions: { id: TerminalOption; label: string }[] = (() => {
+    const custom = t('settings.terminal.external.customCommand.optionLabel')
+    if (isWindowsPlatform()) {
+      return [
+        { id: 'terminal', label: 'Windows Terminal' },
+        { id: 'powershell', label: 'PowerShell' },
+        { id: 'cmd', label: 'Command Prompt' },
+        { id: 'custom', label: custom }
+      ]
+    }
+    if (isMacPlatform()) {
+      return [
+        { id: 'terminal', label: 'Terminal' },
+        { id: 'iterm', label: 'iTerm2' },
+        { id: 'warp', label: 'Warp' },
+        { id: 'alacritty', label: 'Alacritty' },
+        { id: 'kitty', label: 'kitty' },
+        { id: 'ghostty', label: 'Ghostty' },
+        { id: 'custom', label: custom }
+      ]
+    }
+    return [
+      { id: 'terminal', label: 'Default Terminal' },
+      { id: 'alacritty', label: 'Alacritty' },
+      { id: 'kitty', label: 'kitty' },
+      { id: 'custom', label: custom }
+    ]
+  })()
+
+  const backendOptions: {
+    id: EmbeddedTerminalBackend
+    label: string
+    description: string
+    macOnly?: boolean
+  }[] = [
+    {
+      id: 'xterm',
+      label: t('settings.terminal.embedded.xtermLabel'),
+      description: t('settings.terminal.embedded.xtermDescription')
+    },
+    {
+      id: 'ghostty',
+      label: t('settings.terminal.embedded.ghosttyLabel'),
+      description: t('settings.terminal.embedded.ghosttyDescription'),
+      macOnly: true
+    }
+  ]
 
   useEffect(() => {
     let cancelled = false
@@ -139,13 +140,13 @@ export function SettingsTerminal(): React.JSX.Element {
     <div className="space-y-8">
       {/* Embedded Terminal Backend */}
       <div>
-        <h3 className="text-base font-medium mb-1">Embedded Terminal</h3>
+        <h3 className="text-base font-medium mb-1">{t('settings.terminal.embedded.title')}</h3>
         <p className="text-sm text-muted-foreground mb-3">
-          Choose the rendering engine for the built-in terminal panel
+          {t('settings.terminal.embedded.description')}
         </p>
 
         <div className="space-y-1">
-          {BACKEND_OPTIONS.map((opt) => {
+          {backendOptions.map((opt) => {
             const selectable = canSelectBackend(opt.id)
             const isSelected = embeddedTerminalBackend === opt.id
 
@@ -171,10 +172,14 @@ export function SettingsTerminal(): React.JSX.Element {
                   <div className="flex items-center gap-2">
                     <span>{opt.label}</span>
                     {opt.macOnly && !isMac && (
-                      <span className="text-xs text-muted-foreground">(macOS only)</span>
+                      <span className="text-xs text-muted-foreground">
+                        {t('settings.terminal.embedded.macOnly')}
+                      </span>
                     )}
                     {opt.id === 'ghostty' && isMac && ghosttyAvailable === false && (
-                      <span className="text-xs text-muted-foreground">(not available)</span>
+                      <span className="text-xs text-muted-foreground">
+                        {t('settings.terminal.embedded.notAvailable')}
+                      </span>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">{opt.description}</p>
@@ -189,14 +194,13 @@ export function SettingsTerminal(): React.JSX.Element {
           <>
             <div className="flex items-start gap-2 mt-3 p-2.5 rounded-md bg-blue-500/10 border border-blue-500/20 text-xs">
               <Info className="h-3.5 w-3.5 text-blue-500 shrink-0 mt-0.5" />
-              <p className="text-muted-foreground">
-                Ghostty renders via Metal for native performance. The terminal will restart when
-                switching backends. Colors and cursor style are read from your Ghostty config.
-              </p>
+              <p className="text-muted-foreground">{t('settings.terminal.embedded.info')}</p>
             </div>
 
             <div className="mt-4 space-y-2">
-              <label className="text-sm font-medium">Font Size</label>
+              <label className="text-sm font-medium">
+                {t('settings.terminal.embedded.fontSizeLabel')}
+              </label>
               <div className="flex items-center gap-3">
                 <Input
                   type="number"
@@ -212,11 +216,12 @@ export function SettingsTerminal(): React.JSX.Element {
                   className="w-20 font-mono text-sm"
                   data-testid="ghostty-font-size"
                 />
-                <span className="text-xs text-muted-foreground">pt (8-32)</span>
+                <span className="text-xs text-muted-foreground">
+                  {t('settings.terminal.embedded.fontSizeUnit')}
+                </span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Font size for the embedded Ghostty terminal. Restart the terminal for changes to
-                take effect.
+                {t('settings.terminal.embedded.fontSizeDescription')}
               </p>
             </div>
           </>
@@ -225,19 +230,19 @@ export function SettingsTerminal(): React.JSX.Element {
 
       {/* External Terminal (Open in Terminal) */}
       <div>
-        <h3 className="text-base font-medium mb-1">External Terminal</h3>
+        <h3 className="text-base font-medium mb-1">{t('settings.terminal.external.title')}</h3>
         <p className="text-sm text-muted-foreground mb-3">
-          Choose which terminal to use for &quot;Open in Terminal&quot; actions
+          {t('settings.terminal.external.description')}
         </p>
 
         {isDetecting ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Detecting installed terminals...
+            {t('settings.terminal.external.detecting')}
           </div>
         ) : (
           <div className="space-y-1">
-            {getTerminalOptions().map((opt) => {
+            {terminalOptions.map((opt) => {
               const available = isAvailable(opt.id)
               return (
                 <button
@@ -256,7 +261,9 @@ export function SettingsTerminal(): React.JSX.Element {
                   <div className="flex items-center gap-2">
                     <span>{opt.label}</span>
                     {!available && opt.id !== 'custom' && (
-                      <span className="text-xs text-muted-foreground">(not found)</span>
+                      <span className="text-xs text-muted-foreground">
+                        {t('settings.terminal.external.notFound')}
+                      </span>
                     )}
                   </div>
                   {defaultTerminal === opt.id && <Check className="h-4 w-4 text-primary" />}
@@ -269,16 +276,22 @@ export function SettingsTerminal(): React.JSX.Element {
         {/* Custom command input */}
         {defaultTerminal === 'custom' && (
           <div className="space-y-2 mt-3">
-            <label className="text-sm font-medium">Custom Terminal Command</label>
+            <label className="text-sm font-medium">
+              {t('settings.terminal.external.customCommand.label')}
+            </label>
             <Input
               value={customTerminalCommand}
               onChange={(e) => updateSetting('customTerminalCommand', e.target.value)}
-              placeholder={isMacPlatform() ? 'e.g., /usr/local/bin/alacritty' : 'e.g., C:\\Program Files\\Alacritty\\alacritty.exe'}
+              placeholder={
+                isMacPlatform()
+                  ? 'e.g., /usr/local/bin/alacritty'
+                  : 'e.g., C:\\Program Files\\Alacritty\\alacritty.exe'
+              }
               className="font-mono text-sm"
               data-testid="custom-terminal-command"
             />
             <p className="text-xs text-muted-foreground">
-              The command will be called with the worktree path as an argument.
+              {t('settings.terminal.external.customCommand.description')}
             </p>
           </div>
         )}

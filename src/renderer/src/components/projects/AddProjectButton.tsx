@@ -4,11 +4,13 @@ import { Button } from '@/components/ui/button'
 import { useProjectStore } from '@/stores'
 import { projectToast, toast } from '@/lib/toast'
 import { GitInitDialog } from './GitInitDialog'
+import { useI18n } from '@/i18n/useI18n'
 
 export function AddProjectButton(): React.JSX.Element {
   const [isAdding, setIsAdding] = useState(false)
   const [gitInitPath, setGitInitPath] = useState<string | null>(null)
   const { addProject } = useProjectStore()
+  const { t } = useI18n()
 
   const handleAddProject = useCallback(async (): Promise<void> => {
     if (isAdding) return
@@ -85,7 +87,7 @@ export function AddProjectButton(): React.JSX.Element {
         variant="ghost"
         size="icon"
         className="h-6 w-6"
-        title="Add Project"
+        title={t('sidebar.addProjectTitle')}
         onClick={handleAddProject}
         disabled={isAdding}
         data-testid="add-project-button"

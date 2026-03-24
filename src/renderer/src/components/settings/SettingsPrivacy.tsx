@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/useI18n'
 
 export function SettingsPrivacy(): React.JSX.Element {
   const updateSetting = useSettingsStore((s) => s.updateSetting)
   const [enabled, setEnabled] = useState(true)
   const [loaded, setLoaded] = useState(false)
+  const { t } = useI18n()
 
   useEffect(() => {
     window.analyticsOps
@@ -32,18 +34,16 @@ export function SettingsPrivacy(): React.JSX.Element {
     <div className="space-y-6">
       {/* Section header */}
       <div>
-        <h3 className="text-base font-medium mb-1">Privacy</h3>
-        <p className="text-sm text-muted-foreground">
-          Control how Hive collects anonymous usage data
-        </p>
+        <h3 className="text-base font-medium mb-1">{t('settings.privacy.title')}</h3>
+        <p className="text-sm text-muted-foreground">{t('settings.privacy.description')}</p>
       </div>
 
       {/* Toggle */}
       <div className="flex items-center justify-between">
         <div>
-          <label className="text-sm font-medium">Send anonymous usage analytics</label>
+          <label className="text-sm font-medium">{t('settings.privacy.analytics.label')}</label>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Help improve Hive by sharing anonymous feature usage data
+            {t('settings.privacy.analytics.description')}
           </p>
         </div>
         <button
@@ -67,12 +67,14 @@ export function SettingsPrivacy(): React.JSX.Element {
       {/* Info box */}
       <div className="rounded-md border border-border bg-muted/30 p-3">
         <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">What we collect:</span> Feature usage
-          counts, app version, platform (macOS/Windows/Linux).
+          <span className="font-medium text-foreground">{t('settings.privacy.collect.title')}</span>{' '}
+          {t('settings.privacy.collect.description')}
         </p>
         <p className="text-xs text-muted-foreground mt-2">
-          <span className="font-medium text-foreground">What we never collect:</span> Project names,
-          file contents, prompts, AI responses, git data, or any personal information.
+          <span className="font-medium text-foreground">
+            {t('settings.privacy.neverCollect.title')}
+          </span>{' '}
+          {t('settings.privacy.neverCollect.description')}
         </p>
       </div>
     </div>

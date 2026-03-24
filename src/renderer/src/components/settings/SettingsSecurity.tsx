@@ -4,12 +4,14 @@ import { Trash2, Plus, Info, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
+import { useI18n } from '@/i18n/useI18n'
 
 export function SettingsSecurity(): React.JSX.Element {
   const { commandFilter: rawCommandFilter, updateSetting } = useSettingsStore()
   const [newPattern, setNewPattern] = useState('')
   const [activeTab, setActiveTab] = useState<'allowlist' | 'blocklist'>('allowlist')
   const [searchQuery, setSearchQuery] = useState('')
+  const { t } = useI18n()
 
   // Defensive null-guard: commandFilter may be undefined on first hydration from old localStorage
   const commandFilter = rawCommandFilter ?? {
@@ -20,22 +22,22 @@ export function SettingsSecurity(): React.JSX.Element {
   }
 
   const isEnabled = commandFilter.enabled ?? true
+  const activeTabLabel =
+    activeTab === 'allowlist'
+      ? t('settings.security.tabs.allowlist')
+      : t('settings.security.tabs.blocklist')
 
   // Filter patterns based on search query
   const filteredAllowlist = useMemo(() => {
     if (!searchQuery) return commandFilter.allowlist
     const query = searchQuery.toLowerCase()
-    return commandFilter.allowlist.filter(pattern =>
-      pattern.toLowerCase().includes(query)
-    )
+    return commandFilter.allowlist.filter((pattern) => pattern.toLowerCase().includes(query))
   }, [commandFilter.allowlist, searchQuery])
 
   const filteredBlocklist = useMemo(() => {
     if (!searchQuery) return commandFilter.blocklist
     const query = searchQuery.toLowerCase()
-    return commandFilter.blocklist.filter(pattern =>
-      pattern.toLowerCase().includes(query)
-    )
+    return commandFilter.blocklist.filter((pattern) => pattern.toLowerCase().includes(query))
   }, [commandFilter.blocklist, searchQuery])
 
   const handleToggleEnabled = () => {
@@ -55,14 +57,14 @@ export function SettingsSecurity(): React.JSX.Element {
   const handleAddPattern = () => {
     const pattern = newPattern.trim()
     if (!pattern) {
-      toast.error('Pattern cannot be empty')
+      toast.error(t('settings.security.pattern.empty'))
       return
     }
 
     const list = activeTab === 'allowlist' ? commandFilter.allowlist : commandFilter.blocklist
 
     if (list.includes(pattern)) {
-      toast.error('Pattern already exists in this list')
+      toast.error(t('settings.security.pattern.duplicate'))
       return
     }
 
@@ -73,7 +75,7 @@ export function SettingsSecurity(): React.JSX.Element {
 
     updateSetting('commandFilter', updated)
     setNewPattern('')
-    toast.success(`Pattern added to ${activeTab}`)
+    toast.success(t('settings.security.pattern.added', { list: activeTabLabel }))
   }
 
   const handleRemovePattern = (pattern: string, listType: 'allowlist' | 'blocklist') => {
@@ -89,24 +91,29 @@ export function SettingsSecurity(): React.JSX.Element {
           }
 
     updateSetting('commandFilter', updated)
-    toast.success(`Pattern removed from ${listType}`)
+    toast.success(
+      t('settings.security.pattern.removed', {
+        list:
+          listType === 'allowlist'
+            ? t('settings.security.tabs.allowlist')
+            : t('settings.security.tabs.blocklist')
+      })
+    )
   }
 
   return (
     <div className="space-y-6" style={{ overflow: 'hidden' }}>
       <div>
-        <h3 className="text-base font-medium mb-1">Security</h3>
-        <p className="text-sm text-muted-foreground">
-          Control command filtering for approval-based agent sessions
-        </p>
+        <h3 className="text-base font-medium mb-1">{t('settings.security.title')}</h3>
+        <p className="text-sm text-muted-foreground">{t('settings.security.description')}</p>
       </div>
 
       {/* Enable/Disable */}
       <div className="flex items-center justify-between">
         <div>
-          <label className="text-sm font-medium">Enable command filtering</label>
+          <label className="text-sm font-medium">{t('settings.security.enable.label')}</label>
           <p className="text-xs text-muted-foreground">
-            Control which tools and commands approval-based agents can use during sessions
+            {t('settings.security.enable.description')}
           </p>
         </div>
         <button
@@ -146,8 +153,12 @@ export function SettingsSecurity(): React.JSX.Element {
 
       {/* Default Behavior */}
       <div className={cn('space-y-2', !isEnabled && 'opacity-50 pointer-events-none')}>
-        <label className="text-sm font-medium">Default behavior for unlisted commands</label>
-        <p className="text-xs text-muted-foreground">How to handle commands not on either list</p>
+        <label className="text-sm font-medium">
+          {t('settings.security.defaultBehavior.label')}
+        </label>
+        <p className="text-xs text-muted-foreground">
+          {t('settings.security.defaultBehavior.description')}
+        </p>
         <div className="flex gap-2">
           <button
             onClick={() => handleSetDefaultBehavior('ask')}
@@ -160,7 +171,7 @@ export function SettingsSecurity(): React.JSX.Element {
             )}
             data-testid="default-behavior-ask"
           >
-            Ask for approval
+            {t('settings.security.defaultBehavior.ask')}
           </button>
           <button
             onClick={() => handleSetDefaultBehavior('allow')}
@@ -173,7 +184,7 @@ export function SettingsSecurity(): React.JSX.Element {
             )}
             data-testid="default-behavior-allow"
           >
-            Allow silently
+            {t('settings.security.defaultBehavior.allow')}
           </button>
           <button
             onClick={() => handleSetDefaultBehavior('block')}
@@ -186,7 +197,7 @@ export function SettingsSecurity(): React.JSX.Element {
             )}
             data-testid="default-behavior-block"
           >
-            Block silently
+            {t('settings.security.defaultBehavior.block')}
           </button>
         </div>
       </div>
@@ -201,24 +212,12 @@ export function SettingsSecurity(): React.JSX.Element {
         <div className="flex gap-2">
           <Info className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
           <div className="text-xs text-muted-foreground space-y-1">
-            <p className="font-medium text-foreground">Pattern matching with wildcards:</p>
+            <p className="font-medium text-foreground">{t('settings.security.info.title')}</p>
             <ul className="list-disc list-inside space-y-0.5">
-              <li>
-                <code className="text-xs bg-muted px-1 py-0.5 rounded">*</code> matches any sequence
-                except /
-              </li>
-              <li>
-                <code className="text-xs bg-muted px-1 py-0.5 rounded">**</code> matches any
-                sequence including /
-              </li>
-              <li>
-                Example: <code className="text-xs bg-muted px-1 py-0.5 rounded">bash: npm *</code>{' '}
-                matches all npm commands
-              </li>
-              <li>
-                Example: <code className="text-xs bg-muted px-1 py-0.5 rounded">read: src/**</code>{' '}
-                matches any file in src/
-              </li>
+              <li>{t('settings.security.info.single')}</li>
+              <li>{t('settings.security.info.double')}</li>
+              <li>{t('settings.security.info.exampleBash')}</li>
+              <li>{t('settings.security.info.exampleRead')}</li>
             </ul>
           </div>
         </div>
@@ -232,8 +231,10 @@ export function SettingsSecurity(): React.JSX.Element {
         )}
       >
         <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">Priority:</span> Blocklist takes precedence
-          over allowlist. If a command matches both, it will be blocked.
+          <span className="font-medium text-foreground">
+            {t('settings.security.priority.title')}
+          </span>{' '}
+          {t('settings.security.priority.description')}
         </p>
       </div>
 
@@ -250,7 +251,7 @@ export function SettingsSecurity(): React.JSX.Element {
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
           >
-            Allowlist ({commandFilter.allowlist.length})
+            {t('settings.security.tabs.allowlist')} ({commandFilter.allowlist.length})
           </button>
           <button
             onClick={() => setActiveTab('blocklist')}
@@ -262,7 +263,7 @@ export function SettingsSecurity(): React.JSX.Element {
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
           >
-            Blocklist ({commandFilter.blocklist.length})
+            {t('settings.security.tabs.blocklist')} ({commandFilter.blocklist.length})
           </button>
         </div>
 
@@ -280,8 +281,8 @@ export function SettingsSecurity(): React.JSX.Element {
             disabled={!isEnabled}
             placeholder={
               activeTab === 'allowlist'
-                ? 'e.g., bash: git status or read: src/**'
-                : 'e.g., bash: rm -rf * or edit: .env'
+                ? t('settings.security.pattern.allowPlaceholder')
+                : t('settings.security.pattern.blockPlaceholder')
             }
             style={{ flex: '1 1 0', minWidth: 0 }}
             className="px-3 py-1.5 text-sm rounded-md border border-border bg-background"
@@ -295,7 +296,7 @@ export function SettingsSecurity(): React.JSX.Element {
             data-testid="add-pattern-button"
           >
             <Plus className="h-3.5 w-3.5 mr-1" />
-            Add
+            {t('settings.security.pattern.add')}
           </Button>
         </div>
 
@@ -308,7 +309,7 @@ export function SettingsSecurity(): React.JSX.Element {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search patterns..."
+                placeholder={t('settings.security.pattern.searchPlaceholder')}
                 disabled={!isEnabled}
                 className="w-full pl-8 pr-8 py-1.5 text-sm rounded-md border border-border bg-background disabled:opacity-50"
                 data-testid="pattern-search-input"
@@ -330,8 +331,14 @@ export function SettingsSecurity(): React.JSX.Element {
         {/* Show filtered count when searching */}
         {searchQuery && (
           <div className="text-xs text-muted-foreground">
-            Showing {activeTab === 'allowlist' ? filteredAllowlist.length : filteredBlocklist.length} of{' '}
-            {activeTab === 'allowlist' ? commandFilter.allowlist.length : commandFilter.blocklist.length} patterns
+            {t('settings.security.pattern.showingCount', {
+              visible:
+                activeTab === 'allowlist' ? filteredAllowlist.length : filteredBlocklist.length,
+              total:
+                activeTab === 'allowlist'
+                  ? commandFilter.allowlist.length
+                  : commandFilter.blocklist.length
+            })}
           </div>
         )}
 
@@ -339,22 +346,22 @@ export function SettingsSecurity(): React.JSX.Element {
         <div className="space-y-2 max-h-48 overflow-y-auto" style={{ overflowX: 'hidden' }}>
           {activeTab === 'allowlist' && filteredAllowlist.length === 0 && !searchQuery && (
             <div className="text-xs text-muted-foreground text-center py-4">
-              No patterns in allowlist. Commands will follow the default behavior.
+              {t('settings.security.pattern.noAllowlist')}
             </div>
           )}
           {activeTab === 'allowlist' && filteredAllowlist.length === 0 && searchQuery && (
             <div className="text-xs text-muted-foreground text-center py-4">
-              No patterns matching "{searchQuery}"
+              {t('settings.security.pattern.noAllowlistSearch', { query: searchQuery })}
             </div>
           )}
           {activeTab === 'blocklist' && filteredBlocklist.length === 0 && !searchQuery && (
             <div className="text-xs text-muted-foreground text-center py-4">
-              No patterns in blocklist. Default dangerous patterns are included on first launch.
+              {t('settings.security.pattern.noBlocklist')}
             </div>
           )}
           {activeTab === 'blocklist' && filteredBlocklist.length === 0 && searchQuery && (
             <div className="text-xs text-muted-foreground text-center py-4">
-              No patterns matching "{searchQuery}"
+              {t('settings.security.pattern.noBlocklistSearch', { query: searchQuery })}
             </div>
           )}
           {activeTab === 'allowlist' &&
@@ -380,7 +387,7 @@ export function SettingsSecurity(): React.JSX.Element {
                   onClick={() => handleRemovePattern(pattern, 'allowlist')}
                   disabled={!isEnabled}
                   className="shrink-0 text-destructive hover:text-destructive/80 transition-colors"
-                  title="Remove pattern"
+                  title={t('settings.security.pattern.removeTitle')}
                   data-testid="remove-allowlist-pattern"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -410,7 +417,7 @@ export function SettingsSecurity(): React.JSX.Element {
                   onClick={() => handleRemovePattern(pattern, 'blocklist')}
                   disabled={!isEnabled}
                   className="shrink-0 text-destructive hover:text-destructive/80 transition-colors"
-                  title="Remove pattern"
+                  title={t('settings.security.pattern.removeTitle')}
                   data-testid="remove-blocklist-pattern"
                 >
                   <Trash2 className="h-3.5 w-3.5" />

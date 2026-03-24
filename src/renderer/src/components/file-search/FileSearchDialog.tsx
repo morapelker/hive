@@ -9,6 +9,7 @@ import { useWorktreeStore } from '@/stores'
 import { FileIcon } from '@/components/file-tree/FileIcon'
 import { scoreMatch } from '@/lib/file-search-utils'
 import type { FlatFile } from '@/lib/file-search-utils'
+import { useI18n } from '@/i18n/useI18n'
 
 const MAX_RESULTS = 50
 const EMPTY_INDEX: FlatFile[] = []
@@ -17,6 +18,7 @@ export function FileSearchDialog() {
   const { isOpen, searchQuery, selectedIndex, close, setSearchQuery, setSelectedIndex } =
     useFileSearchStore()
   useGhosttySuppression('file-search', isOpen)
+  const { t } = useI18n()
 
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -83,6 +85,16 @@ export function FileSearchDialog() {
     }
   }, [isOpen, selectedIndex])
 
+  // Open file in file viewer
+  const handleFileSelect = useCallback(
+    (path: string, name: string) => {
+      if (!selectedWorktreeId) return
+      useFileViewerStore.getState().openFile(path, name, selectedWorktreeId)
+      close()
+    },
+    [selectedWorktreeId, close]
+  )
+
   // Handle keyboard navigation
   useEffect(() => {
     if (!isOpen) return
@@ -110,17 +122,7 @@ export function FileSearchDialog() {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, filteredFiles, selectedIndex, close])
-
-  // Open file in file viewer
-  const handleFileSelect = useCallback(
-    (path: string, name: string) => {
-      if (!selectedWorktreeId) return
-      useFileViewerStore.getState().openFile(path, name, selectedWorktreeId)
-      close()
-    },
-    [selectedWorktreeId, close]
-  )
+  }, [isOpen, filteredFiles, selectedIndex, handleFileSelect, close])
 
   // Close on overlay click
   const handleOverlayClick = useCallback(() => {
@@ -143,13 +145,13 @@ export function FileSearchDialog() {
         className="fixed left-1/2 top-[20%] -translate-x-1/2 w-full max-w-xl z-50"
         data-testid="file-search-dialog"
         role="dialog"
-        aria-label="File search"
+        aria-label={t('fileSearch.ariaLabel')}
         aria-modal="true"
       >
         <Command
           className="rounded-lg border border-border bg-popover shadow-xl overflow-hidden"
           shouldFilter={false}
-          label="File search"
+          label={t('fileSearch.commandLabel')}
         >
           {/* Search input */}
           <div className="flex items-center border-b border-border px-3">
@@ -158,7 +160,7 @@ export function FileSearchDialog() {
               ref={inputRef}
               value={searchQuery}
               onValueChange={setSearchQuery}
-              placeholder="Search files by name or path..."
+              placeholder={t('fileSearch.placeholder')}
               className="flex-1 h-12 bg-transparent border-0 outline-none text-sm placeholder:text-muted-foreground"
               autoFocus
               data-testid="file-search-input"
@@ -169,7 +171,7 @@ export function FileSearchDialog() {
           <Command.List ref={listRef} className="max-h-[300px] overflow-y-auto p-2">
             {filteredFiles.length === 0 && (
               <Command.Empty className="py-6 text-center text-sm text-muted-foreground">
-                No files found.
+                {t('fileSearch.empty')}
               </Command.Empty>
             )}
 
@@ -209,17 +211,18 @@ export function FileSearchDialog() {
             <div className="flex items-center gap-4">
               <span>
                 <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↑↓</kbd>{' '}
-                navigate
+                {t('fileSearch.hints.navigate')}
               </span>
               <span>
-                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↵</kbd> open
+                <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">↵</kbd>{' '}
+                {t('fileSearch.hints.open')}
               </span>
               <span>
                 <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">esc</kbd>{' '}
-                close
+                {t('fileSearch.hints.close')}
               </span>
             </div>
-            <span>{filteredFiles.length} files</span>
+            <span>{t('fileSearch.fileCount', { count: filteredFiles.length })}</span>
           </div>
         </Command>
       </div>
