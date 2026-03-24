@@ -3,6 +3,7 @@ import { TerminalView, type TerminalViewHandle } from './TerminalView'
 import { useTerminalStore } from '@/stores/useTerminalStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useI18n } from '@/i18n/useI18n'
 
 interface TerminalManagerProps {
   /** The currently selected worktree ID (null if none selected) */
@@ -26,6 +27,7 @@ export function TerminalManager({
   worktreePath,
   isVisible
 }: TerminalManagerProps): React.JSX.Element {
+  const { t } = useI18n()
   // Track which worktrees have had terminals opened
   const activeWorktreesRef = useRef<Map<string, string>>(new Map()) // worktreeId -> cwd
   const terminalRefsMap = useRef<Map<string, React.RefObject<TerminalViewHandle | null>>>(new Map())
@@ -94,7 +96,7 @@ export function TerminalManager({
   if (activeTerminals.length === 0 && !selectedWorktreeId) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-        Select a worktree to open a terminal
+        {t('terminalManager.empty.selectWorktree')}
       </div>
     )
   }
@@ -120,7 +122,7 @@ export function TerminalManager({
         !activeWorktreesRef.current.has(selectedWorktreeId) &&
         !worktreePath && (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            Select a worktree to open a terminal
+            {t('terminalManager.empty.selectWorktree')}
           </div>
         )}
     </>

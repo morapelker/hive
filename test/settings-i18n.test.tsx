@@ -193,6 +193,10 @@ describe('Settings i18n', () => {
     expect(translate('zh-CN', 'gitStatusPanel.fileItem.viewChangesTitle', { path: 'a.ts' })).toBe(
       '查看变更：a.ts'
     )
+    expect(translate('zh-CN', 'projectList.empty.noProjects')).toBe('还没有添加任何项目。')
+    expect(translate('zh-CN', 'terminalManager.empty.selectWorktree')).toBe(
+      '选择一个 worktree 以打开终端'
+    )
     expect(translate('zh-CN', 'commandPalette.hints.goBack')).toBe('返回')
     expect(translate('zh-CN', 'recent.status.planReady')).toBe('计划已就绪')
     expect(translate('zh-CN', 'dialogs.gitInit.title')).toBe('不是 Git 仓库')

@@ -18,6 +18,7 @@ import {
   buildPinnedAndConnectionTargets,
   type HintTarget
 } from '@/lib/hint-utils'
+import { useI18n } from '@/i18n/useI18n'
 
 interface ProjectListProps {
   onAddProject: () => void
@@ -25,6 +26,7 @@ interface ProjectListProps {
 }
 
 export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): React.JSX.Element {
+  const { t } = useI18n()
   const { projects, isLoading, error, loadProjects, reorderProjects } = useProjectStore()
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
   const { setHints, clearHints, setFilterActive } = useHintStore()
@@ -223,7 +225,7 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
   if (error) {
     return (
       <div className="text-sm text-destructive text-center py-8 px-2">
-        <p>Failed to load projects</p>
+        <p>{t('projectList.error.title')}</p>
         <p className="text-xs text-muted-foreground mt-1">{error}</p>
       </div>
     )
@@ -238,8 +240,10 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
         data-testid="empty-projects-state"
       >
         <FolderPlus className="h-8 w-8 text-muted-foreground mb-2" />
-        <p className="text-sm text-muted-foreground">No projects added yet.</p>
-        <p className="text-xs text-muted-foreground mt-1">Click + to add a project.</p>
+        <p className="text-sm text-muted-foreground">{t('projectList.empty.noProjects')}</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          {t('projectList.empty.addProjectHint')}
+        </p>
       </div>
     )
   }
@@ -251,8 +255,8 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
         className="flex flex-col items-center justify-center py-8 px-2 text-center"
         data-testid="empty-space-state"
       >
-        <p className="text-sm text-muted-foreground">No projects in this space.</p>
-        <p className="text-xs text-muted-foreground mt-1">Right-click a project to assign it.</p>
+        <p className="text-sm text-muted-foreground">{t('projectList.empty.noProjectsInSpace')}</p>
+        <p className="text-xs text-muted-foreground mt-1">{t('projectList.empty.assignHint')}</p>
       </div>
     )
   }
@@ -283,7 +287,9 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
         ))}
       </div>
       {filterQuery && filteredProjects.length === 0 && (
-        <div className="text-xs text-muted-foreground text-center py-4">No matching projects</div>
+        <div className="text-xs text-muted-foreground text-center py-4">
+          {t('projectList.empty.noMatches')}
+        </div>
       )}
     </div>
   )

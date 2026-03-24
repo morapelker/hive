@@ -460,6 +460,23 @@ export const messages: Record<AppLocale, MessageTree> = {
         conflictResolutionError: 'Failed to start conflict resolution'
       }
     },
+    projectList: {
+      error: {
+        title: 'Failed to load projects'
+      },
+      empty: {
+        noProjects: 'No projects added yet.',
+        addProjectHint: 'Click + to add a project.',
+        noProjectsInSpace: 'No projects in this space.',
+        assignHint: 'Right-click a project to assign it.',
+        noMatches: 'No matching projects'
+      }
+    },
+    terminalManager: {
+      empty: {
+        selectWorktree: 'Select a worktree to open a terminal'
+      }
+    },
     commandPalette: {
       ariaLabel: 'Command palette',
       commandLabel: 'Command palette',
@@ -1184,6 +1201,23 @@ export const messages: Record<AppLocale, MessageTree> = {
         projectNotFound: '找不到该 worktree 对应的项目',
         createSessionError: '创建会话失败',
         conflictResolutionError: '启动冲突修复失败'
+      }
+    },
+    projectList: {
+      error: {
+        title: '加载项目失败'
+      },
+      empty: {
+        noProjects: '还没有添加任何项目。',
+        addProjectHint: '点击 + 添加一个项目。',
+        noProjectsInSpace: '这个空间里还没有项目。',
+        assignHint: '右键项目即可将其分配到当前空间。',
+        noMatches: '没有匹配的项目'
+      }
+    },
+    terminalManager: {
+      empty: {
+        selectWorktree: '选择一个 worktree 以打开终端'
       }
     },
     commandPalette: {
