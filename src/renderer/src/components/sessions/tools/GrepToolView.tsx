@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { Search, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/useI18n'
 import type { ToolViewProps } from './types'
 
 const MAX_PREVIEW_LINES = 20
 
 export function GrepToolView({ input, output, error }: ToolViewProps) {
+  const { t } = useI18n()
   const [showAll, setShowAll] = useState(false)
 
   const pattern = (input.pattern || input.query || input.regex || '') as string
@@ -30,11 +32,19 @@ export function GrepToolView({ input, output, error }: ToolViewProps) {
       <div className="flex items-center gap-1.5 text-muted-foreground mb-2">
         <Search className="h-3.5 w-3.5" />
         <span className="text-xs">
-          <span className="font-mono font-medium text-foreground">&quot;{pattern}&quot;</span> in{' '}
-          <span className="font-mono">{searchPath}</span>
+          <span className="font-mono font-medium text-foreground">&quot;{pattern}&quot;</span>{' '}
+          {t('toolViews.grep.in')} <span className="font-mono">{searchPath}</span>
           {matchCount > 0 && (
             <span className="ml-1">
-              ({matchCount} {matchCount === 1 ? 'match' : 'matches'})
+              (
+              {t('toolViews.grep.matchCount', {
+                count: matchCount,
+                label:
+                  matchCount === 1
+                    ? t('toolViews.grep.matchSingular')
+                    : t('toolViews.grep.matchPlural')
+              })}
+              )
             </span>
           )}
         </span>
@@ -68,7 +78,7 @@ export function GrepToolView({ input, output, error }: ToolViewProps) {
 
       {/* No matches */}
       {matchCount === 0 && (
-        <div className="text-muted-foreground text-xs italic">No matches found</div>
+        <div className="text-muted-foreground text-xs italic">{t('toolViews.grep.noMatches')}</div>
       )}
 
       {/* Show all button */}
@@ -81,7 +91,9 @@ export function GrepToolView({ input, output, error }: ToolViewProps) {
           <ChevronDown
             className={cn('h-3 w-3 transition-transform duration-150', showAll && 'rotate-180')}
           />
-          {showAll ? 'Show less' : `Show all ${lines.length} results`}
+          {showAll
+            ? t('toolViews.common.showLess')
+            : t('toolViews.grep.showAllResults', { count: lines.length })}
         </button>
       )}
     </div>

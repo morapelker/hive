@@ -514,6 +514,37 @@ export const messages: Record<AppLocale, MessageTree> = {
         copyRawHtml: 'Copy raw HTML'
       }
     },
+    toolViews: {
+      common: {
+        showLess: 'Show less',
+        showAllLines: 'Show all {count} lines'
+      },
+      grep: {
+        in: 'in',
+        matchCount: '{count} {label}',
+        matchSingular: 'match',
+        matchPlural: 'matches',
+        noMatches: 'No matches found',
+        showAllResults: 'Show all {count} results'
+      },
+      read: {
+        linesRange: 'Lines {start}-{end}',
+        fromLine: 'From line {start}',
+        firstLines: 'First {count} lines'
+      },
+      fileChange: {
+        add: 'Add',
+        delete: 'Delete',
+        update: 'Update',
+        moreLines: '... {count} more lines',
+        noDiffContent: 'No diff content',
+        noChanges: 'No file changes'
+      },
+      task: {
+        defaultTitle: 'Sub-agent',
+        prompt: 'Prompt'
+      }
+    },
     commandPalette: {
       ariaLabel: 'Command palette',
       commandLabel: 'Command palette',
@@ -1308,6 +1339,37 @@ export const messages: Record<AppLocale, MessageTree> = {
         copied: '已复制原始评论 HTML',
         outdated: '旧',
         copyRawHtml: '复制原始 HTML'
+      }
+    },
+    toolViews: {
+      common: {
+        showLess: '收起',
+        showAllLines: '显示全部 {count} 行'
+      },
+      grep: {
+        in: '在',
+        matchCount: '{count} 个{label}',
+        matchSingular: '匹配',
+        matchPlural: '匹配',
+        noMatches: '未找到匹配结果',
+        showAllResults: '显示全部 {count} 条结果'
+      },
+      read: {
+        linesRange: '第 {start}-{end} 行',
+        fromLine: '从第 {start} 行开始',
+        firstLines: '前 {count} 行'
+      },
+      fileChange: {
+        add: '新增',
+        delete: '删除',
+        update: '更新',
+        moreLines: '... 还有 {count} 行',
+        noDiffContent: '没有 diff 内容',
+        noChanges: '没有文件变更'
+      },
+      task: {
+        defaultTitle: '子代理',
+        prompt: '提示词'
       }
     },
     commandPalette: {

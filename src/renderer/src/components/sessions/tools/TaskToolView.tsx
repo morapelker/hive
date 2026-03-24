@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Bot, ChevronDown, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/useI18n'
 import type { ToolViewProps } from './types'
 
 const MAX_PREVIEW_LINES = 20
@@ -17,6 +18,7 @@ function parseTaskOutput(output: string): string {
 }
 
 export function TaskToolView({ input, output, error }: ToolViewProps) {
+  const { t } = useI18n()
   const [showAllOutput, setShowAllOutput] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
 
@@ -39,7 +41,9 @@ export function TaskToolView({ input, output, error }: ToolViewProps) {
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
         <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-        <span className="text-xs font-medium text-foreground">{description || 'Sub-agent'}</span>
+        <span className="text-xs font-medium text-foreground">
+          {description || t('toolViews.task.defaultTitle')}
+        </span>
         {subagentType && (
           <span className="text-[10px] bg-blue-500/15 text-blue-500 dark:text-blue-400 rounded px-1.5 py-0.5 font-medium">
             {subagentType}
@@ -55,7 +59,7 @@ export function TaskToolView({ input, output, error }: ToolViewProps) {
             className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors font-medium"
           >
             <FileText className="h-3 w-3" />
-            <span>Prompt</span>
+            <span>{t('toolViews.task.prompt')}</span>
             <ChevronDown
               className={cn(
                 'h-2.5 w-2.5 transition-transform duration-150',
@@ -98,7 +102,9 @@ export function TaskToolView({ input, output, error }: ToolViewProps) {
                   showAllOutput && 'rotate-180'
                 )}
               />
-              {showAllOutput ? 'Show less' : `Show all ${outputLines.length} lines`}
+              {showAllOutput
+                ? t('toolViews.common.showLess')
+                : t('toolViews.common.showAllLines', { count: outputLines.length })}
             </button>
           )}
         </div>

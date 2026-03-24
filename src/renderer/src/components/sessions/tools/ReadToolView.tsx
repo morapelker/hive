@@ -3,6 +3,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/useI18n'
 import type { ToolViewProps } from './types'
 
 const MAX_PREVIEW_LINES = 20
@@ -132,6 +133,7 @@ function getLanguageFromPath(filePath: string): string {
 }
 
 export function ReadToolView({ input, output, error }: ToolViewProps) {
+  const { t } = useI18n()
   const [showAll, setShowAll] = useState(false)
 
   const filePath = (input.file_path || input.filePath || input.path || '') as string
@@ -142,11 +144,11 @@ export function ReadToolView({ input, output, error }: ToolViewProps) {
 
   const lineRange =
     offset && limit
-      ? `Lines ${offset}–${offset + limit}`
+      ? t('toolViews.read.linesRange', { start: offset, end: offset + limit })
       : offset
-        ? `From line ${offset}`
+        ? t('toolViews.read.fromLine', { start: offset })
         : limit
-          ? `First ${limit} lines`
+          ? t('toolViews.read.firstLines', { count: limit })
           : ''
 
   if (error) {
@@ -209,7 +211,9 @@ export function ReadToolView({ input, output, error }: ToolViewProps) {
           <ChevronDown
             className={cn('h-3 w-3 transition-transform duration-150', showAll && 'rotate-180')}
           />
-          {showAll ? 'Show less' : `Show all ${lines.length} lines`}
+          {showAll
+            ? t('toolViews.common.showLess')
+            : t('toolViews.common.showAllLines', { count: lines.length })}
         </button>
       )}
     </div>

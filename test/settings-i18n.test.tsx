@@ -206,6 +206,13 @@ describe('Settings i18n', () => {
     )
     expect(translate('zh-CN', 'dialogs.projectSettings.runScript.placeholder')).toBe('pnpm run dev')
     expect(translate('zh-CN', 'loading.default')).toBe('加载中...')
+    expect(translate('zh-CN', 'toolViews.grep.showAllResults', { count: 12 })).toBe(
+      '显示全部 12 条结果'
+    )
+    expect(translate('zh-CN', 'toolViews.read.linesRange', { start: 10, end: 20 })).toBe(
+      '第 10-20 行'
+    )
+    expect(translate('zh-CN', 'toolViews.task.defaultTitle')).toBe('子代理')
     expect(translate('zh-CN', 'commandPalette.hints.goBack')).toBe('返回')
     expect(translate('zh-CN', 'recent.status.planReady')).toBe('计划已就绪')
     expect(translate('zh-CN', 'dialogs.gitInit.title')).toBe('不是 Git 仓库')
