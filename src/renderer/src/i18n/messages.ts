@@ -545,6 +545,26 @@ export const messages: Record<AppLocale, MessageTree> = {
         prompt: 'Prompt'
       }
     },
+    contextIndicator: {
+      title: 'Context Window',
+      summary: {
+        withLimit: '{used} / {limit} tokens ({percent}%)',
+        noLimit: '{used} tokens (limit unavailable)'
+      },
+      labels: {
+        input: 'Input',
+        cacheRead: 'Cache read',
+        cacheWrite: 'Cache write'
+      },
+      generated: {
+        title: 'Generated (not in context)',
+        output: 'Output',
+        reasoning: 'Reasoning'
+      },
+      cost: {
+        session: 'Session cost: {cost}'
+      }
+    },
     commandPalette: {
       ariaLabel: 'Command palette',
       commandLabel: 'Command palette',
@@ -1370,6 +1390,26 @@ export const messages: Record<AppLocale, MessageTree> = {
       task: {
         defaultTitle: '子代理',
         prompt: '提示词'
+      }
+    },
+    contextIndicator: {
+      title: '上下文窗口',
+      summary: {
+        withLimit: '{used} / {limit} tokens ({percent}%)',
+        noLimit: '{used} tokens（无法获取上限）'
+      },
+      labels: {
+        input: '输入',
+        cacheRead: '缓存读取',
+        cacheWrite: '缓存写入'
+      },
+      generated: {
+        title: '生成内容（不计入上下文）',
+        output: '输出',
+        reasoning: '推理'
+      },
+      cost: {
+        session: '会话成本：{cost}'
       }
     },
     commandPalette: {

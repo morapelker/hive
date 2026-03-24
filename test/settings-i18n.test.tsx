@@ -213,6 +213,10 @@ describe('Settings i18n', () => {
       '第 10-20 行'
     )
     expect(translate('zh-CN', 'toolViews.task.defaultTitle')).toBe('子代理')
+    expect(translate('zh-CN', 'contextIndicator.title')).toBe('上下文窗口')
+    expect(translate('zh-CN', 'contextIndicator.cost.session', { cost: '$1.2345' })).toBe(
+      '会话成本：$1.2345'
+    )
     expect(translate('zh-CN', 'commandPalette.hints.goBack')).toBe('返回')
     expect(translate('zh-CN', 'recent.status.planReady')).toBe('计划已就绪')
     expect(translate('zh-CN', 'dialogs.gitInit.title')).toBe('不是 Git 仓库')

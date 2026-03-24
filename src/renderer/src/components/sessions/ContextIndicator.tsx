@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { getModelLimitKey, useContextStore } from '@/stores/useContextStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/useI18n'
 
 interface ContextIndicatorProps {
   sessionId: string
@@ -25,6 +26,7 @@ export function ContextIndicator({
   modelId,
   providerId
 }: ContextIndicatorProps): React.JSX.Element | null {
+  const { t } = useI18n()
   const tokenInfo = useContextStore((state) => state.tokensBySession[sessionId])
   const sessionModel = useContextStore((state) => state.modelBySession[sessionId])
   const modelLimits = useContextStore((state) => state.modelLimits)
@@ -76,29 +78,47 @@ export function ContextIndicator({
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={8} className="max-w-[260px]">
         <div className="space-y-1.5">
-          <div className="font-medium">Context Window</div>
+          <div className="font-medium">{t('contextIndicator.title')}</div>
           {typeof limit === 'number' ? (
             <div>
-              {formatNumber(used)} / {formatNumber(limit)} tokens ({percent ?? 0}%)
+              {t('contextIndicator.summary.withLimit', {
+                used: formatNumber(used),
+                limit: formatNumber(limit),
+                percent: percent ?? 0
+              })}
             </div>
           ) : (
-            <div>{formatNumber(used)} tokens (limit unavailable)</div>
+            <div>{t('contextIndicator.summary.noLimit', { used: formatNumber(used) })}</div>
           )}
           <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-80">
-            <div>Input: {formatNumber(tokens.input)}</div>
-            <div>Cache read: {formatNumber(tokens.cacheRead)}</div>
-            <div>Cache write: {formatNumber(tokens.cacheWrite)}</div>
+            <div>
+              {t('contextIndicator.labels.input')}: {formatNumber(tokens.input)}
+            </div>
+            <div>
+              {t('contextIndicator.labels.cacheRead')}: {formatNumber(tokens.cacheRead)}
+            </div>
+            <div>
+              {t('contextIndicator.labels.cacheWrite')}: {formatNumber(tokens.cacheWrite)}
+            </div>
           </div>
           {(tokens.output > 0 || tokens.reasoning > 0) && (
             <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-60">
-              <div className="opacity-100 text-[10px]">Generated (not in context)</div>
-              {tokens.output > 0 && <div>Output: {formatNumber(tokens.output)}</div>}
-              {tokens.reasoning > 0 && <div>Reasoning: {formatNumber(tokens.reasoning)}</div>}
+              <div className="opacity-100 text-[10px]">{t('contextIndicator.generated.title')}</div>
+              {tokens.output > 0 && (
+                <div>
+                  {t('contextIndicator.generated.output')}: {formatNumber(tokens.output)}
+                </div>
+              )}
+              {tokens.reasoning > 0 && (
+                <div>
+                  {t('contextIndicator.generated.reasoning')}: {formatNumber(tokens.reasoning)}
+                </div>
+              )}
             </div>
           )}
           {cost > 0 && (
             <div className="border-t border-background/20 pt-1.5">
-              <div>Session cost: ${cost.toFixed(4)}</div>
+              <div>{t('contextIndicator.cost.session', { cost: `$${cost.toFixed(4)}` })}</div>
             </div>
           )}
         </div>
