@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -12,6 +12,7 @@ import {
   Loader2,
   AlertTriangle
 } from 'lucide-react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -28,44 +29,27 @@ interface GitStatusPanelProps {
   className?: string
 }
 
-interface CollapsibleSectionProps {
-  title: string
-  count: number
-  defaultOpen?: boolean
-  children: React.ReactNode
-  action?: React.ReactNode
-  testId?: string
-}
+type FlatStatusItem =
+  | {
+      type: 'header'
+      key: string
+      groupId: string
+      title: string
+      count: number
+      action?: React.ReactNode
+      testId?: string
+    }
+  | { type: 'file'; key: string; file: GitFileStatus; isStaged: boolean }
 
-function CollapsibleSection({
-  title,
-  count,
-  defaultOpen = true,
-  children,
-  action,
-  testId
-}: CollapsibleSectionProps): React.JSX.Element {
-  const [isOpen, setIsOpen] = useState(defaultOpen)
+const ROW_HEIGHT = 24
+const HEADER_HEIGHT = 28
 
-  if (count === 0) return <></>
-
-  return (
-    <div className="border-b last:border-b-0" data-testid={testId}>
-      <button
-        type="button"
-        className="flex items-center justify-between w-full px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent/50"
-        onClick={() => setIsOpen(!isOpen)}
-      >
-        <span className="flex items-center gap-1">
-          {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          {title}
-          <span className="text-[10px] px-1 py-0.5 rounded bg-muted">{count}</span>
-        </span>
-        {action && <span onClick={(e) => e.stopPropagation()}>{action}</span>}
-      </button>
-      {isOpen && <div className="pb-1">{children}</div>}
-    </div>
-  )
+const statusColors: Record<string, string> = {
+  M: 'text-yellow-500',
+  A: 'text-green-500',
+  D: 'text-red-500',
+  '?': 'text-gray-400',
+  C: 'text-red-600 font-bold'
 }
 
 interface FileItemProps {
@@ -75,15 +59,12 @@ interface FileItemProps {
   isStaged: boolean
 }
 
-function FileItem({ file, onToggle, onViewDiff, isStaged }: FileItemProps): React.JSX.Element {
-  const statusColors: Record<string, string> = {
-    M: 'text-yellow-500',
-    A: 'text-green-500',
-    D: 'text-red-500',
-    '?': 'text-gray-400',
-    C: 'text-red-600 font-bold'
-  }
-
+const FileItem = memo(function FileItem({
+  file,
+  onToggle,
+  onViewDiff,
+  isStaged
+}: FileItemProps): React.JSX.Element {
   return (
     <div
       className="flex items-center gap-2 px-2 py-0.5 hover:bg-accent/30 group"
@@ -118,7 +99,7 @@ function FileItem({ file, onToggle, onViewDiff, isStaged }: FileItemProps): Reac
       </Button>
     </div>
   )
-}
+})
 
 export function GitStatusPanel({
   worktreePath,
@@ -140,6 +121,7 @@ export function GitStatusPanel({
 
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isFixingConflicts, setIsFixingConflicts] = useState(false)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
   // Load initial data
   useEffect(() => {
@@ -256,7 +238,157 @@ export function GitStatusPanel({
     [worktreePath]
   )
 
+  const toggleGroup = useCallback((group: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(group)) {
+        next.delete(group)
+      } else {
+        next.add(group)
+      }
+      return next
+    })
+  }, [])
+
   const hasConflicts = conflictedFiles.length > 0
+  const hasStaged = stagedFiles.length > 0
+  const hasUnstaged = modifiedFiles.length > 0 || untrackedFiles.length > 0
+
+  // ── Virtualized flat list for the file changes ──
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  const flatItems = useMemo(() => {
+    const items: FlatStatusItem[] = []
+
+    if (conflictedFiles.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-conflicts',
+        groupId: 'conflicts',
+        title: 'Conflicts',
+        count: conflictedFiles.length,
+        testId: 'git-conflicts-section'
+      })
+      if (!collapsed.has('conflicts')) {
+        for (const file of conflictedFiles) {
+          items.push({
+            type: 'file',
+            key: `conflict-${file.relativePath}`,
+            file,
+            isStaged: false
+          })
+        }
+      }
+    }
+
+    if (stagedFiles.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-staged',
+        groupId: 'staged',
+        title: 'Staged Changes',
+        count: stagedFiles.length,
+        action: hasStaged ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 text-[10px]"
+            onClick={handleUnstageAll}
+            title="Unstage all files"
+            data-testid="git-unstage-all"
+          >
+            <Minus className="h-3 w-3 mr-0.5" />
+            Unstage All
+          </Button>
+        ) : undefined,
+        testId: 'git-staged-section'
+      })
+      if (!collapsed.has('staged')) {
+        for (const file of stagedFiles) {
+          items.push({
+            type: 'file',
+            key: `staged-${file.relativePath}`,
+            file,
+            isStaged: true
+          })
+        }
+      }
+    }
+
+    if (modifiedFiles.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-changes',
+        groupId: 'changes',
+        title: 'Changes',
+        count: modifiedFiles.length,
+        action: hasUnstaged ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 text-[10px]"
+            onClick={handleStageAll}
+            title="Stage all files"
+            data-testid="git-stage-all"
+          >
+            <Plus className="h-3 w-3 mr-0.5" />
+            Stage All
+          </Button>
+        ) : undefined,
+        testId: 'git-modified-section'
+      })
+      if (!collapsed.has('changes')) {
+        for (const file of modifiedFiles) {
+          items.push({
+            type: 'file',
+            key: `modified-${file.relativePath}`,
+            file,
+            isStaged: false
+          })
+        }
+      }
+    }
+
+    if (untrackedFiles.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-untracked',
+        groupId: 'untracked',
+        title: 'Untracked',
+        count: untrackedFiles.length,
+        testId: 'git-untracked-section'
+      })
+      if (!collapsed.has('untracked')) {
+        for (const file of untrackedFiles) {
+          items.push({
+            type: 'file',
+            key: `untracked-${file.relativePath}`,
+            file,
+            isStaged: false
+          })
+        }
+      }
+    }
+
+    return items
+  }, [
+    conflictedFiles,
+    stagedFiles,
+    modifiedFiles,
+    untrackedFiles,
+    collapsed,
+    hasStaged,
+    hasUnstaged,
+    handleUnstageAll,
+    handleStageAll
+  ])
+
+  const virtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => (flatItems[index].type === 'header' ? HEADER_HEIGHT : ROW_HEIGHT),
+    overscan: 10
+  })
 
   const handleFixConflicts = useCallback(async () => {
     if (!worktreePath) return
@@ -306,8 +438,6 @@ export function GitStatusPanel({
   }
 
   const hasChanges = fileStatuses.length > 0
-  const hasUnstaged = modifiedFiles.length > 0 || untrackedFiles.length > 0
-  const hasStaged = stagedFiles.length > 0
 
   return (
     <div
@@ -385,104 +515,66 @@ export function GitStatusPanel({
       {!hasChanges ? (
         <div className="px-2 py-3 text-xs text-muted-foreground text-center">No changes</div>
       ) : (
-        <div className="max-h-[200px] overflow-y-auto">
-          {/* Merge Conflicts */}
-          <CollapsibleSection
-            title="Conflicts"
-            count={conflictedFiles.length}
-            testId="git-conflicts-section"
+        <div ref={scrollRef} className="max-h-[200px] overflow-y-auto">
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative'
+            }}
           >
-            {conflictedFiles.map((file) => (
-              <FileItem
-                key={file.relativePath}
-                file={file}
-                onToggle={handleToggleFile}
-                onViewDiff={handleViewDiff}
-                isStaged={false}
-              />
-            ))}
-          </CollapsibleSection>
-
-          {/* Staged Changes */}
-          <CollapsibleSection
-            title="Staged Changes"
-            count={stagedFiles.length}
-            testId="git-staged-section"
-            action={
-              hasStaged && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 px-1.5 text-[10px]"
-                  onClick={handleUnstageAll}
-                  title="Unstage all files"
-                  data-testid="git-unstage-all"
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const item = flatItems[virtualRow.index]
+              return (
+                <div
+                  key={item.key}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: `${virtualRow.size}px`,
+                    transform: `translateY(${virtualRow.start}px)`
+                  }}
                 >
-                  <Minus className="h-3 w-3 mr-0.5" />
-                  Unstage All
-                </Button>
+                  {item.type === 'header' ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        'flex items-center justify-between w-full px-2 h-full',
+                        'text-xs font-medium text-muted-foreground hover:bg-accent/50',
+                        virtualRow.index > 0 && 'border-t border-border'
+                      )}
+                      onClick={() => toggleGroup(item.groupId)}
+                      data-testid={item.testId}
+                    >
+                      <span className="flex items-center gap-1">
+                        {collapsed.has(item.groupId) ? (
+                          <ChevronRight className="h-3 w-3" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3" />
+                        )}
+                        {item.title}
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-muted">
+                          {item.count}
+                        </span>
+                      </span>
+                      {item.action && (
+                        <span onClick={(e) => e.stopPropagation()}>{item.action}</span>
+                      )}
+                    </button>
+                  ) : (
+                    <FileItem
+                      file={item.file}
+                      onToggle={handleToggleFile}
+                      onViewDiff={handleViewDiff}
+                      isStaged={item.isStaged}
+                    />
+                  )}
+                </div>
               )
-            }
-          >
-            {stagedFiles.map((file) => (
-              <FileItem
-                key={file.relativePath}
-                file={file}
-                onToggle={handleToggleFile}
-                onViewDiff={handleViewDiff}
-                isStaged={true}
-              />
-            ))}
-          </CollapsibleSection>
-
-          {/* Modified (Unstaged) */}
-          <CollapsibleSection
-            title="Changes"
-            count={modifiedFiles.length}
-            testId="git-modified-section"
-            action={
-              hasUnstaged && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 px-1.5 text-[10px]"
-                  onClick={handleStageAll}
-                  title="Stage all files"
-                  data-testid="git-stage-all"
-                >
-                  <Plus className="h-3 w-3 mr-0.5" />
-                  Stage All
-                </Button>
-              )
-            }
-          >
-            {modifiedFiles.map((file) => (
-              <FileItem
-                key={file.relativePath}
-                file={file}
-                onToggle={handleToggleFile}
-                onViewDiff={handleViewDiff}
-                isStaged={false}
-              />
-            ))}
-          </CollapsibleSection>
-
-          {/* Untracked */}
-          <CollapsibleSection
-            title="Untracked"
-            count={untrackedFiles.length}
-            testId="git-untracked-section"
-          >
-            {untrackedFiles.map((file) => (
-              <FileItem
-                key={file.relativePath}
-                file={file}
-                onToggle={handleToggleFile}
-                onViewDiff={handleViewDiff}
-                isStaged={false}
-              />
-            ))}
-          </CollapsibleSection>
+            })}
+          </div>
         </div>
       )}
 
