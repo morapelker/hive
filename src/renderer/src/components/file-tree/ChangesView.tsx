@@ -975,6 +975,28 @@ const MemberChanges = memo(function MemberChanges({
   const flatItems = useMemo(() => {
     const items: FlatChangeItem[] = []
 
+    if (member.conflicted.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-conflicts',
+        groupId: 'conflicts',
+        title: 'Merge Conflicts',
+        count: member.conflicted.length,
+        icon: <AlertTriangle className="h-3 w-3 text-red-500" />,
+        headerClassName: 'text-red-500'
+      })
+      if (!collapsed.has('conflicts')) {
+        for (const file of member.conflicted) {
+          items.push({
+            type: 'file',
+            key: `conflict-${file.relativePath}`,
+            file,
+            category: 'conflict'
+          })
+        }
+      }
+    }
+
     if (member.staged.length > 0) {
       items.push({
         type: 'header',
@@ -1060,7 +1082,7 @@ const MemberChanges = memo(function MemberChanges({
     }
 
     return items
-  }, [member.staged, member.modified, member.untracked, collapsed, onUnstageAll, onStageAll, wp])
+  }, [member.conflicted, member.staged, member.modified, member.untracked, collapsed, onUnstageAll, onStageAll, wp])
 
   const virtualizer = useVirtualizer({
     count: flatItems.length,
@@ -1106,16 +1128,18 @@ const MemberChanges = memo(function MemberChanges({
                       className={cn(
                         'flex items-center justify-between w-full px-2 h-full',
                         'text-xs font-medium text-muted-foreground hover:bg-accent/50',
+                        item.headerClassName,
                         virtualRow.index > 0 && 'border-t border-border'
                       )}
                       onClick={() => toggleGroup(item.groupId)}
                     >
                       <span className="flex items-center gap-1">
-                        {collapsed.has(item.groupId) ? (
-                          <ChevronRight className="h-3 w-3" />
-                        ) : (
-                          <ChevronDown className="h-3 w-3" />
-                        )}
+                        {item.icon ||
+                          (collapsed.has(item.groupId) ? (
+                            <ChevronRight className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          ))}
                         {item.title}
                         <span className="text-[10px] px-1 py-0.5 rounded bg-muted">
                           {item.count}
@@ -1125,6 +1149,28 @@ const MemberChanges = memo(function MemberChanges({
                         <span onClick={(e) => e.stopPropagation()}>{item.action}</span>
                       )}
                     </button>
+                  ) : item.category === 'conflict' ? (
+                    <FileRow
+                      file={item.file}
+                      onViewDiff={handleViewDiff}
+                      onStageToggle={handleStageToggle}
+                      contextMenu={
+                        <ContextMenuContent>
+                          <ContextMenuItem
+                            onClick={() => onStageFile(wp, item.file.relativePath)}
+                          >
+                            <Plus className="h-3.5 w-3.5 mr-2" />
+                            Mark as Resolved
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={() => onViewDiff(item.file, wp)}
+                          >
+                            <FileDiff className="h-3.5 w-3.5 mr-2" />
+                            Open Diff
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      }
+                    />
                   ) : item.category === 'staged' ? (
                     <FileRow
                       file={item.file}
