@@ -21,7 +21,6 @@ import { RecentList } from './RecentList'
 
 export function LeftSidebar(): React.JSX.Element {
   const { leftSidebarWidth, leftSidebarCollapsed, setLeftSidebarWidth } = useLayoutStore()
-  const expandAllProjects = useProjectStore((s) => s.expandAllProjects)
   const projectCount = useProjectStore((s) => s.projects.length)
   const showUsageIndicator = useSettingsStore((s) => s.showUsageIndicator)
   const [filterQuery, setFilterQuery] = useState('')
@@ -42,13 +41,6 @@ export function LeftSidebar(): React.JSX.Element {
   const finalizeConnection = useConnectionStore((s) => s.finalizeConnection)
 
   const canFinalize = connectionModeSelectedIds.size >= 2
-
-  // Expand all projects when entering connection mode
-  useEffect(() => {
-    if (connectionModeActive) {
-      expandAllProjects()
-    }
-  }, [connectionModeActive, expandAllProjects])
 
   // Clear filter when entering connection mode
   useEffect(() => {
