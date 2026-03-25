@@ -862,10 +862,10 @@ export class GitService {
   }
 
   /**
-   * Fetch/update a base branch before creating a worktree
-   * Uses git fetch to update the local branch ref directly without checking it out
+   * Pull a base branch before creating a worktree
+   * Uses git pull with --ff-only to update the local branch safely
    * Gracefully handles errors - won't block worktree creation
-   * @param branchName - Branch name to fetch/update
+   * @param branchName - Branch name to pull
    * @param options - Options including silent mode and skipPull flag
    */
   async pullBaseBranch(
@@ -902,23 +902,19 @@ export class GitService {
         return { success: true, updated: false }
       }
 
-      // Get the current commit SHA before fetch
-      const beforeSha = await this.git.revparse([branchName])
+      // Attempt to pull with fast-forward only
+      const pullOptions: Record<string, null | string | number> = {
+        '--ff-only': null
+      }
 
-      // Use fetch to update the local branch ref directly (doesn't require checkout)
-      // This avoids the issue where git pull operates on the current branch
-      await this.git.fetch('origin', `${branchName}:${branchName}`)
+      const result = await this.git.pull('origin', branchName, pullOptions)
 
-      // Get the commit SHA after fetch
-      const afterSha = await this.git.revparse([branchName])
-
-      const updated = beforeSha !== afterSha
+      const updated = (result.files?.length || 0) > 0 || result.summary.changes > 0
 
       if (!options?.silent && updated) {
-        log.info('Successfully fetched base branch', {
+        log.info('Successfully pulled base branch', {
           branch: branchName,
-          beforeSha: beforeSha.substring(0, 7),
-          afterSha: afterSha.substring(0, 7),
+          changes: result.summary.changes,
           repoPath: this.repoPath
         })
       }
@@ -931,7 +927,7 @@ export class GitService {
       const errMessage = error instanceof Error ? error.message : 'Unknown error'
 
       // Log the error but don't fail - worktree creation should proceed
-      log.warn('Fetch base branch failed, proceeding with local branch state', {
+      log.warn('Pull base branch failed, proceeding with local branch state', {
         branch: branchName,
         error: errMessage,
         repoPath: this.repoPath
