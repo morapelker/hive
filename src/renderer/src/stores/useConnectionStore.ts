@@ -2,6 +2,14 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { toast } from '@/lib/toast'
 import { registerConnectionClear, clearWorktreeSelection } from './store-coordination'
+import { translate } from '@/i18n/useI18n'
+import { DEFAULT_LOCALE } from '@/i18n/messages'
+import { useSettingsStore } from './useSettingsStore'
+
+function t(key: string, params?: Record<string, string | number | boolean>): string {
+  const locale = useSettingsStore.getState().locale ?? DEFAULT_LOCALE
+  return translate(locale, key, params)
+}
 
 // Connection types matching the database schema
 interface ConnectionMemberEnriched {
@@ -97,7 +105,11 @@ export const useConnectionStore = create<ConnectionState>()(
         try {
           const result = await window.connectionOps.create(worktreeIds)
           if (!result.success || !result.connection) {
-            toast.error(`Failed to create connection: ${result.error || 'Unknown error'}`)
+            toast.error(
+              t('connectionStore.toasts.createError', {
+                error: result.error || t('connectionStore.toasts.unknownError')
+              })
+            )
             return null
           }
           const connection = result.connection
@@ -108,11 +120,11 @@ export const useConnectionStore = create<ConnectionState>()(
           // Deconflict: clear worktree selection synchronously (same tick)
           clearWorktreeSelection()
 
-          toast.success(`Connection "${connection.name}" created`)
+          toast.success(t('connectionStore.toasts.createSuccess', { name: connection.name }))
           return connection.id
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          toast.error(`Failed to create connection: ${message}`)
+          toast.error(t('connectionStore.toasts.createError', { error: message }))
           return null
         }
       },
@@ -121,7 +133,11 @@ export const useConnectionStore = create<ConnectionState>()(
         try {
           const result = await window.connectionOps.delete(connectionId)
           if (!result.success) {
-            toast.error(result.error || 'Failed to delete connection')
+            toast.error(
+              result.error
+                ? t('connectionStore.toasts.deleteErrorWithReason', { error: result.error })
+                : t('connectionStore.toasts.deleteError')
+            )
             return
           }
           // Remove from pinned list if pinned
@@ -134,10 +150,10 @@ export const useConnectionStore = create<ConnectionState>()(
               state.selectedConnectionId === connectionId ? null : state.selectedConnectionId
             return { connections, selectedConnectionId }
           })
-          toast.success('Connection deleted')
+          toast.success(t('connectionStore.toasts.deleteSuccess'))
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          toast.error(`Failed to delete connection: ${message}`)
+          toast.error(t('connectionStore.toasts.deleteErrorWithReason', { error: message }))
         }
       },
 
@@ -145,7 +161,11 @@ export const useConnectionStore = create<ConnectionState>()(
         try {
           const addResult = await window.connectionOps.addMember(connectionId, worktreeId)
           if (!addResult.success) {
-            toast.error(`Failed to add member: ${addResult.error || 'Unknown error'}`)
+            toast.error(
+              t('connectionStore.toasts.addMemberError', {
+                error: addResult.error || t('connectionStore.toasts.unknownError')
+              })
+            )
             return
           }
           // Reload the specific connection to get updated members
@@ -159,7 +179,7 @@ export const useConnectionStore = create<ConnectionState>()(
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          toast.error(`Failed to add member: ${message}`)
+          toast.error(t('connectionStore.toasts.addMemberError', { error: message }))
         }
       },
 
@@ -167,7 +187,11 @@ export const useConnectionStore = create<ConnectionState>()(
         try {
           const result = await window.connectionOps.removeMember(connectionId, worktreeId)
           if (!result.success) {
-            toast.error(`Failed to remove member: ${result.error || 'Unknown error'}`)
+            toast.error(
+              t('connectionStore.toasts.removeMemberError', {
+                error: result.error || t('connectionStore.toasts.unknownError')
+              })
+            )
             return
           }
           if (result.connectionDeleted) {
@@ -195,14 +219,14 @@ export const useConnectionStore = create<ConnectionState>()(
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          toast.error(`Failed to remove member: ${message}`)
+          toast.error(t('connectionStore.toasts.removeMemberError', { error: message }))
         }
       },
 
       updateConnectionMembers: async (connectionId: string, desiredWorktreeIds: string[]) => {
         const currentConnection = get().connections.find((c) => c.id === connectionId)
         if (!currentConnection) {
-          toast.error('Connection not found')
+          toast.error(t('connectionStore.toasts.notFound'))
           return
         }
 
@@ -221,7 +245,11 @@ export const useConnectionStore = create<ConnectionState>()(
           for (const id of toAdd) {
             const addResult = await window.connectionOps.addMember(connectionId, id)
             if (!addResult.success) {
-              toast.error(`Failed to add member: ${addResult.error || 'Unknown error'}`)
+              toast.error(
+                t('connectionStore.toasts.addMemberError', {
+                  error: addResult.error || t('connectionStore.toasts.unknownError')
+                })
+              )
               return
             }
           }
@@ -229,7 +257,11 @@ export const useConnectionStore = create<ConnectionState>()(
           for (const id of toRemove) {
             const removeResult = await window.connectionOps.removeMember(connectionId, id)
             if (!removeResult.success) {
-              toast.error(`Failed to remove member: ${removeResult.error || 'Unknown error'}`)
+              toast.error(
+                t('connectionStore.toasts.removeMemberError', {
+                  error: removeResult.error || t('connectionStore.toasts.unknownError')
+                })
+              )
               return
             }
           }
@@ -242,10 +274,10 @@ export const useConnectionStore = create<ConnectionState>()(
               )
             }))
           }
-          toast.success('Connection updated')
+          toast.success(t('connectionStore.toasts.updateSuccess'))
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          toast.error(`Failed to update connection: ${message}`)
+          toast.error(t('connectionStore.toasts.updateError', { error: message }))
         }
       },
 
@@ -253,7 +285,11 @@ export const useConnectionStore = create<ConnectionState>()(
         try {
           const result = await window.connectionOps.rename(connectionId, customName)
           if (!result.success) {
-            toast.error(result.error || 'Failed to rename connection')
+            toast.error(
+              result.error
+                ? t('connectionStore.toasts.renameErrorWithReason', { error: result.error })
+                : t('connectionStore.toasts.renameError')
+            )
             return
           }
           if (result.connection) {
@@ -265,7 +301,7 @@ export const useConnectionStore = create<ConnectionState>()(
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          toast.error(`Failed to rename connection: ${message}`)
+          toast.error(t('connectionStore.toasts.renameErrorWithReason', { error: message }))
         }
       },
 

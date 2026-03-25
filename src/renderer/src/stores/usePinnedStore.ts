@@ -1,6 +1,14 @@
 import { create } from 'zustand'
 import { toast } from '@/lib/toast'
 import { useWorktreeStore } from './useWorktreeStore'
+import { translate } from '@/i18n/useI18n'
+import { DEFAULT_LOCALE } from '@/i18n/messages'
+import { useSettingsStore } from './useSettingsStore'
+
+function t(key: string, params?: Record<string, string | number | boolean>): string {
+  const locale = useSettingsStore.getState().locale ?? DEFAULT_LOCALE
+  return translate(locale, key, params)
+}
 
 interface PinnedState {
   pinnedWorktreeIds: Set<string>
@@ -89,7 +97,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
         return { pinnedConnectionIds: next }
       })
     } else {
-      toast.error(result.error || 'Failed to pin connection')
+      toast.error(result.error || t('pinnedStore.toasts.pinConnectionError'))
     }
   },
 
@@ -102,7 +110,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
         return { pinnedConnectionIds: next }
       })
     } else {
-      toast.error(result.error || 'Failed to unpin connection')
+      toast.error(result.error || t('pinnedStore.toasts.unpinConnectionError'))
     }
   },
 

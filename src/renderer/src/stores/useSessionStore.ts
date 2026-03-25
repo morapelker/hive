@@ -1,8 +1,16 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { SelectedModel } from './useSettingsStore'
+import { useSettingsStore } from './useSettingsStore'
 import { useGitStore } from './useGitStore'
 import { useWorktreeStore } from './useWorktreeStore'
+import { translate } from '@/i18n/useI18n'
+import { DEFAULT_LOCALE } from '@/i18n/messages'
+
+function t(key: string, params?: Record<string, string | number | boolean>): string {
+  const locale = useSettingsStore.getState().locale ?? DEFAULT_LOCALE
+  return translate(locale, key, params)
+}
 
 // Session mode type
 export type SessionMode = 'build' | 'plan'
@@ -1336,7 +1344,10 @@ export const useSessionStore = create<SessionState>()(
         } catch (error) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : 'Failed to create connection session'
+            error:
+              error instanceof Error
+                ? error.message
+                : t('sessionStore.errors.createConnectionSession')
           }
         }
       },

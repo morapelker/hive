@@ -710,6 +710,34 @@ export const messages: Record<AppLocale, MessageTree> = {
         settingsOpen: 'Open Settings'
       }
     },
+    connectionStore: {
+      toasts: {
+        unknownError: 'Unknown error',
+        createError: 'Failed to create connection: {error}',
+        createSuccess: 'Connection "{name}" created',
+        deleteError: 'Failed to delete connection',
+        deleteErrorWithReason: 'Failed to delete connection: {error}',
+        deleteSuccess: 'Connection deleted',
+        addMemberError: 'Failed to add member: {error}',
+        removeMemberError: 'Failed to remove member: {error}',
+        notFound: 'Connection not found',
+        updateSuccess: 'Connection updated',
+        updateError: 'Failed to update connection: {error}',
+        renameError: 'Failed to rename connection',
+        renameErrorWithReason: 'Failed to rename connection: {error}'
+      }
+    },
+    pinnedStore: {
+      toasts: {
+        pinConnectionError: 'Failed to pin connection',
+        unpinConnectionError: 'Failed to unpin connection'
+      }
+    },
+    sessionStore: {
+      errors: {
+        createConnectionSession: 'Failed to create connection session'
+      }
+    },
     commandPalette: {
       ariaLabel: 'Command palette',
       commandLabel: 'Command palette',
@@ -1700,6 +1728,34 @@ export const messages: Record<AppLocale, MessageTree> = {
         focusLeftSidebar: '聚焦左侧边栏',
         focusMainPane: '聚焦主面板',
         settingsOpen: '打开设置'
+      }
+    },
+    connectionStore: {
+      toasts: {
+        unknownError: '未知错误',
+        createError: '创建连接失败：{error}',
+        createSuccess: '连接“{name}”已创建',
+        deleteError: '删除连接失败',
+        deleteErrorWithReason: '删除连接失败：{error}',
+        deleteSuccess: '连接已删除',
+        addMemberError: '添加成员失败：{error}',
+        removeMemberError: '移除成员失败：{error}',
+        notFound: '未找到连接',
+        updateSuccess: '连接已更新',
+        updateError: '更新连接失败：{error}',
+        renameError: '重命名连接失败',
+        renameErrorWithReason: '重命名连接失败：{error}'
+      }
+    },
+    pinnedStore: {
+      toasts: {
+        pinConnectionError: '固定连接失败',
+        unpinConnectionError: '取消固定连接失败'
+      }
+    },
+    sessionStore: {
+      errors: {
+        createConnectionSession: '创建连接会话失败'
       }
     },
     commandPalette: {

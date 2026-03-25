@@ -231,6 +231,13 @@ describe('Settings i18n', () => {
       '[固定] foo'
     )
     expect(translate('zh-CN', 'keyboardShortcuts.items.sessionNew')).toBe('新建会话')
+    expect(translate('zh-CN', 'connectionStore.toasts.createSuccess', { name: 'demo' })).toBe(
+      '连接“demo”已创建'
+    )
+    expect(translate('zh-CN', 'pinnedStore.toasts.pinConnectionError')).toBe('固定连接失败')
+    expect(translate('zh-CN', 'sessionStore.errors.createConnectionSession')).toBe(
+      '创建连接会话失败'
+    )
     expect(translate('zh-CN', 'commandPalette.hints.goBack')).toBe('返回')
     expect(translate('zh-CN', 'recent.status.planReady')).toBe('计划已就绪')
     expect(translate('zh-CN', 'dialogs.gitInit.title')).toBe('不是 Git 仓库')
