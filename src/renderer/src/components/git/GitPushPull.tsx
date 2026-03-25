@@ -16,6 +16,8 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { cn } from '@/lib/utils'
+import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
+import { MergeConfirmDialog } from '@/components/worktrees/MergeConfirmDialog'
 
 interface BranchInfo {
   name: string
@@ -46,6 +48,16 @@ export function GitPushPull({
   const [isMerging, setIsMerging] = useState(false)
   const [isBranchMerged, setIsBranchMerged] = useState(false)
   const [mergedCheckVersion, setMergedCheckVersion] = useState(0)
+
+  // Dirty-check confirmation state for archive and merge
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
+  const [archiveConfirmFiles, setArchiveConfirmFiles] = useState<
+    Array<{ path: string; additions: number; deletions: number; binary: boolean }>
+  >([])
+  const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false)
+  const [mergeConfirmFiles, setMergeConfirmFiles] = useState<
+    Array<{ path: string; additions: number; deletions: number; binary: boolean }>
+  >([])
 
   // Branch picker dropdown state
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false)
@@ -219,7 +231,7 @@ export function GitPushPull({
     return false
   }, [selectedBranchInfo?.worktreePath, worktreesByProject])
 
-  const handleArchiveWorktree = useCallback(async () => {
+  const doArchiveWorktree = useCallback(async () => {
     // Archive the worktree that has the SELECTED BRANCH checked out (not our worktree)
     if (!selectedBranchInfo?.worktreePath) return
 
@@ -251,6 +263,33 @@ export function GitPushPull({
     }
   }, [selectedBranchInfo?.worktreePath, setMergeBranch])
 
+  const handleArchiveWorktree = useCallback(async () => {
+    if (!selectedBranchInfo?.worktreePath) return
+
+    try {
+      const result = await window.gitOps.getDiffStat(selectedBranchInfo.worktreePath)
+      if (result.success && result.files && result.files.length > 0) {
+        setArchiveConfirmFiles(result.files)
+        setArchiveConfirmOpen(true)
+        return
+      }
+    } catch {
+      // If we can't check, proceed without confirmation
+    }
+    doArchiveWorktree()
+  }, [selectedBranchInfo?.worktreePath, doArchiveWorktree])
+
+  const handleArchiveConfirm = useCallback((): void => {
+    setArchiveConfirmOpen(false)
+    setArchiveConfirmFiles([])
+    doArchiveWorktree()
+  }, [doArchiveWorktree])
+
+  const handleArchiveCancel = useCallback((): void => {
+    setArchiveConfirmOpen(false)
+    setArchiveConfirmFiles([])
+  }, [])
+
   const handleDeleteBranch = useCallback(async () => {
     if (!worktreePath || !mergeBranch) return
     try {
@@ -266,7 +305,7 @@ export function GitPushPull({
     }
   }, [worktreePath, mergeBranch, setMergeBranch])
 
-  const handleMerge = useCallback(async () => {
+  const doMerge = useCallback(async () => {
     if (!worktreePath || !mergeBranch.trim()) return
     setIsMerging(true)
     try {
@@ -289,6 +328,46 @@ export function GitPushPull({
       setIsMerging(false)
     }
   }, [worktreePath, mergeBranch, refreshStatuses])
+
+  const handleMerge = useCallback(async () => {
+    if (!worktreePath || !mergeBranch.trim()) return
+
+    // Check if the source branch is checked out in a worktree with dirty files
+    if (selectedBranchInfo?.worktreePath) {
+      try {
+        const result = await window.gitOps.getDiffStat(selectedBranchInfo.worktreePath)
+        if (result.success && result.files && result.files.length > 0) {
+          setMergeConfirmFiles(result.files)
+          setMergeConfirmOpen(true)
+          return
+        }
+      } catch {
+        // If we can't check, proceed without confirmation
+      }
+    }
+    doMerge()
+  }, [worktreePath, mergeBranch, selectedBranchInfo?.worktreePath, doMerge])
+
+  const handleMergeConfirm = useCallback((): void => {
+    setMergeConfirmOpen(false)
+    setMergeConfirmFiles([])
+    doMerge()
+  }, [doMerge])
+
+  const handleMergeCancel = useCallback((): void => {
+    setMergeConfirmOpen(false)
+    setMergeConfirmFiles([])
+  }, [])
+
+  // Resolve the name of the source worktree for confirmation dialog labels
+  const sourceWorktreeName = useMemo(() => {
+    if (!selectedBranchInfo?.worktreePath) return mergeBranch
+    for (const worktrees of worktreesByProject.values()) {
+      const found = worktrees.find((w) => w.path === selectedBranchInfo.worktreePath)
+      if (found) return found.name
+    }
+    return mergeBranch
+  }, [selectedBranchInfo?.worktreePath, worktreesByProject, mergeBranch])
 
   if (!worktreePath) {
     return null
@@ -465,6 +544,22 @@ export function GitPushPull({
           </Button>
         )}
       </div>
+
+      {/* Dirty-check confirmation dialogs */}
+      <ArchiveConfirmDialog
+        open={archiveConfirmOpen}
+        worktreeName={sourceWorktreeName}
+        files={archiveConfirmFiles}
+        onCancel={handleArchiveCancel}
+        onConfirm={handleArchiveConfirm}
+      />
+      <MergeConfirmDialog
+        open={mergeConfirmOpen}
+        worktreeName={sourceWorktreeName}
+        files={mergeConfirmFiles}
+        onCancel={handleMergeCancel}
+        onConfirm={handleMergeConfirm}
+      />
     </div>
   )
 }
