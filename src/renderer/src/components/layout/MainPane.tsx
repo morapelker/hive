@@ -10,6 +10,8 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useProjectStore } from '@/stores/useProjectStore'
 
 const MonacoDiffView = lazy(() => import('@/components/diff/MonacoDiffView'))
 const WorktreeContextEditor = lazy(() =>
@@ -32,6 +34,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const contextEditorWorktreeId = useFileViewerStore((state) => state.contextEditorWorktreeId)
   const closedTerminalSessionIds = useSessionStore((state) => state.closedTerminalSessionIds)
   const ghosttyOverlaySuppressed = useLayoutStore((state) => state.ghosttyOverlaySuppressed)
+  const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
+  const selectedProjectId = useProjectStore((state) => state.selectedProjectId)
 
   // Subscribe to session maps so terminal list stays reactive
   const sessionsByWorktree = useSessionStore((state) => state.sessionsByWorktree)
@@ -164,6 +168,23 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
           <div className="text-center">
             <p className="text-lg font-medium">Welcome to Hive</p>
             <p className="text-sm mt-2">Select a project or worktree to get started.</p>
+          </div>
+        </div>
+      )
+    }
+
+    // Kanban board view takes priority when active and a project is selected
+    if (isBoardViewActive && selectedProjectId) {
+      return (
+        <div
+          className="flex-1 flex flex-col min-h-0 overflow-hidden"
+          data-testid="kanban-board"
+        >
+          <div className="flex-1 flex items-center justify-center text-muted-foreground">
+            <div className="text-center">
+              <p className="text-lg font-medium">Kanban Board</p>
+              <p className="text-sm mt-2">Board view for project {selectedProjectId}</p>
+            </div>
           </div>
         </div>
       )

@@ -327,3 +327,47 @@ export interface SessionSearchOptions {
   dateTo?: string
   includeArchived?: boolean
 }
+
+// Kanban ticket types
+export type KanbanTicketColumn = 'todo' | 'in_progress' | 'review' | 'done'
+
+export interface KanbanTicket {
+  id: string
+  project_id: string
+  title: string
+  description: string | null
+  attachments: unknown[] // Parsed JSON array (stored as TEXT in DB)
+  column: KanbanTicketColumn
+  sort_order: number
+  current_session_id: string | null
+  worktree_id: string | null
+  mode: 'build' | 'plan' | null
+  plan_ready: boolean // Mapped from INTEGER 0/1 in DB
+  created_at: string
+  updated_at: string
+}
+
+export interface KanbanTicketCreate {
+  project_id: string
+  title: string
+  description?: string | null
+  attachments?: unknown[]
+  column?: KanbanTicketColumn
+  sort_order?: number
+  current_session_id?: string | null
+  worktree_id?: string | null
+  mode?: 'build' | 'plan' | null
+  plan_ready?: boolean
+}
+
+export interface KanbanTicketUpdate {
+  title?: string
+  description?: string | null
+  attachments?: unknown[]
+  column?: KanbanTicketColumn
+  sort_order?: number
+  current_session_id?: string | null
+  worktree_id?: string | null
+  mode?: 'build' | 'plan' | null
+  plan_ready?: boolean
+}

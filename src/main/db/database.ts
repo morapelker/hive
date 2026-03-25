@@ -31,7 +31,11 @@ import type {
   ConnectionCreate,
   ConnectionMember,
   ConnectionMemberCreate,
-  ConnectionWithMembers
+  ConnectionWithMembers,
+  KanbanTicket,
+  KanbanTicketCreate,
+  KanbanTicketUpdate,
+  KanbanTicketColumn
 } from './types'
 
 export class DatabaseService {
@@ -95,6 +99,35 @@ export class DatabaseService {
       github_pr_number: (row.github_pr_number as number) ?? null,
       github_pr_url: (row.github_pr_url as string) ?? null
     } as Worktree
+  }
+
+  // Maps SQLite row to KanbanTicket (INTEGER 0/1 → boolean, JSON string → array)
+  private mapKanbanTicketRow(row: Record<string, unknown>): KanbanTicket {
+    let attachments: unknown[] = []
+    try {
+      const raw = row.attachments as string
+      if (raw) {
+        attachments = JSON.parse(raw)
+      }
+    } catch {
+      attachments = []
+    }
+
+    return {
+      id: row.id as string,
+      project_id: row.project_id as string,
+      title: row.title as string,
+      description: (row.description as string) ?? null,
+      attachments,
+      column: row.column as KanbanTicketColumn,
+      sort_order: row.sort_order as number,
+      current_session_id: (row.current_session_id as string) ?? null,
+      worktree_id: (row.worktree_id as string) ?? null,
+      mode: (row.mode as 'build' | 'plan') ?? null,
+      plan_ready: !!(row.plan_ready as number),
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string
+    }
   }
 
   private runMigrations(): void {
@@ -1552,6 +1585,176 @@ export class DatabaseService {
   getSchemaVersion(): number {
     const version = this.getSetting('schema_version')
     return version ? parseInt(version, 10) : 0
+  }
+
+  // Kanban ticket operations
+
+  createKanbanTicket(data: KanbanTicketCreate): KanbanTicket {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+
+    const id = randomUUID()
+    const column = data.column ?? 'todo'
+    const sortOrder = data.sort_order ?? 0
+    const description = data.description ?? null
+    const attachmentsJson = data.attachments ? JSON.stringify(data.attachments) : '[]'
+    const currentSessionId = data.current_session_id ?? null
+    const worktreeId = data.worktree_id ?? null
+    const mode = data.mode ?? null
+    const planReady = data.plan_ready ? 1 : 0
+
+    db.prepare(
+      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      data.project_id,
+      data.title,
+      description,
+      attachmentsJson,
+      column,
+      sortOrder,
+      currentSessionId,
+      worktreeId,
+      mode,
+      planReady,
+      now,
+      now
+    )
+
+    return this.mapKanbanTicketRow({
+      id,
+      project_id: data.project_id,
+      title: data.title,
+      description,
+      attachments: attachmentsJson,
+      column,
+      sort_order: sortOrder,
+      current_session_id: currentSessionId,
+      worktree_id: worktreeId,
+      mode,
+      plan_ready: planReady,
+      created_at: now,
+      updated_at: now
+    })
+  }
+
+  getKanbanTicket(id: string): KanbanTicket | null {
+    const db = this.getDb()
+    const row = db.prepare('SELECT * FROM kanban_tickets WHERE id = ?').get(id) as
+      | Record<string, unknown>
+      | undefined
+    return row ? this.mapKanbanTicketRow(row) : null
+  }
+
+  getKanbanTicketsByProject(projectId: string): KanbanTicket[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        'SELECT * FROM kanban_tickets WHERE project_id = ? ORDER BY "column" ASC, sort_order ASC'
+      )
+      .all(projectId) as Record<string, unknown>[]
+    return rows.map((row) => this.mapKanbanTicketRow(row))
+  }
+
+  updateKanbanTicket(id: string, data: KanbanTicketUpdate): KanbanTicket | null {
+    const db = this.getDb()
+    const existing = this.getKanbanTicket(id)
+    if (!existing) return null
+
+    const updates: string[] = ['updated_at = ?']
+    const values: (string | number | null)[] = [new Date().toISOString()]
+
+    if (data.title !== undefined) {
+      updates.push('title = ?')
+      values.push(data.title)
+    }
+    if (data.description !== undefined) {
+      updates.push('description = ?')
+      values.push(data.description)
+    }
+    if (data.attachments !== undefined) {
+      updates.push('attachments = ?')
+      values.push(JSON.stringify(data.attachments))
+    }
+    if (data.column !== undefined) {
+      updates.push('"column" = ?')
+      values.push(data.column)
+    }
+    if (data.sort_order !== undefined) {
+      updates.push('sort_order = ?')
+      values.push(data.sort_order)
+    }
+    if (data.current_session_id !== undefined) {
+      updates.push('current_session_id = ?')
+      values.push(data.current_session_id)
+    }
+    if (data.worktree_id !== undefined) {
+      updates.push('worktree_id = ?')
+      values.push(data.worktree_id)
+    }
+    if (data.mode !== undefined) {
+      updates.push('mode = ?')
+      values.push(data.mode)
+    }
+    if (data.plan_ready !== undefined) {
+      updates.push('plan_ready = ?')
+      values.push(data.plan_ready ? 1 : 0)
+    }
+
+    if (updates.length === 1) return existing // Only updated_at, nothing meaningful changed
+
+    values.push(id)
+    db.prepare(`UPDATE kanban_tickets SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+
+    return this.getKanbanTicket(id)
+  }
+
+  deleteKanbanTicket(id: string): boolean {
+    const db = this.getDb()
+    const result = db.prepare('DELETE FROM kanban_tickets WHERE id = ?').run(id)
+    return result.changes > 0
+  }
+
+  moveKanbanTicket(id: string, column: KanbanTicketColumn, sortOrder: number): KanbanTicket | null {
+    const db = this.getDb()
+    const existing = this.getKanbanTicket(id)
+    if (!existing) return null
+
+    const now = new Date().toISOString()
+    db.prepare(
+      'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ? WHERE id = ?'
+    ).run(column, sortOrder, now, id)
+
+    return this.getKanbanTicket(id)
+  }
+
+  reorderKanbanTicket(id: string, sortOrder: number): void {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare('UPDATE kanban_tickets SET sort_order = ?, updated_at = ? WHERE id = ?').run(
+      sortOrder,
+      now,
+      id
+    )
+  }
+
+  getKanbanTicketsBySession(sessionId: string): KanbanTicket[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        'SELECT * FROM kanban_tickets WHERE current_session_id = ? ORDER BY sort_order ASC'
+      )
+      .all(sessionId) as Record<string, unknown>[]
+    return rows.map((row) => this.mapKanbanTicketRow(row))
+  }
+
+  updateProjectSimpleMode(projectId: string, enabled: boolean): void {
+    const db = this.getDb()
+    db.prepare('UPDATE projects SET kanban_simple_mode = ? WHERE id = ?').run(
+      enabled ? 1 : 0,
+      projectId
+    )
   }
 
   // Check if tables exist
