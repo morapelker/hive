@@ -937,8 +937,8 @@ export class GitService {
         repoPath: this.repoPath
       })
 
-      // Always return success to allow worktree creation to proceed
-      return { success: true, updated: false }
+      // Return success: false so UI can show warning, but worktree creation will still proceed
+      return { success: false, updated: false }
     }
   }
 
@@ -1396,13 +1396,13 @@ export class GitService {
         // Fetch the PR ref once — FETCH_HEAD stays valid for subsequent retries
         await this.git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
       } else if (autoPull) {
-        // Fetch the branch to get latest changes
+        // Pull the branch to get latest changes
         pullResult = await this.pullBaseBranch(branchName, {
           silent: true,
           skipPull: !autoPull
         })
         if (pullResult.success && pullResult.updated) {
-          log.info('Fetched latest changes before creating worktree from branch', {
+          log.info('Pulled latest changes before creating worktree from branch', {
             branch: branchName,
             repoPath: this.repoPath
           })
@@ -1448,7 +1448,7 @@ export class GitService {
             branchName: breedName,
             name: breedName,
             pullInfo: {
-              pulled: pullResult.success && autoPull,
+              pulled: prNumber == null && pullResult.success && autoPull,
               updated: pullResult.updated || false
             }
           }

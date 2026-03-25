@@ -236,12 +236,22 @@ export function ProjectItem({
       toast.dismiss(loadingToastId)
 
       if (result.success) {
-        // Show info toast if commits were pulled
-        if (result.pullInfo?.updated) {
-          toast.info('Pulled latest changes from origin')
+        // Show warning if auto-pull was enabled but pull failed
+        if (autoPullBeforeWorktree && result.pullInfo?.pulled === false) {
+          toast.warning('Failed to pull latest changes - worktree created from local branch')
+          // Delay success toast so warning is visible
+          setTimeout(() => {
+            gitToast.worktreeCreated(project.name)
+          }, 1500)
         }
-
-        gitToast.worktreeCreated(project.name)
+        // Show info toast if commits were pulled
+        else if (result.pullInfo?.updated) {
+          toast.info('Pulled latest changes from origin')
+          gitToast.worktreeCreated(project.name)
+        } else {
+          // No pull info to show, just success
+          gitToast.worktreeCreated(project.name)
+        }
       } else {
         gitToast.operationFailed('create worktree', result.error)
       }
