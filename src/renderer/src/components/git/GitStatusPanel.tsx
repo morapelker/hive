@@ -59,7 +59,12 @@ interface FileItemProps {
   isStaged: boolean
 }
 
-const FileItem = memo(function FileItem({ file, onToggle, onViewDiff, isStaged }: FileItemProps): React.JSX.Element {
+const FileItem = memo(function FileItem({
+  file,
+  onToggle,
+  onViewDiff,
+  isStaged
+}: FileItemProps): React.JSX.Element {
   return (
     <div
       className="flex items-center gap-2 px-2 py-0.5 hover:bg-accent/30 group"
