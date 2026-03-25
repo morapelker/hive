@@ -197,6 +197,17 @@ function createWindow(): void {
       event.preventDefault()
       mainWindow!.webContents.send('shortcut:close-session')
     }
+
+    // Block zoom shortcuts — Ghostty native overlay requires 1:1 coordinate mapping.
+    // Any zoom level breaks the CSS-to-AppKit point sync for the NSView overlay.
+    if (
+      (input.meta || input.control) &&
+      !input.alt &&
+      (input.key === '=' || input.key === '+' || input.key === '-') &&
+      input.type === 'keyDown'
+    ) {
+      event.preventDefault()
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

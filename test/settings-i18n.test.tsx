@@ -242,6 +242,7 @@ describe('Settings i18n', () => {
     expect(translate('zh-CN', 'prReview.store.unknownReviewer')).toBe('未知评论者')
     expect(translate('zh-CN', 'commandPalette.hints.goBack')).toBe('返回')
     expect(translate('zh-CN', 'recent.status.planReady')).toBe('计划已就绪')
+    expect(translate('zh-CN', 'recent.status.commandApproval')).toBe('审批命令')
     expect(translate('zh-CN', 'dialogs.gitInit.title')).toBe('不是 Git 仓库')
     expect(translate('zh-CN', 'dialogs.connect.connect')).toBe('连接')
     expect(translate('zh-CN', 'dialogs.addAttachment.placeholder')).toBe('粘贴 Jira 或 Figma 链接')
@@ -253,10 +254,12 @@ describe('Settings i18n', () => {
     )
     expect(translate('zh-CN', 'pinned.menu.pin')).toBe('固定')
     expect(translate('zh-CN', 'pinned.status.archiving')).toBe('归档中')
+    expect(translate('zh-CN', 'pinned.status.commandApproval')).toBe('审批命令')
     expect(translate('zh-CN', 'pinned.toasts.pathCopied')).toBe('路径已复制到剪贴板')
     expect(translate('zh-CN', 'projectItem.menu.openInFileManager', { manager: 'Finder' })).toBe(
       '在 Finder 中打开'
     )
     expect(translate('zh-CN', 'projectItem.toasts.createWorktreeError')).toBe('创建 worktree 失败')
+    expect(translate('zh-CN', 'sidebar.filterPopover.noMatchingCommands')).toBe('没有匹配的命令')
   })
 })

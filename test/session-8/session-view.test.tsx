@@ -23,6 +23,14 @@ vi.mock('sonner', () => ({
   }
 }))
 
+vi.mock('react-syntax-highlighter', () => ({
+  Prism: ({ children }: { children: unknown }) => <pre>{children as string}</pre>
+}))
+
+vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
+  oneDark: {}
+}))
+
 // Mock database messages (demo messages to test with)
 const mockDemoMessages = [
   {
@@ -457,9 +465,7 @@ describe('Session 8: Session View', () => {
               content: 'Plan this change',
               opencode_message_id: 'turn-1:user',
               opencode_message_json: null,
-              opencode_parts_json: JSON.stringify([
-                { type: 'text', text: 'Plan this change' }
-              ]),
+              opencode_parts_json: JSON.stringify([{ type: 'text', text: 'Plan this change' }]),
               opencode_timeline_json: null,
               created_at: new Date(Date.now() - 2000).toISOString()
             },
@@ -554,7 +560,6 @@ describe('Session 8: Session View', () => {
           ]
         ])
       })
-
       ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         id: 'test-session-1',
         worktree_id: 'wt-1',
@@ -589,9 +594,7 @@ describe('Session 8: Session View', () => {
       render(<SessionView sessionId="test-session-1" />)
 
       await waitFor(() => {
-        expect(screen.getByTestId('plan-ready-implement-fab').className).not.toContain(
-          'opacity-0'
-        )
+        expect(screen.getByTestId('plan-ready-implement-fab').className).not.toContain('opacity-0')
       })
 
       await user.click(screen.getByTestId('plan-ready-implement-fab'))
@@ -896,6 +899,48 @@ describe('Session 8: Session View', () => {
 
       // Should have newline in input value
       expect(input.value).toContain('Line 1')
+    })
+
+    test('Enter does not send while IME composition is active', async () => {
+      const user = userEvent.setup()
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
+      const input = screen.getByTestId('message-input') as HTMLTextAreaElement
+      await user.type(input, '你好')
+
+      fireEvent.compositionStart(input)
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+
+      expect(window.opencodeOps.prompt).not.toHaveBeenCalled()
+      expect(input.value).toBe('你好')
+
+      fireEvent.compositionEnd(input)
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+
+      await waitFor(() => {
+        expect(window.opencodeOps.prompt).toHaveBeenCalled()
+      })
+    })
+
+    test('Enter does not send when browser reports IME fallback keyCode 229', async () => {
+      const user = userEvent.setup()
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-input')).toBeInTheDocument()
+      })
+
+      const input = screen.getByTestId('message-input') as HTMLTextAreaElement
+      await user.type(input, '中文输入')
+
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 229 })
+
+      expect(window.opencodeOps.prompt).not.toHaveBeenCalled()
+      expect(input.value).toBe('中文输入')
     })
 
     test('Sends message through OpenCode when sending', async () => {
@@ -1479,7 +1524,6 @@ describe('Session 8: Session View', () => {
           list: vi.fn().mockResolvedValue([])
         }
       })
-
       ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         id: 'test-session-1',
         worktree_id: 'wt-1',
@@ -1614,7 +1658,6 @@ describe('Session 8: Session View', () => {
           list: vi.fn().mockResolvedValue([])
         }
       })
-
       ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         id: 'test-session-1',
         worktree_id: 'wt-1',
@@ -1673,7 +1716,9 @@ describe('Session 8: Session View', () => {
 
       await waitFor(() => {
         const orderedMessages = Array.from(
-          container.querySelectorAll('[data-testid="message-user"], [data-testid="message-assistant"]')
+          container.querySelectorAll(
+            '[data-testid="message-user"], [data-testid="message-assistant"]'
+          )
         ).map((element) => element.textContent ?? '')
 
         expect(orderedMessages).toEqual([
@@ -1729,7 +1774,6 @@ describe('Session 8: Session View', () => {
 
     test('Busy remount restores a text-only streaming draft without double-rendering the last assistant message', async () => {
       useWorktreeStatusStore.getState().setSessionStatus('test-session-1', 'working')
-
       ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         id: 'test-session-1',
         worktree_id: 'wt-1',
@@ -1792,7 +1836,6 @@ describe('Session 8: Session View', () => {
     test('Busy remount restores tool parts and clears the overlay after idle refresh without duplicating the final assistant message', async () => {
       let streamCallback: ((event: Record<string, unknown>) => void) | null = null
       useWorktreeStatusStore.getState().setSessionStatus('test-session-1', 'working')
-
       ;(window.db.session.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         id: 'test-session-1',
         worktree_id: 'wt-1',

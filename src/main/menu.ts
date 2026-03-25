@@ -214,10 +214,6 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
           click: () => send('menu:focus-main-pane')
         },
         { type: 'separator' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { role: 'resetZoom' },
-        { type: 'separator' },
         { role: 'togglefullscreen' },
         ...(isDev ? [{ role: 'toggleDevTools' as const }] : [])
       ]

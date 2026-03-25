@@ -396,32 +396,40 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const { displayStatus, statusClass } =
     worktreeStatus === 'answering'
       ? { displayStatus: t('pinned.status.answering'), statusClass: 'font-semibold text-amber-500' }
-      : worktreeStatus === 'permission'
+      : worktreeStatus === 'command_approval'
         ? {
-            displayStatus: t('pinned.status.permission'),
-            statusClass: 'font-semibold text-amber-500'
+            displayStatus: t('pinned.status.commandApproval'),
+            statusClass: 'font-semibold text-orange-500'
           }
-        : worktreeStatus === 'planning'
+        : worktreeStatus === 'permission'
           ? {
-              displayStatus: t('pinned.status.planning'),
-              statusClass: 'font-semibold text-blue-400'
+              displayStatus: t('pinned.status.permission'),
+              statusClass: 'font-semibold text-amber-500'
             }
-          : worktreeStatus === 'working'
+          : worktreeStatus === 'planning'
             ? {
-                displayStatus: t('pinned.status.working'),
-                statusClass: 'font-semibold text-primary'
+                displayStatus: t('pinned.status.planning'),
+                statusClass: 'font-semibold text-blue-400'
               }
-            : worktreeStatus === 'plan_ready'
+            : worktreeStatus === 'working'
               ? {
-                  displayStatus: t('pinned.status.planReady'),
-                  statusClass: 'font-semibold text-blue-400'
+                  displayStatus: t('pinned.status.working'),
+                  statusClass: 'font-semibold text-primary'
                 }
-              : worktreeStatus === 'completed'
+              : worktreeStatus === 'plan_ready'
                 ? {
-                    displayStatus: t('pinned.status.ready'),
-                    statusClass: 'font-semibold text-green-400'
+                    displayStatus: t('pinned.status.planReady'),
+                    statusClass: 'font-semibold text-blue-400'
                   }
-                : { displayStatus: t('pinned.status.ready'), statusClass: 'text-muted-foreground' }
+                : worktreeStatus === 'completed'
+                  ? {
+                      displayStatus: t('pinned.status.ready'),
+                      statusClass: 'font-semibold text-green-400'
+                    }
+                  : {
+                      displayStatus: t('pinned.status.ready'),
+                      statusClass: 'text-muted-foreground'
+                    }
 
   const handleClick = (): void => {
     selectWorktree(worktreeId)
@@ -607,8 +615,15 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
           {(worktreeStatus === 'working' || worktreeStatus === 'planning') && (
             <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
           )}
-          {(worktreeStatus === 'answering' || worktreeStatus === 'permission') && (
-            <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+          {(worktreeStatus === 'answering' ||
+            worktreeStatus === 'command_approval' ||
+            worktreeStatus === 'permission') && (
+            <AlertCircle
+              className={cn(
+                'h-3.5 w-3.5 shrink-0',
+                worktreeStatus === 'command_approval' ? 'text-orange-500' : 'text-amber-500'
+              )}
+            />
           )}
           {worktreeStatus === 'plan_ready' && (
             <MapIcon className="h-3.5 w-3.5 text-blue-400 shrink-0" />
@@ -917,32 +932,40 @@ function PinnedConnectionItem({
   const { displayStatus, statusClass } =
     connectionStatus === 'answering'
       ? { displayStatus: t('pinned.status.answering'), statusClass: 'font-semibold text-amber-500' }
-      : connectionStatus === 'permission'
+      : connectionStatus === 'command_approval'
         ? {
-            displayStatus: t('pinned.status.permission'),
-            statusClass: 'font-semibold text-amber-500'
+            displayStatus: t('pinned.status.commandApproval'),
+            statusClass: 'font-semibold text-orange-500'
           }
-        : connectionStatus === 'planning'
+        : connectionStatus === 'permission'
           ? {
-              displayStatus: t('pinned.status.planning'),
-              statusClass: 'font-semibold text-blue-400'
+              displayStatus: t('pinned.status.permission'),
+              statusClass: 'font-semibold text-amber-500'
             }
-          : connectionStatus === 'working'
+          : connectionStatus === 'planning'
             ? {
-                displayStatus: t('pinned.status.working'),
-                statusClass: 'font-semibold text-primary'
+                displayStatus: t('pinned.status.planning'),
+                statusClass: 'font-semibold text-blue-400'
               }
-            : connectionStatus === 'plan_ready'
+            : connectionStatus === 'working'
               ? {
-                  displayStatus: t('pinned.status.planReady'),
-                  statusClass: 'font-semibold text-blue-400'
+                  displayStatus: t('pinned.status.working'),
+                  statusClass: 'font-semibold text-primary'
                 }
-              : connectionStatus === 'completed'
+              : connectionStatus === 'plan_ready'
                 ? {
-                    displayStatus: t('pinned.status.ready'),
-                    statusClass: 'font-semibold text-green-400'
+                    displayStatus: t('pinned.status.planReady'),
+                    statusClass: 'font-semibold text-blue-400'
                   }
-                : { displayStatus: t('pinned.status.ready'), statusClass: 'text-muted-foreground' }
+                : connectionStatus === 'completed'
+                  ? {
+                      displayStatus: t('pinned.status.ready'),
+                      statusClass: 'font-semibold text-green-400'
+                    }
+                  : {
+                      displayStatus: t('pinned.status.ready'),
+                      statusClass: 'text-muted-foreground'
+                    }
 
   const handleClick = (): void => {
     selectConnection(connectionId)
@@ -1017,8 +1040,15 @@ function PinnedConnectionItem({
           {(connectionStatus === 'working' || connectionStatus === 'planning') && (
             <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
           )}
-          {(connectionStatus === 'answering' || connectionStatus === 'permission') && (
-            <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+          {(connectionStatus === 'answering' ||
+            connectionStatus === 'command_approval' ||
+            connectionStatus === 'permission') && (
+            <AlertCircle
+              className={cn(
+                'h-3.5 w-3.5 shrink-0',
+                connectionStatus === 'command_approval' ? 'text-orange-500' : 'text-amber-500'
+              )}
+            />
           )}
           {connectionStatus === 'plan_ready' && (
             <MapIcon className="h-3.5 w-3.5 text-blue-400 shrink-0" />

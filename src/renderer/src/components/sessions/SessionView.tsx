@@ -48,6 +48,7 @@ import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
 import { COMPLETION_WORDS, formatCompletionDuration, formatElapsedTimer } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { buildPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import beeIcon from '@/assets/bee.png'
 
@@ -611,6 +612,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const cursorPositionRef = useRef(0)
   const [cursorPosition, setCursorPosition] = useState(0)
   const isPastingRef = useRef(false)
+  const isImeComposingRef = useRef(false)
 
   // Draft persistence refs
   const inputValueRef = useRef('')
@@ -1577,6 +1579,26 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             const request = event.data
             if (request?.id && request?.toolName) {
               useCommandApprovalStore.getState().addApproval(sessionId, request)
+            }
+            return
+          }
+
+          // Handle command approval replies
+          if (event.type === 'command.approval_replied') {
+            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+            if (requestId) {
+              useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
+              // Reset status if no more pending approvals (handles transition from background to active)
+              const remaining = useCommandApprovalStore.getState().getApprovals(sessionId)
+              if (remaining.length === 0) {
+                const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+                if (currentStatus?.status === 'command_approval') {
+                  const mode = useSessionStore.getState().getSessionMode(sessionId)
+                  useWorktreeStatusStore
+                    .getState()
+                    .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+                }
+              }
             }
             return
           }
@@ -3930,6 +3952,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
       }
 
+      if (
+        e.key === 'Enter' &&
+        isComposingKeyboardEvent(
+          e.nativeEvent as KeyboardEvent & { keyCode?: number },
+          isImeComposingRef.current
+        )
+      ) {
+        return
+      }
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         // When a plan is pending, sending text rejects the plan with feedback
@@ -4065,7 +4097,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         setHistoryIndex(null)
       }
 
-      if (value.startsWith('/') && value.length >= 1) {
+      if (value.startsWith('/') && !value.includes(' ')) {
         setShowSlashCommands(true)
       } else {
         setShowSlashCommands(false)
@@ -4663,6 +4695,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 setCursorPosition(pos)
               }}
               onKeyDown={handleKeyDown}
+              onCompositionStart={() => {
+                isImeComposingRef.current = true
+              }}
+              onCompositionEnd={() => {
+                isImeComposingRef.current = false
+              }}
               onPaste={handlePaste}
               disabled={!!activePermission}
               placeholder={

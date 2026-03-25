@@ -156,8 +156,15 @@ function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       {(worktreeStatus === 'working' || worktreeStatus === 'planning') && (
         <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
       )}
-      {(worktreeStatus === 'answering' || worktreeStatus === 'permission') && (
-        <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+      {(worktreeStatus === 'answering' ||
+        worktreeStatus === 'command_approval' ||
+        worktreeStatus === 'permission') && (
+        <AlertCircle
+          className={cn(
+            'h-3.5 w-3.5 shrink-0',
+            worktreeStatus === 'command_approval' ? 'text-orange-500' : 'text-amber-500'
+          )}
+        />
       )}
       {worktreeStatus === 'plan_ready' && (
         <MapIcon className="h-3.5 w-3.5 text-blue-400 shrink-0" />
@@ -235,8 +242,15 @@ function RecentConnectionItem({
       {(connectionStatus === 'working' || connectionStatus === 'planning') && (
         <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
       )}
-      {(connectionStatus === 'answering' || connectionStatus === 'permission') && (
-        <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+      {(connectionStatus === 'answering' ||
+        connectionStatus === 'command_approval' ||
+        connectionStatus === 'permission') && (
+        <AlertCircle
+          className={cn(
+            'h-3.5 w-3.5 shrink-0',
+            connectionStatus === 'command_approval' ? 'text-orange-500' : 'text-amber-500'
+          )}
+        />
       )}
       {connectionStatus === 'plan_ready' && (
         <MapIcon className="h-3.5 w-3.5 text-blue-400 shrink-0" />
@@ -272,17 +286,19 @@ function StatusText({
   const { text, className } =
     status === 'answering'
       ? { text: t('recent.status.answering'), className: 'font-semibold text-amber-500' }
-      : status === 'permission'
-        ? { text: t('recent.status.permission'), className: 'font-semibold text-amber-500' }
-        : status === 'planning'
-          ? { text: t('recent.status.planning'), className: 'font-semibold text-blue-400' }
-          : status === 'working'
-            ? { text: t('recent.status.working'), className: 'font-semibold text-primary' }
-            : status === 'plan_ready'
-              ? { text: t('recent.status.planReady'), className: 'font-semibold text-blue-400' }
-              : status === 'completed'
-                ? { text: t('recent.status.ready'), className: 'font-semibold text-green-400' }
-                : { text: t('recent.status.ready'), className: 'text-muted-foreground' }
+      : status === 'command_approval'
+        ? { text: t('recent.status.commandApproval'), className: 'font-semibold text-orange-500' }
+        : status === 'permission'
+          ? { text: t('recent.status.permission'), className: 'font-semibold text-amber-500' }
+          : status === 'planning'
+            ? { text: t('recent.status.planning'), className: 'font-semibold text-blue-400' }
+            : status === 'working'
+              ? { text: t('recent.status.working'), className: 'font-semibold text-primary' }
+              : status === 'plan_ready'
+                ? { text: t('recent.status.planReady'), className: 'font-semibold text-blue-400' }
+                : status === 'completed'
+                  ? { text: t('recent.status.ready'), className: 'font-semibold text-green-400' }
+                  : { text: t('recent.status.ready'), className: 'text-muted-foreground' }
 
   return (
     <span className={cn('text-[11px]', className)} data-testid="recent-status-text">

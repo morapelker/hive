@@ -60,6 +60,7 @@ function isConflictFixActiveStatus(status: string | null): boolean {
     status === 'working' ||
     status === 'planning' ||
     status === 'answering' ||
+    status === 'command_approval' ||
     status === 'permission'
   )
 }

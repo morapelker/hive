@@ -198,32 +198,40 @@ export function WorktreeItem({
           displayStatus: t('pinned.status.answering'),
           statusClass: 'font-semibold text-amber-500'
         }
-      : worktreeStatus === 'permission'
+      : worktreeStatus === 'command_approval'
         ? {
-            displayStatus: t('pinned.status.permission'),
-            statusClass: 'font-semibold text-amber-500'
+            displayStatus: t('pinned.status.commandApproval'),
+            statusClass: 'font-semibold text-orange-500'
           }
-        : worktreeStatus === 'planning'
+        : worktreeStatus === 'permission'
           ? {
-              displayStatus: t('pinned.status.planning'),
-              statusClass: 'font-semibold text-blue-400'
+              displayStatus: t('pinned.status.permission'),
+              statusClass: 'font-semibold text-amber-500'
             }
-          : worktreeStatus === 'working'
+          : worktreeStatus === 'planning'
             ? {
-                displayStatus: t('pinned.status.working'),
-                statusClass: 'font-semibold text-primary'
+                displayStatus: t('pinned.status.planning'),
+                statusClass: 'font-semibold text-blue-400'
               }
-            : worktreeStatus === 'plan_ready'
+            : worktreeStatus === 'working'
               ? {
-                  displayStatus: t('pinned.status.planReady'),
-                  statusClass: 'font-semibold text-blue-400'
+                  displayStatus: t('pinned.status.working'),
+                  statusClass: 'font-semibold text-primary'
                 }
-              : worktreeStatus === 'completed'
+              : worktreeStatus === 'plan_ready'
                 ? {
-                    displayStatus: t('pinned.status.ready'),
-                    statusClass: 'font-semibold text-green-400'
+                    displayStatus: t('pinned.status.planReady'),
+                    statusClass: 'font-semibold text-blue-400'
                   }
-                : { displayStatus: t('pinned.status.ready'), statusClass: 'text-muted-foreground' }
+                : worktreeStatus === 'completed'
+                  ? {
+                      displayStatus: t('pinned.status.ready'),
+                      statusClass: 'font-semibold text-green-400'
+                    }
+                  : {
+                      displayStatus: t('pinned.status.ready'),
+                      statusClass: 'text-muted-foreground'
+                    }
 
   // Archive confirmation state
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
@@ -592,8 +600,15 @@ export function WorktreeItem({
               {(worktreeStatus === 'working' || worktreeStatus === 'planning') && (
                 <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
               )}
-              {(worktreeStatus === 'answering' || worktreeStatus === 'permission') && (
-                <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+              {(worktreeStatus === 'answering' ||
+                worktreeStatus === 'command_approval' ||
+                worktreeStatus === 'permission') && (
+                <AlertCircle
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0',
+                    worktreeStatus === 'command_approval' ? 'text-orange-500' : 'text-amber-500'
+                  )}
+                />
               )}
               {worktreeStatus === 'plan_ready' && (
                 <Map className="h-3.5 w-3.5 text-blue-400 shrink-0" />
@@ -602,6 +617,7 @@ export function WorktreeItem({
                 worktreeStatus !== 'working' &&
                 worktreeStatus !== 'planning' &&
                 worktreeStatus !== 'answering' &&
+                worktreeStatus !== 'command_approval' &&
                 worktreeStatus !== 'permission' &&
                 worktreeStatus !== 'plan_ready' &&
                 (worktree.is_default ? (

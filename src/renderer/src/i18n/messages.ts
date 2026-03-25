@@ -769,6 +769,10 @@ export const messages: Record<AppLocale, MessageTree> = {
     sidebar: {
       projects: 'Projects',
       filterProjects: 'Filter projects...',
+      filterPopover: {
+        noMatchingCommands: 'No matching commands',
+        noMatchingLanguages: 'No matching languages'
+      },
       recentToggleTitle: 'Toggle recent activity',
       sortProjectsTitle: 'Sort by last message',
       addProjectTitle: 'Add Project',
@@ -784,6 +788,7 @@ export const messages: Record<AppLocale, MessageTree> = {
       connectionFallback: 'Connection',
       status: {
         answering: 'Answer questions',
+        commandApproval: 'Approve command',
         permission: 'Permission',
         planning: 'Planning',
         working: 'Working',
@@ -975,6 +980,7 @@ export const messages: Record<AppLocale, MessageTree> = {
       status: {
         archiving: 'Archiving',
         answering: 'Answer questions',
+        commandApproval: 'Approve command',
         permission: 'Permission',
         planning: 'Planning',
         working: 'Working',
@@ -1794,6 +1800,10 @@ export const messages: Record<AppLocale, MessageTree> = {
     sidebar: {
       projects: '项目',
       filterProjects: '筛选项目...',
+      filterPopover: {
+        noMatchingCommands: '没有匹配的命令',
+        noMatchingLanguages: '没有匹配的语言'
+      },
       recentToggleTitle: '切换最近活动视图',
       sortProjectsTitle: '按最近消息排序',
       addProjectTitle: '添加项目',
@@ -1809,6 +1819,7 @@ export const messages: Record<AppLocale, MessageTree> = {
       connectionFallback: '连接',
       status: {
         answering: '等待回答',
+        commandApproval: '审批命令',
         permission: '等待授权',
         planning: '规划中',
         working: '执行中',
@@ -1999,6 +2010,7 @@ export const messages: Record<AppLocale, MessageTree> = {
       status: {
         archiving: '归档中',
         answering: '等待回答',
+        commandApproval: '审批命令',
         permission: '等待授权',
         planning: '规划中',
         working: '执行中',

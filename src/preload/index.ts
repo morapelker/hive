@@ -1,4 +1,10 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
+
+// Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
+// point mapping. Any zoom level breaks coordinate sync and causes misaligned
+// rendering. This also resets zoom for users who accidentally changed it.
+webFrame.setZoomFactor(1)
+webFrame.setVisualZoomLevelLimits(1, 1)
 
 // Typed database API for renderer
 const db = {

@@ -354,7 +354,7 @@ NSView* createHostView(NSWindow* window, ViewRect rect) {
 
   GhosttyHostView* hostView = [[GhosttyHostView alloc] initWithFrame:frame];
   hostView.surfaceId = 0;
-  hostView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+  hostView.autoresizingMask = 0; // JS layer controls frame exclusively via setHostViewFrame()
   hostView.wantsLayer = YES;
 
   // Metal rendering requires a layer-backed view

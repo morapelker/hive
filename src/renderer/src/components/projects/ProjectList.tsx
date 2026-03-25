@@ -23,9 +23,14 @@ import { useI18n } from '@/i18n/useI18n'
 interface ProjectListProps {
   onAddProject: () => void
   filterQuery: string
+  activeLanguages?: string[]
 }
 
-export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): React.JSX.Element {
+export function ProjectList({
+  onAddProject,
+  filterQuery,
+  activeLanguages = []
+}: ProjectListProps): React.JSX.Element {
   const { t } = useI18n()
   const { projects, isLoading, error, loadProjects, reorderProjects } = useProjectStore()
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
@@ -108,10 +113,17 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
       spaceFiltered = projects.filter((p) => allowedIds.has(p.id))
     }
 
-    if (!filterQuery.trim())
-      return spaceFiltered.map((p) => ({ project: p, nameMatch: null, pathMatch: null }))
+    // Then filter by active languages
+    let langFiltered = spaceFiltered
+    if (activeLanguages.length > 0) {
+      const langSet = new Set(activeLanguages)
+      langFiltered = spaceFiltered.filter((p) => p.language && langSet.has(p.language))
+    }
 
-    return spaceFiltered
+    if (!filterQuery.trim())
+      return langFiltered.map((p) => ({ project: p, nameMatch: null, pathMatch: null }))
+
+    return langFiltered
       .map((project) => ({
         project,
         nameMatch: subsequenceMatch(filterQuery, project.name),
@@ -123,7 +135,7 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
         const bScore = b.nameMatch.matched ? b.nameMatch.score : b.pathMatch.score + 1000
         return aScore - bScore
       })
-  }, [projects, filterQuery, activeSpaceId, projectSpaceMap])
+  }, [projects, filterQuery, activeSpaceId, projectSpaceMap, activeLanguages])
 
   // Build hint assignments when filter is active
   const { hintMap: computedHintMap, hintTargetMap: computedHintTargetMap } = useMemo(() => {
@@ -177,14 +189,14 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
     connections
   ])
 
-  // Immediately set filterActive when filter text changes — this drives project expansion
-  // independently of worktree loading (breaking the circular dependency)
+  // Immediately set filterActive when filter text or language filters change — this drives
+  // project expansion independently of worktree loading (breaking the circular dependency)
   useEffect(() => {
-    setFilterActive(!!filterQuery.trim())
+    setFilterActive(!!filterQuery.trim() || activeLanguages.length > 0)
     return () => {
       setFilterActive(false)
     }
-  }, [filterQuery, setFilterActive])
+  }, [filterQuery, activeLanguages, setFilterActive])
 
   useEffect(() => {
     if (filterQuery.trim() || (vimModeEnabled && vimMode === 'normal')) {
@@ -249,7 +261,12 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
   }
 
   // Space has no assigned projects
-  if (activeSpaceId !== null && filteredProjects.length === 0 && !filterQuery.trim()) {
+  if (
+    activeSpaceId !== null &&
+    filteredProjects.length === 0 &&
+    !filterQuery.trim() &&
+    activeLanguages.length === 0
+  ) {
     return (
       <div
         className="flex flex-col items-center justify-center py-8 px-2 text-center"
@@ -261,7 +278,7 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
     )
   }
 
-  const isDraggable = !filterQuery.trim()
+  const isDraggable = !filterQuery.trim() && activeLanguages.length === 0
 
   // Project list
   return (
@@ -286,7 +303,7 @@ export function ProjectList({ onAddProject, filterQuery }: ProjectListProps): Re
           />
         ))}
       </div>
-      {filterQuery && filteredProjects.length === 0 && (
+      {(filterQuery || activeLanguages.length > 0) && filteredProjects.length === 0 && (
         <div className="text-xs text-muted-foreground text-center py-4">
           {t('projectList.empty.noMatches')}
         </div>
