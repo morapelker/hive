@@ -61,23 +61,23 @@ describe('Session 10: Changes View', () => {
   })
 
   describe('Collapsible group headers', () => {
-    test('has a GroupHeader sub-component', () => {
+    test('uses virtualized flat list for group headers', () => {
       const content = readFile('ChangesView.tsx')
-      expect(content).toContain('function GroupHeader')
-      expect(content).toContain('<GroupHeader')
+      expect(content).toContain('useVirtualizer')
+      expect(content).toContain('flatItems')
+      expect(content).toContain("type: 'header'")
     })
 
     test('groups can be collapsed/expanded', () => {
       const content = readFile('ChangesView.tsx')
       expect(content).toContain('collapsed')
       expect(content).toContain('toggleGroup')
-      expect(content).toContain('isCollapsed')
     })
 
     test('groups show count badges', () => {
       const content = readFile('ChangesView.tsx')
-      // Count is rendered in each group header
-      expect(content).toContain('{count}')
+      // Count is rendered in each group header via item.count
+      expect(content).toContain('{item.count}')
     })
 
     test('uses ChevronDown/ChevronRight for collapse indicator', () => {
@@ -88,9 +88,9 @@ describe('Session 10: Changes View', () => {
 
     test('section titles match expected values', () => {
       const content = readFile('ChangesView.tsx')
-      expect(content).toContain('"Staged Changes"')
-      expect(content).toContain('"Changes"')
-      expect(content).toContain('"Untracked"')
+      expect(content).toContain("'Staged Changes'")
+      expect(content).toContain("'Changes'")
+      expect(content).toContain("'Untracked'")
     })
   })
 
