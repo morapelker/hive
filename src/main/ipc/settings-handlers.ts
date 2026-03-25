@@ -25,6 +25,13 @@ function resolveEditorCommand(
   return { command: editor.command }
 }
 
+/** Fire-and-forget spawn: suppress errors and fully detach from parent event loop. */
+function spawnDetached(...args: Parameters<typeof spawn>): void {
+  const child = spawn(...args)
+  child.on('error', () => {})
+  child.unref()
+}
+
 /**
  * Launch a terminal at the given path using the specified terminal ID.
  * Contains all platform-specific terminal launch logic in one place.
@@ -37,35 +44,35 @@ function launchTerminal(
   const currentPlatform = platform()
 
   if (terminalId === 'custom' && customCommand) {
-    spawn(customCommand, [targetPath], { detached: true, stdio: 'ignore' })
+    spawnDetached(customCommand, [targetPath], { detached: true, stdio: 'ignore' })
     return { success: true }
   }
 
   if (currentPlatform === 'darwin') {
     switch (terminalId) {
       case 'terminal':
-        spawn('open', ['-a', 'Terminal', targetPath], { detached: true })
+        spawnDetached('open', ['-a', 'Terminal', targetPath], { detached: true })
         break
       case 'iterm':
-        spawn('open', ['-a', 'iTerm', targetPath], { detached: true })
+        spawnDetached('open', ['-a', 'iTerm', targetPath], { detached: true })
         break
       case 'warp':
-        spawn('open', ['-a', 'Warp', targetPath], { detached: true })
+        spawnDetached('open', ['-a', 'Warp', targetPath], { detached: true })
         break
       case 'alacritty':
-        spawn('alacritty', ['--working-directory', targetPath], {
+        spawnDetached('alacritty', ['--working-directory', targetPath], {
           detached: true,
           stdio: 'ignore'
         })
         break
       case 'kitty':
-        spawn('kitty', ['--directory', targetPath], { detached: true, stdio: 'ignore' })
+        spawnDetached('kitty', ['--directory', targetPath], { detached: true, stdio: 'ignore' })
         break
       case 'ghostty':
-        spawn('open', ['-a', 'Ghostty', targetPath], { detached: true })
+        spawnDetached('open', ['-a', 'Ghostty', targetPath], { detached: true })
         break
       default:
-        spawn('open', ['-a', 'Terminal', targetPath], { detached: true })
+        spawnDetached('open', ['-a', 'Terminal', targetPath], { detached: true })
     }
   } else if (currentPlatform === 'win32') {
     switch (terminalId) {
@@ -74,9 +81,9 @@ function launchTerminal(
         const terminals = detectTerminals()
         const wt = terminals.find((t) => t.id === 'terminal')
         if (wt?.available) {
-          spawn('wt.exe', ['-d', targetPath], { detached: true, stdio: 'ignore' })
+          spawnDetached('wt.exe', ['-d', targetPath], { detached: true, stdio: 'ignore' })
         } else {
-          spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`], {
+          spawnDetached('powershell.exe', ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`], {
             detached: true,
             stdio: 'ignore'
           })
@@ -84,13 +91,13 @@ function launchTerminal(
         break
       }
       case 'powershell':
-        spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`], {
+        spawnDetached('powershell.exe', ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`], {
           detached: true,
           stdio: 'ignore'
         })
         break
       case 'cmd':
-        spawn('cmd.exe', ['/k', `cd /d "${targetPath}"`], {
+        spawnDetached('cmd.exe', ['/k', `cd /d "${targetPath}"`], {
           detached: true,
           stdio: 'ignore'
         })
@@ -99,7 +106,7 @@ function launchTerminal(
         const terminals = detectTerminals()
         const terminal = terminals.find((t) => t.id === terminalId)
         if (terminal?.available) {
-          spawn(terminal.command, [], { cwd: targetPath, detached: true, stdio: 'ignore' })
+          spawnDetached(terminal.command, [], { cwd: targetPath, detached: true, stdio: 'ignore' })
         } else {
           return { success: false, error: 'Terminal not found' }
         }
@@ -110,7 +117,7 @@ function launchTerminal(
     const terminals = detectTerminals()
     const terminal = terminals.find((t) => t.id === terminalId)
     if (terminal?.available) {
-      spawn(terminal.command, [], { cwd: targetPath, detached: true, stdio: 'ignore' })
+      spawnDetached(terminal.command, [], { cwd: targetPath, detached: true, stdio: 'ignore' })
     } else {
       return { success: false, error: 'Terminal not found' }
     }
