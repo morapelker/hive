@@ -235,7 +235,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       // Fire-and-forget: run setup script if configured
       fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
 
-      return { success: true }
+      return {
+        success: true,
+        pullInfo: result.pullInfo
+      }
     } catch (error) {
       set({ creatingForProjectId: null })
       return {

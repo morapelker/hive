@@ -43,6 +43,7 @@ export interface CommandFilterSettings {
 export interface AppSettings {
   // General
   autoStartSession: boolean
+  autoPullBeforeWorktree: boolean
   breedType: 'dogs' | 'cats'
   vimModeEnabled: boolean
 
@@ -107,6 +108,7 @@ export interface AppSettings {
 
 const DEFAULT_SETTINGS: AppSettings = {
   autoStartSession: true,
+  autoPullBeforeWorktree: true,
   breedType: 'dogs',
   vimModeEnabled: false,
   defaultEditor: 'vscode',
@@ -224,6 +226,7 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
 function extractSettings(state: SettingsState): AppSettings {
   return {
     autoStartSession: state.autoStartSession,
+    autoPullBeforeWorktree: state.autoPullBeforeWorktree,
     breedType: state.breedType,
     vimModeEnabled: state.vimModeEnabled,
     defaultEditor: state.defaultEditor,
@@ -432,6 +435,7 @@ export const useSettingsStore = create<SettingsState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         autoStartSession: state.autoStartSession,
+        autoPullBeforeWorktree: state.autoPullBeforeWorktree,
         breedType: state.breedType,
         vimModeEnabled: state.vimModeEnabled,
         defaultEditor: state.defaultEditor,

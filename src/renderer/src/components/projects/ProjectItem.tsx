@@ -125,6 +125,7 @@ export function ProjectItem({
 
   const vimMode = useVimModeStore((s) => s.mode)
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+  const autoPullBeforeWorktree = useSettingsStore((s) => s.autoPullBeforeWorktree)
   const projectHint = useHintStore((s) => s.hintMap.get('project:' + project.id))
 
   const [editName, setEditName] = useState(project.name)
@@ -223,13 +224,45 @@ export function ProjectItem({
       return
     }
 
-    const result = await createWorktree(project.id, project.path, project.name)
-    if (result.success) {
-      gitToast.worktreeCreated(project.name)
-    } else {
-      gitToast.operationFailed('create worktree', result.error)
+    // Show loading toast with appropriate progress message based on auto-pull setting
+    const loadingToastId = autoPullBeforeWorktree
+      ? toast.loading('Pulling latest changes from origin...')
+      : toast.loading('Creating worktree...')
+
+    try {
+      const result = await createWorktree(project.id, project.path, project.name)
+
+      // Dismiss loading toast
+      toast.dismiss(loadingToastId)
+
+      if (result.success) {
+        // Show warning if auto-pull was enabled but pull failed
+        if (autoPullBeforeWorktree && result.pullInfo?.pulled === false) {
+          toast.warning('Failed to pull latest changes - worktree created from local branch')
+          // Delay success toast so warning is visible
+          setTimeout(() => {
+            gitToast.worktreeCreated(project.name)
+          }, 1500)
+        }
+        // Show info toast if commits were pulled
+        else if (result.pullInfo?.updated) {
+          toast.info('Pulled latest changes from origin')
+          gitToast.worktreeCreated(project.name)
+        } else {
+          // No pull info to show, just success
+          gitToast.worktreeCreated(project.name)
+        }
+      } else {
+        gitToast.operationFailed('create worktree', result.error)
+      }
+    } catch (error) {
+      toast.dismiss(loadingToastId)
+      gitToast.operationFailed(
+        'create worktree',
+        error instanceof Error ? error.message : 'Unknown error'
+      )
     }
-  }, [isCreatingWorktree, createWorktree, project])
+  }, [isCreatingWorktree, createWorktree, project, autoPullBeforeWorktree])
 
   const handleCreateWorktree = useCallback(
     async (e: React.MouseEvent): Promise<void> => {
@@ -251,22 +284,56 @@ export function ProjectItem({
   const handleBranchSelect = useCallback(
     async (branchName: string, prNumber?: number): Promise<void> => {
       setBranchPickerOpen(false)
-      const result = await window.worktreeOps.createFromBranch(
-        project.id,
-        project.path,
-        project.name,
-        branchName,
-        prNumber
-      )
-      if (result.success && result.worktree) {
-        useWorktreeStore.getState().loadWorktrees(project.id)
-        useWorktreeStore.getState().selectWorktree(result.worktree.id)
-        gitToast.worktreeCreated(branchName)
-      } else {
-        gitToast.operationFailed('create worktree from branch', result.error)
+
+      // Show loading toast with appropriate progress message based on auto-pull setting
+      const loadingToastId = autoPullBeforeWorktree && !prNumber
+        ? toast.loading('Pulling latest changes from origin...')
+        : toast.loading('Creating worktree...')
+
+      try {
+        const result = await window.worktreeOps.createFromBranch(
+          project.id,
+          project.path,
+          project.name,
+          branchName,
+          prNumber
+        )
+
+        // Dismiss loading toast
+        toast.dismiss(loadingToastId)
+
+        if (result.success && result.worktree) {
+          useWorktreeStore.getState().loadWorktrees(project.id)
+          useWorktreeStore.getState().selectWorktree(result.worktree.id)
+
+          // Show warning if auto-pull was enabled but pull failed (not for PRs)
+          if (autoPullBeforeWorktree && !prNumber && result.pullInfo?.pulled === false) {
+            toast.warning('Failed to pull latest changes - worktree created from local branch')
+            // Delay success toast so warning is visible
+            setTimeout(() => {
+              gitToast.worktreeCreated(branchName)
+            }, 1500)
+          }
+          // Show info toast if commits were pulled (not applicable for PR checkouts)
+          else if (!prNumber && result.pullInfo?.updated) {
+            toast.info('Pulled latest changes from origin')
+            gitToast.worktreeCreated(branchName)
+          } else {
+            // No pull info to show, just success
+            gitToast.worktreeCreated(branchName)
+          }
+        } else {
+          gitToast.operationFailed('create worktree from branch', result.error)
+        }
+      } catch (error) {
+        toast.dismiss(loadingToastId)
+        gitToast.operationFailed(
+          'create worktree from branch',
+          error instanceof Error ? error.message : 'Unknown error'
+        )
       }
     },
-    [project]
+    [project, autoPullBeforeWorktree]
   )
 
   return (
