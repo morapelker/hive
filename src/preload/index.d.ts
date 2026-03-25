@@ -379,6 +379,11 @@ declare global {
         success: boolean
         worktree?: Worktree
         error?: string
+        pullInfo?: {
+          pulled: boolean
+          updated: boolean
+          commitCount?: number
+        }
       }>
       delete: (params: {
         worktreeId: string
@@ -437,6 +442,11 @@ declare global {
         success: boolean
         worktree?: Worktree
         error?: string
+        pullInfo?: {
+          pulled: boolean
+          updated: boolean
+          commitCount?: number
+        }
       }>
       // Subscribe to branch-renamed events (auto-rename from main process)
       onBranchRenamed: (
