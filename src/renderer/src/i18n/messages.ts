@@ -1709,7 +1709,7 @@ export const messages: Record<AppLocale, MessageTree> = {
         changes: '变更',
         files: '文件',
         diffs: '差异',
-        setup: '设置',
+        setup: '启动脚本',
         run: '运行',
         terminal: '终端'
       },

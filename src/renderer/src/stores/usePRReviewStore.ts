@@ -9,6 +9,17 @@ function t(key: string, params?: Record<string, string | number | boolean>): str
   return translate(locale, key, params)
 }
 
+export const UNKNOWN_REVIEWER_KEY = 'ghost'
+export const UNKNOWN_PATH_KEY = '__unknown_path__'
+
+function getReviewerKey(comment: PRReviewComment): string {
+  return comment.user?.login ?? UNKNOWN_REVIEWER_KEY
+}
+
+function getPathKey(comment: PRReviewComment): string {
+  return comment.path ?? UNKNOWN_PATH_KEY
+}
+
 interface PRReviewStoreState {
   // Data - keyed by worktreeId
   comments: Map<string, PRReviewComment[]>
@@ -176,16 +187,14 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
     const allComments = state.comments.get(worktreeId) ?? []
     const hidden = state.hiddenReviewers
     if (hidden.size === 0) return allComments
-    return allComments.filter(
-      (c) => !hidden.has(c.user?.login ?? t('prReview.store.unknownReviewer'))
-    )
+    return allComments.filter((c) => !hidden.has(getReviewerKey(c)))
   },
 
   getGroupedByFile: (worktreeId) => {
     const visible = get().getVisibleComments(worktreeId)
     const grouped = new Map<string, PRReviewComment[]>()
     for (const c of visible) {
-      const filePath = c.path ?? t('prReview.store.unknownPath')
+      const filePath = getPathKey(c)
       const existing = grouped.get(filePath) ?? []
       existing.push(c)
       grouped.set(filePath, existing)
@@ -222,7 +231,7 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
     const allComments = get().comments.get(worktreeId) ?? []
     const counts = new Map<string, number>()
     for (const c of allComments) {
-      const login = c.user?.login ?? t('prReview.store.unknownReviewer')
+      const login = getReviewerKey(c)
       counts.set(login, (counts.get(login) ?? 0) + 1)
     }
     return Array.from(counts.entries())

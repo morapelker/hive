@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useCallback } from 'react'
 import { Loader2, RefreshCw, MessageSquareCode } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { usePRReviewStore } from '@/stores/usePRReviewStore'
+import { UNKNOWN_PATH_KEY, UNKNOWN_REVIEWER_KEY, usePRReviewStore } from '@/stores/usePRReviewStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useGitStore } from '@/stores/useGitStore'
@@ -83,7 +83,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
 
   // Derive filtered/grouped data — defensively wrapped so a malformed
   // comment never crashes the whole sidebar.
-  const { grouped, threads, reviewers } = useMemo(() => {
+  const { grouped, threads, reviewers } = (() => {
     try {
       const state = usePRReviewStore.getState()
       const visible = state.getVisibleComments(worktreeId)
@@ -100,7 +100,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
         reviewers: [] as Array<{ login: string; count: number }>
       }
     }
-  }, [worktreeId, rawComments, hiddenReviewers])
+  })()
 
   const hasRawComments = rawComments.length > 0
 
@@ -144,26 +144,31 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
       <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-muted/30">
         {prNumber && <span className="text-xs text-muted-foreground shrink-0">#{prNumber}</span>}
         <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
-          {reviewers.map(({ login, count }) => (
-            <button
-              key={login}
-              onClick={() => toggleReviewer(login)}
-              className={cn(
-                'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] transition-colors',
-                hiddenReviewers.has(login)
-                  ? 'bg-muted/50 text-muted-foreground line-through opacity-50'
-                  : 'bg-muted text-foreground'
-              )}
-              title={
-                hiddenReviewers.has(login)
-                  ? t('prReview.viewer.reviewer.show', { login })
-                  : t('prReview.viewer.reviewer.hide', { login })
-              }
-            >
-              @{login}
-              <span className="text-[10px] text-muted-foreground">{count}</span>
-            </button>
-          ))}
+          {reviewers.map(({ login, count }) => {
+            const displayLogin =
+              login === UNKNOWN_REVIEWER_KEY ? t('prReview.store.unknownReviewer') : login
+
+            return (
+              <button
+                key={login}
+                onClick={() => toggleReviewer(login)}
+                className={cn(
+                  'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] transition-colors',
+                  hiddenReviewers.has(login)
+                    ? 'bg-muted/50 text-muted-foreground line-through opacity-50'
+                    : 'bg-muted text-foreground'
+                )}
+                title={
+                  hiddenReviewers.has(login)
+                    ? t('prReview.viewer.reviewer.show', { login: displayLogin })
+                    : t('prReview.viewer.reviewer.hide', { login: displayLogin })
+                }
+              >
+                @{displayLogin}
+                <span className="text-[10px] text-muted-foreground">{count}</span>
+              </button>
+            )
+          })}
         </div>
         <Button
           size="sm"
@@ -188,7 +193,7 @@ export function PrReviewViewer({ worktreeId }: PrReviewViewerProps): React.JSX.E
           Array.from(grouped.entries()).map(([filePath, fileComments]) => (
             <PrReviewFileGroup
               key={filePath}
-              filePath={filePath}
+              filePath={filePath === UNKNOWN_PATH_KEY ? t('prReview.store.unknownPath') : filePath}
               comments={fileComments}
               threads={threads}
               selectedIds={selectedIds}

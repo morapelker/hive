@@ -80,7 +80,7 @@ export function Header(): React.JSX.Element {
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const showVimHints = vimModeEnabled && vimMode === 'normal'
   const [conflictFixFlow, setConflictFixFlow] = useState<ConflictFixFlow | null>(null)
-  const { t, isZhCN } = useI18n()
+  const { t, supportsFirstCharHint } = useI18n()
 
   // Monitor PR session stream events for PR URL detection
   usePRDetection(selectedWorktreeId)
@@ -576,13 +576,13 @@ export function Header(): React.JSX.Element {
               {isArchivingWorktree ? (
                 t('header.controls.archiving')
               ) : showVimHints ? (
-                isZhCN ? (
-                  t('header.controls.archive')
-                ) : (
+                supportsFirstCharHint ? (
                   <span>
                     <span className="text-primary font-bold">A</span>
                     {t('header.controls.archive').slice(1)}
                   </span>
+                ) : (
+                  t('header.controls.archive')
                 )
               ) : (
                 t('header.controls.archive')
@@ -612,13 +612,13 @@ export function Header(): React.JSX.Element {
               {isMergingPR ? (
                 t('header.controls.merging')
               ) : showVimHints ? (
-                isZhCN ? (
-                  t('header.controls.mergePR')
-                ) : (
+                supportsFirstCharHint ? (
                   <span>
                     <span className="text-primary font-bold">M</span>
                     {t('header.controls.mergePR').slice(1)}
                   </span>
+                ) : (
+                  t('header.controls.mergePR')
                 )
               ) : (
                 t('header.controls.mergePR')
@@ -638,13 +638,13 @@ export function Header(): React.JSX.Element {
             >
               <FileSearch className="h-3.5 w-3.5 mr-1" />
               {showVimHints ? (
-                isZhCN ? (
-                  t('header.controls.review')
-                ) : (
+                supportsFirstCharHint ? (
                   <span>
                     <span className="text-primary font-bold">R</span>
                     {t('header.controls.review').slice(1)}
                   </span>
+                ) : (
+                  t('header.controls.review')
                 )
               ) : (
                 t('header.controls.review')

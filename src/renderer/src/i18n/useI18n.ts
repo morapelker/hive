@@ -38,7 +38,7 @@ export function translate(
 
 export function useI18n(): {
   locale: AppLocale
-  isZhCN: boolean
+  supportsFirstCharHint: boolean
   t: (key: string, params?: Record<string, Primitive>) => string
 } {
   const locale = useSettingsStore((state) => state.locale ?? DEFAULT_LOCALE)
@@ -46,7 +46,7 @@ export function useI18n(): {
   return useMemo(
     () => ({
       locale,
-      isZhCN: locale === 'zh-CN',
+      supportsFirstCharHint: locale === 'en',
       t: (key: string, params?: Record<string, Primitive>) => translate(locale, key, params)
     }),
     [locale]

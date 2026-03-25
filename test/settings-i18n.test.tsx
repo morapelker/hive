@@ -227,6 +227,7 @@ describe('Settings i18n', () => {
       '会话成本：$1.2345'
     )
     expect(translate('zh-CN', 'helpOverlay.title')).toBe('键盘快捷键')
+    expect(translate('zh-CN', 'helpOverlay.panels.setup')).toBe('启动脚本')
     expect(translate('zh-CN', 'helpOverlay.dynamic.pinnedPrefix', { name: 'foo' })).toBe(
       '[固定] foo'
     )
