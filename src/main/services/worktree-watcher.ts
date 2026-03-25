@@ -34,6 +34,7 @@ interface WatcherEntry {
   worktreeWatcher: chokidar.FSWatcher
   gitDebounceTimer: ReturnType<typeof setTimeout> | null
   worktreeDebounceTimer: ReturnType<typeof setTimeout> | null
+  refCount: number
 }
 
 // Active watchers keyed by worktree path
@@ -138,9 +139,11 @@ export function initWorktreeWatcher(window: BrowserWindow): void {
 }
 
 export async function watchWorktree(worktreePath: string): Promise<void> {
-  // Already watching this path
-  if (watchers.has(worktreePath)) {
-    log.info('Already watching worktree', { worktreePath })
+  // If already watching, just bump the reference count
+  const existing = watchers.get(worktreePath)
+  if (existing) {
+    existing.refCount++
+    log.info('Incremented watcher refCount', { worktreePath, refCount: existing.refCount })
     return
   }
 
@@ -207,7 +210,8 @@ export async function watchWorktree(worktreePath: string): Promise<void> {
     gitWatcher,
     worktreeWatcher,
     gitDebounceTimer: null,
-    worktreeDebounceTimer: null
+    worktreeDebounceTimer: null,
+    refCount: 1
   }
 
   // Attach git watcher handlers after entry is initialized
@@ -250,13 +254,27 @@ export async function unwatchWorktree(worktreePath: string): Promise<void> {
   const entry = watchers.get(worktreePath)
   if (!entry) return
 
-  log.info('Stopping worktree watcher', { worktreePath })
+  // Decrement refCount — if other consumers still need this watcher, keep it alive
+  entry.refCount = Math.max(0, entry.refCount - 1)
+  if (entry.refCount > 0) {
+    log.info('Decremented watcher refCount', { worktreePath, refCount: entry.refCount })
+    return
+  }
 
-  // Clear debounce timers
+  log.info('Stopping worktree watcher (refCount reached 0)', { worktreePath })
+
+  // Clear debounce timers BEFORE map deletion — prevents a timer firing
+  // between delete and clearTimeout from emitting a spurious status event.
   if (entry.gitDebounceTimer) clearTimeout(entry.gitDebounceTimer)
   if (entry.worktreeDebounceTimer) clearTimeout(entry.worktreeDebounceTimer)
 
-  // Close watchers
+  // Delete from map SYNCHRONOUSLY before async cleanup.
+  // This prevents the race where a concurrent watchWorktree() sees the stale
+  // entry via watchers.has(), returns early, then this delete removes it —
+  // leaving no watcher at all.
+  watchers.delete(worktreePath)
+
+  // Close watchers (async, but map is already updated)
   try {
     if (entry.gitWatcher) await entry.gitWatcher.close()
   } catch (error) {
@@ -277,7 +295,6 @@ export async function unwatchWorktree(worktreePath: string): Promise<void> {
     )
   }
 
-  watchers.delete(worktreePath)
   log.info('Worktree watcher stopped', { worktreePath })
 }
 
@@ -285,6 +302,10 @@ export async function cleanupWorktreeWatchers(): Promise<void> {
   log.info('Cleaning up all worktree watchers', { count: watchers.size })
   const paths = Array.from(watchers.keys())
   for (const path of paths) {
+    // Force refCount to 1 so the watcher is fully closed regardless of
+    // how many consumers still hold a reference — we're shutting down.
+    const entry = watchers.get(path)
+    if (entry) entry.refCount = 1
     await unwatchWorktree(path)
   }
 }
