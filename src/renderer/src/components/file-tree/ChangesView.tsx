@@ -67,6 +67,9 @@ type FlatChangeItem =
       category: 'conflict' | 'staged' | 'modified' | 'untracked'
     }
 
+const ROW_HEIGHT = 24
+const HEADER_HEIGHT = 28
+
 export function ChangesView({
   worktreePath,
   isConnectionMode,
@@ -262,8 +265,6 @@ export function ChangesView({
 
   // ── Virtualized flat list for the file changes ──
   const scrollRef = useRef<HTMLDivElement>(null)
-  const ROW_HEIGHT = 24
-  const HEADER_HEIGHT = 28
 
   const flatItems = useMemo(() => {
     const items: FlatChangeItem[] = []
@@ -669,7 +670,8 @@ export function ChangesView({
                       className={cn(
                         'flex items-center justify-between w-full px-2 h-full',
                         'text-xs font-medium text-muted-foreground hover:bg-accent/50',
-                        item.headerClassName
+                        item.headerClassName,
+                        virtualRow.index > 0 && 'border-t border-border'
                       )}
                       onClick={() => toggleGroup(item.groupId)}
                       data-testid={item.testId}
