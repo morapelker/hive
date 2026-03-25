@@ -73,7 +73,6 @@ export interface WorktreeResult {
   pullInfo?: {
     pulled: boolean
     updated: boolean
-    commitCount?: number
   }
 }
 
@@ -103,6 +102,19 @@ export function getBreedType(db: DatabaseService): BreedType {
   return 'dogs'
 }
 
+export function getAutoPullSetting(db: DatabaseService): boolean {
+  try {
+    const settingsJson = db.getSetting(APP_SETTINGS_DB_KEY)
+    if (settingsJson) {
+      const settings = JSON.parse(settingsJson)
+      return settings.autoPullBeforeWorktree !== false
+    }
+  } catch {
+    // Default to true if settings can't be read
+  }
+  return true
+}
+
 // ── Operations ──────────────────────────────────────────────────
 
 export async function createWorktreeOp(
@@ -120,16 +132,7 @@ export async function createWorktreeOp(
     const breedType = getBreedType(db)
 
     // Read autoPullBeforeWorktree setting (defaults to true)
-    let autoPullEnabled = true
-    try {
-      const settingsJson = db.getSetting(APP_SETTINGS_DB_KEY)
-      if (settingsJson) {
-        const settings = JSON.parse(settingsJson)
-        autoPullEnabled = settings.autoPullBeforeWorktree !== false
-      }
-    } catch {
-      // Default to true if settings can't be read
-    }
+    const autoPullEnabled = getAutoPullSetting(db)
 
     const result = await gitService.createWorktree(params.projectName, breedType, {
       autoPull: autoPullEnabled
@@ -498,16 +501,7 @@ export async function createWorktreeFromBranchOp(
     const breedType = getBreedType(db)
 
     // Read autoPullBeforeWorktree setting (defaults to true)
-    let autoPullEnabled = true
-    try {
-      const settingsJson = db.getSetting(APP_SETTINGS_DB_KEY)
-      if (settingsJson) {
-        const settings = JSON.parse(settingsJson)
-        autoPullEnabled = settings.autoPullBeforeWorktree !== false
-      }
-    } catch {
-      // Default to true if settings can't be read
-    }
+    const autoPullEnabled = getAutoPullSetting(db)
 
     const gitService = createGitService(params.projectPath)
     const result = await gitService.createWorktreeFromBranch(

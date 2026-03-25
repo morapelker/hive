@@ -33,7 +33,6 @@ export interface CreateWorktreeResult {
   pullInfo?: {
     pulled: boolean
     updated: boolean
-    commitCount?: number
   }
 }
 
@@ -283,14 +282,14 @@ export class GitService {
     const projectWorktreesDir = this.ensureWorktreesDir(projectName)
     const defaultBranch = await this.getCurrentBranch()
 
-    // Pull from origin to ensure base branch is up-to-date (if enabled)
+    // Fetch from origin to ensure base branch is up-to-date (if enabled)
     const autoPull = options?.autoPull !== false // Default true
     const pullResult = await this.pullBaseBranch(defaultBranch, {
       silent: true,
       skipPull: !autoPull
     })
     if (pullResult.success && pullResult.updated) {
-      log.info('Pulled latest changes before creating worktree', {
+      log.info('Fetched latest changes before creating worktree', {
         branch: defaultBranch,
         repoPath: this.repoPath
       })
@@ -863,9 +862,10 @@ export class GitService {
   }
 
   /**
-   * Pull a base branch before creating a worktree
+   * Fetch/update a base branch before creating a worktree
+   * Uses git fetch to update the local branch ref directly without checking it out
    * Gracefully handles errors - won't block worktree creation
-   * @param branchName - Branch name to pull
+   * @param branchName - Branch name to fetch/update
    * @param options - Options including silent mode and skipPull flag
    */
   async pullBaseBranch(
@@ -902,19 +902,23 @@ export class GitService {
         return { success: true, updated: false }
       }
 
-      // Attempt to pull with fast-forward only
-      const pullOptions: Record<string, null | string | number> = {
-        '--ff-only': null
-      }
+      // Get the current commit SHA before fetch
+      const beforeSha = await this.git.revparse([branchName])
 
-      const result = await this.git.pull('origin', branchName, pullOptions)
+      // Use fetch to update the local branch ref directly (doesn't require checkout)
+      // This avoids the issue where git pull operates on the current branch
+      await this.git.fetch('origin', `${branchName}:${branchName}`)
 
-      const updated = (result.files?.length || 0) > 0 || result.summary.changes > 0
+      // Get the commit SHA after fetch
+      const afterSha = await this.git.revparse([branchName])
+
+      const updated = beforeSha !== afterSha
 
       if (!options?.silent && updated) {
-        log.info('Successfully pulled base branch', {
+        log.info('Successfully fetched base branch', {
           branch: branchName,
-          changes: result.summary.changes,
+          beforeSha: beforeSha.substring(0, 7),
+          afterSha: afterSha.substring(0, 7),
           repoPath: this.repoPath
         })
       }
@@ -927,7 +931,7 @@ export class GitService {
       const errMessage = error instanceof Error ? error.message : 'Unknown error'
 
       // Log the error but don't fail - worktree creation should proceed
-      log.warn('Pull base branch failed, proceeding with local branch state', {
+      log.warn('Fetch base branch failed, proceeding with local branch state', {
         branch: branchName,
         error: errMessage,
         repoPath: this.repoPath
@@ -1392,13 +1396,13 @@ export class GitService {
         // Fetch the PR ref once — FETCH_HEAD stays valid for subsequent retries
         await this.git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
       } else if (autoPull) {
-        // Pull the branch to get latest changes
+        // Fetch the branch to get latest changes
         pullResult = await this.pullBaseBranch(branchName, {
           silent: true,
           skipPull: !autoPull
         })
         if (pullResult.success && pullResult.updated) {
-          log.info('Pulled latest changes before creating worktree from branch', {
+          log.info('Fetched latest changes before creating worktree from branch', {
             branch: branchName,
             repoPath: this.repoPath
           })

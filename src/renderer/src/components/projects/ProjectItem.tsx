@@ -274,22 +274,45 @@ export function ProjectItem({
   const handleBranchSelect = useCallback(
     async (branchName: string, prNumber?: number): Promise<void> => {
       setBranchPickerOpen(false)
-      const result = await window.worktreeOps.createFromBranch(
-        project.id,
-        project.path,
-        project.name,
-        branchName,
-        prNumber
-      )
-      if (result.success && result.worktree) {
-        useWorktreeStore.getState().loadWorktrees(project.id)
-        useWorktreeStore.getState().selectWorktree(result.worktree.id)
-        gitToast.worktreeCreated(branchName)
-      } else {
-        gitToast.operationFailed('create worktree from branch', result.error)
+
+      // Show loading toast with appropriate progress message based on auto-pull setting
+      const loadingToastId = autoPullBeforeWorktree && !prNumber
+        ? toast.loading('Pulling latest changes from origin...')
+        : toast.loading('Creating worktree...')
+
+      try {
+        const result = await window.worktreeOps.createFromBranch(
+          project.id,
+          project.path,
+          project.name,
+          branchName,
+          prNumber
+        )
+
+        // Dismiss loading toast
+        toast.dismiss(loadingToastId)
+
+        if (result.success && result.worktree) {
+          // Show info toast if commits were pulled (not applicable for PR checkouts)
+          if (!prNumber && result.pullInfo?.updated) {
+            toast.info('Pulled latest changes from origin')
+          }
+
+          useWorktreeStore.getState().loadWorktrees(project.id)
+          useWorktreeStore.getState().selectWorktree(result.worktree.id)
+          gitToast.worktreeCreated(branchName)
+        } else {
+          gitToast.operationFailed('create worktree from branch', result.error)
+        }
+      } catch (error) {
+        toast.dismiss(loadingToastId)
+        gitToast.operationFailed(
+          'create worktree from branch',
+          error instanceof Error ? error.message : 'Unknown error'
+        )
       }
     },
-    [project]
+    [project, autoPullBeforeWorktree]
   )
 
   return (
