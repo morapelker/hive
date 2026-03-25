@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -44,6 +44,14 @@ type FlatStatusItem =
 const ROW_HEIGHT = 24
 const HEADER_HEIGHT = 28
 
+const statusColors: Record<string, string> = {
+  M: 'text-yellow-500',
+  A: 'text-green-500',
+  D: 'text-red-500',
+  '?': 'text-gray-400',
+  C: 'text-red-600 font-bold'
+}
+
 interface FileItemProps {
   file: GitFileStatus
   onToggle: (file: GitFileStatus) => void
@@ -51,15 +59,7 @@ interface FileItemProps {
   isStaged: boolean
 }
 
-function FileItem({ file, onToggle, onViewDiff, isStaged }: FileItemProps): React.JSX.Element {
-  const statusColors: Record<string, string> = {
-    M: 'text-yellow-500',
-    A: 'text-green-500',
-    D: 'text-red-500',
-    '?': 'text-gray-400',
-    C: 'text-red-600 font-bold'
-  }
-
+const FileItem = memo(function FileItem({ file, onToggle, onViewDiff, isStaged }: FileItemProps): React.JSX.Element {
   return (
     <div
       className="flex items-center gap-2 px-2 py-0.5 hover:bg-accent/30 group"
@@ -94,7 +94,7 @@ function FileItem({ file, onToggle, onViewDiff, isStaged }: FileItemProps): Reac
       </Button>
     </div>
   )
-}
+})
 
 export function GitStatusPanel({
   worktreePath,
