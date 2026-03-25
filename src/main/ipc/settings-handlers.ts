@@ -26,6 +26,100 @@ function resolveEditorCommand(
 }
 
 /**
+ * Launch a terminal at the given path using the specified terminal ID.
+ * Contains all platform-specific terminal launch logic in one place.
+ */
+function launchTerminal(
+  targetPath: string,
+  terminalId: string,
+  customCommand?: string
+): { success: boolean; error?: string } {
+  const currentPlatform = platform()
+
+  if (terminalId === 'custom' && customCommand) {
+    spawn(customCommand, [targetPath], { detached: true, stdio: 'ignore' })
+    return { success: true }
+  }
+
+  if (currentPlatform === 'darwin') {
+    switch (terminalId) {
+      case 'terminal':
+        spawn('open', ['-a', 'Terminal', targetPath], { detached: true })
+        break
+      case 'iterm':
+        spawn('open', ['-a', 'iTerm', targetPath], { detached: true })
+        break
+      case 'warp':
+        spawn('open', ['-a', 'Warp', targetPath], { detached: true })
+        break
+      case 'alacritty':
+        spawn('alacritty', ['--working-directory', targetPath], {
+          detached: true,
+          stdio: 'ignore'
+        })
+        break
+      case 'kitty':
+        spawn('kitty', ['--directory', targetPath], { detached: true, stdio: 'ignore' })
+        break
+      case 'ghostty':
+        spawn('open', ['-a', 'Ghostty', targetPath], { detached: true })
+        break
+      default:
+        spawn('open', ['-a', 'Terminal', targetPath], { detached: true })
+    }
+  } else if (currentPlatform === 'win32') {
+    switch (terminalId) {
+      case 'terminal': {
+        // Windows Terminal may not be installed; fall back to PowerShell
+        const terminals = detectTerminals()
+        const wt = terminals.find((t) => t.id === 'terminal')
+        if (wt?.available) {
+          spawn('wt.exe', ['-d', targetPath], { detached: true, stdio: 'ignore' })
+        } else {
+          spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`], {
+            detached: true,
+            stdio: 'ignore'
+          })
+        }
+        break
+      }
+      case 'powershell':
+        spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`], {
+          detached: true,
+          stdio: 'ignore'
+        })
+        break
+      case 'cmd':
+        spawn('cmd.exe', ['/k', `cd /d "${targetPath}"`], {
+          detached: true,
+          stdio: 'ignore'
+        })
+        break
+      default: {
+        const terminals = detectTerminals()
+        const terminal = terminals.find((t) => t.id === terminalId)
+        if (terminal?.available) {
+          spawn(terminal.command, [], { cwd: targetPath, detached: true, stdio: 'ignore' })
+        } else {
+          return { success: false, error: 'Terminal not found' }
+        }
+      }
+    }
+  } else {
+    // Fallback for Linux and other platforms
+    const terminals = detectTerminals()
+    const terminal = terminals.find((t) => t.id === terminalId)
+    if (terminal?.available) {
+      spawn(terminal.command, [], { cwd: targetPath, detached: true, stdio: 'ignore' })
+    } else {
+      return { success: false, error: 'Terminal not found' }
+    }
+  }
+
+  return { success: true }
+}
+
+/**
  * Open a path with the user's preferred editor (reads defaultEditor and customEditorCommand from DB).
  * Used by worktree, connection, and git "Open in Editor" handlers.
  */
@@ -54,6 +148,36 @@ export function openPathWithPreferredEditor(
   try {
     spawn(resolved.command, [path], { detached: true, stdio: 'ignore' })
     return Promise.resolve({ success: true })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    return Promise.resolve({ success: false, error: message })
+  }
+}
+
+/**
+ * Open a path with the user's preferred terminal (reads defaultTerminal and customTerminalCommand from DB).
+ * Used by worktree, connection, and keyboard shortcut "Open in Terminal" handlers.
+ */
+export function openPathWithPreferredTerminal(
+  path: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!existsSync(path)) {
+    return Promise.resolve({ success: false, error: 'Path does not exist' })
+  }
+  let terminalId = 'terminal'
+  let customCommand = ''
+  try {
+    const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
+    if (raw) {
+      const settings = JSON.parse(raw) as { defaultTerminal?: string; customTerminalCommand?: string }
+      if (settings.defaultTerminal) terminalId = settings.defaultTerminal
+      if (settings.customTerminalCommand != null) customCommand = settings.customTerminalCommand
+    }
+  } catch {
+    // Use defaults
+  }
+  try {
+    return Promise.resolve(launchTerminal(path, terminalId, customCommand || undefined))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'
     return Promise.resolve({ success: false, error: message })
@@ -117,7 +241,7 @@ export function registerSettingsHandlers(): void {
     }
   )
 
-  // Open a path with a specific terminal
+  // Open a path with a specific terminal (explicit terminalId/customCommand from renderer)
   ipcMain.handle(
     'settings:openWithTerminal',
     async (
@@ -130,90 +254,7 @@ export function registerSettingsHandlers(): void {
         if (!existsSync(worktreePath)) {
           return { success: false, error: 'Path does not exist' }
         }
-
-        const currentPlatform = platform()
-
-        if (terminalId === 'custom' && customCommand) {
-          spawn(customCommand, [worktreePath], { detached: true, stdio: 'ignore' })
-          return { success: true }
-        }
-
-        if (currentPlatform === 'darwin') {
-          switch (terminalId) {
-            case 'terminal':
-              spawn('open', ['-a', 'Terminal', worktreePath], { detached: true })
-              break
-            case 'iterm':
-              spawn('open', ['-a', 'iTerm', worktreePath], { detached: true })
-              break
-            case 'warp':
-              spawn('open', ['-a', 'Warp', worktreePath], { detached: true })
-              break
-            case 'alacritty':
-              spawn('alacritty', ['--working-directory', worktreePath], {
-                detached: true,
-                stdio: 'ignore'
-              })
-              break
-            case 'kitty':
-              spawn('kitty', ['--directory', worktreePath], { detached: true, stdio: 'ignore' })
-              break
-            case 'ghostty':
-              spawn('open', ['-a', 'Ghostty', worktreePath], { detached: true })
-              break
-            default:
-              spawn('open', ['-a', 'Terminal', worktreePath], { detached: true })
-          }
-        } else if (currentPlatform === 'win32') {
-          switch (terminalId) {
-            case 'terminal': {
-              // Windows Terminal may not be installed; fall back to PowerShell
-              const terminals = detectTerminals()
-              const wt = terminals.find((t) => t.id === 'terminal')
-              if (wt?.available) {
-                spawn('wt.exe', ['-d', worktreePath], { detached: true, stdio: 'ignore' })
-              } else {
-                spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`], {
-                  detached: true,
-                  stdio: 'ignore'
-                })
-              }
-              break
-            }
-            case 'powershell':
-              spawn('powershell.exe', ['-NoExit', '-Command', `Set-Location '${worktreePath.replace(/'/g, "''")}'`], {
-                detached: true,
-                stdio: 'ignore'
-              })
-              break
-            case 'cmd':
-              spawn('cmd.exe', ['/k', `cd /d "${worktreePath}"`], {
-                detached: true,
-                stdio: 'ignore'
-              })
-              break
-            default: {
-              const terminals = detectTerminals()
-              const terminal = terminals.find((t) => t.id === terminalId)
-              if (terminal?.available) {
-                spawn(terminal.command, [], { cwd: worktreePath, detached: true, stdio: 'ignore' })
-              } else {
-                return { success: false, error: 'Terminal not found' }
-              }
-            }
-          }
-        } else {
-          // Fallback for Linux and other platforms
-          const terminals = detectTerminals()
-          const terminal = terminals.find((t) => t.id === terminalId)
-          if (terminal?.available) {
-            spawn(terminal.command, [], { cwd: worktreePath, detached: true, stdio: 'ignore' })
-          } else {
-            return { success: false, error: 'Terminal not found' }
-          }
-        }
-
-        return { success: true }
+        return launchTerminal(worktreePath, terminalId, customCommand)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
         return { success: false, error: message }

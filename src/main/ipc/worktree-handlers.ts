@@ -1,8 +1,6 @@
 import { ipcMain } from 'electron'
-import { spawn } from 'child_process'
 import { existsSync } from 'fs'
-import { platform } from 'os'
-import { openPathWithPreferredEditor } from './settings-handlers'
+import { openPathWithPreferredEditor, openPathWithPreferredTerminal } from './settings-handlers'
 import { createGitService, createLogger } from '../services'
 import { telemetryService } from '../services/telemetry-service'
 import {
@@ -71,7 +69,7 @@ export function registerWorktreeHandlers(): void {
     return existsSync(worktreePath)
   })
 
-  // Open worktree in terminal
+  // Open worktree in user's preferred terminal (from Settings)
   ipcMain.handle(
     'worktree:openInTerminal',
     async (
@@ -80,70 +78,7 @@ export function registerWorktreeHandlers(): void {
     ): Promise<{
       success: boolean
       error?: string
-    }> => {
-      try {
-        if (!existsSync(worktreePath)) {
-          return {
-            success: false,
-            error: 'Worktree directory does not exist'
-          }
-        }
-
-        const currentPlatform = platform()
-
-        if (currentPlatform === 'darwin') {
-          // macOS: Open Terminal.app
-          spawn('open', ['-a', 'Terminal', worktreePath], { detached: true })
-        } else if (currentPlatform === 'win32') {
-          // Windows: Open cmd or PowerShell
-          spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/K', `cd /d "${worktreePath}"`], {
-            detached: true,
-            shell: true
-          })
-        } else {
-          // Linux: Try common terminal emulators
-          const terminals = [
-            'gnome-terminal',
-            'konsole',
-            'xfce4-terminal',
-            'xterm',
-            'terminator',
-            'alacritty',
-            'kitty'
-          ]
-
-          let launched = false
-          for (const terminal of terminals) {
-            try {
-              if (terminal === 'gnome-terminal') {
-                spawn(terminal, ['--working-directory', worktreePath], { detached: true })
-              } else {
-                spawn(terminal, [], { cwd: worktreePath, detached: true })
-              }
-              launched = true
-              break
-            } catch {
-              // Try next terminal
-            }
-          }
-
-          if (!launched) {
-            return {
-              success: false,
-              error: 'No supported terminal emulator found'
-            }
-          }
-        }
-
-        return { success: true }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        return {
-          success: false,
-          error: message
-        }
-      }
-    }
+    }> => openPathWithPreferredTerminal(worktreePath)
   )
 
   // Open worktree in user's preferred editor (from Settings)
