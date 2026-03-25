@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, memo } from 'react'
 import { ChevronRight, Brain } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import Ansi from 'ansi-to-react'
@@ -9,7 +9,7 @@ interface ReasoningBlockProps {
   isStreaming?: boolean
 }
 
-export function ReasoningBlock({ text, isStreaming = false }: ReasoningBlockProps) {
+export const ReasoningBlock = memo(function ReasoningBlock({ text, isStreaming = false }: ReasoningBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const userOverrideRef = useRef(false)
 
@@ -73,4 +73,4 @@ export function ReasoningBlock({ text, isStreaming = false }: ReasoningBlockProp
       )}
     </div>
   )
-}
+})

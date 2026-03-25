@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
@@ -10,7 +10,7 @@ interface CodeBlockProps {
   language?: string
 }
 
-export function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): React.JSX.Element {
+export const CodeBlock = memo(function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): React.JSX.Element {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async (): Promise<void> => {
@@ -50,4 +50,4 @@ export function CodeBlock({ code, language = 'typescript' }: CodeBlockProps): Re
       </pre>
     </div>
   )
-}
+})

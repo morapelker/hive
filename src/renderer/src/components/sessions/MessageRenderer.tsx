@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { UserBubble } from './UserBubble'
 import { AssistantCanvas } from './AssistantCanvas'
 import { CopyMessageButton } from './CopyMessageButton'
@@ -14,7 +15,7 @@ interface MessageRendererProps {
   isForking?: boolean
 }
 
-export function MessageRenderer({
+export const MessageRenderer = memo(function MessageRenderer({
   message,
   isStreaming = false,
   cwd,
@@ -59,4 +60,4 @@ export function MessageRenderer({
       )}
     </div>
   )
-}
+})

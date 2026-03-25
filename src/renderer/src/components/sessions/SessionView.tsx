@@ -461,6 +461,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     supportsRedo: boolean
   } | null>(null)
 
+  const messagesRef = useRef(messages)
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
+
   const sessionCapabilitiesRef = useRef(sessionCapabilities)
   useEffect(() => {
     sessionCapabilitiesRef.current = sessionCapabilities
@@ -3062,13 +3067,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const messageIndex = messages.findIndex((candidate) => candidate.id === message.id)
+      const messageIndex = messagesRef.current.findIndex((candidate) => candidate.id === message.id)
       if (messageIndex === -1) {
         toast.error('Could not locate the selected message')
         return
       }
 
-      const cutoffMessage = messages
+      const cutoffMessage = messagesRef.current
         .slice(messageIndex + 1)
         .find((candidate) => !candidate.id.startsWith('local-'))
 
@@ -3106,7 +3111,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     },
     [
       forkingMessageId,
-      messages,
       opencodeSessionId,
       sessionId,
       sessionRecord,

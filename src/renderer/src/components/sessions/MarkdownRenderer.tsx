@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import Ansi from 'ansi-to-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -63,7 +64,9 @@ const components: Components = {
   pre: ({ children }) => <>{children}</>
 }
 
-export function MarkdownRenderer({ content }: MarkdownRendererProps): React.JSX.Element {
+const remarkPluginsConfig = [remarkGfm]
+
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content }: MarkdownRendererProps): React.JSX.Element {
   if (containsAnsi(content)) {
     return (
       <div className="whitespace-pre-wrap text-sm font-mono">
@@ -73,8 +76,8 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps): React.JSX.
   }
 
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+    <ReactMarkdown remarkPlugins={remarkPluginsConfig} components={components}>
       {content}
     </ReactMarkdown>
   )
-}
+})

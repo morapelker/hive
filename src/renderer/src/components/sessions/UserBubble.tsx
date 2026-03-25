@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { cn } from '@/lib/utils'
 
 interface UserBubbleProps {
@@ -7,7 +8,7 @@ interface UserBubbleProps {
   isAskMode?: boolean
 }
 
-export function UserBubble({ content, isPlanMode, isAskMode }: UserBubbleProps): React.JSX.Element {
+export const UserBubble = memo(function UserBubble({ content, isPlanMode, isAskMode }: UserBubbleProps): React.JSX.Element {
   return (
     <div className="flex justify-end px-6 py-4" data-testid="message-user">
       <div
@@ -40,4 +41,4 @@ export function UserBubble({ content, isPlanMode, isAskMode }: UserBubbleProps):
       </div>
     </div>
   )
-}
+})
