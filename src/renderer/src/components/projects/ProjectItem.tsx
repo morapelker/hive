@@ -303,14 +303,25 @@ export function ProjectItem({
         toast.dismiss(loadingToastId)
 
         if (result.success && result.worktree) {
-          // Show info toast if commits were pulled (not applicable for PR checkouts)
-          if (!prNumber && result.pullInfo?.updated) {
-            toast.info('Pulled latest changes from origin')
-          }
-
           useWorktreeStore.getState().loadWorktrees(project.id)
           useWorktreeStore.getState().selectWorktree(result.worktree.id)
-          gitToast.worktreeCreated(branchName)
+
+          // Show warning if auto-pull was enabled but pull failed (not for PRs)
+          if (autoPullBeforeWorktree && !prNumber && result.pullInfo?.pulled === false) {
+            toast.warning('Failed to pull latest changes - worktree created from local branch')
+            // Delay success toast so warning is visible
+            setTimeout(() => {
+              gitToast.worktreeCreated(branchName)
+            }, 1500)
+          }
+          // Show info toast if commits were pulled (not applicable for PR checkouts)
+          else if (!prNumber && result.pullInfo?.updated) {
+            toast.info('Pulled latest changes from origin')
+            gitToast.worktreeCreated(branchName)
+          } else {
+            // No pull info to show, just success
+            gitToast.worktreeCreated(branchName)
+          }
         } else {
           gitToast.operationFailed('create worktree from branch', result.error)
         }
