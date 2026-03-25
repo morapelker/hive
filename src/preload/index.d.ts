@@ -155,6 +155,49 @@ interface SessionSearchOptions {
   includeArchived?: boolean
 }
 
+type KanbanTicketColumn = 'todo' | 'in_progress' | 'review' | 'done'
+
+interface KanbanTicket {
+  id: string
+  project_id: string
+  title: string
+  description: string | null
+  attachments: unknown[]
+  column: KanbanTicketColumn
+  sort_order: number
+  current_session_id: string | null
+  worktree_id: string | null
+  mode: 'build' | 'plan' | null
+  plan_ready: boolean
+  created_at: string
+  updated_at: string
+}
+
+interface KanbanTicketCreate {
+  project_id: string
+  title: string
+  description?: string | null
+  attachments?: unknown[]
+  column?: KanbanTicketColumn
+  sort_order?: number
+  current_session_id?: string | null
+  worktree_id?: string | null
+  mode?: 'build' | 'plan' | null
+  plan_ready?: boolean
+}
+
+interface KanbanTicketUpdate {
+  title?: string
+  description?: string | null
+  attachments?: unknown[]
+  column?: KanbanTicketColumn
+  sort_order?: number
+  current_session_id?: string | null
+  worktree_id?: string | null
+  mode?: 'build' | 'plan' | null
+  plan_ready?: boolean
+}
+
 declare global {
   interface GhosttyTerminalConfig {
     fontFamily?: string
@@ -1238,6 +1281,25 @@ declare global {
       track: (event: string, properties?: Record<string, unknown>) => Promise<void>
       setEnabled: (enabled: boolean) => Promise<void>
       isEnabled: () => Promise<boolean>
+    }
+    kanban: {
+      ticket: {
+        create: (data: KanbanTicketCreate) => Promise<KanbanTicket>
+        get: (id: string) => Promise<KanbanTicket | null>
+        getByProject: (projectId: string) => Promise<KanbanTicket[]>
+        update: (id: string, data: KanbanTicketUpdate) => Promise<KanbanTicket | null>
+        delete: (id: string) => Promise<boolean>
+        move: (
+          id: string,
+          column: KanbanTicketColumn,
+          sortOrder: number
+        ) => Promise<KanbanTicket | null>
+        reorder: (id: string, sortOrder: number) => Promise<void>
+        getBySession: (sessionId: string) => Promise<KanbanTicket[]>
+      }
+      simpleMode: {
+        toggle: (projectId: string, enabled: boolean) => Promise<void>
+      }
     }
   }
 

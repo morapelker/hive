@@ -1725,6 +1725,51 @@ const analyticsOps = {
   isEnabled: () => ipcRenderer.invoke('telemetry:isEnabled') as Promise<boolean>
 }
 
+const kanban = {
+  ticket: {
+    create: (data: {
+      project_id: string
+      title: string
+      description?: string | null
+      attachments?: unknown[]
+      column?: 'todo' | 'in_progress' | 'review' | 'done'
+      sort_order?: number
+      current_session_id?: string | null
+      worktree_id?: string | null
+      mode?: 'build' | 'plan' | null
+      plan_ready?: boolean
+    }) => ipcRenderer.invoke('kanban:ticket:create', data),
+    get: (id: string) => ipcRenderer.invoke('kanban:ticket:get', id),
+    getByProject: (projectId: string) =>
+      ipcRenderer.invoke('kanban:ticket:getByProject', projectId),
+    update: (
+      id: string,
+      data: {
+        title?: string
+        description?: string | null
+        attachments?: unknown[]
+        column?: 'todo' | 'in_progress' | 'review' | 'done'
+        sort_order?: number
+        current_session_id?: string | null
+        worktree_id?: string | null
+        mode?: 'build' | 'plan' | null
+        plan_ready?: boolean
+      }
+    ) => ipcRenderer.invoke('kanban:ticket:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('kanban:ticket:delete', id),
+    move: (id: string, column: 'todo' | 'in_progress' | 'review' | 'done', sortOrder: number) =>
+      ipcRenderer.invoke('kanban:ticket:move', id, column, sortOrder),
+    reorder: (id: string, sortOrder: number) =>
+      ipcRenderer.invoke('kanban:ticket:reorder', id, sortOrder),
+    getBySession: (sessionId: string) =>
+      ipcRenderer.invoke('kanban:ticket:getBySession', sessionId)
+  },
+  simpleMode: {
+    toggle: (projectId: string, enabled: boolean) =>
+      ipcRenderer.invoke('kanban:simpleMode:toggle', projectId, enabled)
+  }
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -1746,6 +1791,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('connectionOps', connectionOps)
     contextBridge.exposeInMainWorld('usageOps', usageOps)
     contextBridge.exposeInMainWorld('analyticsOps', analyticsOps)
+    contextBridge.exposeInMainWorld('kanban', kanban)
   } catch (error) {
     console.error(error)
   }
@@ -1782,4 +1828,6 @@ if (process.contextIsolated) {
   window.usageOps = usageOps
   // @ts-expect-error (define in dts)
   window.analyticsOps = analyticsOps
+  // @ts-expect-error (define in dts)
+  window.kanban = kanban
 }

@@ -24,5 +24,9 @@ export type {
   Space,
   SpaceCreate,
   SpaceUpdate,
-  ProjectSpaceAssignment
+  ProjectSpaceAssignment,
+  KanbanTicket,
+  KanbanTicketCreate,
+  KanbanTicketUpdate,
+  KanbanTicketColumn
 } from './types'
