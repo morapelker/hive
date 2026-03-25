@@ -902,21 +902,42 @@ export class GitService {
         return { success: true, updated: false }
       }
 
-      // Attempt to pull with fast-forward only
-      const pullOptions: Record<string, null | string | number> = {
-        '--ff-only': null
-      }
+      // Check if this branch is currently checked out
+      const currentBranch = await this.getCurrentBranch()
+      const isCurrentBranch = currentBranch === branchName
 
-      const result = await this.git.pull('origin', branchName, pullOptions)
+      let updated = false
 
-      const updated = (result.files?.length || 0) > 0 || result.summary.changes > 0
+      if (isCurrentBranch) {
+        // Branch is checked out - use git pull
+        const pullOptions: Record<string, null | string | number> = {
+          '--ff-only': null
+        }
+        const result = await this.git.pull('origin', branchName, pullOptions)
+        updated = (result.files?.length || 0) > 0 || result.summary.changes > 0
 
-      if (!options?.silent && updated) {
-        log.info('Successfully pulled base branch', {
-          branch: branchName,
-          changes: result.summary.changes,
-          repoPath: this.repoPath
-        })
+        if (!options?.silent && updated) {
+          log.info('Successfully pulled checked-out branch', {
+            branch: branchName,
+            changes: result.summary.changes,
+            repoPath: this.repoPath
+          })
+        }
+      } else {
+        // Branch is not checked out - use git fetch to update ref directly
+        const beforeSha = await this.git.revparse([branchName])
+        await this.git.fetch('origin', `${branchName}:${branchName}`)
+        const afterSha = await this.git.revparse([branchName])
+        updated = beforeSha !== afterSha
+
+        if (!options?.silent && updated) {
+          log.info('Successfully fetched non-checked-out branch', {
+            branch: branchName,
+            beforeSha: beforeSha.substring(0, 7),
+            afterSha: afterSha.substring(0, 7),
+            repoPath: this.repoPath
+          })
+        }
       }
 
       return {
