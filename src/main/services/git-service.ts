@@ -30,6 +30,11 @@ export interface CreateWorktreeResult {
   branchName?: string
   path?: string
   error?: string
+  pullInfo?: {
+    pulled: boolean
+    updated: boolean
+    commitCount?: number
+  }
 }
 
 export interface DeleteWorktreeResult {
@@ -270,12 +275,26 @@ export class GitService {
    */
   async createWorktree(
     projectName: string,
-    breedType: BreedType = 'dogs'
+    breedType: BreedType = 'dogs',
+    options?: { autoPull?: boolean }
   ): Promise<CreateWorktreeResult> {
     const MAX_ATTEMPTS = 3
     // Ensure worktrees directory exists and get base branch once — neither changes between retries
     const projectWorktreesDir = this.ensureWorktreesDir(projectName)
     const defaultBranch = await this.getCurrentBranch()
+
+    // Pull from origin to ensure base branch is up-to-date (if enabled)
+    const autoPull = options?.autoPull !== false // Default true
+    const pullResult = await this.pullBaseBranch(defaultBranch, {
+      silent: true,
+      skipPull: !autoPull
+    })
+    if (pullResult.success && pullResult.updated) {
+      log.info('Pulled latest changes before creating worktree', {
+        branch: defaultBranch,
+        repoPath: this.repoPath
+      })
+    }
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -312,7 +331,11 @@ export class GitService {
           success: true,
           name: breedName,
           branchName: breedName,
-          path: worktreePath
+          path: worktreePath,
+          pullInfo: {
+            pulled: pullResult.success && autoPull,
+            updated: pullResult.updated || false
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
@@ -840,6 +863,82 @@ export class GitService {
   }
 
   /**
+   * Pull a base branch before creating a worktree
+   * Gracefully handles errors - won't block worktree creation
+   * @param branchName - Branch name to pull
+   * @param options - Options including silent mode and skipPull flag
+   */
+  async pullBaseBranch(
+    branchName: string,
+    options?: { silent?: boolean; skipPull?: boolean }
+  ): Promise<GitPullResult> {
+    // If skipPull is true, return immediately (setting disabled)
+    if (options?.skipPull) {
+      return { success: true, updated: false }
+    }
+
+    try {
+      // Check if remote 'origin' exists
+      const remotes = await this.git.getRemotes()
+      if (!remotes.find((r) => r.name === 'origin')) {
+        if (!options?.silent) {
+          log.info('No remote origin configured, skipping pull', { repoPath: this.repoPath })
+        }
+        return { success: true, updated: false }
+      }
+
+      // Check if branch exists locally
+      const branches = await this.getAllBranches()
+      const branchExists = branches.some((b) => b === branchName)
+
+      if (!branchExists) {
+        // Branch doesn't exist locally, this is fine (new branch)
+        if (!options?.silent) {
+          log.info('Branch does not exist locally, skipping pull', {
+            branch: branchName,
+            repoPath: this.repoPath
+          })
+        }
+        return { success: true, updated: false }
+      }
+
+      // Attempt to pull with fast-forward only
+      const pullOptions: Record<string, null | string | number> = {
+        '--ff-only': null
+      }
+
+      const result = await this.git.pull('origin', branchName, pullOptions)
+
+      const updated = (result.files?.length || 0) > 0 || result.summary.changes > 0
+
+      if (!options?.silent && updated) {
+        log.info('Successfully pulled base branch', {
+          branch: branchName,
+          changes: result.summary.changes,
+          repoPath: this.repoPath
+        })
+      }
+
+      return {
+        success: true,
+        updated
+      }
+    } catch (error) {
+      const errMessage = error instanceof Error ? error.message : 'Unknown error'
+
+      // Log the error but don't fail - worktree creation should proceed
+      log.warn('Pull base branch failed, proceeding with local branch state', {
+        branch: branchName,
+        error: errMessage,
+        repoPath: this.repoPath
+      })
+
+      // Always return success to allow worktree creation to proceed
+      return { success: true, updated: false }
+    }
+  }
+
+  /**
    * Merge a branch into the current branch
    * @param sourceBranch - Branch to merge from
    */
@@ -1260,7 +1359,8 @@ export class GitService {
     projectName: string,
     branchName: string,
     breedType: BreedType = 'dogs',
-    prNumber?: number
+    prNumber?: number,
+    options?: { autoPull?: boolean }
   ): Promise<CreateWorktreeResult> {
     try {
       // Check if branch is already checked out (skip for PR checkouts —
@@ -1285,9 +1385,24 @@ export class GitService {
       const projectWorktreesDir = this.ensureWorktreesDir(projectName)
       const MAX_ATTEMPTS = 3
 
+      // Pull branch if not creating from PR (PR fetch happens separately)
+      const autoPull = options?.autoPull !== false // Default true
+      let pullResult = { success: true, updated: false }
       if (prNumber != null) {
         // Fetch the PR ref once — FETCH_HEAD stays valid for subsequent retries
         await this.git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
+      } else if (autoPull) {
+        // Pull the branch to get latest changes
+        pullResult = await this.pullBaseBranch(branchName, {
+          silent: true,
+          skipPull: !autoPull
+        })
+        if (pullResult.success && pullResult.updated) {
+          log.info('Pulled latest changes before creating worktree from branch', {
+            branch: branchName,
+            repoPath: this.repoPath
+          })
+        }
       }
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -1323,7 +1438,16 @@ export class GitService {
             // Create a new breed-named branch derived from the selected branch
             await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, branchName])
           }
-          return { success: true, path: worktreePath, branchName: breedName, name: breedName }
+          return {
+            success: true,
+            path: worktreePath,
+            branchName: breedName,
+            name: breedName,
+            pullInfo: {
+              pulled: pullResult.success && autoPull,
+              updated: pullResult.updated || false
+            }
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error'
           if (message.toLowerCase().includes('already exists') && attempt < MAX_ATTEMPTS) {

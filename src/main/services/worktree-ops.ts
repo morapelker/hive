@@ -70,6 +70,11 @@ export interface WorktreeResult {
     last_accessed_at: string
   }
   error?: string
+  pullInfo?: {
+    pulled: boolean
+    updated: boolean
+    commitCount?: number
+  }
 }
 
 export interface SimpleResult {
@@ -114,7 +119,21 @@ export async function createWorktreeOp(
     // Read breed type preference from settings
     const breedType = getBreedType(db)
 
-    const result = await gitService.createWorktree(params.projectName, breedType)
+    // Read autoPullBeforeWorktree setting (defaults to true)
+    let autoPullEnabled = true
+    try {
+      const settingsJson = db.getSetting(APP_SETTINGS_DB_KEY)
+      if (settingsJson) {
+        const settings = JSON.parse(settingsJson)
+        autoPullEnabled = settings.autoPullBeforeWorktree !== false
+      }
+    } catch {
+      // Default to true if settings can't be read
+    }
+
+    const result = await gitService.createWorktree(params.projectName, breedType, {
+      autoPull: autoPullEnabled
+    })
 
     if (!result.success || !result.name || !result.path || !result.branchName) {
       log.warn('Worktree creation failed', {
@@ -149,7 +168,8 @@ export async function createWorktreeOp(
     log.info('Worktree created successfully', { name: result.name, path: result.path })
     return {
       success: true,
-      worktree
+      worktree,
+      pullInfo: result.pullInfo
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'
@@ -477,12 +497,25 @@ export async function createWorktreeFromBranchOp(
     // Read breed type preference from settings
     const breedType = getBreedType(db)
 
+    // Read autoPullBeforeWorktree setting (defaults to true)
+    let autoPullEnabled = true
+    try {
+      const settingsJson = db.getSetting(APP_SETTINGS_DB_KEY)
+      if (settingsJson) {
+        const settings = JSON.parse(settingsJson)
+        autoPullEnabled = settings.autoPullBeforeWorktree !== false
+      }
+    } catch {
+      // Default to true if settings can't be read
+    }
+
     const gitService = createGitService(params.projectPath)
     const result = await gitService.createWorktreeFromBranch(
       params.projectName,
       params.branchName,
       breedType,
-      params.prNumber
+      params.prNumber,
+      { autoPull: autoPullEnabled }
     )
     if (!result.success || !result.path) {
       return { success: false, error: result.error || 'Failed to create worktree from branch' }
@@ -505,7 +538,11 @@ export async function createWorktreeFromBranchOp(
       })
     }
 
-    return { success: true, worktree }
+    return {
+      success: true,
+      worktree,
+      pullInfo: result.pullInfo
+    }
   } catch (error) {
     log.error(
       'Create worktree from branch failed',
