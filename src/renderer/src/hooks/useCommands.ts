@@ -14,7 +14,7 @@ import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
 import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { toast } from '@/lib/toast'
-import { revealLabel, isMac, isWindows } from '@/lib/platform'
+import { revealLabel, isWindows, fileManagerName } from '@/lib/platform'
 
 /**
  * Hook that registers all available commands and returns filtered commands
@@ -333,7 +333,7 @@ export function useCommands() {
       {
         id: 'action:reveal-in-finder',
         label: revealLabel(true),
-        description: `Show the current worktree in ${isMac() ? 'Finder' : 'Explorer'}`,
+        description: `Show the current worktree in ${fileManagerName()}`,
         category: 'action',
         icon: 'FolderOpen',
         keywords: ['finder', 'explorer', 'reveal', 'show'],
@@ -346,7 +346,7 @@ export function useCommands() {
           try {
             await window.projectOps.showInFolder(worktreePath)
           } catch {
-            toast.error(`Failed to reveal in ${isMac() ? 'Finder' : 'Explorer'}`)
+            toast.error(`Failed to reveal in ${fileManagerName()}`)
           }
           closeCommandPalette()
         },

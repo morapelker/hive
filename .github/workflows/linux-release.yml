@@ -1,0 +1,89 @@
+name: Build Linux Native Modules
+
+on:
+  workflow_dispatch:
+  # Also run when native deps change
+  push:
+    paths:
+      - 'pnpm-lock.yaml'
+    branches:
+      - linux-release-artifact
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies (compiles native modules for Linux)
+        run: pnpm install --frozen-lockfile
+
+      - name: Collect native .node binaries
+        shell: bash
+        run: |
+          mkdir -p linux-natives
+
+          # better-sqlite3 (-L follows pnpm symlinks)
+          SQLITE_NODE=$(find -L node_modules/better-sqlite3 -name "better_sqlite3.node" | head -1)
+          if [ -n "$SQLITE_NODE" ]; then
+            cp "$SQLITE_NODE" linux-natives/better_sqlite3.node
+            echo "✓ better_sqlite3.node ($(du -h linux-natives/better_sqlite3.node | cut -f1))"
+          else
+            echo "✗ better_sqlite3.node not found!" && exit 1
+          fi
+
+          # node-pty
+          PTY_NODE=$(find -L node_modules/node-pty -name "pty.node" | head -1)
+          if [ -n "$PTY_NODE" ]; then
+            cp "$PTY_NODE" linux-natives/pty.node
+            echo "✓ pty.node ($(du -h linux-natives/pty.node | cut -f1))"
+          else
+            echo "✗ node-pty pty.node not found!" && exit 1
+          fi
+
+          ls -la linux-natives/
+
+      - name: Save Electron version for compatibility check
+        shell: bash
+        run: |
+          ELECTRON_VER=$(node -p "require('./node_modules/electron/package.json').version")
+          echo "electron=$ELECTRON_VER" > linux-natives/versions.txt
+          echo "node=$(node -v)" >> linux-natives/versions.txt
+          cat linux-natives/versions.txt
+
+      - name: Upload Linux native binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-natives
+          path: linux-natives/
+          retention-days: 90
+
+      # Also upload to a GitHub Release for stable caching
+      - name: Upload to linux-natives release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          cd linux-natives
+          tar czf ../linux-natives.tar.gz .
+          cd ..
+
+          # Create or update the release
+          gh release create linux-natives-v1 \
+            --title "Linux Native Modules" \
+            --notes "Prebuilt Linux native .node binaries for cross-compilation from macOS" \
+            --prerelease 2>/dev/null || true
+
+          gh release upload linux-natives-v1 linux-natives.tar.gz --clobber

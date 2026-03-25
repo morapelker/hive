@@ -12,14 +12,20 @@ export async function initPlatform(): Promise<void> {
 
 export const isMac = (): boolean => _platform === 'darwin'
 export const isWindows = (): boolean => _platform === 'win32'
+export const isLinux = (): boolean => _platform === 'linux'
 
 export const revealLabel = (isDir: boolean): string =>
   isMac()
     ? isDir
       ? 'Open in Finder'
       : 'Reveal in Finder'
-    : isDir
-      ? 'Open in Explorer'
-      : 'Show in Explorer'
+    : isLinux()
+      ? isDir
+        ? 'Open in File Manager'
+        : 'Show in File Manager'
+      : isDir
+        ? 'Open in Explorer'
+        : 'Show in Explorer'
 
-export const fileManagerName = (): string => (isMac() ? 'Finder' : 'Explorer')
+export const fileManagerName = (): string =>
+  isMac() ? 'Finder' : isLinux() ? 'File Manager' : 'Explorer'

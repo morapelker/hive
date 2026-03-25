@@ -16,9 +16,9 @@ const log = createLogger({ component: 'ShellEnv' })
  * Must be called once at app startup, before any child process spawning.
  */
 export function loadShellEnv(): void {
-  if (process.platform !== 'darwin') return
+  if (process.platform === 'win32') return
 
-  const shell = process.env.SHELL || '/bin/zsh'
+  const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
 
   try {
     // Use null-delimited output (`env -0`) to safely handle values that

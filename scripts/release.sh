@@ -402,6 +402,37 @@ fi
 # Always restore macOS native binaries so the working tree stays usable for development
 bash "$SCRIPT_DIR/prepare-win-deps.sh" --restore 2>/dev/null || true
 
+# ── Phase 4.6: Linux build ───────────────────────────────────────
+# Linux build is non-fatal — macOS artifacts are already published.
+# If this fails, we warn but continue with the release.
+LINUX_BUILD_OK=false
+tg "🐧 Hive release v${NEW_VERSION} — building Linux"
+if bash "$SCRIPT_DIR/prepare-linux-deps.sh"; then
+  info "Packaging Linux build..."
+  info "This may take a few minutes."
+  # --config.npmRebuild=false: skip native module rebuild (we prepared Linux binaries manually)
+  if pnpm exec electron-builder --linux --publish always --config.npmRebuild=false; then
+    LINUX_BUILD_OK=true
+    ok "Linux assets uploaded to GitHub Releases"
+
+    # Also publish canary-linux.yml so canary-channel users see this stable release
+    if [[ -f "$DIST_DIR/latest-linux.yml" ]]; then
+      cp "$DIST_DIR/latest-linux.yml" "$DIST_DIR/canary-linux.yml"
+      gh release upload "v${NEW_VERSION}" "$DIST_DIR/canary-linux.yml" --repo "$REPO" --clobber
+      ok "canary-linux.yml published"
+    fi
+  else
+    warn "Linux build failed — release will continue without Linux artifacts"
+    tg "⚠️ Hive release v${NEW_VERSION} — Linux build failed"
+  fi
+else
+  warn "Linux dependency preparation failed — skipping Linux build"
+  tg "⚠️ Hive release v${NEW_VERSION} — Linux deps preparation failed"
+fi
+
+# Always restore macOS native binaries after Linux build
+bash "$SCRIPT_DIR/prepare-linux-deps.sh" --restore 2>/dev/null || true
+
 # Un-draft the release and attach release notes
 info "Publishing release (removing draft status)..."
 if [[ -n "$RELEASE_NOTES" ]]; then
@@ -493,11 +524,19 @@ if $WIN_BUILD_OK; then
 else
   echo "    Windows: ⚠ build failed (macOS release published without Windows artifacts)"
 fi
+if $LINUX_BUILD_OK; then
+  echo "    Linux:"
+  echo "      • Hive-${NEW_VERSION}.AppImage   (AppImage)"
+  echo "      • hive_${NEW_VERSION}_amd64.deb  (Debian package)"
+  echo "      • hive-${NEW_VERSION}.tar.gz     (portable)"
+  echo "      • latest-linux.yml (auto-updater)"
+else
+  echo "    Linux: ⚠ build failed (release published without Linux artifacts)"
+fi
 echo ""
 
 RELEASE_SUCCEEDED=true
-if $WIN_BUILD_OK; then
-  tg "✅ Hive release v${NEW_VERSION} — released successfully (macOS + Windows)"
-else
-  tg "✅ Hive release v${NEW_VERSION} — released (macOS only, Windows build failed)"
-fi
+PLATFORMS="macOS"
+if $WIN_BUILD_OK; then PLATFORMS="$PLATFORMS + Windows"; fi
+if $LINUX_BUILD_OK; then PLATFORMS="$PLATFORMS + Linux"; fi
+tg "✅ Hive release v${NEW_VERSION} — released successfully ($PLATFORMS)"

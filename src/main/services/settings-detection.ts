@@ -25,7 +25,7 @@ export function detectEditors(): DetectedApp[] {
             ]
           : currentPlatform === 'win32'
             ? ['code.cmd', 'code']
-            : ['code']
+            : ['/usr/bin/code', '/snap/bin/code', 'code']
     },
     {
       id: 'cursor',
@@ -35,7 +35,7 @@ export function detectEditors(): DetectedApp[] {
           ? ['/usr/local/bin/cursor', '/Applications/Cursor.app/Contents/Resources/app/bin/cursor']
           : currentPlatform === 'win32'
             ? ['cursor.cmd', 'cursor']
-            : ['cursor']
+            : ['/usr/bin/cursor', '/opt/cursor/cursor', 'cursor']
     },
     {
       id: 'sublime',
@@ -48,7 +48,7 @@ export function detectEditors(): DetectedApp[] {
             ]
           : currentPlatform === 'win32'
             ? ['subl.exe']
-            : ['subl']
+            : ['/usr/bin/subl', '/opt/sublime_text/sublime_text', 'subl']
     },
     {
       id: 'webstorm',
@@ -58,7 +58,7 @@ export function detectEditors(): DetectedApp[] {
           ? ['/usr/local/bin/webstorm', '/Applications/WebStorm.app/Contents/MacOS/webstorm']
           : currentPlatform === 'win32'
             ? ['webstorm64.exe', 'webstorm.cmd']
-            : ['webstorm']
+            : ['/usr/bin/webstorm', '/snap/bin/webstorm', 'webstorm']
     },
     {
       id: 'zed',
@@ -68,7 +68,7 @@ export function detectEditors(): DetectedApp[] {
           ? ['/usr/local/bin/zed', '/Applications/Zed.app/Contents/MacOS/zed']
           : currentPlatform === 'win32'
             ? ['zed.exe']
-            : ['zed']
+            : ['/usr/bin/zed', '/usr/local/bin/zed', 'zed']
     }
   ]
 
@@ -147,8 +147,14 @@ export function detectTerminals(): DetectedApp[] {
           ]
         : [
             { id: 'terminal', name: 'Default Terminal', commands: ['x-terminal-emulator'] },
+            { id: 'gnome-terminal', name: 'GNOME Terminal', commands: ['gnome-terminal'] },
+            { id: 'konsole', name: 'Konsole', commands: ['konsole'] },
+            { id: 'xfce4-terminal', name: 'Xfce Terminal', commands: ['xfce4-terminal'] },
             { id: 'alacritty', name: 'Alacritty', commands: ['alacritty'] },
-            { id: 'kitty', name: 'kitty', commands: ['kitty'] }
+            { id: 'kitty', name: 'kitty', commands: ['kitty'] },
+            { id: 'ghostty', name: 'Ghostty', commands: ['ghostty'] },
+            { id: 'wezterm', name: 'WezTerm', commands: ['wezterm'] },
+            { id: 'foot', name: 'foot', commands: ['foot'] }
           ]
 
   for (const def of terminalDefs) {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Globe } from 'lucide-react'
-import { isMac } from '@/lib/platform'
+import { isMac, isLinux } from '@/lib/platform'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import type { BottomPanelTab } from '@/stores/useLayoutStore'
@@ -134,7 +134,7 @@ export function BottomPanel({
                 <input
                   value={chromeCommandInput}
                   onChange={(e) => setChromeCommandInput(e.target.value)}
-                  placeholder={isMac() ? 'open -a "Google Chrome" {url}' : 'start chrome {url}'}
+                  placeholder={isMac() ? 'open -a "Google Chrome" {url}' : isLinux() ? 'xdg-open {url}' : 'start chrome {url}'}
                   className="w-full text-xs bg-background border rounded px-2 py-1 mb-2"
                   onKeyDown={(e) => e.stopPropagation()}
                 />

@@ -297,7 +297,11 @@ function registerSystemHandlers(): void {
           if (process.platform === 'win32') {
             return { success: false, error: 'Ghostty is not available on Windows' }
           }
-          spawn('open', ['-a', 'Ghostty', path], { detached: true, stdio: 'ignore' })
+          if (process.platform === 'darwin') {
+            spawn('open', ['-a', 'Ghostty', path], { detached: true, stdio: 'ignore' })
+          } else {
+            spawn('ghostty', ['--working-directory=' + path], { detached: true, stdio: 'ignore' })
+          }
           break
         case 'android-studio':
           if (process.platform === 'darwin') {
@@ -386,13 +390,17 @@ function registerSystemHandlers(): void {
       const tmpPath = join(app.getPath('temp'), 'hive-server-install')
       writeFileSync(tmpPath, scriptContent, { mode: 0o755 })
 
-      const osascript = `do shell script "mv '${tmpPath}' '${targetPath}' && chmod +x '${targetPath}'" with administrator privileges`
-      await execAsync(`osascript -e '${osascript}'`, { timeout: 30000 })
+      if (process.platform === 'darwin') {
+        const osascript = `do shell script "mv '${tmpPath}' '${targetPath}' && chmod +x '${targetPath}'" with administrator privileges`
+        await execAsync(`osascript -e '${osascript}'`, { timeout: 30000 })
+      } else {
+        await execAsync(`pkexec sh -c "mv '${tmpPath}' '${targetPath}' && chmod +x '${targetPath}'"`, { timeout: 30000 })
+      }
 
       return { success: true, path: targetPath }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      if (message.includes('User canceled') || message.includes('-128')) {
+      if (message.includes('User canceled') || message.includes('-128') || message.includes('Not authorized')) {
         return { success: false, error: 'Installation cancelled' }
       }
       return { success: false, error: message }
@@ -432,13 +440,17 @@ function registerSystemHandlers(): void {
         return { success: false, error: 'hive-server is not installed' }
       }
 
-      const osascript = `do shell script "rm '${targetPath}'" with administrator privileges`
-      await execAsync(`osascript -e '${osascript}'`, { timeout: 30000 })
+      if (process.platform === 'darwin') {
+        const osascript = `do shell script "rm '${targetPath}'" with administrator privileges`
+        await execAsync(`osascript -e '${osascript}'`, { timeout: 30000 })
+      } else {
+        await execAsync(`pkexec rm '${targetPath}'`, { timeout: 30000 })
+      }
 
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      if (message.includes('User canceled') || message.includes('-128')) {
+      if (message.includes('User canceled') || message.includes('-128') || message.includes('Not authorized')) {
         return { success: false, error: 'Uninstall cancelled' }
       }
       return { success: false, error: message }
