@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { Paperclip, AlertCircle, Trash2, GitBranch, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
@@ -52,6 +52,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const [isDragging, setIsDragging] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showWorktreePicker, setShowWorktreePicker] = useState(false)
+  const dragCloneRef = useRef<HTMLElement | null>(null)
 
   // ── Lookup worktree name ────────────────────────────────────────
   const worktreeName = useWorktreeStore(
@@ -102,22 +103,44 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   // ── Drag handlers ──────────────────────────────────────────────
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
-      // Store drag data in module-level state (reliable across Electron)
-      const dragPayload = {
-        ticketId: ticket.id,
-        sourceColumn: ticket.column,
-        sourceIndex: index
-      }
-      setKanbanDragData(dragPayload)
-      // Also set DataTransfer for native drag feedback (ghost image, cursor)
+      // Store drag data
+      setKanbanDragData({ ticketId: ticket.id, sourceColumn: ticket.column, sourceIndex: index })
       e.dataTransfer.setData('text/plain', ticket.id)
       e.dataTransfer.effectAllowed = 'move'
+
+      // Create rotated clone for drag image
+      const el = e.currentTarget as HTMLElement
+      const clone = el.cloneNode(true) as HTMLElement
+      clone.style.width = `${el.offsetWidth}px`
+      clone.style.transform = 'rotate(3deg)'
+      clone.style.position = 'fixed'
+      clone.style.top = '-9999px'
+      clone.style.left = '-9999px'
+      clone.style.pointerEvents = 'none'
+      clone.style.zIndex = '9999'
+      document.body.appendChild(clone)
+      e.dataTransfer.setDragImage(clone, el.offsetWidth / 2, el.offsetHeight / 2)
+      dragCloneRef.current = clone
+
+      // Clean up clone after browser captures it
+      requestAnimationFrame(() => {
+        if (dragCloneRef.current) {
+          document.body.removeChild(dragCloneRef.current)
+          dragCloneRef.current = null
+        }
+      })
+
       setIsDragging(true)
     },
     [ticket.id, ticket.column, index]
   )
 
   const handleDragEnd = useCallback(() => {
+    // Safety cleanup
+    if (dragCloneRef.current) {
+      dragCloneRef.current.remove()
+      dragCloneRef.current = null
+    }
     setKanbanDragData(null)
     setIsDragging(false)
   }, [])
@@ -160,9 +183,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             onDragEnd={handleDragEnd}
             onClick={handleClick}
             className={cn(
-              'group cursor-pointer rounded-md border bg-muted/15 p-3 transition-all duration-200',
-              'hover:bg-muted/30',
-              isDragging && 'opacity-50',
+              'group cursor-pointer rounded-md border bg-card shadow-sm p-3 transition-all duration-200',
+              'hover:bg-muted/40',
+              isDragging && 'invisible',
               borderState === 'default' && 'border-border/60',
               borderState === 'static-violet' && 'border-violet-500/60',
               borderState === 'pulse-blue' && 'border-blue-500/60',
