@@ -248,6 +248,11 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
     ghosttyService.setFocus(worktreeId, focused)
   })
 
+  // Paste text into a Ghostty surface (programmatic paste, bypasses macOS focus)
+  ipcMain.handle('terminal:ghostty:pasteText', (_event, worktreeId: string, text: string) => {
+    ghosttyService.pasteText(worktreeId, text)
+  })
+
   // Destroy a Ghostty surface for a worktree
   ipcMain.handle('terminal:ghostty:destroySurface', (_event, worktreeId: string) => {
     log.info('IPC: terminal:ghostty:destroySurface', { worktreeId })

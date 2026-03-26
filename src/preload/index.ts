@@ -463,6 +463,19 @@ const systemOps = {
     }
   },
 
+  // Subscribe to Edit > Paste from the application menu.
+  // Used to route paste to the Ghostty terminal when it is the active backend,
+  // since the menu accelerator intercepts Cmd+V before it reaches the native NSView.
+  onEditPaste: (callback: (text: string) => void): (() => void) => {
+    const handler = (_event: unknown, text: string): void => {
+      callback(text)
+    }
+    ipcRenderer.on('edit:paste', handler)
+    return () => {
+      ipcRenderer.removeListener('edit:paste', handler)
+    }
+  },
+
   // Open a URL in Chrome (or default browser) with optional custom command
   openInChrome: (url: string, customCommand?: string) =>
     ipcRenderer.invoke('system:openInChrome', { url, customCommand }),
@@ -1574,6 +1587,9 @@ const terminalOps = {
 
   ghosttySetFocus: (worktreeId: string, focused: boolean): Promise<void> =>
     ipcRenderer.invoke('terminal:ghostty:setFocus', worktreeId, focused),
+
+  ghosttyPasteText: (worktreeId: string, text: string): Promise<void> =>
+    ipcRenderer.invoke('terminal:ghostty:pasteText', worktreeId, text),
 
   ghosttyDestroySurface: (worktreeId: string): Promise<void> =>
     ipcRenderer.invoke('terminal:ghostty:destroySurface', worktreeId),

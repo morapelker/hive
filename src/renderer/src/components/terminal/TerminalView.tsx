@@ -109,6 +109,27 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     return () => clearTimeout(timer)
   }, [effectiveVisible])
 
+  // Ghostty paste: the Cmd+V menu accelerator intercepts the keystroke at the
+  // macOS application-menu level, before it can reach the native Ghostty NSView.
+  // The menu handler checks webContents.isFocused() — when the Ghostty NSView
+  // is the macOS first responder the web content is NOT focused, so the handler
+  // reads the clipboard and sends 'edit:paste' via IPC for us to forward here.
+  useEffect(() => {
+    if (activeBackendTypeRef.current !== 'ghostty' || !effectiveVisible) return
+    if (!window.systemOps?.onEditPaste) return
+
+    const cleanup = window.systemOps.onEditPaste((text) => {
+      // The main process already verified that webContents is NOT focused
+      // (i.e. a native NSView like Ghostty has macOS first responder), so
+      // we can unconditionally forward the text to the Ghostty surface.
+      window.terminalOps.ghosttyPasteText(worktreeId, text)
+    })
+
+    return cleanup
+    // embeddedTerminalBackend in deps ensures re-evaluation when the user switches backends,
+    // since activeBackendTypeRef is a ref and doesn't trigger re-renders on its own.
+  }, [effectiveVisible, worktreeId, embeddedTerminalBackend])
+
   // Search helpers (only for xterm backend)
   const handleSearch = useCallback((query: string) => {
     setSearchQuery(query)

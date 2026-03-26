@@ -479,6 +479,7 @@ declare global {
       onNewSessionShortcut: (callback: () => void) => () => void
       onCloseSessionShortcut: (callback: () => void) => () => void
       onFileSearchShortcut: (callback: () => void) => () => void
+      onEditPaste: (callback: (text: string) => void) => () => void
       onNotificationNavigate: (
         callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
       ) => () => void
@@ -846,6 +847,7 @@ declare global {
         mods: number
       ) => Promise<void>
       ghosttySetFocus: (worktreeId: string, focused: boolean) => Promise<void>
+      ghosttyPasteText: (worktreeId: string, text: string) => Promise<void>
       ghosttyDestroySurface: (worktreeId: string) => Promise<void>
       ghosttyShutdown: () => Promise<void>
     }
