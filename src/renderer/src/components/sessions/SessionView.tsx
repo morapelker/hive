@@ -10,9 +10,12 @@ import { QueuedMessageBubble } from './QueuedMessageBubble'
 import { ContextIndicator } from './ContextIndicator'
 import { AttachmentButton } from './AttachmentButton'
 import { AttachmentPreview } from './AttachmentPreview'
+import { TicketAttachments } from './TicketAttachments'
 import { CodexFastToggle } from './CodexFastToggle'
 import type { Attachment } from './AttachmentPreview'
-import { buildMessageParts, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
+import { buildMessageParts, buildDisplayContent, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
+import { TicketPickerModal } from '@/components/kanban/TicketPickerModal'
+import type { TicketAttachmentData } from '@/components/kanban/TicketPickerModal'
 import { SlashCommandPopover } from './SlashCommandPopover'
 import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
@@ -48,6 +51,7 @@ import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
 import { COMPLETION_WORDS, formatCompletionDuration, formatElapsedTimer } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { buildPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import beeIcon from '@/assets/bee.png'
@@ -426,6 +430,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }>
   >([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [ticketPickerOpen, setTicketPickerOpen] = useState(false)
 
   // Consume files dropped from Finder via the global drop zone
   const pendingDropFiles = useDropAttachmentStore((s) => s.pending)
@@ -3277,7 +3282,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           const prefixedQuestion = prAskContext + ASK_MODE_PREFIX + question
 
           // Add user message to UI immediately (before response)
-          setMessages((prev) => [...prev, createLocalMessage('user', prefixedQuestion)])
+          // Include attachment XML so cards render instantly
+          const askDisplayContent = buildDisplayContent(attachments, prefixedQuestion)
+          setMessages((prev) => [...prev, createLocalMessage('user', askDisplayContent)])
 
           // Mark that a new prompt is in flight
           newPromptPendingRef.current = true
@@ -3363,6 +3370,28 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const currentRevertId = revertMessageID
         setRevertMessageID(null)
         revertDiffRef.current = null
+
+        // Build the full display content for the optimistic message so that
+        // attachment cards (tickets, PR comments, files) render immediately
+        // instead of only appearing after a session reload from disk.
+        const optimisticMode = useSessionStore.getState().getSessionMode(sessionId)
+        const optimisticModePrefix = optimisticMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX : ''
+        const optimisticPrComments = usePRReviewStore.getState().attachedComments
+        let optimisticPrContext = ''
+        if (optimisticPrComments.length > 0) {
+          optimisticPrContext =
+            optimisticPrComments
+              .map(
+                (c) =>
+                  `<pr-comment author="${c.user.login}" file="${c.path}" line="${c.line ?? 'file-level'}">\n${c.body}\n<diff-hunk>${c.diffHunk}</diff-hunk>\n</pr-comment>`
+              )
+              .join('\n\n') + '\n\n'
+        }
+        const optimisticContent = buildDisplayContent(
+          attachments,
+          optimisticPrContext + optimisticModePrefix + trimmedValue
+        )
+
         setMessages((prev) => {
           let base = prev
           if (currentRevertId) {
@@ -3371,7 +3400,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               base = prev.slice(0, boundaryIndex)
             }
           }
-          return [...base, createLocalMessage('user', trimmedValue)]
+          return [...base, createLocalMessage('user', optimisticContent)]
         })
 
         // Mark that a new prompt is in flight — prevents finalizeResponse
@@ -3833,6 +3862,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       sessionStore.setPendingFollowUpMessages(newSessionId, [
         'use the subagent development skill to implement the following plan:\n' + planContent
       ])
+      // Notify kanban store: supercharge re-attaches ticket to new session
+      notifyKanbanSessionSync(sessionId, {
+        type: 'supercharge',
+        newSessionId
+      })
       sessionStore.setActiveConnectionSession(newSessionId)
       await setModePromise
       return
@@ -3885,6 +3919,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       'use the subagent development skill to implement the following plan:\n' + planContent
     ])
 
+    // 5b. Notify kanban store: supercharge re-attaches ticket to new session
+    notifyKanbanSessionSync(sessionId, {
+      type: 'supercharge',
+      newSessionId
+    })
+
     // 6. Navigate to the new worktree
     worktreeStore.selectWorktree(dupResult.worktree.id)
     await setModePromise
@@ -3926,6 +3966,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     sessionStore.setPendingFollowUpMessages(newSessionId, [
       'use the subagent development skill to implement the following plan:\n' + planContent
     ])
+
+    // 3b. Notify kanban store: supercharge re-attaches ticket to new session
+    notifyKanbanSessionSync(sessionId, {
+      type: 'supercharge',
+      newSessionId
+    })
 
     // 4. Navigate to the new session (same worktree)
     sessionStore.setActiveSession(newSessionId)
@@ -4075,6 +4121,34 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
+
+  const handleTicketPickerSelect = useCallback(
+    (tickets: TicketAttachmentData[]) => {
+      setAttachments((prev) => {
+        const remaining = MAX_ATTACHMENTS - prev.length
+        if (remaining <= 0) {
+          toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+          return prev
+        }
+        const toAdd = tickets.slice(0, remaining).map((t) => ({
+          kind: 'ticket' as const,
+          id: crypto.randomUUID(),
+          name: t.title,
+          ticketId: t.ticketId,
+          title: t.title,
+          description: t.description,
+          attachments: t.attachments
+        }))
+        if (tickets.length > remaining) {
+          toast.warning(
+            `Only ${remaining} of ${tickets.length} tickets attached (${MAX_ATTACHMENTS} max)`
+          )
+        }
+        return [...prev, ...toAdd]
+      })
+    },
+    []
+  )
 
   // Slash command handlers
   const handleInputChange = useCallback(
@@ -4664,6 +4738,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           />
           {/* PR review comment attachments — above the input container */}
           <PrCommentAttachments />
+          {/* Ticket attachments — above the input container */}
+          <TicketAttachments attachments={attachments} onRemove={handleRemoveAttachment} />
           <div
             className={cn(
               'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
@@ -4740,7 +4816,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                     onAccept={() => updateSetting('codexFastModeAccepted', true)}
                   />
                 )}
-                <AttachmentButton onAttach={handleAttach} />
+                <AttachmentButton
+                  onAttach={handleAttach}
+                  projectId={sessionRecord?.project_id ?? null}
+                  onPickTicket={() => setTicketPickerOpen(true)}
+                />
                 <ContextIndicator
                   sessionId={sessionId}
                   modelId={currentModelId}
@@ -4825,6 +4905,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           </div>
         </div>
       </div>
+
+      {/* Ticket picker modal for attaching board tickets */}
+      {sessionRecord?.project_id && (
+        <TicketPickerModal
+          projectId={sessionRecord.project_id}
+          open={ticketPickerOpen}
+          onOpenChange={setTicketPickerOpen}
+          onSelectTickets={handleTicketPickerSelect}
+        />
+      )}
     </div>
   )
 }
