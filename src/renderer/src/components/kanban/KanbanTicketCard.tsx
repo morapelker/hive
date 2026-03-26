@@ -43,7 +43,6 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
 
     [data-gradient-border] {
       position: relative;
-      isolation: isolate;
     }
 
     [data-gradient-border]::before {
@@ -51,6 +50,7 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
       position: absolute;
       inset: -1.5px;
       border-radius: inherit;
+      padding: 1.5px;
       background: conic-gradient(
         from var(--kanban-angle) at 50% 50%,
         var(--grad-dim) 0%,
@@ -61,9 +61,16 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
         var(--grad-bright) 87.5%,
         var(--grad-dim) 100%
       );
+      -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+      mask-composite: exclude;
       animation: kanban-gradient-rotate 3s linear infinite;
       pointer-events: none;
-      z-index: -1;
     }
   `
   document.head.appendChild(style)
