@@ -581,6 +581,7 @@ function PlanReviewModeContent({
       const handoffPrompt = `Implement the following plan\n${planContent}`
       await sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+      sessionStore.setActiveSession(result.session.id)
 
       toast.success('Handoff session created')
       onClose()
@@ -752,8 +753,8 @@ function ReviewModeContent({
   const [isSending, setIsSending] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Display last assistant message or fallback
-  const reviewContent = ticket.description ?? 'Session completed. Review the changes and provide followup if needed.'
+  // Display ticket description as context, with notice to view session for full conversation
+  const reviewDescription = ticket.description ?? null
 
   const toggleMode = useCallback(() => {
     setFollowUpMode((prev) => (prev === 'build' ? 'plan' : 'build'))
@@ -872,9 +873,18 @@ function ReviewModeContent({
 
       <div
         data-testid="review-content"
-        className="flex-1 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-4 prose prose-sm dark:prose-invert max-w-none"
+        className="flex-1 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-4 space-y-3"
       >
-        <MarkdownRenderer content={reviewContent} />
+        {reviewDescription ? (
+          <div className="prose prose-sm dark:prose-invert max-w-none">
+            <MarkdownRenderer content={reviewDescription} />
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Session completed.</p>
+        )}
+        <p data-testid="review-session-notice" className="text-xs text-muted-foreground/80">
+          View the full session conversation by clicking &quot;Jump to session&quot; above.
+        </p>
       </div>
 
       {/* Followup input area */}
@@ -964,6 +974,17 @@ function ErrorModeContent({
   const [isSending, setIsSending] = useState(false)
   const updateTicket = useKanbanStore((s) => s.updateTicket)
 
+  // Look up session status entry for error details
+  const sessionStatusEntry = useWorktreeStatusStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id) return null
+        return state.sessionStatuses[ticket.current_session_id] ?? null
+      },
+      [ticket.current_session_id]
+    )
+  )
+
   const toggleMode = useCallback(() => {
     setFollowUpMode((prev) => (prev === 'build' ? 'plan' : 'build'))
   }, [])
@@ -1046,9 +1067,20 @@ function ErrorModeContent({
 
       <div
         data-testid="error-info"
-        className="rounded-md border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-400"
+        className="rounded-md border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-400 space-y-1"
       >
-        The linked session reported an error. You can send a followup message to retry or provide corrections.
+        <p>The linked session reported an error. You can send a followup message to retry or provide corrections.</p>
+        {sessionStatusEntry && (
+          <p className="text-xs text-red-400/70" data-testid="error-status-detail">
+            Status: {sessionStatusEntry.status}
+            {sessionStatusEntry.word ? ` - ${sessionStatusEntry.word}` : ''}
+            {sessionStatusEntry.durationMs ? ` (${Math.round(sessionStatusEntry.durationMs / 1000)}s ago)` : ''}
+          </p>
+        )}
+        <p className="text-xs text-red-400/70">
+          Session: {ticket.current_session_id}
+          {' \u2014 use "Jump to session" for full details.'}
+        </p>
       </div>
 
       {/* Followup input */}

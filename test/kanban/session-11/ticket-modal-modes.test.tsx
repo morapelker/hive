@@ -474,6 +474,33 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
         expect(mockDbSession.create).toHaveBeenCalled()
       })
     })
+
+    test('Handoff calls correct session store actions', async () => {
+      render(<KanbanTicketModal />)
+
+      const handoffBtn = screen.getByTestId('plan-review-handoff-btn')
+      await act(async () => {
+        fireEvent.click(handoffBtn)
+      })
+
+      await waitFor(() => {
+        // Should have created a new session in the same worktree
+        expect(mockDbSession.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            worktree_id: 'wt-1',
+            project_id: 'proj-1'
+          })
+        )
+      })
+
+      // Should have set a pending message with the plan content
+      const sessionStore = useSessionStore.getState()
+      const pendingMessage = sessionStore.pendingMessages.get('new-session-1')
+      expect(pendingMessage).toContain('Implement the following plan')
+
+      // Should have set the new session as active
+      expect(sessionStore.activeSessionId).toBe('new-session-1')
+    })
   })
 
   // ════════════════════════════════════════════════════════════════════
