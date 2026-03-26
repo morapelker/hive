@@ -220,39 +220,42 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
   return (
     <div
       data-testid={`kanban-column-${column}`}
-      className="flex flex-1 min-w-[240px] max-w-[360px] flex-col"
+      className="flex flex-1 min-w-[240px] max-w-[360px] flex-col rounded-lg border border-border/40 bg-card/50 p-2"
     >
       {/* Column header */}
-      <div className="flex items-center gap-2 px-2 pb-3">
-        {/* Collapse toggle for Done column */}
-        {isDoneColumn && (
-          <button
-            data-testid="kanban-column-done-toggle"
-            onClick={handleToggleCollapse}
-            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted/40 transition-colors"
-          >
-            {isCollapsed ? (
-              <ChevronRight className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
-            )}
-          </button>
-        )}
+      <div className="flex flex-col gap-1 px-2 pb-3">
+        {/* Title row — always centered */}
+        <div className="flex items-center justify-center gap-2">
+          {/* Collapse toggle for Done column */}
+          {isDoneColumn && (
+            <button
+              data-testid="kanban-column-done-toggle"
+              onClick={handleToggleCollapse}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted/40 transition-colors"
+            >
+              {isCollapsed ? (
+                <ChevronRight className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
+            </button>
+          )}
 
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          {COLUMN_TITLES[column]}
-        </h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {COLUMN_TITLES[column]}
+          </h3>
 
-        {/* Ticket count pill */}
-        <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-muted/40 px-1.5 text-[11px] font-medium text-muted-foreground">
-          {tickets.length}
-        </span>
+          <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-muted/40 px-1.5 text-[11px] font-medium text-muted-foreground">
+            {tickets.length}
+          </span>
+        </div>
 
+        {/* Controls row — only for columns with controls */}
         {/* Flow mode toggle — only for In Progress column.
             ON (default) = flow mode: automated worktree picker on drop.
             OFF = simple mode: direct drop, no modal. */}
         {isInProgressColumn && (
-          <div className="ml-auto flex items-center gap-1.5">
+          <div className="flex items-center justify-center gap-1.5">
             <Zap className={cn('h-3 w-3', !isSimpleMode ? 'text-amber-500' : 'text-muted-foreground/50')} />
             <Switch
               data-testid="simple-mode-toggle"
@@ -265,13 +268,15 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
 
         {/* Add ticket button — only for To Do column */}
         {isTodoColumn && (
-          <button
-            data-testid="kanban-add-ticket-btn"
-            onClick={() => setIsCreateModalOpen(true)}
-            className="ml-auto flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex items-center justify-center">
+            <button
+              data-testid="kanban-add-ticket-btn"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
         )}
       </div>
 
