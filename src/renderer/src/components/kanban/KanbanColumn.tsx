@@ -50,6 +50,9 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
   const isTodoColumn = column === 'todo'
   const isInProgressColumn = column === 'in_progress'
 
+  // Global drag state — true when ANY ticket is being dragged
+  const isDragging = useKanbanStore((state) => state.isDragging)
+
   // ── Simple mode toggle (In Progress column only) ───────────────
   const isSimpleMode = useKanbanStore(
     useCallback(
@@ -220,7 +223,17 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
   return (
     <div
       data-testid={`kanban-column-${column}`}
-      className="flex flex-1 min-w-[240px] max-w-[360px] flex-col rounded-lg border border-border/40 bg-card/50 p-2"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={cn(
+        'flex flex-1 min-w-[240px] max-w-[360px] flex-col rounded-lg border-2 bg-card/50 p-2 transition-all duration-200',
+        isDragOver
+          ? 'border-dashed border-primary bg-primary/[0.03]'
+          : isDragging
+            ? 'border-dashed border-muted-foreground/25'
+            : 'border-solid border-border/20'
+      )}
     >
       {/* Column header */}
       <div className="flex flex-col gap-1 px-2 pb-3">
@@ -284,13 +297,7 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
       {!(isDoneColumn && isCollapsed) && (
         <div
           data-testid={`kanban-drop-area-${column}`}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          className={cn(
-            'flex flex-col gap-2 overflow-y-auto px-1 pb-2 transition-all duration-200 rounded-md min-h-[60px]',
-            isDragOver && 'bg-primary/5 ring-1 ring-primary/20'
-          )}
+          className="flex flex-1 flex-col gap-2 overflow-y-auto px-1 pb-2 rounded-md min-h-[60px]"
         >
           {tickets.length === 0 ? (
             isDragOver ? (
