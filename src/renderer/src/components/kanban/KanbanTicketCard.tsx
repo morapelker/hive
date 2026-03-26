@@ -122,12 +122,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       e.dataTransfer.setDragImage(clone, el.offsetWidth / 2, el.offsetHeight / 2)
       dragCloneRef.current = clone
 
-      // Clean up clone after browser captures it
+      // Clean up clone after browser captures it — double-rAF ensures
+      // Chromium/Electron has finished reading the drag image before removal
       requestAnimationFrame(() => {
-        if (dragCloneRef.current) {
-          document.body.removeChild(dragCloneRef.current)
-          dragCloneRef.current = null
-        }
+        requestAnimationFrame(() => {
+          if (dragCloneRef.current) {
+            dragCloneRef.current.remove()
+            dragCloneRef.current = null
+          }
+        })
       })
 
       setIsDragging(true)
