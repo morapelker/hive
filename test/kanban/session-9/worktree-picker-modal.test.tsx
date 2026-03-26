@@ -275,6 +275,50 @@ describe('Session 9: Worktree Picker Modal', () => {
     expect(items[0].getAttribute('data-testid')).toBe('worktree-item-new')
   })
 
+  // ── Auto-select current worktree tests ──────────────────────────
+
+  test('auto-selects the current worktree from store when modal opens', () => {
+    act(() => {
+      useWorktreeStore.setState({ selectedWorktreeId: 'wt-2' })
+    })
+
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    // wt-2 should be auto-selected (has ring highlight)
+    const wt2Item = screen.getByTestId('worktree-item-wt-2')
+    expect(wt2Item.className).toContain('ring-primary')
+
+    // Send button should be enabled since a worktree is auto-selected
+    const sendBtn = screen.getByTestId('wt-picker-send-btn')
+    expect(sendBtn).not.toBeDisabled()
+  })
+
+  test('does not auto-select worktree from a different project', () => {
+    act(() => {
+      useWorktreeStore.setState({ selectedWorktreeId: 'wt-other-project' })
+    })
+
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    // No worktree should be selected — send button disabled
+    const sendBtn = screen.getByTestId('wt-picker-send-btn')
+    expect(sendBtn).toBeDisabled()
+  })
+
   // ── Build/Plan toggle tests ──────────────────────────────────────
 
   test('Build/Plan chip toggle defaults to build', () => {

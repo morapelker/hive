@@ -43,14 +43,15 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
 
     [data-gradient-border] {
       position: relative;
+      isolation: isolate;
     }
 
     [data-gradient-border]::before {
       content: '';
       position: absolute;
-      inset: -1.5px;
+      inset: -1px;
       border-radius: inherit;
-      padding: 1.5px;
+      padding: 1px;
       background: conic-gradient(
         from var(--kanban-angle) at 50% 50%,
         var(--grad-dim) 0%,
@@ -64,13 +65,34 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
       -webkit-mask:
         linear-gradient(#fff 0 0) content-box,
         linear-gradient(#fff 0 0);
-      -webkit-mask-composite: xor;
       mask:
         linear-gradient(#fff 0 0) content-box,
         linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
       mask-composite: exclude;
       animation: kanban-gradient-rotate 3s linear infinite;
       pointer-events: none;
+    }
+
+    [data-gradient-border]::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: inherit;
+      background: conic-gradient(
+        from var(--kanban-angle) at 50% 50%,
+        transparent 0%,
+        var(--grad-bright) 12.5%,
+        transparent 25%,
+        transparent 50%,
+        var(--grad-bright) 62.5%,
+        transparent 75%
+      );
+      filter: blur(8px);
+      opacity: 0.25;
+      animation: kanban-gradient-rotate 3s linear infinite;
+      pointer-events: none;
+      z-index: -1;
     }
   `
   document.head.appendChild(style)

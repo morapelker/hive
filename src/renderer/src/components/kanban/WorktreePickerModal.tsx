@@ -101,12 +101,17 @@ export function WorktreePickerModal({
   useEffect(() => {
     if (open) {
       setMode('build')
-      setSelectedWorktreeId(null)
+      // Auto-select the current worktree if it belongs to this project
+      const { selectedWorktreeId: currentId, worktreesByProject } =
+        useWorktreeStore.getState()
+      const projectWts = worktreesByProject.get(projectId) ?? []
+      const match = currentId ? projectWts.find((wt) => wt.id === currentId) : null
+      setSelectedWorktreeId(match ? currentId : null)
       setIsNewWorktree(false)
       setPromptText(buildPrompt('build', ticket))
       setIsSending(false)
     }
-  }, [open, ticket])
+  }, [open, ticket, projectId])
 
   // ── Handle mode toggle ──────────────────────────────────────────
   const toggleMode = useCallback(() => {
