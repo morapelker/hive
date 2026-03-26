@@ -25,6 +25,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { setKanbanDragData, useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useQuestionStore } from '@/stores/useQuestionStore'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 interface KanbanTicketCardProps {
@@ -83,6 +84,18 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         if (!ticket.current_session_id) return false
         const entry = state.sessionStatuses[ticket.current_session_id]
         return entry?.status === 'working' || entry?.status === 'planning'
+      },
+      [ticket.current_session_id]
+    )
+  )
+
+  // ── Detect pending questions for this ticket's session ─────────
+  const isAsking = useQuestionStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id) return false
+        const questions = state.pendingBySession.get(ticket.current_session_id)
+        return (questions?.length ?? 0) > 0
       },
       [ticket.current_session_id]
     )
@@ -198,7 +211,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             <p className="text-sm font-medium leading-snug text-foreground">{ticket.title}</p>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || ticket.plan_ready || isError || isBusy) && (
+            {(hasAttachments || worktreeName || ticket.plan_ready || isError || isBusy || isAsking) && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {/* Attachment badge */}
                 {hasAttachments && (
@@ -234,9 +247,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 )}
 
                 {/* Progress bar — pushed right, shown when session is actively working */}
-                {isBusy && ticket.mode && (
+                {(isBusy || isAsking) && ticket.mode && (
                   <span data-testid="kanban-ticket-progress" className="ml-auto">
-                    <IndeterminateProgressBar mode={ticket.mode} className="w-20" />
+                    <IndeterminateProgressBar mode={ticket.mode} isAsking={isAsking} className="w-20" />
                   </span>
                 )}
               </div>
