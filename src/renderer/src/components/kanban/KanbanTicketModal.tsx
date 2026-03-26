@@ -1462,23 +1462,37 @@ function QuestionModeContent({
     try {
       const worktreePath = ticket.worktree_id ? findWorktreePathById(ticket.worktree_id) : null
       await window.opencodeOps.questionReply(requestId, answers, worktreePath || undefined)
+      // Optimistically set session back to working so the progress bar resumes immediately
+      if (ticket.current_session_id) {
+        useWorktreeStatusStore.getState().setSessionStatus(
+          ticket.current_session_id,
+          ticket.mode === 'plan' ? 'planning' : 'working'
+        )
+      }
       onClose()
     } catch (err) {
       console.error('Failed to send answer:', err)
       toast.error('Failed to send answer')
     }
-  }, [ticket.worktree_id, onClose])
+  }, [ticket.worktree_id, ticket.current_session_id, ticket.mode, onClose])
 
   const handleReject = useCallback(async (requestId: string) => {
     try {
       const worktreePath = ticket.worktree_id ? findWorktreePathById(ticket.worktree_id) : null
       await window.opencodeOps.questionReject(requestId, worktreePath || undefined)
+      // Optimistically set session back to working so the progress bar resumes immediately
+      if (ticket.current_session_id) {
+        useWorktreeStatusStore.getState().setSessionStatus(
+          ticket.current_session_id,
+          ticket.mode === 'plan' ? 'planning' : 'working'
+        )
+      }
       onClose()
     } catch (err) {
       console.error('Failed to dismiss question:', err)
       toast.error('Failed to dismiss question')
     }
-  }, [ticket.worktree_id, onClose])
+  }, [ticket.worktree_id, ticket.current_session_id, ticket.mode, onClose])
 
   return (
     <DialogContent data-testid="kanban-ticket-modal" className="sm:max-w-lg">
