@@ -290,6 +290,8 @@ function KanbanTicketModalContent({
   )
 
   const baseModalMode = resolveModalMode(ticket, sessionStatus)
+  // Question mode takes highest priority — an unanswered question blocks
+  // the agent regardless of other ticket state (error, plan_ready, etc.)
   const modalMode = activeQuestion ? 'question' : baseModalMode
 
   // Render the appropriate content based on mode
@@ -1461,7 +1463,8 @@ function QuestionModeContent({
       const worktreePath = ticket.worktree_id ? findWorktreePathById(ticket.worktree_id) : null
       await window.opencodeOps.questionReply(requestId, answers, worktreePath || undefined)
       onClose()
-    } catch {
+    } catch (err) {
+      console.error('Failed to send answer:', err)
       toast.error('Failed to send answer')
     }
   }, [ticket.worktree_id, onClose])
@@ -1471,7 +1474,8 @@ function QuestionModeContent({
       const worktreePath = ticket.worktree_id ? findWorktreePathById(ticket.worktree_id) : null
       await window.opencodeOps.questionReject(requestId, worktreePath || undefined)
       onClose()
-    } catch {
+    } catch (err) {
+      console.error('Failed to dismiss question:', err)
       toast.error('Failed to dismiss question')
     }
   }, [ticket.worktree_id, onClose])
