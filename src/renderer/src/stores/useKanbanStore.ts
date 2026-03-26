@@ -22,6 +22,8 @@ let _kanbanDragData: KanbanDragData | null = null
 
 export function setKanbanDragData(data: KanbanDragData | null): void {
   _kanbanDragData = data
+  // Also update reactive store flag so all columns can show drag affordance
+  useKanbanStore.setState({ isDragging: data !== null })
 }
 
 export function getKanbanDragData(): KanbanDragData | null {
@@ -47,6 +49,8 @@ interface KanbanState {
   simpleModeByProject: Record<string, boolean>
   /** Currently selected ticket ID for the detail modal (null = closed) */
   selectedTicketId: string | null
+  /** Whether a ticket is currently being dragged (reactive, for column styling) */
+  isDragging: boolean
 
   // ── Actions ────────────────────────────────────────────────────────
   setSelectedTicketId: (id: string | null) => void
@@ -84,6 +88,7 @@ export const useKanbanStore = create<KanbanState>()(
       isBoardViewActive: false,
       simpleModeByProject: {} as Record<string, boolean>,
       selectedTicketId: null,
+      isDragging: false,
 
       // ── setSelectedTicketId ────────────────────────────────────────
       setSelectedTicketId: (id: string | null) => {
