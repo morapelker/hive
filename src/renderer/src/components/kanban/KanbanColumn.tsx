@@ -1,9 +1,20 @@
 import { useState, useCallback, useRef, Fragment } from 'react'
 import { ChevronRight, ChevronDown, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { toast } from '@/lib/toast'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel
+} from '@/components/ui/alert-dialog'
 import { useKanbanStore, getKanbanDragData, setKanbanDragData } from '@/stores/useKanbanStore'
 import type { KanbanTicket, KanbanTicketColumn as ColumnType } from '../../../../main/db/types'
 
@@ -28,6 +39,10 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
   const [dropIndex, setDropIndex] = useState<number | null>(null)
   const dropIndexRef = useRef<number | null>(null)
   const [worktreePickerTicket, setWorktreePickerTicket] = useState<KanbanTicket | null>(null)
+  const [pendingBackwardDrag, setPendingBackwardDrag] = useState<{
+    ticketId: string
+    targetIndex: number
+  } | null>(null)
 
   const isDoneColumn = column === 'done'
   const isTodoColumn = column === 'todo'
@@ -109,8 +124,17 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
           }
         }
 
-        // Future (S11): when dropping back to To Do from In Progress,
-        //   show stop session confirmation.
+        // S11: backward drag from In Progress to To Do — confirm if ticket has active session
+        if (isTodoColumn && sourceColumn === 'in_progress') {
+          const allTickets = store.tickets.get(projectId) ?? []
+          const draggedTicket = allTickets.find((t) => t.id === ticketId)
+          if (draggedTicket?.current_session_id) {
+            // Show confirmation dialog
+            setPendingBackwardDrag({ ticketId, targetIndex })
+            return
+          }
+        }
+
         // Default: move directly
         const sortOrder = store.computeSortOrder(tickets, targetIndex)
         store.moveTicket(ticketId, projectId, column, sortOrder)
@@ -123,8 +147,39 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
         store.reorderTicket(ticketId, projectId, sortOrder)
       }
     },
-    [column, projectId, tickets, isInProgressColumn]
+    [column, projectId, tickets, isInProgressColumn, isTodoColumn]
   )
+
+  // ── Backward drag confirmation handler ───────────────────────────
+  const handleConfirmBackwardDrag = useCallback(async () => {
+    if (!pendingBackwardDrag) return
+    const { ticketId, targetIndex } = pendingBackwardDrag
+
+    const store = useKanbanStore.getState()
+
+    try {
+      // Clear session link on the ticket
+      await store.updateTicket(ticketId, projectId, {
+        current_session_id: null,
+        worktree_id: null,
+        mode: null,
+        plan_ready: false
+      })
+
+      // Move to todo
+      const sortOrder = store.computeSortOrder(
+        store.getTicketsByColumn(projectId, 'todo'),
+        targetIndex
+      )
+      await store.moveTicket(ticketId, projectId, 'todo', sortOrder)
+
+      toast.success('Session stopped and ticket moved to To Do')
+    } catch {
+      toast.error('Failed to move ticket')
+    }
+
+    setPendingBackwardDrag(null)
+  }, [pendingBackwardDrag, projectId])
 
   // ── Drop indicator element ────────────────────────────────────────
   const dropIndicator = (
@@ -233,6 +288,32 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
           }}
         />
       )}
+
+      {/* Backward drag confirmation dialog — To Do column */}
+      <AlertDialog
+        open={!!pendingBackwardDrag}
+        onOpenChange={(open) => {
+          if (!open) setPendingBackwardDrag(null)
+        }}
+      >
+        <AlertDialogContent data-testid="backward-drag-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Stop active session?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This ticket has an active session. Stop the session and move to To Do?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="backward-drag-cancel-btn">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="backward-drag-confirm-btn"
+              onClick={handleConfirmBackwardDrag}
+            >
+              Stop &amp; Move
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

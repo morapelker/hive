@@ -169,6 +169,8 @@ import { useProjectStore } from '@/stores/useProjectStore'
 // ── Import components under test ────────────────────────────────────
 import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
+import { KanbanColumn } from '@/components/kanban/KanbanColumn'
+import { setKanbanDragData } from '@/stores/useKanbanStore'
 
 import type { KanbanTicket } from '../../../src/main/db/types'
 
@@ -883,6 +885,162 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
         expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-1')
         expect(useSessionStore.getState().activeSessionId).toBe('session-flow')
       }
+    })
+  })
+
+  // ════════════════════════════════════════════════════════════════════
+  // BACKWARD DRAG CONFIRMATION TESTS
+  // ════════════════════════════════════════════════════════════════════
+
+  describe('Backward drag confirmation', () => {
+    const inProgressTicketWithSession = makeTicket({
+      id: 'ticket-in-progress',
+      column: 'in_progress',
+      current_session_id: 'session-1',
+      worktree_id: 'wt-1',
+      mode: 'build',
+      sort_order: 100
+    })
+
+    const inProgressTicketWithoutSession = makeTicket({
+      id: 'ticket-in-progress-simple',
+      column: 'in_progress',
+      current_session_id: null,
+      worktree_id: null,
+      mode: null,
+      sort_order: 200
+    })
+
+    beforeEach(() => {
+      act(() => {
+        useKanbanStore.setState({
+          tickets: new Map([
+            [
+              'proj-1',
+              [inProgressTicketWithSession, inProgressTicketWithoutSession]
+            ]
+          ]),
+          isLoading: false,
+          isBoardViewActive: true,
+          simpleModeByProject: {}
+        })
+      })
+    })
+
+    test('shows dialog when moving ticket with session from in_progress to todo', () => {
+      // Render the To Do column (empty — we're dropping into it)
+      render(<KanbanColumn column="todo" tickets={[]} projectId="proj-1" />)
+
+      // Set drag data for a ticket that has an active session
+      setKanbanDragData({
+        ticketId: 'ticket-in-progress',
+        sourceColumn: 'in_progress',
+        sourceIndex: 0
+      })
+
+      // Simulate drop on the todo column's drop area
+      const dropArea = screen.getByTestId('kanban-drop-area-todo')
+      fireEvent.drop(dropArea)
+
+      // Confirmation dialog should appear
+      expect(screen.getByTestId('backward-drag-confirm-dialog')).toBeInTheDocument()
+      expect(
+        screen.getByText('This ticket has an active session. Stop the session and move to To Do?')
+      ).toBeInTheDocument()
+    })
+
+    test('confirming stops session and moves ticket to todo', async () => {
+      render(<KanbanColumn column="todo" tickets={[]} projectId="proj-1" />)
+
+      // Set drag data for a ticket with active session
+      setKanbanDragData({
+        ticketId: 'ticket-in-progress',
+        sourceColumn: 'in_progress',
+        sourceIndex: 0
+      })
+
+      // Simulate drop
+      const dropArea = screen.getByTestId('kanban-drop-area-todo')
+      fireEvent.drop(dropArea)
+
+      // Click confirm button
+      const confirmBtn = screen.getByTestId('backward-drag-confirm-btn')
+      await act(async () => {
+        fireEvent.click(confirmBtn)
+      })
+
+      // Should have cleared session fields on the ticket
+      await waitFor(() => {
+        expect(mockKanban.ticket.update).toHaveBeenCalledWith(
+          'ticket-in-progress',
+          expect.objectContaining({
+            current_session_id: null,
+            worktree_id: null,
+            mode: null,
+            plan_ready: false
+          })
+        )
+      })
+
+      // Should have moved to todo
+      await waitFor(() => {
+        expect(mockKanban.ticket.move).toHaveBeenCalledWith(
+          'ticket-in-progress',
+          'todo',
+          expect.any(Number)
+        )
+      })
+    })
+
+    test('cancelling keeps ticket in in_progress', () => {
+      render(<KanbanColumn column="todo" tickets={[]} projectId="proj-1" />)
+
+      // Set drag data for a ticket with active session
+      setKanbanDragData({
+        ticketId: 'ticket-in-progress',
+        sourceColumn: 'in_progress',
+        sourceIndex: 0
+      })
+
+      // Simulate drop
+      const dropArea = screen.getByTestId('kanban-drop-area-todo')
+      fireEvent.drop(dropArea)
+
+      // Dialog should be open
+      expect(screen.getByTestId('backward-drag-confirm-dialog')).toBeInTheDocument()
+
+      // Click cancel
+      const cancelBtn = screen.getByTestId('backward-drag-cancel-btn')
+      fireEvent.click(cancelBtn)
+
+      // ticket.update and ticket.move should NOT have been called
+      expect(mockKanban.ticket.update).not.toHaveBeenCalled()
+      expect(mockKanban.ticket.move).not.toHaveBeenCalled()
+    })
+
+    test('moves ticket directly when it has no active session', () => {
+      render(<KanbanColumn column="todo" tickets={[]} projectId="proj-1" />)
+
+      // Set drag data for a ticket WITHOUT a session
+      setKanbanDragData({
+        ticketId: 'ticket-in-progress-simple',
+        sourceColumn: 'in_progress',
+        sourceIndex: 1
+      })
+
+      // Simulate drop
+      const dropArea = screen.getByTestId('kanban-drop-area-todo')
+      fireEvent.drop(dropArea)
+
+      // No confirmation dialog should appear
+      expect(screen.queryByTestId('backward-drag-confirm-dialog')).not.toBeInTheDocument()
+
+      // Should have moved directly
+      expect(mockKanban.ticket.move).toHaveBeenCalledWith(
+        'ticket-in-progress-simple',
+        'todo',
+        expect.any(Number)
+      )
     })
   })
 })
