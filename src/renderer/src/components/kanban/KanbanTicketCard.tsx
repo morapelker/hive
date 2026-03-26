@@ -1,6 +1,25 @@
 import { memo, useCallback, useMemo, useState } from 'react'
-import { Paperclip, AlertCircle } from 'lucide-react'
+import { Paperclip, AlertCircle, Trash2, GitBranch, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { toast } from '@/lib/toast'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator
+} from '@/components/ui/context-menu'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel
+} from '@/components/ui/alert-dialog'
+import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { setKanbanDragData, useKanbanStore } from '@/stores/useKanbanStore'
@@ -31,6 +50,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   index = 0
 }: KanbanTicketCardProps) {
   const [isDragging, setIsDragging] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showWorktreePicker, setShowWorktreePicker] = useState(false)
+
   // ── Lookup worktree name ────────────────────────────────────────
   const worktreeName = useWorktreeStore(
     useCallback(
@@ -105,76 +127,173 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     useKanbanStore.getState().setSelectedTicketId(ticket.id)
   }, [ticket.id])
 
+  // ── Context menu handlers ─────────────────────────────────────
+  const handleDelete = useCallback(async () => {
+    try {
+      await useKanbanStore.getState().deleteTicket(ticket.id, ticket.project_id)
+      toast.success('Ticket deleted')
+    } catch {
+      toast.error('Failed to delete ticket')
+    }
+    setShowDeleteConfirm(false)
+  }, [ticket.id, ticket.project_id])
+
+  const handleJumpToSession = useCallback(() => {
+    if (!ticket.current_session_id) return
+    const kanbanStore = useKanbanStore.getState()
+    if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
+    if (ticket.worktree_id) useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+    useSessionStore.getState().setActiveSession(ticket.current_session_id)
+  }, [ticket.current_session_id, ticket.worktree_id])
+
+  const isSimpleTicket = ticket.current_session_id === null
+  const isFlowTicket = ticket.current_session_id !== null
+
   return (
-    <div
-      data-testid={`kanban-ticket-${ticket.id}`}
-      draggable={true}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onClick={handleClick}
-      className={cn(
-        'group cursor-pointer rounded-md border bg-muted/15 p-3 transition-all duration-200',
-        'hover:bg-muted/30',
-        isDragging && 'opacity-50',
-        borderState === 'default' && 'border-border/60',
-        borderState === 'static-violet' && 'border-violet-500/60',
-        borderState === 'pulse-blue' && 'border-blue-500/60',
-        borderState === 'pulse-violet' && 'border-violet-500/60'
-      )}
-      style={
-        borderState === 'pulse-blue'
-          ? ({
-              '--pulse-color': 'rgb(59 130 246 / 0.5)',
-              animation: 'kanban-border-pulse 2s ease-in-out infinite'
-            } as React.CSSProperties)
-          : borderState === 'pulse-violet'
-            ? ({
-                '--pulse-color': 'rgb(139 92 246 / 0.5)',
-                animation: 'kanban-border-pulse 2s ease-in-out infinite'
-              } as React.CSSProperties)
-            : undefined
-      }
-    >
-      {/* Title */}
-      <p className="text-sm font-medium leading-snug text-foreground">{ticket.title}</p>
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            data-testid={`kanban-ticket-${ticket.id}`}
+            draggable={true}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onClick={handleClick}
+            className={cn(
+              'group cursor-pointer rounded-md border bg-muted/15 p-3 transition-all duration-200',
+              'hover:bg-muted/30',
+              isDragging && 'opacity-50',
+              borderState === 'default' && 'border-border/60',
+              borderState === 'static-violet' && 'border-violet-500/60',
+              borderState === 'pulse-blue' && 'border-blue-500/60',
+              borderState === 'pulse-violet' && 'border-violet-500/60'
+            )}
+            style={
+              borderState === 'pulse-blue'
+                ? ({
+                    '--pulse-color': 'rgb(59 130 246 / 0.5)',
+                    animation: 'kanban-border-pulse 2s ease-in-out infinite'
+                  } as React.CSSProperties)
+                : borderState === 'pulse-violet'
+                  ? ({
+                      '--pulse-color': 'rgb(139 92 246 / 0.5)',
+                      animation: 'kanban-border-pulse 2s ease-in-out infinite'
+                    } as React.CSSProperties)
+                  : undefined
+            }
+          >
+            {/* Title */}
+            <p className="text-sm font-medium leading-snug text-foreground">{ticket.title}</p>
 
-      {/* Badges row */}
-      {(hasAttachments || worktreeName || ticket.plan_ready || isError) && (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {/* Attachment badge */}
-          {hasAttachments && (
-            <span
-              data-testid="kanban-ticket-attachments"
-              className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+            {/* Badges row */}
+            {(hasAttachments || worktreeName || ticket.plan_ready || isError) && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {/* Attachment badge */}
+                {hasAttachments && (
+                  <span
+                    data-testid="kanban-ticket-attachments"
+                    className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                  >
+                    <Paperclip className="h-3 w-3" />
+                    {ticket.attachments.length}
+                  </span>
+                )}
+
+                {/* Worktree name badge */}
+                {worktreeName && (
+                  <span className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    {worktreeName}
+                  </span>
+                )}
+
+                {/* Plan ready badge */}
+                {ticket.plan_ready && (
+                  <span className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[11px] font-medium text-violet-500">
+                    Plan ready
+                  </span>
+                )}
+
+                {/* Error badge */}
+                {isError && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-[11px] font-medium text-red-500">
+                    <AlertCircle className="h-3 w-3" />
+                    Error
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </ContextMenuTrigger>
+
+        <ContextMenuContent>
+          {/* Assign to worktree — only for simple tickets (no session) */}
+          {isSimpleTicket && (
+            <ContextMenuItem
+              data-testid="ctx-assign-worktree"
+              onClick={() => setShowWorktreePicker(true)}
+              className="gap-2"
             >
-              <Paperclip className="h-3 w-3" />
-              {ticket.attachments.length}
-            </span>
+              <GitBranch className="h-3.5 w-3.5" />
+              Assign to worktree
+            </ContextMenuItem>
           )}
 
-          {/* Worktree name badge */}
-          {worktreeName && (
-            <span className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-              {worktreeName}
-            </span>
+          {/* Jump to session — only for flow tickets (has session) */}
+          {isFlowTicket && (
+            <ContextMenuItem
+              data-testid="ctx-jump-to-session"
+              onClick={handleJumpToSession}
+              className="gap-2"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Jump to session
+            </ContextMenuItem>
           )}
 
-          {/* Plan ready badge */}
-          {ticket.plan_ready && (
-            <span className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[11px] font-medium text-violet-500">
-              Plan ready
-            </span>
-          )}
+          <ContextMenuSeparator />
 
-          {/* Error badge */}
-          {isError && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-[11px] font-medium text-red-500">
-              <AlertCircle className="h-3 w-3" />
-              Error
-            </span>
-          )}
-        </div>
-      )}
-    </div>
+          {/* Delete */}
+          <ContextMenuItem
+            data-testid="ctx-delete-ticket"
+            onClick={() => setShowDeleteConfirm(true)}
+            className="gap-2 text-red-500 focus:text-red-500"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent data-testid="ctx-delete-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete ticket</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete &ldquo;{ticket.title}&rdquo;? This action cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="ctx-delete-cancel-btn">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="ctx-delete-confirm-btn"
+              variant="destructive"
+              onClick={handleDelete}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Worktree picker modal for assigning */}
+      <WorktreePickerModal
+        ticket={ticket}
+        projectId={ticket.project_id}
+        open={showWorktreePicker}
+        onOpenChange={setShowWorktreePicker}
+      />
+    </>
   )
 })
