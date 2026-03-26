@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { Hammer, Map, Plus, GitBranch, Send } from 'lucide-react'
+import { Hammer, Map, Plus, GitBranch, Send, ChevronDown, Loader2, Search } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -10,6 +10,8 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
+import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -24,6 +26,13 @@ import type { KanbanTicket } from '../../../../main/db/types'
 
 // ── Types ───────────────────────────────────────────────────────────
 type PickerMode = 'build' | 'plan'
+
+interface BranchInfo {
+  name: string
+  isRemote: boolean
+  isCheckedOut: boolean
+  worktreePath?: string
+}
 
 interface WorktreePickerModalProps {
   ticket: KanbanTicket
@@ -59,6 +68,11 @@ export function WorktreePickerModal({
   const [promptText, setPromptText] = useState('')
   const [isSending, setIsSending] = useState(false)
   const promptRef = useRef<HTMLTextAreaElement>(null)
+  const [sourceBranch, setSourceBranch] = useState<string | null>(null) // null = default
+  const [branchPopoverOpen, setBranchPopoverOpen] = useState(false)
+  const [branches, setBranches] = useState<BranchInfo[]>([])
+  const [branchFilter, setBranchFilter] = useState('')
+  const [branchesLoading, setBranchesLoading] = useState(false)
 
   // ── Store access ────────────────────────────────────────────────
   const worktrees = useWorktreeStore(
@@ -77,7 +91,7 @@ export function WorktreePickerModal({
 
   const updateTicket = useKanbanStore((state) => state.updateTicket)
   const createSession = useSessionStore((state) => state.createSession)
-  const createWorktree = useWorktreeStore((state) => state.createWorktree)
+  const createWorktreeFromBranch = useWorktreeStore((state) => state.createWorktreeFromBranch)
 
   const project = useProjectStore(
     useCallback(
@@ -85,6 +99,11 @@ export function WorktreePickerModal({
       [projectId]
     )
   )
+
+  const defaultBranchName = useMemo(() => {
+    const defaultWt = worktrees.find(w => w.is_default)
+    return defaultWt?.branch_name ?? 'main'
+  }, [worktrees])
 
   // ── Count in-progress tickets per worktree ──────────────────────
   const ticketCountByWorktree = useMemo(() => {
@@ -96,6 +115,15 @@ export function WorktreePickerModal({
     }
     return counts
   }, [ticketsForProject])
+
+  // ── Lazy branch loading ────────────────────────────────────────
+  useEffect(() => {
+    if (!isNewWorktree || !project?.path || branches.length > 0) return
+    setBranchesLoading(true)
+    window.gitOps.listBranchesWithStatus(project.path)
+      .then(result => { if (result.success) setBranches(result.branches) })
+      .finally(() => setBranchesLoading(false))
+  }, [isNewWorktree, project?.path])
 
   // ── Reset state when modal opens ────────────────────────────────
   useEffect(() => {
@@ -110,8 +138,23 @@ export function WorktreePickerModal({
       setIsNewWorktree(false)
       setPromptText(buildPrompt('build', ticket))
       setIsSending(false)
+      setSourceBranch(null)
+      setBranches([])
+      setBranchFilter('')
+      setBranchPopoverOpen(false)
     }
   }, [open, ticket, projectId])
+
+  // ── Branch filtering ───────────────────────────────────────────
+  const filteredBranches = useMemo(() => {
+    const lower = branchFilter.toLowerCase()
+    return branches
+      .filter(b => b.name.toLowerCase().includes(lower))
+      .sort((a, b) => {
+        if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1
+        return a.name.localeCompare(b.name)
+      })
+  }, [branches, branchFilter])
 
   // ── Handle mode toggle ──────────────────────────────────────────
   const toggleMode = useCallback(() => {
@@ -129,6 +172,7 @@ export function WorktreePickerModal({
     if (!open) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (branchPopoverOpen) return  // Don't toggle mode while picking a branch
         e.preventDefault()
         e.stopImmediatePropagation()
         toggleMode()
@@ -138,17 +182,18 @@ export function WorktreePickerModal({
     return () => {
       window.removeEventListener('keydown', handler, true)
     }
-  }, [open, toggleMode])
+  }, [open, toggleMode, branchPopoverOpen])
 
   // Keep React keydown for test compatibility (jsdom doesn't have capture-phase issues)
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Tab') {
+        if (branchPopoverOpen) return
         e.preventDefault()
         toggleMode()
       }
     },
-    [toggleMode]
+    [toggleMode, branchPopoverOpen]
   )
 
   // ── Handle worktree selection ───────────────────────────────────
@@ -174,7 +219,13 @@ export function WorktreePickerModal({
 
       // Create new worktree if needed
       if (isNewWorktree && project) {
-        const result = await createWorktree(projectId, project.path, project.name)
+        const targetBranch = sourceBranch ?? defaultBranchName
+        const result = await createWorktreeFromBranch(
+          projectId,
+          project.path,
+          project.name,
+          targetBranch
+        )
         if (!result.success || !result.worktree?.id) {
           toast.error(result.error || 'Failed to create worktree')
           setIsSending(false)
@@ -286,7 +337,9 @@ export function WorktreePickerModal({
     selectedWorktreeId,
     isNewWorktree,
     project,
-    createWorktree,
+    createWorktreeFromBranch,
+    sourceBranch,
+    defaultBranchName,
     projectId,
     createSession,
     mode,
@@ -369,6 +422,73 @@ export function WorktreePickerModal({
                 </span>
                 <span className="font-medium text-foreground">New worktree</span>
               </button>
+
+              {isNewWorktree && (
+                <div className="flex items-center gap-2 px-3.5 py-2 border-b border-border/40 bg-muted/5">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">from</span>
+                  <Popover open={branchPopoverOpen} onOpenChange={setBranchPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        data-testid="source-branch-trigger"
+                        className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md border border-border/60 hover:bg-muted/30 transition-colors"
+                      >
+                        <GitBranch className="h-3 w-3 text-muted-foreground" />
+                        <span className="truncate max-w-[180px]">
+                          {sourceBranch ?? defaultBranchName}
+                        </span>
+                        <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-72 p-0" align="start">
+                      <div className="p-2 border-b border-border/40">
+                        <div className="relative">
+                          <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+                          <Input
+                            placeholder="Filter branches..."
+                            value={branchFilter}
+                            onChange={(e) => setBranchFilter(e.target.value)}
+                            className="pl-7 h-8 text-xs"
+                            autoFocus
+                          />
+                        </div>
+                      </div>
+                      <div className="max-h-[200px] overflow-y-auto py-1">
+                        {branchesLoading ? (
+                          <div className="flex items-center justify-center py-4">
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : filteredBranches.length === 0 ? (
+                          <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                            No branches found
+                          </div>
+                        ) : (
+                          filteredBranches.map((branch) => (
+                            <button
+                              key={`${branch.name}-${branch.isRemote}`}
+                              data-testid={`source-branch-${branch.name}`}
+                              className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left hover:bg-muted/30 transition-colors"
+                              onClick={() => {
+                                setSourceBranch(branch.name)
+                                setBranchPopoverOpen(false)
+                                setBranchFilter('')
+                              }}
+                            >
+                              <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
+                              <span className="flex-1 truncate">{branch.name}</span>
+                              {branch.isRemote && (
+                                <span className="text-[10px] text-muted-foreground">remote</span>
+                              )}
+                              {branch.isCheckedOut && (
+                                <span className="text-[10px] text-primary">active</span>
+                              )}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              )}
 
               {/* Existing worktrees */}
               {worktrees.map((wt) => {
