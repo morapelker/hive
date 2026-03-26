@@ -65,6 +65,39 @@ const mockWorktreeOps = {
       github_pr_number: null,
       github_pr_url: null
     }
+  }),
+  createFromBranch: vi.fn().mockResolvedValue({
+    success: true,
+    worktree: {
+      id: 'wt-new',
+      project_id: 'proj-1',
+      name: 'new-worktree',
+      branch_name: 'new-worktree',
+      path: '/test/new-worktree',
+      status: 'active',
+      is_default: false,
+      branch_renamed: 0,
+      last_message_at: null,
+      session_titles: '[]',
+      last_model_provider_id: null,
+      last_model_id: null,
+      last_model_variant: null,
+      created_at: '2026-01-01T00:00:00Z',
+      last_accessed_at: '2026-01-01T00:00:00Z',
+      github_pr_number: null,
+      github_pr_url: null
+    }
+  })
+}
+
+const mockGitOps = {
+  listBranchesWithStatus: vi.fn().mockResolvedValue({
+    success: true,
+    branches: [
+      { name: 'main', isRemote: false, isCheckedOut: true },
+      { name: 'feature-x', isRemote: false, isCheckedOut: false },
+      { name: 'develop', isRemote: true, isCheckedOut: false }
+    ]
   })
 }
 
@@ -87,6 +120,12 @@ Object.defineProperty(window, 'worktreeOps', {
   writable: true,
   configurable: true,
   value: mockWorktreeOps
+})
+
+Object.defineProperty(window, 'gitOps', {
+  writable: true,
+  configurable: true,
+  value: mockGitOps
 })
 
 // ── Import stores AFTER mocking ─────────────────────────────────────
@@ -169,7 +208,7 @@ describe('Session 9: Worktree Picker Modal', () => {
   const defaultWorktrees = [
     makeWorktree({ id: 'wt-1', name: 'feature-auth' }),
     makeWorktree({ id: 'wt-2', name: 'feature-api', is_default: false }),
-    makeWorktree({ id: 'wt-default', name: 'main', is_default: true })
+    makeWorktree({ id: 'wt-default', name: 'main', is_default: true, branch_name: 'main' })
   ]
 
   beforeEach(() => {
@@ -540,6 +579,174 @@ describe('Session 9: Worktree Picker Modal', () => {
 
     await waitFor(() => {
       expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+  })
+
+  // ── Source branch picker tests ──────────────────────────────────
+
+  test('shows source branch selector when New worktree is selected', () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    // Source branch trigger should not be visible before selecting "New worktree"
+    expect(screen.queryByTestId('source-branch-trigger')).not.toBeInTheDocument()
+
+    // Click "New worktree"
+    fireEvent.click(screen.getByTestId('worktree-item-new'))
+
+    // Source branch trigger should now be visible with default branch name
+    const trigger = screen.getByTestId('source-branch-trigger')
+    expect(trigger).toBeInTheDocument()
+    expect(trigger).toHaveTextContent('main')
+  })
+
+  test('source branch defaults to default worktree branch name', () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    // Click "New worktree"
+    fireEvent.click(screen.getByTestId('worktree-item-new'))
+
+    // The trigger should show "main" (the branch_name of the default worktree wt-default)
+    const trigger = screen.getByTestId('source-branch-trigger')
+    expect(trigger).toHaveTextContent('main')
+  })
+
+  test('source branch selector loads branches lazily', async () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    // On initial render, listBranchesWithStatus should NOT have been called
+    expect(mockGitOps.listBranchesWithStatus).not.toHaveBeenCalled()
+
+    // Click "New worktree" to trigger lazy branch loading
+    fireEvent.click(screen.getByTestId('worktree-item-new'))
+
+    // Now listBranchesWithStatus should be called
+    await waitFor(() => {
+      expect(mockGitOps.listBranchesWithStatus).toHaveBeenCalledWith('/test/my-project')
+    })
+  })
+
+  test('selecting a branch updates the displayed branch name', async () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    // Click "New worktree" and wait for branches to load
+    fireEvent.click(screen.getByTestId('worktree-item-new'))
+    await waitFor(() => {
+      expect(mockGitOps.listBranchesWithStatus).toHaveBeenCalled()
+    })
+
+    // Open the branch popover
+    fireEvent.click(screen.getByTestId('source-branch-trigger'))
+
+    // Select "feature-x"
+    await waitFor(() => {
+      expect(screen.getByTestId('source-branch-feature-x')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('source-branch-feature-x'))
+
+    // Trigger should now display "feature-x"
+    const trigger = screen.getByTestId('source-branch-trigger')
+    expect(trigger).toHaveTextContent('feature-x')
+  })
+
+  test('submitting with New worktree calls createFromBranch with selected branch', async () => {
+    const onOpenChange = vi.fn()
+
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={onOpenChange}
+      />
+    )
+
+    // Click "New worktree" and wait for branches to load
+    fireEvent.click(screen.getByTestId('worktree-item-new'))
+    await waitFor(() => {
+      expect(mockGitOps.listBranchesWithStatus).toHaveBeenCalled()
+    })
+
+    // Open the branch popover and select "feature-x"
+    fireEvent.click(screen.getByTestId('source-branch-trigger'))
+    await waitFor(() => {
+      expect(screen.getByTestId('source-branch-feature-x')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('source-branch-feature-x'))
+
+    // Click send
+    const sendBtn = screen.getByTestId('wt-picker-send-btn')
+    await act(async () => {
+      fireEvent.click(sendBtn)
+    })
+
+    // Should have called createFromBranch with the selected branch
+    await waitFor(() => {
+      expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith(
+        'proj-1',
+        '/test/my-project',
+        'My Project',
+        'feature-x'
+      )
+    })
+  })
+
+  test('submitting with New worktree uses default branch when none selected', async () => {
+    const onOpenChange = vi.fn()
+
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={onOpenChange}
+      />
+    )
+
+    // Click "New worktree" (don't change branch)
+    fireEvent.click(screen.getByTestId('worktree-item-new'))
+
+    // Click send
+    const sendBtn = screen.getByTestId('wt-picker-send-btn')
+    await act(async () => {
+      fireEvent.click(sendBtn)
+    })
+
+    // Should have called createFromBranch with the default branch "main"
+    await waitFor(() => {
+      expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith(
+        'proj-1',
+        '/test/my-project',
+        'My Project',
+        'main'
+      )
     })
   })
 })
