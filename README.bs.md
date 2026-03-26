@@ -221,18 +221,13 @@ Povežite bilo koja dva worktreea za:
 
 - **Cross-platform podrška** — Windows i Linux buildovi
 - **Plugin sistem** — Proširite Hive prilagođenim integracijama
-- **Poboljšane konekcije** — Višesmjerne konekcije, grupe konekcija, pametni prijedlozi
 - **Cloud sinhronizacija** — Sinhronizujte postavke, sesije i šablone konekcija na svim uređajima
 - **Timske funkcionalnosti** — Dijelite worktreeje i surađujte u realnom vremenu
-- **Prilagođeni AI modeli** — Koristite svoje OpenAI/Anthropic API ključeve
-- **Terminal tabovi** — Više terminal sesija po worktreeu
 - **Git graf vizualizacija** — Vizuelna historija brancheva i mergeova
 - **Profiliranje performansi** — Ugrađeni alati za optimizaciju
 
 ### 🎯 Vizija budućnosti
 
-- **Inteligencija konekcija** — AI-pokretani prijedlozi konekcija bazirani na git historiji
-- **Marketplace konekcija** — Dijelite i otkrivajte šablone konekcija
 - **Udaljeni razvoj** — SSH i container-bazirani razvoj
 - **Trosmjerne konekcije** — Povežite i mergujte više brancheva vizuelno
 - **CI/CD integracija** — Praćenje GitHub Actions, GitLab CI, Jenkins

@@ -228,18 +228,13 @@ Connectez n'importe quelle paire de worktrees pour :
 
 - **Support multi-plateforme** — Builds Windows et Linux
 - **Système de plugins** — Étendez Hive avec des intégrations personnalisées
-- **Connexions améliorées** — Connexions multi-voies, groupes de connexions, suggestions intelligentes
 - **Synchronisation cloud** — Synchronisez paramètres, sessions et modèles de connexion entre appareils
 - **Fonctionnalités d'équipe** — Partagez des worktrees et collaborez en temps réel
-- **Modèles IA personnalisés** — Utilisez vos propres clés API OpenAI/Anthropic
-- **Onglets de terminal** — Sessions de terminal multiples par worktree
 - **Visualisation du graphe Git** — Historique visuel des branches et merges
 - **Profilage de performance** — Outils intégrés pour l'optimisation
 
 ### 🎯 Vision future
 
-- **Intelligence des connexions** — Suggestions de connexion propulsées par l'IA basées sur l'historique git
-- **Marketplace de connexions** — Partagez et découvrez des modèles de connexion
 - **Développement distant** — Développement basé sur SSH et conteneurs
 - **Connexions trilatérales** — Connectez et fusionnez plusieurs branches visuellement
 - **Intégration CI/CD** — Surveillance GitHub Actions, GitLab CI, Jenkins

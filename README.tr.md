@@ -221,18 +221,13 @@ Herhangi iki worktree'yi bağlayarak:
 
 - **Çapraz platform desteği** — Windows ve Linux derlemeleri
 - **Eklenti sistemi** — Hive'ı özel entegrasyonlarla genişletin
-- **Geliştirilmiş Bağlantılar** — Çok yönlü bağlantılar, bağlantı grupları, akıllı öneriler
 - **Bulut senkronizasyonu** — Ayarları, oturumları ve bağlantı şablonlarını cihazlar arası senkronize edin
 - **Takım özellikleri** — Worktree'leri paylaşın ve gerçek zamanlı işbirliği yapın
-- **Özel AI modelleri** — Kendi OpenAI/Anthropic API anahtarlarınızı kullanın
-- **Terminal sekmeleri** — Worktree başına birden fazla terminal oturumu
 - **Git graf görselleştirmesi** — Görsel dal geçmişi ve birleştirmeler
 - **Performans profilleme** — Optimizasyon için yerleşik araçlar
 
 ### 🎯 Gelecek Vizyonu
 
-- **Bağlantı Zekası** — Git geçmişine dayalı AI destekli bağlantı önerileri
-- **Bağlantı Pazaryeri** — Bağlantı şablonlarını paylaşın ve keşfedin
 - **Uzaktan geliştirme** — SSH ve konteyner tabanlı geliştirme
 - **Üç yönlü bağlantılar** — Birden fazla dalı görsel olarak bağlayın ve birleştirin
 - **CI/CD entegrasyonu** — GitHub Actions, GitLab CI, Jenkins izleme

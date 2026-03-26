@@ -228,18 +228,13 @@ Verbinde beliebige zwei Worktrees um:
 
 - **Plattformübergreifende Unterstützung** — Windows- und Linux-Builds
 - **Plugin-System** — Erweitere Hive mit eigenen Integrationen
-- **Verbesserte Verbindungen** — Mehrweg-Verbindungen, Verbindungsgruppen, intelligente Vorschläge
 - **Cloud-Synchronisation** — Synchronisiere Einstellungen, Sessions und Verbindungsvorlagen über Geräte
 - **Team-Funktionen** — Teile Worktrees und arbeite in Echtzeit zusammen
-- **Eigene KI-Modelle** — Nutze deine eigenen OpenAI/Anthropic API-Schlüssel
-- **Terminal-Tabs** — Mehrere Terminal-Sessions pro Worktree
 - **Git-Graph-Visualisierung** — Visuelle Branch-Historie und Merges
 - **Performance-Profiling** — Eingebaute Tools zur Optimierung
 
 ### 🎯 Zukunftsvision
 
-- **Verbindungs-Intelligenz** — KI-gestützte Verbindungsvorschläge basierend auf Git-Historie
-- **Verbindungs-Marktplatz** — Verbindungsvorlagen teilen und entdecken
 - **Remote-Entwicklung** — SSH- und Container-basierte Entwicklung
 - **Dreiwege-Verbindungen** — Mehrere Branches visuell verbinden und mergen
 - **CI/CD-Integration** — GitHub Actions, GitLab CI, Jenkins Monitoring

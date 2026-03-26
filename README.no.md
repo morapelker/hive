@@ -221,18 +221,13 @@ Koble to vilkårlige worktrees for å:
 
 - **Tverrplattformstøtte** — Windows og Linux builds
 - **Plugin-system** — Utvid Hive med tilpassede integrasjoner
-- **Forbedrede tilkoblinger** — Flerveis-tilkoblinger, tilkoblingsgrupper, smarte forslag
 - **Skysynkronisering** — Synkroniser innstillinger, økter og tilkoblingsmaler på tvers av enheter
 - **Teamfunksjoner** — Del worktrees og samarbeid i sanntid
-- **Tilpassede AI-modeller** — Bruk dine egne OpenAI/Anthropic API-nøkler
-- **Terminalfaner** — Flere terminaløkter per worktree
 - **Git graf-visualisering** — Visuell grenhistorikk og sammenslåinger
 - **Ytelsesprofilering** — Innebygde verktøy for optimalisering
 
 ### 🎯 Fremtidsvisjon
 
-- **Tilkoblingsintelligens** — AI-drevne tilkoblingsforslag basert på git-historikk
-- **Tilkoblingsmarkedsplass** — Del og oppdag tilkoblingsmaler
 - **Fjernutvikling** — SSH og container-basert utvikling
 - **Treveis-tilkoblinger** — Koble og slå sammen flere grener visuelt
 - **CI/CD-integrasjon** — GitHub Actions, GitLab CI, Jenkins overvåking
