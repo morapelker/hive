@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { SessionMode } from '@/stores/useSessionStore'
 
@@ -22,9 +23,10 @@ export function IndeterminateProgressBar({
   const bgBar = isAsking ? 'bg-amber-500' : mode === 'build' ? 'bg-blue-500' : 'bg-violet-500'
 
   // Sync all progress bars to the same phase by using a negative animation-delay
-  // based on a global clock. This is a one-time calculation at mount; the browser's
-  // CSS engine handles the rest with zero JS overhead.
-  const syncDelay = -(Date.now() % ANIMATION_DURATION_MS)
+  // based on a global clock. Lazy initializer ensures this runs exactly once at
+  // mount — subsequent re-renders reuse the captured value so the CSS animation
+  // isn't restarted.
+  const [syncDelay] = useState(() => -(Date.now() % ANIMATION_DURATION_MS))
 
   return (
     <div
