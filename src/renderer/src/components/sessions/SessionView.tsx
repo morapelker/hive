@@ -3643,6 +3643,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       await useSessionStore.getState().setSessionMode(sessionId, 'build')
       lastSendMode.set(sessionId, 'build')
+      notifyKanbanSessionSync(sessionId, { type: 'implement' })
       await handleSend(
         sessionRecord?.agent_sdk === 'codex'
           ? 'Implement the plan.'
@@ -3680,6 +3681,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
         await useSessionStore.getState().setSessionMode(sessionId, 'build')
         lastSendMode.set(sessionId, 'build')
+        notifyKanbanSessionSync(sessionId, { type: 'implement' })
 
         // The SDK resumes within the same prompt cycle after plan approval —
         // it won't emit a new session.status:busy event. Set status explicitly.
@@ -3708,6 +3710,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // OpenCode sessions: legacy non-blocking behavior.
     await useSessionStore.getState().setSessionMode(sessionId, 'build')
     lastSendMode.set(sessionId, 'build')
+    notifyKanbanSessionSync(sessionId, { type: 'implement' })
     await handleSend('Implement')
   }, [
     sessionId,
@@ -3824,6 +3827,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
       const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+      notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
       sessionStore.setActiveConnectionSession(result.session.id)
       await setModePromise
       return
@@ -3847,6 +3851,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
     sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+    notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
     sessionStore.setActiveSession(result.session.id)
     await setModePromise
   }, [messages, worktreeId, sessionRecord?.project_id, connectionId, sessionId])

@@ -360,6 +360,16 @@ export const useKanbanStore = create<KanbanState>()(
                 break
               }
 
+              case 'implement': {
+                // Plan approved from session view — clear plan_ready, set mode to build
+                if (ticket.plan_ready || ticket.mode !== 'build') {
+                  get()
+                    .updateTicket(ticket.id, projectId, { plan_ready: false, mode: 'build' })
+                    .catch(() => {})
+                }
+                break
+              }
+
               case 'session_error': {
                 // Error requires user attention — move to review if currently in_progress
                 if (ticket.column === 'in_progress') {
