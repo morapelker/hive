@@ -155,6 +155,36 @@ function markBackgroundSessionCompleted(sessionId: string): void {
   }
 }
 
+function findLinkedKanbanTicket(sessionId: string): { id: string; current_session_id: string | null } | null {
+  const kanbanTickets = useKanbanStore.getState().tickets
+  for (const [, projectTickets] of kanbanTickets) {
+    const linkedTicket = projectTickets.find((t) => t.current_session_id === sessionId)
+    if (linkedTicket) return linkedTicket
+  }
+  return null
+}
+
+function captureAIResponseForTicket(sessionId: string): void {
+  const linkedTicket = findLinkedKanbanTicket(sessionId)
+  if (!linkedTicket) return
+
+  window.db.sessionMessage.list(sessionId).then((messages) => {
+    const last = [...messages]
+      .reverse()
+      .find((m) => m.role === 'assistant' && m.content.trim().length > 0)
+    if (last) {
+      window.kanban.followup.create({
+        ticket_id: linkedTicket.id,
+        content: last.content,
+        role: 'assistant',
+        mode: useSessionStore.getState().getSessionMode(sessionId),
+        session_id: sessionId,
+        source: 'direct'
+      }).catch(() => {})
+    }
+  }).catch(() => {})
+}
+
 /**
  * Persistent global listener for OpenCode stream events.
  *
@@ -418,6 +448,18 @@ export function useOpenCodeGlobalListener(): void {
                 toolUseID: data?.toolUseID ?? ''
               })
               useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+              // Capture plan content as AI response for linked kanban ticket
+              const planLinkedTicket = findLinkedKanbanTicket(sessionId)
+              if (planLinkedTicket && data?.plan && data.plan.trim().length > 0) {
+                window.kanban.followup.create({
+                  ticket_id: planLinkedTicket.id,
+                  content: data.plan,
+                  role: 'assistant',
+                  mode: 'plan',
+                  session_id: sessionId,
+                  source: 'direct'
+                }).catch(() => {})
+              }
             }
             return
           }
@@ -512,6 +554,13 @@ export function useOpenCodeGlobalListener(): void {
           const statusForIdle = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
           if (statusForIdle?.status === 'command_approval') return
 
+          // Capture AI's final response for linked kanban ticket
+          // Skip if a background follow-up is already dispatching — the deferred idle
+          // path will capture after that dispatch completes.
+          if (!backgroundFollowUpDispatchingRef.current.has(sessionId)) {
+            captureAIResponseForTicket(sessionId)
+          }
+
           // Active session is handled by SessionView.
           if (sessionId === activeId) return
 
@@ -554,19 +603,15 @@ export function useOpenCodeGlobalListener(): void {
                 dispatchSucceeded = true
 
                 // Persist follow-up for the linked kanban ticket
-                const kanbanTickets = useKanbanStore.getState().tickets
-                for (const [, projectTickets] of kanbanTickets) {
-                  const linkedTicket = projectTickets.find(t => t.current_session_id === sessionId)
-                  if (linkedTicket) {
-                    window.kanban.followup.create({
-                      ticket_id: linkedTicket.id,
-                      content: message,
-                      mode: useSessionStore.getState().getSessionMode(sessionId),
-                      session_id: sessionId,
-                      source: 'supercharge'
-                    }).catch(() => {})
-                    break
-                  }
+                const superchargeLinkedTicket = findLinkedKanbanTicket(sessionId)
+                if (superchargeLinkedTicket) {
+                  window.kanban.followup.create({
+                    ticket_id: superchargeLinkedTicket.id,
+                    content: message,
+                    mode: useSessionStore.getState().getSessionMode(sessionId),
+                    session_id: sessionId,
+                    source: 'supercharge'
+                  }).catch(() => {})
                 }
               } catch {
                 useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
@@ -589,6 +634,8 @@ export function useOpenCodeGlobalListener(): void {
                 // Don't overwrite command_approval — session is blocked waiting for command approval
                 const followUpStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
                 if (followUpStatus?.status === 'command_approval') return
+
+                captureAIResponseForTicket(sessionId)
 
                 const nextFollowUp = useSessionStore.getState().dequeueFollowUpMessage(sessionId)
                 if (nextFollowUp) {
