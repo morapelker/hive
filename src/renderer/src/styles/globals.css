@@ -363,7 +363,9 @@
 
 /* Indeterminate progress bar bounce animation for agent working indicator.
    6-phase bouncing worm: grow → slide → shrink → grow → slide back → shrink.
-   Uses left/right on position:absolute to animate width + position together. */
+   Uses left/right on position:absolute to animate width + position together.
+   NOTE: Primary animation is driven via Web Animations API in IndeterminateProgressBar.tsx
+   for reliable cross-instance synchronization. These keyframes are retained as documentation. */
 @keyframes progress-bounce {
   0% {
     left: 0;
