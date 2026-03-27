@@ -197,6 +197,18 @@ export class XtermBackend implements TerminalBackend {
         return false
       }
 
+      // Cmd+Shift+V — always paste
+      if (e.metaKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
+        navigator.clipboard
+          .readText()
+          .catch(() => window.projectOps.readFromClipboard())
+          .then((text) => {
+            if (text) window.terminalOps.write(this.worktreeId, text)
+          })
+          .catch((err) => console.error('Terminal paste failed:', err))
+        return false
+      }
+
       return true
     })
 
