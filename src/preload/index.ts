@@ -355,7 +355,8 @@ const worktreeOps = {
     projectPath: string,
     projectName: string,
     branchName: string,
-    prNumber?: number
+    prNumber?: number,
+    nameHint?: string
   ): Promise<{
     success: boolean
     worktree?: {
@@ -375,7 +376,8 @@ const worktreeOps = {
       projectPath,
       projectName,
       branchName,
-      prNumber
+      prNumber,
+      nameHint
     }),
 
   // Subscribe to branch-renamed events (auto-rename from main process)

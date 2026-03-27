@@ -479,7 +479,8 @@ declare global {
         projectPath: string,
         projectName: string,
         branchName: string,
-        prNumber?: number
+        prNumber?: number,
+        nameHint?: string
       ) => Promise<{
         success: boolean
         worktree?: Worktree

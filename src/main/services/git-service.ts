@@ -1381,7 +1381,7 @@ export class GitService {
     branchName: string,
     breedType: BreedType = 'dogs',
     prNumber?: number,
-    options?: { autoPull?: boolean }
+    options?: { autoPull?: boolean; nameHint?: string }
   ): Promise<CreateWorktreeResult> {
     try {
       // Check if branch is already checked out (skip for PR checkouts —
@@ -1448,22 +1448,36 @@ export class GitService {
           ...existingDirs
         ])
 
-        // Select a unique breed name
-        const breedName = selectUniqueBreedName(existingNames, breedType)
-        const worktreePath = join(projectWorktreesDir, `${projectName}--${breedName}`)
+        // Use nameHint if provided and non-empty, otherwise fall back to breed name
+        const nameHint = options?.nameHint
+        let worktreeName: string
+        if (nameHint) {
+          // Start with the hint; if it collides, append -2, -3, etc.
+          worktreeName = nameHint
+          if (existingNames.has(worktreeName)) {
+            let suffix = 2
+            while (existingNames.has(`${nameHint}-${suffix}`) && suffix <= 9999) {
+              suffix += 1
+            }
+            worktreeName = `${nameHint}-${suffix}`
+          }
+        } else {
+          worktreeName = selectUniqueBreedName(existingNames, breedType)
+        }
+        const worktreePath = join(projectWorktreesDir, `${projectName}--${worktreeName}`)
 
         try {
           if (prNumber != null) {
-            await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, 'FETCH_HEAD'])
+            await this.git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, 'FETCH_HEAD'])
           } else {
-            // Create a new breed-named branch derived from the selected branch
-            await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, branchName])
+            // Create a new branch derived from the selected branch
+            await this.git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, branchName])
           }
           return {
             success: true,
             path: worktreePath,
-            branchName: breedName,
-            name: breedName,
+            branchName: worktreeName,
+            name: worktreeName,
             pullInfo: {
               pulled: prNumber == null && pullResult.success && autoPull,
               updated: pullResult.updated || false
