@@ -15,7 +15,9 @@ import {
   Zap,
   ArrowRight,
   AlertCircle,
-  Bolt
+  Bolt,
+  Play,
+  Square
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -44,6 +46,7 @@ import { PLAN_MODE_PREFIX } from '@/lib/constants'
 import { parseAttachmentUrl } from '@/lib/attachment-utils'
 import type { AttachmentInfo } from '@/lib/attachment-utils'
 import { toast } from '@/lib/toast'
+import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
 import type { KanbanTicket, KanbanTicketUpdate } from '../../../../main/db/types'
@@ -1102,6 +1105,23 @@ function ReviewModeContent({
   // Display ticket description as context, with notice to view session for full conversation
   const reviewDescription = ticket.description ?? null
 
+  // ── Run-script state ───────────────────────────────────────────────
+  const project = useMemo(
+    () => useProjectStore.getState().projects.find((p) => p.id === ticket.project_id) ?? null,
+    [ticket.project_id]
+  )
+
+  const worktree = useMemo(
+    () => (ticket.worktree_id ? findWorktreeById(ticket.worktree_id) : null),
+    [ticket.worktree_id]
+  )
+
+  const hasRunScript = !!project?.run_script && !!worktree
+
+  const runRunning = useScriptStore((s) =>
+    ticket.worktree_id ? (s.scriptStates[ticket.worktree_id]?.runRunning ?? false) : false
+  )
+
   const toggleMode = useCallback(() => {
     setFollowUpMode((prev) => (prev === 'build' ? 'plan' : 'build'))
   }, [])
@@ -1190,6 +1210,44 @@ function ReviewModeContent({
     }
   }, [ticket, moveTicket, onClose])
 
+  // ── Run / Stop handlers ────────────────────────────────────────────
+  const handleRunScript = useCallback(() => {
+    if (!ticket.worktree_id || !worktree || !project?.run_script || runRunning) return
+    const commands = project.run_script
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#'))
+    fireRunScript(ticket.worktree_id, commands, worktree.path)
+    toast.success('Run script started')
+  }, [ticket.worktree_id, worktree, project, runRunning])
+
+  const handleStopScript = useCallback(async () => {
+    if (!ticket.worktree_id) return
+    await killRunScript(ticket.worktree_id)
+    toast.success('Run script stopped')
+  }, [ticket.worktree_id])
+
+  // Cmd+R / Ctrl+R toggles run/stop while the review modal is open
+  useEffect(() => {
+    if (!hasRunScript) return
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'r' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        const modal = document.querySelector('[data-testid="kanban-ticket-modal"]')
+        if (modal?.contains(document.activeElement)) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          if (runRunning) {
+            handleStopScript()
+          } else {
+            handleRunScript()
+          }
+        }
+      }
+    }
+    window.addEventListener('keydown', handler, true) // capture phase
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [hasRunScript, runRunning, handleRunScript, handleStopScript])
+
   const ModeIcon = followUpMode === 'build' ? Hammer : Map
   const modeLabel = followUpMode === 'build' ? 'Build' : 'Plan'
 
@@ -1263,6 +1321,22 @@ function ReviewModeContent({
         >
           Cancel
         </Button>
+        {hasRunScript && (
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="review-run-btn"
+            onClick={runRunning ? handleStopScript : handleRunScript}
+            className={cn(
+              'gap-1.5',
+              runRunning
+                ? 'border-red-500/30 text-red-500 hover:bg-red-500/10'
+                : 'border-green-500/30 text-green-500 hover:bg-green-500/10'
+            )}
+          >
+            {runRunning ? <><Square className="h-3.5 w-3.5" /> Stop</> : <><Play className="h-3.5 w-3.5" /> Run</>}
+          </Button>
+        )}
         <Button
           type="button"
           data-testid="review-move-done-btn"
