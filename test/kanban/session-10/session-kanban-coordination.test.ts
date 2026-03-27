@@ -108,7 +108,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
   // ────────────────────────────────────────────────────────────────────
   // Plan session completing sets plan_ready to true
   // ────────────────────────────────────────────────────────────────────
-  test('plan session completing sets plan_ready to true', async () => {
+  test('plan session completing sets plan_ready and moves to review', async () => {
     const ticket = makeTicket({
       id: 't1',
       column: 'in_progress',
@@ -133,13 +133,15 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.plan_ready).toBe(true)
+    expect(updated!.column).toBe('review')
     expect(mockKanban.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: true })
+    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
   // Plan session completing does NOT move ticket to review
   // ────────────────────────────────────────────────────────────────────
-  test('plan session completing does NOT move ticket to review', async () => {
+  test('plan session completing moves ticket to review', async () => {
     const ticket = makeTicket({
       id: 't1',
       column: 'in_progress',
@@ -163,15 +165,14 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
 
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const updated = tickets!.find((t) => t.id === 't1')
-    // Should stay in in_progress, not be moved to review
-    expect(updated!.column).toBe('in_progress')
-    expect(mockKanban.ticket.move).not.toHaveBeenCalled()
+    expect(updated!.column).toBe('review')
+    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
   // Session error does not change ticket column
   // ────────────────────────────────────────────────────────────────────
-  test('session error does not change ticket column', async () => {
+  test('session error moves in_progress ticket to review', async () => {
     const ticket = makeTicket({
       id: 't1',
       column: 'in_progress',
@@ -193,9 +194,9 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     })
 
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
-    const unchanged = tickets!.find((t) => t.id === 't1')
-    expect(unchanged!.column).toBe('in_progress')
-    expect(mockKanban.ticket.move).not.toHaveBeenCalled()
+    const moved = tickets!.find((t) => t.id === 't1')
+    expect(moved!.column).toBe('review')
+    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
     expect(mockKanban.ticket.update).not.toHaveBeenCalled()
   })
 
@@ -299,7 +300,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
   // ────────────────────────────────────────────────────────────────────
   // plan_ready change persists via IPC
   // ────────────────────────────────────────────────────────────────────
-  test('plan_ready change persists via IPC', async () => {
+  test('plan_ready change persists via IPC and moves to review', async () => {
     const ticket = makeTicket({
       id: 't1',
       column: 'in_progress',
@@ -322,6 +323,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     })
 
     expect(mockKanban.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: true })
+    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -406,7 +408,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
 
     const ticketsAfterB = useKanbanStore.getState().tickets.get('proj-1')!
     expect(ticketsAfterB.find((t) => t.id === 'tB')!.plan_ready).toBe(true)
-    expect(ticketsAfterB.find((t) => t.id === 'tB')!.column).toBe('in_progress')
+    expect(ticketsAfterB.find((t) => t.id === 'tB')!.column).toBe('review')
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -435,7 +437,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
   // ────────────────────────────────────────────────────────────────────
   // plan_ready event sets flag on plan-mode ticket
   // ────────────────────────────────────────────────────────────────────
-  test('plan_ready event sets flag on plan-mode ticket', async () => {
+  test('plan_ready event sets flag and moves to review', async () => {
     const ticket = makeTicket({
       id: 't1',
       column: 'in_progress',
@@ -457,7 +459,10 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     })
 
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
-    expect(tickets!.find((t) => t.id === 't1')!.plan_ready).toBe(true)
+    const updated = tickets!.find((t) => t.id === 't1')
+    expect(updated!.plan_ready).toBe(true)
+    expect(updated!.column).toBe('review')
+    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
