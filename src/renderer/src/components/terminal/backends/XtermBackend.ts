@@ -188,28 +188,12 @@ export class XtermBackend implements TerminalBackend {
         return true
       }
 
-      // Cmd+V — paste
-      if (e.metaKey && e.key === 'v' && !e.shiftKey && e.type === 'keydown') {
-        navigator.clipboard.readText().then((text) => {
-          window.terminalOps.write(this.worktreeId, text)
-        })
-        return false
-      }
-
       // Cmd+Shift+C — always copy
       if (e.metaKey && e.shiftKey && e.key === 'C' && e.type === 'keydown') {
         if (terminal.hasSelection()) {
           navigator.clipboard.writeText(terminal.getSelection())
           terminal.clearSelection()
         }
-        return false
-      }
-
-      // Cmd+Shift+V — always paste
-      if (e.metaKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
-        navigator.clipboard.readText().then((text) => {
-          window.terminalOps.write(this.worktreeId, text)
-        })
         return false
       }
 
