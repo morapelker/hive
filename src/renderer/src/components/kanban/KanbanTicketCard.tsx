@@ -107,11 +107,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   // ── Border state computation ────────────────────────────────────
   const borderState = useMemo(() => {
+    if (ticket.column !== 'in_progress') return 'default'
     if (ticket.plan_ready) return 'violet'
     if (ticket.current_session_id && ticket.mode === 'build') return 'blue'
     if (ticket.current_session_id && ticket.mode === 'plan') return 'violet'
     return 'default'
-  }, [ticket.mode, ticket.plan_ready, ticket.current_session_id])
+  }, [ticket.column, ticket.mode, ticket.plan_ready, ticket.current_session_id])
 
   // ── Drag handlers ──────────────────────────────────────────────
   const handleDragStart = useCallback(
