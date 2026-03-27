@@ -221,18 +221,13 @@ Kết nối bất kỳ hai worktree nào để:
 
 - **Hỗ trợ đa nền tảng** — Build cho Windows và Linux
 - **Hệ thống plugin** — Mở rộng Hive với tích hợp tùy chỉnh
-- **Kết nối nâng cao** — Kết nối đa chiều, nhóm kết nối, gợi ý thông minh
 - **Đồng bộ đám mây** — Đồng bộ cài đặt, phiên và mẫu kết nối giữa các thiết bị
 - **Tính năng nhóm** — Chia sẻ worktree và cộng tác thời gian thực
-- **Mô hình AI tùy chỉnh** — Sử dụng API key OpenAI/Anthropic của riêng bạn
-- **Tab terminal** — Nhiều phiên terminal cho mỗi worktree
 - **Trực quan hóa đồ thị Git** — Lịch sử nhánh và merge trực quan
 - **Profiling hiệu năng** — Công cụ tích hợp để tối ưu hóa
 
 ### 🎯 Tầm nhìn tương lai
 
-- **Thông minh kết nối** — Gợi ý kết nối dựa trên AI từ lịch sử git
-- **Marketplace kết nối** — Chia sẻ và khám phá mẫu kết nối
 - **Phát triển từ xa** — Phát triển dựa trên SSH và container
 - **Kết nối ba chiều** — Kết nối và merge nhiều nhánh trực quan
 - **Tích hợp CI/CD** — Giám sát GitHub Actions, GitLab CI, Jenkins

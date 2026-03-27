@@ -107,6 +107,13 @@ public:
   // Focus management
   void setFocus(uint32_t surfaceId, bool focused);
 
+  // Paste text into a surface (writes text as if typed)
+  void pasteText(uint32_t surfaceId, const std::string& text);
+
+  // Returns the surface ID whose NSView is the window's current first
+  // responder, or 0 if no Ghostty surface has focus.
+  uint32_t focusedSurfaceId();
+
   // Update libghostty focus state only (no NSResponder changes).
   void setSurfaceFocus(uint32_t surfaceId, bool focused);
 

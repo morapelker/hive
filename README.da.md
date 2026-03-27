@@ -221,18 +221,13 @@ Forbind to vilkårlige worktrees for at:
 
 - **Tværplatform-support** — Windows og Linux builds
 - **Plugin-system** — Udvid Hive med tilpassede integrationer
-- **Forbedrede forbindelser** — Flervejsforbindelser, forbindelsesgrupper, smarte forslag
 - **Cloud-synkronisering** — Synkronisér indstillinger, sessioner og forbindelsesskabeloner på tværs af enheder
 - **Teamfunktioner** — Del worktrees og samarbejd i realtid
-- **Tilpassede AI-modeller** — Brug dine egne OpenAI/Anthropic API-nøgler
-- **Terminal-faner** — Flere terminal-sessioner per worktree
 - **Git graf-visualisering** — Visuel branch-historik og merges
 - **Ydelsesprofilering** — Indbyggede værktøjer til optimering
 
 ### 🎯 Fremtidsvision
 
-- **Forbindelsesintelligens** — AI-drevne forbindelsesforslag baseret på git-historik
-- **Forbindelsesmarkedsplads** — Del og opdag forbindelsesskabeloner
 - **Fjernudvikling** — SSH og container-baseret udvikling
 - **Trevejsforbindelser** — Forbind og flet flere branches visuelt
 - **CI/CD-integration** — GitHub Actions, GitLab CI, Jenkins overvågning

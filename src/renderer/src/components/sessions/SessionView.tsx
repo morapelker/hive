@@ -2209,7 +2209,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // This catches edge cases where session.status events are unavailable.
             immediateFlush()
             setIsSending(false)
-            setQueuedMessages([])
+            // Only clear visual queue if no follow-ups remain
+            const hasFollowUps =
+              (useSessionStore.getState().pendingFollowUpMessages.get(sessionId)?.length ?? 0) > 0
+            if (!hasFollowUps) {
+              setQueuedMessages([])
+            }
             // Clear any stale command approvals when session goes idle
             useCommandApprovalStore.getState().clearSession(sessionId)
 
@@ -2252,6 +2257,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // If there are queued follow-up messages, send the next one instead of finalizing
               const followUp = useSessionStore.getState().consumeFollowUpMessage(sessionId)
               if (followUp) {
+                // Remove the first visual queued bubble (FIFO matches persistent queue order)
+                setQueuedMessages((prev) => prev.slice(1))
                 hasFinalizedCurrentResponseRef.current = false
                 setIsSending(true)
                 setMessages((prev) => [...prev, createLocalMessage('user', followUp)])
@@ -3335,6 +3342,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           ...prev,
           { id: crypto.randomUUID(), content: trimmedValue, timestamp: Date.now() }
         ])
+        // Persist to the follow-up queue so the idle handler sends it
+        useSessionStore.getState().enqueueFollowUpMessage(sessionId, trimmedValue)
+        // Clear input but do NOT send — the idle handler will send when the agent finishes
+        setInputValue('')
+        inputValueRef.current = ''
+        fileMentions.clearMentions()
+        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+        window.db.session.updateDraft(sessionId, null)
+        return
       }
       setInputValue('')
       inputValueRef.current = ''

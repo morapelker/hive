@@ -182,6 +182,19 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
       const allTickets = store.tickets.get(projectId) ?? []
       const draggedTicket = allTickets.find((t) => t.id === ticketId)
       if (draggedTicket?.current_session_id) {
+        // Abort the running agent process (not just the DB status)
+        const session = await window.db.session.get(draggedTicket.current_session_id)
+        if (session?.opencode_session_id && session.worktree_id) {
+          const worktree = await window.db.worktree.get(session.worktree_id)
+          if (worktree?.path) {
+            try {
+              await window.opencodeOps.abort(worktree.path, session.opencode_session_id)
+            } catch {
+              // Non-critical — session may already be idle
+            }
+          }
+        }
+
         await window.db.session.update(draggedTicket.current_session_id, {
           status: 'completed',
           completed_at: new Date().toISOString()

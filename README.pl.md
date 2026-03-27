@@ -221,18 +221,13 @@ Połącz dowolne dwa worktree, aby:
 
 - **Wsparcie wieloplatformowe** — Buildy Windows i Linux
 - **System wtyczek** — Rozszerzaj Hive własnymi integracjami
-- **Ulepszone połączenia** — Połączenia wielokierunkowe, grupy połączeń, inteligentne sugestie
 - **Synchronizacja w chmurze** — Synchronizuj ustawienia, sesje i szablony połączeń między urządzeniami
 - **Funkcje zespołowe** — Udostępniaj worktree i współpracuj w czasie rzeczywistym
-- **Własne modele AI** — Używaj własnych kluczy API OpenAI/Anthropic
-- **Zakładki terminala** — Wiele sesji terminala na worktree
 - **Wizualizacja grafu Git** — Wizualna historia gałęzi i merge'ów
 - **Profilowanie wydajności** — Wbudowane narzędzia optymalizacji
 
 ### 🎯 Wizja przyszłości
 
-- **Inteligencja połączeń** — Sugestie połączeń AI na podstawie historii git
-- **Marketplace połączeń** — Udostępniaj i odkrywaj szablony połączeń
 - **Rozwój zdalny** — Rozwój oparty na SSH i kontenerach
 - **Połączenia trójstronne** — Wizualne łączenie i merge wielu gałęzi
 - **Integracja CI/CD** — Monitorowanie GitHub Actions, GitLab CI, Jenkins

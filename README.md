@@ -228,18 +228,13 @@ Connect any two worktrees to:
 
 - **Cross-platform support** — Windows and Linux builds
 - **Plugin system** — Extend Hive with custom integrations
-- **Enhanced Connections** — Multi-way connections, connection groups, smart suggestions
 - **Cloud sync** — Sync settings, sessions, and connection templates across devices
 - **Team features** — Share worktrees and collaborate in real-time
-- **Custom AI models** — Bring your own OpenAI/Anthropic API keys
-- **Terminal tabs** — Multiple terminal sessions per worktree
 - **Git graph visualization** — Visual branch history and merges
 - **Performance profiling** — Built-in tools for optimization
 
 ### 🎯 Future Vision
 
-- **Connection Intelligence** — AI-powered connection suggestions based on git history
-- **Connection Marketplace** — Share and discover connection templates
 - **Remote development** — SSH and container-based development
 - **Three-way connections** — Connect and merge multiple branches visually
 - **CI/CD integration** — GitHub Actions, GitLab CI, Jenkins monitoring

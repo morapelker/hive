@@ -107,6 +107,7 @@ interface SessionState {
   dequeueFollowUpMessage: (sessionId: string) => string | null
   requeueFollowUpMessageFront: (sessionId: string, message: string) => void
   consumeFollowUpMessage: (sessionId: string) => string | null
+  enqueueFollowUpMessage: (sessionId: string, message: string) => void
   closeOtherSessions: (worktreeId: string, keepSessionId: string) => Promise<void>
   closeSessionsToRight: (worktreeId: string, fromSessionId: string) => Promise<void>
   // Plan approval
@@ -1062,6 +1063,15 @@ export const useSessionStore = create<SessionState>()(
       // Consume (pop first) a follow-up message for a session
       consumeFollowUpMessage: (sessionId: string): string | null => {
         return get().dequeueFollowUpMessage(sessionId)
+      },
+
+      enqueueFollowUpMessage: (sessionId: string, message: string) => {
+        set((state) => {
+          const existing = state.pendingFollowUpMessages.get(sessionId) || []
+          const newMap = new Map(state.pendingFollowUpMessages)
+          newMap.set(sessionId, [...existing, message])
+          return { pendingFollowUpMessages: newMap }
+        })
       },
 
       // Close all sessions except the kept one
