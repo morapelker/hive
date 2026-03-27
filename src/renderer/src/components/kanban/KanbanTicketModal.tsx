@@ -173,12 +173,12 @@ async function sendFollowupToSession(opts: {
 
 /** Determine what mode the modal should operate in */
 function resolveModalMode(ticket: KanbanTicket, sessionStatus: string | null): ModalMode {
-  // Error mode: in_progress + linked session has error
-  if (ticket.column === 'in_progress' && sessionStatus === 'error') {
+  // Error mode: linked session has error (can appear in any column)
+  if (sessionStatus === 'error') {
     return 'error'
   }
-  // Plan review mode: in_progress + plan_ready
-  if (ticket.column === 'in_progress' && ticket.plan_ready) {
+  // Plan review mode: plan_ready flag set (ticket is now in review column)
+  if (ticket.plan_ready) {
     return 'plan_review'
   }
   // Review mode: review column

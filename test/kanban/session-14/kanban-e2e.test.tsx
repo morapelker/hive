@@ -248,10 +248,9 @@ describe('Session 14: E2E Integration', () => {
 
     let t = getTicket('proj-1', 't-plan-1')
     expect(t!.plan_ready).toBe(true)
-    expect(t!.column).toBe('in_progress')
+    expect(t!.column).toBe('review')
     expect(mockKanban.ticket.update).toHaveBeenCalledWith('t-plan-1', { plan_ready: true })
-    // Should NOT have moved
-    expect(mockKanban.ticket.move).not.toHaveBeenCalled()
+    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t-plan-1', 'review', 0)
 
     // Step 3: Supercharge → new session replaces old, plan_ready resets
     await act(async () => {
@@ -520,7 +519,7 @@ describe('Session 14: E2E Integration', () => {
   // ──────────────────────────────────────────────────────────────────
   // 7. Session error sets error state without moving ticket
   // ──────────────────────────────────────────────────────────────────
-  test('session error sets error state without moving ticket', async () => {
+  test('session error moves in_progress ticket to review', async () => {
     const ticket = makeTicket({
       id: 't-err',
       column: 'in_progress',
@@ -545,10 +544,9 @@ describe('Session 14: E2E Integration', () => {
     })
 
     const t = getTicket('proj-1', 't-err')
-    // Ticket stays in in_progress — no column change
-    expect(t!.column).toBe('in_progress')
-    // No IPC move or update calls
-    expect(mockKanban.ticket.move).not.toHaveBeenCalled()
+    // Ticket moves to review — error needs user attention
+    expect(t!.column).toBe('review')
+    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t-err', 'review', 0)
     expect(mockKanban.ticket.update).not.toHaveBeenCalled()
     // Session ID is preserved so error can be displayed
     expect(t!.current_session_id).toBe('session-err-1')
@@ -574,7 +572,7 @@ describe('Session 14: E2E Integration', () => {
       })
     })
 
-    // Session errored (no state change)
+    // Session errored → moves to review
     await act(async () => {
       useKanbanStore.getState().syncTicketWithSession('session-recover-1', {
         type: 'session_error'
@@ -582,8 +580,8 @@ describe('Session 14: E2E Integration', () => {
       await flush()
     })
 
-    // Verify still in_progress
-    expect(getTicket('proj-1', 't-recover')!.column).toBe('in_progress')
+    // Verify moved to review (error needs user attention)
+    expect(getTicket('proj-1', 't-recover')!.column).toBe('review')
 
     // User sends followup → session recovers and completes
     await act(async () => {

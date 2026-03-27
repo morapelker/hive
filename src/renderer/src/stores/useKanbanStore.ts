@@ -288,20 +288,30 @@ export const useKanbanStore = create<KanbanState>()(
                     .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                     .catch(() => {})
                 } else if (ticket.mode === 'plan' && !ticket.plan_ready) {
-                  // Set plan_ready flag, keep in current column (idempotent — skip if already set)
+                  // Plan finished — set plan_ready and move to review for user attention
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})
+                  if (ticket.column !== 'review') {
+                    get()
+                      .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                      .catch(() => {})
+                  }
                 }
                 break
               }
 
               case 'plan_ready': {
-                // Explicit plan.ready event — set flag (idempotent)
+                // Explicit plan.ready event — set flag and move to review
                 if (ticket.mode === 'plan' && !ticket.plan_ready) {
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})
+                  if (ticket.column !== 'review') {
+                    get()
+                      .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                      .catch(() => {})
+                  }
                 }
                 break
               }
@@ -337,8 +347,12 @@ export const useKanbanStore = create<KanbanState>()(
               }
 
               case 'session_error': {
-                // No state change needed — ticket stays in current column.
-                // The card reads session status from worktree-status store.
+                // Error requires user attention — move to review if currently in_progress
+                if (ticket.column === 'in_progress') {
+                  get()
+                    .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                    .catch(() => {})
+                }
                 break
               }
             }
