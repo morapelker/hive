@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hive — AI Agent Orchestrator</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <meta name="description" content="Run multiple AI coding agents in parallel across projects. One window. Isolated branches. Zero tab chaos. Free and open source.">
+  <meta property="og:title" content="Hive — AI Agent Orchestrator">
+  <meta property="og:description" content="Run Claude Code, OpenCode, and Codex sessions in parallel across projects. One window. Isolated branches. Zero tab chaos.">
+  <meta property="og:image" content="https://raw.githubusercontent.com/morapelker/hive/main/docs/screenshots/hive-ss-1.png">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 60px 24px;
+    }
+
+    .hero {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .hero h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .hero .subtitle {
+      font-size: 1.1rem;
+      color: #888;
+      max-width: 600px;
+      margin: 0 auto 40px;
+      line-height: 1.6;
+    }
+
+    .demo {
+      margin-bottom: 56px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #222;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .demo:hover .play-overlay {
+      opacity: 1;
+    }
+
+    .demo img {
+      width: 100%;
+      display: block;
+    }
+
+    .play-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .play-icon {
+      width: 72px;
+      height: 72px;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .play-icon::after {
+      content: '';
+      display: block;
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-width: 14px 0 14px 24px;
+      border-color: transparent transparent transparent #0a0a0a;
+      margin-left: 4px;
+    }
+
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal-content {
+      position: relative;
+      max-width: 1200px;
+      width: 95%;
+      cursor: default;
+    }
+
+    .modal-content video {
+      width: 100%;
+      border-radius: 12px;
+      outline: none;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: -40px;
+      right: 0;
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 1.5rem;
+      cursor: pointer;
+      font-family: inherit;
+      padding: 4px 8px;
+      transition: color 0.2s;
+    }
+
+    .modal-close:hover {
+      color: #fff;
+    }
+
+    .features {
+      display: grid;
+      gap: 32px;
+      margin-bottom: 56px;
+    }
+
+    .feature {
+      padding: 24px;
+      border: 1px solid #1a1a1a;
+      border-radius: 8px;
+      background: #111;
+    }
+
+    .feature h3 {
+      font-size: 1rem;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+
+    .feature p {
+      font-size: 0.9rem;
+      color: #888;
+      line-height: 1.6;
+    }
+
+    .install {
+      text-align: center;
+      margin-bottom: 56px;
+    }
+
+    .install h2 {
+      font-size: 1.3rem;
+      color: #fff;
+      margin-bottom: 20px;
+    }
+
+    .install-cmd {
+      display: inline-block;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 16px 24px;
+      font-size: 0.95rem;
+      color: #4ade80;
+      cursor: pointer;
+      position: relative;
+      transition: border-color 0.2s;
+    }
+
+    .install-cmd:hover {
+      border-color: #4ade80;
+    }
+
+    .install-cmd .copy-hint {
+      position: absolute;
+      top: -28px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.75rem;
+      color: #666;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .install-cmd:hover .copy-hint {
+      opacity: 1;
+    }
+
+    .install-cmd.copied {
+      border-color: #4ade80;
+    }
+
+    .install-cmd.copied .copy-hint {
+      opacity: 1;
+      color: #4ade80;
+    }
+
+    .meta {
+      text-align: center;
+      color: #555;
+      font-size: 0.85rem;
+      margin-bottom: 24px;
+    }
+
+    .links {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .links a {
+      color: #888;
+      text-decoration: none;
+      margin: 0 16px;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+
+    .links a:hover {
+      color: #fff;
+    }
+
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 1.8rem; }
+      .container { padding: 40px 16px; }
+      .play-icon { width: 56px; height: 56px; }
+      .play-icon::after { border-width: 10px 0 10px 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hero">
+      <h1>Hive</h1>
+      <p class="subtitle">
+        Stop juggling terminal tabs.<br>
+        Orchestrate your AI coding agents from one window.
+      </p>
+    </div>
+
+    <div class="demo" onclick="openModal()">
+      <img src="screenshots/hive-full-demo.gif" alt="Hive demo — orchestrate AI agents across projects">
+      <div class="play-overlay">
+        <div class="play-icon"></div>
+      </div>
+    </div>
+
+    <div class="features">
+      <div class="feature">
+        <h3>All your agents in one sidebar</h3>
+        <p>Run Claude Code, OpenCode, and Codex sessions across multiple projects. See every agent's status at a glance. Click to switch. No more hunting through terminal tabs.</p>
+      </div>
+      <div class="feature">
+        <h3>Isolated branches by default</h3>
+        <p>Each agent runs on its own git worktree branch. Two agents can work on the same repo simultaneously without stepping on each other. No conflicts, no stashing.</p>
+      </div>
+      <div class="feature">
+        <h3>Connections: cross-repo AI context</h3>
+        <p>Link multiple repositories together so a single agent session sees your entire stack. Frontend, backend, shared libraries — one agent plans and implements across all of them in one pass.</p>
+      </div>
+    </div>
+
+    <div class="install">
+      <h2>Install</h2>
+      <div class="install-cmd" onclick="copyInstall(this)">
+        <span class="copy-hint">click to copy</span>
+        brew tap morapelker/hive && brew install --cask hive
+      </div>
+      <p style="margin-top: 16px; color: #555; font-size: 0.8rem;">
+        Or download the .dmg from <a href="https://github.com/morapelker/hive/releases/latest" style="color: #888;">GitHub Releases</a>
+      </p>
+    </div>
+
+    <p class="meta">Free. Open source. MIT licensed. macOS.</p>
+
+    <div class="links">
+      <a href="https://github.com/morapelker/hive">GitHub</a>
+      <a href="https://github.com/morapelker/hive/issues">Issues</a>
+      <a href="https://github.com/morapelker/hive/discussions">Discussions</a>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="videoModal" onclick="closeModal(event)">
+    <div class="modal-content">
+      <button class="modal-close" onclick="closeModal(event)">ESC</button>
+      <video id="demoVideo" controls preload="none">
+        <source src="screenshots/hive-full-demo.mp4" type="video/mp4">
+      </video>
+    </div>
+  </div>
+
+  <script>
+    function openModal() {
+      var modal = document.getElementById('videoModal');
+      var video = document.getElementById('demoVideo');
+      modal.classList.add('open');
+      video.play();
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal(e) {
+      if (e.target.closest('.modal-content') && !e.target.closest('.modal-close')) return;
+      var modal = document.getElementById('videoModal');
+      var video = document.getElementById('demoVideo');
+      modal.classList.remove('open');
+      video.pause();
+      video.currentTime = 0;
+      document.body.style.overflow = '';
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') closeModal(e);
+    });
+
+    function copyInstall(el) {
+      navigator.clipboard.writeText('brew tap morapelker/hive && brew install --cask hive');
+      el.classList.add('copied');
+      el.querySelector('.copy-hint').textContent = 'copied!';
+      setTimeout(function() {
+        el.classList.remove('copied');
+        el.querySelector('.copy-hint').textContent = 'click to copy';
+      }, 2000);
+    }
+  </script>
+</body>
+</html>

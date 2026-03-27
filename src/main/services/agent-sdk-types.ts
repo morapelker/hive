@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron'
 
-export type AgentSdkId = 'opencode' | 'claude-code' | 'terminal'
+export type AgentSdkId = 'opencode' | 'claude-code' | 'codex' | 'terminal'
 
 export interface AgentSdkCapabilities {
   supportsUndo: boolean
@@ -11,6 +11,10 @@ export interface AgentSdkCapabilities {
   supportsModelSelection: boolean
   supportsReconnect: boolean
   supportsPartialStreaming: boolean
+}
+
+export interface PromptOptions {
+  codexFastMode?: boolean
 }
 
 export interface AgentSdkImplementer {
@@ -41,7 +45,8 @@ export interface AgentSdkImplementer {
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
         >,
-    modelOverride?: { providerID: string; modelID: string; variant?: string }
+    modelOverride?: { providerID: string; modelID: string; variant?: string },
+    options?: PromptOptions
   ): Promise<void>
   abort(worktreePath: string, agentSessionId: string): Promise<boolean>
   getMessages(worktreePath: string, agentSessionId: string): Promise<unknown[]>
@@ -112,6 +117,17 @@ export const CLAUDE_CODE_CAPABILITIES: AgentSdkCapabilities = {
   supportsUndo: true,
   supportsRedo: false,
   supportsCommands: true,
+  supportsPermissionRequests: true,
+  supportsQuestionPrompts: true,
+  supportsModelSelection: true,
+  supportsReconnect: true,
+  supportsPartialStreaming: true
+}
+
+export const CODEX_CAPABILITIES: AgentSdkCapabilities = {
+  supportsUndo: true,
+  supportsRedo: false,
+  supportsCommands: false,
   supportsPermissionRequests: true,
   supportsQuestionPrompts: true,
   supportsModelSelection: true,

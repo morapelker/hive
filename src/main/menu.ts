@@ -1,5 +1,6 @@
-import { BrowserWindow, Menu, app, shell } from 'electron'
+import { BrowserWindow, Menu, app, clipboard, shell } from 'electron'
 import { getLogDir } from './services/logger'
+import { ghosttyService } from './services/ghostty-service'
 import { updaterService } from './services/updater'
 
 export interface MenuState {
@@ -11,8 +12,10 @@ export interface MenuState {
 
 let _mainWindow: BrowserWindow | null = null
 
-function send(channel: string): void {
-  _mainWindow?.webContents.send(channel)
+function send(channel: string, ...args: unknown[]): void {
+  if (_mainWindow && !_mainWindow.isDestroyed()) {
+    _mainWindow.webContents.send(channel, ...args)
+  }
 }
 
 const sessionItemIds = [
@@ -72,8 +75,48 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
       ]
     },
 
-    // Edit
-    { role: 'editMenu' },
+    // Edit — custom submenu instead of role:'editMenu' so we can control the
+    // Paste accelerator. On macOS, any menu accelerator intercepts the keystroke
+    // at the system level BEFORE it can reach a native NSView. This prevents
+    // Cmd+V from reaching the Ghostty terminal's NSView, causing paste to fail.
+    // By omitting the accelerator, Cmd+V flows through macOS's normal key event
+    // path to whichever view has first responder — Ghostty NSView for the
+    // terminal, or Chromium for web content (text inputs, etc.).
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        {
+          label: 'Paste',
+          accelerator: 'CmdOrCtrl+V',
+          click: (): void => {
+            if (!_mainWindow || _mainWindow.isDestroyed()) return
+            // On macOS the Ghostty terminal is a native NSView overlay that
+            // can become the macOS first responder independently of Chromium.
+            // The menu accelerator intercepts Cmd+V before any NSView sees it.
+            // Query the native addon for the actual macOS first responder: if
+            // a Ghostty surface owns it, paste directly into that surface;
+            // otherwise fall through to the normal web content paste path.
+            if (ghosttyService.focusedSurfaceId() > 0) {
+              const text = clipboard.readText()
+              if (text) {
+                ghosttyService.pasteToFocusedSurface(text)
+              }
+            } else {
+              _mainWindow.webContents.paste()
+            }
+          }
+        },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { type: 'separator' },
+        { role: 'selectAll' }
+      ]
+    },
 
     // Session
     {
@@ -212,10 +255,6 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
           click: () => send('menu:focus-main-pane')
         },
         { type: 'separator' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { role: 'resetZoom' },
-        { type: 'separator' },
         { role: 'togglefullscreen' },
         ...(isDev ? [{ role: 'toggleDevTools' as const }] : [])
       ]
@@ -232,7 +271,7 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
           id: 'check-for-updates',
           label: 'Check for Updates...',
           click: () => {
-            updaterService.checkForUpdates()
+            updaterService.checkForUpdates({ manual: true })
           }
         },
         { type: 'separator' },

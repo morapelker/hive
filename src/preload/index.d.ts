@@ -63,6 +63,8 @@ interface Worktree {
   attachments: string // JSON array of Attachment objects
   pinned: number // 0 = not pinned, 1 = pinned
   context: string | null
+  github_pr_number: number | null
+  github_pr_url: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -75,7 +77,7 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code' | 'terminal'
+  agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   mode: 'build' | 'plan'
   model_provider_id: string | null
   model_id: string | null
@@ -88,6 +90,54 @@ interface Session {
 interface Setting {
   key: string
   value: string
+}
+
+interface SessionMessage {
+  id: string
+  session_id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  opencode_message_id: string | null
+  opencode_message_json: string | null
+  opencode_parts_json: string | null
+  opencode_timeline_json: string | null
+  created_at: string
+}
+
+type SessionActivityKind =
+  | 'tool.started'
+  | 'tool.updated'
+  | 'tool.completed'
+  | 'tool.failed'
+  | 'approval.requested'
+  | 'approval.resolved'
+  | 'user-input.requested'
+  | 'user-input.resolved'
+  | 'task.started'
+  | 'task.updated'
+  | 'task.completed'
+  | 'plan.ready'
+  | 'plan.resolved'
+  | 'session.error'
+  | 'session.retry'
+  | 'session.info'
+
+type SessionActivityTone = 'tool' | 'approval' | 'info' | 'error'
+
+interface SessionActivity {
+  id: string
+  session_id: string
+  agent_session_id: string | null
+  thread_id: string | null
+  turn_id: string | null
+  item_id: string | null
+  request_id: string | null
+  kind: SessionActivityKind
+  tone: SessionActivityTone
+  summary: string
+  payload_json: string | null
+  sequence: number | null
+  created_at: string
 }
 
 interface SessionWithWorktree extends Session {
@@ -213,6 +263,14 @@ declare global {
           worktreeId: string,
           attachmentId: string
         ) => Promise<{ success: boolean; error?: string }>
+        attachPR: (
+          worktreeId: string,
+          prNumber: number,
+          prUrl: string
+        ) => Promise<{ success: boolean; error?: string }>
+        detachPR: (
+          worktreeId: string
+        ) => Promise<{ success: boolean; error?: string }>
         setPinned: (
           worktreeId: string,
           pinned: boolean
@@ -226,7 +284,7 @@ declare global {
           connection_id?: string | null
           name?: string | null
           opencode_session_id?: string | null
-          agent_sdk?: 'opencode' | 'claude-code' | 'terminal'
+          agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
           model_provider_id?: string | null
           model_id?: string | null
           model_variant?: string | null
@@ -241,7 +299,7 @@ declare global {
             name?: string | null
             status?: 'active' | 'completed' | 'error'
             opencode_session_id?: string | null
-            agent_sdk?: 'opencode' | 'claude-code' | 'terminal'
+            agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
             mode?: 'build' | 'plan'
             model_provider_id?: string | null
             model_id?: string | null
@@ -256,6 +314,12 @@ declare global {
         updateDraft: (sessionId: string, draft: string | null) => Promise<void>
         getByConnection: (connectionId: string) => Promise<Session[]>
         getActiveByConnection: (connectionId: string) => Promise<Session[]>
+      }
+      sessionMessage: {
+        list: (sessionId: string) => Promise<SessionMessage[]>
+      }
+      sessionActivity: {
+        list: (sessionId: string) => Promise<SessionActivity[]>
       }
       space: {
         list: () => Promise<Space[]>
@@ -294,6 +358,8 @@ declare global {
       copyToClipboard: (text: string) => Promise<void>
       readFromClipboard: () => Promise<string>
       detectLanguage: (projectPath: string) => Promise<string | null>
+      findXcworkspace: (projectPath: string) => Promise<string | null>
+      isAndroidProject: (projectPath: string) => Promise<boolean>
       loadLanguageIcons: () => Promise<Record<string, string>>
       initRepository: (path: string) => Promise<{ success: boolean; error?: string }>
       pickProjectIcon: (projectId: string) => Promise<{
@@ -313,6 +379,10 @@ declare global {
         success: boolean
         worktree?: Worktree
         error?: string
+        pullInfo?: {
+          pulled: boolean
+          updated: boolean
+        }
       }>
       delete: (params: {
         worktreeId: string
@@ -371,6 +441,10 @@ declare global {
         success: boolean
         worktree?: Worktree
         error?: string
+        pullInfo?: {
+          pulled: boolean
+          updated: boolean
+        }
       }>
       // Subscribe to branch-renamed events (auto-rename from main process)
       onBranchRenamed: (
@@ -395,7 +469,7 @@ declare global {
         logs: string
       }>
       isLogMode: () => Promise<boolean>
-      detectAgentSdks: () => Promise<{ opencode: boolean; claude: boolean }>
+      detectAgentSdks: () => Promise<{ opencode: boolean; claude: boolean; codex: boolean }>
       quitApp: () => Promise<void>
       openInApp: (appName: string, path: string) => Promise<{ success: boolean; error?: string }>
       openInChrome: (
@@ -405,6 +479,7 @@ declare global {
       onNewSessionShortcut: (callback: () => void) => () => void
       onCloseSessionShortcut: (callback: () => void) => () => void
       onFileSearchShortcut: (callback: () => void) => () => void
+      onEditPaste: (callback: (text: string) => void) => () => void
       onNotificationNavigate: (
         callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
       ) => () => void
@@ -419,6 +494,7 @@ declare global {
       isPackaged: () => Promise<boolean>
       installServerToPath: () => Promise<{ success: boolean; path?: string; error?: string }>
       uninstallServerFromPath: () => Promise<{ success: boolean; error?: string }>
+      getPlatform: () => Promise<string>
     }
     loggingOps: {
       createResponseLog: (sessionId: string) => Promise<string>
@@ -446,7 +522,8 @@ declare global {
         worktreePath: string,
         opencodeSessionId: string,
         messageOrParts: string | MessagePart[],
-        model?: { providerID: string; modelID: string; variant?: string }
+        model?: { providerID: string; modelID: string; variant?: string },
+        options?: { codexFastMode?: boolean }
       ) => Promise<{ success: boolean; error?: string }>
       // Abort a streaming session
       abort: (
@@ -464,7 +541,9 @@ declare global {
         opencodeSessionId: string
       ) => Promise<{ success: boolean; messages: unknown[]; error?: string }>
       // List available models from all configured providers
-      listModels: (opts?: { agentSdk?: 'opencode' | 'claude-code' | 'terminal' }) => Promise<{
+      listModels: (opts?: {
+        agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+      }) => Promise<{
         success: boolean
         providers: Record<string, unknown>
         error?: string
@@ -474,13 +553,13 @@ declare global {
         providerID: string
         modelID: string
         variant?: string
-        agentSdk?: 'opencode' | 'claude-code' | 'terminal'
+        agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
       }) => Promise<{ success: boolean; error?: string }>
       // Get model info (name, context limit)
       modelInfo: (
         worktreePath: string,
         modelId: string,
-        agentSdk?: 'opencode' | 'claude-code' | 'terminal'
+        agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
       ) => Promise<{
         success: boolean
         model?: { id: string; name: string; limit: { context: number } }
@@ -640,11 +719,22 @@ declare global {
         content?: string
         error?: string
       }>
+      writeFile: (filePath: string, content: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
       readPrompt: (promptName: string) => Promise<{
         success: boolean
         content?: string
         error?: string
       }>
+      readImageAsBase64: (filePath: string) => Promise<{
+        success: boolean
+        data?: string
+        mimeType?: string
+        error?: string
+      }>
+      getPathForFile: (file: File) => string
     }
     settingsOps: {
       detectEditors: () => Promise<DetectedApp[]>
@@ -757,6 +847,7 @@ declare global {
         mods: number
       ) => Promise<void>
       ghosttySetFocus: (worktreeId: string, focused: boolean) => Promise<void>
+      ghosttyPasteText: (worktreeId: string, text: string) => Promise<void>
       ghosttyDestroySurface: (worktreeId: string) => Promise<void>
       ghosttyShutdown: () => Promise<void>
     }
@@ -922,6 +1013,16 @@ declare global {
         content: string | null
         error?: string
       }>
+      // Get raw file content as base64 from disk (for binary/image files)
+      getFileContentBase64: (
+        worktreePath: string,
+        filePath: string
+      ) => Promise<{
+        success: boolean
+        data?: string
+        mimeType?: string
+        error?: string
+      }>
       // Get remote URL for a worktree
       getRemoteUrl: (
         worktreePath: string,
@@ -964,6 +1065,41 @@ declare global {
         }>
         error?: string
       }>
+      // Get the state of a specific PR via gh CLI
+      getPRState: (
+        projectPath: string,
+        prNumber: number
+      ) => Promise<{
+        success: boolean
+        state?: string
+        title?: string
+        error?: string
+      }>
+      // Fetch inline review comments for a PR
+      getPRReviewComments: (
+        projectPath: string,
+        prNumber: number
+      ) => Promise<{
+        success: boolean
+        comments?: Array<{
+          id: number
+          body: string
+          bodyHTML: string
+          path: string
+          line: number | null
+          originalLine: number | null
+          side: 'LEFT' | 'RIGHT'
+          diffHunk: string
+          user: { login: string; avatarUrl: string }
+          createdAt: string
+          updatedAt: string
+          inReplyToId: number | null
+          pullRequestReviewId: number | null
+          subjectType: 'line' | 'file'
+        }>
+        baseBranch?: string
+        error?: string
+      }>
       // Get file content from a specific git ref (HEAD, index)
       getRefContent: (
         worktreePath: string,
@@ -972,6 +1108,17 @@ declare global {
       ) => Promise<{
         success: boolean
         content?: string
+        error?: string
+      }>
+      // Get file content as base64 from a specific git ref (for binary/image files)
+      getRefContentBase64: (
+        worktreePath: string,
+        ref: string,
+        filePath: string
+      ) => Promise<{
+        success: boolean
+        data?: string
+        mimeType?: string
         error?: string
       }>
       // Stage a single hunk by applying a patch to the index
@@ -1019,16 +1166,23 @@ declare global {
       }>
     }
     updaterOps: {
-      checkForUpdate: () => Promise<void>
+      checkForUpdate: (options?: { manual?: boolean }) => Promise<void>
       downloadUpdate: () => Promise<void>
       installUpdate: () => Promise<void>
       setChannel: (channel: string) => Promise<void>
       getVersion: () => Promise<string>
       onChecking: (callback: () => void) => () => void
       onUpdateAvailable: (
-        callback: (data: { version: string; releaseNotes?: string; releaseDate?: string }) => void
+        callback: (data: {
+          version: string
+          releaseNotes?: string
+          releaseDate?: string
+          isManualCheck?: boolean
+        }) => void
       ) => () => void
-      onUpdateNotAvailable: (callback: (data: { version: string }) => void) => () => void
+      onUpdateNotAvailable: (
+        callback: (data: { version: string; isManualCheck?: boolean }) => void
+      ) => () => void
       onProgress: (
         callback: (data: {
           percent: number
@@ -1040,7 +1194,9 @@ declare global {
       onUpdateDownloaded: (
         callback: (data: { version: string; releaseNotes?: string }) => void
       ) => () => void
-      onError: (callback: (data: { message: string }) => void) => () => void
+      onError: (
+        callback: (data: { message: string; isManualCheck?: boolean }) => void
+      ) => () => void
     }
     connectionOps: {
       create: (
@@ -1078,6 +1234,7 @@ declare global {
     }
     usageOps: {
       fetch: () => Promise<import('../shared/types/usage').UsageResult>
+      fetchOpenai: () => Promise<import('../shared/types/usage').OpenAIUsageResult>
     }
     analyticsOps: {
       track: (event: string, properties?: Record<string, unknown>) => Promise<void>

@@ -1,4 +1,5 @@
 import { defineWorkspace } from 'vitest/config'
+import { resolve } from 'path'
 
 export default defineWorkspace([
   {
@@ -27,9 +28,15 @@ export default defineWorkspace([
         'test/phase-9/session-5/**/*.test.ts',
         'test/phase-9/session-13/**/*.test.ts',
         'test/server/**/*.test.ts',
-        'test/lsp/**/*.test.ts'
+        'test/lsp/**/*.test.ts',
+        'test/phase-21/**/*.test.ts'
       ],
       globals: true
+    },
+    resolve: {
+      alias: {
+        '@shared': resolve(__dirname, 'src/shared')
+      }
     }
   }
 ])

@@ -1,2 +1,5 @@
 export { FileViewer } from './FileViewer'
-export { FileSearch } from './FileSearch'
+export { CodeMirrorEditor } from './CodeMirrorEditor'
+export { ImagePreview } from './ImagePreview'
+export { UnsavedChangesDialog } from './UnsavedChangesDialog'
+export { ExternalChangesBanner } from './ExternalChangesBanner'

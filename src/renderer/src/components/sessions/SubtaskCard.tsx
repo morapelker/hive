@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { ChevronRight, Loader2, Check, AlertCircle, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -22,7 +22,7 @@ function StatusIcon({ status }: { status: 'running' | 'completed' | 'error' }) {
   }
 }
 
-export function SubtaskCard({ subtask }: SubtaskCardProps) {
+export const SubtaskCard = memo(function SubtaskCard({ subtask }: SubtaskCardProps) {
   const [isExpanded, setIsExpanded] = useState(false)
 
   const preview = subtask.description || subtask.prompt
@@ -93,4 +93,4 @@ export function SubtaskCard({ subtask }: SubtaskCardProps) {
       )}
     </div>
   )
-}
+})

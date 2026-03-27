@@ -31,7 +31,7 @@ function parseAnswers(output: string): Map<string, string> {
 
 export function QuestionToolView({ input, output, error }: ToolViewProps) {
   const questionInput = input as unknown as QuestionInput
-  const questions = questionInput?.questions || []
+  const questions = Array.isArray(questionInput?.questions) ? questionInput.questions : []
   const answerMap = output ? parseAnswers(output) : new Map<string, string>()
 
   return (
@@ -51,7 +51,7 @@ export function QuestionToolView({ input, output, error }: ToolViewProps) {
           const answer = answerMap.get(q.question)
           const answerLabels = answer ? answer.split(', ') : []
 
-          const options = q.options || []
+          const options = Array.isArray(q.options) ? q.options : []
 
           return (
             <div key={i}>

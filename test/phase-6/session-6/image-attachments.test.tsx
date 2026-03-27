@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { AttachmentButton } from '../../../src/renderer/src/components/sessions/AttachmentButton'
 import { AttachmentPreview } from '../../../src/renderer/src/components/sessions/AttachmentPreview'
 import type { Attachment } from '../../../src/renderer/src/components/sessions/AttachmentPreview'
+import { buildMessageParts } from '../../../src/renderer/src/lib/file-attachment-utils'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -27,12 +28,12 @@ describe('Session 6: Image Attachments', () => {
       expect(input).toHaveClass('hidden')
     })
 
-    test('file input accepts images and PDFs', () => {
+    test('file input accepts all file types', () => {
       const onAttach = vi.fn()
       render(<AttachmentButton onAttach={onAttach} />)
 
       const input = screen.getByTestId('attachment-file-input')
-      expect(input).toHaveAttribute('accept', 'image/*,.pdf')
+      expect(input).not.toHaveAttribute('accept')
     })
 
     test('file input allows multiple files', () => {
@@ -68,12 +69,14 @@ describe('Session 6: Image Attachments', () => {
   describe('AttachmentPreview', () => {
     const mockAttachments: Attachment[] = [
       {
+        kind: 'data',
         id: 'att-1',
         name: 'screenshot.png',
         mime: 'image/png',
         dataUrl: 'data:image/png;base64,abc123'
       },
       {
+        kind: 'data',
         id: 'att-2',
         name: 'photo.jpg',
         mime: 'image/jpeg',
@@ -110,6 +113,7 @@ describe('Session 6: Image Attachments', () => {
     test('renders file icon for PDF attachments', () => {
       const pdfAttachment: Attachment[] = [
         {
+          kind: 'data',
           id: 'att-pdf',
           name: 'report.pdf',
           mime: 'application/pdf',
@@ -148,9 +152,9 @@ describe('Session 6: Image Attachments', () => {
 
     test('multiple attachments displayed in row', () => {
       const threeAttachments: Attachment[] = [
-        { id: '1', name: 'a.png', mime: 'image/png', dataUrl: 'data:image/png;base64,a' },
-        { id: '2', name: 'b.png', mime: 'image/png', dataUrl: 'data:image/png;base64,b' },
-        { id: '3', name: 'c.png', mime: 'image/png', dataUrl: 'data:image/png;base64,c' }
+        { kind: 'data', id: '1', name: 'a.png', mime: 'image/png', dataUrl: 'data:image/png;base64,a' },
+        { kind: 'data', id: '2', name: 'b.png', mime: 'image/png', dataUrl: 'data:image/png;base64,b' },
+        { kind: 'data', id: '3', name: 'c.png', mime: 'image/png', dataUrl: 'data:image/png;base64,c' }
       ]
 
       render(
@@ -165,7 +169,12 @@ describe('Session 6: Image Attachments', () => {
   describe('Attachment state management', () => {
     test('handleAttach adds attachment with unique id', () => {
       const attachments: Attachment[] = []
-      const file = { name: 'test.png', mime: 'image/png', dataUrl: 'data:image/png;base64,abc' }
+      const file: Omit<Attachment, 'id'> = {
+        kind: 'data',
+        name: 'test.png',
+        mime: 'image/png',
+        dataUrl: 'data:image/png;base64,abc'
+      }
 
       const newAttachment: Attachment = {
         id: crypto.randomUUID(),
@@ -181,8 +190,8 @@ describe('Session 6: Image Attachments', () => {
 
     test('handleRemoveAttachment removes by id', () => {
       const attachments: Attachment[] = [
-        { id: 'a', name: 'a.png', mime: 'image/png', dataUrl: 'data:a' },
-        { id: 'b', name: 'b.png', mime: 'image/png', dataUrl: 'data:b' }
+        { kind: 'data', id: 'a', name: 'a.png', mime: 'image/png', dataUrl: 'data:a' },
+        { kind: 'data', id: 'b', name: 'b.png', mime: 'image/png', dataUrl: 'data:b' }
       ]
 
       const updated = attachments.filter(a => a.id !== 'a')
@@ -193,7 +202,7 @@ describe('Session 6: Image Attachments', () => {
 
     test('attachments cleared after send', () => {
       const attachments: Attachment[] = [
-        { id: 'a', name: 'a.png', mime: 'image/png', dataUrl: 'data:a' }
+        { kind: 'data', id: 'a', name: 'a.png', mime: 'image/png', dataUrl: 'data:a' }
       ]
 
       // Simulate clearing after send
@@ -205,7 +214,7 @@ describe('Session 6: Image Attachments', () => {
 
   describe('Clipboard paste handler', () => {
     test('image paste creates attachment', () => {
-      const attachments: Array<{ name: string; mime: string; dataUrl: string }> = []
+      const attachments: Array<{ kind: 'data'; name: string; mime: string; dataUrl: string }> = []
 
       // Simulate paste event processing logic
       const items = [
@@ -217,6 +226,7 @@ describe('Session 6: Image Attachments', () => {
           const file = item.getAsFile()
           if (file) {
             attachments.push({
+              kind: 'data',
               name: file.name || 'pasted-image.png',
               mime: file.type,
               dataUrl: 'data:image/png;base64,fakedata'
@@ -231,7 +241,7 @@ describe('Session 6: Image Attachments', () => {
     })
 
     test('text paste does not create attachment', () => {
-      const attachments: Array<{ name: string; mime: string; dataUrl: string }> = []
+      const attachments: Array<{ kind: 'data'; name: string; mime: string; dataUrl: string }> = []
 
       // Simulate paste event with text data
       const items = [
@@ -243,6 +253,7 @@ describe('Session 6: Image Attachments', () => {
           const file = item.getAsFile()
           if (file) {
             attachments.push({
+              kind: 'data',
               name: 'shouldnt-happen.png',
               mime: file.type,
               dataUrl: 'data:fake'
@@ -263,25 +274,13 @@ describe('Session 6: Image Attachments', () => {
   })
 
   describe('Message parts construction', () => {
-    test('attachments included as file parts before text', () => {
+    test('data attachments included as file parts before text', () => {
       const attachments: Attachment[] = [
-        { id: '1', name: 'img.png', mime: 'image/png', dataUrl: 'data:image/png;base64,abc' }
+        { kind: 'data', id: '1', name: 'img.png', mime: 'image/png', dataUrl: 'data:image/png;base64,abc' }
       ]
       const promptMessage = 'describe this image'
 
-      type MessagePart =
-        | { type: 'text'; text: string }
-        | { type: 'file'; mime: string; url: string; filename?: string }
-
-      const parts: MessagePart[] = [
-        ...attachments.map(a => ({
-          type: 'file' as const,
-          mime: a.mime,
-          url: a.dataUrl,
-          filename: a.name
-        })),
-        { type: 'text' as const, text: promptMessage }
-      ]
+      const parts = buildMessageParts(attachments, promptMessage)
 
       expect(parts).toHaveLength(2)
       expect(parts[0]).toEqual({
@@ -296,26 +295,14 @@ describe('Session 6: Image Attachments', () => {
       })
     })
 
-    test('multiple attachments all included as file parts', () => {
+    test('multiple data attachments all included as file parts', () => {
       const attachments: Attachment[] = [
-        { id: '1', name: 'a.png', mime: 'image/png', dataUrl: 'data:a' },
-        { id: '2', name: 'b.pdf', mime: 'application/pdf', dataUrl: 'data:b' },
-        { id: '3', name: 'c.jpg', mime: 'image/jpeg', dataUrl: 'data:c' }
+        { kind: 'data', id: '1', name: 'a.png', mime: 'image/png', dataUrl: 'data:a' },
+        { kind: 'data', id: '2', name: 'b.pdf', mime: 'application/pdf', dataUrl: 'data:b' },
+        { kind: 'data', id: '3', name: 'c.jpg', mime: 'image/jpeg', dataUrl: 'data:c' }
       ]
 
-      type MessagePart =
-        | { type: 'text'; text: string }
-        | { type: 'file'; mime: string; url: string; filename?: string }
-
-      const parts: MessagePart[] = [
-        ...attachments.map(a => ({
-          type: 'file' as const,
-          mime: a.mime,
-          url: a.dataUrl,
-          filename: a.name
-        })),
-        { type: 'text' as const, text: 'check these files' }
-      ]
+      const parts = buildMessageParts(attachments, 'check these files')
 
       expect(parts).toHaveLength(4)
       expect(parts.filter(p => p.type === 'file')).toHaveLength(3)
@@ -325,22 +312,57 @@ describe('Session 6: Image Attachments', () => {
     test('no attachments produces text-only parts', () => {
       const attachments: Attachment[] = []
 
-      type MessagePart =
-        | { type: 'text'; text: string }
-        | { type: 'file'; mime: string; url: string; filename?: string }
-
-      const parts: MessagePart[] = [
-        ...attachments.map(a => ({
-          type: 'file' as const,
-          mime: a.mime,
-          url: a.dataUrl,
-          filename: a.name
-        })),
-        { type: 'text' as const, text: 'just text' }
-      ]
+      const parts = buildMessageParts(attachments, 'just text')
 
       expect(parts).toHaveLength(1)
       expect(parts[0].type).toBe('text')
+    })
+
+    test('path attachments produce XML text block', () => {
+      const attachments: Attachment[] = [
+        { kind: 'path', id: '1', name: 'main.ts', mime: 'text/typescript', filePath: '/src/main.ts' },
+        { kind: 'path', id: '2', name: 'utils.ts', mime: 'text/typescript', filePath: '/src/utils.ts' }
+      ]
+
+      const parts = buildMessageParts(attachments, 'review these')
+
+      expect(parts).toHaveLength(2)
+      expect(parts[0]).toEqual({
+        type: 'text',
+        text: '<attached_files>\n<file path="/src/main.ts">main.ts</file>\n<file path="/src/utils.ts">utils.ts</file>\n</attached_files>'
+      })
+      expect(parts[1]).toEqual({
+        type: 'text',
+        text: 'review these'
+      })
+    })
+
+    test('mixed data and path attachments produce correct parts', () => {
+      const attachments: Attachment[] = [
+        { kind: 'data', id: '1', name: 'screenshot.png', mime: 'image/png', dataUrl: 'data:image/png;base64,abc' },
+        { kind: 'path', id: '2', name: 'code.ts', mime: 'text/typescript', filePath: '/src/code.ts' }
+      ]
+
+      const parts = buildMessageParts(attachments, 'explain')
+
+      expect(parts).toHaveLength(3)
+      // First: data attachment as file part
+      expect(parts[0]).toEqual({
+        type: 'file',
+        mime: 'image/png',
+        url: 'data:image/png;base64,abc',
+        filename: 'screenshot.png'
+      })
+      // Second: path attachment as XML text block
+      expect(parts[1]).toEqual({
+        type: 'text',
+        text: '<attached_files>\n<file path="/src/code.ts">code.ts</file>\n</attached_files>'
+      })
+      // Third: prompt text
+      expect(parts[2]).toEqual({
+        type: 'text',
+        text: 'explain'
+      })
     })
   })
 })

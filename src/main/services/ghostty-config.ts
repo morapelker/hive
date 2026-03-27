@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname, isAbsolute } from 'path'
 import { homedir } from 'os'
 import { createLogger } from './logger'
 
@@ -44,7 +44,10 @@ function findConfigFile(): string | undefined {
     join(home, 'Library', 'Application Support', 'com.mitchellh.ghostty', 'config'),
     join(xdgConfig, 'ghostty', 'config.ghostty'),
     join(xdgConfig, 'ghostty', 'config'),
-    join(home, '.config', 'ghostty', 'config')
+    join(home, '.config', 'ghostty', 'config'),
+    ...(process.platform === 'win32' && process.env.APPDATA
+      ? [join(process.env.APPDATA, 'ghostty', 'config')]
+      : [])
   ]
 
   for (const path of candidates) {
@@ -239,7 +242,7 @@ function createIncludeResolver(baseConfigDir: string): (includePath: string) => 
     }
 
     // If not absolute, resolve relative to the config file's directory
-    if (!resolved.startsWith('/')) {
+    if (!isAbsolute(resolved)) {
       resolved = join(baseConfigDir, resolved)
     }
 
@@ -268,7 +271,7 @@ export function parseGhosttyConfig(): GhosttyConfig {
   }
 
   try {
-    const configDir = configPath.substring(0, configPath.lastIndexOf('/'))
+    const configDir = dirname(configPath)
     const visited = new Set<string>([configPath])
     const config = parseGhosttyConfigContent(content, {}, createIncludeResolver(configDir), visited)
 

@@ -11,6 +11,11 @@ export function AgentSetupGuard(): React.JSX.Element | null {
   const updateSetting = useSettingsStore((s) => s.updateSetting)
 
   const [status, setStatus] = useState<SetupStatus>('detecting')
+  const [detectedSdks, setDetectedSdks] = useState<{
+    opencode: boolean
+    claude: boolean
+    codex: boolean
+  } | null>(null)
 
   useEffect(() => {
     if (isLoading || initialSetupComplete) return
@@ -22,21 +27,28 @@ export function AgentSetupGuard(): React.JSX.Element | null {
       .then((result) => {
         if (cancelled) return
 
-        const { opencode, claude } = result
+        setDetectedSdks(result)
 
-        if (!opencode && !claude) {
+        const { opencode, claude, codex } = result
+        const found: Array<'opencode' | 'claude-code' | 'codex'> = []
+        if (opencode) found.push('opencode')
+        if (claude) found.push('claude-code')
+        if (codex) found.push('codex')
+
+        if (found.length === 0) {
           setStatus('none-found')
-        } else if (opencode && claude) {
-          setStatus('choose')
-        } else {
+        } else if (found.length === 1) {
           // Exactly one found — auto-select it
-          updateSetting('defaultAgentSdk', opencode ? 'opencode' : 'claude-code')
+          updateSetting('defaultAgentSdk', found[0])
           updateSetting('initialSetupComplete', true)
           window.analyticsOps.track('onboarding_completed', {
-            sdk: opencode ? 'opencode' : 'claude-code',
+            sdk: found[0],
             auto_selected: true
           })
           setStatus('done')
+        } else {
+          // Multiple found — let user choose
+          setStatus('choose')
         }
       })
       .catch((error) => {
@@ -60,9 +72,10 @@ export function AgentSetupGuard(): React.JSX.Element | null {
     return <AgentNotFoundDialog />
   }
 
-  if (status === 'choose') {
+  if (status === 'choose' && detectedSdks) {
     return (
       <AgentPickerDialog
+        availableSdks={detectedSdks}
         onSelect={(sdk) => {
           updateSetting('defaultAgentSdk', sdk)
           updateSetting('initialSetupComplete', true)

@@ -66,7 +66,7 @@ function createMockClaudeImpl(): AgentSdkImplementer {
     getModelInfo: vi.fn().mockResolvedValue({
       id: 'opus',
       name: 'Claude Opus 4',
-      limit: { context: 200000, output: 32000 }
+      limit: { context: 1000000, output: 32000 }
     }),
     setSelectedModel: vi.fn(),
     getSessionInfo: vi.fn().mockResolvedValue({ canUndo: false, canRedo: false }),

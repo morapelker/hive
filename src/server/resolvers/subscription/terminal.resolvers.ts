@@ -17,7 +17,9 @@ export const terminalSubscriptionResolvers: Resolvers = {
         try {
           while (true) {
             if (queue.length === 0) {
-              await new Promise<void>(r => { resolve = r })
+              await new Promise<void>((r) => {
+                resolve = r
+              })
             }
             while (queue.length > 0) {
               yield { terminalData: queue.shift()! }
@@ -43,7 +45,9 @@ export const terminalSubscriptionResolvers: Resolvers = {
         try {
           while (true) {
             if (queue.length === 0) {
-              await new Promise<void>(r => { resolve = r })
+              await new Promise<void>((r) => {
+                resolve = r
+              })
             }
             while (queue.length > 0) {
               yield { terminalExit: queue.shift()! }

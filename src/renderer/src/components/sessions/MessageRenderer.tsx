@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { UserBubble } from './UserBubble'
 import { AssistantCanvas } from './AssistantCanvas'
 import { CopyMessageButton } from './CopyMessageButton'
@@ -14,7 +15,7 @@ interface MessageRendererProps {
   isForking?: boolean
 }
 
-export function MessageRenderer({
+export const MessageRenderer = memo(function MessageRenderer({
   message,
   isStreaming = false,
   cwd,
@@ -27,8 +28,8 @@ export function MessageRenderer({
   const displayContent = isPlanMode
     ? message.content.slice(PLAN_MODE_PREFIX.length)
     : isAskMode
-    ? message.content.slice(ASK_MODE_PREFIX.length)
-    : message.content
+      ? message.content.slice(ASK_MODE_PREFIX.length)
+      : message.content
   const isAssistantMessage = message.role === 'assistant' && !isStreaming
 
   return (
@@ -59,4 +60,4 @@ export function MessageRenderer({
       )}
     </div>
   )
-}
+})

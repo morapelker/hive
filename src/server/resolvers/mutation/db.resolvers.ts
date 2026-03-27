@@ -60,6 +60,8 @@ function mapSession(row: any) {
     name: row.name,
     status: row.status,
     opencodeSessionId: row.opencode_session_id,
+    // Only claude-code needs hyphen→underscore conversion (claude-code → claude_code).
+    // Other SDK values (opencode, codex, terminal) pass through as-is.
     agentSdk: row.agent_sdk === 'claude-code' ? 'claude_code' : row.agent_sdk,
     mode: row.mode,
     modelProviderId: row.model_provider_id,
@@ -104,8 +106,7 @@ export const dbMutationResolvers: Resolvers = {
       const data: Record<string, unknown> = {}
       if (input.name !== undefined) data.name = input.name
       if (input.description !== undefined) data.description = input.description
-      if (input.tags !== undefined)
-        data.tags = input.tags ? JSON.stringify(input.tags) : null
+      if (input.tags !== undefined) data.tags = input.tags ? JSON.stringify(input.tags) : null
       if (input.language !== undefined) data.language = input.language
       if (input.customIcon !== undefined) data.custom_icon = input.customIcon
       if (input.setupScript !== undefined) data.setup_script = input.setupScript
@@ -166,9 +167,7 @@ export const dbMutationResolvers: Resolvers = {
         name: input.name ?? null,
         opencode_session_id: input.opencodeSessionId ?? null,
         agent_sdk:
-          input.agentSdk === 'claude_code'
-            ? 'claude-code'
-            : (input.agentSdk ?? 'opencode'),
+          input.agentSdk === 'claude_code' ? 'claude-code' : (input.agentSdk ?? 'opencode'),
         model_provider_id: input.modelProviderId ?? null,
         model_id: input.modelId ?? null,
         model_variant: input.modelVariant ?? null
@@ -179,14 +178,11 @@ export const dbMutationResolvers: Resolvers = {
       const data: Record<string, unknown> = {}
       if (input.name !== undefined) data.name = input.name
       if (input.status !== undefined) data.status = input.status
-      if (input.opencodeSessionId !== undefined)
-        data.opencode_session_id = input.opencodeSessionId
+      if (input.opencodeSessionId !== undefined) data.opencode_session_id = input.opencodeSessionId
       if (input.agentSdk !== undefined)
-        data.agent_sdk =
-          input.agentSdk === 'claude_code' ? 'claude-code' : input.agentSdk
+        data.agent_sdk = input.agentSdk === 'claude_code' ? 'claude-code' : input.agentSdk
       if (input.mode !== undefined) data.mode = input.mode
-      if (input.modelProviderId !== undefined)
-        data.model_provider_id = input.modelProviderId
+      if (input.modelProviderId !== undefined) data.model_provider_id = input.modelProviderId
       if (input.modelId !== undefined) data.model_id = input.modelId
       if (input.modelVariant !== undefined) data.model_variant = input.modelVariant
       if (input.updatedAt !== undefined) data.updated_at = input.updatedAt

@@ -7,18 +7,21 @@ export const PR_URL_PATTERN = /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/
 
 /**
  * Watches stream events for a PR session and detects when a GitHub PR URL
- * appears in assistant output. Transitions PR state from 'creating' to 'created'.
+ * appears in assistant output. Transitions from creating → attached (DB-persisted).
  *
  * Stream detection is scoped to the specific Hive session that started PR
- * creation (event.sessionId === prInfo.sessionId). This prevents concurrent PR
+ * creation (event.sessionId === prCreation.sessionId). This prevents concurrent PR
  * workflows in sibling worktrees from leaking state into each other.
  *
  * We scan both text content AND tool output (the `gh pr create` command output
  * typically contains the PR URL before the assistant's text summary does).
  */
 export function usePRDetection(worktreeId: string | null): void {
-  const prInfo = useGitStore((s) => (worktreeId ? s.prInfo.get(worktreeId) : undefined))
-  const setPrState = useGitStore((s) => s.setPrState)
+  const prCreation = useGitStore((s) =>
+    worktreeId ? s.prCreation.get(worktreeId) : undefined
+  )
+  const setPrCreation = useGitStore((s) => s.setPrCreation)
+  const attachPR = useGitStore((s) => s.attachPR)
 
   const worktreePath = useWorktreeStore((s) => {
     if (!worktreeId) return null
@@ -30,7 +33,7 @@ export function usePRDetection(worktreeId: string | null): void {
   })
 
   const opencodeSessionId = useSessionStore((s) => {
-    const prSessionId = prInfo?.sessionId
+    const prSessionId = prCreation?.sessionId
     if (!prSessionId) return null
     for (const sessions of s.sessionsByWorktree.values()) {
       const match = sessions.find((session) => session.id === prSessionId)
@@ -40,17 +43,17 @@ export function usePRDetection(worktreeId: string | null): void {
   })
 
   // Use refs to avoid stale closures in the stream listener
-  const prInfoRef = useRef(prInfo)
+  const prCreationRef = useRef(prCreation)
   const worktreeIdRef = useRef(worktreeId)
-  prInfoRef.current = prInfo
+  prCreationRef.current = prCreation
   worktreeIdRef.current = worktreeId
 
   // Accumulate streamed text to detect PR URLs across deltas
   const accumulatedTextRef = useRef('')
 
   useEffect(() => {
-    // Only monitor when state is 'creating'
-    if (!worktreeId || !prInfo || prInfo.state !== 'creating') return
+    // Only monitor when actively creating
+    if (!worktreeId || !prCreation || !prCreation.creating) return
 
     // Reset accumulated text
     accumulatedTextRef.current = ''
@@ -58,28 +61,30 @@ export function usePRDetection(worktreeId: string | null): void {
     const checkForPrUrl = (text: string): void => {
       const match = text.match(PR_URL_PATTERN)
       if (match) {
-        const currentPrInfo = prInfoRef.current
+        const currentCreation = prCreationRef.current
         const currentWorktreeId = worktreeIdRef.current
-        if (currentPrInfo && currentWorktreeId && currentPrInfo.state === 'creating') {
+        if (currentCreation && currentWorktreeId && currentCreation.creating) {
           const prNumber = parseInt(match[1], 10)
-          setPrState(currentWorktreeId, {
-            ...currentPrInfo,
-            state: 'created',
-            prNumber,
-            prUrl: match[0]
-          })
+          // Persist to DB + optimistic cache
+          attachPR(currentWorktreeId, prNumber, match[0])
+          // Clear ephemeral creation state
+          setPrCreation(currentWorktreeId, null)
         }
       }
     }
 
     const unsubscribe = window.opencodeOps?.onStream
       ? window.opencodeOps.onStream((event) => {
-          const currentPrInfo = prInfoRef.current
-          if (!currentPrInfo || currentPrInfo.state !== 'creating' || !currentPrInfo.sessionId) {
+          const currentCreation = prCreationRef.current
+          if (
+            !currentCreation ||
+            !currentCreation.creating ||
+            !currentCreation.sessionId
+          ) {
             return
           }
 
-          if (event.sessionId !== currentPrInfo.sessionId) return
+          if (event.sessionId !== currentCreation.sessionId) return
 
           // Primary path: message part updates (SDK streams text/tool deltas here)
           if (event.type === 'message.part.updated') {
@@ -128,14 +133,14 @@ export function usePRDetection(worktreeId: string | null): void {
       : () => {}
 
     return unsubscribe
-  }, [worktreeId, prInfo, opencodeSessionId, worktreePath, setPrState])
+  }, [worktreeId, prCreation, opencodeSessionId, worktreePath, setPrCreation, attachPR])
 
   // Backstop: poll transcript while creating in case stream event payload shapes vary.
   useEffect(() => {
     if (
       !worktreeId ||
-      !prInfo ||
-      prInfo.state !== 'creating' ||
+      !prCreation ||
+      !prCreation.creating ||
       !worktreePath ||
       !opencodeSessionId
     ) {
@@ -153,17 +158,15 @@ export function usePRDetection(worktreeId: string | null): void {
         const match = serialized.match(PR_URL_PATTERN)
         if (!match) return
 
-        const currentPrInfo = prInfoRef.current
+        const currentCreation = prCreationRef.current
         const currentWorktreeId = worktreeIdRef.current
-        if (!currentPrInfo || !currentWorktreeId || currentPrInfo.state !== 'creating') return
+        if (!currentCreation || !currentWorktreeId || !currentCreation.creating) return
 
         const prNumber = parseInt(match[1], 10)
-        setPrState(currentWorktreeId, {
-          ...currentPrInfo,
-          state: 'created',
-          prNumber,
-          prUrl: match[0]
-        })
+        // Persist to DB + optimistic cache
+        attachPR(currentWorktreeId, prNumber, match[0])
+        // Clear ephemeral creation state
+        setPrCreation(currentWorktreeId, null)
       } catch {
         // Non-fatal: next poll tick will retry
       }
@@ -178,5 +181,5 @@ export function usePRDetection(worktreeId: string | null): void {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [worktreeId, worktreePath, opencodeSessionId, prInfo, setPrState])
+  }, [worktreeId, worktreePath, opencodeSessionId, prCreation, setPrCreation, attachPR])
 }

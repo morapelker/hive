@@ -1,8 +1,6 @@
 import { ipcMain } from 'electron'
-import { spawn } from 'child_process'
 import { existsSync } from 'fs'
-import { platform } from 'os'
-import { openPathWithPreferredEditor } from './settings-handlers'
+import { openPathWithPreferredEditor, openPathWithPreferredTerminal } from './settings-handlers'
 import { createGitService, createLogger } from '../services'
 import { telemetryService } from '../services/telemetry-service'
 import {
@@ -43,47 +41,35 @@ export function registerWorktreeHandlers(): void {
   })
 
   // Create a new worktree
-  ipcMain.handle(
-    'worktree:create',
-    async (_event, params: CreateWorktreeParams) => {
-      const result = await createWorktreeOp(getDatabase(), params)
-      if (result.success) {
-        telemetryService.track('worktree_created')
-      }
-      return result
+  ipcMain.handle('worktree:create', async (_event, params: CreateWorktreeParams) => {
+    const result = await createWorktreeOp(getDatabase(), params)
+    if (result.success) {
+      telemetryService.track('worktree_created')
     }
-  )
+    return result
+  })
 
   // Delete/Archive a worktree
-  ipcMain.handle(
-    'worktree:delete',
-    async (_event, params: DeleteWorktreeParams) => {
-      return deleteWorktreeOp(getDatabase(), params)
-    }
-  )
+  ipcMain.handle('worktree:delete', async (_event, params: DeleteWorktreeParams) => {
+    return deleteWorktreeOp(getDatabase(), params)
+  })
 
   // Sync worktrees with actual git state
-  ipcMain.handle(
-    'worktree:sync',
-    async (_event, params: SyncWorktreesParams) => {
-      return syncWorktreesOp(getDatabase(), params)
-    }
-  )
+  ipcMain.handle('worktree:sync', async (_event, params: SyncWorktreesParams) => {
+    return syncWorktreesOp(getDatabase(), params)
+  })
 
   // Duplicate a worktree (clone branch with uncommitted state)
-  ipcMain.handle(
-    'worktree:duplicate',
-    async (_event, params: DuplicateWorktreeParams) => {
-      return duplicateWorktreeOp(getDatabase(), params)
-    }
-  )
+  ipcMain.handle('worktree:duplicate', async (_event, params: DuplicateWorktreeParams) => {
+    return duplicateWorktreeOp(getDatabase(), params)
+  })
 
   // Check if worktree path exists on disk
   ipcMain.handle('worktree:exists', (_event, worktreePath: string): boolean => {
     return existsSync(worktreePath)
   })
 
-  // Open worktree in terminal
+  // Open worktree in user's preferred terminal (from Settings)
   ipcMain.handle(
     'worktree:openInTerminal',
     async (
@@ -92,70 +78,7 @@ export function registerWorktreeHandlers(): void {
     ): Promise<{
       success: boolean
       error?: string
-    }> => {
-      try {
-        if (!existsSync(worktreePath)) {
-          return {
-            success: false,
-            error: 'Worktree directory does not exist'
-          }
-        }
-
-        const currentPlatform = platform()
-
-        if (currentPlatform === 'darwin') {
-          // macOS: Open Terminal.app
-          spawn('open', ['-a', 'Terminal', worktreePath], { detached: true })
-        } else if (currentPlatform === 'win32') {
-          // Windows: Open cmd or PowerShell
-          spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/K', `cd /d "${worktreePath}"`], {
-            detached: true,
-            shell: true
-          })
-        } else {
-          // Linux: Try common terminal emulators
-          const terminals = [
-            'gnome-terminal',
-            'konsole',
-            'xfce4-terminal',
-            'xterm',
-            'terminator',
-            'alacritty',
-            'kitty'
-          ]
-
-          let launched = false
-          for (const terminal of terminals) {
-            try {
-              if (terminal === 'gnome-terminal') {
-                spawn(terminal, ['--working-directory', worktreePath], { detached: true })
-              } else {
-                spawn(terminal, [], { cwd: worktreePath, detached: true })
-              }
-              launched = true
-              break
-            } catch {
-              // Try next terminal
-            }
-          }
-
-          if (!launched) {
-            return {
-              success: false,
-              error: 'No supported terminal emulator found'
-            }
-          }
-        }
-
-        return { success: true }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        return {
-          success: false,
-          error: message
-        }
-      }
-    }
+    }> => openPathWithPreferredTerminal(worktreePath)
   )
 
   // Open worktree in user's preferred editor (from Settings)
@@ -216,12 +139,9 @@ export function registerWorktreeHandlers(): void {
   )
 
   // Rename a branch in a worktree
-  ipcMain.handle(
-    'worktree:renameBranch',
-    async (_event, params: RenameBranchParams) => {
-      return renameWorktreeBranchOp(getDatabase(), params)
-    }
-  )
+  ipcMain.handle('worktree:renameBranch', async (_event, params: RenameBranchParams) => {
+    return renameWorktreeBranchOp(getDatabase(), params)
+  })
 
   // List all branches with checkout status
   ipcMain.handle(
@@ -242,12 +162,9 @@ export function registerWorktreeHandlers(): void {
   )
 
   // Create a worktree from a specific existing branch
-  ipcMain.handle(
-    'worktree:createFromBranch',
-    async (_event, params: CreateFromBranchParams) => {
-      return createWorktreeFromBranchOp(getDatabase(), params)
-    }
-  )
+  ipcMain.handle('worktree:createFromBranch', async (_event, params: CreateFromBranchParams) => {
+    return createWorktreeFromBranchOp(getDatabase(), params)
+  })
 
   // Get worktree context
   ipcMain.handle('worktree:getContext', async (_event, worktreeId: string) => {

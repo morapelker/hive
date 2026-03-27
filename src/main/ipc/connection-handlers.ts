@@ -1,8 +1,5 @@
 import { ipcMain } from 'electron'
-import { spawn } from 'child_process'
-import { existsSync } from 'fs'
-import { platform } from 'os'
-import { openPathWithPreferredEditor } from './settings-handlers'
+import { openPathWithPreferredEditor, openPathWithPreferredTerminal } from './settings-handlers'
 import { createLogger } from '../services'
 import { telemetryService } from '../services/telemetry-service'
 import {
@@ -135,62 +132,14 @@ export function registerConnectionHandlers(): void {
     }
   )
 
-  // Open connection directory in terminal
+  // Open connection directory in user's preferred terminal (from Settings)
   ipcMain.handle(
     'connection:openInTerminal',
     async (
       _event,
       { connectionPath }: { connectionPath: string }
-    ): Promise<{ success: boolean; error?: string }> => {
-      try {
-        if (!existsSync(connectionPath)) {
-          return { success: false, error: 'Connection directory does not exist' }
-        }
-
-        const currentPlatform = platform()
-
-        if (currentPlatform === 'darwin') {
-          spawn('open', ['-a', 'Terminal', connectionPath], { detached: true })
-        } else if (currentPlatform === 'win32') {
-          spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/K', `cd /d "${connectionPath}"`], {
-            detached: true,
-            shell: true
-          })
-        } else {
-          const terminals = [
-            'gnome-terminal',
-            'konsole',
-            'xfce4-terminal',
-            'xterm',
-            'terminator',
-            'alacritty',
-            'kitty'
-          ]
-          let launched = false
-          for (const terminal of terminals) {
-            try {
-              if (terminal === 'gnome-terminal') {
-                spawn(terminal, ['--working-directory', connectionPath], { detached: true })
-              } else {
-                spawn(terminal, [], { cwd: connectionPath, detached: true })
-              }
-              launched = true
-              break
-            } catch {
-              // Try next terminal
-            }
-          }
-          if (!launched) {
-            return { success: false, error: 'No supported terminal emulator found' }
-          }
-        }
-
-        return { success: true }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return { success: false, error: message }
-      }
-    }
+    ): Promise<{ success: boolean; error?: string }> =>
+      openPathWithPreferredTerminal(connectionPath)
   )
 
   // Open connection directory in user's preferred editor (from Settings)

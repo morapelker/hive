@@ -48,9 +48,7 @@ export function HunkActionGutter({
       // For additions and modifications, use modified side line number
       // For deletions, use the modified side anchor point
       const lineNumber =
-        hunk.type === 'delete'
-          ? Math.max(1, hunk.modifiedStartLine || 1)
-          : hunk.modifiedStartLine
+        hunk.type === 'delete' ? Math.max(1, hunk.modifiedStartLine || 1) : hunk.modifiedStartLine
 
       const top = modifiedEditor.getTopForLineNumber(lineNumber)
       const scrollTop = modifiedEditor.getScrollTop()

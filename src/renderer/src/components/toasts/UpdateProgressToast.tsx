@@ -16,13 +16,9 @@ export function UpdateProgressToast({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Download className="h-4 w-4 text-blue-500" />
-          <span className="text-sm font-medium text-foreground">
-            Downloading v{version}...
-          </span>
+          <span className="text-sm font-medium text-foreground">Downloading v{version}...</span>
         </div>
-        <span className="text-xs tabular-nums text-muted-foreground">
-          {rounded}%
-        </span>
+        <span className="text-xs tabular-nums text-muted-foreground">{rounded}%</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
         <div

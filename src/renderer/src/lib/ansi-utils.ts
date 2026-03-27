@@ -9,6 +9,12 @@
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\].*?(?:\x07|\x1b\\)/g
 
+/** Check whether a string contains any ANSI escape sequences. */
+export function containsAnsi(text: string): boolean {
+  ANSI_RE.lastIndex = 0
+  return ANSI_RE.test(text)
+}
+
 /**
  * Remove all ANSI escape sequences from a string.
  * Useful for plain-text search matching against terminal output.

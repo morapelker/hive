@@ -1,10 +1,7 @@
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import type { Resolvers } from '../../__generated__/resolvers-types'
-import {
-  createGitService,
-  parseWorktreeForBranch
-} from '../../../main/services/git-service'
+import { createGitService, parseWorktreeForBranch } from '../../../main/services/git-service'
 import { getEventBus } from '../../event-bus'
 import { watchWorktree, unwatchWorktree } from '../../../main/services/worktree-watcher'
 import { watchBranch, unwatchBranch } from '../../../main/services/branch-watcher'
@@ -179,10 +176,7 @@ export const gitMutationResolvers: Resolvers = {
         const worktreeListResult = await execAsync('git worktree list --porcelain', {
           cwd: worktreePath
         })
-        const targetWorktreePath = parseWorktreeForBranch(
-          worktreeListResult.stdout,
-          targetBranch
-        )
+        const targetWorktreePath = parseWorktreeForBranch(worktreeListResult.stdout, targetBranch)
 
         if (targetWorktreePath) {
           const currentBranch = await execAsync('git branch --show-current', {

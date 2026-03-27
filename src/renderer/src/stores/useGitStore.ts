@@ -30,12 +30,14 @@ interface RemoteInfo {
   url: string | null
 }
 
-interface PRInfo {
-  state: 'none' | 'creating' | 'created' | 'merged'
-  prNumber?: number
-  prUrl?: string
-  targetBranch?: string
-  sessionId?: string
+interface PRCreationState {
+  creating: boolean
+  sessionId: string
+}
+
+interface AttachedPR {
+  number: number
+  url: string
 }
 
 interface GitStoreState {
@@ -57,7 +59,8 @@ interface GitStoreState {
   reviewTargetBranch: Map<string, string>
 
   // PR lifecycle - keyed by worktree ID
-  prInfo: Map<string, PRInfo>
+  prCreation: Map<string, PRCreationState>
+  attachedPR: Map<string, AttachedPR>
 
   // Cross-worktree merge default - keyed by project ID
   defaultMergeBranch: Map<string, string>
@@ -93,7 +96,10 @@ interface GitStoreState {
   setReviewTargetBranch: (worktreeId: string, branch: string) => void
 
   // PR lifecycle actions
-  setPrState: (worktreeId: string, info: PRInfo) => void
+  setPrCreation: (worktreeId: string, state: PRCreationState | null) => void
+  setAttachedPR: (worktreeId: string, pr: AttachedPR | null) => void
+  attachPR: (worktreeId: string, prNumber: number, prUrl: string) => Promise<void>
+  detachPR: (worktreeId: string) => Promise<void>
 
   // Cross-worktree merge default actions
   setDefaultMergeBranch: (projectId: string, branchName: string) => void
@@ -142,7 +148,8 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   reviewTargetBranch: new Map(),
 
   // PR lifecycle
-  prInfo: new Map(),
+  prCreation: new Map(),
+  attachedPR: new Map(),
 
   // Cross-worktree merge default
   defaultMergeBranch: new Map(),
@@ -376,13 +383,96 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
     }
   },
 
-  // Set PR lifecycle state for a worktree
-  setPrState: (worktreeId: string, info: PRInfo) => {
-    set((state) => {
-      const newMap = new Map(state.prInfo)
-      newMap.set(worktreeId, info)
-      return { prInfo: newMap }
+  // Set ephemeral PR creation state for a worktree
+  setPrCreation: (worktreeId: string, state: PRCreationState | null) => {
+    set((s) => {
+      const newMap = new Map(s.prCreation)
+      if (state) {
+        newMap.set(worktreeId, state)
+      } else {
+        newMap.delete(worktreeId)
+      }
+      return { prCreation: newMap }
     })
+  },
+
+  // Set optimistic attached PR cache
+  setAttachedPR: (worktreeId: string, pr: AttachedPR | null) => {
+    set((s) => {
+      const newMap = new Map(s.attachedPR)
+      if (pr) {
+        newMap.set(worktreeId, pr)
+      } else {
+        newMap.delete(worktreeId)
+      }
+      return { attachedPR: newMap }
+    })
+  },
+
+  // Attach a PR to a worktree (optimistic + DB write)
+  attachPR: async (worktreeId: string, prNumber: number, prUrl: string) => {
+    const prev = get().attachedPR.get(worktreeId) ?? null
+    // Optimistic update
+    set((s) => {
+      const newMap = new Map(s.attachedPR)
+      newMap.set(worktreeId, { number: prNumber, url: prUrl })
+      return { attachedPR: newMap }
+    })
+    try {
+      const result = await window.db.worktree.attachPR(worktreeId, prNumber, prUrl)
+      if (!result.success) {
+        // Rollback on failure
+        set((s) => {
+          const newMap = new Map(s.attachedPR)
+          if (prev) {
+            newMap.set(worktreeId, prev)
+          } else {
+            newMap.delete(worktreeId)
+          }
+          return { attachedPR: newMap }
+        })
+      }
+    } catch {
+      // Rollback on error
+      set((s) => {
+        const newMap = new Map(s.attachedPR)
+        if (prev) {
+          newMap.set(worktreeId, prev)
+        } else {
+          newMap.delete(worktreeId)
+        }
+        return { attachedPR: newMap }
+      })
+    }
+  },
+
+  // Detach a PR from a worktree (optimistic + DB write)
+  detachPR: async (worktreeId: string) => {
+    const prev = get().attachedPR.get(worktreeId) ?? null
+    // Optimistic update
+    set((s) => {
+      const newMap = new Map(s.attachedPR)
+      newMap.delete(worktreeId)
+      return { attachedPR: newMap }
+    })
+    try {
+      const result = await window.db.worktree.detachPR(worktreeId)
+      if (!result.success) {
+        // Rollback on failure
+        set((s) => {
+          const newMap = new Map(s.attachedPR)
+          if (prev) newMap.set(worktreeId, prev)
+          return { attachedPR: newMap }
+        })
+      }
+    } catch {
+      // Rollback on error
+      set((s) => {
+        const newMap = new Map(s.attachedPR)
+        if (prev) newMap.set(worktreeId, prev)
+        return { attachedPR: newMap }
+      })
+    }
   },
 
   // Set PR target branch for a worktree
@@ -515,4 +605,4 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
 }))
 
 // Export types
-export type { GitStatusCode, GitFileStatus, GitBranchInfo, RemoteInfo, PRInfo }
+export type { GitStatusCode, GitFileStatus, GitBranchInfo, RemoteInfo, PRCreationState, AttachedPR }

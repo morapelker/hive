@@ -2,8 +2,8 @@ import { ipcMain } from 'electron'
 import { updaterService } from '../services/updater'
 
 export function registerUpdaterHandlers(): void {
-  ipcMain.handle('updater:check', async () => {
-    await updaterService.checkForUpdates()
+  ipcMain.handle('updater:check', async (_event, options?: { manual?: boolean }) => {
+    await updaterService.checkForUpdates(options)
   })
 
   ipcMain.handle('updater:download', async () => {

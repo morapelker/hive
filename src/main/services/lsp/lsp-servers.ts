@@ -7,11 +7,7 @@ import type { LspServerDefinition, LspServerHandle } from './lsp-types'
  * Walk up from `path.dirname(file)` to `stopDir`, looking for any marker file.
  * Returns the directory containing the first marker found, or `stopDir` as fallback.
  */
-export function findProjectRoot(
-  file: string,
-  rootMarkers: string[],
-  stopDir: string
-): string {
+export function findProjectRoot(file: string, rootMarkers: string[], stopDir: string): string {
   let dir = dirname(file)
 
   while (true) {
@@ -120,13 +116,7 @@ export const GoplsServer: LspServerDefinition = {
 export const PyrightServer: LspServerDefinition = {
   id: 'pyright',
   extensions: ['.py', '.pyi'],
-  rootMarkers: [
-    'pyproject.toml',
-    'setup.py',
-    'setup.cfg',
-    'requirements.txt',
-    'Pipfile'
-  ],
+  rootMarkers: ['pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'Pipfile'],
   async spawn(root: string): Promise<LspServerHandle | undefined> {
     try {
       if (binaryExists('pyright-langserver')) {

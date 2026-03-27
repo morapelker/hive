@@ -165,9 +165,7 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
                 )}
               >
                 {q.header}
-                {answers[i]?.length > 0 && (
-                  <Check className="h-3 w-3 ml-1 inline text-green-500" />
-                )}
+                {answers[i]?.length > 0 && <Check className="h-3 w-3 ml-1 inline text-green-500" />}
               </button>
             ))}
           </div>
@@ -242,7 +240,9 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Pencil className="h-3.5 w-3.5 shrink-0 text-blue-400" />
-                <span className="text-sm font-medium whitespace-pre-wrap line-clamp-3">{customAnswer}</span>
+                <span className="text-sm font-medium whitespace-pre-wrap line-clamp-3">
+                  {customAnswer}
+                </span>
               </div>
             </button>
           )}

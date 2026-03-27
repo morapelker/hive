@@ -24,3 +24,20 @@ export interface GitDiffStatFile {
   deletions: number
   binary: boolean
 }
+
+export interface PRReviewComment {
+  id: number
+  body: string
+  bodyHTML: string
+  path: string
+  line: number | null
+  originalLine: number | null
+  side: 'LEFT' | 'RIGHT'
+  diffHunk: string
+  user: { login: string; avatarUrl: string }
+  createdAt: string
+  updatedAt: string
+  inReplyToId: number | null
+  pullRequestReviewId: number | null
+  subjectType: 'line' | 'file'
+}

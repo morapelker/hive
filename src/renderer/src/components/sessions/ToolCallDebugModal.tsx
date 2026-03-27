@@ -75,7 +75,7 @@ export function ToolCallDebugModal({ open, onOpenChange, toolUse }: ToolCallDebu
   }, [toolUse.input])
 
   const outputText = useMemo(
-    () => toolUse.error ? `[ERROR]\n${toolUse.error}` : toolUse.output ?? '(no output)',
+    () => (toolUse.error ? `[ERROR]\n${toolUse.error}` : (toolUse.output ?? '(no output)')),
     [toolUse.error, toolUse.output]
   )
 
@@ -86,7 +86,10 @@ export function ToolCallDebugModal({ open, onOpenChange, toolUse }: ToolCallDebu
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="tool-debug-modal" className="max-w-2xl max-h-[85vh] flex flex-col gap-3">
+      <DialogContent
+        data-testid="tool-debug-modal"
+        className="max-w-2xl max-h-[85vh] flex flex-col gap-3"
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Bug className="h-4 w-4 text-muted-foreground" />
@@ -155,7 +158,10 @@ export function ToolCallDebugModal({ open, onOpenChange, toolUse }: ToolCallDebu
 
         {/* Tab content */}
         <div role="tabpanel" className="flex-1 min-h-0">
-          <pre data-testid="tool-debug-content" className="bg-muted rounded-md p-3 font-mono text-xs leading-relaxed overflow-auto max-h-[60vh] select-text whitespace-pre-wrap break-words">
+          <pre
+            data-testid="tool-debug-content"
+            className="bg-muted rounded-md p-3 font-mono text-xs leading-relaxed overflow-auto max-h-[60vh] select-text whitespace-pre-wrap break-words"
+          >
             {activeTab === 'input' ? inputJson : outputText}
           </pre>
         </div>

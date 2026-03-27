@@ -105,6 +105,8 @@ enum SessionMode {
 enum AgentSdk {
   opencode
   claude_code
+  codex
+  terminal
 }
 
 # --- Inputs ---

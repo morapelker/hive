@@ -2,10 +2,20 @@ import simpleGit, { SimpleGit, BranchSummary } from 'simple-git'
 import { app } from 'electron'
 import { join, basename, dirname } from 'path'
 import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync, readdirSync } from 'fs'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import { tmpdir } from 'os'
-import { selectUniqueBreedName, ALL_BREED_NAMES, LEGACY_CITY_NAMES, type BreedType } from './breed-names'
+import { getImageMimeType } from '@shared/types/file-utils'
+import {
+  selectUniqueBreedName,
+  ALL_BREED_NAMES,
+  LEGACY_CITY_NAMES,
+  type BreedType
+} from './breed-names'
 import { createLogger } from './logger'
+import { normalizeWorktreePath } from './path-utils'
 
+const execFileAsync = promisify(execFile)
 const log = createLogger({ component: 'GitService' })
 
 export interface WorktreeInfo {
@@ -20,6 +30,10 @@ export interface CreateWorktreeResult {
   branchName?: string
   path?: string
   error?: string
+  pullInfo?: {
+    pulled: boolean
+    updated: boolean
+  }
 }
 
 export interface DeleteWorktreeResult {
@@ -215,6 +229,7 @@ export class GitService {
     try {
       const result = await this.git.raw(['worktree', 'list', '--porcelain'])
       const worktrees: WorktreeInfo[] = []
+      const normalizedRepoPath = normalizeWorktreePath(this.repoPath)
 
       const lines = result.split('\n')
       let currentWorktree: Partial<WorktreeInfo> = {}
@@ -226,12 +241,17 @@ export class GitService {
           // Format: branch refs/heads/branch-name
           const branchRef = line.replace('branch ', '')
           currentWorktree.branch = branchRef.replace('refs/heads/', '')
+        } else if (line === 'detached') {
+          currentWorktree.branch = ''
         } else if (line === '') {
-          if (currentWorktree.path && currentWorktree.branch) {
+          const worktreePath = currentWorktree.path
+          const worktreeBranch = currentWorktree.branch
+
+          if (worktreePath && worktreeBranch !== undefined) {
             worktrees.push({
-              path: currentWorktree.path,
-              branch: currentWorktree.branch,
-              isMain: currentWorktree.path === this.repoPath
+              path: worktreePath,
+              branch: worktreeBranch,
+              isMain: normalizeWorktreePath(worktreePath) === normalizedRepoPath
             })
           }
           currentWorktree = {}
@@ -254,12 +274,26 @@ export class GitService {
    */
   async createWorktree(
     projectName: string,
-    breedType: BreedType = 'dogs'
+    breedType: BreedType = 'dogs',
+    options?: { autoPull?: boolean }
   ): Promise<CreateWorktreeResult> {
     const MAX_ATTEMPTS = 3
     // Ensure worktrees directory exists and get base branch once — neither changes between retries
     const projectWorktreesDir = this.ensureWorktreesDir(projectName)
     const defaultBranch = await this.getCurrentBranch()
+
+    // Fetch from origin to ensure base branch is up-to-date (if enabled)
+    const autoPull = options?.autoPull !== false // Default true
+    const pullResult = await this.pullBaseBranch(defaultBranch, {
+      silent: true,
+      skipPull: !autoPull
+    })
+    if (pullResult.success && pullResult.updated) {
+      log.info('Fetched latest changes before creating worktree', {
+        branch: defaultBranch,
+        repoPath: this.repoPath
+      })
+    }
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -271,17 +305,23 @@ export class GitService {
         // Also scan the filesystem to catch path collisions from incomplete cleanups
         let existingDirs: string[] = []
         try {
-          existingDirs = readdirSync(projectWorktreesDir)
+          existingDirs = readdirSync(projectWorktreesDir).map((d) =>
+            d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
+          )
         } catch {
           // directory may not exist yet; ignore
         }
 
         // Combine all existing names to avoid
-        const existingNames = new Set([...existingBranches, ...existingWorktreeBranches, ...existingDirs])
+        const existingNames = new Set([
+          ...existingBranches,
+          ...existingWorktreeBranches,
+          ...existingDirs
+        ])
 
         // Select a unique breed name
         const breedName = selectUniqueBreedName(existingNames, breedType)
-        const worktreePath = join(projectWorktreesDir, breedName)
+        const worktreePath = join(projectWorktreesDir, `${projectName}--${breedName}`)
 
         // Create the worktree with a new branch
         await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, defaultBranch])
@@ -290,7 +330,11 @@ export class GitService {
           success: true,
           name: breedName,
           branchName: breedName,
-          path: worktreePath
+          path: worktreePath,
+          pullInfo: {
+            pulled: pullResult.success && autoPull,
+            updated: pullResult.updated || false
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error'
@@ -818,6 +862,104 @@ export class GitService {
   }
 
   /**
+   * Pull a base branch before creating a worktree
+   * Uses git pull with --ff-only to update the local branch safely
+   * Gracefully handles errors - won't block worktree creation
+   * @param branchName - Branch name to pull
+   * @param options - Options including silent mode and skipPull flag
+   */
+  async pullBaseBranch(
+    branchName: string,
+    options?: { silent?: boolean; skipPull?: boolean }
+  ): Promise<GitPullResult> {
+    // If skipPull is true, return immediately (setting disabled)
+    if (options?.skipPull) {
+      return { success: true, updated: false }
+    }
+
+    try {
+      // Check if remote 'origin' exists
+      const remotes = await this.git.getRemotes()
+      if (!remotes.find((r) => r.name === 'origin')) {
+        if (!options?.silent) {
+          log.info('No remote origin configured, skipping pull', { repoPath: this.repoPath })
+        }
+        return { success: true, updated: false }
+      }
+
+      // Check if branch exists locally
+      const branches = await this.getAllBranches()
+      const branchExists = branches.some((b) => b === branchName)
+
+      if (!branchExists) {
+        // Branch doesn't exist locally, this is fine (new branch)
+        if (!options?.silent) {
+          log.info('Branch does not exist locally, skipping pull', {
+            branch: branchName,
+            repoPath: this.repoPath
+          })
+        }
+        return { success: true, updated: false }
+      }
+
+      // Check if this branch is currently checked out
+      const currentBranch = await this.getCurrentBranch()
+      const isCurrentBranch = currentBranch === branchName
+
+      let updated = false
+
+      if (isCurrentBranch) {
+        // Branch is checked out - use git pull
+        const pullOptions: Record<string, null | string | number> = {
+          '--ff-only': null
+        }
+        const result = await this.git.pull('origin', branchName, pullOptions)
+        updated = (result.files?.length || 0) > 0 || result.summary.changes > 0
+
+        if (!options?.silent && updated) {
+          log.info('Successfully pulled checked-out branch', {
+            branch: branchName,
+            changes: result.summary.changes,
+            repoPath: this.repoPath
+          })
+        }
+      } else {
+        // Branch is not checked out - use git fetch to update ref directly
+        const beforeSha = await this.git.revparse([branchName])
+        await this.git.fetch('origin', `${branchName}:${branchName}`)
+        const afterSha = await this.git.revparse([branchName])
+        updated = beforeSha !== afterSha
+
+        if (!options?.silent && updated) {
+          log.info('Successfully fetched non-checked-out branch', {
+            branch: branchName,
+            beforeSha: beforeSha.substring(0, 7),
+            afterSha: afterSha.substring(0, 7),
+            repoPath: this.repoPath
+          })
+        }
+      }
+
+      return {
+        success: true,
+        updated
+      }
+    } catch (error) {
+      const errMessage = error instanceof Error ? error.message : 'Unknown error'
+
+      // Log the error but don't fail - worktree creation should proceed
+      log.warn('Pull base branch failed, proceeding with local branch state', {
+        branch: branchName,
+        error: errMessage,
+        repoPath: this.repoPath
+      })
+
+      // Return success: false so UI can show warning, but worktree creation will still proceed
+      return { success: false, updated: false }
+    }
+  }
+
+  /**
    * Merge a branch into the current branch
    * @param sourceBranch - Branch to merge from
    */
@@ -925,17 +1067,59 @@ export class GitService {
   }
 
   /**
+   * Get file content from a specific git ref as base64 (for binary files like images).
+   * Uses execFile with buffer encoding to avoid corrupting binary data.
+   * @param ref - Git ref: 'HEAD' for HEAD version, '' (empty string) for index/staged version
+   * @param filePath - Relative path to the file
+   */
+  async getRefContentBase64(
+    ref: string,
+    filePath: string
+  ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> {
+    try {
+      const refSpec = ref ? `${ref}:${filePath}` : `:${filePath}`
+      const { stdout } = await execFileAsync('git', ['show', refSpec], {
+        encoding: 'buffer',
+        cwd: this.repoPath,
+        maxBuffer: 1024 * 1024 // 1MB limit, matching readFileAsBase64
+      })
+      const data = stdout.toString('base64')
+      const mimeType = getImageMimeType(filePath) ?? undefined
+      return { success: true, data, mimeType }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      log.error(
+        'Failed to get ref content as base64',
+        error instanceof Error ? error : new Error(message),
+        {
+          ref,
+          filePath,
+          repoPath: this.repoPath
+        }
+      )
+      return { success: false, error: message }
+    }
+  }
+
+  /**
    * Write patch content to a temp file, run git apply, then clean up.
    * simple-git's applyPatch() treats the first arg as a file path,
    * so we must write the patch string to disk first.
    */
   private async applyPatchString(patch: string, options: string[]): Promise<void> {
-    const tmpFile = join(tmpdir(), `hive-patch-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`)
+    const tmpFile = join(
+      tmpdir(),
+      `hive-patch-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`
+    )
     try {
       writeFileSync(tmpFile, patch, 'utf-8')
       await this.git.applyPatch(tmpFile, options)
     } finally {
-      try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
+      try {
+        unlinkSync(tmpFile)
+      } catch {
+        /* ignore cleanup errors */
+      }
     }
   }
 
@@ -1024,7 +1208,7 @@ export class GitService {
           }
         }
         newBranchName = `${baseName}-v${maxVersion + 1}`
-        worktreePath = join(projectWorktreesDir, newBranchName)
+        worktreePath = join(projectWorktreesDir, `${projectName}--${newBranchName}`)
 
         try {
           await this.git.raw(['worktree', 'add', '-b', newBranchName, worktreePath, sourceBranch])
@@ -1196,7 +1380,8 @@ export class GitService {
     projectName: string,
     branchName: string,
     breedType: BreedType = 'dogs',
-    prNumber?: number
+    prNumber?: number,
+    options?: { autoPull?: boolean }
   ): Promise<CreateWorktreeResult> {
     try {
       // Check if branch is already checked out (skip for PR checkouts —
@@ -1210,9 +1395,7 @@ export class GitService {
           const branch = lines
             .find((l) => l.startsWith('branch '))
             ?.replace('branch refs/heads/', '')
-          const wtPath = lines
-            .find((l) => l.startsWith('worktree '))
-            ?.replace('worktree ', '')
+          const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
           if (branch === branchName && wtPath) {
             // Already checked out — duplicate it
             return this.duplicateWorktree(branchName, wtPath, projectName)
@@ -1223,9 +1406,24 @@ export class GitService {
       const projectWorktreesDir = this.ensureWorktreesDir(projectName)
       const MAX_ATTEMPTS = 3
 
+      // Pull branch if not creating from PR (PR fetch happens separately)
+      const autoPull = options?.autoPull !== false // Default true
+      let pullResult = { success: true, updated: false }
       if (prNumber != null) {
         // Fetch the PR ref once — FETCH_HEAD stays valid for subsequent retries
         await this.git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
+      } else if (autoPull) {
+        // Pull the branch to get latest changes
+        pullResult = await this.pullBaseBranch(branchName, {
+          silent: true,
+          skipPull: !autoPull
+        })
+        if (pullResult.success && pullResult.updated) {
+          log.info('Pulled latest changes before creating worktree from branch', {
+            branch: branchName,
+            repoPath: this.repoPath
+          })
+        }
       }
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -1237,7 +1435,9 @@ export class GitService {
         // Also scan the filesystem to catch path collisions from incomplete cleanups
         let existingDirs: string[] = []
         try {
-          existingDirs = readdirSync(projectWorktreesDir)
+          existingDirs = readdirSync(projectWorktreesDir).map((d) =>
+            d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
+          )
         } catch {
           // directory may not exist yet; ignore
         }
@@ -1250,7 +1450,7 @@ export class GitService {
 
         // Select a unique breed name
         const breedName = selectUniqueBreedName(existingNames, breedType)
-        const worktreePath = join(projectWorktreesDir, breedName)
+        const worktreePath = join(projectWorktreesDir, `${projectName}--${breedName}`)
 
         try {
           if (prNumber != null) {
@@ -1259,7 +1459,16 @@ export class GitService {
             // Create a new breed-named branch derived from the selected branch
             await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, branchName])
           }
-          return { success: true, path: worktreePath, branchName: breedName, name: breedName }
+          return {
+            success: true,
+            path: worktreePath,
+            branchName: breedName,
+            name: breedName,
+            pullInfo: {
+              pulled: prNumber == null && pullResult.success && autoPull,
+              updated: pullResult.updated || false
+            }
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error'
           if (message.toLowerCase().includes('already exists') && attempt < MAX_ATTEMPTS) {
@@ -1452,9 +1661,11 @@ export class GitService {
    * Get list of files changed between the current worktree and a branch
    * Uses git diff --name-status to get file paths and their change status
    */
-  async getBranchDiffFiles(
-    branch: string
-  ): Promise<{ success: boolean; files?: { relativePath: string; status: string }[]; error?: string }> {
+  async getBranchDiffFiles(branch: string): Promise<{
+    success: boolean
+    files?: { relativePath: string; status: string }[]
+    error?: string
+  }> {
     if (!branch || branch.startsWith('-')) {
       return { success: false, error: 'Invalid branch name' }
     }
@@ -1536,12 +1747,8 @@ export function canonicalizeBranchName(title: string): string {
 export function isAutoNamedBranch(branchName: string): boolean {
   const lower = branchName.toLowerCase()
   return (
-    ALL_BREED_NAMES.some(
-      (b) => b === lower || new RegExp(`^${b}-(?:v)?\\d+$`).test(lower)
-    ) ||
-    LEGACY_CITY_NAMES.some(
-      (c) => c === lower || new RegExp(`^${c}-(?:v)?\\d+$`).test(lower)
-    )
+    ALL_BREED_NAMES.some((b) => b === lower || new RegExp(`^${b}-(?:v)?\\d+$`).test(lower)) ||
+    LEGACY_CITY_NAMES.some((c) => c === lower || new RegExp(`^${c}-(?:v)?\\d+$`).test(lower))
   )
 }
 

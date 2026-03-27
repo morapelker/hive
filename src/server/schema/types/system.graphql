@@ -15,4 +15,5 @@ type AppPaths {
 type AgentSdkDetection {
   opencode: Boolean!
   claude: Boolean!
+  codex: Boolean!
 }

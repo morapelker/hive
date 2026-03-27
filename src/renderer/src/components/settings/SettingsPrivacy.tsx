@@ -8,12 +8,15 @@ export function SettingsPrivacy(): React.JSX.Element {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    window.analyticsOps.isEnabled().then((val) => {
-      setEnabled(val)
-      setLoaded(true)
-    }).catch(() => {
-      setLoaded(true) // Fall back to default (enabled=true)
-    })
+    window.analyticsOps
+      .isEnabled()
+      .then((val) => {
+        setEnabled(val)
+        setLoaded(true)
+      })
+      .catch(() => {
+        setLoaded(true) // Fall back to default (enabled=true)
+      })
   }, [])
 
   const handleToggle = () => {
@@ -52,22 +55,24 @@ export function SettingsPrivacy(): React.JSX.Element {
             enabled ? 'bg-primary' : 'bg-muted'
           )}
         >
-          <span className={cn(
-            'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
-            enabled ? 'translate-x-4' : 'translate-x-0'
-          )} />
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
+              enabled ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
         </button>
       </div>
 
       {/* Info box */}
       <div className="rounded-md border border-border bg-muted/30 p-3">
         <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">What we collect:</span>{' '}
-          Feature usage counts, app version, platform (macOS/Windows/Linux).
+          <span className="font-medium text-foreground">What we collect:</span> Feature usage
+          counts, app version, platform (macOS/Windows/Linux).
         </p>
         <p className="text-xs text-muted-foreground mt-2">
-          <span className="font-medium text-foreground">What we never collect:</span>{' '}
-          Project names, file contents, prompts, AI responses, git data, or any personal information.
+          <span className="font-medium text-foreground">What we never collect:</span> Project names,
+          file contents, prompts, AI responses, git data, or any personal information.
         </p>
       </div>
     </div>

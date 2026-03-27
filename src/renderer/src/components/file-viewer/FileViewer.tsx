@@ -1,94 +1,24 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Loader2 } from 'lucide-react'
-import { FileSearch, type SearchMatch } from './FileSearch'
+import { CodeMirrorEditor } from './CodeMirrorEditor'
+import { ImagePreview } from './ImagePreview'
+import { UnsavedChangesDialog } from './UnsavedChangesDialog'
+import { ExternalChangesBanner } from './ExternalChangesBanner'
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
 import { cn } from '@/lib/utils'
+import { toast } from '@/lib/toast'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useGitStore } from '@/stores/useGitStore'
+import { isBinaryImageFile, isSvgFile, getImageMimeType } from '@shared/types/file-utils'
 
-// Map file extensions to Prism language identifiers
-const extensionToLanguage: Record<string, string> = {
-  '.ts': 'typescript',
-  '.tsx': 'tsx',
-  '.js': 'javascript',
-  '.jsx': 'jsx',
-  '.mjs': 'javascript',
-  '.cjs': 'javascript',
-  '.json': 'json',
-  '.jsonc': 'json',
-  '.md': 'markdown',
-  '.mdx': 'markdown',
-  '.css': 'css',
-  '.scss': 'scss',
-  '.sass': 'sass',
-  '.less': 'less',
-  '.html': 'html',
-  '.htm': 'html',
-  '.xml': 'xml',
-  '.svg': 'xml',
-  '.vue': 'html',
-  '.svelte': 'html',
-  '.py': 'python',
-  '.rb': 'ruby',
-  '.go': 'go',
-  '.rs': 'rust',
-  '.java': 'java',
-  '.kt': 'kotlin',
-  '.kts': 'kotlin',
-  '.c': 'c',
-  '.h': 'c',
-  '.cpp': 'cpp',
-  '.hpp': 'cpp',
-  '.cc': 'cpp',
-  '.cs': 'csharp',
-  '.php': 'php',
-  '.swift': 'swift',
-  '.dart': 'dart',
-  '.sql': 'sql',
-  '.sh': 'bash',
-  '.bash': 'bash',
-  '.zsh': 'bash',
-  '.fish': 'bash',
-  '.ps1': 'powershell',
-  '.yaml': 'yaml',
-  '.yml': 'yaml',
-  '.toml': 'toml',
-  '.ini': 'ini',
-  '.env': 'bash',
-  '.dockerfile': 'docker',
-  '.graphql': 'graphql',
-  '.gql': 'graphql',
-  '.lua': 'lua',
-  '.r': 'r',
-  '.scala': 'scala',
-  '.zig': 'zig',
-  '.elm': 'elm',
-  '.ex': 'elixir',
-  '.exs': 'elixir',
-  '.erl': 'erlang',
-  '.clj': 'clojure',
-  '.hs': 'haskell',
-  '.ml': 'ocaml',
-  '.tf': 'hcl',
-  '.proto': 'protobuf',
-  '.bat': 'batch',
-  '.cmd': 'batch'
-}
+// Time window after a save during which file watcher events are suppressed
+// to avoid treating our own writes as external changes.
+const OWN_SAVE_SUPPRESSION_MS = 500
 
 export function isMarkdownFile(filePath: string): boolean {
   const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase()
   return ext === '.md' || ext === '.mdx'
-}
-
-function getLanguageFromPath(filePath: string): string {
-  const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase()
-  // Check special filenames
-  const name = filePath.substring(filePath.lastIndexOf('/') + 1).toLowerCase()
-  if (name === 'dockerfile' || name.startsWith('dockerfile.')) return 'docker'
-  if (name === 'makefile') return 'makefile'
-  if (name === '.gitignore' || name === '.dockerignore') return 'bash'
-
-  return extensionToLanguage[ext] || 'text'
 }
 
 interface FileViewerProps {
@@ -97,15 +27,16 @@ interface FileViewerProps {
 
 export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   const [content, setContent] = useState<string | null>(null)
+  const [imageDataUri, setImageDataUri] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [highlightLines, setHighlightLines] = useState<Set<number>>(new Set())
-  const [currentMatchLine, setCurrentMatchLine] = useState<number | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
 
   const isMarkdown = isMarkdownFile(filePath)
-  const [viewMode, setViewMode] = useState<'preview' | 'source'>(isMarkdown ? 'preview' : 'source')
+  const isBinaryImage = isBinaryImageFile(filePath)
+  const isSvg = isSvgFile(filePath)
+  const [viewMode, setViewMode] = useState<'preview' | 'source'>(
+    isMarkdown || isSvg ? 'preview' : 'source'
+  )
 
   // Load file content
   useEffect(() => {
@@ -113,74 +44,205 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     setIsLoading(true)
     setError(null)
     setContent(null)
-    setSearchOpen(false)
-    setHighlightLines(new Set())
-    setCurrentMatchLine(null)
+    setImageDataUri(null)
+    latestContentRef.current = null
 
-    window.fileOps.readFile(filePath).then((result) => {
-      if (cancelled) return
-      if (result.success && result.content !== undefined) {
-        setContent(result.content)
-      } else {
-        setError(result.error || 'Failed to read file')
-      }
-      setIsLoading(false)
-    })
+    if (isBinaryImage) {
+      const mimeType = getImageMimeType(filePath) || 'image/png'
+      window.fileOps.readImageAsBase64(filePath).then((result) => {
+        if (cancelled) return
+        if (result.success && result.data) {
+          setImageDataUri(`data:${mimeType};base64,${result.data}`)
+        } else {
+          setError(result.error || 'Failed to read image')
+        }
+        setIsLoading(false)
+      })
+    } else {
+      window.fileOps.readFile(filePath).then((result) => {
+        if (cancelled) return
+        if (result.success && result.content !== undefined) {
+          setContent(result.content)
+          useFileViewerStore.getState().setOriginalContent(filePath, result.content)
+          if (isSvg) {
+            setImageDataUri(
+              `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(result.content)))}`
+            )
+          }
+        } else {
+          setError(result.error || 'Failed to read file')
+        }
+        setIsLoading(false)
+      })
+    }
 
     return () => {
       cancelled = true
     }
-  }, [filePath])
+  }, [filePath, isBinaryImage, isSvg])
+
+  const [reloadKey, setReloadKey] = useState(0)
+  const lastSaveTimestampRef = useRef<number>(0)
+
+  const isExternallyChanged = useFileViewerStore((s) => s.externallyChanged.has(filePath))
+  const markExternallyChanged = useFileViewerStore((s) => s.markExternallyChanged)
+  const clearExternallyChanged = useFileViewerStore((s) => s.clearExternallyChanged)
+
+  const pendingClose = useFileViewerStore((s) => s.pendingClose)
+  const latestContentRef = useRef<string | null>(null)
+
+  const handleSave = useCallback(
+    async (newContent: string) => {
+      lastSaveTimestampRef.current = Date.now()
+      const result = await window.fileOps.writeFile(filePath, newContent)
+      if (result.success) {
+        toast.success('File saved')
+        const store = useFileViewerStore.getState()
+        store.markClean(filePath)
+        store.setOriginalContent(filePath, newContent)
+        const tab = store.openFiles.get(filePath)
+        if (tab && tab.type === 'file') {
+          const worktree = useWorktreeStore
+            .getState()
+            .worktrees.find((w) => w.id === tab.worktreeId)
+          if (worktree?.path) {
+            useGitStore.getState().refreshStatuses(worktree.path)
+          }
+        }
+      } else {
+        toast.error('Failed to save: ' + result.error)
+      }
+    },
+    [filePath]
+  )
+
+  const handleContentChange = useCallback(
+    (newContent: string) => {
+      latestContentRef.current = newContent
+      const original = useFileViewerStore.getState().getOriginalContent(filePath)
+      if (original !== undefined && newContent !== original) {
+        useFileViewerStore.getState().markDirty(filePath)
+      } else {
+        useFileViewerStore.getState().markClean(filePath)
+      }
+    },
+    [filePath]
+  )
+
+  const handleDialogSave = useCallback(async () => {
+    if (pendingClose && latestContentRef.current !== null) {
+      lastSaveTimestampRef.current = Date.now()
+      const result = await window.fileOps.writeFile(pendingClose, latestContentRef.current)
+      if (result.success) {
+        toast.success('File saved')
+        const tab = useFileViewerStore.getState().openFiles.get(pendingClose)
+        if (tab && tab.type === 'file') {
+          const worktree = useWorktreeStore
+            .getState()
+            .worktrees.find((w) => w.id === tab.worktreeId)
+          if (worktree?.path) {
+            useGitStore.getState().refreshStatuses(worktree.path)
+          }
+        }
+      } else {
+        toast.error('Failed to save: ' + result.error)
+        return
+      }
+      useFileViewerStore.getState().confirmCloseFile(pendingClose)
+    }
+  }, [pendingClose])
+
+  const handleDialogDontSave = useCallback(() => {
+    if (pendingClose) {
+      useFileViewerStore.getState().confirmCloseFile(pendingClose)
+    }
+  }, [pendingClose])
+
+  const handleDialogCancel = useCallback(() => {
+    useFileViewerStore.getState().cancelCloseFile()
+  }, [])
+
+  // Subscribe to file watcher for external change detection and deletion
+  useEffect(() => {
+    const unsubscribe = window.fileTreeOps.onChange((event) => {
+      // Check if the current file was deleted
+      const wasDeleted = event.events.some(
+        (e) => e.changedPath === filePath && e.eventType === 'unlink'
+      )
+      if (wasDeleted) {
+        setError('File was deleted from disk')
+        setContent(null)
+        setImageDataUri(null)
+        // Clean up store metadata so dirty indicator and dialogs don't fire
+        const store = useFileViewerStore.getState()
+        store.markClean(filePath)
+        store.clearExternallyChanged(filePath)
+        return
+      }
+
+      const hasChange = event.events.some(
+        (e) => e.changedPath === filePath && e.eventType === 'change'
+      )
+      if (!hasChange) return
+      // Suppress if this was our own save
+      if (Date.now() - lastSaveTimestampRef.current < OWN_SAVE_SUPPRESSION_MS) return
+      // Re-read from disk and compare with original
+      window.fileOps.readFile(filePath).then((result) => {
+        if (!result.success || result.content === undefined) return
+        const original = useFileViewerStore.getState().getOriginalContent(filePath)
+        if (original !== undefined && result.content !== original) {
+          markExternallyChanged(filePath)
+        }
+      })
+    })
+    return () => {
+      unsubscribe()
+    }
+  }, [filePath, markExternallyChanged])
+
+  const handleReload = useCallback(async () => {
+    const result = await window.fileOps.readFile(filePath)
+    if (result.success && result.content !== undefined) {
+      setContent(result.content)
+      const store = useFileViewerStore.getState()
+      store.setOriginalContent(filePath, result.content)
+      store.markClean(filePath)
+      clearExternallyChanged(filePath)
+      setReloadKey((k) => k + 1)
+    }
+  }, [filePath, clearExternallyChanged])
+
+  const handleKeepMine = useCallback(async () => {
+    clearExternallyChanged(filePath)
+    // Update originalContents to disk content so future changes are detected correctly
+    const result = await window.fileOps.readFile(filePath)
+    if (result.success && result.content !== undefined) {
+      useFileViewerStore.getState().setOriginalContent(filePath, result.content)
+    }
+  }, [filePath, clearExternallyChanged])
 
   // Reset view mode when file changes
   useEffect(() => {
-    setViewMode(isMarkdownFile(filePath) ? 'preview' : 'source')
+    if (isMarkdownFile(filePath) || isSvgFile(filePath)) {
+      setViewMode('preview')
+    } else {
+      setViewMode('source')
+    }
   }, [filePath])
 
-  // Cmd+F keyboard shortcut
+  // Regenerate SVG data URI from edited content when switching to preview.
+  // Triggers on viewMode change (not on every keystroke) — latestContentRef is
+  // read at effect-run time so the preview reflects the latest editor content.
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-        e.preventDefault()
-        e.stopPropagation()
-        setSearchOpen(true)
+    if (isSvg && viewMode === 'preview') {
+      const svgContent = latestContentRef.current ?? content
+      if (svgContent) {
+        setImageDataUri(
+          `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgContent)))}`
+        )
       }
     }
-    window.addEventListener('keydown', handler, true)
-    return () => window.removeEventListener('keydown', handler, true)
-  }, [])
-
-  const handleMatchesChange = useCallback((matches: SearchMatch[], currentIndex: number) => {
-    const lines = new Set<number>()
-    for (const m of matches) {
-      lines.add(m.line)
-    }
-    setHighlightLines(lines)
-
-    if (matches.length > 0 && matches[currentIndex]) {
-      const matchLine = matches[currentIndex].line
-      setCurrentMatchLine(matchLine)
-
-      // Scroll to the current match line
-      const container = containerRef.current
-      if (container) {
-        // Each line in the syntax highlighter is approximately 20px
-        const lineHeight = 20
-        const targetScroll = matchLine * lineHeight - container.clientHeight / 2
-        container.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' })
-      }
-    } else {
-      setCurrentMatchLine(null)
-    }
-  }, [])
-
-  const handleCloseSearch = useCallback(() => {
-    setSearchOpen(false)
-    setHighlightLines(new Set())
-    setCurrentMatchLine(null)
-  }, [])
-
-  const language = getLanguageFromPath(filePath)
+  }, [viewMode, isSvg, content])
 
   if (isLoading) {
     return (
@@ -204,7 +266,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     )
   }
 
-  if (content === null) {
+  if (content === null && !imageDataUri) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <p className="text-sm text-muted-foreground">No content</p>
@@ -212,12 +274,14 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     )
   }
 
+  const fileName = filePath.substring(filePath.lastIndexOf('/') + 1)
+
   return (
     <div className="flex-1 flex flex-col min-h-0" data-testid="file-viewer">
       {/* File path bar */}
       <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border bg-muted/30 flex items-center justify-between">
         <span className="truncate">{filePath}</span>
-        {isMarkdown && (
+        {(isMarkdown || isSvg) && (
           <div className="flex items-center gap-1 shrink-0 ml-2">
             <button
               onClick={() => setViewMode('source')}
@@ -243,57 +307,45 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
         )}
       </div>
 
-      {/* Search overlay */}
-      {searchOpen && (
-        <FileSearch
-          content={content}
-          onMatchesChange={handleMatchesChange}
-          onClose={handleCloseSearch}
-        />
+      {/* External changes banner */}
+      {isExternallyChanged && (
+        <ExternalChangesBanner onReload={handleReload} onKeepMine={handleKeepMine} />
       )}
 
       {/* Content area */}
-      {viewMode === 'preview' && isMarkdown ? (
+      {isBinaryImage && imageDataUri ? (
+        <div className="flex-1 overflow-auto" data-testid="file-viewer-image">
+          <ImagePreview src={imageDataUri} fileName={fileName} />
+        </div>
+      ) : isSvg && viewMode === 'preview' && imageDataUri ? (
+        <div className="flex-1 overflow-auto" data-testid="file-viewer-image">
+          <ImagePreview src={imageDataUri} fileName={fileName} />
+        </div>
+      ) : viewMode === 'preview' && isMarkdown ? (
         <div
           className="flex-1 overflow-auto p-6 prose prose-sm dark:prose-invert max-w-none"
           data-testid="file-viewer-markdown-preview"
         >
-          <MarkdownRenderer content={content} />
+          <MarkdownRenderer content={latestContentRef.current ?? content!} />
         </div>
       ) : (
-        <div ref={containerRef} className="flex-1 overflow-auto" data-testid="file-viewer-content">
-          <SyntaxHighlighter
-            language={language}
-            style={oneDark}
-            showLineNumbers
-            wrapLines
-            lineProps={(lineNumber: number) => {
-              const lineIndex = lineNumber - 1 // lineNumber is 1-based
-              const style: React.CSSProperties = {}
-              if (highlightLines.has(lineIndex)) {
-                style.backgroundColor = 'rgba(255, 200, 0, 0.15)'
-              }
-              if (currentMatchLine === lineIndex) {
-                style.backgroundColor = 'rgba(255, 200, 0, 0.3)'
-              }
-              return { style }
-            }}
-            customStyle={{
-              margin: 0,
-              borderRadius: 0,
-              fontSize: '13px',
-              lineHeight: '20px',
-              minHeight: '100%'
-            }}
-            codeTagProps={{
-              style: {
-                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace'
-              }
-            }}
-          >
-            {content}
-          </SyntaxHighlighter>
-        </div>
+        <CodeMirrorEditor
+          key={`${filePath}-${reloadKey}`}
+          content={content!}
+          filePath={filePath}
+          onContentChange={handleContentChange}
+          onSave={handleSave}
+        />
+      )}
+
+      {pendingClose && (
+        <UnsavedChangesDialog
+          open={!!pendingClose}
+          fileName={pendingClose.substring(pendingClose.lastIndexOf('/') + 1)}
+          onSave={handleDialogSave}
+          onDontSave={handleDialogDontSave}
+          onCancel={handleDialogCancel}
+        />
       )}
     </div>
   )

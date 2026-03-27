@@ -146,14 +146,7 @@ export function FileTree({
 
     // Start watching (store handles onChange subscription internally)
     startWatching(worktreePath)
-  }, [
-    worktreePath,
-    isConnectionMode,
-    loadFileTree,
-    loadFileStatuses,
-    startWatching,
-    stopWatching
-  ])
+  }, [worktreePath, isConnectionMode, loadFileTree, loadFileStatuses, startWatching, stopWatching])
 
   // Cleanup watching on unmount
   useEffect(() => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
+import { revealLabel } from '@/lib/platform'
 import {
   AlertCircle,
   Code,
@@ -31,8 +32,20 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { useConnectionStore, usePinnedStore } from '@/stores'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from '@/components/ui/tooltip'
+import {
+  useConnectionStore,
+  usePinnedStore,
+  useHintStore,
+  useVimModeStore,
+  useSettingsStore
+} from '@/stores'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { HintBadge } from '@/components/ui/HintBadge'
 import { toast, clipboardToast } from '@/lib/toast'
 
 interface ConnectionMemberEnriched {
@@ -91,23 +104,33 @@ export function ConnectionItem({
     state.getConnectionStatus(connection.id)
   )
 
+  // Hint overlay state
+  const hint = useHintStore((s) => s.hintMap.get(`conn:${connection.id}`))
+  const hintMode = useHintStore((s) => s.mode)
+  const hintPendingChar = useHintStore((s) => s.pendingChar)
+  const hintActionMode = useHintStore((s) => s.actionMode)
+  const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+
   const isSelected = selectedConnectionId === connection.id
 
   // Derive display status text + color
   const { displayStatus, statusClass } =
     connectionStatus === 'answering'
       ? { displayStatus: 'Answer questions', statusClass: 'font-semibold text-amber-500' }
-      : connectionStatus === 'permission'
-        ? { displayStatus: 'Permission', statusClass: 'font-semibold text-amber-500' }
-        : connectionStatus === 'planning'
-          ? { displayStatus: 'Planning', statusClass: 'font-semibold text-blue-400' }
-          : connectionStatus === 'working'
-            ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
-            : connectionStatus === 'plan_ready'
-              ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
-              : connectionStatus === 'completed'
-                ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
-                : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
+      : connectionStatus === 'command_approval'
+        ? { displayStatus: 'Approve command', statusClass: 'font-semibold text-orange-500' }
+        : connectionStatus === 'permission'
+          ? { displayStatus: 'Permission', statusClass: 'font-semibold text-amber-500' }
+          : connectionStatus === 'planning'
+            ? { displayStatus: 'Planning', statusClass: 'font-semibold text-blue-400' }
+            : connectionStatus === 'working'
+              ? { displayStatus: 'Working', statusClass: 'font-semibold text-primary' }
+              : connectionStatus === 'plan_ready'
+                ? { displayStatus: 'Plan ready', statusClass: 'font-semibold text-blue-400' }
+                : connectionStatus === 'completed'
+                  ? { displayStatus: 'Ready', statusClass: 'font-semibold text-green-400' }
+                  : { displayStatus: 'Ready', statusClass: 'text-muted-foreground' }
 
   // Marquee animation state for overflowing display name
   const containerRef = useRef<HTMLDivElement>(null)
@@ -120,30 +143,54 @@ export function ConnectionItem({
   const [isRenaming, setIsRenaming] = useState(false)
   const [nameInput, setNameInput] = useState('')
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const intentionalCloseRef = useRef(false)
+  const renameStartTimeRef = useRef<number>(0)
 
   // Focus rename input when it appears (deferred to run after menu closes)
   useEffect(() => {
     if (isRenaming) {
-      requestAnimationFrame(() => {
-        renameInputRef.current?.focus()
-        renameInputRef.current?.select()
-      })
+      // Focus function
+      const focusInput = () => {
+        if (renameInputRef.current && document.activeElement !== renameInputRef.current) {
+          renameInputRef.current.focus()
+          renameInputRef.current.select()
+        }
+      }
+
+      // Use requestAnimationFrame to focus after menu closes
+      requestAnimationFrame(focusInput)
     }
   }, [isRenaming])
 
+  // Cleanup blur timer on unmount
+  useEffect(() => {
+    return () => {
+      if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+    }
+  }, [])
+
   const handleStartRename = useCallback((): void => {
+    intentionalCloseRef.current = false
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current) // Clear any pending blur timer
+    renameStartTimeRef.current = Date.now() // Record time before setting state
     setNameInput(connection.custom_name || '')
     setIsRenaming(true)
   }, [connection.custom_name])
 
   const handleSaveRename = useCallback(async (): Promise<void> => {
-    setIsRenaming(false)
-    const trimmed = nameInput.trim()
-    // Empty string clears the custom name (revert to default)
-    const newCustomName = trimmed || null
-    // Only save if the value actually changed
-    if (newCustomName !== (connection.custom_name || null)) {
-      await renameConnection(connection.id, newCustomName)
+    intentionalCloseRef.current = true
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+    try {
+      const trimmed = nameInput.trim()
+      // Empty string clears the custom name (revert to default)
+      const newCustomName = trimmed || null
+      // Only save if the value actually changed
+      if (newCustomName !== (connection.custom_name || null)) {
+        await renameConnection(connection.id, newCustomName)
+      }
+    } finally {
+      setIsRenaming(false)
     }
   }, [nameInput, connection.id, connection.custom_name, renameConnection])
 
@@ -154,6 +201,8 @@ export function ConnectionItem({
         handleSaveRename()
       } else if (e.key === 'Escape') {
         e.preventDefault()
+        intentionalCloseRef.current = true
+        if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
         setIsRenaming(false)
       }
     },
@@ -217,8 +266,15 @@ export function ConnectionItem({
   }, [onManageWorktrees, connection.id])
 
   // Build the project names string from unique project names
-  const projectNames =
-    [...new Set(connection.members?.map((m) => m.project_name) || [])].join(' + ')
+  const projectNames = [...new Set(connection.members?.map((m) => m.project_name) || [])].join(
+    ' + '
+  )
+
+  // Build detailed project info for tooltip (project name + branch)
+  const projectDetails = connection.members?.map((m) => ({
+    project: m.project_name,
+    branch: m.worktree_branch
+  })) || []
 
   // Display logic: custom name takes priority over project names
   const hasCustomName = !!connection.custom_name
@@ -237,11 +293,7 @@ export function ConnectionItem({
         Rename
       </ContextMenuItem>
       <ContextMenuItem onClick={handleTogglePin}>
-        {isPinned ? (
-          <PinOff className="h-4 w-4 mr-2" />
-        ) : (
-          <Pin className="h-4 w-4 mr-2" />
-        )}
+        {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
         {isPinned ? 'Unpin' : 'Pin'}
       </ContextMenuItem>
       <ContextMenuSeparator />
@@ -255,7 +307,7 @@ export function ConnectionItem({
       </ContextMenuItem>
       <ContextMenuItem onClick={handleOpenInFinder}>
         <ExternalLink className="h-4 w-4 mr-2" />
-        Open in Finder
+        {revealLabel(true)}
       </ContextMenuItem>
       <ContextMenuItem onClick={handleCopyPath}>
         <Copy className="h-4 w-4 mr-2" />
@@ -272,17 +324,15 @@ export function ConnectionItem({
     </>
   )
 
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          className={cn(
-            'group flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
-            isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
-          )}
-          onClick={handleClick}
-          data-testid={`connection-item-${connection.id}`}
-        >
+  const mainContent = (
+    <div
+      className={cn(
+        'group flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors',
+        isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+      )}
+      onClick={handleClick}
+      data-testid={`connection-item-${connection.id}`}
+    >
           {/* Connection color indicator — always visible */}
           {connection.color ? (
             <span
@@ -314,7 +364,39 @@ export function ConnectionItem({
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
                 onKeyDown={handleRenameKeyDown}
-                onBlur={() => setIsRenaming(false)}
+                onBlur={() => {
+                  // Skip scheduling timer if we're intentionally closing via Escape/Enter
+                  if (intentionalCloseRef.current) {
+                    intentionalCloseRef.current = false
+                    return
+                  }
+                  // Ignore blur events that happen too soon after starting rename (menu closing)
+                  const timeSinceStart = Date.now() - renameStartTimeRef.current
+                  if (timeSinceStart < 500) {
+                    // Always refocus during the first 500ms (menu closing period)
+                    // User can press Escape to cancel if needed
+                    setTimeout(() => {
+                      if (
+                        renameInputRef.current &&
+                        document.activeElement !== renameInputRef.current
+                      ) {
+                        renameInputRef.current.focus()
+                        renameInputRef.current.select()
+                      }
+                    }, 0)
+                    return
+                  }
+
+                  // Delay blur to allow for normal focus changes
+                  if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+                  blurTimerRef.current = setTimeout(() => {
+                    blurTimerRef.current = null
+                    // Only close if the input is still not focused
+                    if (document.activeElement !== renameInputRef.current) {
+                      setIsRenaming(false)
+                    }
+                  }, 100)
+                }}
                 onClick={(e) => e.stopPropagation()}
                 className="bg-background border border-border rounded px-1.5 py-0.5 text-sm w-full focus:outline-none focus:ring-1 focus:ring-ring"
                 placeholder={projectNames || 'Connection name'}
@@ -348,13 +430,20 @@ export function ConnectionItem({
                   data-testid="connection-status-text"
                 >
                   {displayStatus}
-                  {hasCustomName && projectNames && (
-                    <span className="text-muted-foreground font-normal"> · {projectNames}</span>
-                  )}
                 </span>
               </>
             )}
           </div>
+
+          {/* Hint badge */}
+          {hint && vimModeEnabled && vimMode === 'normal' && (
+            <HintBadge
+              code={hint}
+              mode={hintMode}
+              pendingChar={hintPendingChar}
+              actionMode={hintActionMode}
+            />
+          )}
 
           {/* Unread dot badge */}
           {connectionStatus === 'unread' && (
@@ -386,11 +475,7 @@ export function ConnectionItem({
                 Rename
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleTogglePin}>
-                {isPinned ? (
-                  <PinOff className="h-4 w-4 mr-2" />
-                ) : (
-                  <Pin className="h-4 w-4 mr-2" />
-                )}
+                {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
                 {isPinned ? 'Unpin' : 'Pin'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -404,7 +489,7 @@ export function ConnectionItem({
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleOpenInFinder}>
                 <ExternalLink className="h-4 w-4 mr-2" />
-                Open in Finder
+                {revealLabel(true)}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleCopyPath}>
                 <Copy className="h-4 w-4 mr-2" />
@@ -421,7 +506,27 @@ export function ConnectionItem({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </ContextMenuTrigger>
+  )
+
+  return (
+    <ContextMenu>
+      <Tooltip>
+        <ContextMenuTrigger asChild>
+          <TooltipTrigger asChild>{mainContent}</TooltipTrigger>
+        </ContextMenuTrigger>
+        {hasCustomName && projectDetails.length > 0 && (
+          <TooltipContent side="right" sideOffset={8} className="max-w-xs">
+            <div className="space-y-1">
+              {projectDetails.map((detail, idx) => (
+                <div key={idx} className="text-[11px] font-mono">
+                  <div className="font-medium">{detail.project}</div>
+                  <div className="text-muted-foreground text-[10px]">→ {detail.branch}</div>
+                </div>
+              ))}
+            </div>
+          </TooltipContent>
+        )}
+      </Tooltip>
 
       {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">{menuItems}</ContextMenuContent>

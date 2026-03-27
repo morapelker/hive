@@ -133,5 +133,5 @@ export const LANGUAGE_EXTENSIONS: Record<string, string> = {
   '.nim': 'nim',
 
   // V
-  '.v': 'v',
+  '.v': 'v'
 }

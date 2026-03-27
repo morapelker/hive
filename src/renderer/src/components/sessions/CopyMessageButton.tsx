@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
@@ -7,7 +7,7 @@ interface CopyMessageButtonProps {
   content: string
 }
 
-export function CopyMessageButton({ content }: CopyMessageButtonProps) {
+export const CopyMessageButton = memo(function CopyMessageButton({ content }: CopyMessageButtonProps) {
   const [copied, setCopied] = useState(false)
 
   if (!content.trim()) return null
@@ -39,4 +39,4 @@ export function CopyMessageButton({ content }: CopyMessageButtonProps) {
       )}
     </Button>
   )
-}
+})

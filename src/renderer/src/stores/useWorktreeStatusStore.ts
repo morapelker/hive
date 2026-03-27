@@ -8,6 +8,7 @@ export type SessionStatusType =
   | 'planning'
   | 'answering'
   | 'permission'
+  | 'command_approval'
   | 'unread'
   | 'completed'
   | 'plan_ready'
@@ -42,7 +43,8 @@ interface WorktreeStatusState {
 
 // Priority ranking for status aggregation (higher number = higher priority)
 const STATUS_PRIORITY: Record<SessionStatusType, number> = {
-  answering: 7,
+  answering: 8,
+  command_approval: 7,
   permission: 6,
   planning: 5,
   working: 4,
@@ -141,8 +143,8 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       const entry = sessionStatuses[id]
       if (!entry) continue
 
-      // answering/permission have the highest priority — return immediately
-      if (entry.status === 'answering' || entry.status === 'permission') return entry.status
+      // answering/command_approval/permission have the highest priority — return immediately
+      if (entry.status === 'answering' || entry.status === 'command_approval' || entry.status === 'permission') return entry.status
       if (entry.status === 'planning') hasPlanning = true
       if (entry.status === 'working') hasWorking = true
       if (entry.status === 'plan_ready') hasPlanReady = true
@@ -190,7 +192,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       const entry = sessionStatuses[id]
       if (!entry) continue
 
-      if (entry.status === 'answering' || entry.status === 'permission') return entry.status
+      if (entry.status === 'answering' || entry.status === 'command_approval' || entry.status === 'permission') return entry.status
       if (entry.status === 'planning') hasPlanning = true
       if (entry.status === 'working') hasWorking = true
       if (entry.status === 'plan_ready') hasPlanReady = true

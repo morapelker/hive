@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { Trash2, Plus, Info } from 'lucide-react'
+import { Trash2, Plus, Info, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
@@ -9,6 +9,7 @@ export function SettingsSecurity(): React.JSX.Element {
   const { commandFilter: rawCommandFilter, updateSetting } = useSettingsStore()
   const [newPattern, setNewPattern] = useState('')
   const [activeTab, setActiveTab] = useState<'allowlist' | 'blocklist'>('allowlist')
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Defensive null-guard: commandFilter may be undefined on first hydration from old localStorage
   const commandFilter = rawCommandFilter ?? {
@@ -19,6 +20,23 @@ export function SettingsSecurity(): React.JSX.Element {
   }
 
   const isEnabled = commandFilter.enabled ?? true
+
+  // Filter patterns based on search query
+  const filteredAllowlist = useMemo(() => {
+    if (!searchQuery) return commandFilter.allowlist
+    const query = searchQuery.toLowerCase()
+    return commandFilter.allowlist.filter(pattern =>
+      pattern.toLowerCase().includes(query)
+    )
+  }, [commandFilter.allowlist, searchQuery])
+
+  const filteredBlocklist = useMemo(() => {
+    if (!searchQuery) return commandFilter.blocklist
+    const query = searchQuery.toLowerCase()
+    return commandFilter.blocklist.filter(pattern =>
+      pattern.toLowerCase().includes(query)
+    )
+  }, [commandFilter.blocklist, searchQuery])
 
   const handleToggleEnabled = () => {
     updateSetting('commandFilter', {
@@ -78,7 +96,9 @@ export function SettingsSecurity(): React.JSX.Element {
     <div className="space-y-6" style={{ overflow: 'hidden' }}>
       <div>
         <h3 className="text-base font-medium mb-1">Security</h3>
-        <p className="text-sm text-muted-foreground">Control which commands Claude can execute</p>
+        <p className="text-sm text-muted-foreground">
+          Control command filtering for approval-based agent sessions
+        </p>
       </div>
 
       {/* Enable/Disable */}
@@ -86,7 +106,7 @@ export function SettingsSecurity(): React.JSX.Element {
         <div>
           <label className="text-sm font-medium">Enable command filtering</label>
           <p className="text-xs text-muted-foreground">
-            Control which tools and commands Claude can use during sessions
+            Control which tools and commands approval-based agents can use during sessions
           </p>
         </div>
         <button
@@ -127,9 +147,7 @@ export function SettingsSecurity(): React.JSX.Element {
       {/* Default Behavior */}
       <div className={cn('space-y-2', !isEnabled && 'opacity-50 pointer-events-none')}>
         <label className="text-sm font-medium">Default behavior for unlisted commands</label>
-        <p className="text-xs text-muted-foreground">
-          How to handle commands not on either list
-        </p>
+        <p className="text-xs text-muted-foreground">How to handle commands not on either list</p>
         <div className="flex gap-2">
           <button
             onClick={() => handleSetDefaultBehavior('ask')}
@@ -281,20 +299,66 @@ export function SettingsSecurity(): React.JSX.Element {
           </Button>
         </div>
 
+        {/* Search input */}
+        {(commandFilter.allowlist.length > 0 || commandFilter.blocklist.length > 0) && (
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search patterns..."
+                disabled={!isEnabled}
+                className="w-full pl-8 pr-8 py-1.5 text-sm rounded-md border border-border bg-background disabled:opacity-50"
+                data-testid="pattern-search-input"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  disabled={!isEnabled}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  data-testid="clear-search-button"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Show filtered count when searching */}
+        {searchQuery && (
+          <div className="text-xs text-muted-foreground">
+            Showing {activeTab === 'allowlist' ? filteredAllowlist.length : filteredBlocklist.length} of{' '}
+            {activeTab === 'allowlist' ? commandFilter.allowlist.length : commandFilter.blocklist.length} patterns
+          </div>
+        )}
+
         {/* Pattern list with scrolling */}
         <div className="space-y-2 max-h-48 overflow-y-auto" style={{ overflowX: 'hidden' }}>
-          {activeTab === 'allowlist' && commandFilter.allowlist.length === 0 && (
+          {activeTab === 'allowlist' && filteredAllowlist.length === 0 && !searchQuery && (
             <div className="text-xs text-muted-foreground text-center py-4">
               No patterns in allowlist. Commands will follow the default behavior.
             </div>
           )}
-          {activeTab === 'blocklist' && commandFilter.blocklist.length === 0 && (
+          {activeTab === 'allowlist' && filteredAllowlist.length === 0 && searchQuery && (
+            <div className="text-xs text-muted-foreground text-center py-4">
+              No patterns matching "{searchQuery}"
+            </div>
+          )}
+          {activeTab === 'blocklist' && filteredBlocklist.length === 0 && !searchQuery && (
             <div className="text-xs text-muted-foreground text-center py-4">
               No patterns in blocklist. Default dangerous patterns are included on first launch.
             </div>
           )}
+          {activeTab === 'blocklist' && filteredBlocklist.length === 0 && searchQuery && (
+            <div className="text-xs text-muted-foreground text-center py-4">
+              No patterns matching "{searchQuery}"
+            </div>
+          )}
           {activeTab === 'allowlist' &&
-            commandFilter.allowlist.map((pattern) => (
+            filteredAllowlist.map((pattern) => (
               <div
                 key={pattern}
                 className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-muted/30"
@@ -302,7 +366,12 @@ export function SettingsSecurity(): React.JSX.Element {
               >
                 <code
                   className="text-xs font-mono"
-                  style={{ flex: '1 1 0', minWidth: 0, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}
+                  style={{
+                    flex: '1 1 0',
+                    minWidth: 0,
+                    wordBreak: 'break-all',
+                    whiteSpace: 'pre-wrap'
+                  }}
                   title={pattern}
                 >
                   {pattern}
@@ -319,7 +388,7 @@ export function SettingsSecurity(): React.JSX.Element {
               </div>
             ))}
           {activeTab === 'blocklist' &&
-            commandFilter.blocklist.map((pattern) => (
+            filteredBlocklist.map((pattern) => (
               <div
                 key={pattern}
                 className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-muted/30"
@@ -327,7 +396,12 @@ export function SettingsSecurity(): React.JSX.Element {
               >
                 <code
                   className="text-xs font-mono"
-                  style={{ flex: '1 1 0', minWidth: 0, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}
+                  style={{
+                    flex: '1 1 0',
+                    minWidth: 0,
+                    wordBreak: 'break-all',
+                    whiteSpace: 'pre-wrap'
+                  }}
                   title={pattern}
                 >
                   {pattern}

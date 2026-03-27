@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { GitFork, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -7,7 +8,7 @@ interface ForkMessageButtonProps {
   isForking?: boolean
 }
 
-export function ForkMessageButton({
+export const ForkMessageButton = memo(function ForkMessageButton({
   onFork,
   disabled = false,
   isForking = false
@@ -31,4 +32,4 @@ export function ForkMessageButton({
       )}
     </Button>
   )
-}
+})

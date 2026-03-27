@@ -23,9 +23,19 @@ function getUpdateChannel(): 'stable' | 'canary' {
 const CHECK_INTERVAL = 4 * 60 * 60 * 1000 // 4 hours
 const INITIAL_DELAY = 10 * 1000 // 10 seconds
 
-autoUpdater.autoDownload = true
+autoUpdater.autoDownload = false
 autoUpdater.autoInstallOnAppQuit = true
 autoUpdater.logger = null
+
+let isManualCheck = false
+let checkInterval: ReturnType<typeof setInterval> | null = null
+let initialTimeout: ReturnType<typeof setTimeout> | null = null
+
+function safeSend(win: BrowserWindow, channel: string, data?: unknown): void {
+  if (!win.isDestroyed()) {
+    win.webContents.send(channel, data)
+  }
+}
 
 export const updaterService = {
   init(mainWindow: BrowserWindow): void {
@@ -42,28 +52,32 @@ export const updaterService = {
 
     autoUpdater.on('checking-for-update', () => {
       log.info('Checking for update')
-      mainWindow.webContents.send('updater:checking')
+      safeSend(mainWindow, 'updater:checking')
     })
 
     autoUpdater.on('update-available', (info) => {
-      log.info('Update available', { version: info.version })
-      mainWindow.webContents.send('updater:available', {
+      log.info('Update available', { version: info.version, isManualCheck })
+      safeSend(mainWindow, 'updater:available', {
         version: info.version,
         releaseNotes: info.releaseNotes,
-        releaseDate: info.releaseDate
+        releaseDate: info.releaseDate,
+        isManualCheck
       })
+      isManualCheck = false
     })
 
     autoUpdater.on('update-not-available', (info) => {
-      log.info('No update available', { version: info.version })
-      mainWindow.webContents.send('updater:not-available', {
-        version: info.version
+      log.info('No update available', { version: info.version, isManualCheck })
+      safeSend(mainWindow, 'updater:not-available', {
+        version: info.version,
+        isManualCheck
       })
+      isManualCheck = false
     })
 
     autoUpdater.on('download-progress', (progress) => {
       log.info('Download progress', { percent: Math.round(progress.percent) })
-      mainWindow.webContents.send('updater:progress', {
+      safeSend(mainWindow, 'updater:progress', {
         percent: progress.percent,
         bytesPerSecond: progress.bytesPerSecond,
         transferred: progress.transferred,
@@ -73,7 +87,7 @@ export const updaterService = {
 
     autoUpdater.on('update-downloaded', (info) => {
       log.info('Update downloaded', { version: info.version })
-      mainWindow.webContents.send('updater:downloaded', {
+      safeSend(mainWindow, 'updater:downloaded', {
         version: info.version,
         releaseNotes: info.releaseNotes
       })
@@ -81,22 +95,25 @@ export const updaterService = {
 
     autoUpdater.on('error', (error) => {
       log.error('Update error', error)
-      mainWindow.webContents.send('updater:error', {
-        message: error?.message ?? String(error)
+      safeSend(mainWindow, 'updater:error', {
+        message: error?.message ?? String(error),
+        isManualCheck
       })
+      isManualCheck = false
     })
 
-    setTimeout(() => {
+    initialTimeout = setTimeout(() => {
       this.checkForUpdates()
     }, INITIAL_DELAY)
 
-    setInterval(() => {
+    checkInterval = setInterval(() => {
       this.checkForUpdates()
     }, CHECK_INTERVAL)
   },
 
-  async checkForUpdates(): Promise<void> {
+  async checkForUpdates(options?: { manual?: boolean }): Promise<void> {
     try {
+      isManualCheck = options?.manual ?? false
       await autoUpdater.checkForUpdates()
     } catch (error) {
       log.error(
@@ -121,12 +138,23 @@ export const updaterService = {
     autoUpdater.quitAndInstall()
   },
 
+  cleanup(): void {
+    if (initialTimeout) {
+      clearTimeout(initialTimeout)
+      initialTimeout = null
+    }
+    if (checkInterval) {
+      clearInterval(checkInterval)
+      checkInterval = null
+    }
+  },
+
   setChannel(channel: 'stable' | 'canary'): void {
     autoUpdater.channel = channel === 'canary' ? 'canary' : 'latest'
     autoUpdater.allowPrerelease = channel === 'canary'
     autoUpdater.allowDowngrade = true // allow downgrade on explicit channel switch
     log.info('Update channel changed', { channel })
-    this.checkForUpdates()
+    this.checkForUpdates({ manual: true })
   },
 
   getVersion(): string {

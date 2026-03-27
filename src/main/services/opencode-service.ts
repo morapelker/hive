@@ -615,6 +615,17 @@ class OpenCodeService {
     }
   }
 
+  clearSelectedModel(): void {
+    try {
+      const db = getDatabase()
+      db.deleteSetting(SELECTED_MODEL_DB_KEY)
+      log.info('Selected model cleared from backend')
+    } catch (error) {
+      log.error('Failed to clear selected model from backend', { error })
+      throw error
+    }
+  }
+
   /**
    * Send a prompt to an OpenCode session.
    * Accepts either a parts array (text + file parts) or a plain string for backward compatibility.

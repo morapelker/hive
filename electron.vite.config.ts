@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['fix-path'] })],
+    plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
         '@main': resolve('src/main'),

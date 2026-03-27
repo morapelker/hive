@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { revealLabel } from '@/lib/platform'
 import {
   ChevronRight,
   Plus,
@@ -37,7 +38,16 @@ import {
   ContextMenuSubContent,
   ContextMenuCheckboxItem
 } from '@/components/ui/context-menu'
-import { useProjectStore, useWorktreeStore, useSpaceStore, useConnectionStore } from '@/stores'
+import {
+  useProjectStore,
+  useWorktreeStore,
+  useSpaceStore,
+  useConnectionStore,
+  useHintStore,
+  useVimModeStore,
+  useSettingsStore
+} from '@/stores'
+import { HintBadge } from '@/components/ui/HintBadge'
 import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
@@ -106,6 +116,18 @@ export function ProjectItem({
 
   const projectSpaceIds = projectSpaceMap[project.id] ?? []
 
+  const plusHint = useHintStore((s) => s.hintMap.get('plus:' + project.id))
+  const hintMode = useHintStore((s) => s.mode)
+  const hintPendingChar = useHintStore((s) => s.pendingChar)
+  const hintActionMode = useHintStore((s) => s.actionMode)
+  const isSearchMode = useHintStore((s) => s.filterActive)
+  const inputFocused = useHintStore((s) => s.inputFocused)
+
+  const vimMode = useVimModeStore((s) => s.mode)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+  const autoPullBeforeWorktree = useSettingsStore((s) => s.autoPullBeforeWorktree)
+  const projectHint = useHintStore((s) => s.hintMap.get('project:' + project.id))
+
   const [editName, setEditName] = useState(project.name)
   const [branchPickerOpen, setBranchPickerOpen] = useState(false)
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
@@ -114,7 +136,7 @@ export function ProjectItem({
   const isCreatingWorktree = creatingForProjectId === project.id
 
   const isSelected = selectedProjectId === project.id
-  const isExpanded = expandedProjectIds.has(project.id)
+  const isExpanded = isSearchMode || expandedProjectIds.has(project.id)
   const isEditing = editingProjectId === project.id
 
   // Focus input when editing starts (deferred to run after menu closes)
@@ -192,47 +214,126 @@ export function ProjectItem({
     toast.success('Project refreshed')
   }
 
-  const handleCreateWorktree = useCallback(
-    async (e: React.MouseEvent): Promise<void> => {
-      e.stopPropagation()
-      if (isCreatingWorktree) return
+  const doCreateWorktree = useCallback(async (): Promise<void> => {
+    if (isCreatingWorktree) return
 
-      // Check if repo has any commits before attempting worktree creation
-      const hasCommits = await window.worktreeOps.hasCommits(project.path)
-      if (!hasCommits) {
-        setNoCommitsDialogOpen(true)
-        return
-      }
+    // Check if repo has any commits before attempting worktree creation
+    const hasCommits = await window.worktreeOps.hasCommits(project.path)
+    if (!hasCommits) {
+      setNoCommitsDialogOpen(true)
+      return
+    }
 
+    // Show loading toast with appropriate progress message based on auto-pull setting
+    const loadingToastId = autoPullBeforeWorktree
+      ? toast.loading('Pulling latest changes from origin...')
+      : toast.loading('Creating worktree...')
+
+    try {
       const result = await createWorktree(project.id, project.path, project.name)
+
+      // Dismiss loading toast
+      toast.dismiss(loadingToastId)
+
       if (result.success) {
-        gitToast.worktreeCreated(project.name)
+        // Show warning if auto-pull was enabled but pull failed
+        if (autoPullBeforeWorktree && result.pullInfo?.pulled === false) {
+          toast.warning('Failed to pull latest changes - worktree created from local branch')
+          // Delay success toast so warning is visible
+          setTimeout(() => {
+            gitToast.worktreeCreated(project.name)
+          }, 1500)
+        }
+        // Show info toast if commits were pulled
+        else if (result.pullInfo?.updated) {
+          toast.info('Pulled latest changes from origin')
+          gitToast.worktreeCreated(project.name)
+        } else {
+          // No pull info to show, just success
+          gitToast.worktreeCreated(project.name)
+        }
       } else {
         gitToast.operationFailed('create worktree', result.error)
       }
+    } catch (error) {
+      toast.dismiss(loadingToastId)
+      gitToast.operationFailed(
+        'create worktree',
+        error instanceof Error ? error.message : 'Unknown error'
+      )
+    }
+  }, [isCreatingWorktree, createWorktree, project, autoPullBeforeWorktree])
+
+  const handleCreateWorktree = useCallback(
+    async (e: React.MouseEvent): Promise<void> => {
+      e.stopPropagation()
+      await doCreateWorktree()
     },
-    [isCreatingWorktree, createWorktree, project]
+    [doCreateWorktree]
   )
+
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const ce = e as CustomEvent<{ projectId: string }>
+      if (ce.detail.projectId === project.id) doCreateWorktree()
+    }
+    window.addEventListener('hive:hint-plus', handler)
+    return () => window.removeEventListener('hive:hint-plus', handler)
+  }, [project.id, doCreateWorktree])
 
   const handleBranchSelect = useCallback(
     async (branchName: string, prNumber?: number): Promise<void> => {
       setBranchPickerOpen(false)
-      const result = await window.worktreeOps.createFromBranch(
-        project.id,
-        project.path,
-        project.name,
-        branchName,
-        prNumber
-      )
-      if (result.success && result.worktree) {
-        useWorktreeStore.getState().loadWorktrees(project.id)
-        useWorktreeStore.getState().selectWorktree(result.worktree.id)
-        gitToast.worktreeCreated(branchName)
-      } else {
-        gitToast.operationFailed('create worktree from branch', result.error)
+
+      // Show loading toast with appropriate progress message based on auto-pull setting
+      const loadingToastId = autoPullBeforeWorktree && !prNumber
+        ? toast.loading('Pulling latest changes from origin...')
+        : toast.loading('Creating worktree...')
+
+      try {
+        const result = await window.worktreeOps.createFromBranch(
+          project.id,
+          project.path,
+          project.name,
+          branchName,
+          prNumber
+        )
+
+        // Dismiss loading toast
+        toast.dismiss(loadingToastId)
+
+        if (result.success && result.worktree) {
+          useWorktreeStore.getState().loadWorktrees(project.id)
+          useWorktreeStore.getState().selectWorktree(result.worktree.id)
+
+          // Show warning if auto-pull was enabled but pull failed (not for PRs)
+          if (autoPullBeforeWorktree && !prNumber && result.pullInfo?.pulled === false) {
+            toast.warning('Failed to pull latest changes - worktree created from local branch')
+            // Delay success toast so warning is visible
+            setTimeout(() => {
+              gitToast.worktreeCreated(branchName)
+            }, 1500)
+          }
+          // Show info toast if commits were pulled (not applicable for PR checkouts)
+          else if (!prNumber && result.pullInfo?.updated) {
+            toast.info('Pulled latest changes from origin')
+            gitToast.worktreeCreated(branchName)
+          } else {
+            // No pull info to show, just success
+            gitToast.worktreeCreated(branchName)
+          }
+        } else {
+          gitToast.operationFailed('create worktree from branch', result.error)
+        }
+      } catch (error) {
+        toast.dismiss(loadingToastId)
+        gitToast.operationFailed(
+          'create worktree from branch',
+          error instanceof Error ? error.message : 'Unknown error'
+        )
       }
     },
-    [project]
+    [project, autoPullBeforeWorktree]
   )
 
   return (
@@ -254,6 +355,16 @@ export function ProjectItem({
             onClick={handleClick}
             data-testid={`project-item-${project.id}`}
           >
+            {/* Project Hint Badge (visible in vim normal mode, left of chevron) */}
+            {!isEditing && projectHint && vimModeEnabled && vimMode === 'normal' && (
+              <HintBadge
+                code={projectHint}
+                mode={hintMode}
+                pendingChar={hintPendingChar}
+                actionMode={hintActionMode}
+              />
+            )}
+
             {/* Expand/Collapse Chevron */}
             <Button
               variant="ghost"
@@ -307,6 +418,18 @@ export function ProjectItem({
               </div>
             )}
 
+            {/* Plus Hint Badge (visible when filter is active and search field is focused) */}
+            {!isEditing &&
+              plusHint &&
+              (inputFocused || (vimModeEnabled && vimMode === 'normal')) && (
+                <HintBadge
+                  code={plusHint}
+                  mode={hintMode}
+                  pendingChar={hintPendingChar}
+                  actionMode={hintActionMode}
+                />
+              )}
+
             {/* Create Worktree Button (hidden in connection mode) */}
             {!isEditing && !connectionModeActive && (
               <Button
@@ -331,77 +454,79 @@ export function ProjectItem({
           </div>
         </ContextMenuTrigger>
 
-        {!connectionModeActive && <ContextMenuContent className="w-48">
-          <ContextMenuItem onClick={handleStartEdit}>
-            <Pencil className="h-4 w-4 mr-2" />
-            Edit Name
-          </ContextMenuItem>
-          <ContextMenuItem onClick={handleOpenInFinder}>
-            <ExternalLink className="h-4 w-4 mr-2" />
-            Open in Finder
-          </ContextMenuItem>
-          <ContextMenuItem onClick={handleCopyPath}>
-            <Copy className="h-4 w-4 mr-2" />
-            Copy Path
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => refreshLanguage(project.id)}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh Language
-          </ContextMenuItem>
-          <ContextMenuItem onClick={handleRefreshProject}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh Project
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => setBranchPickerOpen(true)}>
-            <GitBranch className="h-4 w-4 mr-2" />
-            New Workspace From...
-          </ContextMenuItem>
-          <ContextMenuItem
-            onClick={() => useProjectStore.getState().openProjectSettings(project.id)}
-          >
-            <Settings className="h-4 w-4 mr-2" />
-            Project Settings
-          </ContextMenuItem>
-          {spaces.length > 0 && (
-            <>
-              <ContextMenuSub>
-                <ContextMenuSubTrigger>
-                  <FolderHeart className="h-4 w-4 mr-2" />
-                  Assign to Space
-                </ContextMenuSubTrigger>
-                <ContextMenuSubContent className="w-40">
-                  {spaces.map((space) => {
-                    const isAssigned = projectSpaceIds.includes(space.id)
-                    return (
-                      <ContextMenuCheckboxItem
-                        key={space.id}
-                        checked={isAssigned}
-                        onSelect={(e) => {
-                          e.preventDefault()
-                          if (isAssigned) {
-                            removeProjectFromSpace(project.id, space.id)
-                          } else {
-                            assignProjectToSpace(project.id, space.id)
-                          }
-                        }}
-                      >
-                        {space.name}
-                      </ContextMenuCheckboxItem>
-                    )
-                  })}
-                </ContextMenuSubContent>
-              </ContextMenuSub>
-            </>
-          )}
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={() => setRemoveConfirmOpen(true)}
-            className="text-destructive focus:text-destructive focus:bg-destructive/10"
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            Remove from Hive
-          </ContextMenuItem>
-        </ContextMenuContent>}
+        {!connectionModeActive && (
+          <ContextMenuContent className="w-48">
+            <ContextMenuItem onClick={handleStartEdit}>
+              <Pencil className="h-4 w-4 mr-2" />
+              Edit Name
+            </ContextMenuItem>
+            <ContextMenuItem onClick={handleOpenInFinder}>
+              <ExternalLink className="h-4 w-4 mr-2" />
+              {revealLabel(true)}
+            </ContextMenuItem>
+            <ContextMenuItem onClick={handleCopyPath}>
+              <Copy className="h-4 w-4 mr-2" />
+              Copy Path
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => refreshLanguage(project.id)}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh Language
+            </ContextMenuItem>
+            <ContextMenuItem onClick={handleRefreshProject}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh Project
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => setBranchPickerOpen(true)}>
+              <GitBranch className="h-4 w-4 mr-2" />
+              New Workspace From...
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => useProjectStore.getState().openProjectSettings(project.id)}
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              Project Settings
+            </ContextMenuItem>
+            {spaces.length > 0 && (
+              <>
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <FolderHeart className="h-4 w-4 mr-2" />
+                    Assign to Space
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent className="w-40">
+                    {spaces.map((space) => {
+                      const isAssigned = projectSpaceIds.includes(space.id)
+                      return (
+                        <ContextMenuCheckboxItem
+                          key={space.id}
+                          checked={isAssigned}
+                          onSelect={(e) => {
+                            e.preventDefault()
+                            if (isAssigned) {
+                              removeProjectFromSpace(project.id, space.id)
+                            } else {
+                              assignProjectToSpace(project.id, space.id)
+                            }
+                          }}
+                        >
+                          {space.name}
+                        </ContextMenuCheckboxItem>
+                      )
+                    })}
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+              </>
+            )}
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onClick={() => setRemoveConfirmOpen(true)}
+              className="text-destructive focus:text-destructive focus:bg-destructive/10"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Remove from Hive
+            </ContextMenuItem>
+          </ContextMenuContent>
+        )}
       </ContextMenu>
 
       {/* Worktree List - shown when project is expanded */}

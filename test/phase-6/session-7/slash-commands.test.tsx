@@ -271,60 +271,36 @@ describe('Session 7: Slash Commands', () => {
   })
 
   describe('Slash command input detection', () => {
-    test('Input starting with "/" triggers slash mode', () => {
-      let showSlashCommands = false
-      const handleInputChange = (value: string): void => {
-        if (value.startsWith('/') && value.length >= 1) {
-          showSlashCommands = true
-        } else {
-          showSlashCommands = false
-        }
+    const handleInputChange = (value: string): boolean => {
+      if (value.startsWith('/') && !value.includes(' ')) {
+        return true
+      } else {
+        return false
       }
+    }
 
-      handleInputChange('/')
-      expect(showSlashCommands).toBe(true)
+    test('Input starting with "/" triggers slash mode', () => {
+      expect(handleInputChange('/')).toBe(true)
     })
 
     test('Input not starting with "/" hides slash mode', () => {
-      let showSlashCommands = false
-      const handleInputChange = (value: string): void => {
-        if (value.startsWith('/') && value.length >= 1) {
-          showSlashCommands = true
-        } else {
-          showSlashCommands = false
-        }
-      }
-
-      handleInputChange('hello')
-      expect(showSlashCommands).toBe(false)
+      expect(handleInputChange('hello')).toBe(false)
     })
 
     test('Clearing "/" hides slash mode', () => {
-      let showSlashCommands = true
-      const handleInputChange = (value: string): void => {
-        if (value.startsWith('/') && value.length >= 1) {
-          showSlashCommands = true
-        } else {
-          showSlashCommands = false
-        }
-      }
-
-      handleInputChange('')
-      expect(showSlashCommands).toBe(false)
+      expect(handleInputChange('')).toBe(false)
     })
 
     test('"/comp" triggers slash mode', () => {
-      let showSlashCommands = false
-      const handleInputChange = (value: string): void => {
-        if (value.startsWith('/') && value.length >= 1) {
-          showSlashCommands = true
-        } else {
-          showSlashCommands = false
-        }
-      }
+      expect(handleInputChange('/comp')).toBe(true)
+    })
 
-      handleInputChange('/comp')
-      expect(showSlashCommands).toBe(true)
+    test('"/command " with space hides slash mode (command already selected)', () => {
+      expect(handleInputChange('/undo ')).toBe(false)
+    })
+
+    test('"/command text" hides slash mode (typing after selection)', () => {
+      expect(handleInputChange('/undo fix the bug')).toBe(false)
     })
   })
 

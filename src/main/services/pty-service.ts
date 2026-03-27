@@ -52,7 +52,14 @@ class PtyService {
       }
     }
 
-    const shell = opts.shell || process.env.SHELL || '/bin/zsh'
+    const shell =
+      opts.shell ||
+      process.env.SHELL ||
+      (process.platform === 'win32'
+        ? 'powershell.exe'
+        : process.platform === 'darwin'
+          ? '/bin/zsh'
+          : '/bin/bash')
     const cols = opts.cols || 80
     const rows = opts.rows || 24
 

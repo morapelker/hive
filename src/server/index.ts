@@ -113,14 +113,14 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
       context: (ctx) => ({
         ...opts.context,
         clientIp:
-          (ctx.extra as { request: { socket: { remoteAddress?: string } } })
-            .request.socket.remoteAddress || 'unknown',
+          (ctx.extra as { request: { socket: { remoteAddress?: string } } }).request.socket
+            .remoteAddress || 'unknown',
         authenticated: true
       }),
       onConnect: (ctx) => {
         const clientIp =
-          (ctx.extra as { request: { socket: { remoteAddress?: string } } })
-            .request.socket.remoteAddress || 'unknown'
+          (ctx.extra as { request: { socket: { remoteAddress?: string } } }).request.socket
+            .remoteAddress || 'unknown'
 
         if (opts.bruteForce.isBlocked(clientIp)) return false
 

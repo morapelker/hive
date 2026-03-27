@@ -201,6 +201,31 @@ export function registerDatabaseHandlers(): void {
   )
 
   ipcMain.handle(
+    'db:worktree:attachPR',
+    (
+      _event,
+      { worktreeId, prNumber, prUrl }: { worktreeId: string; prNumber: number; prUrl: string }
+    ) => {
+      try {
+        return getDatabase().attachPR(worktreeId, prNumber, prUrl)
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'db:worktree:detachPR',
+    (_event, { worktreeId }: { worktreeId: string }) => {
+      try {
+        return getDatabase().detachPR(worktreeId)
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  )
+
+  ipcMain.handle(
     'db:worktree:setPinned',
     (_event, { worktreeId, pinned }: { worktreeId: string; pinned: boolean }) => {
       try {
@@ -264,6 +289,14 @@ export function registerDatabaseHandlers(): void {
 
   ipcMain.handle('db:session:updateDraft', (_event, sessionId: string, draft: string | null) => {
     getDatabase().updateSessionDraft(sessionId, draft)
+  })
+
+  ipcMain.handle('db:sessionMessage:list', (_event, sessionId: string) => {
+    return getDatabase().getSessionMessages(sessionId)
+  })
+
+  ipcMain.handle('db:sessionActivity:list', (_event, sessionId: string) => {
+    return getDatabase().getSessionActivities(sessionId)
   })
 
   // Spaces

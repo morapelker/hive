@@ -82,9 +82,8 @@ export class BruteForceTracker {
   cleanup(): void {
     const now = Date.now()
     for (const [ip, entry] of this.map) {
-      const expiry = entry.blockedUntil > 0
-        ? entry.blockedUntil
-        : entry.firstAttempt + this.opts.windowMs
+      const expiry =
+        entry.blockedUntil > 0 ? entry.blockedUntil : entry.firstAttempt + this.opts.windowMs
       if (now > expiry) {
         this.map.delete(ip)
       }

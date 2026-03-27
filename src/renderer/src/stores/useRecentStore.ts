@@ -72,9 +72,7 @@ export const useRecentStore = create<RecentState>()((set, get) => ({
         }
       }
       await Promise.all(
-        [...projectsToLoad].map((pid) =>
-          useWorktreeStore.getState().loadWorktrees(pid)
-        )
+        [...projectsToLoad].map((pid) => useWorktreeStore.getState().loadWorktrees(pid))
       )
     } catch {
       // Fallback silently if DB query fails

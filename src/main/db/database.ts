@@ -18,6 +18,8 @@ import type {
   SessionMessageCreate,
   SessionMessageUpdate,
   SessionMessageUpsertByOpenCode,
+  SessionActivity,
+  SessionActivityCreate,
   Setting,
   SessionSearchOptions,
   SessionWithWorktree,
@@ -89,7 +91,9 @@ export class DatabaseService {
       last_model_variant: (row.last_model_variant as string) ?? null,
       attachments: (row.attachments as string) ?? '[]',
       pinned: (row.pinned as number) ?? 0,
-      context: (row.context as string) ?? null
+      context: (row.context as string) ?? null,
+      github_pr_number: (row.github_pr_number as number) ?? null,
+      github_pr_url: (row.github_pr_url as string) ?? null
     } as Worktree
   }
 
@@ -186,10 +190,35 @@ export class DatabaseService {
     this.safeAddColumn('worktrees', 'attachments', "TEXT DEFAULT '[]'")
     this.safeAddColumn('worktrees', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('worktrees', 'context', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('worktrees', 'github_pr_number', 'INTEGER DEFAULT NULL')
+    this.safeAddColumn('worktrees', 'github_pr_url', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS session_activities (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        agent_session_id TEXT,
+        thread_id TEXT,
+        turn_id TEXT,
+        item_id TEXT,
+        request_id TEXT,
+        kind TEXT NOT NULL,
+        tone TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        payload_json TEXT,
+        sequence INTEGER,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_session_activities_session_created
+        ON session_activities(session_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS idx_session_activities_session_turn
+        ON session_activities(session_id, turn_id, created_at);
     `)
   }
 
@@ -414,8 +443,11 @@ export class DatabaseService {
       last_model_provider_id: null,
       last_model_id: null,
       last_model_variant: null,
+      attachments: '[]',
       pinned: 0,
       context: null,
+      github_pr_number: null,
+      github_pr_url: null,
       created_at: now,
       last_accessed_at: now
     }
@@ -645,18 +677,13 @@ export class DatabaseService {
   /**
    * Remove an attachment from a worktree by attachment ID.
    */
-  removeAttachment(
-    worktreeId: string,
-    attachmentId: string
-  ): { success: boolean; error?: string } {
+  removeAttachment(worktreeId: string, attachmentId: string): { success: boolean; error?: string } {
     const db = this.getDb()
     const row = db.prepare('SELECT attachments FROM worktrees WHERE id = ?').get(worktreeId) as
       | Record<string, unknown>
       | undefined
     if (!row) return { success: false, error: 'Worktree not found' }
-    const attachments: Array<{ id: string }> = JSON.parse(
-      (row.attachments as string) || '[]'
-    )
+    const attachments: Array<{ id: string }> = JSON.parse((row.attachments as string) || '[]')
     const filtered = attachments.filter((a) => a.id !== attachmentId)
     if (filtered.length === attachments.length) {
       return { success: false, error: 'Attachment not found' }
@@ -665,6 +692,36 @@ export class DatabaseService {
       JSON.stringify(filtered),
       worktreeId
     )
+    return { success: true }
+  }
+
+  /**
+   * Attach a GitHub PR to a worktree.
+   */
+  attachPR(
+    worktreeId: string,
+    prNumber: number,
+    prUrl: string
+  ): { success: boolean; error?: string } {
+    const db = this.getDb()
+    const row = db.prepare('SELECT id FROM worktrees WHERE id = ?').get(worktreeId)
+    if (!row) return { success: false, error: 'Worktree not found' }
+    db.prepare(
+      'UPDATE worktrees SET github_pr_number = ?, github_pr_url = ? WHERE id = ?'
+    ).run(prNumber, prUrl, worktreeId)
+    return { success: true }
+  }
+
+  /**
+   * Detach a GitHub PR from a worktree.
+   */
+  detachPR(worktreeId: string): { success: boolean; error?: string } {
+    const db = this.getDb()
+    const row = db.prepare('SELECT id FROM worktrees WHERE id = ?').get(worktreeId)
+    if (!row) return { success: false, error: 'Worktree not found' }
+    db.prepare(
+      'UPDATE worktrees SET github_pr_number = NULL, github_pr_url = NULL WHERE id = ?'
+    ).run(worktreeId)
     return { success: true }
   }
 
@@ -746,11 +803,23 @@ export class DatabaseService {
     return row ?? null
   }
 
-  getAgentSdkForSession(agentSessionId: string): 'opencode' | 'claude-code' | null {
+  getSessionByOpenCodeSessionId(opencodeSessionId: string): Session | null {
+    const db = this.getDb()
+    const row = db
+      .prepare('SELECT * FROM sessions WHERE opencode_session_id = ? LIMIT 1')
+      .get(opencodeSessionId) as Session | undefined
+    return row ?? null
+  }
+
+  getAgentSdkForSession(
+    agentSessionId: string
+  ): 'opencode' | 'claude-code' | 'codex' | 'terminal' | null {
     const db = this.getDb()
     const row = db
       .prepare('SELECT agent_sdk FROM sessions WHERE opencode_session_id = ? LIMIT 1')
-      .get(agentSessionId) as { agent_sdk: 'opencode' | 'claude-code' } | undefined
+      .get(agentSessionId) as
+      | { agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal' }
+      | undefined
     return row?.agent_sdk ?? null
   }
 
@@ -1051,6 +1120,99 @@ export class DatabaseService {
     const db = this.getDb()
     const result = db.prepare('DELETE FROM session_messages WHERE id = ?').run(id)
     return result.changes > 0
+  }
+
+  replaceSessionMessages(sessionId: string, messages: SessionMessageCreate[]): SessionMessage[] {
+    const db = this.getDb()
+    const tx = db.transaction(() => {
+      db.prepare('DELETE FROM session_messages WHERE session_id = ?').run(sessionId)
+      const created: SessionMessage[] = []
+      for (const message of messages) {
+        created.push(
+          this.createSessionMessage({
+            ...message,
+            session_id: sessionId
+          })
+        )
+      }
+      return created
+    })
+    return tx()
+  }
+
+  upsertSessionActivity(data: SessionActivityCreate): SessionActivity {
+    const db = this.getDb()
+    const now = data.created_at ?? new Date().toISOString()
+    const id = data.id ?? randomUUID()
+
+    db.prepare(
+      `INSERT INTO session_activities (
+        id,
+        session_id,
+        agent_session_id,
+        thread_id,
+        turn_id,
+        item_id,
+        request_id,
+        kind,
+        tone,
+        summary,
+        payload_json,
+        sequence,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        agent_session_id = excluded.agent_session_id,
+        thread_id = excluded.thread_id,
+        turn_id = excluded.turn_id,
+        item_id = excluded.item_id,
+        request_id = excluded.request_id,
+        kind = excluded.kind,
+        tone = excluded.tone,
+        summary = excluded.summary,
+        payload_json = excluded.payload_json,
+        sequence = excluded.sequence,
+        created_at = excluded.created_at`
+    ).run(
+      id,
+      data.session_id,
+      data.agent_session_id ?? null,
+      data.thread_id ?? null,
+      data.turn_id ?? null,
+      data.item_id ?? null,
+      data.request_id ?? null,
+      data.kind,
+      data.tone,
+      data.summary,
+      data.payload_json ?? null,
+      data.sequence ?? null,
+      now
+    )
+
+    db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, data.session_id)
+
+    const row = db.prepare('SELECT * FROM session_activities WHERE id = ?').get(id) as
+      | SessionActivity
+      | undefined
+    if (!row) {
+      throw new Error(`Failed to load session activity after upsert: ${id}`)
+    }
+    return row
+  }
+
+  getSessionActivities(sessionId: string): SessionActivity[] {
+    const db = this.getDb()
+    return db
+      .prepare(
+        `SELECT * FROM session_activities
+         WHERE session_id = ?
+         ORDER BY
+           CASE WHEN sequence IS NULL THEN 1 ELSE 0 END,
+           sequence ASC,
+           created_at ASC,
+           id ASC`
+      )
+      .all(sessionId) as SessionActivity[]
   }
 
   // Connection operations
