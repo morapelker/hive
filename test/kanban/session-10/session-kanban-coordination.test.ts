@@ -600,4 +600,140 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     //  the guard `ticket.current_session_id !== event.newSessionId` prevents the update)
     expect(mockKanban.ticket.update).not.toHaveBeenCalled()
   })
+
+  // ────────────────────────────────────────────────────────────────────
+  // mode_change updates ticket from plan→build and clears plan_ready
+  // ────────────────────────────────────────────────────────────────────
+  test('mode_change updates ticket from plan→build and clears plan_ready', async () => {
+    const ticket = makeTicket({
+      id: 't1',
+      column: 'in_progress',
+      current_session_id: 'session-mc1',
+      mode: 'plan',
+      plan_ready: true
+    })
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [ticket]]])
+      })
+    })
+
+    await act(async () => {
+      useKanbanStore.getState().syncTicketWithSession('session-mc1', {
+        type: 'mode_change',
+        sessionMode: 'build'
+      })
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    const tickets = useKanbanStore.getState().tickets.get('proj-1')
+    const updated = tickets!.find((t) => t.id === 't1')
+    expect(updated!.mode).toBe('build')
+    expect(updated!.plan_ready).toBe(false)
+    expect(mockKanban.ticket.update).toHaveBeenCalledWith('t1', {
+      mode: 'build',
+      plan_ready: false
+    })
+  })
+
+  // ────────────────────────────────────────────────────────────────────
+  // mode_change updates ticket from build→plan, preserves plan_ready
+  // ────────────────────────────────────────────────────────────────────
+  test('mode_change updates ticket from build→plan, preserves plan_ready', async () => {
+    const ticket = makeTicket({
+      id: 't1',
+      column: 'in_progress',
+      current_session_id: 'session-mc2',
+      mode: 'build',
+      plan_ready: false
+    })
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [ticket]]])
+      })
+    })
+
+    await act(async () => {
+      useKanbanStore.getState().syncTicketWithSession('session-mc2', {
+        type: 'mode_change',
+        sessionMode: 'plan'
+      })
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    const tickets = useKanbanStore.getState().tickets.get('proj-1')
+    const updated = tickets!.find((t) => t.id === 't1')
+    expect(updated!.mode).toBe('plan')
+    expect(updated!.plan_ready).toBe(false) // preserved from original
+    expect(mockKanban.ticket.update).toHaveBeenCalledWith('t1', {
+      mode: 'plan',
+      plan_ready: false
+    })
+  })
+
+  // ────────────────────────────────────────────────────────────────────
+  // mode_change is idempotent when ticket already at target mode
+  // ────────────────────────────────────────────────────────────────────
+  test('mode_change is idempotent when ticket already at target mode', async () => {
+    const ticket = makeTicket({
+      id: 't1',
+      column: 'in_progress',
+      current_session_id: 'session-mc3',
+      mode: 'build',
+      plan_ready: false
+    })
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [ticket]]])
+      })
+    })
+
+    await act(async () => {
+      useKanbanStore.getState().syncTicketWithSession('session-mc3', {
+        type: 'mode_change',
+        sessionMode: 'build'
+      })
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // Already in build mode with plan_ready=false — should be a no-op
+    expect(mockKanban.ticket.update).not.toHaveBeenCalled()
+  })
+
+  // ────────────────────────────────────────────────────────────────────
+  // mode_change ignores unrelated sessions
+  // ────────────────────────────────────────────────────────────────────
+  test('mode_change ignores unrelated sessions', async () => {
+    const ticket = makeTicket({
+      id: 't1',
+      column: 'in_progress',
+      current_session_id: 'session-mc4',
+      mode: 'plan',
+      plan_ready: true
+    })
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [ticket]]])
+      })
+    })
+
+    await act(async () => {
+      useKanbanStore.getState().syncTicketWithSession('session-other', {
+        type: 'mode_change',
+        sessionMode: 'build'
+      })
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // Different session — ticket should be unchanged
+    const tickets = useKanbanStore.getState().tickets.get('proj-1')
+    const unchanged = tickets!.find((t) => t.id === 't1')
+    expect(unchanged!.mode).toBe('plan')
+    expect(unchanged!.plan_ready).toBe(true)
+    expect(mockKanban.ticket.update).not.toHaveBeenCalled()
+  })
 })

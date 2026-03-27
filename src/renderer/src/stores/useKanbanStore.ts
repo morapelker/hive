@@ -299,6 +299,21 @@ export const useKanbanStore = create<KanbanState>()(
                 break
               }
 
+              case 'mode_change': {
+                // Mode toggled outside the Kanban board — sync ticket mode + plan_ready
+                const targetMode = event.sessionMode ?? null
+                const targetPlanReady = targetMode === 'build' ? false : ticket.plan_ready
+                if (ticket.mode !== targetMode || ticket.plan_ready !== targetPlanReady) {
+                  get()
+                    .updateTicket(ticket.id, projectId, {
+                      mode: targetMode,
+                      plan_ready: targetPlanReady
+                    })
+                    .catch(() => {})
+                }
+                break
+              }
+
               case 'session_error': {
                 // No state change needed — ticket stays in current column.
                 // The card reads session status from worktree-status store.
