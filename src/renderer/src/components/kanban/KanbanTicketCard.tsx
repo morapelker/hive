@@ -192,7 +192,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     if (!ticket.current_session_id) return
     const kanbanStore = useKanbanStore.getState()
     if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
-    if (ticket.worktree_id) useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+    if (ticket.worktree_id) {
+      useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+      useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
+    }
     useSessionStore.getState().setActiveSession(ticket.current_session_id)
   }, [ticket.current_session_id, ticket.worktree_id])
 

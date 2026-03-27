@@ -453,18 +453,21 @@ describe('Session 14: E2E Integration', () => {
 
     // Simulate "Jump to session" action:
     // 1. Disable board view
-    // 2. Set active worktree
+    // 2. Set active worktree (both UI selection and session store)
     // 3. Set active session
     act(() => {
       useKanbanStore.getState().toggleBoardView()
-      useWorktreeStore.setState({ selectedWorktreeId: 'wt-jump' })
-      useSessionStore.setState({ activeSessionId: 'session-jump-1' })
+      useWorktreeStore.getState().selectWorktree('wt-jump')
+      useSessionStore.getState().setActiveWorktree('wt-jump')
+      useSessionStore.getState().setActiveSession('session-jump-1')
     })
 
     // Board view should be off
     expect(useKanbanStore.getState().isBoardViewActive).toBe(false)
     // Correct worktree selected
     expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-jump')
+    // Session store worktree must be synced for session to render
+    expect(useSessionStore.getState().activeWorktreeId).toBe('wt-jump')
     // Correct session selected
     expect(useSessionStore.getState().activeSessionId).toBe('session-jump-1')
   })

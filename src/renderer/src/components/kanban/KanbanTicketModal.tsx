@@ -1621,9 +1621,10 @@ function JumpToSessionButton({
       kanbanStore.toggleBoardView()
     }
 
-    // Select the ticket's worktree
+    // Select the ticket's worktree and sync session store
     if (ticket.worktree_id) {
       useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+      useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
     }
 
     // Focus the session tab

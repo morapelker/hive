@@ -767,6 +767,7 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
       fireEvent.click(jumpBtn)
 
       expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-1')
+      expect(useSessionStore.getState().activeWorktreeId).toBe('wt-1')
       expect(useSessionStore.getState().activeSessionId).toBe('session-jump')
     })
   })
