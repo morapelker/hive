@@ -135,7 +135,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 
 // ── Import component under test ─────────────────────────────────────
-import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
+import { WorktreePickerModal, _resetLastSourceBranch } from '@/components/kanban/WorktreePickerModal'
 
 import type { KanbanTicket } from '../../../src/main/db/types'
 
@@ -212,6 +212,7 @@ describe('Session 9: Worktree Picker Modal', () => {
   ]
 
   beforeEach(() => {
+    _resetLastSourceBranch()
     act(() => {
       useKanbanStore.setState({
         tickets: new Map([

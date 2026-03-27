@@ -43,6 +43,16 @@ interface WorktreePickerModalProps {
   onSendComplete?: () => void
 }
 
+/** In-memory: last-chosen source branch per project (resets on app restart) */
+const _lastSourceBranchByProject: Record<string, string> = {}
+
+/** @internal — for test cleanup only */
+export function _resetLastSourceBranch(): void {
+  for (const key of Object.keys(_lastSourceBranchByProject)) {
+    delete _lastSourceBranchByProject[key]
+  }
+}
+
 // ── Prompt template builders ────────────────────────────────────────
 function buildPrompt(mode: PickerMode, ticket: KanbanTicket): string {
   const prefix =
@@ -123,7 +133,13 @@ export function WorktreePickerModal({
     setBranchesLoading(true)
     window.gitOps.listBranchesWithStatus(project.path)
       .then((result) => {
-        if (result.success) setBranches(result.branches)
+        if (result.success) {
+          setBranches(result.branches)
+          const remembered = _lastSourceBranchByProject[projectId]
+          if (remembered && !result.branches.some(b => b.name === remembered)) {
+            setSourceBranch(null)
+          }
+        }
       })
       .catch(() => {
         // IPC failure — branches stay empty, user sees "No branches found"
@@ -145,7 +161,7 @@ export function WorktreePickerModal({
       setIsNewWorktree(false)
       setPromptText(buildPrompt('build', ticket))
       setIsSending(false)
-      setSourceBranch(null)
+      setSourceBranch(_lastSourceBranchByProject[projectId] ?? null)
       setBranches([])
       setBranchFilter('')
       setBranchPopoverOpen(false)
@@ -235,6 +251,7 @@ export function WorktreePickerModal({
       // Create new worktree if needed
       if (isNewWorktree && project) {
         const targetBranch = sourceBranch ?? defaultBranchName
+        _lastSourceBranchByProject[projectId] = targetBranch
         const result = await createWorktreeFromBranch(
           projectId,
           project.path,
@@ -486,6 +503,7 @@ export function WorktreePickerModal({
                               className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left hover:bg-muted/30 transition-colors"
                               onClick={() => {
                                 setSourceBranch(branch.name)
+                                _lastSourceBranchByProject[projectId] = branch.name
                                 setBranchPopoverOpen(false)
                                 setBranchFilter('')
                               }}
