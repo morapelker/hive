@@ -30,6 +30,20 @@ export function getKanbanDragData(): KanbanDragData | null {
   return _kanbanDragData
 }
 
+// ── Layout animation suppression (module-level, shared across all columns) ──
+// Set during drag-and-drop so the resulting re-render uses instant transitions.
+// Cleared after a short delay to ensure React has committed the render.
+let _suppressLayoutAnimation = false
+
+export function suppressLayoutAnimation(): void {
+  _suppressLayoutAnimation = true
+  setTimeout(() => { _suppressLayoutAnimation = false }, 300)
+}
+
+export function isLayoutAnimationSuppressed(): boolean {
+  return _suppressLayoutAnimation
+}
+
 // ── Column ordering for sort comparisons ───────────────────────────────
 const COLUMN_ORDER: Record<KanbanTicketColumn, number> = {
   todo: 0,
@@ -51,7 +65,6 @@ interface KanbanState {
   selectedTicketId: string | null
   /** Whether a ticket is currently being dragged (reactive, for column styling) */
   isDragging: boolean
-
   // ── Actions ────────────────────────────────────────────────────────
   setSelectedTicketId: (id: string | null) => void
   loadTickets: (projectId: string) => Promise<void>
@@ -89,7 +102,6 @@ export const useKanbanStore = create<KanbanState>()(
       simpleModeByProject: {} as Record<string, boolean>,
       selectedTicketId: null,
       isDragging: false,
-
       // ── setSelectedTicketId ────────────────────────────────────────
       setSelectedTicketId: (id: string | null) => {
         set({ selectedTicketId: id })

@@ -106,6 +106,7 @@
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.468.0",
     "monaco-editor": "^0.55.1",
+    "motion": "^12.38.0",
     "node-addon-api": "^8.6.0",
     "node-pty": "^1.1.0",
     "posthog-node": "^5.26.0",
