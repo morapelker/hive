@@ -12,9 +12,9 @@ import {
   Archive,
   ChevronDown,
   FileSearch,
-  X,
-  LayoutGrid
+  X
 } from 'lucide-react'
+import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -864,7 +864,7 @@ export function Header(): React.JSX.Element {
               isBoardViewActive && 'bg-accent text-accent-foreground'
             )}
           >
-            <LayoutGrid className="h-4 w-4" />
+            <KanbanIcon className="h-4 w-4" />
           </Button>
         )}
         <Button

@@ -18,9 +18,9 @@ import {
   Loader2,
   AlertCircle,
   Check,
-  TerminalSquare,
-  LayoutGrid
+  TerminalSquare
 } from 'lucide-react'
+import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore } from '@/stores/useSessionStore'
 import {
   useFileViewerStore,
@@ -1025,7 +1025,7 @@ export function SessionTabs(): React.JSX.Element | null {
                 : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
             )}
           >
-            <LayoutGrid className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
+            <KanbanIcon className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
             <span className="truncate flex-1">Kanban</span>
             {!isFileTabActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
           </div>

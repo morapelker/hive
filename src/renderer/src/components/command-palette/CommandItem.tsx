@@ -24,10 +24,11 @@ import {
   ChevronRight,
   type LucideIcon
 } from 'lucide-react'
+import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { cn } from '@/lib/utils'
 
 // Icon mapping
-const iconMap: Record<string, LucideIcon> = {
+const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   Plus,
   Minus,
   X,
@@ -46,7 +47,8 @@ const iconMap: Record<string, LucideIcon> = {
   Check,
   Upload,
   Download,
-  RefreshCw
+  RefreshCw,
+  KanbanIcon
 }
 
 interface CommandItemProps {
