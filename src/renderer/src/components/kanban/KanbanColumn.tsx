@@ -249,9 +249,9 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
       )}
     >
       {/* Column header */}
-      <div className="flex flex-col gap-1 px-2 pb-3">
+      <div className="px-2 pb-3">
         {/* Title row — always centered */}
-        <div className="flex items-center justify-center gap-2">
+        <div className="relative flex items-center justify-center gap-2">
           {/* Collapse toggle for Done column */}
           {isDoneColumn && (
             <button
@@ -274,24 +274,22 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
           <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-muted/40 px-1.5 text-[11px] font-medium text-muted-foreground">
             {tickets.length}
           </span>
+
+          {/* Flow mode toggle — top-right, only for In Progress column.
+              ON (default) = flow mode: automated worktree picker on drop.
+              OFF = simple mode: direct drop, no modal. */}
+          {isInProgressColumn && (
+            <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <Zap className={cn('h-3 w-3', !isSimpleMode ? 'text-amber-500' : 'text-muted-foreground/50')} />
+              <Switch
+                data-testid="simple-mode-toggle"
+                size="sm"
+                checked={!isSimpleMode}
+                onCheckedChange={(checked) => handleSimpleModeToggle(!checked)}
+              />
+            </div>
+          )}
         </div>
-
-        {/* Controls row — only for columns with controls */}
-        {/* Flow mode toggle — only for In Progress column.
-            ON (default) = flow mode: automated worktree picker on drop.
-            OFF = simple mode: direct drop, no modal. */}
-        {isInProgressColumn && (
-          <div className="flex items-center justify-center gap-1.5">
-            <Zap className={cn('h-3 w-3', !isSimpleMode ? 'text-amber-500' : 'text-muted-foreground/50')} />
-            <Switch
-              data-testid="simple-mode-toggle"
-              size="sm"
-              checked={!isSimpleMode}
-              onCheckedChange={(checked) => handleSimpleModeToggle(!checked)}
-            />
-          </div>
-        )}
-
       </div>
 
       {/* Drop area — scrollable card list, doubles as drop target */}
