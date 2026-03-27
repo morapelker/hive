@@ -1044,7 +1044,7 @@ export function SessionTabs(): React.JSX.Element | null {
             )}
           >
             <KanbanIcon className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
-            <span className="truncate flex-1">Kanban</span>
+            <span className="truncate flex-1">Board</span>
             {!isFileTabActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
           </div>
         ) : (

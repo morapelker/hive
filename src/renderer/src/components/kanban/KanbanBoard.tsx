@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { LayoutGroup, motion } from 'motion/react'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn'
 import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
@@ -24,20 +25,23 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
   }, [projectId, loadTickets])
 
   return (
-    <div
-      data-testid="kanban-board"
-      className="flex flex-1 min-h-0 gap-4 overflow-x-auto p-4"
-    >
-      {COLUMNS.map((column) => (
-        <KanbanColumn
-          key={column}
-          column={column}
-          tickets={getTicketsByColumn(projectId, column)}
-          archivedTickets={column === 'done' ? getArchivedTicketsByColumn(projectId, 'done') : undefined}
-          projectId={projectId}
-        />
-      ))}
-      <KanbanTicketModal />
-    </div>
+    <LayoutGroup>
+      <motion.div
+        layoutScroll
+        data-testid="kanban-board"
+        className="flex flex-1 min-h-0 gap-4 overflow-x-auto p-4"
+      >
+        {COLUMNS.map((column) => (
+          <KanbanColumn
+            key={column}
+            column={column}
+            tickets={getTicketsByColumn(projectId, column)}
+            archivedTickets={column === 'done' ? getArchivedTicketsByColumn(projectId, 'done') : undefined}
+            projectId={projectId}
+          />
+        ))}
+        <KanbanTicketModal />
+      </motion.div>
+    </LayoutGroup>
   )
 }

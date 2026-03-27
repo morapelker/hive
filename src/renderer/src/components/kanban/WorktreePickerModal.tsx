@@ -23,6 +23,10 @@ import { messageSendTimes, lastSendMode } from '@/lib/message-send-times'
 import { PLAN_MODE_PREFIX } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import type { KanbanTicket } from '../../../../main/db/types'
+import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
+
+// Stable empty array to avoid referential-inequality loops in Zustand selectors
+const EMPTY_ARRAY: readonly never[] = []
 
 // ── Types ───────────────────────────────────────────────────────────
 type PickerMode = 'build' | 'plan'
@@ -41,6 +45,16 @@ interface WorktreePickerModalProps {
   onOpenChange: (open: boolean) => void
   /** Called after a successful send to complete the column move */
   onSendComplete?: () => void
+}
+
+/** In-memory: last-chosen source branch per project (resets on app restart) */
+const _lastSourceBranchByProject: Record<string, string> = {}
+
+/** @internal — for test cleanup only */
+export function _resetLastSourceBranch(): void {
+  for (const key of Object.keys(_lastSourceBranchByProject)) {
+    delete _lastSourceBranchByProject[key]
+  }
 }
 
 // ── Prompt template builders ────────────────────────────────────────
@@ -77,14 +91,14 @@ export function WorktreePickerModal({
   // ── Store access ────────────────────────────────────────────────
   const worktrees = useWorktreeStore(
     useCallback(
-      (state) => state.worktreesByProject.get(projectId) ?? [],
+      (state) => state.worktreesByProject.get(projectId) ?? EMPTY_ARRAY,
       [projectId]
     )
   )
 
   const ticketsForProject = useKanbanStore(
     useCallback(
-      (state) => state.tickets.get(projectId) ?? [],
+      (state) => state.tickets.get(projectId) ?? EMPTY_ARRAY,
       [projectId]
     )
   )
@@ -105,6 +119,10 @@ export function WorktreePickerModal({
     return defaultWt?.branch_name ?? 'main'
   }, [worktrees])
 
+  const worktreeNamePreview = useMemo(() => {
+    return canonicalizeTicketTitle(ticket.title)
+  }, [ticket.title])
+
   // ── Count in-progress tickets per worktree ──────────────────────
   const ticketCountByWorktree = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -123,7 +141,13 @@ export function WorktreePickerModal({
     setBranchesLoading(true)
     window.gitOps.listBranchesWithStatus(project.path)
       .then((result) => {
-        if (result.success) setBranches(result.branches)
+        if (result.success) {
+          setBranches(result.branches)
+          const remembered = _lastSourceBranchByProject[projectId]
+          if (remembered && !result.branches.some(b => b.name === remembered)) {
+            setSourceBranch(null)
+          }
+        }
       })
       .catch(() => {
         // IPC failure — branches stay empty, user sees "No branches found"
@@ -145,7 +169,7 @@ export function WorktreePickerModal({
       setIsNewWorktree(false)
       setPromptText(buildPrompt('build', ticket))
       setIsSending(false)
-      setSourceBranch(null)
+      setSourceBranch(_lastSourceBranchByProject[projectId] ?? null)
       setBranches([])
       setBranchFilter('')
       setBranchPopoverOpen(false)
@@ -235,11 +259,14 @@ export function WorktreePickerModal({
       // Create new worktree if needed
       if (isNewWorktree && project) {
         const targetBranch = sourceBranch ?? defaultBranchName
+        _lastSourceBranchByProject[projectId] = targetBranch
+        const nameHint = canonicalizeTicketTitle(ticket.title)
         const result = await createWorktreeFromBranch(
           projectId,
           project.path,
           project.name,
-          targetBranch
+          targetBranch,
+          nameHint || undefined
         )
         if (!result.success || !result.worktree?.id) {
           toast.error(result.error || 'Failed to create worktree')
@@ -486,6 +513,7 @@ export function WorktreePickerModal({
                               className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left hover:bg-muted/30 transition-colors"
                               onClick={() => {
                                 setSourceBranch(branch.name)
+                                _lastSourceBranchByProject[projectId] = branch.name
                                 setBranchPopoverOpen(false)
                                 setBranchFilter('')
                               }}
@@ -504,6 +532,11 @@ export function WorktreePickerModal({
                       </div>
                     </PopoverContent>
                   </Popover>
+                  {worktreeNamePreview && (
+                    <span className="ml-auto text-xs text-muted-foreground font-mono truncate max-w-[180px]">
+                      {worktreeNamePreview}
+                    </span>
+                  )}
                 </div>
               )}
 

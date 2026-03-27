@@ -199,12 +199,12 @@ export function useCommands() {
       },
 
       // =====================
-      // KANBAN COMMANDS
+      // BOARD COMMANDS
       // =====================
       {
         id: 'kanban:toggle',
-        label: 'Open Kanban Board',
-        description: 'Toggle the Kanban board view',
+        label: 'Open Board',
+        description: 'Toggle the board view',
         category: 'navigation',
         icon: 'KanbanIcon',
         keywords: ['kanban', 'board', 'tickets', 'todo'],

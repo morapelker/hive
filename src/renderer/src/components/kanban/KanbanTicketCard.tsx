@@ -21,9 +21,11 @@ import {
 } from '@/components/ui/alert-dialog'
 import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
+import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { setKanbanDragData, useKanbanStore } from '@/stores/useKanbanStore'
+import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import type { KanbanTicket } from '../../../../main/db/types'
@@ -104,17 +106,29 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  // ── Detect if the linked worktree has a live run process ──────
+  const isRunProcessAlive = useScriptStore(
+    useCallback(
+      (s) => {
+        if (!ticket.worktree_id) return false
+        return s.scriptStates[ticket.worktree_id]?.runRunning ?? false
+      },
+      [ticket.worktree_id]
+    )
+  )
+
   const isActive = sessionStatus === 'active'
   const isError = sessionStatus === 'error'
   const hasAttachments = ticket.attachments.length > 0
 
   // ── Border state computation ────────────────────────────────────
   const borderState = useMemo(() => {
+    if (ticket.column !== 'in_progress') return 'default'
     if (ticket.plan_ready) return 'violet'
     if (ticket.current_session_id && ticket.mode === 'build') return 'blue'
     if (ticket.current_session_id && ticket.mode === 'plan') return 'violet'
     return 'default'
-  }, [ticket.mode, ticket.plan_ready, ticket.current_session_id])
+  }, [ticket.column, ticket.mode, ticket.plan_ready, ticket.current_session_id])
 
   // ── Drag handlers ──────────────────────────────────────────────
   const handleDragStart = useCallback(
@@ -204,7 +218,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     if (!ticket.current_session_id) return
     const kanbanStore = useKanbanStore.getState()
     if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
-    if (ticket.worktree_id) useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+    if (ticket.worktree_id) {
+      useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+      useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
+    }
     useSessionStore.getState().setActiveSession(ticket.current_session_id)
   }, [ticket.current_session_id, ticket.worktree_id])
 
@@ -235,7 +252,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             <p className="text-sm font-medium leading-snug text-foreground">{ticket.title}</p>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || ticket.plan_ready || isError || isBusy || isAsking || isArchived) && (
+            {(hasAttachments || worktreeName || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive) && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {/* Archived badge */}
                 {isArchived && (
@@ -260,6 +277,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   <span className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     {worktreeName}
                   </span>
+                )}
+
+                {/* Run process alive indicator */}
+                {isRunProcessAlive && (
+                  <PulseAnimation className="h-3 w-3 text-green-500 shrink-0" />
                 )}
 
                 {/* Plan ready badge */}

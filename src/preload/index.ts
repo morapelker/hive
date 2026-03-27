@@ -355,7 +355,8 @@ const worktreeOps = {
     projectPath: string,
     projectName: string,
     branchName: string,
-    prNumber?: number
+    prNumber?: number,
+    nameHint?: string
   ): Promise<{
     success: boolean
     worktree?: {
@@ -375,7 +376,8 @@ const worktreeOps = {
       projectPath,
       projectName,
       branchName,
-      prNumber
+      prNumber,
+      nameHint
     }),
 
   // Subscribe to branch-renamed events (auto-rename from main process)
@@ -1787,6 +1789,18 @@ const kanban = {
   simpleMode: {
     toggle: (projectId: string, enabled: boolean) =>
       ipcRenderer.invoke('kanban:simpleMode:toggle', projectId, enabled)
+  },
+  followup: {
+    create: (data: {
+      ticket_id: string
+      content: string
+      role?: 'user' | 'assistant'
+      mode: 'build' | 'plan'
+      session_id?: string | null
+      source?: 'direct' | 'supercharge' | 'error_retry'
+    }) => ipcRenderer.invoke('kanban:followup:create', data),
+    getByTicket: (ticketId: string) =>
+      ipcRenderer.invoke('kanban:followup:getByTicket', ticketId)
   }
 }
 

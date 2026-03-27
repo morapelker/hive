@@ -19,15 +19,49 @@ export interface KanbanDragData {
 }
 
 let _kanbanDragData: KanbanDragData | null = null
+let _pendingDragTicketIdFrame: number | undefined
 
 export function setKanbanDragData(data: KanbanDragData | null): void {
   _kanbanDragData = data
-  // Also update reactive store flag so all columns can show drag affordance
-  useKanbanStore.setState({ isDragging: data !== null })
+
+  // Cancel any pending delayed draggingTicketId update
+  if (_pendingDragTicketIdFrame !== undefined) {
+    cancelAnimationFrame(_pendingDragTicketIdFrame)
+    _pendingDragTicketIdFrame = undefined
+  }
+
+  if (data) {
+    // isDragging set immediately so columns show drag affordance
+    useKanbanStore.setState({ isDragging: true })
+    // Delay draggingTicketId to next frame — the wrapper collapse must happen
+    // AFTER the browser has committed the drag (captured the drag image and
+    // started tracking the pointer). Collapsing during dragstart aborts the drag.
+    _pendingDragTicketIdFrame = requestAnimationFrame(() => {
+      _pendingDragTicketIdFrame = undefined
+      useKanbanStore.setState({ draggingTicketId: data.ticketId })
+    })
+  } else {
+    // Clear everything immediately on drag end / drop
+    useKanbanStore.setState({ isDragging: false, draggingTicketId: null })
+  }
 }
 
 export function getKanbanDragData(): KanbanDragData | null {
   return _kanbanDragData
+}
+
+// ── Layout animation suppression (module-level, shared across all columns) ──
+// Set during drag-and-drop so the resulting re-render uses instant transitions.
+// Cleared after a short delay to ensure React has committed the render.
+let _suppressLayoutAnimation = false
+
+export function suppressLayoutAnimation(): void {
+  _suppressLayoutAnimation = true
+  setTimeout(() => { _suppressLayoutAnimation = false }, 300)
+}
+
+export function isLayoutAnimationSuppressed(): boolean {
+  return _suppressLayoutAnimation
 }
 
 // ── Column ordering for sort comparisons ───────────────────────────────
@@ -51,6 +85,7 @@ interface KanbanState {
   selectedTicketId: string | null
   /** Whether a ticket is currently being dragged (reactive, for column styling) */
   isDragging: boolean
+  draggingTicketId: string | null
   /** Per-project archive visibility toggle — NOT persisted to localStorage */
   showArchivedByProject: Record<string, boolean>
 
@@ -96,6 +131,7 @@ export const useKanbanStore = create<KanbanState>()(
       simpleModeByProject: {} as Record<string, boolean>,
       selectedTicketId: null,
       isDragging: false,
+      draggingTicketId: null,
       showArchivedByProject: {} as Record<string, boolean>,
 
       // ── setSelectedTicketId ────────────────────────────────────────
@@ -374,20 +410,30 @@ export const useKanbanStore = create<KanbanState>()(
                     .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                     .catch(() => {})
                 } else if (ticket.mode === 'plan' && !ticket.plan_ready) {
-                  // Set plan_ready flag, keep in current column (idempotent — skip if already set)
+                  // Plan finished — set plan_ready and move to review for user attention
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})
+                  if (ticket.column !== 'review') {
+                    get()
+                      .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                      .catch(() => {})
+                  }
                 }
                 break
               }
 
               case 'plan_ready': {
-                // Explicit plan.ready event — set flag (idempotent)
+                // Explicit plan.ready event — set flag and move to review
                 if (ticket.mode === 'plan' && !ticket.plan_ready) {
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})
+                  if (ticket.column !== 'review') {
+                    get()
+                      .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                      .catch(() => {})
+                  }
                 }
                 break
               }
@@ -407,9 +453,38 @@ export const useKanbanStore = create<KanbanState>()(
                 break
               }
 
+              case 'mode_change': {
+                // Mode toggled outside the Kanban board — sync ticket mode + plan_ready
+                const targetMode = event.sessionMode ?? null
+                const targetPlanReady = targetMode === 'build' ? false : ticket.plan_ready
+                if (ticket.mode !== targetMode || ticket.plan_ready !== targetPlanReady) {
+                  get()
+                    .updateTicket(ticket.id, projectId, {
+                      mode: targetMode,
+                      plan_ready: targetPlanReady
+                    })
+                    .catch(() => {})
+                }
+                break
+              }
+
+              case 'implement': {
+                // Plan approved from session view — clear plan_ready, set mode to build
+                if (ticket.plan_ready || ticket.mode !== 'build') {
+                  get()
+                    .updateTicket(ticket.id, projectId, { plan_ready: false, mode: 'build' })
+                    .catch(() => {})
+                }
+                break
+              }
+
               case 'session_error': {
-                // No state change needed — ticket stays in current column.
-                // The card reads session status from worktree-status store.
+                // Error requires user attention — move to review if currently in_progress
+                if (ticket.column === 'in_progress') {
+                  get()
+                    .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                    .catch(() => {})
+                }
                 break
               }
             }

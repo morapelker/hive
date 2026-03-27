@@ -868,7 +868,7 @@ export function Header(): React.JSX.Element {
               }
               toggleBoardView()
             }}
-            title={isBoardViewActive ? 'Close Kanban Board' : 'Open Kanban Board'}
+            title={isBoardViewActive ? 'Close Board' : 'Open Board'}
             data-testid="kanban-board-toggle"
             className={cn(
               isBoardViewActive && 'bg-accent text-accent-foreground'

@@ -1,6 +1,20 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 
+// ── Mock electron and simple-git so git-service can be imported in jsdom ──
+vi.mock('electron', () => ({
+  app: {
+    getPath: vi.fn().mockReturnValue('/tmp/mock-home')
+  }
+}))
+
+vi.mock('simple-git', () => ({
+  default: vi.fn().mockReturnValue({
+    branch: vi.fn(),
+    raw: vi.fn()
+  })
+}))
+
 // ── Mock window APIs BEFORE importing stores ────────────────────────
 const mockKanban = {
   ticket: {
@@ -135,7 +149,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 
 // ── Import component under test ─────────────────────────────────────
-import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
+import { WorktreePickerModal, _resetLastSourceBranch } from '@/components/kanban/WorktreePickerModal'
 
 import type { KanbanTicket } from '../../../src/main/db/types'
 
@@ -212,6 +226,7 @@ describe('Session 9: Worktree Picker Modal', () => {
   ]
 
   beforeEach(() => {
+    _resetLastSourceBranch()
     act(() => {
       useKanbanStore.setState({
         tickets: new Map([
@@ -761,7 +776,9 @@ describe('Session 9: Worktree Picker Modal', () => {
         'proj-1',
         '/test/my-project',
         'My Project',
-        'feature-x'
+        'feature-x',
+        undefined,
+        'implement-auth-flow'
       )
     })
   })
@@ -793,8 +810,93 @@ describe('Session 9: Worktree Picker Modal', () => {
         'proj-1',
         '/test/my-project',
         'My Project',
-        'main'
+        'main',
+        undefined,
+        'implement-auth-flow'
       )
+    })
+  })
+
+  describe('ticket-title worktree naming', () => {
+    test('shows canonicalized ticket title preview when "New worktree" is selected', async () => {
+      const ticket = makeTicket({ title: 'Add dark mode toggle' })
+
+      render(
+        <WorktreePickerModal
+          ticket={ticket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={vi.fn()}
+        />
+      )
+
+      // Click "New worktree"
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('worktree-item-new'))
+      })
+
+      // The preview text should appear in the source-branch row
+      expect(screen.getByText('add-dark-mode-toggle')).toBeInTheDocument()
+    })
+
+    test('does not show preview when ticket title produces empty canonical name', async () => {
+      const ticket = makeTicket({ title: '🔥🚀💥' })
+
+      render(
+        <WorktreePickerModal
+          ticket={ticket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={vi.fn()}
+        />
+      )
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('worktree-item-new'))
+      })
+
+      // The "from" row should exist but no preview span with font-mono class
+      const fromRow = screen.getByText('from').closest('div')
+      expect(fromRow).toBeInTheDocument()
+      const previewSpans = fromRow?.querySelectorAll('.font-mono')
+      expect(previewSpans?.length ?? 0).toBe(0)
+    })
+
+    test('passes nameHint to createFromBranch when creating new worktree', async () => {
+      const ticket = makeTicket({ title: 'Fix login bug' })
+
+      const onSendComplete = vi.fn()
+      render(
+        <WorktreePickerModal
+          ticket={ticket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={vi.fn()}
+          onSendComplete={onSendComplete}
+        />
+      )
+
+      // Select "New worktree"
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('worktree-item-new'))
+      })
+
+      // Click Send
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+      })
+
+      // Verify createFromBranch was called with the nameHint
+      await waitFor(() => {
+        expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith(
+          'proj-1',
+          '/test/my-project',
+          'My Project',
+          'main',
+          undefined,
+          'fix-login-bug'
+        )
+      })
     })
   })
 })

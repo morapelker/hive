@@ -1181,15 +1181,14 @@ export class GitService {
   async duplicateWorktree(
     sourceBranch: string,
     sourceWorktreePath: string,
-    projectName: string
+    projectName: string,
+    nameHint?: string
   ): Promise<CreateWorktreeResult> {
     try {
-      // 1. Extract base name (strip -vN suffix)
-      const baseName = sourceBranch.replace(/-v\d+$/, '')
       const projectWorktreesDir = this.ensureWorktreesDir(projectName)
       const MAX_ATTEMPTS = 3
 
-      // 2-4. Find next version number and create worktree, with retry on collision
+      // 2-4. Find a unique branch name and create worktree, with retry on collision
       let newBranchName = ''
       let worktreePath = ''
       let created = false
@@ -1197,17 +1196,33 @@ export class GitService {
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // Re-fetch on every attempt so retries see the latest state
         const allBranches = await this.getAllBranches()
-        const versionPattern = new RegExp(
-          `^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`
-        )
-        let maxVersion = 1 // means first dup will be v2
-        for (const branch of allBranches) {
-          const match = branch.match(versionPattern)
-          if (match) {
-            maxVersion = Math.max(maxVersion, parseInt(match[1], 10))
+
+        if (nameHint) {
+          // Use nameHint with -2, -3, ... collision suffixing
+          const existingNames = new Set(allBranches)
+          newBranchName = nameHint
+          if (existingNames.has(newBranchName)) {
+            let suffix = 2
+            while (existingNames.has(`${nameHint}-${suffix}`) && suffix <= 9999) {
+              suffix += 1
+            }
+            newBranchName = `${nameHint}-${suffix}`
           }
+        } else {
+          // Default: use source branch name with -vN versioning
+          const baseName = sourceBranch.replace(/-v\d+$/, '')
+          const versionPattern = new RegExp(
+            `^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`
+          )
+          let maxVersion = 1 // means first dup will be v2
+          for (const branch of allBranches) {
+            const match = branch.match(versionPattern)
+            if (match) {
+              maxVersion = Math.max(maxVersion, parseInt(match[1], 10))
+            }
+          }
+          newBranchName = `${baseName}-v${maxVersion + 1}`
         }
-        newBranchName = `${baseName}-v${maxVersion + 1}`
         worktreePath = join(projectWorktreesDir, `${projectName}--${newBranchName}`)
 
         try {
@@ -1381,7 +1396,7 @@ export class GitService {
     branchName: string,
     breedType: BreedType = 'dogs',
     prNumber?: number,
-    options?: { autoPull?: boolean }
+    options?: { autoPull?: boolean; nameHint?: string }
   ): Promise<CreateWorktreeResult> {
     try {
       // Check if branch is already checked out (skip for PR checkouts —
@@ -1398,7 +1413,7 @@ export class GitService {
           const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
           if (branch === branchName && wtPath) {
             // Already checked out — duplicate it
-            return this.duplicateWorktree(branchName, wtPath, projectName)
+            return this.duplicateWorktree(branchName, wtPath, projectName, options?.nameHint)
           }
         }
       }
@@ -1426,6 +1441,8 @@ export class GitService {
         }
       }
 
+      const nameHint = options?.nameHint
+
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // Re-fetch on every attempt so retries see the latest state
         const existingBranches = await this.getAllBranches()
@@ -1448,22 +1465,35 @@ export class GitService {
           ...existingDirs
         ])
 
-        // Select a unique breed name
-        const breedName = selectUniqueBreedName(existingNames, breedType)
-        const worktreePath = join(projectWorktreesDir, `${projectName}--${breedName}`)
+        // Use nameHint if provided and non-empty, otherwise fall back to breed name
+        let worktreeName: string
+        if (nameHint) {
+          // Start with the hint; if it collides, append -2, -3, etc.
+          worktreeName = nameHint
+          if (existingNames.has(worktreeName)) {
+            let suffix = 2
+            while (existingNames.has(`${nameHint}-${suffix}`) && suffix <= 9999) {
+              suffix += 1
+            }
+            worktreeName = `${nameHint}-${suffix}`
+          }
+        } else {
+          worktreeName = selectUniqueBreedName(existingNames, breedType)
+        }
+        const worktreePath = join(projectWorktreesDir, `${projectName}--${worktreeName}`)
 
         try {
           if (prNumber != null) {
-            await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, 'FETCH_HEAD'])
+            await this.git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, 'FETCH_HEAD'])
           } else {
-            // Create a new breed-named branch derived from the selected branch
-            await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, branchName])
+            // Create a new branch derived from the selected branch
+            await this.git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, branchName])
           }
           return {
             success: true,
             path: worktreePath,
-            branchName: breedName,
-            name: breedName,
+            branchName: worktreeName,
+            name: worktreeName,
             pullInfo: {
               pulled: prNumber == null && pullResult.success && autoPull,
               updated: pullResult.updated || false
@@ -1739,6 +1769,9 @@ export function canonicalizeBranchName(title: string): string {
     .slice(0, 50) // truncate
     .replace(/-+$/, '') // strip trailing dashes after truncation
 }
+
+// Re-export from shared so backend callers can still import from git-service
+export { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 
 /**
  * Check if a branch name is an auto-generated name (breed or legacy city name).

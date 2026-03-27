@@ -43,6 +43,7 @@ import { checkAutoApprove } from '@/lib/permissionUtils'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { useWorktreeStore, useDropAttachmentStore } from '@/stores'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { usePRReviewStore } from '@/stores/usePRReviewStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
@@ -508,6 +509,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [sessionErrorStderr, setSessionErrorStderr] = useState<string | null>(null)
   const [retryTickMs, setRetryTickMs] = useState<number>(Date.now())
   const [elapsedTickMs, setElapsedTickMs] = useState(Date.now())
+  const [planSavedAsTicket, setPlanSavedAsTicket] = useState(false)
 
   // Prompt history key: works for both worktree and connection sessions
   const historyKey = worktreeId ?? connectionId
@@ -3643,6 +3645,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       await useSessionStore.getState().setSessionMode(sessionId, 'build')
       lastSendMode.set(sessionId, 'build')
+      notifyKanbanSessionSync(sessionId, { type: 'implement' })
       await handleSend(
         sessionRecord?.agent_sdk === 'codex'
           ? 'Implement the plan.'
@@ -3680,6 +3683,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
         await useSessionStore.getState().setSessionMode(sessionId, 'build')
         lastSendMode.set(sessionId, 'build')
+        notifyKanbanSessionSync(sessionId, { type: 'implement' })
 
         // The SDK resumes within the same prompt cycle after plan approval —
         // it won't emit a new session.status:busy event. Set status explicitly.
@@ -3708,6 +3712,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // OpenCode sessions: legacy non-blocking behavior.
     await useSessionStore.getState().setSessionMode(sessionId, 'build')
     lastSendMode.set(sessionId, 'build')
+    notifyKanbanSessionSync(sessionId, { type: 'implement' })
     await handleSend('Implement')
   }, [
     sessionId,
@@ -3824,6 +3829,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
       const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+      notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
       sessionStore.setActiveConnectionSession(result.session.id)
       await setModePromise
       return
@@ -3847,6 +3853,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
     sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+    notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
     sessionStore.setActiveSession(result.session.id)
     await setModePromise
   }, [messages, worktreeId, sessionRecord?.project_id, connectionId, sessionId])
@@ -3993,6 +4000,47 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     sessionStore.setActiveSession(newSessionId)
     await setModePromise
   }, [messages, worktreeId, sessionRecord?.project_id, pendingPlan, sessionId])
+
+  const handlePlanReadySaveAsTicket = useCallback(async () => {
+    const projectId = sessionRecord?.project_id
+    if (!projectId) {
+      toast.error('No project associated with this session')
+      return
+    }
+
+    const planContent =
+      pendingPlan?.planContent ??
+      [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim().length > 0)
+        ?.content
+
+    if (!planContent) {
+      toast.error('No plan content found')
+      return
+    }
+
+    // Extract title from first markdown heading, or fall back to first non-empty line
+    const headingMatch = planContent.match(/^#+\s+(.+)$/m)
+    const title = headingMatch
+      ? headingMatch[1].trim()
+      : (planContent
+          .split('\n')
+          .find((line: string) => line.trim().length > 0)
+          ?.trim()
+          .slice(0, 100) ?? 'Plan ticket')
+
+    try {
+      await useKanbanStore.getState().createTicket(projectId, {
+        project_id: projectId,
+        title,
+        description: planContent,
+        column: 'todo'
+      })
+      setPlanSavedAsTicket(true)
+      toast.success('Saved as ticket')
+    } catch {
+      toast.error('Failed to save as ticket')
+    }
+  }, [messages, pendingPlan, sessionRecord?.project_id])
 
   // Abort streaming
   const handleAbort = useCallback(async () => {
@@ -4462,6 +4510,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       ? !!pendingPlan && hasCodexProposedPlan
       : lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming && !pendingPlan
 
+  // Reset "saved as ticket" flag when the plan changes (new plan → fresh button)
+  const pendingPlanRef = useRef(pendingPlan)
+  if (pendingPlanRef.current !== pendingPlan) {
+    pendingPlanRef.current = pendingPlan
+    if (planSavedAsTicket) setPlanSavedAsTicket(false)
+  }
+
   const retrySecondsRemaining = useMemo(() => {
     if (!sessionRetry?.next) return null
     return Math.max(0, Math.ceil((sessionRetry.next - retryTickMs) / 1000))
@@ -4683,6 +4738,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           onSuperpowers={handlePlanReadySuperpowers}
           onSuperpowersLocal={handlePlanReadySuperpowersLocal}
           isConnectionSession={!!connectionId}
+          onSaveAsTicket={sessionRecord?.project_id && !planSavedAsTicket ? handlePlanReadySaveAsTicket : undefined}
         />
         {/* Scroll-to-bottom FAB */}
         <ScrollToBottomFab

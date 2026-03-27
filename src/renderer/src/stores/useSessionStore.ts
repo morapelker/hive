@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type { SelectedModel } from './useSettingsStore'
 import { useGitStore } from './useGitStore'
 import { useWorktreeStore } from './useWorktreeStore'
+import { notifyKanbanSessionSync } from './store-coordination'
 
 // Session mode type
 export type SessionMode = 'build' | 'plan'
@@ -786,6 +787,9 @@ export const useSessionStore = create<SessionState>()(
 
         // Auto-apply mode-specific model if configured
         await get().applyModeDefaultModel(sessionId, newMode)
+
+        // Notify Kanban board of mode change
+        notifyKanbanSessionSync(sessionId, { type: 'mode_change', sessionMode: newMode })
       },
 
       // Set session mode explicitly (also applies mode-specific model default)
@@ -804,6 +808,9 @@ export const useSessionStore = create<SessionState>()(
 
         // Apply mode-specific default model (same as toggleSessionMode)
         await get().applyModeDefaultModel(sessionId, mode)
+
+        // Notify Kanban board of mode change
+        notifyKanbanSessionSync(sessionId, { type: 'mode_change', sessionMode: mode })
       },
 
       // Set model for a specific session (per-session model selection, scope-agnostic)
