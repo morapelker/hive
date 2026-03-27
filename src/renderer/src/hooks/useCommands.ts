@@ -206,7 +206,7 @@ export function useCommands() {
         label: 'Open Kanban Board',
         description: 'Toggle the Kanban board view',
         category: 'navigation',
-        icon: 'LayoutGrid',
+        icon: 'KanbanIcon',
         keywords: ['kanban', 'board', 'tickets', 'todo'],
         action: () => {
           toggleBoardView()
