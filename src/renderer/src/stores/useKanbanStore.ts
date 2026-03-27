@@ -19,11 +19,31 @@ export interface KanbanDragData {
 }
 
 let _kanbanDragData: KanbanDragData | null = null
+let _pendingDragTicketIdFrame: number | undefined
 
 export function setKanbanDragData(data: KanbanDragData | null): void {
   _kanbanDragData = data
-  // Also update reactive store flag so all columns can show drag affordance
-  useKanbanStore.setState({ isDragging: data !== null })
+
+  // Cancel any pending delayed draggingTicketId update
+  if (_pendingDragTicketIdFrame !== undefined) {
+    cancelAnimationFrame(_pendingDragTicketIdFrame)
+    _pendingDragTicketIdFrame = undefined
+  }
+
+  if (data) {
+    // isDragging set immediately so columns show drag affordance
+    useKanbanStore.setState({ isDragging: true })
+    // Delay draggingTicketId to next frame — the wrapper collapse must happen
+    // AFTER the browser has committed the drag (captured the drag image and
+    // started tracking the pointer). Collapsing during dragstart aborts the drag.
+    _pendingDragTicketIdFrame = requestAnimationFrame(() => {
+      _pendingDragTicketIdFrame = undefined
+      useKanbanStore.setState({ draggingTicketId: data.ticketId })
+    })
+  } else {
+    // Clear everything immediately on drag end / drop
+    useKanbanStore.setState({ isDragging: false, draggingTicketId: null })
+  }
 }
 
 export function getKanbanDragData(): KanbanDragData | null {
@@ -51,6 +71,7 @@ interface KanbanState {
   selectedTicketId: string | null
   /** Whether a ticket is currently being dragged (reactive, for column styling) */
   isDragging: boolean
+  draggingTicketId: string | null
 
   // ── Actions ────────────────────────────────────────────────────────
   setSelectedTicketId: (id: string | null) => void
@@ -89,6 +110,7 @@ export const useKanbanStore = create<KanbanState>()(
       simpleModeByProject: {} as Record<string, boolean>,
       selectedTicketId: null,
       isDragging: false,
+      draggingTicketId: null,
 
       // ── setSelectedTicketId ────────────────────────────────────────
       setSelectedTicketId: (id: string | null) => {

@@ -52,6 +52,7 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
 
   // Global drag state — true when ANY ticket is being dragged
   const isDragging = useKanbanStore((state) => state.isDragging)
+  const draggingTicketId = useKanbanStore((state) => state.draggingTicketId)
 
   // ── Simple mode toggle (In Progress column only) ───────────────
   const isSimpleMode = useKanbanStore(
@@ -325,7 +326,7 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
               {tickets.map((ticket, index) => (
                 <Fragment key={ticket.id}>
                   {isDragOver && dropIndex === index && dropIndicator}
-                  <div data-card-index={index}>
+                  <div data-card-index={index} className={draggingTicketId === ticket.id ? 'h-0 min-h-0 overflow-hidden' : undefined}>
                     <KanbanTicketCard ticket={ticket} index={index} />
                   </div>
                 </Fragment>
