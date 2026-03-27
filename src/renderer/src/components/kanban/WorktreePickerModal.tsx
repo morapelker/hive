@@ -23,7 +23,7 @@ import { messageSendTimes, lastSendMode } from '@/lib/message-send-times'
 import { PLAN_MODE_PREFIX } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import type { KanbanTicket } from '../../../../main/db/types'
-import { canonicalizeTicketTitle } from '../../../../main/services/git-service'
+import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 
 // ── Types ───────────────────────────────────────────────────────────
 type PickerMode = 'build' | 'plan'

@@ -1755,22 +1755,8 @@ export function canonicalizeBranchName(title: string): string {
     .replace(/-+$/, '') // strip trailing dashes after truncation
 }
 
-/**
- * Convert a ticket title into a safe git branch name.
- * Unlike canonicalizeBranchName (which takes 3 words for verbose session titles),
- * this uses the full title since ticket titles are short and intentional.
- */
-export function canonicalizeTicketTitle(title: string): string {
-  return title
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/g, '-') // spaces and underscores → dashes
-    .replace(/[^a-z0-9\-/.]/g, '') // remove invalid chars
-    .replace(/-{2,}/g, '-') // collapse consecutive dashes
-    .replace(/^-+|-+$/g, '') // strip leading/trailing dashes
-    .slice(0, 50) // truncate
-    .replace(/-+$/, '') // strip trailing dashes after truncation
-}
+// Re-export from shared so backend callers can still import from git-service
+export { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 
 /**
  * Check if a branch name is an auto-generated name (breed or legacy city name).
