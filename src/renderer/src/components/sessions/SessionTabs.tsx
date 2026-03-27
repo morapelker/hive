@@ -35,6 +35,7 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useHintStore } from '@/stores/useHintStore'
 import { cn, parseColorQuad } from '@/lib/utils'
@@ -502,6 +503,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const [showRightArrow, setShowRightArrow] = useState(false)
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null)
+  const [isTicketCreateOpen, setIsTicketCreateOpen] = useState(false)
 
   const {
     activeWorktreeId,
@@ -950,49 +952,61 @@ export function SessionTabs(): React.JSX.Element | null {
       className="flex items-center border-b border-border bg-muted/30"
       data-testid="session-tabs"
     >
-      {/* New session button - on the left */}
-      {/* Right-click shows provider menu with session type options */}
-      <ContextMenu
-        onOpenChange={(open) => {
-          if (open) pushGhosttySuppression('session-tabs-context')
-          else popGhosttySuppression('session-tabs-context')
-        }}
-      >
-        <ContextMenuTrigger asChild>
-          <button
-            onClick={handleCreateSession}
-            className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
-            data-testid="create-session"
-            title="Create new session (right-click for options)"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          {availableAgentSdks?.opencode && (
-            <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
-              New OpenCode Session
+      {/* New session / new ticket button - on the left */}
+      {isBoardViewActive ? (
+        /* Kanban mode: plus button opens the ticket creation modal */
+        <button
+          onClick={() => setIsTicketCreateOpen(true)}
+          className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
+          data-testid="kanban-add-ticket-btn"
+          title="Create new ticket"
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      ) : (
+        /* Normal mode: right-click shows provider menu with session type options */
+        <ContextMenu
+          onOpenChange={(open) => {
+            if (open) pushGhosttySuppression('session-tabs-context')
+            else popGhosttySuppression('session-tabs-context')
+          }}
+        >
+          <ContextMenuTrigger asChild>
+            <button
+              onClick={handleCreateSession}
+              className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
+              data-testid="create-session"
+              title="Create new session (right-click for options)"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            {availableAgentSdks?.opencode && (
+              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
+                New OpenCode Session
+              </ContextMenuItem>
+            )}
+            {availableAgentSdks?.claude && (
+              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
+                New Claude Code Session
+              </ContextMenuItem>
+            )}
+            {availableAgentSdks?.codex && (
+              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('codex')}>
+                New Codex Session
+              </ContextMenuItem>
+            )}
+            {(availableAgentSdks?.opencode ||
+              availableAgentSdks?.claude ||
+              availableAgentSdks?.codex) && <ContextMenuSeparator />}
+            <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
+              <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
+              New Terminal
             </ContextMenuItem>
-          )}
-          {availableAgentSdks?.claude && (
-            <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
-              New Claude Code Session
-            </ContextMenuItem>
-          )}
-          {availableAgentSdks?.codex && (
-            <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('codex')}>
-              New Codex Session
-            </ContextMenuItem>
-          )}
-          {(availableAgentSdks?.opencode ||
-            availableAgentSdks?.claude ||
-            availableAgentSdks?.codex) && <ContextMenuSeparator />}
-          <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
-            <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
-            New Terminal
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+          </ContextMenuContent>
+        </ContextMenu>
+      )}
 
       {/* Left scroll arrow */}
       {showLeftArrow && (
@@ -1201,6 +1215,15 @@ export function SessionTabs(): React.JSX.Element | null {
         >
           <ChevronRight className="h-4 w-4" />
         </button>
+      )}
+
+      {/* Ticket creation modal — kanban mode */}
+      {isBoardViewActive && project && (
+        <TicketCreateModal
+          open={isTicketCreateOpen}
+          onOpenChange={setIsTicketCreateOpen}
+          projectId={project.id}
+        />
       )}
     </div>
   )

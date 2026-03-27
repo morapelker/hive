@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Paperclip, AlertCircle, Trash2, GitBranch, ExternalLink } from 'lucide-react'
+import { Paperclip, AlertCircle, Trash2, Archive, GitBranch, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import {
@@ -166,6 +166,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     useKanbanStore.getState().setSelectedTicketId(ticket.id)
   }, [ticket.id])
 
+  const isDone = ticket.column === 'done'
+
   // ── Context menu handlers ─────────────────────────────────────
   const handleDelete = useCallback(async () => {
     try {
@@ -175,6 +177,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       toast.error('Failed to delete ticket')
     }
     setShowDeleteConfirm(false)
+  }, [ticket.id, ticket.project_id])
+
+  const handleArchive = useCallback(async () => {
+    try {
+      await useKanbanStore.getState().deleteTicket(ticket.id, ticket.project_id)
+      toast.success('Ticket archived')
+    } catch {
+      toast.error('Failed to archive ticket')
+    }
   }, [ticket.id, ticket.project_id])
 
   const handleJumpToSession = useCallback(() => {
@@ -284,40 +295,53 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
           <ContextMenuSeparator />
 
-          {/* Delete */}
-          <ContextMenuItem
-            data-testid="ctx-delete-ticket"
-            onClick={() => setShowDeleteConfirm(true)}
-            className="gap-2 text-red-500 focus:text-red-500"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete
-          </ContextMenuItem>
+          {/* Archive (done tickets) or Delete (all others) */}
+          {isDone ? (
+            <ContextMenuItem
+              data-testid="ctx-archive-ticket"
+              onClick={handleArchive}
+              className="gap-2"
+            >
+              <Archive className="h-3.5 w-3.5" />
+              Archive
+            </ContextMenuItem>
+          ) : (
+            <ContextMenuItem
+              data-testid="ctx-delete-ticket"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="gap-2 text-red-500 focus:text-red-500"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </ContextMenuItem>
+          )}
         </ContextMenuContent>
       </ContextMenu>
 
-      {/* Delete confirmation dialog */}
-      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <AlertDialogContent data-testid="ctx-delete-confirm-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete ticket</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete &ldquo;{ticket.title}&rdquo;? This action cannot be
-              undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="ctx-delete-cancel-btn">Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              data-testid="ctx-delete-confirm-btn"
-              variant="destructive"
-              onClick={handleDelete}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Delete confirmation dialog (not used for done/archive tickets) */}
+      {!isDone && (
+        <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+          <AlertDialogContent data-testid="ctx-delete-confirm-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete ticket</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete &ldquo;{ticket.title}&rdquo;? This action cannot be
+                undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="ctx-delete-cancel-btn">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                data-testid="ctx-delete-confirm-btn"
+                variant="destructive"
+                onClick={handleDelete}
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
 
       {/* Worktree picker modal for assigning */}
       <WorktreePickerModal

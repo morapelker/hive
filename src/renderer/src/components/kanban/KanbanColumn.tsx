@@ -279,18 +279,6 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
           </div>
         )}
 
-        {/* Add ticket button — only for To Do column */}
-        {isTodoColumn && (
-          <div className="flex items-center justify-center">
-            <button
-              data-testid="kanban-add-ticket-btn"
-              onClick={() => setIsCreateModalOpen(true)}
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Drop area — scrollable card list, doubles as drop target */}
@@ -303,9 +291,21 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
             isDragOver ? (
               dropIndicator
             ) : (
-              <p className="px-2 py-4 text-center text-xs text-muted-foreground/60">
-                No tickets
-              </p>
+              /* Empty state: show the add-ticket card as the only item */
+              isTodoColumn ? (
+                <button
+                  data-testid="kanban-add-ticket-card"
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="flex items-center justify-center gap-1.5 rounded-md border border-dashed border-border/60 p-3 text-sm text-muted-foreground/60 hover:border-primary/40 hover:text-muted-foreground hover:bg-muted/20 transition-colors cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>New ticket</span>
+                </button>
+              ) : (
+                <p className="px-2 py-4 text-center text-xs text-muted-foreground/60">
+                  No tickets
+                </p>
+              )
             )
           ) : (
             <>
@@ -318,12 +318,24 @@ export function KanbanColumn({ column, tickets, projectId }: KanbanColumnProps) 
                 </Fragment>
               ))}
               {isDragOver && dropIndex === tickets.length && dropIndicator}
+
+              {/* Add-ticket card at the end of the To Do column */}
+              {isTodoColumn && (
+                <button
+                  data-testid="kanban-add-ticket-card"
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="flex items-center justify-center gap-1.5 rounded-md border border-dashed border-border/60 p-3 text-sm text-muted-foreground/60 hover:border-primary/40 hover:text-muted-foreground hover:bg-muted/20 transition-colors cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>New ticket</span>
+                </button>
+              )}
             </>
           )}
         </div>
       )}
 
-      {/* Ticket creation modal — only for To Do column */}
+      {/* Ticket creation modal — To Do column */}
       {isTodoColumn && (
         <TicketCreateModal
           open={isCreateModalOpen}

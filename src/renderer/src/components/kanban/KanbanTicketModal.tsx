@@ -160,9 +160,11 @@ async function sendFollowupToSession(opts: {
     // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
     const model = resolveSessionModel(opts.sessionId)
 
-    await window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
+    window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
       { type: 'text', text: fullPrompt }
-    ], model)
+    ], model).catch((err) => {
+      console.error('Background prompt failed:', err)
+    })
   }
 
   await opts.updateTicket(opts.ticketId, opts.projectId, { mode: opts.followUpMode, plan_ready: false })

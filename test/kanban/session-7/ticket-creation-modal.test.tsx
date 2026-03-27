@@ -87,35 +87,36 @@ describe('Session 7: Ticket Creation Modal', () => {
     vi.clearAllMocks()
   })
 
-  // ── "+" button tests ──────────────────────────────────────────────
-  test('"+" button renders in To Do column header', () => {
+  // ── Add-ticket card tests ─────────────────────────────────────────
+
+  test('add-ticket card renders in empty To Do column', () => {
     render(<KanbanColumn column="todo" tickets={[]} projectId="proj-1" />)
 
-    expect(screen.getByTestId('kanban-add-ticket-btn')).toBeInTheDocument()
+    expect(screen.getByTestId('kanban-add-ticket-card')).toBeInTheDocument()
   })
 
-  test('"+" button does not render in other columns', () => {
+  test('add-ticket card does not render in other empty columns', () => {
     const { unmount: u1 } = render(
       <KanbanColumn column="in_progress" tickets={[]} projectId="proj-1" />
     )
-    expect(screen.queryByTestId('kanban-add-ticket-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('kanban-add-ticket-card')).not.toBeInTheDocument()
     u1()
 
     const { unmount: u2 } = render(
       <KanbanColumn column="review" tickets={[]} projectId="proj-1" />
     )
-    expect(screen.queryByTestId('kanban-add-ticket-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('kanban-add-ticket-card')).not.toBeInTheDocument()
     u2()
 
     render(<KanbanColumn column="done" tickets={[]} projectId="proj-1" />)
-    expect(screen.queryByTestId('kanban-add-ticket-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('kanban-add-ticket-card')).not.toBeInTheDocument()
   })
 
-  test('clicking "+" opens the creation modal', () => {
+  test('clicking add-ticket card opens the creation modal', () => {
     render(<KanbanColumn column="todo" tickets={[]} projectId="proj-1" />)
 
-    const addBtn = screen.getByTestId('kanban-add-ticket-btn')
-    fireEvent.click(addBtn)
+    const addCard = screen.getByTestId('kanban-add-ticket-card')
+    fireEvent.click(addCard)
 
     expect(screen.getByTestId('ticket-create-modal')).toBeInTheDocument()
   })

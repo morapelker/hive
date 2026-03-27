@@ -596,6 +596,57 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
         )
       })
     })
+
+    test('slow prompt does not block ticket move to in_progress', async () => {
+      // Make prompt() return a promise that never resolves (simulating a long session)
+      let resolvePrompt!: () => void
+      mockOpencodeOps.prompt.mockReturnValue(
+        new Promise<{ success: boolean }>((resolve) => {
+          resolvePrompt = () => resolve({ success: true })
+        })
+      )
+
+      render(<KanbanTicketModal />)
+
+      const input = screen.getByTestId('review-followup-input') as HTMLTextAreaElement
+      fireEvent.change(input, { target: { value: 'Fix validation' } })
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('review-send-followup-btn'))
+      })
+
+      // Ticket move should happen immediately, not after prompt resolves
+      await waitFor(() => {
+        expect(mockKanban.ticket.move).toHaveBeenCalledWith(
+          'ticket-review',
+          'in_progress',
+          expect.any(Number)
+        )
+      })
+
+      // Verify prompt was fired (fire-and-forget)
+      expect(mockOpencodeOps.prompt).toHaveBeenCalled()
+
+      // Clean up: resolve the pending promise to avoid unhandled rejection
+      resolvePrompt()
+    })
+
+    test('ticket store state is in_progress after sending followup', async () => {
+      render(<KanbanTicketModal />)
+
+      const input = screen.getByTestId('review-followup-input') as HTMLTextAreaElement
+      fireEvent.change(input, { target: { value: 'Fix validation' } })
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('review-send-followup-btn'))
+      })
+
+      await waitFor(() => {
+        const tickets = useKanbanStore.getState().tickets.get('proj-1')
+        const ticket = tickets?.find((t) => t.id === 'ticket-review')
+        expect(ticket?.column).toBe('in_progress')
+      })
+    })
   })
 
   // ════════════════════════════════════════════════════════════════════
