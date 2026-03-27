@@ -169,9 +169,13 @@ async function sendFollowupToSession(opts: {
       source: 'direct'
     }).catch(() => {})
 
-    await window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
+    const result = await window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
       { type: 'text', text: fullPrompt }
     ], model)
+
+    if (result && !result.success) {
+      throw new Error(result.error || 'Failed to send prompt to session')
+    }
   }
 
   await opts.updateTicket(opts.ticketId, opts.projectId, { mode: opts.followUpMode, plan_ready: false })

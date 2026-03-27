@@ -164,24 +164,24 @@ function findLinkedKanbanTicket(sessionId: string): { id: string; current_sessio
   return null
 }
 
+/** Tracks the last assistant text per session as it streams in, keyed by sessionId. */
+const lastAssistantTextBySession = new Map<string, string>()
+
 function captureAIResponseForTicket(sessionId: string): void {
   const linkedTicket = findLinkedKanbanTicket(sessionId)
   if (!linkedTicket) return
 
-  window.db.sessionMessage.list(sessionId).then((messages) => {
-    const last = [...messages]
-      .reverse()
-      .find((m) => m.role === 'assistant' && m.content.trim().length > 0)
-    if (last) {
-      window.kanban.followup.create({
-        ticket_id: linkedTicket.id,
-        content: last.content,
-        role: 'assistant',
-        mode: useSessionStore.getState().getSessionMode(sessionId),
-        session_id: sessionId,
-        source: 'direct'
-      }).catch(() => {})
-    }
+  const lastText = lastAssistantTextBySession.get(sessionId)
+  lastAssistantTextBySession.delete(sessionId)
+  if (!lastText || !lastText.trim()) return
+
+  window.kanban.followup.create({
+    ticket_id: linkedTicket.id,
+    content: lastText,
+    role: 'assistant',
+    mode: useSessionStore.getState().getSessionMode(sessionId),
+    session_id: sessionId,
+    source: 'direct'
   }).catch(() => {})
 }
 
@@ -258,6 +258,21 @@ export function useOpenCodeGlobalListener(): void {
           // Handle context compaction from Codex sessions
           if (event.type === 'session.context_compacted') {
             useContextStore.getState().clearSessionTokenSnapshot(sessionId)
+            return
+          }
+
+          // Track last assistant text content for kanban ticket AI response capture.
+          // message.part.updated carries delta chunks — accumulate them into full text.
+          if (event.type === 'message.part.updated' && !event.childSessionId) {
+            const data = event.data as { part?: { type?: string; text?: string }; delta?: string }
+            const part = data?.part
+            if (part?.type === 'text') {
+              const delta = data?.delta ?? part.text ?? ''
+              if (delta) {
+                const prev = lastAssistantTextBySession.get(sessionId) ?? ''
+                lastAssistantTextBySession.set(sessionId, prev + delta)
+              }
+            }
             return
           }
 
@@ -459,6 +474,7 @@ export function useOpenCodeGlobalListener(): void {
                   session_id: sessionId,
                   source: 'direct'
                 }).catch(() => {})
+                lastAssistantTextBySession.delete(sessionId)
               }
             }
             return
