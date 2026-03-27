@@ -36,6 +36,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { QuickActions } from './QuickActions'
 import { usePRDetection } from '@/hooks/usePRDetection'
 import hiveLogo from '@/assets/icon.png'
@@ -857,7 +858,16 @@ export function Header(): React.JSX.Element {
           <Button
             variant="ghost"
             size="icon"
-            onClick={toggleBoardView}
+            onClick={() => {
+              if (!isBoardViewActive) {
+                // Clear any active file/diff/context views so the board can render
+                const fileStore = useFileViewerStore.getState()
+                fileStore.setActiveFile(null)
+                fileStore.clearActiveDiff()
+                fileStore.closeContextEditor()
+              }
+              toggleBoardView()
+            }}
             title={isBoardViewActive ? 'Close Kanban Board' : 'Open Kanban Board'}
             data-testid="kanban-board-toggle"
             className={cn(

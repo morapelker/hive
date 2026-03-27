@@ -116,6 +116,19 @@ export function getAutoPullSetting(db: DatabaseService): boolean {
   return true
 }
 
+/** Copy context from the most recently accessed worktree in this project (if any has context). */
+function copyContextFromProject(
+  db: DatabaseService,
+  projectId: string,
+  targetWorktreeId: string
+): void {
+  const existingWorktrees = db.getActiveWorktreesByProject(projectId)
+  const sourceWithContext = existingWorktrees.find((w) => w.id !== targetWorktreeId && w.context)
+  if (sourceWithContext) {
+    db.updateWorktreeContext(targetWorktreeId, sourceWithContext.context)
+  }
+}
+
 // ── Operations ──────────────────────────────────────────────────
 
 export async function createWorktreeOp(
@@ -157,6 +170,9 @@ export async function createWorktreeOp(
       branch_name: result.branchName,
       path: result.path
     })
+
+    // Copy context from the most recently accessed worktree in this project
+    copyContextFromProject(db, params.projectId, worktree.id)
 
     // Auto-assign port if project has it enabled
     const project = db.getProject(params.projectId)
@@ -527,6 +543,9 @@ export async function createWorktreeFromBranchOp(
     if (params.nameHint) {
       db.updateWorktree(worktree.id, { branch_renamed: 1 })
     }
+
+    // Copy context from the most recently accessed worktree in this project
+    copyContextFromProject(db, params.projectId, worktree.id)
 
     // Auto-assign port if project has it enabled
     const project = db.getProject(params.projectId)

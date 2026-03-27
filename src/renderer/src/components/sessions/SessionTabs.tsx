@@ -1030,7 +1030,11 @@ export function SessionTabs(): React.JSX.Element | null {
           /* Kanban board tab */
           <div
             data-testid="kanban-board-tab"
-            onClick={() => setActiveFile(null)}
+            onClick={() => {
+              setActiveFile(null)
+              useFileViewerStore.getState().clearActiveDiff()
+              useFileViewerStore.getState().closeContextEditor()
+            }}
             className={cn(
               'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
               'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
