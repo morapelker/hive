@@ -25,6 +25,9 @@ import { toast } from '@/lib/toast'
 import type { KanbanTicket } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 
+// Stable empty array to avoid referential-inequality loops in Zustand selectors
+const EMPTY_ARRAY: readonly never[] = []
+
 // ── Types ───────────────────────────────────────────────────────────
 type PickerMode = 'build' | 'plan'
 
@@ -78,14 +81,14 @@ export function WorktreePickerModal({
   // ── Store access ────────────────────────────────────────────────
   const worktrees = useWorktreeStore(
     useCallback(
-      (state) => state.worktreesByProject.get(projectId) ?? [],
+      (state) => state.worktreesByProject.get(projectId) ?? EMPTY_ARRAY,
       [projectId]
     )
   )
 
   const ticketsForProject = useKanbanStore(
     useCallback(
-      (state) => state.tickets.get(projectId) ?? [],
+      (state) => state.tickets.get(projectId) ?? EMPTY_ARRAY,
       [projectId]
     )
   )

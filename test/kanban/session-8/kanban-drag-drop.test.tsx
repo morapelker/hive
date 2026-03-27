@@ -155,26 +155,26 @@ describe('Session 8: Drag-and-Drop', () => {
     expect(dt.setData).toHaveBeenCalledWith('text/plain', 't-1')
   })
 
-  test('drag source gets opacity class during drag', () => {
+  test('drag source gets invisible class during drag', () => {
     const ticket = makeTicket({ id: 't-drag' })
     render(<KanbanTicketCard ticket={ticket} />)
 
     const card = screen.getByTestId('kanban-ticket-t-drag')
 
     // Before drag — no opacity reduction
-    expect(card.className).not.toContain('opacity-50')
+    expect(card.className).not.toContain('invisible')
 
     // Start drag
     act(() => {
       dispatchDrag(card, 'dragstart', createMockDT())
     })
-    expect(card.className).toContain('opacity-50')
+    expect(card.className).toContain('invisible')
 
     // End drag — also clears shared drag data
     act(() => {
       dispatchDrag(card, 'dragend')
     })
-    expect(card.className).not.toContain('opacity-50')
+    expect(card.className).not.toContain('invisible')
     expect(getKanbanDragData()).toBeNull()
   })
 
