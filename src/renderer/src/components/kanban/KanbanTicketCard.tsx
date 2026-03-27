@@ -21,9 +21,11 @@ import {
 } from '@/components/ui/alert-dialog'
 import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
+import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { setKanbanDragData, useKanbanStore } from '@/stores/useKanbanStore'
+import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import type { KanbanTicket } from '../../../../main/db/types'
@@ -98,6 +100,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return (questions?.length ?? 0) > 0
       },
       [ticket.current_session_id]
+    )
+  )
+
+  // ── Detect if the linked worktree has a live run process ──────
+  const isRunProcessAlive = useScriptStore(
+    useCallback(
+      (s) => {
+        if (!ticket.worktree_id) return false
+        return s.scriptStates[ticket.worktree_id]?.runRunning ?? false
+      },
+      [ticket.worktree_id]
     )
   )
 
@@ -222,7 +235,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             <p className="text-sm font-medium leading-snug text-foreground">{ticket.title}</p>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || ticket.plan_ready || isError || isBusy || isAsking) && (
+            {(hasAttachments || worktreeName || ticket.plan_ready || isError || isBusy || isAsking || isRunProcessAlive) && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {/* Attachment badge */}
                 {hasAttachments && (
@@ -240,6 +253,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   <span className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     {worktreeName}
                   </span>
+                )}
+
+                {/* Run process alive indicator */}
+                {isRunProcessAlive && (
+                  <PulseAnimation className="h-3 w-3 text-green-500 shrink-0" />
                 )}
 
                 {/* Plan ready badge */}
