@@ -28,6 +28,7 @@ import { setKanbanDragData, useKanbanStore } from '@/stores/useKanbanStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
+import { useSessionTimer } from '@/hooks/useSessionTimer'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 interface KanbanTicketCardProps {
@@ -105,6 +106,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       },
       [ticket.current_session_id]
     )
+  )
+
+  const timerText = useSessionTimer(
+    ticket.current_session_id,
+    (isBusy || isAsking) && ticket.column === 'in_progress'
   )
 
   // ── Detect if the linked worktree has a live run process ──────
@@ -312,9 +318,20 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </span>
                 )}
 
-                {/* Progress bar — pushed right, shown when session is actively working */}
                 {(isBusy || isAsking) && ticket.mode && (
-                  <span data-testid="kanban-ticket-progress" className="ml-auto">
+                  <span data-testid="kanban-ticket-progress" className="ml-auto flex items-center gap-1.5">
+                    {timerText && (
+                      <span className={cn(
+                        'text-[11px] tabular-nums font-semibold',
+                        isAsking
+                          ? 'text-amber-500'
+                          : ticket.mode === 'build'
+                            ? 'text-blue-500'
+                            : 'text-violet-500'
+                      )}>
+                        {timerText}
+                      </span>
+                    )}
                     <IndeterminateProgressBar mode={ticket.mode} isAsking={isAsking} className="w-20" />
                   </span>
                 )}

@@ -41,7 +41,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { resolveModelForSdk } from '@/stores/useSettingsStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
-import { messageSendTimes, lastSendMode } from '@/lib/message-send-times'
+import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { PLAN_MODE_PREFIX } from '@/lib/constants'
 import { parseAttachmentUrl } from '@/lib/attachment-utils'
 import type { AttachmentInfo } from '@/lib/attachment-utils'
@@ -159,6 +159,7 @@ async function sendFollowupToSession(opts: {
 
   if (worktreePath && session.opencode_session_id) {
     messageSendTimes.set(opts.sessionId, Date.now())
+    userExplicitSendTimes.set(opts.sessionId, Date.now())
     lastSendMode.set(opts.sessionId, opts.followUpMode)
     useWorktreeStatusStore
       .getState()
@@ -747,6 +748,7 @@ function PlanReviewModeContent({
           // 'planning' so the kanban card shows the progress bar while the
           // agent processes the rejection feedback.
           messageSendTimes.set(sessionId, Date.now())
+          userExplicitSendTimes.set(sessionId, Date.now())
           lastSendMode.set(sessionId, 'plan')
           useWorktreeStatusStore
             .getState()
@@ -763,6 +765,7 @@ function PlanReviewModeContent({
       // the moment the modal closes (sendFollowupToSession would set this too,
       // but only after async DB calls — the card would look idle in between).
       messageSendTimes.set(sessionId, Date.now())
+      userExplicitSendTimes.set(sessionId, Date.now())
       lastSendMode.set(sessionId, followUpMode)
       useWorktreeStatusStore
         .getState()
@@ -812,6 +815,7 @@ function PlanReviewModeContent({
       lastSendMode.set(sessionId, 'build')
       useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
       messageSendTimes.set(sessionId, Date.now())
+      userExplicitSendTimes.set(sessionId, Date.now())
 
       // Clear plan_ready badge — ticket is back to working
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { plan_ready: false, mode: 'build' })
@@ -893,6 +897,7 @@ function PlanReviewModeContent({
 
     // Set status tracking
     messageSendTimes.set(newSessionId, Date.now())
+    userExplicitSendTimes.set(newSessionId, Date.now())
     lastSendMode.set(newSessionId, 'build')
     useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
 
@@ -1224,6 +1229,7 @@ function ReviewModeContent({
       // the moment the modal closes (sendFollowupToSession would set this too,
       // but only after async DB calls — the card would look idle in between).
       messageSendTimes.set(sessionId, Date.now())
+      userExplicitSendTimes.set(sessionId, Date.now())
       lastSendMode.set(sessionId, mode)
       useWorktreeStatusStore
         .getState()

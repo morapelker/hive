@@ -22,6 +22,7 @@ import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
 import { useFileMentions } from '@/hooks/useFileMentions'
+import { useSessionTimer } from '@/hooks/useSessionTimer'
 import type { FlatFile } from '@/lib/file-search-utils'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -50,7 +51,7 @@ import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
-import { COMPLETION_WORDS, formatCompletionDuration, formatElapsedTimer } from '@/lib/format-utils'
+import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
@@ -529,7 +530,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [sessionErrorMessage, setSessionErrorMessage] = useState<string | null>(null)
   const [sessionErrorStderr, setSessionErrorStderr] = useState<string | null>(null)
   const [retryTickMs, setRetryTickMs] = useState<number>(Date.now())
-  const [elapsedTickMs, setElapsedTickMs] = useState(Date.now())
   const [planSavedAsTicket, setPlanSavedAsTicket] = useState(false)
 
   // Prompt history key: works for both worktree and connection sessions
@@ -4594,18 +4594,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }, [sessionRetry?.next])
 
   const isActive = isStreaming || isSending
-  useEffect(() => {
-    if (!isActive) return
-    setElapsedTickMs(Date.now())
-    const timer = window.setInterval(() => setElapsedTickMs(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [isActive])
-
-  const elapsedTimerText = useMemo(() => {
-    const sendTime = userExplicitSendTimes.get(sessionId)
-    if (!sendTime) return null
-    return formatElapsedTimer(elapsedTickMs - sendTime)
-  }, [sessionId, elapsedTickMs])
+  const elapsedTimerText = useSessionTimer(sessionId, isActive)
 
   // Render based on view state
   if (viewState.status === 'connecting') {
