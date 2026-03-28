@@ -64,3 +64,55 @@ input GitPullInput {
   branch: String
   rebase: Boolean
 }
+
+# --- Branch diff types ---
+
+type GitBranchDiffFile {
+  path: String!
+  status: String!
+}
+
+type GitBranchDiffFilesResult {
+  success: Boolean!
+  files: [GitBranchDiffFile!]
+  error: String
+}
+
+type GitBranchFileDiffResult {
+  success: Boolean!
+  diff: String
+  error: String
+}
+
+type GitFileContentBase64Result {
+  success: Boolean!
+  content: String
+  mimeType: String
+  error: String
+}
+
+type GitPRStateResult {
+  success: Boolean!
+  state: String
+  merged: Boolean
+  error: String
+}
+
+type PRReviewUser {
+  login: String!
+}
+
+type PRReviewComment {
+  id: Int!
+  path: String
+  line: Int
+  body: String!
+  user: PRReviewUser!
+  createdAt: String!
+}
+
+type GitPRReviewCommentsResult {
+  success: Boolean!
+  comments: [PRReviewComment!]
+  error: String
+}

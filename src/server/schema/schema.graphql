@@ -55,6 +55,12 @@ type Query {
   gitIsBranchMerged(worktreePath: String!, branch: String!): GitIsMergedResult!
   gitRemoteUrl(worktreePath: String!, remote: String): GitRemoteUrlResult!
   gitListPRs(projectPath: String!): GitPRListResult!
+  gitBranchDiffFiles(worktreePath: String!, baseBranch: String!): GitBranchDiffFilesResult!
+  gitBranchFileDiff(worktreePath: String!, baseBranch: String!, filePath: String!): GitBranchFileDiffResult!
+  gitFileContentBase64(worktreePath: String!, filePath: String!): GitFileContentBase64Result!
+  gitRefContentBase64(worktreePath: String!, ref: String!, filePath: String!): GitFileContentBase64Result!
+  gitPRState(worktreePath: String!, prNumber: Int!): GitPRStateResult!
+  gitPRReviewComments(worktreePath: String!, prNumber: Int!): GitPRReviewCommentsResult!
 
   # --- File Tree ---
   fileTreeScan(dirPath: String!): FileTreeScanResult!

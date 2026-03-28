@@ -250,6 +250,26 @@ export type GitBranchChangedEvent = {
   worktreePath: Scalars['String']['output'];
 };
 
+export type GitBranchDiffFile = {
+  __typename?: 'GitBranchDiffFile';
+  path: Scalars['String']['output'];
+  status: Scalars['String']['output'];
+};
+
+export type GitBranchDiffFilesResult = {
+  __typename?: 'GitBranchDiffFilesResult';
+  error?: Maybe<Scalars['String']['output']>;
+  files?: Maybe<Array<GitBranchDiffFile>>;
+  success: Scalars['Boolean']['output'];
+};
+
+export type GitBranchFileDiffResult = {
+  __typename?: 'GitBranchFileDiffResult';
+  diff?: Maybe<Scalars['String']['output']>;
+  error?: Maybe<Scalars['String']['output']>;
+  success: Scalars['Boolean']['output'];
+};
+
 export type GitBranchInfo = {
   __typename?: 'GitBranchInfo';
   ahead: Scalars['Int']['output'];
@@ -326,6 +346,14 @@ export type GitDiffStatResult = {
   success: Scalars['Boolean']['output'];
 };
 
+export type GitFileContentBase64Result = {
+  __typename?: 'GitFileContentBase64Result';
+  content?: Maybe<Scalars['String']['output']>;
+  error?: Maybe<Scalars['String']['output']>;
+  mimeType?: Maybe<Scalars['String']['output']>;
+  success: Scalars['Boolean']['output'];
+};
+
 export type GitFileContentResult = {
   __typename?: 'GitFileContentResult';
   content?: Maybe<Scalars['String']['output']>;
@@ -373,6 +401,21 @@ export type GitPrListResult = {
   __typename?: 'GitPRListResult';
   error?: Maybe<Scalars['String']['output']>;
   prs?: Maybe<Array<GitPr>>;
+  success: Scalars['Boolean']['output'];
+};
+
+export type GitPrReviewCommentsResult = {
+  __typename?: 'GitPRReviewCommentsResult';
+  comments?: Maybe<Array<PrReviewComment>>;
+  error?: Maybe<Scalars['String']['output']>;
+  success: Scalars['Boolean']['output'];
+};
+
+export type GitPrStateResult = {
+  __typename?: 'GitPRStateResult';
+  error?: Maybe<Scalars['String']['output']>;
+  merged?: Maybe<Scalars['Boolean']['output']>;
+  state?: Maybe<Scalars['String']['output']>;
   success: Scalars['Boolean']['output'];
 };
 
@@ -1164,6 +1207,21 @@ export type OpenCodeUndoResult = {
   success: Scalars['Boolean']['output'];
 };
 
+export type PrReviewComment = {
+  __typename?: 'PRReviewComment';
+  body: Scalars['String']['output'];
+  createdAt: Scalars['String']['output'];
+  id: Scalars['Int']['output'];
+  line?: Maybe<Scalars['Int']['output']>;
+  path?: Maybe<Scalars['String']['output']>;
+  user: PrReviewUser;
+};
+
+export type PrReviewUser = {
+  __typename?: 'PRReviewUser';
+  login: Scalars['String']['output'];
+};
+
 export type PermissionReplyInput = {
   message?: InputMaybe<Scalars['String']['input']>;
   reply: Scalars['String']['input'];
@@ -1250,17 +1308,23 @@ export type Query = {
   fileTreeLoadChildren: FileTreeChildrenResult;
   fileTreeScan: FileTreeScanResult;
   fileTreeScanFlat: FileTreeScanFlatResult;
+  gitBranchDiffFiles: GitBranchDiffFilesResult;
   gitBranchExists: Scalars['Boolean']['output'];
+  gitBranchFileDiff: GitBranchFileDiffResult;
   gitBranchInfo: GitBranchInfoResult;
   gitBranches: GitBranchesResult;
   gitBranchesWithStatus: GitBranchesWithStatusResult;
   gitDiff: GitDiffResult;
   gitDiffStat: GitDiffStatResult;
   gitFileContent: GitFileContentResult;
+  gitFileContentBase64: GitFileContentBase64Result;
   gitFileStatuses: GitFileStatusesResult;
   gitIsBranchMerged: GitIsMergedResult;
   gitListPRs: GitPrListResult;
+  gitPRReviewComments: GitPrReviewCommentsResult;
+  gitPRState: GitPrStateResult;
   gitRefContent: GitRefContentResult;
+  gitRefContentBase64: GitFileContentBase64Result;
   gitRemoteUrl: GitRemoteUrlResult;
   opencodeCapabilities: OpenCodeCapabilitiesResult;
   opencodeCommands: OpenCodeCommandsResult;
@@ -1349,9 +1413,22 @@ export type QueryFileTreeScanFlatArgs = {
 };
 
 
+export type QueryGitBranchDiffFilesArgs = {
+  baseBranch: Scalars['String']['input'];
+  worktreePath: Scalars['String']['input'];
+};
+
+
 export type QueryGitBranchExistsArgs = {
   branchName: Scalars['String']['input'];
   projectPath: Scalars['String']['input'];
+};
+
+
+export type QueryGitBranchFileDiffArgs = {
+  baseBranch: Scalars['String']['input'];
+  filePath: Scalars['String']['input'];
+  worktreePath: Scalars['String']['input'];
 };
 
 
@@ -1386,6 +1463,12 @@ export type QueryGitFileContentArgs = {
 };
 
 
+export type QueryGitFileContentBase64Args = {
+  filePath: Scalars['String']['input'];
+  worktreePath: Scalars['String']['input'];
+};
+
+
 export type QueryGitFileStatusesArgs = {
   worktreePath: Scalars['String']['input'];
 };
@@ -1402,7 +1485,26 @@ export type QueryGitListPRsArgs = {
 };
 
 
+export type QueryGitPrReviewCommentsArgs = {
+  prNumber: Scalars['Int']['input'];
+  worktreePath: Scalars['String']['input'];
+};
+
+
+export type QueryGitPrStateArgs = {
+  prNumber: Scalars['Int']['input'];
+  worktreePath: Scalars['String']['input'];
+};
+
+
 export type QueryGitRefContentArgs = {
+  filePath: Scalars['String']['input'];
+  ref: Scalars['String']['input'];
+  worktreePath: Scalars['String']['input'];
+};
+
+
+export type QueryGitRefContentBase64Args = {
   filePath: Scalars['String']['input'];
   ref: Scalars['String']['input'];
   worktreePath: Scalars['String']['input'];
@@ -1967,6 +2069,9 @@ export type ResolversTypes = ResolversObject<{
   Float: ResolverTypeWrapper<Scalars['Float']['output']>;
   ForkSessionInput: ForkSessionInput;
   GitBranchChangedEvent: ResolverTypeWrapper<GitBranchChangedEvent>;
+  GitBranchDiffFile: ResolverTypeWrapper<GitBranchDiffFile>;
+  GitBranchDiffFilesResult: ResolverTypeWrapper<GitBranchDiffFilesResult>;
+  GitBranchFileDiffResult: ResolverTypeWrapper<GitBranchFileDiffResult>;
   GitBranchInfo: ResolverTypeWrapper<GitBranchInfo>;
   GitBranchInfoResult: ResolverTypeWrapper<GitBranchInfoResult>;
   GitBranchWithStatus: ResolverTypeWrapper<GitBranchWithStatus>;
@@ -1977,6 +2082,7 @@ export type ResolversTypes = ResolversObject<{
   GitDiffResult: ResolverTypeWrapper<GitDiffResult>;
   GitDiffStatFile: ResolverTypeWrapper<GitDiffStatFile>;
   GitDiffStatResult: ResolverTypeWrapper<GitDiffStatResult>;
+  GitFileContentBase64Result: ResolverTypeWrapper<GitFileContentBase64Result>;
   GitFileContentResult: ResolverTypeWrapper<GitFileContentResult>;
   GitFileStatus: ResolverTypeWrapper<GitFileStatus>;
   GitFileStatusesResult: ResolverTypeWrapper<GitFileStatusesResult>;
@@ -1984,6 +2090,8 @@ export type ResolversTypes = ResolversObject<{
   GitMergeResult: ResolverTypeWrapper<GitMergeResult>;
   GitPR: ResolverTypeWrapper<GitPr>;
   GitPRListResult: ResolverTypeWrapper<GitPrListResult>;
+  GitPRReviewCommentsResult: ResolverTypeWrapper<GitPrReviewCommentsResult>;
+  GitPRStateResult: ResolverTypeWrapper<GitPrStateResult>;
   GitPullInput: GitPullInput;
   GitPushInput: GitPushInput;
   GitRefContentResult: ResolverTypeWrapper<GitRefContentResult>;
@@ -2013,6 +2121,8 @@ export type ResolversTypes = ResolversObject<{
   OpenCodeSessionInfoResult: ResolverTypeWrapper<OpenCodeSessionInfoResult>;
   OpenCodeStreamEvent: ResolverTypeWrapper<OpenCodeStreamEvent>;
   OpenCodeUndoResult: ResolverTypeWrapper<OpenCodeUndoResult>;
+  PRReviewComment: ResolverTypeWrapper<PrReviewComment>;
+  PRReviewUser: ResolverTypeWrapper<PrReviewUser>;
   PermissionReplyInput: PermissionReplyInput;
   PermissionRequest: ResolverTypeWrapper<PermissionRequest>;
   PermissionTool: ResolverTypeWrapper<PermissionTool>;
@@ -2088,6 +2198,9 @@ export type ResolversParentTypes = ResolversObject<{
   Float: Scalars['Float']['output'];
   ForkSessionInput: ForkSessionInput;
   GitBranchChangedEvent: GitBranchChangedEvent;
+  GitBranchDiffFile: GitBranchDiffFile;
+  GitBranchDiffFilesResult: GitBranchDiffFilesResult;
+  GitBranchFileDiffResult: GitBranchFileDiffResult;
   GitBranchInfo: GitBranchInfo;
   GitBranchInfoResult: GitBranchInfoResult;
   GitBranchWithStatus: GitBranchWithStatus;
@@ -2098,6 +2211,7 @@ export type ResolversParentTypes = ResolversObject<{
   GitDiffResult: GitDiffResult;
   GitDiffStatFile: GitDiffStatFile;
   GitDiffStatResult: GitDiffStatResult;
+  GitFileContentBase64Result: GitFileContentBase64Result;
   GitFileContentResult: GitFileContentResult;
   GitFileStatus: GitFileStatus;
   GitFileStatusesResult: GitFileStatusesResult;
@@ -2105,6 +2219,8 @@ export type ResolversParentTypes = ResolversObject<{
   GitMergeResult: GitMergeResult;
   GitPR: GitPr;
   GitPRListResult: GitPrListResult;
+  GitPRReviewCommentsResult: GitPrReviewCommentsResult;
+  GitPRStateResult: GitPrStateResult;
   GitPullInput: GitPullInput;
   GitPushInput: GitPushInput;
   GitRefContentResult: GitRefContentResult;
@@ -2134,6 +2250,8 @@ export type ResolversParentTypes = ResolversObject<{
   OpenCodeSessionInfoResult: OpenCodeSessionInfoResult;
   OpenCodeStreamEvent: OpenCodeStreamEvent;
   OpenCodeUndoResult: OpenCodeUndoResult;
+  PRReviewComment: PrReviewComment;
+  PRReviewUser: PrReviewUser;
   PermissionReplyInput: PermissionReplyInput;
   PermissionRequest: PermissionRequest;
   PermissionTool: PermissionTool;
@@ -2313,6 +2431,23 @@ export type GitBranchChangedEventResolvers<ContextType = GraphQLContext, ParentT
   worktreePath?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
 }>;
 
+export type GitBranchDiffFileResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitBranchDiffFile'] = ResolversParentTypes['GitBranchDiffFile']> = ResolversObject<{
+  path?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  status?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+}>;
+
+export type GitBranchDiffFilesResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitBranchDiffFilesResult'] = ResolversParentTypes['GitBranchDiffFilesResult']> = ResolversObject<{
+  error?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  files?: Resolver<Maybe<Array<ResolversTypes['GitBranchDiffFile']>>, ParentType, ContextType>;
+  success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+}>;
+
+export type GitBranchFileDiffResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitBranchFileDiffResult'] = ResolversParentTypes['GitBranchFileDiffResult']> = ResolversObject<{
+  diff?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  error?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+}>;
+
 export type GitBranchInfoResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitBranchInfo'] = ResolversParentTypes['GitBranchInfo']> = ResolversObject<{
   ahead?: Resolver<ResolversTypes['Int'], ParentType, ContextType>;
   behind?: Resolver<ResolversTypes['Int'], ParentType, ContextType>;
@@ -2372,6 +2507,13 @@ export type GitDiffStatResultResolvers<ContextType = GraphQLContext, ParentType 
   success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
 }>;
 
+export type GitFileContentBase64ResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitFileContentBase64Result'] = ResolversParentTypes['GitFileContentBase64Result']> = ResolversObject<{
+  content?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  error?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  mimeType?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+}>;
+
 export type GitFileContentResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitFileContentResult'] = ResolversParentTypes['GitFileContentResult']> = ResolversObject<{
   content?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   error?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
@@ -2412,6 +2554,19 @@ export type GitPrResolvers<ContextType = GraphQLContext, ParentType extends Reso
 export type GitPrListResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitPRListResult'] = ResolversParentTypes['GitPRListResult']> = ResolversObject<{
   error?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   prs?: Resolver<Maybe<Array<ResolversTypes['GitPR']>>, ParentType, ContextType>;
+  success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+}>;
+
+export type GitPrReviewCommentsResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitPRReviewCommentsResult'] = ResolversParentTypes['GitPRReviewCommentsResult']> = ResolversObject<{
+  comments?: Resolver<Maybe<Array<ResolversTypes['PRReviewComment']>>, ParentType, ContextType>;
+  error?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+}>;
+
+export type GitPrStateResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitPRStateResult'] = ResolversParentTypes['GitPRStateResult']> = ResolversObject<{
+  error?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  merged?: Resolver<Maybe<ResolversTypes['Boolean']>, ParentType, ContextType>;
+  state?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
 }>;
 
@@ -2637,6 +2792,19 @@ export type OpenCodeUndoResultResolvers<ContextType = GraphQLContext, ParentType
   success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
 }>;
 
+export type PrReviewCommentResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['PRReviewComment'] = ResolversParentTypes['PRReviewComment']> = ResolversObject<{
+  body?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  createdAt?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  id?: Resolver<ResolversTypes['Int'], ParentType, ContextType>;
+  line?: Resolver<Maybe<ResolversTypes['Int']>, ParentType, ContextType>;
+  path?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  user?: Resolver<ResolversTypes['PRReviewUser'], ParentType, ContextType>;
+}>;
+
+export type PrReviewUserResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['PRReviewUser'] = ResolversParentTypes['PRReviewUser']> = ResolversObject<{
+  login?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+}>;
+
 export type PermissionRequestResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['PermissionRequest'] = ResolversParentTypes['PermissionRequest']> = ResolversObject<{
   always?: Resolver<Array<ResolversTypes['String']>, ParentType, ContextType>;
   id?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
@@ -2697,17 +2865,23 @@ export type QueryResolvers<ContextType = GraphQLContext, ParentType extends Reso
   fileTreeLoadChildren?: Resolver<ResolversTypes['FileTreeChildrenResult'], ParentType, ContextType, RequireFields<QueryFileTreeLoadChildrenArgs, 'dirPath' | 'rootPath'>>;
   fileTreeScan?: Resolver<ResolversTypes['FileTreeScanResult'], ParentType, ContextType, RequireFields<QueryFileTreeScanArgs, 'dirPath'>>;
   fileTreeScanFlat?: Resolver<ResolversTypes['FileTreeScanFlatResult'], ParentType, ContextType, RequireFields<QueryFileTreeScanFlatArgs, 'dirPath'>>;
+  gitBranchDiffFiles?: Resolver<ResolversTypes['GitBranchDiffFilesResult'], ParentType, ContextType, RequireFields<QueryGitBranchDiffFilesArgs, 'baseBranch' | 'worktreePath'>>;
   gitBranchExists?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType, RequireFields<QueryGitBranchExistsArgs, 'branchName' | 'projectPath'>>;
+  gitBranchFileDiff?: Resolver<ResolversTypes['GitBranchFileDiffResult'], ParentType, ContextType, RequireFields<QueryGitBranchFileDiffArgs, 'baseBranch' | 'filePath' | 'worktreePath'>>;
   gitBranchInfo?: Resolver<ResolversTypes['GitBranchInfoResult'], ParentType, ContextType, RequireFields<QueryGitBranchInfoArgs, 'worktreePath'>>;
   gitBranches?: Resolver<ResolversTypes['GitBranchesResult'], ParentType, ContextType, RequireFields<QueryGitBranchesArgs, 'projectPath'>>;
   gitBranchesWithStatus?: Resolver<ResolversTypes['GitBranchesWithStatusResult'], ParentType, ContextType, RequireFields<QueryGitBranchesWithStatusArgs, 'projectPath'>>;
   gitDiff?: Resolver<ResolversTypes['GitDiffResult'], ParentType, ContextType, RequireFields<QueryGitDiffArgs, 'input'>>;
   gitDiffStat?: Resolver<ResolversTypes['GitDiffStatResult'], ParentType, ContextType, RequireFields<QueryGitDiffStatArgs, 'worktreePath'>>;
   gitFileContent?: Resolver<ResolversTypes['GitFileContentResult'], ParentType, ContextType, RequireFields<QueryGitFileContentArgs, 'filePath' | 'worktreePath'>>;
+  gitFileContentBase64?: Resolver<ResolversTypes['GitFileContentBase64Result'], ParentType, ContextType, RequireFields<QueryGitFileContentBase64Args, 'filePath' | 'worktreePath'>>;
   gitFileStatuses?: Resolver<ResolversTypes['GitFileStatusesResult'], ParentType, ContextType, RequireFields<QueryGitFileStatusesArgs, 'worktreePath'>>;
   gitIsBranchMerged?: Resolver<ResolversTypes['GitIsMergedResult'], ParentType, ContextType, RequireFields<QueryGitIsBranchMergedArgs, 'branch' | 'worktreePath'>>;
   gitListPRs?: Resolver<ResolversTypes['GitPRListResult'], ParentType, ContextType, RequireFields<QueryGitListPRsArgs, 'projectPath'>>;
+  gitPRReviewComments?: Resolver<ResolversTypes['GitPRReviewCommentsResult'], ParentType, ContextType, RequireFields<QueryGitPrReviewCommentsArgs, 'prNumber' | 'worktreePath'>>;
+  gitPRState?: Resolver<ResolversTypes['GitPRStateResult'], ParentType, ContextType, RequireFields<QueryGitPrStateArgs, 'prNumber' | 'worktreePath'>>;
   gitRefContent?: Resolver<ResolversTypes['GitRefContentResult'], ParentType, ContextType, RequireFields<QueryGitRefContentArgs, 'filePath' | 'ref' | 'worktreePath'>>;
+  gitRefContentBase64?: Resolver<ResolversTypes['GitFileContentBase64Result'], ParentType, ContextType, RequireFields<QueryGitRefContentBase64Args, 'filePath' | 'ref' | 'worktreePath'>>;
   gitRemoteUrl?: Resolver<ResolversTypes['GitRemoteUrlResult'], ParentType, ContextType, RequireFields<QueryGitRemoteUrlArgs, 'worktreePath'>>;
   opencodeCapabilities?: Resolver<ResolversTypes['OpenCodeCapabilitiesResult'], ParentType, ContextType, Partial<QueryOpencodeCapabilitiesArgs>>;
   opencodeCommands?: Resolver<ResolversTypes['OpenCodeCommandsResult'], ParentType, ContextType, RequireFields<QueryOpencodeCommandsArgs, 'worktreePath'>>;
@@ -2923,6 +3097,9 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   FileTreeScanResult?: FileTreeScanResultResolvers<ContextType>;
   FlatFile?: FlatFileResolvers<ContextType>;
   GitBranchChangedEvent?: GitBranchChangedEventResolvers<ContextType>;
+  GitBranchDiffFile?: GitBranchDiffFileResolvers<ContextType>;
+  GitBranchDiffFilesResult?: GitBranchDiffFilesResultResolvers<ContextType>;
+  GitBranchFileDiffResult?: GitBranchFileDiffResultResolvers<ContextType>;
   GitBranchInfo?: GitBranchInfoResolvers<ContextType>;
   GitBranchInfoResult?: GitBranchInfoResultResolvers<ContextType>;
   GitBranchWithStatus?: GitBranchWithStatusResolvers<ContextType>;
@@ -2932,6 +3109,7 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   GitDiffResult?: GitDiffResultResolvers<ContextType>;
   GitDiffStatFile?: GitDiffStatFileResolvers<ContextType>;
   GitDiffStatResult?: GitDiffStatResultResolvers<ContextType>;
+  GitFileContentBase64Result?: GitFileContentBase64ResultResolvers<ContextType>;
   GitFileContentResult?: GitFileContentResultResolvers<ContextType>;
   GitFileStatus?: GitFileStatusResolvers<ContextType>;
   GitFileStatusesResult?: GitFileStatusesResultResolvers<ContextType>;
@@ -2939,6 +3117,8 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   GitMergeResult?: GitMergeResultResolvers<ContextType>;
   GitPR?: GitPrResolvers<ContextType>;
   GitPRListResult?: GitPrListResultResolvers<ContextType>;
+  GitPRReviewCommentsResult?: GitPrReviewCommentsResultResolvers<ContextType>;
+  GitPRStateResult?: GitPrStateResultResolvers<ContextType>;
   GitRefContentResult?: GitRefContentResultResolvers<ContextType>;
   GitRemoteUrlResult?: GitRemoteUrlResultResolvers<ContextType>;
   GitStatusChangedEvent?: GitStatusChangedEventResolvers<ContextType>;
@@ -2959,6 +3139,8 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   OpenCodeSessionInfoResult?: OpenCodeSessionInfoResultResolvers<ContextType>;
   OpenCodeStreamEvent?: OpenCodeStreamEventResolvers<ContextType>;
   OpenCodeUndoResult?: OpenCodeUndoResultResolvers<ContextType>;
+  PRReviewComment?: PrReviewCommentResolvers<ContextType>;
+  PRReviewUser?: PrReviewUserResolvers<ContextType>;
   PermissionRequest?: PermissionRequestResolvers<ContextType>;
   PermissionTool?: PermissionToolResolvers<ContextType>;
   Project?: ProjectResolvers<ContextType>;
