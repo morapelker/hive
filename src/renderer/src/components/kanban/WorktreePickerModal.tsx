@@ -18,7 +18,8 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { resolveModelForSdk } from '@/stores/useSettingsStore'
+import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { messageSendTimes, lastSendMode } from '@/lib/message-send-times'
 import { PLAN_MODE_PREFIX } from '@/lib/constants'
 import { toast } from '@/lib/toast'
@@ -90,6 +91,10 @@ export function WorktreePickerModal({
   const [branches, setBranches] = useState<BranchInfo[]>([])
   const [branchFilter, setBranchFilter] = useState('')
   const [branchesLoading, setBranchesLoading] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<{
+    providerID: string; modelID: string; variant?: string
+  } | null>(null)
+  const [selectedSdk, setSelectedSdk] = useState<'opencode' | 'claude-code' | 'codex' | null>(null)
 
   // ── Store access ────────────────────────────────────────────────
   const worktrees = useWorktreeStore(
@@ -125,6 +130,21 @@ export function WorktreePickerModal({
   const worktreeNamePreview = useMemo(() => {
     return canonicalizeTicketTitle(ticket.title)
   }, [ticket.title])
+
+  // ── SDK / Model resolution ──────────────────────────────────────
+  const availableAgentSdks = useSettingsStore((s) => s.availableAgentSdks)
+  const defaultAgentSdk = useSettingsStore((s) => s.defaultAgentSdk) ?? 'opencode'
+  const defaultSdkNormalized = defaultAgentSdk === 'terminal' ? 'opencode' : defaultAgentSdk
+  const agentSdk = selectedSdk ?? defaultSdkNormalized
+
+  const autoResolvedModel = useMemo(() => {
+    const settings = useSettingsStore.getState()
+    // Priority 1: mode-specific default
+    const modeModel = settings.getModelForMode(mode)
+    if (modeModel) return modeModel
+    // Priority 2: per-provider / global default
+    return resolveModelForSdk(agentSdk) ?? null
+  }, [mode, agentSdk])
 
   // ── Count in-progress tickets per worktree ──────────────────────
   const ticketCountByWorktree = useMemo(() => {
@@ -179,6 +199,8 @@ export function WorktreePickerModal({
       setIsNewWorktree(false)
       setPromptText(buildPrompt('build', ticket))
       setIsSending(false)
+      setSelectedModel(null)
+      setSelectedSdk(null)
       setSourceBranch(_lastSourceBranchByProject[projectId] ?? null)
       setBranches([])
       setBranchFilter('')
@@ -196,6 +218,12 @@ export function WorktreePickerModal({
         return a.name.localeCompare(b.name)
       })
   }, [branches, branchFilter])
+
+  // ── Handle SDK change ───────────────────────────────────────────
+  const handleSdkChange = useCallback((sdk: 'opencode' | 'claude-code' | 'codex') => {
+    setSelectedSdk(sdk)
+    setSelectedModel(null)  // reset model — new SDK has different models
+  }, [])
 
   // ── Handle mode toggle ──────────────────────────────────────────
   const toggleMode = useCallback(() => {
@@ -327,7 +355,7 @@ export function WorktreePickerModal({
       }
 
       // Create session in the selected worktree
-      const sessionResult = await createSession(worktreeId, projectId, undefined, mode)
+      const sessionResult = await createSession(worktreeId, projectId, agentSdk, mode)
 
       if (!sessionResult.success || !sessionResult.session) {
         toast.error(sessionResult.error || 'Failed to create session')
@@ -336,7 +364,13 @@ export function WorktreePickerModal({
       }
 
       const sessionId = sessionResult.session.id
-      const agentSdk = sessionResult.session.agent_sdk
+      const sessionAgentSdk = sessionResult.session.agent_sdk
+
+      // Apply user's model override to the session if they explicitly picked one
+      const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
+      if (selectedModel) {
+        await useSessionStore.getState().setSessionModel(sessionId, selectedModel)
+      }
 
       // Update the ticket with session info and move to in_progress
       const sortOrder = useKanbanStore
@@ -387,31 +421,13 @@ export function WorktreePickerModal({
 
       // Send the prompt — apply plan mode prefix for opencode SDK
       if (promptText.trim()) {
-        const skipPrefix = agentSdk === 'claude-code' || agentSdk === 'codex'
+        const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
         const modePrefix = mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX : ''
         const fullPrompt = modePrefix + promptText.trim()
 
-        // Resolve model from the freshly-created session (mirrors SessionView.getModelForRequests)
-        const sessionState = useSessionStore.getState()
-        let sessionModel: { providerID: string; modelID: string; variant?: string } | undefined
-        for (const sessions of sessionState.sessionsByWorktree.values()) {
-          const found = sessions.find((s) => s.id === sessionId)
-          if (found?.model_provider_id && found.model_id) {
-            sessionModel = {
-              providerID: found.model_provider_id,
-              modelID: found.model_id,
-              variant: found.model_variant ?? undefined
-            }
-            break
-          }
-        }
-        if (!sessionModel) {
-          sessionModel = resolveModelForSdk(agentSdk) ?? undefined
-        }
-
         await window.opencodeOps.prompt(worktree.path, connectResult.sessionId, [
           { type: 'text', text: fullPrompt }
-        ], sessionModel)
+        ], effectiveModel)
       }
     } catch {
       toast.error('Failed to start session')
@@ -428,6 +444,7 @@ export function WorktreePickerModal({
     defaultBranchName,
     projectId,
     createSession,
+    agentSdk,
     mode,
     promptText,
     updateTicket,
@@ -435,7 +452,9 @@ export function WorktreePickerModal({
     ticket.title,
     onSendComplete,
     onOpenChange,
-    preAssignOnly
+    preAssignOnly,
+    selectedModel,
+    autoResolvedModel
   ])
 
   // ── Mode toggle chip ────────────────────────────────────────────
@@ -627,6 +646,72 @@ export function WorktreePickerModal({
               })}
             </div>
           </div>
+
+          {/* ── Provider & Model picker (hidden in pre-assign mode) ── */}
+          {!preAssignOnly && (
+            <div className="space-y-2">
+              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Provider & Model
+              </label>
+              {/* SDK toggle — only when 2+ SDKs are available */}
+              {availableAgentSdks && (
+                [availableAgentSdks.opencode, availableAgentSdks.claude, availableAgentSdks.codex].filter(Boolean).length >= 2
+              ) && (
+                <div className="flex gap-1.5" data-testid="sdk-toggle">
+                  {availableAgentSdks.opencode && (
+                    <button
+                      type="button"
+                      data-testid="sdk-toggle-opencode"
+                      onClick={() => handleSdkChange('opencode')}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                        agentSdk === 'opencode'
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                      )}
+                    >
+                      OpenCode
+                    </button>
+                  )}
+                  {availableAgentSdks.claude && (
+                    <button
+                      type="button"
+                      data-testid="sdk-toggle-claude-code"
+                      onClick={() => handleSdkChange('claude-code')}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                        agentSdk === 'claude-code'
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                      )}
+                    >
+                      Claude Code
+                    </button>
+                  )}
+                  {availableAgentSdks.codex && (
+                    <button
+                      type="button"
+                      data-testid="sdk-toggle-codex"
+                      onClick={() => handleSdkChange('codex')}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                        agentSdk === 'codex'
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                      )}
+                    >
+                      Codex
+                    </button>
+                  )}
+                </div>
+              )}
+              <ModelSelector
+                value={selectedModel ?? autoResolvedModel}
+                onChange={setSelectedModel}
+                agentSdkOverride={agentSdk}
+              />
+            </div>
+          )}
 
           {/* ── Prompt preview / editor (hidden in pre-assign mode) ── */}
           {!preAssignOnly && (
