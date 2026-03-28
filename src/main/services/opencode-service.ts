@@ -1059,6 +1059,13 @@ class OpenCodeService {
       }
     }
 
+    // Fallback: check for sessionID at the top level of the event itself.
+    // Some event types (e.g. permission.asked) may deliver the payload without
+    // a `properties` wrapper, or with the sessionID on the event root.
+    if (!sessionId && event.sessionID) {
+      sessionId = event.sessionID
+    }
+
     if (!sessionId) {
       // Skip events without session ID
       return

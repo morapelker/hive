@@ -65,6 +65,27 @@ import { CommandApprovalPrompt } from './CommandApprovalPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, stripPlanModePrefix } from '@/lib/constants'
 
+/**
+ * Resolve an OpenCode session ID to the corresponding Hive session ID
+ * by looking up sessions with a matching `opencode_session_id` in the store.
+ * Returns null if no matching Hive session is found.
+ */
+function resolveHiveSessionIdFromOpencodeId(opencodeSessionId: string): string | null {
+  const sessionState = useSessionStore.getState()
+
+  for (const sessions of sessionState.sessionsByWorktree.values()) {
+    const match = sessions.find((s) => s.opencode_session_id === opencodeSessionId)
+    if (match) return match.id
+  }
+
+  for (const sessions of sessionState.sessionsByConnection.values()) {
+    const match = sessions.find((s) => s.opencode_session_id === opencodeSessionId)
+    if (match) return match.id
+  }
+
+  return null
+}
+
 interface SlashCommandInfo {
   name: string
   description?: string
@@ -946,6 +967,37 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
     }
   }, [activePermission, sessionId])
+
+  // Periodic permission hydration while the session is actively streaming.
+  // The live SSE event path may occasionally miss `permission.asked` events
+  // (e.g., due to event format mismatches), so we poll the REST API as a
+  // safety net to ensure the permission dialog appears promptly.
+  useEffect(() => {
+    if (!isStreaming || !worktreePath || activePermission) return
+
+    // First check after a short delay, then periodic
+    const timerId = setInterval(() => {
+      window.opencodeOps
+        ?.permissionList(worktreePath)
+        .then((result) => {
+          if (result.success && result.permissions) {
+            for (const req of result.permissions) {
+              const r = req as PermissionRequest
+              if (r.id && r.permission) {
+                const targetSessionId =
+                  (r.sessionID && resolveHiveSessionIdFromOpencodeId(r.sessionID)) || sessionId
+                usePermissionStore.getState().addPermission(targetSessionId, r)
+              }
+            }
+          }
+        })
+        .catch(() => {
+          // Silently ignore — this is a best-effort check
+        })
+    }, 3000)
+
+    return () => clearInterval(timerId)
+  }, [isStreaming, worktreePath, activePermission, sessionId])
 
   // Clean up rAF-based streaming and scroll guards on unmount
   useEffect(() => {
@@ -2587,7 +2639,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             })
         }
 
-        // Hydrate any pending permission requests (fire-and-forget)
+        // Hydrate any pending permission requests (fire-and-forget).
+        // The REST endpoint returns ALL pending permissions for the directory,
+        // so we use PermissionRequest.sessionID (OpenCode session ID) to route
+        // each permission to the correct Hive session rather than blindly
+        // assigning to the mounting session.
         const hydratePermissions = (path: string): void => {
           window.opencodeOps
             .permissionList(path)
@@ -2596,7 +2652,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 for (const req of result.permissions) {
                   const r = req as PermissionRequest
                   if (r.id && r.permission) {
-                    usePermissionStore.getState().addPermission(sessionId, r)
+                    const targetSessionId =
+                      (r.sessionID && resolveHiveSessionIdFromOpencodeId(r.sessionID)) || sessionId
+                    usePermissionStore.getState().addPermission(targetSessionId, r)
                   }
                 }
               }
