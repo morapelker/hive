@@ -2,13 +2,15 @@ import { createYoga, createSchema } from 'graphql-yoga'
 import { GraphQLError } from 'graphql'
 import { useServer } from 'graphql-ws/use/ws'
 import { createServer as createHttpsServer } from 'node:https'
-import { createServer as createHttpServer } from 'node:http'
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { WebSocketServer } from 'ws'
 import type { GraphQLContext } from './context'
 import { mergeResolvers } from './resolvers'
 import { extractBearerToken, verifyApiKey, BruteForceTracker } from './plugins/auth'
+import { handleAuthEndpoint } from './plugins/auth-endpoint'
+import { createStaticHandler } from './static-handler'
 
 function loadSchemaSDL(): string {
   const schemaDir = join(__dirname, '..', '..', 'src', 'server', 'schema')
@@ -35,6 +37,7 @@ export interface ServerOptions {
   insecure?: boolean
   tlsCert?: string
   tlsKey?: string
+  webRoot?: string
   context: Omit<GraphQLContext, 'clientIp' | 'authenticated'>
   getKeyHash: () => string
   bruteForce: BruteForceTracker
@@ -92,14 +95,46 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
     }
   })
 
+  const staticHandler = opts.webRoot ? createStaticHandler(opts.webRoot) : null
+
+  const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
+    const url = req.url ?? '/'
+    const pathname = url.split('?')[0]
+
+    // 1. Auth endpoint (async)
+    if (req.method === 'POST' && pathname === '/api/auth/validate') {
+      handleAuthEndpoint(req, res, opts.getKeyHash, opts.bruteForce).catch(() => {
+        if (!res.writableEnded) {
+          res.writeHead(500)
+          res.end()
+        }
+      })
+      return
+    }
+
+    // 2. GraphQL path -- always handled by yoga
+    if (pathname === '/graphql' || pathname.startsWith('/graphql/')) {
+      yoga(req, res)
+      return
+    }
+
+    // 3. Static handler (if configured), falling back to yoga
+    if (staticHandler && staticHandler(req, res)) {
+      return
+    }
+
+    // 4. Fallback to yoga for any unmatched routes
+    yoga(req, res)
+  }
+
   const server = opts.insecure
-    ? createHttpServer(yoga)
+    ? createHttpServer(requestHandler)
     : createHttpsServer(
         {
           cert: readFileSync(opts.tlsCert!),
           key: readFileSync(opts.tlsKey!)
         },
-        yoga
+        requestHandler
       )
 
   const wss = new WebSocketServer({

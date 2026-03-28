@@ -6,6 +6,7 @@ export interface HeadlessConfig {
   port: number
   bindAddress: string
   insecure: boolean
+  webRoot: string | null
   tls: {
     certPath: string
     keyPath: string
@@ -23,6 +24,7 @@ const DEFAULTS: HeadlessConfig = {
   port: 8443,
   bindAddress: '0.0.0.0',
   insecure: false,
+  webRoot: null,
   tls: {
     certPath: join(homedir(), '.hive', 'tls', 'server.crt'),
     keyPath: join(homedir(), '.hive', 'tls', 'server.key')
@@ -66,6 +68,7 @@ function deepMerge<T extends Record<string, unknown>>(
 function cloneDefaults(): HeadlessConfig {
   return {
     ...DEFAULTS,
+    webRoot: DEFAULTS.webRoot,
     tls: { ...DEFAULTS.tls },
     security: { ...DEFAULTS.security, allowedIps: [...DEFAULTS.security.allowedIps] }
   }

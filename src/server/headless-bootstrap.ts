@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { existsSync, rmSync } from 'node:fs'
 import { loadHeadlessConfig } from './config'
 import { ensureTlsCerts, generateTlsCerts, getCertFingerprint } from './tls'
 import { generateApiKey, hashApiKey, BruteForceTracker } from './plugins/auth'
@@ -11,7 +12,6 @@ import { ClaudeCodeImplementer } from '../main/services/claude-code-implementer'
 import { CodexImplementer } from '../main/services/codex-implementer'
 import { AgentSdkManager } from '../main/services/agent-sdk-manager'
 import type { AgentSdkImplementer } from '../main/services/agent-sdk-types'
-import { rmSync } from 'node:fs'
 
 export interface HeadlessBootstrapOpts {
   port?: number
@@ -110,12 +110,28 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
   // Periodic cleanup
   const cleanupInterval = setInterval(() => bruteForce.cleanup(), 60_000)
 
+  // Resolve web UI root directory
+  let webRoot: string | undefined
+  if (config.webRoot) {
+    // Explicit webRoot from config
+    if (existsSync(join(config.webRoot, 'index.html'))) {
+      webRoot = config.webRoot
+    }
+  } else {
+    // Default: look for bundled web UI next to server code
+    const defaultWebRoot = join(__dirname, 'web')
+    if (existsSync(join(defaultWebRoot, 'index.html'))) {
+      webRoot = defaultWebRoot
+    }
+  }
+
   // Start GraphQL server
   serverHandle = startGraphQLServer({
     port,
     bindAddress: bind,
     insecure: config.insecure,
     ...(config.insecure ? {} : { tlsCert: config.tls.certPath, tlsKey: config.tls.keyPath }),
+    webRoot,
     context: { db, sdkManager, eventBus },
     getKeyHash: () => db.getSetting('headless_api_key_hash') || '',
     bruteForce
@@ -123,6 +139,11 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
 
   const protocol = config.insecure ? 'http' : 'https'
   console.log(`Hive headless server running on ${protocol}://${bind}:${port}/graphql`)
+  if (webRoot) {
+    console.log(`Web UI available at ${protocol}://${bind}:${port}/`)
+  } else {
+    console.log('Web UI not found, API-only mode')
+  }
   if (fingerprint) {
     console.log(`TLS fingerprint: ${fingerprint}`)
   }
