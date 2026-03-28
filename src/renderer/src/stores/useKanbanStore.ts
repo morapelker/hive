@@ -487,6 +487,16 @@ export const useKanbanStore = create<KanbanState>()(
                 }
                 break
               }
+
+              case 'session_working': {
+                // Session became active — if ticket is in review, move it to in_progress
+                if (ticket.column === 'review') {
+                  get()
+                    .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
+                    .catch(() => {})
+                }
+                break
+              }
             }
           }
         }

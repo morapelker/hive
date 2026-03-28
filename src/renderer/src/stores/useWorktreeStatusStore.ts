@@ -88,6 +88,8 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       })
     } else if (status === 'plan_ready') {
       notifyKanbanSessionSync(sessionId, { type: 'plan_ready' })
+    } else if (status === 'working' || status === 'planning') {
+      notifyKanbanSessionSync(sessionId, { type: 'session_working' })
     }
   },
 

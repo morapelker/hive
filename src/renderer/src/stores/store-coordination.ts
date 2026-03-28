@@ -37,7 +37,7 @@ export function clearConnectionSelection(): void {
 // importing useKanbanStore.
 
 export interface KanbanSessionEvent {
-  type: 'session_completed' | 'session_error' | 'plan_ready' | 'supercharge' | 'mode_change' | 'implement'
+  type: 'session_completed' | 'session_error' | 'plan_ready' | 'supercharge' | 'mode_change' | 'implement' | 'session_working'
   /** The mode the session was running in (build / plan) — relevant for completed events */
   sessionMode?: 'build' | 'plan'
   /** For supercharge: the newly-created session that replaces the old one */
