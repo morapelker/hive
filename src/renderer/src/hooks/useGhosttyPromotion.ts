@@ -3,6 +3,7 @@ import { toast as sonnerToast } from 'sonner'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { toast } from '@/lib/toast'
 import { GhosttyPromoToast } from '@/components/toasts/GhosttyPromoToast'
+import { detectTransportMode } from '@/transport/detect'
 
 /**
  * Shows a promotional toast when Ghostty native terminal is available
@@ -13,6 +14,9 @@ export function useGhosttyPromotion(terminalTabVisible: boolean): void {
   const toastId = useRef<string | number | null>(null)
 
   useEffect(() => {
+    // Don't show Ghostty promotion in web mode
+    if (detectTransportMode() === 'web') return
+
     if (!terminalTabVisible || shownRef.current) return
 
     const { embeddedTerminalBackend, ghosttyPromotionDismissed } = useSettingsStore.getState()

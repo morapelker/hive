@@ -1,17 +1,56 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Plus, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useProjectStore } from '@/stores'
+import { useIsWebMode } from '@/hooks/useIsWebMode'
 import { projectToast, toast } from '@/lib/toast'
 import { GitInitDialog } from './GitInitDialog'
 
 export function AddProjectButton(): React.JSX.Element {
+  const isWebMode = useIsWebMode()
   const [isAdding, setIsAdding] = useState(false)
   const [gitInitPath, setGitInitPath] = useState<string | null>(null)
+  const [showPathInput, setShowPathInput] = useState(false)
+  const [manualPath, setManualPath] = useState('')
   const { addProject } = useProjectStore()
+
+  const handleAddProjectFromPath = useCallback(async (path: string): Promise<void> => {
+    if (!path.trim()) return
+
+    setIsAdding(true)
+    try {
+      const result = await addProject(path.trim())
+
+      if (result.success) {
+        projectToast.added(path.trim().split('/').pop() || path.trim())
+        setShowPathInput(false)
+        setManualPath('')
+        return
+      }
+
+      if (result.error?.includes('not a Git repository')) {
+        setGitInitPath(path.trim())
+        setShowPathInput(false)
+        setManualPath('')
+        return
+      }
+
+      toast.error(result.error || 'Failed to add project')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to add project')
+    } finally {
+      setIsAdding(false)
+    }
+  }, [addProject])
 
   const handleAddProject = useCallback(async (): Promise<void> => {
     if (isAdding) return
+
+    if (isWebMode) {
+      setShowPathInput(true)
+      return
+    }
 
     setIsAdding(true)
     try {
@@ -47,7 +86,7 @@ export function AddProjectButton(): React.JSX.Element {
     } finally {
       setIsAdding(false)
     }
-  }, [isAdding, addProject])
+  }, [isAdding, isWebMode, addProject])
 
   useEffect(() => {
     const handler = (): void => {
@@ -81,17 +120,46 @@ export function AddProjectButton(): React.JSX.Element {
 
   return (
     <>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        title="Add Project"
-        onClick={handleAddProject}
-        disabled={isAdding}
-        data-testid="add-project-button"
-      >
-        {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-      </Button>
+      {showPathInput && isWebMode ? (
+        <div className="flex items-center gap-1">
+          <Input
+            value={manualPath}
+            onChange={(e) => setManualPath(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleAddProjectFromPath(manualPath)
+              if (e.key === 'Escape') {
+                setShowPathInput(false)
+                setManualPath('')
+              }
+            }}
+            placeholder="/path/to/project"
+            className="h-6 text-xs font-mono w-48"
+            autoFocus
+            data-testid="add-project-path-input"
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={() => handleAddProjectFromPath(manualPath)}
+            disabled={isAdding || !manualPath.trim()}
+          >
+            {isAdding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          title="Add Project"
+          onClick={handleAddProject}
+          disabled={isAdding}
+          data-testid="add-project-button"
+        >
+          {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+        </Button>
+      )}
       <GitInitDialog
         open={!!gitInitPath}
         path={gitInitPath || ''}

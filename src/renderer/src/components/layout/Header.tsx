@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useMemo } from 'react'
 import { isMac } from '@/lib/platform'
+import { useIsWebMode } from '@/hooks/useIsWebMode'
+import { getWebAuth } from '@/transport/graphql/auth'
 import {
   PanelRightClose,
   PanelRightOpen,
@@ -67,6 +69,17 @@ function isConflictFixActiveStatus(status: string | null): boolean {
 }
 
 export function Header(): React.JSX.Element {
+  const isWebMode = useIsWebMode()
+  const webServerUrl = useMemo(() => {
+    if (!isWebMode) return null
+    const auth = getWebAuth()
+    if (!auth) return null
+    try {
+      return new URL(auth.serverUrl).host
+    } catch {
+      return auth.serverUrl
+    }
+  }, [isWebMode])
   const { rightSidebarCollapsed, toggleRightSidebar } = useLayoutStore()
   const { openPanel: openSessionHistory } = useSessionHistoryStore()
   const openSettings = useSettingsStore((s) => s.openSettings)
@@ -504,6 +517,14 @@ export function Header(): React.JSX.Element {
           </span>
         ) : (
           <span className="text-sm font-medium">Hive</span>
+        )}
+        {isWebMode && webServerUrl && (
+          <span
+            className="text-[10px] font-mono px-1.5 py-0.5 rounded border select-none text-emerald-500 bg-emerald-500/10 border-emerald-500/30"
+            data-testid="web-connection-indicator"
+          >
+            Connected to {webServerUrl}
+          </span>
         )}
         {vimModeEnabled && (
           <span
