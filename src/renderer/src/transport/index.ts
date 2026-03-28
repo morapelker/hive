@@ -9,6 +9,10 @@ import { createTerminalOpsAdapter } from './graphql/adapters/terminal-ops'
 import { createWorktreeOpsAdapter } from './graphql/adapters/worktree-ops'
 import { createProjectOpsAdapter } from './graphql/adapters/project-ops'
 import { createConnectionOpsAdapter } from './graphql/adapters/connection-ops'
+import { createSystemOpsAdapter } from './graphql/adapters/system-ops'
+import { createSettingsOpsAdapter } from './graphql/adapters/settings-ops'
+import { createFileOpsAdapter } from './graphql/adapters/file-ops'
+import { createScriptOpsAdapter } from './graphql/adapters/script-ops'
 
 export interface TransportResult {
   mode: 'electron' | 'web'
@@ -37,6 +41,10 @@ export function installTransport(): TransportResult {
   window.worktreeOps = createWorktreeOpsAdapter()
   window.projectOps = createProjectOpsAdapter()
   window.connectionOps = createConnectionOpsAdapter()
+  window.systemOps = createSystemOpsAdapter()
+  window.settingsOps = createSettingsOpsAdapter()
+  window.fileOps = createFileOpsAdapter()
+  window.scriptOps = createScriptOpsAdapter()
 
   return { mode, needsAuth: false }
 }
