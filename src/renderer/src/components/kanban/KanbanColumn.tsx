@@ -299,9 +299,9 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
       {/* Column header */}
       <ContextMenu>
         <ContextMenuTrigger asChild disabled={!isDoneColumn}>
-          <div className="flex flex-col gap-1 px-2 pb-3">
-            {/* Title row — always centered */}
-            <div className="flex items-center justify-center gap-2">
+          <div className="relative flex items-center px-2 pb-3">
+            {/* Title group — centered */}
+            <div className="flex w-full items-center justify-center gap-2">
               {/* Collapse toggle for Done column */}
               {isDoneColumn && (
                 <button
@@ -321,19 +321,18 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
                 {COLUMN_TITLES[column]}
               </h3>
 
-              <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-muted/40 px-1.5 text-[11px] font-medium text-muted-foreground">
+              <span className="inline-flex h-5 min-w-[20px] items-center justify-center gap-0.5 rounded-full bg-muted/40 px-1.5 text-[11px] font-medium text-muted-foreground">
                 {showArchived && archivedTickets && archivedTickets.length > 0
-                  ? `${tickets.length} + ${archivedTickets.length} archived`
+                  ? <>{tickets.length}+{archivedTickets.length}<Archive className="h-2.5 w-2.5" /></>
                   : tickets.length}
               </span>
             </div>
 
-            {/* Controls row — only for columns with controls */}
-            {/* Flow mode toggle — only for In Progress column.
+            {/* Flow mode toggle — top-right, vertically centered with title.
                 ON (default) = flow mode: automated worktree picker on drop.
                 OFF = simple mode: direct drop, no modal. */}
             {isInProgressColumn && (
-              <div className="flex items-center justify-center gap-1.5">
+              <div className="absolute right-2 flex items-center gap-1.5">
                 <Zap className={cn('h-3 w-3', !isSimpleMode ? 'text-amber-500' : 'text-muted-foreground/50')} />
                 <Switch
                   data-testid="simple-mode-toggle"
@@ -344,9 +343,9 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
               </div>
             )}
 
-            {/* Archive toggle — only for Done column */}
+            {/* Archive toggle — top-right, vertically centered with title */}
             {isDoneColumn && (
-              <div className="flex items-center justify-center gap-1.5">
+              <div className="absolute right-2 flex items-center gap-1.5">
                 <Archive className={cn('h-3 w-3', showArchived ? 'text-muted-foreground' : 'text-muted-foreground/50')} />
                 <Switch
                   data-testid="archive-toggle"
