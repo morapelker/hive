@@ -507,8 +507,6 @@ function EditModeContent({
 
         {/* Attachments */}
         <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Attachments</label>
-
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {attachments.map((attachment, index) => (

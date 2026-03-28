@@ -312,7 +312,7 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
       expect(screen.getByTestId('kanban-ticket-modal')).toBeInTheDocument()
       expect(screen.getByTestId('ticket-edit-title-input')).toBeInTheDocument()
       expect(screen.getByTestId('ticket-edit-description-input')).toBeInTheDocument()
-      expect(screen.getByText('Attachments')).toBeInTheDocument()
+      expect(screen.getByTestId('ticket-edit-add-attachment-btn')).toBeInTheDocument()
     })
 
     test('save persists changes via updateTicket', async () => {
