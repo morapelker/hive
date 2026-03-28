@@ -1717,9 +1717,9 @@ function ConversationHistory({ messages }: {
             )}>
               {msg.role === 'assistant' ? 'ai' : msg.mode}
             </span>
-            <p className="text-foreground/80 whitespace-pre-wrap break-words flex-1 font-mono leading-relaxed">
-              {msg.content}
-            </p>
+            <div className="text-foreground/80 break-words flex-1 min-w-0 [&_p]:mb-1.5 [&_p]:last:mb-0 [&_ul]:mb-1.5 [&_ul]:pl-4 [&_ol]:mb-1.5 [&_ol]:pl-4 [&_blockquote]:my-1.5 [&_pre]:my-1.5">
+              <MarkdownRenderer content={msg.content} />
+            </div>
             <span className="shrink-0 text-muted-foreground/50 text-[10px]">
               {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
