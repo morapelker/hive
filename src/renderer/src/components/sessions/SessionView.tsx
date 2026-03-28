@@ -1803,6 +1803,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             if (event.childSessionId) return
             setSessionErrorMessage(extractSessionErrorMessage(event.data))
             setSessionErrorStderr(extractSessionErrorStderr(event.data))
+            // Notify kanban store so errored tickets auto-move to review
+            notifyKanbanSessionSync(sessionId, { type: 'session_error' })
             return
           }
 

@@ -143,7 +143,8 @@ export const useKanbanStore = create<KanbanState>()(
       loadTickets: async (projectId: string) => {
         set({ isLoading: true })
         try {
-          const tickets = await window.kanban.ticket.getByProject(projectId)
+          const includeArchived = get().showArchivedByProject[projectId] ?? false
+          const tickets = await window.kanban.ticket.getByProject(projectId, includeArchived)
           set((state) => {
             const next = new Map(state.tickets)
             next.set(projectId, tickets)
@@ -318,6 +319,8 @@ export const useKanbanStore = create<KanbanState>()(
         set((state) => ({
           showArchivedByProject: { ...state.showArchivedByProject, [projectId]: show }
         }))
+        // Re-fetch tickets with updated archive visibility
+        get().loadTickets(projectId)
       },
 
       // ── moveTicket (optimistic) ──────────────────────────────────

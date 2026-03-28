@@ -281,6 +281,24 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kanban_tickets_session ON kanban_tickets(current_session_id);
       CREATE INDEX IF NOT EXISTS idx_kanban_tickets_worktree ON kanban_tickets(worktree_id);
     `)
+
+    // Ticket followup messages table + index (idempotent repair for v13/v14 migrations)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ticket_followup_messages (
+        id TEXT PRIMARY KEY,
+        ticket_id TEXT NOT NULL REFERENCES kanban_tickets(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        mode TEXT,
+        session_id TEXT,
+        source TEXT,
+        created_at TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ticket_followup_messages_ticket
+        ON ticket_followup_messages(ticket_id, created_at);
+    `)
+    this.safeAddColumn('ticket_followup_messages', 'role', "TEXT NOT NULL DEFAULT 'user'")
   }
 
   // Settings operations
@@ -1651,13 +1669,12 @@ export class DatabaseService {
     return row ? this.mapKanbanTicketRow(row) : null
   }
 
-  getKanbanTicketsByProject(projectId: string): KanbanTicket[] {
+  getKanbanTicketsByProject(projectId: string, includeArchived: boolean = false): KanbanTicket[] {
     const db = this.getDb()
-    const rows = db
-      .prepare(
-        'SELECT * FROM kanban_tickets WHERE project_id = ? ORDER BY "column" ASC, sort_order ASC'
-      )
-      .all(projectId) as Record<string, unknown>[]
+    const query = includeArchived
+      ? 'SELECT * FROM kanban_tickets WHERE project_id = ? ORDER BY "column" ASC, sort_order ASC'
+      : 'SELECT * FROM kanban_tickets WHERE project_id = ? AND archived_at IS NULL ORDER BY "column" ASC, sort_order ASC'
+    const rows = db.prepare(query).all(projectId) as Record<string, unknown>[]
     return rows.map((row) => this.mapKanbanTicketRow(row))
   }
 

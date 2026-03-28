@@ -16,8 +16,8 @@ export function registerKanbanHandlers(): void {
     return getDatabase().getKanbanTicket(id)
   })
 
-  ipcMain.handle('kanban:ticket:getByProject', (_event, projectId: string) => {
-    return getDatabase().getKanbanTicketsByProject(projectId)
+  ipcMain.handle('kanban:ticket:getByProject', (_event, projectId: string, includeArchived?: boolean) => {
+    return getDatabase().getKanbanTicketsByProject(projectId, includeArchived ?? false)
   })
 
   ipcMain.handle('kanban:ticket:update', (_event, id: string, data: KanbanTicketUpdate) => {

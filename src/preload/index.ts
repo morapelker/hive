@@ -1759,8 +1759,8 @@ const kanban = {
       plan_ready?: boolean
     }) => ipcRenderer.invoke('kanban:ticket:create', data),
     get: (id: string) => ipcRenderer.invoke('kanban:ticket:get', id),
-    getByProject: (projectId: string) =>
-      ipcRenderer.invoke('kanban:ticket:getByProject', projectId),
+    getByProject: (projectId: string, includeArchived?: boolean) =>
+      ipcRenderer.invoke('kanban:ticket:getByProject', projectId, includeArchived),
     update: (
       id: string,
       data: {
