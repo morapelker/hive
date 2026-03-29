@@ -199,26 +199,6 @@ interface KanbanTicketUpdate {
   plan_ready?: boolean
 }
 
-interface TicketFollowupMessage {
-  id: string
-  ticket_id: string
-  content: string
-  role: 'user' | 'assistant'
-  mode: 'build' | 'plan'
-  session_id: string | null
-  source: 'direct' | 'supercharge' | 'error_retry'
-  created_at: string
-}
-
-interface TicketFollowupMessageCreate {
-  ticket_id: string
-  content: string
-  role?: 'user' | 'assistant'
-  mode: 'build' | 'plan'
-  session_id?: string | null
-  source?: 'direct' | 'supercharge' | 'error_retry'
-}
-
 declare global {
   interface GhosttyTerminalConfig {
     fontFamily?: string
@@ -1326,10 +1306,6 @@ declare global {
       }
       simpleMode: {
         toggle: (projectId: string, enabled: boolean) => Promise<void>
-      }
-      followup: {
-        create: (data: TicketFollowupMessageCreate) => Promise<TicketFollowupMessage>
-        getByTicket: (ticketId: string) => Promise<TicketFollowupMessage[]>
       }
     }
     ticketImport: {

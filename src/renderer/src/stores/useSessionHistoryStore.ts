@@ -1,10 +1,11 @@
 import { create } from 'zustand'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 
-// Session type with worktree/project metadata for display
+// Session type with worktree/project/connection metadata for display
 interface SessionWithWorktree {
   id: string
   worktree_id: string | null
+  connection_id: string | null
   project_id: string
   name: string | null
   status: 'active' | 'completed' | 'error'
@@ -15,6 +16,7 @@ interface SessionWithWorktree {
   worktree_name?: string
   worktree_branch_name?: string
   project_name?: string
+  connection_name?: string
 }
 
 interface SessionSearchFilters {

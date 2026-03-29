@@ -219,32 +219,6 @@ export function createKanbanAdapter(): KanbanApi {
           { projectId, enabled }
         )
       }
-    },
-
-    followup: {
-      async create(data) {
-        const input = {
-          ticketId: data.ticket_id,
-          message: data.content
-        }
-        const result = await graphqlQuery<{ kanbanCreateFollowup: GqlTicketFollowupMessage }>(
-          `mutation ($input: KanbanCreateFollowupInput!) {
-            kanbanCreateFollowup(input: $input) { ${FOLLOWUP_FIELDS} }
-          }`,
-          { input }
-        )
-        return mapFollowup(result.kanbanCreateFollowup)
-      },
-
-      async getByTicket(ticketId) {
-        const result = await graphqlQuery<{ kanbanFollowupsByTicket: GqlTicketFollowupMessage[] }>(
-          `query ($ticketId: ID!) {
-            kanbanFollowupsByTicket(ticketId: $ticketId) { ${FOLLOWUP_FIELDS} }
-          }`,
-          { ticketId }
-        )
-        return result.kanbanFollowupsByTicket.map(mapFollowup)
-      }
     }
   }
 }

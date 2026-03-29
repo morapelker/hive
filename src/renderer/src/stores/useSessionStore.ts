@@ -4,9 +4,10 @@ import type { SelectedModel } from './useSettingsStore'
 import { useGitStore } from './useGitStore'
 import { useWorktreeStore } from './useWorktreeStore'
 import { notifyKanbanSessionSync } from './store-coordination'
+import { useSettingsStore } from './useSettingsStore'
 
 // Session mode type
-export type SessionMode = 'build' | 'plan'
+export type SessionMode = 'build' | 'plan' | 'super-plan'
 
 // Pending plan approval state (from ExitPlanMode blocking tool)
 export interface PendingPlan {
@@ -71,8 +72,13 @@ interface SessionState {
   // MainPane subscribes to this to prune mountedTerminalSessionIds.
   closedTerminalSessionIds: Set<string>
 
+  // Orphaned sessions (from archived worktrees) - read-only, not attached to any worktree
+  orphanedSessions: Map<string, Session>
+
   // Actions
   acknowledgeClosedTerminals: (ids: Set<string>) => void
+  openOrphanedSession: (session: Session) => void
+  closeOrphanedSessions: () => void
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
   createSession: (
     worktreeId: string,
@@ -84,6 +90,10 @@ interface SessionState {
   reopenSession: (
     sessionId: string,
     worktreeId: string
+  ) => Promise<{ success: boolean; error?: string }>
+  reopenConnectionSession: (
+    sessionId: string,
+    connectionId: string
   ) => Promise<{ success: boolean; error?: string }>
   setActiveSession: (sessionId: string | null) => void
   setActiveWorktree: (worktreeId: string | null) => void
@@ -178,6 +188,9 @@ export const useSessionStore = create<SessionState>()(
       activeConnectionId: null,
       inlineConnectionSessionId: null,
       closedTerminalSessionIds: new Set<string>(),
+
+      // Orphaned sessions
+      orphanedSessions: new Map(),
 
       acknowledgeClosedTerminals: (ids: Set<string>) => {
         set((state) => {
@@ -435,7 +448,20 @@ export const useSessionStore = create<SessionState>()(
             const newWorktreeTabOrderMap = new Map(state.tabOrderByWorktree)
             const newConnectionSessionsMap = new Map(state.sessionsByConnection)
             const newConnectionTabOrderMap = new Map(state.tabOrderByConnection)
+            const newOrphanedSessions = new Map(state.orphanedSessions)
             let newActiveSessionId = state.activeSessionId
+
+            // Check if this is an orphaned session
+            if (newOrphanedSessions.has(sessionId)) {
+              newOrphanedSessions.delete(sessionId)
+              if (state.activeSessionId === sessionId) {
+                newActiveSessionId = null
+              }
+              return {
+                orphanedSessions: newOrphanedSessions,
+                activeSessionId: newActiveSessionId
+              }
+            }
 
             // Check worktree sessions first
             let foundInWorktree = false
@@ -551,7 +577,7 @@ export const useSessionStore = create<SessionState>()(
       // Reopen a closed session (from history) - marks as active and adds to tabs
       reopenSession: async (sessionId: string, worktreeId: string) => {
         try {
-          // Mark session as active again
+          // 1. Update database status first - this ensures persistence
           const updatedSession = await window.db.session.update(sessionId, {
             status: 'active',
             completed_at: null
@@ -561,16 +587,42 @@ export const useSessionStore = create<SessionState>()(
             return { success: false, error: 'Session not found' }
           }
 
+          // 2. Clear all prompt stores BEFORE activating session to prevent stale/malformed data
+          const [{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }] = await Promise.all([
+            import('./useQuestionStore'),
+            import('./usePermissionStore'),
+            import('./useCommandApprovalStore'),
+            import('./useFileViewerStore')
+          ])
+
+          // Clear any stale prompts from previous session state
+          useQuestionStore.getState().clearSession(sessionId)
+          usePermissionStore.getState().clearSession(sessionId)
+          useCommandApprovalStore.getState().clearSession(sessionId)
+          // Clear file viewer so session takes focus
+          useFileViewerStore.getState().setActiveFile(null)
+          useFileViewerStore.getState().clearActiveDiff()
+
+          // 3. Update state to add the session to tabs and make it active
           set((state) => {
             const newSessionsMap = new Map(state.sessionsByWorktree)
             const existingSessions = newSessionsMap.get(worktreeId) || []
 
-            // Only add if not already in the list
-            if (!existingSessions.some((s) => s.id === sessionId)) {
-              newSessionsMap.set(worktreeId, [updatedSession, ...existingSessions])
+            // Add the reopened session if not already present
+            let updatedSessions: typeof existingSessions
+            const existingIndex = existingSessions.findIndex((s) => s.id === sessionId)
+            if (existingIndex >= 0) {
+              // Update the existing session with fresh data
+              updatedSessions = [...existingSessions]
+              updatedSessions[existingIndex] = updatedSession
+            } else {
+              // Prepend the reopened session to the list
+              updatedSessions = [updatedSession, ...existingSessions]
             }
 
-            // Add to tab order
+            newSessionsMap.set(worktreeId, updatedSessions)
+
+            // Add to tab order if not already there
             const newTabOrderMap = new Map(state.tabOrderByWorktree)
             const existingOrder = newTabOrderMap.get(worktreeId) || []
             if (!existingOrder.includes(sessionId)) {
@@ -590,6 +642,77 @@ export const useSessionStore = create<SessionState>()(
           return {
             success: false,
             error: error instanceof Error ? error.message : 'Failed to reopen session'
+          }
+        }
+      },
+
+      // Reopen a closed connection session (from history)
+      reopenConnectionSession: async (sessionId: string, connectionId: string) => {
+        try {
+          // 1. Update database status first - this ensures persistence
+          const updatedSession = await window.db.session.update(sessionId, {
+            status: 'active',
+            completed_at: null
+          })
+
+          if (!updatedSession) {
+            return { success: false, error: 'Session not found' }
+          }
+
+          // 2. Clear all prompt stores BEFORE activating session
+          const [{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }] = await Promise.all([
+            import('./useQuestionStore'),
+            import('./usePermissionStore'),
+            import('./useCommandApprovalStore'),
+            import('./useFileViewerStore')
+          ])
+
+          useQuestionStore.getState().clearSession(sessionId)
+          usePermissionStore.getState().clearSession(sessionId)
+          useCommandApprovalStore.getState().clearSession(sessionId)
+          useFileViewerStore.getState().setActiveFile(null)
+          useFileViewerStore.getState().clearActiveDiff()
+
+          // 3. Update state to add the session to tabs and make it active
+          set((state) => {
+            const newSessionsMap = new Map(state.sessionsByConnection)
+            const existingSessions = newSessionsMap.get(connectionId) || []
+
+            // Add the reopened session if not already present
+            let updatedSessions: typeof existingSessions
+            const existingIndex = existingSessions.findIndex((s) => s.id === sessionId)
+            if (existingIndex >= 0) {
+              // Update the existing session with fresh data
+              updatedSessions = [...existingSessions]
+              updatedSessions[existingIndex] = updatedSession
+            } else {
+              // Prepend the reopened session to the list
+              updatedSessions = [updatedSession, ...existingSessions]
+            }
+
+            newSessionsMap.set(connectionId, updatedSessions)
+
+            // Add to tab order if not already there
+            const newTabOrderMap = new Map(state.tabOrderByConnection)
+            const existingOrder = newTabOrderMap.get(connectionId) || []
+            if (!existingOrder.includes(sessionId)) {
+              newTabOrderMap.set(connectionId, [...existingOrder, sessionId])
+            }
+
+            return {
+              sessionsByConnection: newSessionsMap,
+              tabOrderByConnection: newTabOrderMap,
+              activeSessionId: sessionId,
+              activeConnectionId: connectionId,
+              activeWorktreeId: null
+            }
+          })
+
+          return { success: true }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to reopen connection session'
           }
         }
       },
@@ -769,7 +892,19 @@ export const useSessionStore = create<SessionState>()(
       // Toggle session mode between build and plan
       toggleSessionMode: async (sessionId: string) => {
         const currentMode = get().modeBySession.get(sessionId) || 'build'
-        const newMode: SessionMode = currentMode === 'build' ? 'plan' : 'build'
+
+        const superPlanEnabled = useSettingsStore.getState().superPlanModeEnabled
+
+        let newMode: SessionMode
+        if (superPlanEnabled) {
+          // 3-way cycle: build → plan → super-plan → build
+          if (currentMode === 'build') newMode = 'plan'
+          else if (currentMode === 'plan') newMode = 'super-plan'
+          else newMode = 'build'  // super-plan → build
+        } else {
+          // 2-way cycle: build ↔ plan
+          newMode = currentMode === 'build' ? 'plan' : 'build'
+        }
 
         // Update local state immediately
         set((state) => {
@@ -1459,6 +1594,47 @@ export const useSessionStore = create<SessionState>()(
         for (const sessionId of toClose) {
           await get().closeSession(sessionId)
         }
+      },
+
+      // Open an orphaned session (from archived worktree) in read-only mode
+      openOrphanedSession: (session: Session) => {
+        set((state) => {
+          const newOrphanedSessions = new Map(state.orphanedSessions)
+          newOrphanedSessions.set(session.id, session)
+
+          return {
+            orphanedSessions: newOrphanedSessions,
+            activeSessionId: session.id,
+            activeWorktreeId: null,
+            activeConnectionId: null
+          }
+        })
+
+        // Clear prompt stores and file viewer
+        Promise.all([
+          import('./useQuestionStore'),
+          import('./usePermissionStore'),
+          import('./useCommandApprovalStore'),
+          import('./useFileViewerStore')
+        ]).then(([{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }]) => {
+          useQuestionStore.getState().clearSession(session.id)
+          usePermissionStore.getState().clearSession(session.id)
+          useCommandApprovalStore.getState().clearSession(session.id)
+          useFileViewerStore.getState().setActiveFile(null)
+          useFileViewerStore.getState().clearActiveDiff()
+        })
+      },
+
+      // Close all orphaned sessions (called when navigating away)
+      closeOrphanedSessions: () => {
+        set((state) => {
+          const hasOrphanedActive = state.activeSessionId && state.orphanedSessions.has(state.activeSessionId)
+
+          return {
+            orphanedSessions: new Map(),
+            activeSessionId: hasOrphanedActive ? null : state.activeSessionId
+          }
+        })
       }
     }),
     {

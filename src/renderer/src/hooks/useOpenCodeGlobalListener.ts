@@ -157,36 +157,6 @@ function markBackgroundSessionCompleted(sessionId: string): void {
   }
 }
 
-function findLinkedKanbanTicket(sessionId: string): { id: string; current_session_id: string | null } | null {
-  const kanbanTickets = useKanbanStore.getState().tickets
-  for (const [, projectTickets] of kanbanTickets) {
-    const linkedTicket = projectTickets.find((t) => t.current_session_id === sessionId)
-    if (linkedTicket) return linkedTicket
-  }
-  return null
-}
-
-/** Tracks the last assistant text per session as it streams in, keyed by sessionId. */
-const lastAssistantTextBySession = new Map<string, string>()
-
-function captureAIResponseForTicket(sessionId: string): void {
-  const linkedTicket = findLinkedKanbanTicket(sessionId)
-  if (!linkedTicket) return
-
-  const lastText = lastAssistantTextBySession.get(sessionId)
-  lastAssistantTextBySession.delete(sessionId)
-  if (!lastText || !lastText.trim()) return
-
-  window.kanban.followup.create({
-    ticket_id: linkedTicket.id,
-    content: lastText,
-    role: 'assistant',
-    mode: useSessionStore.getState().getSessionMode(sessionId),
-    session_id: sessionId,
-    source: 'direct'
-  }).catch(() => {})
-}
-
 /**
  * Persistent global listener for OpenCode stream events.
  *
@@ -260,21 +230,6 @@ export function useOpenCodeGlobalListener(): void {
           // Handle context compaction from Codex sessions
           if (event.type === 'session.context_compacted') {
             useContextStore.getState().clearSessionTokenSnapshot(sessionId)
-            return
-          }
-
-          // Track last assistant text content for kanban ticket AI response capture.
-          // message.part.updated carries delta chunks — accumulate them into full text.
-          if (event.type === 'message.part.updated' && !event.childSessionId) {
-            const data = event.data as { part?: { type?: string; text?: string }; delta?: string }
-            const part = data?.part
-            if (part?.type === 'text') {
-              const delta = data?.delta ?? part.text ?? ''
-              if (delta) {
-                const prev = lastAssistantTextBySession.get(sessionId) ?? ''
-                lastAssistantTextBySession.set(sessionId, prev + delta)
-              }
-            }
             return
           }
 
@@ -465,19 +420,6 @@ export function useOpenCodeGlobalListener(): void {
                 toolUseID: data?.toolUseID ?? ''
               })
               useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
-              // Capture plan content as AI response for linked kanban ticket
-              const planLinkedTicket = findLinkedKanbanTicket(sessionId)
-              if (planLinkedTicket && data?.plan && data.plan.trim().length > 0) {
-                window.kanban.followup.create({
-                  ticket_id: planLinkedTicket.id,
-                  content: data.plan,
-                  role: 'assistant',
-                  mode: 'plan',
-                  session_id: sessionId,
-                  source: 'direct'
-                }).catch(() => {})
-                lastAssistantTextBySession.delete(sessionId)
-              }
             }
             return
           }
@@ -572,13 +514,6 @@ export function useOpenCodeGlobalListener(): void {
           const statusForIdle = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
           if (statusForIdle?.status === 'command_approval') return
 
-          // Capture AI's final response for linked kanban ticket
-          // Skip if a background follow-up is already dispatching — the deferred idle
-          // path will capture after that dispatch completes.
-          if (!backgroundFollowUpDispatchingRef.current.has(sessionId)) {
-            captureAIResponseForTicket(sessionId)
-          }
-
           // Active session is handled by SessionView.
           if (sessionId === activeId) return
 
@@ -619,18 +554,6 @@ export function useOpenCodeGlobalListener(): void {
                 }
 
                 dispatchSucceeded = true
-
-                // Persist follow-up for the linked kanban ticket
-                const linkedTicket = findLinkedKanbanTicket(sessionId)
-                if (linkedTicket) {
-                  window.kanban.followup.create({
-                    ticket_id: linkedTicket.id,
-                    content: message,
-                    mode: useSessionStore.getState().getSessionMode(sessionId),
-                    session_id: sessionId,
-                    source: 'supercharge'
-                  }).catch(() => {})
-                }
               } catch {
                 useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
                 markBackgroundSessionCompleted(sessionId)
@@ -652,8 +575,6 @@ export function useOpenCodeGlobalListener(): void {
                 // Don't overwrite command_approval — session is blocked waiting for command approval
                 const followUpStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
                 if (followUpStatus?.status === 'command_approval') return
-
-                captureAIResponseForTicket(sessionId)
 
                 const nextFollowUp = useSessionStore.getState().dequeueFollowUpMessage(sessionId)
                 if (nextFollowUp) {

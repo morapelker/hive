@@ -22,17 +22,6 @@ function mapKanbanTicket(row: any) {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapFollowup(row: any) {
-  if (!row) return null
-  return {
-    id: row.id,
-    ticketId: row.ticket_id,
-    message: row.content,
-    createdAt: row.created_at
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Kanban Mutation Resolvers
 // ---------------------------------------------------------------------------
@@ -102,15 +91,6 @@ export const kanbanMutationResolvers: Resolvers = {
     kanbanToggleSimpleMode: async (_parent, { projectId, enabled }, ctx) => {
       ctx.db.updateProjectSimpleMode(projectId, enabled)
       return { success: true }
-    },
-
-    kanbanCreateFollowup: async (_parent, { input }, ctx) => {
-      const row = ctx.db.createTicketFollowupMessage({
-        ticket_id: input.ticketId,
-        content: input.message,
-        mode: 'build'
-      })
-      return mapFollowup(row)
     }
   }
 }

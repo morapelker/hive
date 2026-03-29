@@ -125,7 +125,7 @@ export class DatabaseService {
       sort_order: row.sort_order as number,
       current_session_id: (row.current_session_id as string) ?? null,
       worktree_id: (row.worktree_id as string) ?? null,
-      mode: (row.mode as 'build' | 'plan') ?? null,
+      mode: (row.mode as 'build' | 'plan' | 'super-plan') ?? null,
       plan_ready: !!(row.plan_ready as number),
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
@@ -995,10 +995,12 @@ export class DatabaseService {
         s.*,
         w.name as worktree_name,
         w.branch_name as worktree_branch_name,
-        p.name as project_name
+        p.name as project_name,
+        c.name as connection_name
       FROM sessions s
       LEFT JOIN worktrees w ON s.worktree_id = w.id
       LEFT JOIN projects p ON s.project_id = p.id
+      LEFT JOIN connections c ON s.connection_id = c.id
     `
 
     if (options.keyword) {
@@ -1006,10 +1008,11 @@ export class DatabaseService {
         s.name LIKE ? OR
         p.name LIKE ? OR
         w.name LIKE ? OR
-        w.branch_name LIKE ?
+        w.branch_name LIKE ? OR
+        c.name LIKE ?
       )`)
       const keyword = `%${options.keyword}%`
-      values.push(keyword, keyword, keyword, keyword)
+      values.push(keyword, keyword, keyword, keyword, keyword)
     }
 
     if (options.project_id) {
@@ -1853,7 +1856,7 @@ export class DatabaseService {
       ticket_id: data.ticket_id,
       content: data.content,
       role: role as 'user' | 'assistant',
-      mode: data.mode as 'build' | 'plan',
+      mode: data.mode as 'build' | 'plan' | 'super-plan',
       session_id: sessionId,
       source: source as 'direct' | 'supercharge' | 'error_retry',
       created_at: now

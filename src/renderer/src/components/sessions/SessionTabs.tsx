@@ -68,9 +68,9 @@ interface SessionTabProps {
   onDragEnd: () => void
   isDragging: boolean
   isDragOver: boolean
-  worktreeId: string
-  onCloseOthers: () => void
-  onCloseToRight: () => void
+  worktreeId: string | null
+  onCloseOthers?: () => void
+  onCloseToRight?: () => void
   hintCode?: string
 }
 
@@ -245,8 +245,12 @@ function SessionTab({
           Close
           <ContextMenuShortcut>&#8984;W</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>
-        <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
+        {onCloseOthers && (
+          <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>
+        )}
+        {onCloseToRight && (
+          <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   )
@@ -515,6 +519,7 @@ export function SessionTabs(): React.JSX.Element | null {
     tabOrderByWorktree,
     sessionsByConnection,
     tabOrderByConnection,
+    orphanedSessions,
     loadSessions,
     createSession,
     closeSession,
@@ -532,7 +537,8 @@ export function SessionTabs(): React.JSX.Element | null {
     inlineConnectionSessionId,
     setInlineConnectionSession,
     clearInlineConnectionSession,
-    loadConnectionSessionsBackground
+    loadConnectionSessionsBackground,
+    closeOrphanedSessions
   } = useSessionStore()
 
   const {
@@ -572,16 +578,20 @@ export function SessionTabs(): React.JSX.Element | null {
   // Sync active worktree with selected worktree (worktree mode only)
   useEffect(() => {
     if (isConnectionMode) return
+    // Don't sync if we're currently viewing an orphaned session
+    if (activeSessionId && orphanedSessions.has(activeSessionId)) return
     if (selectedWorktreeId !== activeWorktreeId) {
       useSessionStore.getState().setActiveWorktree(selectedWorktreeId)
     }
-  }, [selectedWorktreeId, activeWorktreeId, isConnectionMode])
+  }, [selectedWorktreeId, activeWorktreeId, isConnectionMode, activeSessionId, orphanedSessions])
 
   // Sync active connection with selected connection (connection mode only)
   useEffect(() => {
     if (!isConnectionMode || !selectedConnectionId) return
+    // Don't sync if we're currently viewing an orphaned session
+    if (activeSessionId && orphanedSessions.has(activeSessionId)) return
     useSessionStore.getState().setActiveConnection(selectedConnectionId)
-  }, [selectedConnectionId, isConnectionMode])
+  }, [selectedConnectionId, isConnectionMode, activeSessionId, orphanedSessions])
 
   // Load sessions when worktree changes, then auto-start if the worktree has 0 sessions.
   // Auto-start runs as a direct follow-up to loadSessions (not a separate effect) to
@@ -662,6 +672,11 @@ export function SessionTabs(): React.JSX.Element | null {
   useEffect(() => {
     loadedConnectionsRef.current.clear()
   }, [selectedWorktreeId])
+
+  // Close orphaned sessions when navigating away (worktree or project change)
+  useEffect(() => {
+    closeOrphanedSessions()
+  }, [selectedWorktreeId, selectedConnectionId, closeOrphanedSessions])
 
   // Background-load sessions for all connections the selected worktree belongs to.
   // This is non-blocking and does not enter connection mode.
@@ -924,13 +939,17 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }, [vimModeEnabled, vimMode, sessionHints, setSessionHints, clearSessionHints])
 
-  // Don't render if nothing is selected
-  if (!selectedWorktreeId && !selectedConnectionId) {
+  // Don't render if nothing is selected AND no orphaned sessions
+  if (!selectedWorktreeId && !selectedConnectionId && orphanedSessions.size === 0) {
     return null
   }
 
-  // After early return, scopeId is guaranteed to be defined
-  const resolvedScopeId = scopeId!
+  // Resolve scopeId (may be undefined if only orphaned sessions exist)
+  const resolvedScopeId = scopeId || null
+
+  // Add orphaned sessions to the list (they appear as additional tabs)
+  const orphanedSessionsList = Array.from(orphanedSessions.values())
+  const allSessions = [...orderedSessions, ...orphanedSessionsList]
 
   // Get file tabs for the current worktree (only regular file tabs, not diff tabs)
   const fileTabs = Array.from(openFiles.values()).filter(
@@ -1096,39 +1115,48 @@ export function SessionTabs(): React.JSX.Element | null {
                 })}
 
               {/* Session tabs */}
-              {orderedSessions.map((session) => (
-                <SessionTab
-                  key={session.id}
-                  sessionId={session.id}
-                  name={session.name || 'Untitled'}
-                  agentSdk={session.agent_sdk}
-                  isActive={
-                    session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId
-                  }
-                  onClick={() => handleSessionTabClick(session.id)}
-                  onClose={(e) => handleCloseSession(e, session.id)}
-                  onMiddleClick={(e) => handleCloseSession(e, session.id)}
-                  onRename={(newName) => handleRenameSession(session.id, newName)}
-                  onDragStart={(e) => handleDragStart(e, session.id)}
-                  onDragOver={(e) => handleDragOver(e, session.id)}
-                  onDrop={(e) => handleDrop(e, session.id)}
-                  onDragEnd={handleDragEnd}
-                  isDragging={draggedTabId === session.id}
-                  isDragOver={dragOverTabId === session.id}
-                  worktreeId={resolvedScopeId}
-                  onCloseOthers={() =>
-                    isConnectionMode
-                      ? closeOtherConnectionSessions(resolvedScopeId, session.id)
-                      : closeOtherSessions(resolvedScopeId, session.id)
-                  }
-                  onCloseToRight={() =>
-                    isConnectionMode
-                      ? closeConnectionSessionsToRight(resolvedScopeId, session.id)
-                      : closeSessionsToRight(resolvedScopeId, session.id)
-                  }
-                  hintCode={sessionHints.sessionHintMap.get(session.id)}
-                />
-              ))}
+              {allSessions.map((session) => {
+                const isOrphaned = orphanedSessions.has(session.id)
+                return (
+                  <SessionTab
+                    key={session.id}
+                    sessionId={session.id}
+                    name={session.name || 'Untitled'}
+                    agentSdk={session.agent_sdk}
+                    isActive={
+                      session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId
+                    }
+                    onClick={() => handleSessionTabClick(session.id)}
+                    onClose={(e) => handleCloseSession(e, session.id)}
+                    onMiddleClick={(e) => handleCloseSession(e, session.id)}
+                    onRename={(newName) => handleRenameSession(session.id, newName)}
+                    onDragStart={(e) => handleDragStart(e, session.id)}
+                    onDragOver={(e) => handleDragOver(e, session.id)}
+                    onDrop={(e) => handleDrop(e, session.id)}
+                    onDragEnd={handleDragEnd}
+                    isDragging={draggedTabId === session.id}
+                    isDragOver={dragOverTabId === session.id}
+                    worktreeId={resolvedScopeId}
+                    onCloseOthers={
+                      isOrphaned || !resolvedScopeId
+                        ? undefined
+                        : () =>
+                            isConnectionMode
+                              ? closeOtherConnectionSessions(resolvedScopeId, session.id)
+                              : closeOtherSessions(resolvedScopeId, session.id)
+                    }
+                    onCloseToRight={
+                      isOrphaned || !resolvedScopeId
+                        ? undefined
+                        : () =>
+                            isConnectionMode
+                              ? closeConnectionSessionsToRight(resolvedScopeId, session.id)
+                              : closeSessionsToRight(resolvedScopeId, session.id)
+                    }
+                    hintCode={sessionHints.sessionHintMap.get(session.id)}
+                  />
+                )
+              })}
             </>
           )
         )}

@@ -118,6 +118,12 @@ function tryParseJson(output: string): unknown | null {
 /** Extract hover content as a string */
 function extractHoverContent(data: unknown[]): string {
   const parts: string[] = []
+
+  // Guard against non-array data
+  if (!Array.isArray(data)) {
+    return ''
+  }
+
   for (const item of data) {
     const obj = item as Record<string, unknown>
     const contents = obj?.contents as Record<string, unknown> | string | undefined
@@ -400,7 +406,16 @@ function flattenDiagnostics(data: Record<string, unknown[]>): Array<{
     message: string
     line: number | null
   }> = []
+
+  // Guard against non-object data
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return result
+  }
+
   for (const [filePath, diags] of Object.entries(data)) {
+    // Guard against non-array diags
+    if (!Array.isArray(diags)) continue
+
     for (const diag of diags as Array<Record<string, unknown>>) {
       const severity = (diag.severity || 4) as number
       const message = (diag.message || '') as string
@@ -541,14 +556,18 @@ export function LspToolView({ input, output, error }: ToolViewProps) {
     case 'goToImplementation':
       return (
         <div data-testid="lsp-tool-view">
-          <LocationList items={parsed as unknown[]} showAll={showAll} onToggle={toggleShowAll} />
+          <LocationList
+            items={Array.isArray(parsed) ? parsed : []}
+            showAll={showAll}
+            onToggle={toggleShowAll}
+          />
         </div>
       )
 
     case 'hover':
       return (
         <div data-testid="lsp-tool-view">
-          <HoverView data={parsed as unknown[]} />
+          <HoverView data={Array.isArray(parsed) ? parsed : []} />
         </div>
       )
 
@@ -556,7 +575,7 @@ export function LspToolView({ input, output, error }: ToolViewProps) {
       return (
         <div data-testid="lsp-tool-view">
           <CallHierarchyList
-            items={parsed as unknown[]}
+            items={Array.isArray(parsed) ? parsed : []}
             direction="incoming"
             showAll={showAll}
             onToggle={toggleShowAll}
@@ -568,7 +587,7 @@ export function LspToolView({ input, output, error }: ToolViewProps) {
       return (
         <div data-testid="lsp-tool-view">
           <CallHierarchyList
-            items={parsed as unknown[]}
+            items={Array.isArray(parsed) ? parsed : []}
             direction="outgoing"
             showAll={showAll}
             onToggle={toggleShowAll}
@@ -580,7 +599,7 @@ export function LspToolView({ input, output, error }: ToolViewProps) {
       return (
         <div data-testid="lsp-tool-view">
           <SymbolList
-            items={parsed as unknown[]}
+            items={Array.isArray(parsed) ? parsed : []}
             showFilePath={false}
             showAll={showAll}
             onToggle={toggleShowAll}
@@ -592,7 +611,7 @@ export function LspToolView({ input, output, error }: ToolViewProps) {
       return (
         <div data-testid="lsp-tool-view">
           <SymbolList
-            items={parsed as unknown[]}
+            items={Array.isArray(parsed) ? parsed : []}
             showFilePath={true}
             showAll={showAll}
             onToggle={toggleShowAll}

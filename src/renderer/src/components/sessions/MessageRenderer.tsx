@@ -3,7 +3,7 @@ import { UserBubble } from './UserBubble'
 import { AssistantCanvas } from './AssistantCanvas'
 import { CopyMessageButton } from './CopyMessageButton'
 import { ForkMessageButton } from './ForkMessageButton'
-import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX } from '@/lib/constants'
+import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX } from '@/lib/constants'
 import type { OpenCodeMessage } from './SessionView'
 
 interface MessageRendererProps {
@@ -23,13 +23,16 @@ export const MessageRenderer = memo(function MessageRenderer({
   forkDisabled = false,
   isForking = false
 }: MessageRendererProps): React.JSX.Element {
-  const isPlanMode = message.role === 'user' && message.content.startsWith(PLAN_MODE_PREFIX)
+  const isSuperPlanMode = message.role === 'user' && message.content.startsWith(SUPER_PLAN_MODE_PREFIX)
+  const isPlanMode = !isSuperPlanMode && message.role === 'user' && message.content.startsWith(PLAN_MODE_PREFIX)
   const isAskMode = message.role === 'user' && message.content.startsWith(ASK_MODE_PREFIX)
-  const displayContent = isPlanMode
-    ? message.content.slice(PLAN_MODE_PREFIX.length)
-    : isAskMode
-      ? message.content.slice(ASK_MODE_PREFIX.length)
-      : message.content
+  const displayContent = isSuperPlanMode
+    ? message.content.slice(SUPER_PLAN_MODE_PREFIX.length)
+    : isPlanMode
+      ? message.content.slice(PLAN_MODE_PREFIX.length)
+      : isAskMode
+        ? message.content.slice(ASK_MODE_PREFIX.length)
+        : message.content
   const isAssistantMessage = message.role === 'assistant' && !isStreaming
 
   return (
@@ -47,6 +50,7 @@ export const MessageRenderer = memo(function MessageRenderer({
           content={displayContent}
           timestamp={message.timestamp}
           isPlanMode={isPlanMode}
+          isSuperPlanMode={isSuperPlanMode}
           isAskMode={isAskMode}
         />
       ) : (
