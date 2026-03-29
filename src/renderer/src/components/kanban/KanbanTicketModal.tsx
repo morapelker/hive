@@ -42,6 +42,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { resolveModelForSdk } from '@/stores/useSettingsStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX } from '@/lib/constants'
 import { parseAttachmentUrl } from '@/lib/attachment-utils'
 import type { AttachmentInfo } from '@/lib/attachment-utils'
@@ -97,6 +98,7 @@ function findSessionById(sessionId: string): {
       return { session: found, worktreePath }
     }
   }
+  console.warn(`[KanbanTicketModal] findSessionById: session not found in any map — sessionId=${sessionId}`)
   return null
 }
 
@@ -140,9 +142,22 @@ async function sendFollowupToSession(opts: {
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
 }): Promise<void> {
   const result = findSessionById(opts.sessionId)
-  if (!result) return
+  if (!result) {
+    console.error(`[KanbanTicketModal] sendFollowupToSession: session not found — sessionId=${opts.sessionId}`)
+    throw new Error(`Session not found: ${opts.sessionId}`)
+  }
 
   const { session, worktreePath } = result
+
+  if (!worktreePath) {
+    console.error(`[KanbanTicketModal] sendFollowupToSession: worktreePath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}`)
+    throw new Error(`Worktree path not found for session: ${opts.sessionId}`)
+  }
+
+  if (!session.opencode_session_id) {
+    console.error(`[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`)
+    throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
+  }
 
   // Set session mode so the agent SDK knows we're in plan mode (matches Tab toggle in SessionView).
   // This updates modeBySession, persists to DB, and applies mode-specific default model.
@@ -153,38 +168,36 @@ async function sendFollowupToSession(opts: {
   const modePrefix = opts.followUpMode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX : ''
   const fullPrompt = modePrefix + opts.prompt
 
-  // Reset plan_ready and mode immediately so the kanban card updates before the
-  // prompt runs (prompt may take a long time).
-  await opts.updateTicket(opts.ticketId, opts.projectId, { mode: opts.followUpMode, plan_ready: false })
+  messageSendTimes.set(opts.sessionId, Date.now())
+  userExplicitSendTimes.set(opts.sessionId, Date.now())
+  snapshotTokenBaseline(opts.sessionId)
+  lastSendMode.set(opts.sessionId, opts.followUpMode)
+  useWorktreeStatusStore
+    .getState()
+    .setSessionStatus(opts.sessionId, opts.followUpMode === 'plan' ? 'planning' : 'working')
 
-  if (worktreePath && session.opencode_session_id) {
-    messageSendTimes.set(opts.sessionId, Date.now())
-    userExplicitSendTimes.set(opts.sessionId, Date.now())
-    lastSendMode.set(opts.sessionId, opts.followUpMode)
-    useWorktreeStatusStore
-      .getState()
-      .setSessionStatus(opts.sessionId, opts.followUpMode === 'plan' ? 'planning' : 'working')
+  // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
+  const model = resolveSessionModel(opts.sessionId)
 
-    // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
-    const model = resolveSessionModel(opts.sessionId)
+  // Persist the followup message
+  window.kanban.followup.create({
+    ticket_id: opts.ticketId,
+    content: opts.prompt,
+    mode: opts.followUpMode,
+    session_id: opts.sessionId,
+    source: 'direct'
+  }).catch(() => {})
 
-    // Persist the followup message
-    window.kanban.followup.create({
-      ticket_id: opts.ticketId,
-      content: opts.prompt,
-      mode: opts.followUpMode,
-      session_id: opts.sessionId,
-      source: 'direct'
-    }).catch(() => {})
+  const promptResult = await window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
+    { type: 'text', text: fullPrompt }
+  ], model)
 
-    const result = await window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
-      { type: 'text', text: fullPrompt }
-    ], model)
-
-    if (result && !result.success) {
-      throw new Error(result.error || 'Failed to send prompt to session')
-    }
+  if (promptResult && !promptResult.success) {
+    throw new Error(promptResult.error || 'Failed to send prompt to session')
   }
+
+  // Update ticket mode only AFTER successful prompt — avoids stale state on failure
+  await opts.updateTicket(opts.ticketId, opts.projectId, { mode: opts.followUpMode, plan_ready: false })
 }
 
 /** Determine what mode the modal should operate in */
@@ -727,14 +740,17 @@ function PlanReviewModeContent({
 
         if (isClaudeCode && sessionRecord?.worktree_id) {
           const worktreePath = findWorktreePathById(sessionRecord.worktree_id)
-          if (worktreePath) {
-            await window.opencodeOps.planReject(
-              worktreePath,
-              sessionId,
-              feedback,
-              pendingPlan.requestId
-            )
+          if (!worktreePath) {
+            console.error(`[KanbanTicketModal] planReject: worktreePath not found — worktree_id=${sessionRecord.worktree_id}`)
+            toast.error('Failed to reject plan: worktree not found')
+            return
           }
+          await window.opencodeOps.planReject(
+            worktreePath,
+            sessionId,
+            feedback,
+            pendingPlan.requestId
+          )
           // planReject already sends the feedback as the next prompt for Claude Code
           window.kanban.followup.create({
             ticket_id: ticket.id,
@@ -749,6 +765,7 @@ function PlanReviewModeContent({
           // agent processes the rejection feedback.
           messageSendTimes.set(sessionId, Date.now())
           userExplicitSendTimes.set(sessionId, Date.now())
+          snapshotTokenBaseline(sessionId)
           lastSendMode.set(sessionId, 'plan')
           useWorktreeStatusStore
             .getState()
@@ -766,6 +783,7 @@ function PlanReviewModeContent({
       // but only after async DB calls — the card would look idle in between).
       messageSendTimes.set(sessionId, Date.now())
       userExplicitSendTimes.set(sessionId, Date.now())
+      snapshotTokenBaseline(sessionId)
       lastSendMode.set(sessionId, followUpMode)
       useWorktreeStatusStore
         .getState()
@@ -783,6 +801,7 @@ function PlanReviewModeContent({
         updateTicket
       }).catch(() => {
         toast.error('Failed to send followup')
+        useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       })
     } catch {
       toast.error('Failed to send followup')
@@ -816,6 +835,7 @@ function PlanReviewModeContent({
       useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
       messageSendTimes.set(sessionId, Date.now())
       userExplicitSendTimes.set(sessionId, Date.now())
+      snapshotTokenBaseline(sessionId)
 
       // Clear plan_ready badge — ticket is back to working
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { plan_ready: false, mode: 'build' })
@@ -823,9 +843,12 @@ function PlanReviewModeContent({
       // For opencode agents, approve the plan if there's a pending one
       if (pendingPlan && sessionRecord?.worktree_id) {
         const worktreePath = findWorktreePathById(sessionRecord.worktree_id)
-        if (worktreePath) {
-          await window.opencodeOps.planApprove(worktreePath, sessionId, pendingPlan.requestId)
+        if (!worktreePath) {
+          console.error(`[KanbanTicketModal] handleImplement: worktreePath not found — worktree_id=${sessionRecord.worktree_id}`)
+          toast.error('Failed to approve plan: worktree not found')
+          return
         }
+        await window.opencodeOps.planApprove(worktreePath, sessionId, pendingPlan.requestId)
       }
 
       toast.success('Implementation started')
@@ -898,6 +921,7 @@ function PlanReviewModeContent({
     // Set status tracking
     messageSendTimes.set(newSessionId, Date.now())
     userExplicitSendTimes.set(newSessionId, Date.now())
+    snapshotTokenBaseline(newSessionId)
     lastSendMode.set(newSessionId, 'build')
     useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
 
@@ -1230,6 +1254,7 @@ function ReviewModeContent({
       // but only after async DB calls — the card would look idle in between).
       messageSendTimes.set(sessionId, Date.now())
       userExplicitSendTimes.set(sessionId, Date.now())
+      snapshotTokenBaseline(sessionId)
       lastSendMode.set(sessionId, mode)
       useWorktreeStatusStore
         .getState()
@@ -1250,6 +1275,7 @@ function ReviewModeContent({
         updateTicket
       }).catch(() => {
         toast.error('Failed to send followup')
+        useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       })
     } catch {
       toast.error('Failed to move ticket')
@@ -1498,6 +1524,10 @@ function ErrorModeContent({
       onClose()
     } catch {
       toast.error('Failed to send retry')
+      // Reset session status so the kanban card stops showing a progress bar
+      if (ticket.current_session_id) {
+        useWorktreeStatusStore.getState().clearSessionStatus(ticket.current_session_id)
+      }
     } finally {
       setIsSending(false)
     }
