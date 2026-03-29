@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { Hammer, Map, Plus, GitBranch, Send, ChevronDown, Loader2, Search } from 'lucide-react'
+import { Hammer, Map, Sparkles, Plus, GitBranch, Send, ChevronDown, Loader2, Search } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -22,7 +22,7 @@ import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { PLAN_MODE_PREFIX } from '@/lib/constants'
+import { PLAN_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import type { KanbanTicket } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
@@ -31,7 +31,7 @@ import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 const EMPTY_ARRAY: readonly never[] = []
 
 // ── Types ───────────────────────────────────────────────────────────
-type PickerMode = 'build' | 'plan'
+type PickerMode = 'build' | 'plan' | 'super-plan'
 
 interface BranchInfo {
   name: string
@@ -66,7 +66,9 @@ function buildPrompt(mode: PickerMode, ticket: KanbanTicket): string {
   const prefix =
     mode === 'build'
       ? 'Please implement the following ticket.'
-      : 'Please review the following ticket and create a detailed implementation plan.'
+      : mode === 'plan'
+        ? 'Please review the following ticket and create a detailed implementation plan.'
+        : 'Please review the following ticket and create a detailed implementation plan.'  // super-plan same as plan
 
   const description = ticket.description ?? ''
   return `${prefix}\n\n<ticket title="${ticket.title}">${description}</ticket>`
@@ -229,7 +231,7 @@ export function WorktreePickerModal({
   // ── Handle mode toggle ──────────────────────────────────────────
   const toggleMode = useCallback(() => {
     setMode((prev) => {
-      const next = prev === 'build' ? 'plan' : 'build'
+      const next = prev === 'build' ? 'plan' : prev === 'plan' ? 'super-plan' : 'build'
       setPromptText(buildPrompt(next, ticket))
       return next
     })
@@ -420,12 +422,15 @@ export function WorktreePickerModal({
       lastSendMode.set(sessionId, mode)
       useWorktreeStatusStore
         .getState()
-        .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+        .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
 
       // Send the prompt — apply plan mode prefix for opencode SDK
       if (promptText.trim()) {
         const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
-        const modePrefix = mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX : ''
+        const modePrefix =
+          mode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+          : mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
+          : ''
         const fullPrompt = modePrefix + promptText.trim()
 
         await window.opencodeOps.prompt(worktree.path, connectResult.sessionId, [
@@ -461,8 +466,8 @@ export function WorktreePickerModal({
   ])
 
   // ── Mode toggle chip ────────────────────────────────────────────
-  const ModeIcon = mode === 'build' ? Hammer : Map
-  const modeLabel = mode === 'build' ? 'Build' : 'Plan'
+  const ModeIcon = mode === 'build' ? Hammer : mode === 'plan' ? Map : Sparkles
+  const modeLabel = mode === 'build' ? 'Build' : mode === 'plan' ? 'Plan' : 'Super Plan'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -491,7 +496,9 @@ export function WorktreePickerModal({
                 'border select-none',
                 mode === 'build'
                   ? 'bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20'
-                  : 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
+                  : mode === 'plan'
+                    ? 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
+                    : 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20'
               )}
               title={`${modeLabel} mode`}
               aria-label={`Current mode: ${modeLabel}. Click to switch`}
