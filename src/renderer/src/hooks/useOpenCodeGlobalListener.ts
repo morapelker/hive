@@ -12,6 +12,7 @@ import { useRecentStore } from '@/stores/useRecentStore'
 import { useUsageStore, resolveUsageProvider } from '@/stores'
 import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '@/lib/token-utils'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
+import { computeTokenDelta } from '@/lib/token-baselines'
 import { messageSendTimes } from '@/lib/message-send-times'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -115,7 +116,8 @@ function markBackgroundSessionCompleted(sessionId: string): void {
   const sendTime = messageSendTimes.get(sessionId)
   const durationMs = sendTime ? Date.now() - sendTime : 0
   const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
-  useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'completed', { word, durationMs })
+  const tokenDelta = computeTokenDelta(sessionId)
+  useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
 
   const now = Date.now()
   const sessions = useSessionStore.getState().sessionsByWorktree

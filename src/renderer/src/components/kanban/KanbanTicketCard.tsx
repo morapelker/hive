@@ -31,6 +31,7 @@ import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
+import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 interface KanbanTicketCardProps {
@@ -111,6 +112,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
 
   const timerText = useSessionTimer(
+    ticket.current_session_id,
+    (isBusy || isAsking) && ticket.column === 'in_progress'
+  )
+
+  const tokenText = useSessionTokenDelta(
     ticket.current_session_id,
     (isBusy || isAsking) && ticket.column === 'in_progress'
   )
@@ -291,8 +297,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               borderState === 'violet' && 'border-violet-500/60'
             )}
           >
-            {/* Title */}
-            <p className="text-sm font-medium leading-snug text-foreground">{ticket.title}</p>
+            {/* Title + token counter */}
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium leading-snug text-foreground">{ticket.title}</p>
+              {tokenText && (
+                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                  {tokenText}
+                </span>
+              )}
+            </div>
 
             {/* Badges + progress row */}
             {(hasAttachments || worktreeName || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive) && (

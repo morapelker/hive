@@ -53,6 +53,7 @@ import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
 import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { buildPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
@@ -2367,8 +2368,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               const sendTime = messageSendTimes.get(sessionId)
               const durationMs = sendTime ? Date.now() - sendTime : 0
               const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+              const tokenDelta = computeTokenDelta(sessionId)
               const statusStore = useWorktreeStatusStore.getState()
-              statusStore.setSessionStatus(sessionId, 'completed', { word, durationMs })
+              statusStore.setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
             } else if (status.type === 'retry') {
               setIsStreaming(true)
               setIsSending(true)
@@ -2693,6 +2695,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Start completion timer for auto-sent pending prompts (e.g. PR creation)
             messageSendTimes.set(sessionId, Date.now())
             userExplicitSendTimes.set(sessionId, Date.now())
+            snapshotTokenBaseline(sessionId)
             // Set worktree status based on session mode
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
             lastSendMode.set(sessionId, currentMode)
@@ -2798,9 +2801,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   const sendTime = messageSendTimes.get(sessionId)
                   const durationMs = sendTime ? Date.now() - sendTime : 0
                   const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+                  const tokenDelta = computeTokenDelta(sessionId)
                   useWorktreeStatusStore
                     .getState()
-                    .setSessionStatus(sessionId, 'completed', { word, durationMs })
+                    .setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
                 } else {
                   useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
                 }
@@ -3325,6 +3329,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Start completion badge timer
           messageSendTimes.set(sessionId, Date.now())
           userExplicitSendTimes.set(sessionId, Date.now())
+          snapshotTokenBaseline(sessionId)
           lastSendMode.set(sessionId, 'ask')
           useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
 
@@ -3428,6 +3433,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       // Start the completion badge timer from when the user sends the message
       messageSendTimes.set(sessionId, Date.now())
       userExplicitSendTimes.set(sessionId, Date.now())
+      snapshotTokenBaseline(sessionId)
 
       // Record the mode at send time — used to derive "Plan ready" vs "Ready"
       const currentModeForStatus = useSessionStore.getState().getSessionMode(sessionId)
@@ -3751,6 +3757,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         setIsStreaming(true)
         setIsSending(true)
         userExplicitSendTimes.set(sessionId, Date.now())
+        snapshotTokenBaseline(sessionId)
 
         // Transition the ExitPlanMode tool card to "accepted" state
         updateStreamingPartsRef((parts) =>
@@ -3813,6 +3820,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       if (!worktreePath) return
       userExplicitSendTimes.set(sessionId, Date.now())
+      snapshotTokenBaseline(sessionId)
       const pendingBeforeAction = pendingPlan
       useSessionStore.getState().clearPendingPlan(sessionId)
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)

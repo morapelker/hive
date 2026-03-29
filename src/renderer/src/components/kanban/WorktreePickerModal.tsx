@@ -21,6 +21,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import type { KanbanTicket } from '../../../../main/db/types'
@@ -415,6 +416,7 @@ export function WorktreePickerModal({
       // Set status tracking so the global listener can compute completion badges
       messageSendTimes.set(sessionId, Date.now())
       userExplicitSendTimes.set(sessionId, Date.now())
+      snapshotTokenBaseline(sessionId)
       lastSendMode.set(sessionId, mode)
       useWorktreeStatusStore
         .getState()

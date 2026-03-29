@@ -19,6 +19,7 @@ export interface SessionStatusEntry {
   timestamp: number
   word?: string
   durationMs?: number
+  tokenDelta?: number
 }
 
 interface WorktreeStatusState {
@@ -31,7 +32,7 @@ interface WorktreeStatusState {
   setSessionStatus: (
     sessionId: string,
     status: SessionStatusType | null,
-    metadata?: { word?: string; durationMs?: number }
+    metadata?: { word?: string; durationMs?: number; tokenDelta?: number }
   ) => void
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
@@ -70,7 +71,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
   setSessionStatus: (
     sessionId: string,
     status: SessionStatusType | null,
-    metadata?: { word?: string; durationMs?: number }
+    metadata?: { word?: string; durationMs?: number; tokenDelta?: number }
   ) => {
     set((state) => ({
       sessionStatuses: {
