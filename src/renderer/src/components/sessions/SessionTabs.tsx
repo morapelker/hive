@@ -66,9 +66,9 @@ interface SessionTabProps {
   onDragEnd: () => void
   isDragging: boolean
   isDragOver: boolean
-  worktreeId: string
-  onCloseOthers: () => void
-  onCloseToRight: () => void
+  worktreeId: string | null
+  onCloseOthers?: () => void
+  onCloseToRight?: () => void
   hintCode?: string
 }
 
@@ -243,8 +243,12 @@ function SessionTab({
           Close
           <ContextMenuShortcut>&#8984;W</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>
-        <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
+        {onCloseOthers && (
+          <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>
+        )}
+        {onCloseToRight && (
+          <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   )

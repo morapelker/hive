@@ -4653,8 +4653,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 <div>
                   <p className="text-sm font-medium">Read-Only Mode</p>
                   <p className="mt-0.5 text-sm opacity-90">
-                    This session is from an archived worktree. You can view the conversation history
-                    but cannot send new messages.
+                    {sessionRecord?.connection_id
+                      ? 'This session is from a deleted connection. You can view the conversation history but cannot send new messages.'
+                      : sessionRecord?.worktree_id
+                        ? 'This session is from an archived worktree. You can view the conversation history but cannot send new messages.'
+                        : 'This session is no longer accessible. You can view the conversation history but cannot send new messages.'}
                   </p>
                 </div>
               </div>

@@ -396,10 +396,9 @@ export function SessionHistory(): React.JSX.Element | null {
         // Check if connection still exists (connection_name will be NULL if deleted)
         if (session.connection_name) {
           // Connection exists - reopen it in connection mode
-          selectConnection(session.connection_id)
-
           const result = await reopenConnectionSession(session.id, session.connection_id)
           if (result.success) {
+            selectConnection(session.connection_id)
             closePanel()
             toast.success(`Loaded session "${session.name || 'Untitled'}"`)
           } else {
@@ -423,10 +422,9 @@ export function SessionHistory(): React.JSX.Element | null {
 
         if (worktreeExists) {
           // Worktree exists - reopen session normally
-          selectWorktree(session.worktree_id)
-
           const result = await reopenSession(session.id, session.worktree_id)
           if (result.success) {
+            selectWorktree(session.worktree_id)
             closePanel()
             toast.success(`Loaded session "${session.name || 'Untitled'}"`)
           } else {
