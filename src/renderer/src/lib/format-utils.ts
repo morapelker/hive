@@ -29,6 +29,12 @@ export function formatElapsedTimer(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
+export function formatTokenCount(n: number): string {
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
+  return `${(n / 1_000_000).toFixed(1)}m`
+}
+
 import { stripAnsi } from './ansi-utils'
 
 export const COMPLETION_WORDS = [
