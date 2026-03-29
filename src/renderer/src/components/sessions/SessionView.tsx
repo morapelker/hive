@@ -53,7 +53,7 @@ import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
 import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
-import { snapshotTokenBaseline } from '@/lib/token-baselines'
+import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { buildPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
@@ -2368,8 +2368,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               const sendTime = messageSendTimes.get(sessionId)
               const durationMs = sendTime ? Date.now() - sendTime : 0
               const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+              const tokenDelta = computeTokenDelta(sessionId)
               const statusStore = useWorktreeStatusStore.getState()
-              statusStore.setSessionStatus(sessionId, 'completed', { word, durationMs })
+              statusStore.setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
             } else if (status.type === 'retry') {
               setIsStreaming(true)
               setIsSending(true)
@@ -2800,9 +2801,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   const sendTime = messageSendTimes.get(sessionId)
                   const durationMs = sendTime ? Date.now() - sendTime : 0
                   const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+                  const tokenDelta = computeTokenDelta(sessionId)
                   useWorktreeStatusStore
                     .getState()
-                    .setSessionStatus(sessionId, 'completed', { word, durationMs })
+                    .setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
                 } else {
                   useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
                 }
