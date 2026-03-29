@@ -139,3 +139,37 @@ describe('snapshotTokenBaseline / computeTokenDelta', () => {
     expect(computeTokenDelta('test-session')).toBe(0)
   })
 })
+
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+
+describe('SessionStatusEntry tokenDelta metadata', () => {
+  beforeEach(() => {
+    const store = useWorktreeStatusStore.getState()
+    store.clearSessionStatus('s1')
+  })
+
+  test('setSessionStatus stores tokenDelta in the entry', () => {
+    useWorktreeStatusStore
+      .getState()
+      .setSessionStatus('s1', 'completed', { word: 'Buzzed', durationMs: 5000, tokenDelta: 1234 })
+
+    const entry = useWorktreeStatusStore.getState().sessionStatuses['s1']
+    expect(entry).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        word: 'Buzzed',
+        durationMs: 5000,
+        tokenDelta: 1234
+      })
+    )
+  })
+
+  test('tokenDelta is undefined when not provided', () => {
+    useWorktreeStatusStore
+      .getState()
+      .setSessionStatus('s1', 'completed', { word: 'Brewed', durationMs: 3000 })
+
+    const entry = useWorktreeStatusStore.getState().sessionStatuses['s1']
+    expect(entry?.tokenDelta).toBeUndefined()
+  })
+})
