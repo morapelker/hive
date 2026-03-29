@@ -933,8 +933,8 @@ export function SessionTabs(): React.JSX.Element | null {
     return null
   }
 
-  // After early return, scopeId is guaranteed to be defined (unless we have orphaned sessions only)
-  const resolvedScopeId = scopeId!
+  // Resolve scopeId (may be undefined if only orphaned sessions exist)
+  const resolvedScopeId = scopeId || null
 
   // Add orphaned sessions to the list (they appear as additional tabs)
   const orphanedSessionsList = Array.from(orphanedSessions.values())
@@ -1104,39 +1104,48 @@ export function SessionTabs(): React.JSX.Element | null {
                 })}
 
               {/* Session tabs */}
-              {allSessions.map((session) => (
-                <SessionTab
-                  key={session.id}
-                  sessionId={session.id}
-                  name={session.name || 'Untitled'}
-                  agentSdk={session.agent_sdk}
-                  isActive={
-                    session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId
-                  }
-                  onClick={() => handleSessionTabClick(session.id)}
-                  onClose={(e) => handleCloseSession(e, session.id)}
-                  onMiddleClick={(e) => handleCloseSession(e, session.id)}
-                  onRename={(newName) => handleRenameSession(session.id, newName)}
-                  onDragStart={(e) => handleDragStart(e, session.id)}
-                  onDragOver={(e) => handleDragOver(e, session.id)}
-                  onDrop={(e) => handleDrop(e, session.id)}
-                  onDragEnd={handleDragEnd}
-                  isDragging={draggedTabId === session.id}
-                  isDragOver={dragOverTabId === session.id}
-                  worktreeId={resolvedScopeId}
-                  onCloseOthers={() =>
-                    isConnectionMode
-                      ? closeOtherConnectionSessions(resolvedScopeId, session.id)
-                      : closeOtherSessions(resolvedScopeId, session.id)
-                  }
-                  onCloseToRight={() =>
-                    isConnectionMode
-                      ? closeConnectionSessionsToRight(resolvedScopeId, session.id)
-                      : closeSessionsToRight(resolvedScopeId, session.id)
-                  }
-                  hintCode={sessionHints.sessionHintMap.get(session.id)}
-                />
-              ))}
+              {allSessions.map((session) => {
+                const isOrphaned = orphanedSessions.has(session.id)
+                return (
+                  <SessionTab
+                    key={session.id}
+                    sessionId={session.id}
+                    name={session.name || 'Untitled'}
+                    agentSdk={session.agent_sdk}
+                    isActive={
+                      session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId
+                    }
+                    onClick={() => handleSessionTabClick(session.id)}
+                    onClose={(e) => handleCloseSession(e, session.id)}
+                    onMiddleClick={(e) => handleCloseSession(e, session.id)}
+                    onRename={(newName) => handleRenameSession(session.id, newName)}
+                    onDragStart={(e) => handleDragStart(e, session.id)}
+                    onDragOver={(e) => handleDragOver(e, session.id)}
+                    onDrop={(e) => handleDrop(e, session.id)}
+                    onDragEnd={handleDragEnd}
+                    isDragging={draggedTabId === session.id}
+                    isDragOver={dragOverTabId === session.id}
+                    worktreeId={resolvedScopeId}
+                    onCloseOthers={
+                      isOrphaned || !resolvedScopeId
+                        ? undefined
+                        : () =>
+                            isConnectionMode
+                              ? closeOtherConnectionSessions(resolvedScopeId, session.id)
+                              : closeOtherSessions(resolvedScopeId, session.id)
+                    }
+                    onCloseToRight={
+                      isOrphaned || !resolvedScopeId
+                        ? undefined
+                        : () =>
+                            isConnectionMode
+                              ? closeConnectionSessionsToRight(resolvedScopeId, session.id)
+                              : closeSessionsToRight(resolvedScopeId, session.id)
+                    }
+                    hintCode={sessionHints.sessionHintMap.get(session.id)}
+                  />
+                )
+              })}
             </>
           )
         )}

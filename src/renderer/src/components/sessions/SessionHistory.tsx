@@ -336,7 +336,7 @@ export function SessionHistory(): React.JSX.Element | null {
     }
   }, [debouncedKeyword, isOpen, performSearch])
 
-  // Trigger search when non-keyword filters change
+  // Trigger search when non-keyword filters change (isOpen handled by first effect)
   useEffect(() => {
     if (isOpen) {
       performSearch()
@@ -347,7 +347,6 @@ export function SessionHistory(): React.JSX.Element | null {
     filters.dateFrom,
     filters.dateTo,
     filters.includeArchived,
-    isOpen,
     performSearch
   ])
 
@@ -392,19 +391,28 @@ export function SessionHistory(): React.JSX.Element | null {
   // Handle loading a session
   const handleLoadSession = useCallback(
     async (session: SessionWithWorktree) => {
-      // Check if this is a connection session
-      if (session.connection_id && session.connection_name) {
-        // Connection session - reopen it in connection mode
-        selectConnection(session.connection_id)
+      // Check if this is a connection session (has connection_id)
+      if (session.connection_id) {
+        // Check if connection still exists (connection_name will be NULL if deleted)
+        if (session.connection_name) {
+          // Connection exists - reopen it in connection mode
+          selectConnection(session.connection_id)
 
-        const result = await reopenConnectionSession(session.id, session.connection_id)
-        if (result.success) {
-          closePanel()
-          toast.success(`Loaded session "${session.name || 'Untitled'}"`)
+          const result = await reopenConnectionSession(session.id, session.connection_id)
+          if (result.success) {
+            closePanel()
+            toast.success(`Loaded session "${session.name || 'Untitled'}"`)
+          } else {
+            toast.error(result.error || 'Failed to load session')
+          }
+          return
         } else {
-          toast.error(result.error || 'Failed to load session')
+          // Connection was deleted - open in read-only mode
+          openOrphanedSession(session as any)
+          closePanel()
+          toast.info('Opened in read-only mode: connection no longer exists.')
+          return
         }
-        return
       }
 
       // Check if session has a worktree_id and if that worktree still exists
