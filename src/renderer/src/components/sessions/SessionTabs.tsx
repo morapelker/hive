@@ -575,16 +575,20 @@ export function SessionTabs(): React.JSX.Element | null {
   // Sync active worktree with selected worktree (worktree mode only)
   useEffect(() => {
     if (isConnectionMode) return
+    // Don't sync if we're currently viewing an orphaned session
+    if (activeSessionId && orphanedSessions.has(activeSessionId)) return
     if (selectedWorktreeId !== activeWorktreeId) {
       useSessionStore.getState().setActiveWorktree(selectedWorktreeId)
     }
-  }, [selectedWorktreeId, activeWorktreeId, isConnectionMode])
+  }, [selectedWorktreeId, activeWorktreeId, isConnectionMode, activeSessionId, orphanedSessions])
 
   // Sync active connection with selected connection (connection mode only)
   useEffect(() => {
     if (!isConnectionMode || !selectedConnectionId) return
+    // Don't sync if we're currently viewing an orphaned session
+    if (activeSessionId && orphanedSessions.has(activeSessionId)) return
     useSessionStore.getState().setActiveConnection(selectedConnectionId)
-  }, [selectedConnectionId, isConnectionMode])
+  }, [selectedConnectionId, isConnectionMode, activeSessionId, orphanedSessions])
 
   // Load sessions when worktree changes, then auto-start if the worktree has 0 sessions.
   // Auto-start runs as a direct follow-up to loadSessions (not a separate effect) to
