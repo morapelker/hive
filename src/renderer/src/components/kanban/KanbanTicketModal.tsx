@@ -49,11 +49,21 @@ import { toast } from '@/lib/toast'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
+import { SessionStreamPanel } from './SessionStreamPanel'
 import type { KanbanTicket, KanbanTicketUpdate } from '../../../../main/db/types'
 
 // ── Types ───────────────────────────────────────────────────────────
 type ModalMode = 'edit' | 'plan_review' | 'review' | 'error' | 'question'
 type FollowUpMode = 'build' | 'plan'
+
+/** Standard (non-dual-pane) DialogContent className per modal mode */
+const MODE_DIALOG_CLASS: Record<ModalMode, string> = {
+  edit: 'sm:max-w-lg',
+  plan_review: 'sm:max-w-2xl max-h-[80vh] flex flex-col',
+  review: 'sm:max-w-2xl max-h-[80vh] flex flex-col',
+  error: 'sm:max-w-lg',
+  question: 'sm:max-w-lg'
+}
 
 interface TicketAttachment extends AttachmentInfo {
   url: string
@@ -167,15 +177,6 @@ async function sendFollowupToSession(opts: {
 
     // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
     const model = resolveSessionModel(opts.sessionId)
-
-    // Persist the followup message
-    window.kanban.followup.create({
-      ticket_id: opts.ticketId,
-      content: opts.prompt,
-      mode: opts.followUpMode,
-      session_id: opts.sessionId,
-      source: 'direct'
-    }).catch(() => {})
 
     const result = await window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
       { type: 'text', text: fullPrompt }
@@ -313,10 +314,18 @@ function KanbanTicketModalContent({
   // the agent regardless of other ticket state (error, plan_ready, etc.)
   const modalMode = activeQuestion ? 'question' : baseModalMode
 
-  // Render the appropriate content based on mode
+  // ── Session stream resolution ────────────────────────────────────
+  const worktreePath = sessionRecord?.worktree_id
+    ? findWorktreePathById(sessionRecord.worktree_id)
+    : null
+  const opcSessionId: string | null = sessionRecord?.opencode_session_id ?? null
+  const hasSession = !!(ticket.current_session_id && worktreePath && opcSessionId)
+
+  // Render the mode-specific inner content (without DialogContent wrapper)
+  let modeContent: React.ReactNode
   switch (modalMode) {
     case 'edit':
-      return (
+      modeContent = (
         <EditModeContent
           ticket={ticket}
           onClose={onClose}
@@ -324,36 +333,113 @@ function KanbanTicketModalContent({
           deleteTicket={deleteTicket}
         />
       )
+      break
     case 'plan_review':
-      return (
+      modeContent = (
         <PlanReviewModeContent
           ticket={ticket}
           onClose={onClose}
           pendingPlan={pendingPlan}
           sessionRecord={sessionRecord}
           updateTicket={updateTicket}
+          dualPane={hasSession}
         />
       )
+      break
     case 'review':
-      return (
+      modeContent = (
         <ReviewModeContent
           ticket={ticket}
           onClose={onClose}
           moveTicket={moveTicket}
           updateTicket={updateTicket}
+          dualPane={hasSession}
         />
       )
+      break
     case 'error':
-      return <ErrorModeContent ticket={ticket} onClose={onClose} />
+      modeContent = <ErrorModeContent ticket={ticket} onClose={onClose} dualPane={hasSession} />
+      break
     case 'question':
-      return (
+      modeContent = (
         <QuestionModeContent
           ticket={ticket}
           onClose={onClose}
           activeQuestion={activeQuestion!}
+          dualPane={hasSession}
         />
       )
+      break
   }
+
+  // ── Full-width session layout (only in-progress edit mode — left pane has no actionable content) ──
+  if (hasSession && modalMode === 'edit' && ticket.column === 'in_progress') {
+    return (
+      <DialogContent
+        data-testid="kanban-ticket-modal"
+        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden"
+      >
+        <DialogHeader className="sr-only">
+          <DialogTitle>{ticket.title}</DialogTitle>
+        </DialogHeader>
+        <div className="flex h-full overflow-hidden">
+          <SessionStreamPanel
+            sessionId={ticket.current_session_id!}
+            worktreePath={worktreePath!}
+            opencodeSessionId={opcSessionId!}
+            title={ticket.title}
+            fullWidth
+          />
+        </div>
+      </DialogContent>
+    )
+  }
+
+  // ── Dual-pane layout (ticket + session stream) ──────────────────
+  if (hasSession) {
+    return (
+      <DialogContent
+        data-testid="kanban-ticket-modal"
+        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden"
+      >
+        <div className="flex h-full overflow-hidden">
+          {/* Left: ticket content */}
+          <div className="w-[480px] shrink-0 h-full flex flex-col overflow-y-auto p-6 gap-4">
+            {/* Shared ticket context header for non-edit modes */}
+            {modalMode !== 'edit' && (
+              <div className="space-y-2 pb-3 border-b border-border/40">
+                <h2 className="text-base font-semibold text-foreground leading-tight">
+                  {ticket.title}
+                </h2>
+                {ticket.description && (
+                  <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-muted-foreground max-h-[120px] overflow-y-auto">
+                    <MarkdownRenderer content={ticket.description} />
+                  </div>
+                )}
+              </div>
+            )}
+            {modeContent}
+          </div>
+          {/* Right: session stream */}
+          <SessionStreamPanel
+            sessionId={ticket.current_session_id!}
+            worktreePath={worktreePath!}
+            opencodeSessionId={opcSessionId!}
+          />
+        </div>
+      </DialogContent>
+    )
+  }
+
+  // ── Standard layout (no session) ────────────────────────────────
+  return (
+    <DialogContent
+      data-testid="kanban-ticket-modal"
+      className={MODE_DIALOG_CLASS[modalMode]}
+    >
+      {modeContent}
+    </DialogContent>
+  )
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -429,7 +515,7 @@ function EditModeContent({
   }, [deleteTicket, ticket.id, ticket.project_id, onClose])
 
   return (
-    <DialogContent data-testid="kanban-ticket-modal" className="sm:max-w-lg">
+    <>
       <DialogHeader>
         <div className="flex items-center justify-between">
           <DialogTitle>Edit Ticket</DialogTitle>
@@ -648,7 +734,7 @@ function EditModeContent({
           </Button>
         </div>
       </DialogFooter>
-    </DialogContent>
+    </>
   )
 }
 
@@ -661,7 +747,8 @@ function PlanReviewModeContent({
   onClose,
   pendingPlan,
   sessionRecord,
-  updateTicket
+  updateTicket,
+  dualPane = false
 }: {
   ticket: KanbanTicket
   onClose: () => void
@@ -673,20 +760,13 @@ function PlanReviewModeContent({
     agent_sdk: string
   } | null
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
+  dualPane?: boolean
 }) {
   const [isActioning, setIsActioning] = useState(false)
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('plan')
   const [isSending, setIsSending] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  const [followupHistory, setFollowupHistory] = useState<Array<{
-    id: string; content: string; role: 'user' | 'assistant'; mode: 'build' | 'plan'; source: string; created_at: string
-  }>>([])
-
-  useEffect(() => {
-    window.kanban.followup.getByTicket(ticket.id).then(setFollowupHistory).catch(() => {})
-  }, [ticket.id])
 
   const planContent = pendingPlan?.planContent ?? ticket.description ?? ''
 
@@ -735,14 +815,6 @@ function PlanReviewModeContent({
               pendingPlan.requestId
             )
           }
-          // planReject already sends the feedback as the next prompt for Claude Code
-          window.kanban.followup.create({
-            ticket_id: ticket.id,
-            content: feedback,
-            mode: 'plan',
-            session_id: sessionId,
-            source: 'direct'
-          }).catch(() => {})
           await updateTicket(ticket.id, ticket.project_id, { plan_ready: false, mode: 'plan' })
           // The clearSessionStatus above wiped the busy state. Set it back to
           // 'planning' so the kanban card shows the progress bar while the
@@ -1019,11 +1091,11 @@ function PlanReviewModeContent({
   }, [ticket, isActioning, planContent, onClose, eagerSuperchargeStart])
 
   return (
-    <DialogContent data-testid="kanban-ticket-modal" className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+    <>
       <DialogHeader>
         <div className="flex items-center justify-between">
           <DialogTitle className="flex items-center gap-2">
-            {ticket.title}
+            {!dualPane && ticket.title}
             <span className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[11px] font-medium text-violet-500">
               Plan ready
             </span>
@@ -1039,8 +1111,6 @@ function PlanReviewModeContent({
       >
         <MarkdownRenderer content={planContent} />
       </div>
-
-      <ConversationHistory messages={followupHistory} />
 
       {/* Followup input — iterate on the plan */}
       <div className="space-y-1.5 flex-shrink-0">
@@ -1133,7 +1203,7 @@ function PlanReviewModeContent({
           Implement
         </Button>
       </DialogFooter>
-    </DialogContent>
+    </>
   )
 }
 
@@ -1145,25 +1215,19 @@ function ReviewModeContent({
   ticket,
   onClose,
   moveTicket,
-  updateTicket
+  updateTicket,
+  dualPane = false
 }: {
   ticket: KanbanTicket
   onClose: () => void
   moveTicket: (ticketId: string, projectId: string, column: 'todo' | 'in_progress' | 'review' | 'done', sortOrder: number) => Promise<void>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
+  dualPane?: boolean
 }) {
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  const [followupHistory, setFollowupHistory] = useState<Array<{
-    id: string; content: string; role: 'user' | 'assistant'; mode: 'build' | 'plan'; source: string; created_at: string
-  }>>([])
-
-  useEffect(() => {
-    window.kanban.followup.getByTicket(ticket.id).then(setFollowupHistory).catch(() => {})
-  }, [ticket.id])
 
   // Display ticket description as context, with notice to view session for full conversation
   const reviewDescription = ticket.description ?? null
@@ -1325,32 +1389,32 @@ function ReviewModeContent({
   const modeLabel = followUpMode === 'build' ? 'Build' : 'Plan'
 
   return (
-    <DialogContent data-testid="kanban-ticket-modal" className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+    <>
       <DialogHeader>
         <div className="flex items-center justify-between">
-          <DialogTitle>{ticket.title}</DialogTitle>
+          <DialogTitle>{dualPane ? 'Review' : ticket.title}</DialogTitle>
           <JumpToSessionButton ticket={ticket} onClose={onClose} />
         </div>
         <DialogDescription>Review the session output and provide followup.</DialogDescription>
       </DialogHeader>
 
-      <div
-        data-testid="review-content"
-        className="flex-1 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-4 space-y-3"
-      >
-        {reviewDescription ? (
-          <div className="prose prose-sm dark:prose-invert max-w-none">
-            <MarkdownRenderer content={reviewDescription} />
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Session completed.</p>
-        )}
-        <p data-testid="review-session-notice" className="text-xs text-muted-foreground/80">
-          View the full session conversation by clicking &quot;Jump to session&quot; above.
-        </p>
-      </div>
-
-      <ConversationHistory messages={followupHistory} />
+      {!dualPane && (
+        <div
+          data-testid="review-content"
+          className="flex-1 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-4 space-y-3"
+        >
+          {reviewDescription ? (
+            <div className="prose prose-sm dark:prose-invert max-w-none">
+              <MarkdownRenderer content={reviewDescription} />
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Session completed.</p>
+          )}
+          <p data-testid="review-session-notice" className="text-xs text-muted-foreground/80">
+            View the full session conversation by clicking &quot;Jump to session&quot; above.
+          </p>
+        </div>
+      )}
 
       {/* Followup input area */}
       <div className="space-y-2 flex-shrink-0">
@@ -1436,7 +1500,7 @@ function ReviewModeContent({
           {isSending ? 'Sending...' : 'Send'}
         </Button>
       </DialogFooter>
-    </DialogContent>
+    </>
   )
 }
 
@@ -1446,23 +1510,17 @@ function ReviewModeContent({
 
 function ErrorModeContent({
   ticket,
-  onClose
+  onClose,
+  dualPane = false
 }: {
   ticket: KanbanTicket
   onClose: () => void
+  dualPane?: boolean
 }) {
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)
   const updateTicket = useKanbanStore((s) => s.updateTicket)
-
-  const [followupHistory, setFollowupHistory] = useState<Array<{
-    id: string; content: string; role: 'user' | 'assistant'; mode: 'build' | 'plan'; source: string; created_at: string
-  }>>([])
-
-  useEffect(() => {
-    window.kanban.followup.getByTicket(ticket.id).then(setFollowupHistory).catch(() => {})
-  }, [ticket.id])
 
   // Look up session status entry for error details
   const sessionStatusEntry = useWorktreeStatusStore(
@@ -1518,11 +1576,11 @@ function ErrorModeContent({
   const modeLabel = followUpMode === 'build' ? 'Build' : 'Plan'
 
   return (
-    <DialogContent data-testid="kanban-ticket-modal" className="sm:max-w-lg">
+    <>
       <DialogHeader>
         <div className="flex items-center justify-between">
           <DialogTitle className="flex items-center gap-2">
-            {ticket.title}
+            {!dualPane && ticket.title}
             <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-[11px] font-medium text-red-500">
               <AlertCircle className="h-3 w-3" />
               Error
@@ -1550,8 +1608,6 @@ function ErrorModeContent({
           {' \u2014 use "Jump to session" for full details.'}
         </p>
       </div>
-
-      <ConversationHistory messages={followupHistory} />
 
       {/* Followup input */}
       <div className="space-y-2">
@@ -1612,7 +1668,7 @@ function ErrorModeContent({
           {isSending ? 'Sending...' : 'Send'}
         </Button>
       </DialogFooter>
-    </DialogContent>
+    </>
   )
 }
 
@@ -1623,11 +1679,13 @@ function ErrorModeContent({
 function QuestionModeContent({
   ticket,
   onClose,
-  activeQuestion
+  activeQuestion,
+  dualPane = false
 }: {
   ticket: KanbanTicket
   onClose: () => void
   activeQuestion: QuestionRequest
+  dualPane?: boolean
 }) {
   const handleReply = useCallback(async (requestId: string, answers: string[][]) => {
     try {
@@ -1666,7 +1724,7 @@ function QuestionModeContent({
   }, [ticket.worktree_id, ticket.current_session_id, ticket.mode, onClose])
 
   return (
-    <DialogContent data-testid="kanban-ticket-modal" className="sm:max-w-lg">
+    <>
       <DialogHeader>
         <div className="flex items-center justify-between">
           <DialogTitle className="flex items-center gap-2">
@@ -1674,7 +1732,7 @@ function QuestionModeContent({
           </DialogTitle>
           <JumpToSessionButton ticket={ticket} onClose={onClose} />
         </div>
-        <DialogDescription className="truncate">{ticket.title}</DialogDescription>
+        <DialogDescription>{dualPane ? 'An agent question needs your attention.' : ticket.title}</DialogDescription>
       </DialogHeader>
       <QuestionPrompt
         key={activeQuestion.id}
@@ -1682,57 +1740,7 @@ function QuestionModeContent({
         onReply={handleReply}
         onReject={handleReject}
       />
-    </DialogContent>
-  )
-}
-
-// ════════════════════════════════════════════════════════════════════
-// CONVERSATION HISTORY
-// ════════════════════════════════════════════════════════════════════
-
-function ConversationHistory({ messages }: {
-  messages: Array<{
-    id: string
-    content: string
-    role: 'user' | 'assistant'
-    mode: 'build' | 'plan'
-    source: string
-    created_at: string
-  }>
-}) {
-  if (messages.length === 0) return null
-
-  return (
-    <div className="space-y-2">
-      <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        Conversation history
-      </label>
-      <div className="max-h-64 overflow-y-auto space-y-1.5 rounded-md border border-border/40 bg-muted/10 p-2">
-        {messages.map((msg) => (
-          <div key={msg.id} className={cn(
-            'flex items-start gap-2 text-xs',
-            msg.role === 'assistant' && 'bg-muted/30 rounded-md p-1.5 -mx-0.5'
-          )}>
-            <span className={cn(
-              'shrink-0 mt-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
-              msg.role === 'assistant'
-                ? 'bg-emerald-500/10 text-emerald-500'
-                : msg.mode === 'build'
-                  ? 'bg-blue-500/10 text-blue-500'
-                  : 'bg-violet-500/10 text-violet-500'
-            )}>
-              {msg.role === 'assistant' ? 'ai' : msg.mode}
-            </span>
-            <div className="text-foreground/80 break-words flex-1 min-w-0 [&_p]:mb-1.5 [&_p]:last:mb-0 [&_ul]:mb-1.5 [&_ul]:pl-4 [&_ol]:mb-1.5 [&_ol]:pl-4 [&_blockquote]:my-1.5 [&_pre]:my-1.5">
-              <MarkdownRenderer content={msg.content} />
-            </div>
-            <span className="shrink-0 text-muted-foreground/50 text-[10px]">
-              {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
+    </>
   )
 }
 

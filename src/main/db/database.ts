@@ -35,9 +35,7 @@ import type {
   KanbanTicket,
   KanbanTicketCreate,
   KanbanTicketUpdate,
-  KanbanTicketColumn,
-  TicketFollowupMessage,
-  TicketFollowupMessageCreate
+  KanbanTicketColumn
 } from './types'
 
 export class DatabaseService {
@@ -1805,41 +1803,6 @@ export class DatabaseService {
       enabled ? 1 : 0,
       projectId
     )
-  }
-
-  // Ticket followup message operations
-
-  createTicketFollowupMessage(data: TicketFollowupMessageCreate): TicketFollowupMessage {
-    const db = this.getDb()
-    const id = randomUUID()
-    const now = new Date().toISOString()
-    const sessionId = data.session_id ?? null
-    const source = data.source ?? 'direct'
-    const role = data.role ?? 'user'
-
-    db.prepare(
-      `INSERT INTO ticket_followup_messages (id, ticket_id, content, role, mode, session_id, source, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, data.ticket_id, data.content, role, data.mode, sessionId, source, now)
-
-    return {
-      id,
-      ticket_id: data.ticket_id,
-      content: data.content,
-      role: role as 'user' | 'assistant',
-      mode: data.mode as 'build' | 'plan',
-      session_id: sessionId,
-      source: source as 'direct' | 'supercharge' | 'error_retry',
-      created_at: now
-    }
-  }
-
-  getTicketFollowupMessages(ticketId: string): TicketFollowupMessage[] {
-    const db = this.getDb()
-    const rows = db.prepare(
-      'SELECT * FROM ticket_followup_messages WHERE ticket_id = ? ORDER BY created_at ASC'
-    ).all(ticketId) as TicketFollowupMessage[]
-    return rows
   }
 
   // Check if tables exist

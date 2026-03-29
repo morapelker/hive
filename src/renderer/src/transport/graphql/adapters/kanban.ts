@@ -25,13 +25,6 @@ interface GqlKanbanTicket {
   updatedAt: string
 }
 
-interface GqlTicketFollowupMessage {
-  id: string
-  ticketId: string
-  message: string
-  createdAt: string
-}
-
 function mapTicket(t: GqlKanbanTicket) {
   return {
     id: t.id,
@@ -55,21 +48,7 @@ function mapTicketOrNull(t: GqlKanbanTicket | null) {
   return t ? mapTicket(t) : null
 }
 
-function mapFollowup(f: GqlTicketFollowupMessage) {
-  return {
-    id: f.id,
-    ticket_id: f.ticketId,
-    content: f.message,
-    role: 'user' as const,
-    mode: 'build' as const,
-    session_id: null,
-    source: 'direct' as const,
-    created_at: f.createdAt
-  }
-}
-
 const TICKET_FIELDS = `id projectId sessionId worktreeId title description column sortOrder archived createdAt updatedAt`
-const FOLLOWUP_FIELDS = `id ticketId message createdAt`
 
 export function createKanbanAdapter(): KanbanApi {
   return {
@@ -212,32 +191,6 @@ export function createKanbanAdapter(): KanbanApi {
           }`,
           { projectId, enabled }
         )
-      }
-    },
-
-    followup: {
-      async create(data) {
-        const input = {
-          ticketId: data.ticket_id,
-          message: data.content
-        }
-        const result = await graphqlQuery<{ kanbanCreateFollowup: GqlTicketFollowupMessage }>(
-          `mutation ($input: KanbanCreateFollowupInput!) {
-            kanbanCreateFollowup(input: $input) { ${FOLLOWUP_FIELDS} }
-          }`,
-          { input }
-        )
-        return mapFollowup(result.kanbanCreateFollowup)
-      },
-
-      async getByTicket(ticketId) {
-        const result = await graphqlQuery<{ kanbanFollowupsByTicket: GqlTicketFollowupMessage[] }>(
-          `query ($ticketId: ID!) {
-            kanbanFollowupsByTicket(ticketId: $ticketId) { ${FOLLOWUP_FIELDS} }
-          }`,
-          { ticketId }
-        )
-        return result.kanbanFollowupsByTicket.map(mapFollowup)
       }
     }
   }

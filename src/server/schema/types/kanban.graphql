@@ -19,13 +19,6 @@ type KanbanTicket {
   updatedAt: String!
 }
 
-type TicketFollowupMessage {
-  id: String!
-  ticketId: String!
-  message: String!
-  createdAt: String!
-}
-
 input KanbanCreateTicketInput {
   projectId: String!
   sessionId: String
@@ -45,7 +38,3 @@ input KanbanUpdateTicketInput {
   worktreeId: String
 }
 
-input KanbanCreateFollowupInput {
-  ticketId: String!
-  message: String!
-}

@@ -22,17 +22,6 @@ function mapKanbanTicket(row: any) {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapFollowup(row: any) {
-  if (!row) return null
-  return {
-    id: row.id,
-    ticketId: row.ticket_id,
-    message: row.content,
-    createdAt: row.created_at
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Kanban Query Resolvers
 // ---------------------------------------------------------------------------
@@ -49,9 +38,6 @@ export const kanbanQueryResolvers: Resolvers = {
     },
     kanbanTicketsBySession: async (_parent, { sessionId }, ctx) => {
       return ctx.db.getKanbanTicketsBySession(sessionId).map(mapKanbanTicket)
-    },
-    kanbanFollowupsByTicket: async (_parent, { ticketId }, ctx) => {
-      return ctx.db.getTicketFollowupMessages(ticketId).map(mapFollowup)
     }
   }
 }

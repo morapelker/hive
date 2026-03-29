@@ -28,7 +28,5 @@ export type {
   KanbanTicket,
   KanbanTicketCreate,
   KanbanTicketUpdate,
-  KanbanTicketColumn,
-  TicketFollowupMessage,
-  TicketFollowupMessageCreate
+  KanbanTicketColumn
 } from './types'

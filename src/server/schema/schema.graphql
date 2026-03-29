@@ -102,7 +102,6 @@ type Query {
   kanbanTicket(id: ID!): KanbanTicket
   kanbanTicketsByProject(projectId: ID!, includeArchived: Boolean): [KanbanTicket!]!
   kanbanTicketsBySession(sessionId: ID!): [KanbanTicket!]!
-  kanbanFollowupsByTicket(ticketId: ID!): [TicketFollowupMessage!]!
 
   # --- Usage ---
   usageFetch(providers: [String!]): UsageResult!
@@ -238,7 +237,6 @@ type Mutation {
   kanbanMoveTicket(id: ID!, column: KanbanTicketColumn!, sortOrder: Float!): KanbanTicket
   kanbanReorderTicket(id: ID!, sortOrder: Float!): SuccessResult!
   kanbanToggleSimpleMode(projectId: ID!, enabled: Boolean!): SuccessResult!
-  kanbanCreateFollowup(input: KanbanCreateFollowupInput!): TicketFollowupMessage!
 
   # --- Logging ---
   createResponseLog(sessionId: ID!): String!

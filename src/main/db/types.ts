@@ -374,23 +374,3 @@ export interface KanbanTicketUpdate {
   plan_ready?: boolean
 }
 
-// Ticket followup message types
-export interface TicketFollowupMessage {
-  id: string
-  ticket_id: string
-  content: string
-  role: 'user' | 'assistant'
-  mode: 'build' | 'plan'
-  session_id: string | null
-  source: 'direct' | 'supercharge' | 'error_retry'
-  created_at: string
-}
-
-export interface TicketFollowupMessageCreate {
-  ticket_id: string
-  content: string
-  role?: 'user' | 'assistant'
-  mode: 'build' | 'plan'
-  session_id?: string | null
-  source?: 'direct' | 'supercharge' | 'error_retry'
-}

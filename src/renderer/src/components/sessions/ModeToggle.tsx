@@ -26,7 +26,7 @@ export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
   const toggleSessionMode = useSessionStore((state) => state.toggleSessionMode)
 
-  const config = MODE_CONFIG[mode]
+  const config = MODE_CONFIG[mode] ?? MODE_CONFIG.build
   const Icon = config.icon
 
   return (
