@@ -844,10 +844,12 @@ export class DatabaseService {
         s.*,
         w.name as worktree_name,
         w.branch_name as worktree_branch_name,
-        p.name as project_name
+        p.name as project_name,
+        c.name as connection_name
       FROM sessions s
       LEFT JOIN worktrees w ON s.worktree_id = w.id
       LEFT JOIN projects p ON s.project_id = p.id
+      LEFT JOIN connections c ON s.connection_id = c.id
     `
 
     if (options.keyword) {
@@ -855,10 +857,11 @@ export class DatabaseService {
         s.name LIKE ? OR
         p.name LIKE ? OR
         w.name LIKE ? OR
-        w.branch_name LIKE ?
+        w.branch_name LIKE ? OR
+        c.name LIKE ?
       )`)
       const keyword = `%${options.keyword}%`
-      values.push(keyword, keyword, keyword, keyword)
+      values.push(keyword, keyword, keyword, keyword, keyword)
     }
 
     if (options.project_id) {

@@ -470,6 +470,7 @@ export function SessionTabs(): React.JSX.Element | null {
     tabOrderByWorktree,
     sessionsByConnection,
     tabOrderByConnection,
+    orphanedSessions,
     loadSessions,
     createSession,
     closeSession,
@@ -487,7 +488,8 @@ export function SessionTabs(): React.JSX.Element | null {
     inlineConnectionSessionId,
     setInlineConnectionSession,
     clearInlineConnectionSession,
-    loadConnectionSessionsBackground
+    loadConnectionSessionsBackground,
+    closeOrphanedSessions
   } = useSessionStore()
 
   const {
@@ -616,6 +618,11 @@ export function SessionTabs(): React.JSX.Element | null {
   useEffect(() => {
     loadedConnectionsRef.current.clear()
   }, [selectedWorktreeId])
+
+  // Close orphaned sessions when navigating away (worktree or project change)
+  useEffect(() => {
+    closeOrphanedSessions()
+  }, [selectedWorktreeId, selectedConnectionId, closeOrphanedSessions])
 
   // Background-load sessions for all connections the selected worktree belongs to.
   // This is non-blocking and does not enter connection mode.
@@ -827,8 +834,8 @@ export function SessionTabs(): React.JSX.Element | null {
     setDragOverTabId(null)
   }
 
-  // Don't render if nothing is selected
-  if (!selectedWorktreeId && !selectedConnectionId) {
+  // Don't render if nothing is selected AND no orphaned sessions
+  if (!selectedWorktreeId && !selectedConnectionId && orphanedSessions.size === 0) {
     return null
   }
 
@@ -843,9 +850,13 @@ export function SessionTabs(): React.JSX.Element | null {
     : tabOrderByWorktree.get(scopeId) || []
 
   // Get sessions in tab order
-  const orderedSessions = tabOrder
+  let orderedSessions = tabOrder
     .map((id) => sessions.find((s) => s.id === id))
     .filter((s): s is NonNullable<typeof s> => s !== undefined)
+
+  // Add orphaned sessions to the list (they appear as additional tabs)
+  const orphanedSessionsList = Array.from(orphanedSessions.values())
+  orderedSessions = [...orderedSessions, ...orphanedSessionsList]
 
   // Get file tabs for the current worktree (only regular file tabs, not diff tabs)
   const fileTabs = Array.from(openFiles.values()).filter(

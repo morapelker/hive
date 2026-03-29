@@ -10,7 +10,8 @@ import {
   ExternalLink,
   Filter,
   MessageSquare,
-  AlertCircle
+  AlertCircle,
+  Users
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,6 +29,7 @@ import { useSessionHistoryStore, type SessionWithWorktree } from '@/stores/useSe
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 
 // Debounce hook for search input
 function useDebounce<T>(value: T, delay: number): T {
@@ -97,12 +99,18 @@ function SessionItem({
             {session.name || 'Untitled Session'}
           </div>
 
-          {/* Project and worktree info */}
+          {/* Project, worktree, and connection info */}
           <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
             {session.project_name && (
               <span className="flex items-center gap-1">
                 <FolderGit2 className="h-3 w-3" />
                 <span className="truncate max-w-[120px]">{session.project_name}</span>
+              </span>
+            )}
+            {session.connection_name && (
+              <span className="flex items-center gap-1">
+                <Users className="h-3 w-3" />
+                <span className="truncate max-w-[100px]">{session.connection_name}</span>
               </span>
             )}
             {session.worktree_name && (
@@ -314,8 +322,9 @@ export function SessionHistory(): React.JSX.Element | null {
   } = useSessionHistoryStore()
 
   const { projects } = useProjectStore()
-  const { worktreesByProject, loadWorktrees } = useWorktreeStore()
-  const { reopenSession, setActiveSession } = useSessionStore()
+  const { worktreesByProject, loadWorktrees, selectWorktree } = useWorktreeStore()
+  const { reopenSession, reopenConnectionSession, openOrphanedSession } = useSessionStore()
+  const { selectConnection } = useConnectionStore()
 
   // Debounce the keyword filter
   const debouncedKeyword = useDebounce(filters.keyword, 300)
@@ -326,6 +335,21 @@ export function SessionHistory(): React.JSX.Element | null {
       performSearch()
     }
   }, [debouncedKeyword, isOpen, performSearch])
+
+  // Trigger search when non-keyword filters change
+  useEffect(() => {
+    if (isOpen) {
+      performSearch()
+    }
+  }, [
+    filters.projectId,
+    filters.worktreeId,
+    filters.dateFrom,
+    filters.dateTo,
+    filters.includeArchived,
+    isOpen,
+    performSearch
+  ])
 
   // Focus search input when panel opens
   useEffect(() => {
@@ -368,24 +392,54 @@ export function SessionHistory(): React.JSX.Element | null {
   // Handle loading a session
   const handleLoadSession = useCallback(
     async (session: SessionWithWorktree) => {
-      // If session has a valid worktree, reopen it there
-      if (session.worktree_id && session.worktree_name) {
-        const result = await reopenSession(session.id, session.worktree_id)
+      // Check if this is a connection session
+      if (session.connection_id && session.connection_name) {
+        // Connection session - reopen it in connection mode
+        selectConnection(session.connection_id)
+
+        const result = await reopenConnectionSession(session.id, session.connection_id)
         if (result.success) {
           closePanel()
           toast.success(`Loaded session "${session.name || 'Untitled'}"`)
         } else {
           toast.error(result.error || 'Failed to load session')
         }
+        return
+      }
+
+      // Check if session has a worktree_id and if that worktree still exists
+      if (session.worktree_id && session.worktree_name) {
+        // Check if the worktree actually exists in the system
+        const allWorktrees = Array.from(worktreesByProject.values()).flat()
+        const worktreeExists = allWorktrees.some((w) => w.id === session.worktree_id)
+
+        if (worktreeExists) {
+          // Worktree exists - reopen session normally
+          selectWorktree(session.worktree_id)
+
+          const result = await reopenSession(session.id, session.worktree_id)
+          if (result.success) {
+            closePanel()
+            toast.success(`Loaded session "${session.name || 'Untitled'}"`)
+          } else {
+            toast.error(result.error || 'Failed to load session')
+          }
+        } else {
+          // Worktree was deleted/archived - open in read-only mode
+          openOrphanedSession(session as any)
+          closePanel()
+          toast.info(
+            `Opened in read-only mode: worktree "${session.worktree_name}" no longer exists.`
+          )
+        }
       } else {
-        // Session is orphaned - we can still view it but need to create a new session
-        // to continue the conversation
-        toast.info('This session is from an archived worktree. Opening in read-only mode.')
-        setActiveSession(session.id)
+        // Session is orphaned (no worktree_id or connection_id) - open in read-only mode
+        openOrphanedSession(session as any)
         closePanel()
+        toast.info('Opened in read-only mode: session is from an archived worktree.')
       }
     },
-    [reopenSession, setActiveSession, closePanel]
+    [reopenSession, reopenConnectionSession, openOrphanedSession, closePanel, selectWorktree, selectConnection, worktreesByProject]
   )
 
   // Get selected session
