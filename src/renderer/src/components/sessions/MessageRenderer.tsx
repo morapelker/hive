@@ -15,6 +15,41 @@ interface MessageRendererProps {
   isForking?: boolean
 }
 
+/**
+ * Skip past attachment XML blocks to find where the actual prompt text starts.
+ * Attachments can come before the mode prefix, so we need to skip them.
+ */
+function skipAttachments(content: string): { prefix: string; remaining: string } {
+  let pos = 0
+  const attachmentPatterns = [
+    /<data-attachment[\s\S]*?<\/data-attachment>/,
+    /<attached_files>[\s\S]*?<\/attached_files>/,
+    /<ticket[\s\S]*?<\/ticket>/,
+    /<pr-comment[\s\S]*?<\/pr-comment>/
+  ]
+
+  let changed = true
+  while (changed) {
+    changed = false
+    const rest = content.slice(pos).trimStart()
+    const trimOffset = content.slice(pos).length - rest.length
+
+    for (const pattern of attachmentPatterns) {
+      const match = rest.match(pattern)
+      if (match && match.index === 0) {
+        pos += trimOffset + match[0].length
+        changed = true
+        break
+      }
+    }
+  }
+
+  return {
+    prefix: content.slice(0, pos),
+    remaining: content.slice(pos).trimStart()
+  }
+}
+
 export const MessageRenderer = memo(function MessageRenderer({
   message,
   isStreaming = false,
@@ -23,13 +58,23 @@ export const MessageRenderer = memo(function MessageRenderer({
   forkDisabled = false,
   isForking = false
 }: MessageRendererProps): React.JSX.Element {
-  const isPlanMode = message.role === 'user' && message.content.startsWith(PLAN_MODE_PREFIX)
-  const isAskMode = message.role === 'user' && message.content.startsWith(ASK_MODE_PREFIX)
-  const displayContent = isPlanMode
-    ? message.content.slice(PLAN_MODE_PREFIX.length)
-    : isAskMode
-      ? message.content.slice(ASK_MODE_PREFIX.length)
-      : message.content
+  // For user messages, check if there's a mode prefix (possibly after attachments)
+  let isPlanMode = false
+  let isAskMode = false
+  let displayContent = message.content
+
+  if (message.role === 'user') {
+    const { prefix, remaining } = skipAttachments(message.content)
+
+    if (remaining.startsWith(PLAN_MODE_PREFIX)) {
+      isPlanMode = true
+      displayContent = prefix + remaining.slice(PLAN_MODE_PREFIX.length)
+    } else if (remaining.startsWith(ASK_MODE_PREFIX)) {
+      isAskMode = true
+      displayContent = prefix + remaining.slice(ASK_MODE_PREFIX.length)
+    }
+  }
+
   const isAssistantMessage = message.role === 'assistant' && !isStreaming
 
   return (
