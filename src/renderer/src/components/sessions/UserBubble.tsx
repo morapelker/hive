@@ -7,10 +7,11 @@ interface UserBubbleProps {
   content: string
   timestamp: string
   isPlanMode?: boolean
+  isSuperPlanMode?: boolean
   isAskMode?: boolean
 }
 
-export const UserBubble = memo(function UserBubble({ content, isPlanMode, isAskMode }: UserBubbleProps): React.JSX.Element {
+export const UserBubble = memo(function UserBubble({ content, isPlanMode, isSuperPlanMode, isAskMode }: UserBubbleProps): React.JSX.Element {
   const { tickets, prComments, files, dataAttachments, cleanText } = useMemo(
     () => parseUserMessageAttachments(content),
     [content]
@@ -28,13 +29,23 @@ export const UserBubble = memo(function UserBubble({ content, isPlanMode, isAskM
       <div
         className={cn(
           'max-w-[80%] rounded-2xl px-4 py-3',
-          isPlanMode
+          isSuperPlanMode
             ? 'bg-purple-500/10 text-foreground'
-            : isAskMode
-              ? 'bg-amber-500/10 text-foreground'
-              : 'bg-primary/10 text-foreground'
+            : isPlanMode
+              ? 'bg-purple-500/10 text-foreground'
+              : isAskMode
+                ? 'bg-amber-500/10 text-foreground'
+                : 'bg-primary/10 text-foreground'
         )}
       >
+        {isSuperPlanMode && (
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-orange-500/15 text-orange-400 mb-1"
+            data-testid="super-plan-mode-badge"
+          >
+            SUPER PLAN
+          </span>
+        )}
         {isPlanMode && (
           <span
             className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-purple-500/15 text-purple-400 mb-1"

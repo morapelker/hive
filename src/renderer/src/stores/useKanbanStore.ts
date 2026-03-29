@@ -10,6 +10,7 @@ import {
   registerKanbanSessionSync,
   type KanbanSessionEvent
 } from './store-coordination'
+import { isPlanLike } from '../lib/constants'
 
 // ── Shared drag state (module-level, avoids DataTransfer issues in Electron) ──
 export interface KanbanDragData {
@@ -412,7 +413,7 @@ export const useKanbanStore = create<KanbanState>()(
                   get()
                     .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                     .catch(() => {})
-                } else if (ticket.mode === 'plan' && !ticket.plan_ready) {
+                } else if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
                   // Plan finished — set plan_ready and move to review for user attention
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
@@ -428,7 +429,7 @@ export const useKanbanStore = create<KanbanState>()(
 
               case 'plan_ready': {
                 // Explicit plan.ready event — set flag and move to review
-                if (ticket.mode === 'plan' && !ticket.plan_ready) {
+                if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})

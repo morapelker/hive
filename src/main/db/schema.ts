@@ -358,5 +358,22 @@ export const MIGRATIONS: Migration[] = [
     down: `
       ALTER TABLE ticket_followup_messages DROP COLUMN role;
     `
+  },
+  {
+    version: 15,
+    name: 'add_kanban_ticket_external_source',
+    up: `
+      ALTER TABLE kanban_tickets ADD COLUMN external_provider TEXT DEFAULT NULL;
+      ALTER TABLE kanban_tickets ADD COLUMN external_id TEXT DEFAULT NULL;
+      ALTER TABLE kanban_tickets ADD COLUMN external_url TEXT DEFAULT NULL;
+      CREATE INDEX IF NOT EXISTS idx_kanban_tickets_external
+        ON kanban_tickets(external_provider, external_id);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_kanban_tickets_external;
+      ALTER TABLE kanban_tickets DROP COLUMN external_url;
+      ALTER TABLE kanban_tickets DROP COLUMN external_id;
+      ALTER TABLE kanban_tickets DROP COLUMN external_provider;
+    `
   }
 ]

@@ -125,11 +125,14 @@ export class DatabaseService {
       sort_order: row.sort_order as number,
       current_session_id: (row.current_session_id as string) ?? null,
       worktree_id: (row.worktree_id as string) ?? null,
-      mode: (row.mode as 'build' | 'plan') ?? null,
+      mode: (row.mode as 'build' | 'plan' | 'super-plan') ?? null,
       plan_ready: !!(row.plan_ready as number),
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
-      archived_at: (row.archived_at as string) ?? null
+      archived_at: (row.archived_at as string) ?? null,
+      external_provider: (row.external_provider as string) ?? null,
+      external_id: (row.external_id as string) ?? null,
+      external_url: (row.external_url as string) ?? null
     }
   }
 
@@ -1627,10 +1630,13 @@ export class DatabaseService {
     const worktreeId = data.worktree_id ?? null
     const mode = data.mode ?? null
     const planReady = data.plan_ready ? 1 : 0
+    const externalProvider = data.external_provider ?? null
+    const externalId = data.external_id ?? null
+    const externalUrl = data.external_url ?? null
 
     db.prepare(
-      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       data.project_id,
@@ -1643,6 +1649,9 @@ export class DatabaseService {
       worktreeId,
       mode,
       planReady,
+      externalProvider,
+      externalId,
+      externalUrl,
       now,
       now
     )
@@ -1659,6 +1668,9 @@ export class DatabaseService {
       worktree_id: worktreeId,
       mode,
       plan_ready: planReady,
+      external_provider: externalProvider,
+      external_id: externalId,
+      external_url: externalUrl,
       created_at: now,
       updated_at: now
     })
@@ -1669,6 +1681,20 @@ export class DatabaseService {
     const row = db.prepare('SELECT * FROM kanban_tickets WHERE id = ?').get(id) as
       | Record<string, unknown>
       | undefined
+    return row ? this.mapKanbanTicketRow(row) : null
+  }
+
+  getKanbanTicketByExternalId(
+    externalProvider: string,
+    externalId: string,
+    projectId: string
+  ): KanbanTicket | null {
+    const db = this.getDb()
+    const row = db
+      .prepare(
+        'SELECT * FROM kanban_tickets WHERE external_provider = ? AND external_id = ? AND project_id = ?'
+      )
+      .get(externalProvider, externalId, projectId) as Record<string, unknown> | undefined
     return row ? this.mapKanbanTicketRow(row) : null
   }
 
@@ -1830,7 +1856,7 @@ export class DatabaseService {
       ticket_id: data.ticket_id,
       content: data.content,
       role: role as 'user' | 'assistant',
-      mode: data.mode as 'build' | 'plan',
+      mode: data.mode as 'build' | 'plan' | 'super-plan',
       session_id: sessionId,
       source: source as 'direct' | 'supercharge' | 'error_retry',
       created_at: now

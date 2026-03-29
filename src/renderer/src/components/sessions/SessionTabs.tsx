@@ -18,7 +18,8 @@ import {
   Loader2,
   AlertCircle,
   Check,
-  TerminalSquare
+  TerminalSquare,
+  Download
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -36,6 +37,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
+import { ImportTicketsModal } from '@/components/kanban/ImportTicketsModal'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useHintStore } from '@/stores/useHintStore'
 import { cn, parseColorQuad } from '@/lib/utils'
@@ -508,6 +510,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null)
   const [isTicketCreateOpen, setIsTicketCreateOpen] = useState(false)
+  const [showImport, setShowImport] = useState(false)
 
   const {
     activeWorktreeId,
@@ -1249,13 +1252,34 @@ export function SessionTabs(): React.JSX.Element | null {
         </button>
       )}
 
+      {/* Import button — kanban mode, sits on the tab bar line */}
+      {isBoardViewActive && (
+        <button
+          onClick={() => setShowImport(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0 border-l border-border cursor-pointer select-none"
+          data-testid="kanban-import-btn"
+          title="Import tickets"
+        >
+          <Download className="h-3.5 w-3.5" />
+          Import
+        </button>
+      )}
+
       {/* Ticket creation modal — kanban mode */}
       {isBoardViewActive && project && (
-        <TicketCreateModal
-          open={isTicketCreateOpen}
-          onOpenChange={setIsTicketCreateOpen}
-          projectId={project.id}
-        />
+        <>
+          <TicketCreateModal
+            open={isTicketCreateOpen}
+            onOpenChange={setIsTicketCreateOpen}
+            projectId={project.id}
+          />
+          <ImportTicketsModal
+            open={showImport}
+            onOpenChange={setShowImport}
+            projectId={project.id}
+            projectPath={project.path}
+          />
+        </>
       )}
     </div>
   )

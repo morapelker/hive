@@ -1,4 +1,4 @@
-import { Hammer, Map } from 'lucide-react'
+import { Hammer, Map, Sparkles } from 'lucide-react'
 import { useSessionStore, type SessionMode } from '@/stores/useSessionStore'
 import { cn } from '@/lib/utils'
 
@@ -19,14 +19,20 @@ const MODE_CONFIG: Record<
     label: 'Plan',
     icon: Map,
     description: 'Plan and design before implementing'
+  },
+  'super-plan': {
+    label: 'Super Plan',
+    icon: Sparkles,
+    description: 'Deep-dive interview to refine the plan'
   }
 }
 
 export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
-  const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
+  const rawMode = useSessionStore((state) => state.modeBySession.get(sessionId))
+  const mode: SessionMode = rawMode === 'plan' ? 'plan' : 'build'
   const toggleSessionMode = useSessionStore((state) => state.toggleSessionMode)
 
-  const config = MODE_CONFIG[mode]
+  const config = MODE_CONFIG[mode] ?? MODE_CONFIG.build
   const Icon = config.icon
 
   return (
@@ -38,10 +44,12 @@ export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
         'border select-none',
         mode === 'build'
           ? 'bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20'
-          : 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
+          : mode === 'plan'
+            ? 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
+            : 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20'
       )}
       title={`${config.description} (Tab to toggle)`}
-      aria-label={`Current mode: ${config.label}. Click to switch to ${mode === 'build' ? 'Plan' : 'Build'} mode`}
+      aria-label={`Current mode: ${config.label}. Click to switch to ${mode === 'build' ? 'Plan' : mode === 'plan' ? 'Super Plan' : 'Build'} mode`}
       data-testid="mode-toggle"
       data-mode={mode}
     >

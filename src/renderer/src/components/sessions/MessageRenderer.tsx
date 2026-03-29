@@ -3,7 +3,7 @@ import { UserBubble } from './UserBubble'
 import { AssistantCanvas } from './AssistantCanvas'
 import { CopyMessageButton } from './CopyMessageButton'
 import { ForkMessageButton } from './ForkMessageButton'
-import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX } from '@/lib/constants'
+import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX } from '@/lib/constants'
 import type { OpenCodeMessage } from './SessionView'
 
 interface MessageRendererProps {
@@ -59,6 +59,7 @@ export const MessageRenderer = memo(function MessageRenderer({
   isForking = false
 }: MessageRendererProps): React.JSX.Element {
   // For user messages, check if there's a mode prefix (possibly after attachments)
+  let isSuperPlanMode = false
   let isPlanMode = false
   let isAskMode = false
   let displayContent = message.content
@@ -66,7 +67,11 @@ export const MessageRenderer = memo(function MessageRenderer({
   if (message.role === 'user') {
     const { prefix, remaining } = skipAttachments(message.content)
 
-    if (remaining.startsWith(PLAN_MODE_PREFIX)) {
+    // Check for mode prefixes in order (longest first to avoid false positives)
+    if (remaining.startsWith(SUPER_PLAN_MODE_PREFIX)) {
+      isSuperPlanMode = true
+      displayContent = prefix + remaining.slice(SUPER_PLAN_MODE_PREFIX.length)
+    } else if (remaining.startsWith(PLAN_MODE_PREFIX)) {
       isPlanMode = true
       displayContent = prefix + remaining.slice(PLAN_MODE_PREFIX.length)
     } else if (remaining.startsWith(ASK_MODE_PREFIX)) {
@@ -92,6 +97,7 @@ export const MessageRenderer = memo(function MessageRenderer({
           content={displayContent}
           timestamp={message.timestamp}
           isPlanMode={isPlanMode}
+          isSuperPlanMode={isSuperPlanMode}
           isAskMode={isAskMode}
         />
       ) : (

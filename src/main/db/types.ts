@@ -84,7 +84,7 @@ export interface WorktreeUpdate {
   last_accessed_at?: string
 }
 
-export type SessionMode = 'build' | 'plan'
+export type SessionMode = 'build' | 'plan' | 'super-plan'
 
 export interface Session {
   id: string
@@ -342,11 +342,14 @@ export interface KanbanTicket {
   sort_order: number
   current_session_id: string | null
   worktree_id: string | null
-  mode: 'build' | 'plan' | null
+  mode: 'build' | 'plan' | 'super-plan' | null
   plan_ready: boolean // Mapped from INTEGER 0/1 in DB
   created_at: string
   updated_at: string
   archived_at: string | null
+  external_provider: string | null
+  external_id: string | null
+  external_url: string | null
 }
 
 export interface KanbanTicketCreate {
@@ -358,8 +361,11 @@ export interface KanbanTicketCreate {
   sort_order?: number
   current_session_id?: string | null
   worktree_id?: string | null
-  mode?: 'build' | 'plan' | null
+  mode?: 'build' | 'plan' | 'super-plan' | null
   plan_ready?: boolean
+  external_provider?: string | null
+  external_id?: string | null
+  external_url?: string | null
 }
 
 export interface KanbanTicketUpdate {
@@ -370,7 +376,7 @@ export interface KanbanTicketUpdate {
   sort_order?: number
   current_session_id?: string | null
   worktree_id?: string | null
-  mode?: 'build' | 'plan' | null
+  mode?: 'build' | 'plan' | 'super-plan' | null
   plan_ready?: boolean
 }
 
@@ -380,7 +386,7 @@ export interface TicketFollowupMessage {
   ticket_id: string
   content: string
   role: 'user' | 'assistant'
-  mode: 'build' | 'plan'
+  mode: 'build' | 'plan' | 'super-plan'
   session_id: string | null
   source: 'direct' | 'supercharge' | 'error_retry'
   created_at: string
@@ -390,7 +396,7 @@ export interface TicketFollowupMessageCreate {
   ticket_id: string
   content: string
   role?: 'user' | 'assistant'
-  mode: 'build' | 'plan'
+  mode: 'build' | 'plan' | 'super-plan'
   session_id?: string | null
   source?: 'direct' | 'supercharge' | 'error_retry'
 }

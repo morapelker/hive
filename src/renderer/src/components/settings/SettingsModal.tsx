@@ -10,7 +10,8 @@ import {
   Shield,
   Eye,
   Sparkles,
-  LogOut
+  LogOut,
+  Plug
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -27,6 +28,7 @@ import { SettingsShortcuts } from './SettingsShortcuts'
 import { SettingsUpdates } from './SettingsUpdates'
 import { SettingsSecurity } from './SettingsSecurity'
 import { SettingsPrivacy } from './SettingsPrivacy'
+import { SettingsIntegrations } from './SettingsIntegrations'
 import { cn } from '@/lib/utils'
 
 const SECTIONS = [
@@ -35,6 +37,7 @@ const SECTIONS = [
   { id: 'models', label: 'Models', icon: Sparkles, electronOnly: false },
   { id: 'editor', label: 'Editor', icon: Code, electronOnly: false },
   { id: 'terminal', label: 'Terminal', icon: Terminal, electronOnly: true },
+  { id: 'integrations', label: 'Integrations', icon: Plug, electronOnly: false },
   { id: 'security', label: 'Security', icon: Shield, electronOnly: false },
   { id: 'privacy', label: 'Privacy', icon: Eye, electronOnly: false },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, electronOnly: false },
@@ -119,6 +122,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'models' && <SettingsModels />}
             {activeSection === 'editor' && <SettingsEditor />}
             {activeSection === 'terminal' && <SettingsTerminal />}
+            {activeSection === 'integrations' && <SettingsIntegrations />}
             {activeSection === 'security' && <SettingsSecurity />}
             {activeSection === 'privacy' && <SettingsPrivacy />}
             {activeSection === 'shortcuts' && <SettingsShortcuts />}

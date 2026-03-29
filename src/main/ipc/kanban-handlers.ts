@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../db'
 import { createLogger } from '../services/logger'
-import type { KanbanTicketCreate, KanbanTicketUpdate, KanbanTicketColumn, TicketFollowupMessageCreate } from '../db'
+import type { KanbanTicketCreate, KanbanTicketUpdate, KanbanTicketColumn } from '../db'
 
 const log = createLogger({ component: 'KanbanHandlers' })
 
@@ -59,11 +59,4 @@ export function registerKanbanHandlers(): void {
     return getDatabase().updateProjectSimpleMode(projectId, enabled)
   })
 
-  ipcMain.handle('kanban:followup:create', (_event, data: TicketFollowupMessageCreate) => {
-    return getDatabase().createTicketFollowupMessage(data)
-  })
-
-  ipcMain.handle('kanban:followup:getByTicket', (_event, ticketId: string) => {
-    return getDatabase().getTicketFollowupMessages(ticketId)
-  })
 }

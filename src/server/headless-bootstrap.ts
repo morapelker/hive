@@ -125,6 +125,7 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
     // Default: look for bundled web UI in known locations
     const candidates = [
       join(__dirname, 'web'),
+      join(__dirname, '..', 'web'),
       join(__dirname, '..', '..', 'out', 'web'),
       join(__dirname, '..', '..', 'dist', 'web')
     ]

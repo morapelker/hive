@@ -4,9 +4,10 @@ import type { SelectedModel } from './useSettingsStore'
 import { useGitStore } from './useGitStore'
 import { useWorktreeStore } from './useWorktreeStore'
 import { notifyKanbanSessionSync } from './store-coordination'
+import { useSettingsStore } from './useSettingsStore'
 
 // Session mode type
-export type SessionMode = 'build' | 'plan'
+export type SessionMode = 'build' | 'plan' | 'super-plan'
 
 // Pending plan approval state (from ExitPlanMode blocking tool)
 export interface PendingPlan {
@@ -891,7 +892,19 @@ export const useSessionStore = create<SessionState>()(
       // Toggle session mode between build and plan
       toggleSessionMode: async (sessionId: string) => {
         const currentMode = get().modeBySession.get(sessionId) || 'build'
-        const newMode: SessionMode = currentMode === 'build' ? 'plan' : 'build'
+
+        const superPlanEnabled = useSettingsStore.getState().superPlanModeEnabled
+
+        let newMode: SessionMode
+        if (superPlanEnabled) {
+          // 3-way cycle: build → plan → super-plan → build
+          if (currentMode === 'build') newMode = 'plan'
+          else if (currentMode === 'plan') newMode = 'super-plan'
+          else newMode = 'build'  // super-plan → build
+        } else {
+          // 2-way cycle: build ↔ plan
+          newMode = currentMode === 'build' ? 'plan' : 'build'
+        }
 
         // Update local state immediately
         set((state) => {

@@ -1789,19 +1789,66 @@ const kanban = {
   simpleMode: {
     toggle: (projectId: string, enabled: boolean) =>
       ipcRenderer.invoke('kanban:simpleMode:toggle', projectId, enabled)
-  },
-  followup: {
-    create: (data: {
-      ticket_id: string
-      content: string
-      role?: 'user' | 'assistant'
-      mode: 'build' | 'plan'
-      session_id?: string | null
-      source?: 'direct' | 'supercharge' | 'error_retry'
-    }) => ipcRenderer.invoke('kanban:followup:create', data),
-    getByTicket: (ticketId: string) =>
-      ipcRenderer.invoke('kanban:followup:getByTicket', ticketId)
   }
+}
+
+const ticketImport = {
+  listProviders: (): Promise<Array<{ id: string; name: string; icon: string }>> =>
+    ipcRenderer.invoke('ticketImport:listProviders'),
+  getSettingsSchema: (
+    providerId: string
+  ): Promise<Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>> =>
+    ipcRenderer.invoke('ticketImport:getSettingsSchema', providerId),
+  authenticate: (
+    providerId: string,
+    settings: Record<string, string>
+  ): Promise<{ success: boolean; error: string | null }> =>
+    ipcRenderer.invoke('ticketImport:authenticate', providerId, settings),
+  detectRepo: (
+    providerId: string,
+    projectPath: string
+  ): Promise<{ repo: string | null }> =>
+    ipcRenderer.invoke('ticketImport:detectRepo', providerId, projectPath),
+  listIssues: (
+    providerId: string,
+    repo: string,
+    options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string },
+    settings: Record<string, string>
+  ): Promise<{
+    issues: Array<{
+      externalId: string
+      title: string
+      body: string | null
+      state: 'open' | 'closed'
+      url: string
+      createdAt: string
+      updatedAt: string
+    }>
+    hasNextPage: boolean
+    totalCount: number
+  }> => ipcRenderer.invoke('ticketImport:listIssues', providerId, repo, options, settings),
+  importIssues: (
+    providerId: string,
+    projectId: string,
+    repo: string,
+    issues: Array<{ externalId: string; title: string; body: string | null; state: string; url: string }>
+  ): Promise<{ imported: string[]; skipped: string[] }> =>
+    ipcRenderer.invoke('ticketImport:importIssues', providerId, projectId, repo, issues),
+  getAvailableStatuses: (
+    providerId: string,
+    repo: string,
+    externalId: string,
+    settings: Record<string, string>
+  ): Promise<Array<{ id: string; label: string }>> =>
+    ipcRenderer.invoke('ticketImport:getAvailableStatuses', providerId, repo, externalId, settings),
+  updateRemoteStatus: (
+    providerId: string,
+    repo: string,
+    externalId: string,
+    statusId: string,
+    settings: Record<string, string>
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('ticketImport:updateRemoteStatus', providerId, repo, externalId, statusId, settings)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
@@ -1826,6 +1873,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('usageOps', usageOps)
     contextBridge.exposeInMainWorld('analyticsOps', analyticsOps)
     contextBridge.exposeInMainWorld('kanban', kanban)
+    contextBridge.exposeInMainWorld('ticketImport', ticketImport)
   } catch (error) {
     console.error(error)
   }
@@ -1864,4 +1912,6 @@ if (process.contextIsolated) {
   window.analyticsOps = analyticsOps
   // @ts-expect-error (define in dts)
   window.kanban = kanban
+  // @ts-expect-error (define in dts)
+  window.ticketImport = ticketImport
 }

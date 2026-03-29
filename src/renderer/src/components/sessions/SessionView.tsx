@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
-import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square, Archive, X, Github } from 'lucide-react'
+import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square, Archive, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { ProviderIcon } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
 import { MessageRenderer } from './MessageRenderer'
 import { ModeToggle } from './ModeToggle'
@@ -65,7 +66,7 @@ import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import { CommandApprovalPrompt } from './CommandApprovalPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
-import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, stripPlanModePrefix } from '@/lib/constants'
+import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX, stripPlanModePrefix, isPlanLike } from '@/lib/constants'
 
 /**
  * Resolve an OpenCode session ID to the corresponding Hive session ID
@@ -412,7 +413,7 @@ function PrCommentAttachments(): React.JSX.Element | null {
             className="group relative flex flex-col gap-1 px-3 py-2 rounded-lg bg-background border border-border text-sm max-w-[400px] min-w-[220px]"
           >
             <div className="flex items-center gap-2">
-              <Github className="h-3.5 w-3.5 shrink-0 text-foreground" />
+              <ProviderIcon provider="github" />
               <img
                 src={c.user.avatarUrl}
                 alt={c.user.login}
@@ -953,7 +954,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       // Question answered/dismissed — restore status based on session mode
       if (currentStatus?.status === 'answering') {
         const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-        statusStore.setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+        statusStore.setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
       }
     }
   }, [activeQuestion, sessionId])
@@ -970,7 +971,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     } else if (!activePermission && sessionId) {
       if (currentStatus?.status === 'permission') {
         const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-        statusStore.setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+        statusStore.setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
       }
     }
   }, [activePermission, sessionId])
@@ -1667,7 +1668,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   const mode = useSessionStore.getState().getSessionMode(sessionId)
                   useWorktreeStatusStore
                     .getState()
-                    .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+                    .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
                 }
               }
             }
@@ -2312,7 +2313,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
               useWorktreeStatusStore
                 .getState()
-                .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+                .setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
             } else if (status.type === 'idle') {
               // Don't overwrite plan_ready — session is blocked waiting for plan approval
               if (useSessionStore.getState().getPendingPlan(sessionId)) return
@@ -2707,9 +2708,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             lastSendMode.set(sessionId, currentMode)
             useWorktreeStatusStore
               .getState()
-              .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+              .setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
             // Apply mode prefix for OpenCode sessions (Claude Code uses native plan mode)
-            const modePrefix = currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX : ''
+            const modePrefix =
+              currentMode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+              : currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
+              : ''
             const promptMessage = modePrefix + pendingMsg
             // Store the full prompt so the stream handler can detect SDK echoes
             lastSentPromptRef.current = promptMessage
@@ -2792,7 +2796,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 const currentMode = useSessionStore.getState().getSessionMode(sessionId)
                 useWorktreeStatusStore
                   .getState()
-                  .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+                  .setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
               }
             } else if (reconnectResult.sessionStatus === 'idle') {
               if (!hasPendingPlanOnReconnect) {
@@ -3446,7 +3450,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       lastSendMode.set(sessionId, currentModeForStatus)
       useWorktreeStatusStore
         .getState()
-        .setSessionStatus(sessionId, currentModeForStatus === 'plan' ? 'planning' : 'working')
+        .setSessionStatus(sessionId, isPlanLike(currentModeForStatus) ? 'planning' : 'working')
+
+      // Auto-revert super-plan → plan immediately (one-shot mode).
+      // The captured `currentModeForStatus` preserves the original mode for prefix logic below.
+      if (currentModeForStatus === 'super-plan') {
+        useSessionStore.getState().setSessionMode(sessionId, 'plan')
+      }
 
       try {
         setSessionRetry(null)
@@ -3464,8 +3474,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // Build the full display content for the optimistic message so that
         // attachment cards (tickets, PR comments, files) render immediately
         // instead of only appearing after a session reload from disk.
-        const optimisticMode = useSessionStore.getState().getSessionMode(sessionId)
-        const optimisticModePrefix = optimisticMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX : ''
+        const optimisticMode = currentModeForStatus
+        const optimisticModePrefix =
+          optimisticMode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+          : optimisticMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
+          : ''
         const optimisticPrComments = usePRReviewStore.getState().attachedComments
         let optimisticPrContext = ''
         if (optimisticPrComments.length > 0) {
@@ -3586,9 +3599,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
             } else {
               // Unknown command — send as regular prompt (SDK may handle it)
-              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
               const modePrefix =
-                currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX : ''
+                currentModeForStatus === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+                : currentModeForStatus === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
+                : ''
               // Build PR review comment context
               const prAttachedComments = usePRReviewStore.getState().attachedComments
               let prContext = ''
@@ -3621,8 +3635,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             }
           } else {
             // Regular prompt — existing code (with mode prefix, attachments, etc.)
-            const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-            const modePrefix = currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX : ''
+            const modePrefix =
+              currentModeForStatus === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+              : currentModeForStatus === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
+              : ''
             // Build PR review comment context
             const prAttachedComments = usePRReviewStore.getState().attachedComments
             let prContext = ''
@@ -3862,7 +3878,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const currentMode = useSessionStore.getState().getSessionMode(sessionId)
         useWorktreeStatusStore
           .getState()
-          .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+          .setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
       } catch (err) {
         toast.error(`Plan reject error: ${err instanceof Error ? err.message : String(err)}`)
         useSessionStore.getState().setPendingPlan(sessionId, pendingBeforeAction)

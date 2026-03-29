@@ -22,17 +22,6 @@ function mapKanbanTicket(row: any) {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapFollowup(row: any) {
-  if (!row) return null
-  return {
-    id: row.id,
-    ticketId: row.ticket_id,
-    message: row.content,
-    createdAt: row.created_at
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Kanban Mutation Resolvers
 // ---------------------------------------------------------------------------
@@ -47,7 +36,10 @@ export const kanbanMutationResolvers: Resolvers = {
         title: input.title,
         description: input.description ?? null,
         column: input.column as 'todo' | 'in_progress' | 'review' | 'done',
-        sort_order: input.sortOrder ?? 0
+        sort_order: input.sortOrder ?? 0,
+        external_provider: input.externalProvider ?? null,
+        external_id: input.externalId ?? null,
+        external_url: input.externalUrl ?? null
       })
       return mapKanbanTicket(row)
     },
@@ -99,15 +91,6 @@ export const kanbanMutationResolvers: Resolvers = {
     kanbanToggleSimpleMode: async (_parent, { projectId, enabled }, ctx) => {
       ctx.db.updateProjectSimpleMode(projectId, enabled)
       return { success: true }
-    },
-
-    kanbanCreateFollowup: async (_parent, { input }, ctx) => {
-      const row = ctx.db.createTicketFollowupMessage({
-        ticket_id: input.ticketId,
-        content: input.message,
-        mode: 'build'
-      })
-      return mapFollowup(row)
     }
   }
 }

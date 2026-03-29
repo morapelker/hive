@@ -1,6 +1,8 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff } from 'lucide-react'
+import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw } from 'lucide-react'
+import { UpdateStatusModal } from './UpdateStatusModal'
 import { cn } from '@/lib/utils'
+import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
 import {
   ContextMenu,
@@ -51,6 +53,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showWorktreePicker, setShowWorktreePicker] = useState(false)
   const [showPreAssignPicker, setShowPreAssignPicker] = useState(false)
+  const [showStatusUpdate, setShowStatusUpdate] = useState(false)
+  const isExternalTicket = !!ticket.external_provider
   const dragCloneRef = useRef<HTMLElement | null>(null)
 
   // ── Lookup worktree name ────────────────────────────────────────
@@ -150,6 +154,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     if (ticket.plan_ready) return 'violet'
     if (ticket.current_session_id && ticket.mode === 'build') return 'blue'
     if (ticket.current_session_id && ticket.mode === 'plan') return 'violet'
+    if (ticket.current_session_id && ticket.mode === 'super-plan') return 'violet'
     return 'default'
   }, [ticket.column, ticket.mode, ticket.plan_ready, ticket.current_session_id])
 
@@ -297,14 +302,28 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               borderState === 'violet' && 'border-violet-500/60'
             )}
           >
-            {/* Title + token counter */}
+            {/* Title + top-right indicators */}
             <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium leading-snug text-foreground">{ticket.title}</p>
-              {tokenText && (
-                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                  {tokenText}
-                </span>
-              )}
+              <p className="text-sm font-medium leading-snug text-foreground min-w-0">{ticket.title}</p>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {tokenText && (
+                  <span className="text-[11px] tabular-nums text-muted-foreground">
+                    {tokenText}
+                  </span>
+                )}
+                {ticket.external_provider && (
+                  <a
+                    href={ticket.external_url ?? '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="transition-opacity hover:opacity-80"
+                    title={`${getProviderLabel(ticket.external_provider)} #${ticket.external_id}`}
+                  >
+                    <ProviderIcon provider={ticket.external_provider} />
+                  </a>
+                )}
+              </div>
             </div>
 
             {/* Badges + progress row */}
@@ -458,6 +477,18 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </>
           )}
 
+          {/* Update status on remote platform */}
+          {isExternalTicket && (
+            <ContextMenuItem
+              data-testid="ctx-update-remote-status"
+              onClick={() => setShowStatusUpdate(true)}
+              className="gap-2"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Update on {getProviderLabel(ticket.external_provider!)}
+            </ContextMenuItem>
+          )}
+
           <ContextMenuSeparator />
 
           {/* Archive/Unarchive (done tickets) or Delete (all others) */}
@@ -535,6 +566,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         onOpenChange={setShowPreAssignPicker}
         preAssignOnly
       />
+
+      {isExternalTicket && ticket.external_id && ticket.external_url && (
+        <UpdateStatusModal
+          open={showStatusUpdate}
+          onOpenChange={setShowStatusUpdate}
+          externalProvider={ticket.external_provider!}
+          externalId={ticket.external_id}
+          externalUrl={ticket.external_url}
+          ticketTitle={ticket.title}
+        />
+      )}
     </>
   )
 })
