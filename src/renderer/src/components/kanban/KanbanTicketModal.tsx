@@ -879,7 +879,7 @@ function PlanReviewModeContent({
       lastSendMode.set(sessionId, followUpMode)
       useWorktreeStatusStore
         .getState()
-        .setSessionStatus(sessionId, followUpMode === 'plan' ? 'planning' : 'working')
+        .setSessionStatus(sessionId, isPlanLike(followUpMode) ? 'planning' : 'working')
 
       toast.success('Followup sent')
       onClose()
@@ -1350,7 +1350,7 @@ function ReviewModeContent({
       lastSendMode.set(sessionId, mode)
       useWorktreeStatusStore
         .getState()
-        .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+        .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
 
       toast.success('Followup sent')
       onClose()
@@ -1763,7 +1763,7 @@ function QuestionModeContent({
       if (ticket.current_session_id) {
         useWorktreeStatusStore.getState().setSessionStatus(
           ticket.current_session_id,
-          ticket.mode === 'plan' ? 'planning' : 'working'
+          isPlanLike(ticket.mode) ? 'planning' : 'working'
         )
       }
       onClose()
@@ -1781,7 +1781,7 @@ function QuestionModeContent({
       if (ticket.current_session_id) {
         useWorktreeStatusStore.getState().setSessionStatus(
           ticket.current_session_id,
-          ticket.mode === 'plan' ? 'planning' : 'working'
+          isPlanLike(ticket.mode) ? 'planning' : 'working'
         )
       }
       onClose()

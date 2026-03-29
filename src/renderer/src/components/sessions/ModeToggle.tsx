@@ -29,7 +29,7 @@ const MODE_CONFIG: Record<
 
 export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
   const rawMode = useSessionStore((state) => state.modeBySession.get(sessionId))
-  const mode: SessionMode = rawMode === 'plan' ? 'plan' : 'build'
+  const mode: SessionMode = rawMode === 'plan' ? 'plan' : rawMode === 'super-plan' ? 'super-plan' : 'build'
   const toggleSessionMode = useSessionStore((state) => state.toggleSessionMode)
 
   const config = MODE_CONFIG[mode] ?? MODE_CONFIG.build

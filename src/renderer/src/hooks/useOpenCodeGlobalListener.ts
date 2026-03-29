@@ -15,6 +15,7 @@ import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { computeTokenDelta } from '@/lib/token-baselines'
 import { messageSendTimes } from '@/lib/message-send-times'
 import { checkAutoApprove } from '@/lib/permissionUtils'
+import { isPlanLike } from '@/lib/constants'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 
 interface PromptDispatchContext {
@@ -353,7 +354,7 @@ export function useOpenCodeGlobalListener(): void {
                   const mode = useSessionStore.getState().getSessionMode(sessionId)
                   useWorktreeStatusStore
                     .getState()
-                    .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+                    .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
                 }
               }
             }
@@ -399,7 +400,7 @@ export function useOpenCodeGlobalListener(): void {
                   const mode = useSessionStore.getState().getSessionMode(sessionId)
                   useWorktreeStatusStore
                     .getState()
-                    .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+                    .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
                 }
               }
             }
@@ -452,7 +453,7 @@ export function useOpenCodeGlobalListener(): void {
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
               useWorktreeStatusStore
                 .getState()
-                .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
+                .setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
             }
 
             // Always track recent activity so data is fresh when toggled on (Fix #6)
@@ -539,7 +540,7 @@ export function useOpenCodeGlobalListener(): void {
                 const mode = useSessionStore.getState().getSessionMode(sessionId)
                 useWorktreeStatusStore
                   .getState()
-                  .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+                  .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
 
                 const result = await window.opencodeOps.prompt(
                   context.worktreePath,

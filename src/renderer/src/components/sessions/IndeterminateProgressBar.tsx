@@ -60,14 +60,18 @@ export function IndeterminateProgressBar({
       ? 'bg-amber-500/15'
       : mode === 'build'
         ? 'bg-blue-500/15'
-        : 'bg-violet-500/15'
+        : mode === 'super-plan'
+          ? 'bg-orange-500/15'
+          : 'bg-violet-500/15'
   const bgBar = isCompacting
     ? 'bg-red-500'
     : isAsking
       ? 'bg-amber-500'
       : mode === 'build'
         ? 'bg-blue-500'
-        : 'bg-violet-500'
+        : mode === 'super-plan'
+          ? 'bg-orange-500'
+          : 'bg-violet-500'
 
   return (
     <div

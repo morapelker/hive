@@ -4942,7 +4942,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
               mode === 'build'
                 ? 'border-blue-500/50 bg-blue-500/5'
-                : 'border-violet-500/50 bg-violet-500/5'
+                : mode === 'super-plan'
+                  ? 'border-orange-500/50 bg-orange-500/5'
+                  : 'border-violet-500/50 bg-violet-500/5'
             )}
           >
             {/* Top row: mode toggle */}
@@ -5034,7 +5036,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                         ? 'text-amber-500 font-semibold'
                         : mode === 'build'
                           ? 'text-blue-500 font-semibold'
-                          : 'text-violet-500 font-semibold'
+                          : mode === 'super-plan'
+                            ? 'text-orange-500 font-semibold'
+                            : 'text-violet-500 font-semibold'
                       : 'text-muted-foreground'
                   )}
                 >
