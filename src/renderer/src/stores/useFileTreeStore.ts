@@ -43,10 +43,7 @@ interface FileTreeState {
   refreshFileTree: (worktreePath: string) => Promise<void>
   startWatching: (worktreePath: string) => Promise<void>
   stopWatching: (worktreePath: string) => Promise<void>
-  handleFileChange: (
-    worktreePath: string,
-    events: FileTreeChangeEventItem[]
-  ) => Promise<void>
+  handleFileChange: (worktreePath: string, events: FileTreeChangeEventItem[]) => Promise<void>
 }
 
 // Helper to convert Set to Array for persistence
@@ -308,10 +305,7 @@ export const useFileTreeStore = create<FileTreeState>()(
       },
 
       // Handle batched file change events from watcher
-      handleFileChange: async (
-        worktreePath: string,
-        events: FileTreeChangeEventItem[]
-      ) => {
+      handleFileChange: async (worktreePath: string, events: FileTreeChangeEventItem[]) => {
         // Refresh the tree display once (not per-event)
         await get().refreshFileTree(worktreePath)
 

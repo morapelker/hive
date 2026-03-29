@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { revealLabel } from '@/lib/platform'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -171,7 +172,7 @@ export function FileContextMenu({
           </ContextMenuItem>
           <ContextMenuItem onClick={handleOpenInFinder}>
             <FolderOpen className="mr-2 h-4 w-4" />
-            {node.isDirectory ? 'Open in Finder' : 'Reveal in Finder'}
+            {revealLabel(node.isDirectory)}
           </ContextMenuItem>
 
           <ContextMenuSeparator />

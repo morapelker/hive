@@ -16,6 +16,7 @@ export interface DiffTab {
   isUntracked: boolean
   isNewFile?: boolean
   compareBranch?: string
+  prReviewWorktreeId?: string
 }
 
 export interface ContextTab {
@@ -33,12 +34,20 @@ export interface ActiveDiff {
   isUntracked: boolean
   isNewFile?: boolean
   compareBranch?: string
+  scrollToLine?: number
+  scrollTrigger?: number
+  prReviewWorktreeId?: string
 }
 
 interface FileViewerState {
   openFiles: Map<string, TabEntry>
   activeFilePath: string | null
   activeDiff: ActiveDiff | null
+
+  dirtyFiles: Set<string>
+  originalContents: Map<string, string>
+  pendingClose: string | null
+  externallyChanged: Set<string>
 
   contextEditorWorktreeId: string | null
   openContextEditor: (worktreeId: string) => void
@@ -55,12 +64,27 @@ interface FileViewerState {
   activateDiffTab: (tabKey: string) => void
   closeOtherFiles: (keepKey: string) => void
   closeFilesToRight: (fromKey: string) => void
+
+  markDirty: (path: string) => void
+  markClean: (path: string) => void
+  isDirty: (path: string) => boolean
+  setOriginalContent: (path: string, content: string) => void
+  getOriginalContent: (path: string) => string | undefined
+  requestCloseFile: (path: string) => void
+  confirmCloseFile: (path: string) => void
+  cancelCloseFile: () => void
+  markExternallyChanged: (path: string) => void
+  clearExternallyChanged: (path: string) => void
 }
 
-export const useFileViewerStore = create<FileViewerState>((set) => ({
+export const useFileViewerStore = create<FileViewerState>((set, get) => ({
   openFiles: new Map(),
   activeFilePath: null,
   activeDiff: null,
+  dirtyFiles: new Set(),
+  originalContents: new Map(),
+  pendingClose: null,
+  externallyChanged: new Set(),
   contextEditorWorktreeId: null,
 
   openContextEditor: (worktreeId: string) => {
@@ -141,7 +165,16 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
   },
 
   closeAllFiles: () => {
-    set({ openFiles: new Map(), activeFilePath: null, activeDiff: null, contextEditorWorktreeId: null })
+    set({
+      openFiles: new Map(),
+      activeFilePath: null,
+      activeDiff: null,
+      contextEditorWorktreeId: null,
+      dirtyFiles: new Set(),
+      originalContents: new Map(),
+      pendingClose: null,
+      externallyChanged: new Set()
+    })
   },
 
   setActiveDiff: (diff: ActiveDiff | null) => {
@@ -162,9 +195,19 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
         staged: diff.staged,
         isUntracked: diff.isUntracked,
         isNewFile: diff.isNewFile,
-        compareBranch: diff.compareBranch
+        compareBranch: diff.compareBranch,
+        prReviewWorktreeId: diff.prReviewWorktreeId
       })
-      return { activeDiff: diff, activeFilePath: tabKey, openFiles }
+      // Increment scrollTrigger so the scroll effect re-fires even when
+      // scrollToLine hasn't changed (e.g. same comment clicked twice)
+      const scrollTrigger = diff.scrollToLine != null
+        ? (state.activeDiff?.scrollTrigger ?? 0) + 1
+        : undefined
+      return {
+        activeDiff: { ...diff, scrollTrigger },
+        activeFilePath: tabKey,
+        openFiles
+      }
     })
   },
 
@@ -198,7 +241,8 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
           staged: tab.staged,
           isUntracked: tab.isUntracked,
           isNewFile: tab.isNewFile,
-          compareBranch: tab.compareBranch
+          compareBranch: tab.compareBranch,
+          prReviewWorktreeId: tab.prReviewWorktreeId
         }
       }
     })
@@ -209,6 +253,17 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
       const newMap = new Map<string, TabEntry>()
       const kept = state.openFiles.get(keepKey)
       if (kept) newMap.set(keepKey, kept)
+      // Clean up dirty, original, and externallyChanged for closed files
+      const newDirty = new Set(state.dirtyFiles)
+      const newOriginal = new Map(state.originalContents)
+      const newExtChanged = new Set(state.externallyChanged)
+      for (const key of state.openFiles.keys()) {
+        if (!newMap.has(key)) {
+          newDirty.delete(key)
+          newOriginal.delete(key)
+          newExtChanged.delete(key)
+        }
+      }
       // Clear contextEditorWorktreeId if the context tab was closed
       const contextTabKey = state.contextEditorWorktreeId
         ? `context:${state.contextEditorWorktreeId}`
@@ -218,7 +273,10 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
         openFiles: newMap,
         activeFilePath: kept ? keepKey : null,
         activeDiff: kept?.type === 'diff' ? state.activeDiff : null,
-        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null
+        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null,
+        dirtyFiles: newDirty,
+        originalContents: newOriginal,
+        externallyChanged: newExtChanged
       }
     })
   },
@@ -233,6 +291,15 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
         const entry = state.openFiles.get(keys[i])
         if (entry) newMap.set(keys[i], entry)
       }
+      // Clean up dirty, original, and externallyChanged for closed files
+      const newDirty = new Set(state.dirtyFiles)
+      const newOriginal = new Map(state.originalContents)
+      const newExtChanged = new Set(state.externallyChanged)
+      for (const key of keys.slice(index + 1)) {
+        newDirty.delete(key)
+        newOriginal.delete(key)
+        newExtChanged.delete(key)
+      }
       // If active file was to the right and got closed, activate the fromKey
       const activeStillOpen = newMap.has(state.activeFilePath || '')
       // Clear contextEditorWorktreeId if the context tab was closed
@@ -243,8 +310,103 @@ export const useFileViewerStore = create<FileViewerState>((set) => ({
       return {
         openFiles: newMap,
         activeFilePath: activeStillOpen ? state.activeFilePath : fromKey,
-        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null
+        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null,
+        dirtyFiles: newDirty,
+        originalContents: newOriginal,
+        externallyChanged: newExtChanged
       }
+    })
+  },
+
+  markDirty: (path: string) => {
+    set((state) => {
+      if (state.dirtyFiles.has(path)) return state
+      const newDirty = new Set(state.dirtyFiles)
+      newDirty.add(path)
+      return { dirtyFiles: newDirty }
+    })
+  },
+
+  markClean: (path: string) => {
+    set((state) => {
+      if (!state.dirtyFiles.has(path)) return state
+      const newDirty = new Set(state.dirtyFiles)
+      newDirty.delete(path)
+      return { dirtyFiles: newDirty }
+    })
+  },
+
+  isDirty: (path: string) => {
+    return get().dirtyFiles.has(path)
+  },
+
+  setOriginalContent: (path: string, content: string) => {
+    set((state) => {
+      const newOriginal = new Map(state.originalContents)
+      newOriginal.set(path, content)
+      return { originalContents: newOriginal }
+    })
+  },
+
+  getOriginalContent: (path: string) => {
+    return get().originalContents.get(path)
+  },
+
+  requestCloseFile: (path: string) => {
+    const state = get()
+    if (state.dirtyFiles.has(path)) {
+      // Switch to the dirty tab so the correct FileViewer renders the dialog
+      set({ pendingClose: path, activeFilePath: path, activeDiff: null })
+    } else {
+      get().closeFile(path)
+      // Clean up original content and externallyChanged for non-dirty files
+      set((s) => {
+        const newOriginal = new Map(s.originalContents)
+        newOriginal.delete(path)
+        const newExtChanged = new Set(s.externallyChanged)
+        newExtChanged.delete(path)
+        return { originalContents: newOriginal, externallyChanged: newExtChanged }
+      })
+    }
+  },
+
+  confirmCloseFile: (path: string) => {
+    set((state) => {
+      const newDirty = new Set(state.dirtyFiles)
+      newDirty.delete(path)
+      const newOriginal = new Map(state.originalContents)
+      newOriginal.delete(path)
+      const newExtChanged = new Set(state.externallyChanged)
+      newExtChanged.delete(path)
+      return {
+        dirtyFiles: newDirty,
+        originalContents: newOriginal,
+        pendingClose: null,
+        externallyChanged: newExtChanged
+      }
+    })
+    get().closeFile(path)
+  },
+
+  cancelCloseFile: () => {
+    set({ pendingClose: null })
+  },
+
+  markExternallyChanged: (path: string) => {
+    set((state) => {
+      if (state.externallyChanged.has(path)) return state
+      const newSet = new Set(state.externallyChanged)
+      newSet.add(path)
+      return { externallyChanged: newSet }
+    })
+  },
+
+  clearExternallyChanged: (path: string) => {
+    set((state) => {
+      if (!state.externallyChanged.has(path)) return state
+      const newSet = new Set(state.externallyChanged)
+      newSet.delete(path)
+      return { externallyChanged: newSet }
     })
   }
 }))

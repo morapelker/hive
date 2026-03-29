@@ -55,7 +55,11 @@ function resolveGitDir(worktreePath: string): string | null {
 function emitBranchChanged(worktreePath: string): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.webContents.send('git:branchChanged', { worktreePath })
-  try { getEventBus().emit('git:branchChanged', { worktreePath }) } catch { /* EventBus not available */ }
+  try {
+    getEventBus().emit('git:branchChanged', { worktreePath })
+  } catch {
+    /* EventBus not available */
+  }
 }
 
 export function initBranchWatcher(window: BrowserWindow): void {

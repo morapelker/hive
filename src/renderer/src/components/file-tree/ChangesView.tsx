@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, memo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react'
 import {
   AlertTriangle,
   ChevronDown,
@@ -15,6 +15,7 @@ import {
   FileDiff,
   Link
 } from 'lucide-react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { toast } from '@/lib/toast'
 import {
   ContextMenu,
@@ -46,6 +47,28 @@ interface ChangesViewProps {
   connectionMembers?: ConnectionMemberInfo[]
   onFileClick?: (filePath: string) => void
 }
+
+type FlatChangeItem =
+  | {
+      type: 'header'
+      key: string
+      groupId: string
+      title: string
+      count: number
+      action?: React.ReactNode
+      icon?: React.ReactNode
+      headerClassName?: string
+      testId?: string
+    }
+  | {
+      type: 'file'
+      key: string
+      file: GitFileStatus
+      category: 'conflict' | 'staged' | 'modified' | 'untracked'
+    }
+
+const ROW_HEIGHT = 24
+const HEADER_HEIGHT = 28
 
 export function ChangesView({
   worktreePath,
@@ -239,6 +262,142 @@ export function ChangesView({
     },
     [worktreePath, onFileClick]
   )
+
+  // ── Virtualized flat list for the file changes ──
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  const flatItems = useMemo(() => {
+    const items: FlatChangeItem[] = []
+
+    if (conflictedFiles.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-conflicts',
+        groupId: 'conflicts',
+        title: 'Merge Conflicts',
+        count: conflictedFiles.length,
+        icon: <AlertTriangle className="h-3 w-3 text-red-500" />,
+        headerClassName: 'text-red-500',
+        testId: 'changes-conflicts-section'
+      })
+      if (!collapsed.has('conflicts')) {
+        for (const file of conflictedFiles) {
+          items.push({
+            type: 'file',
+            key: `conflict-${file.relativePath}`,
+            file,
+            category: 'conflict'
+          })
+        }
+      }
+    }
+
+    if (stagedFiles.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-staged',
+        groupId: 'staged',
+        title: 'Staged Changes',
+        count: stagedFiles.length,
+        action: (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 text-[10px]"
+            onClick={handleUnstageAll}
+            title="Unstage all files"
+            data-testid="changes-unstage-all"
+          >
+            <Minus className="h-3 w-3 mr-0.5" />
+            Unstage All
+          </Button>
+        ),
+        testId: 'changes-staged-section'
+      })
+      if (!collapsed.has('staged')) {
+        for (const file of stagedFiles) {
+          items.push({
+            type: 'file',
+            key: `staged-${file.relativePath}`,
+            file,
+            category: 'staged'
+          })
+        }
+      }
+    }
+
+    if (modifiedFiles.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-unstaged',
+        groupId: 'unstaged',
+        title: 'Changes',
+        count: modifiedFiles.length,
+        action: (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 text-[10px]"
+            onClick={handleStageAll}
+            title="Stage all files"
+            data-testid="changes-stage-all"
+          >
+            <Plus className="h-3 w-3 mr-0.5" />
+            Stage All
+          </Button>
+        ),
+        testId: 'changes-modified-section'
+      })
+      if (!collapsed.has('unstaged')) {
+        for (const file of modifiedFiles) {
+          items.push({
+            type: 'file',
+            key: `modified-${file.relativePath}`,
+            file,
+            category: 'modified'
+          })
+        }
+      }
+    }
+
+    if (untrackedFiles.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-untracked',
+        groupId: 'untracked',
+        title: 'Untracked',
+        count: untrackedFiles.length,
+        testId: 'changes-untracked-section'
+      })
+      if (!collapsed.has('untracked')) {
+        for (const file of untrackedFiles) {
+          items.push({
+            type: 'file',
+            key: `untracked-${file.relativePath}`,
+            file,
+            category: 'untracked'
+          })
+        }
+      }
+    }
+
+    return items
+  }, [
+    conflictedFiles,
+    stagedFiles,
+    modifiedFiles,
+    untrackedFiles,
+    collapsed,
+    handleUnstageAll,
+    handleStageAll
+  ])
+
+  const virtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => (flatItems[index].type === 'header' ? HEADER_HEIGHT : ROW_HEIGHT),
+    overscan: 15
+  })
 
   // ── Connection mode: load statuses for all member worktrees ──
   useEffect(() => {
@@ -483,190 +642,163 @@ export function ChangesView({
           No changes
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto">
-          {/* Merge Conflicts */}
-          {conflictedFiles.length > 0 && (
-            <GroupHeader
-              title="Merge Conflicts"
-              count={conflictedFiles.length}
-              isCollapsed={collapsed.has('conflicts')}
-              onToggle={() => toggleGroup('conflicts')}
-              icon={<AlertTriangle className="h-3 w-3 text-red-500" />}
-              headerClassName="text-red-500"
-              testId="changes-conflicts-section"
-            >
-              {conflictedFiles.map((file) => (
-                <FileRow
-                  key={`conflict-${file.relativePath}`}
-                  file={file}
-                  onViewDiff={handleViewDiff}
-                  onStageToggle={handleStageFile}
-                  contextMenu={
-                    <ContextMenuContent>
-                      <ContextMenuItem onClick={() => handleStageFile(file)}>
-                        <Plus className="h-3.5 w-3.5 mr-2" />
-                        Mark as Resolved
-                      </ContextMenuItem>
-                      <ContextMenuItem onClick={() => handleViewDiff(file)}>
-                        <FileDiff className="h-3.5 w-3.5 mr-2" />
-                        Open Diff
-                      </ContextMenuItem>
-                    </ContextMenuContent>
-                  }
-                />
-              ))}
-            </GroupHeader>
-          )}
-
-          {/* Staged Changes */}
-          {stagedFiles.length > 0 && (
-            <GroupHeader
-              title="Staged Changes"
-              count={stagedFiles.length}
-              isCollapsed={collapsed.has('staged')}
-              onToggle={() => toggleGroup('staged')}
-              action={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 px-1.5 text-[10px]"
-                  onClick={handleUnstageAll}
-                  title="Unstage all files"
-                  data-testid="changes-unstage-all"
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative'
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const item = flatItems[virtualRow.index]
+              return (
+                <div
+                  key={item.key}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: `${virtualRow.size}px`,
+                    transform: `translateY(${virtualRow.start}px)`
+                  }}
                 >
-                  <Minus className="h-3 w-3 mr-0.5" />
-                  Unstage All
-                </Button>
-              }
-              testId="changes-staged-section"
-            >
-              {stagedFiles.map((file) => (
-                <FileRow
-                  key={`staged-${file.relativePath}`}
-                  file={file}
-                  onViewDiff={handleViewDiff}
-                  onStageToggle={handleUnstageFile}
-                  contextMenu={
-                    <ContextMenuContent>
-                      <ContextMenuItem onClick={() => handleUnstageFile(file)}>
-                        <Minus className="h-3.5 w-3.5 mr-2" />
-                        Unstage
-                      </ContextMenuItem>
-                      <ContextMenuItem onClick={() => handleViewDiff(file)}>
-                        <FileDiff className="h-3.5 w-3.5 mr-2" />
-                        Open Diff
-                      </ContextMenuItem>
-                    </ContextMenuContent>
-                  }
-                />
-              ))}
-            </GroupHeader>
-          )}
-
-          {/* Unstaged Changes */}
-          {modifiedFiles.length > 0 && (
-            <GroupHeader
-              title="Changes"
-              count={modifiedFiles.length}
-              isCollapsed={collapsed.has('unstaged')}
-              onToggle={() => toggleGroup('unstaged')}
-              action={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 px-1.5 text-[10px]"
-                  onClick={handleStageAll}
-                  title="Stage all files"
-                  data-testid="changes-stage-all"
-                >
-                  <Plus className="h-3 w-3 mr-0.5" />
-                  Stage All
-                </Button>
-              }
-              testId="changes-modified-section"
-            >
-              {modifiedFiles.map((file) => (
-                <FileRow
-                  key={`modified-${file.relativePath}`}
-                  file={file}
-                  onViewDiff={handleViewDiff}
-                  onStageToggle={handleStageFile}
-                  contextMenu={
-                    <ContextMenuContent>
-                      <ContextMenuItem onClick={() => handleStageFile(file)}>
-                        <Plus className="h-3.5 w-3.5 mr-2" />
-                        Stage
-                      </ContextMenuItem>
-                      <ContextMenuItem onClick={() => handleViewDiff(file)}>
-                        <FileDiff className="h-3.5 w-3.5 mr-2" />
-                        Open Diff
-                      </ContextMenuItem>
-                      <ContextMenuSeparator />
-                      <ContextMenuItem
-                        onClick={() => handleDiscardFile(file)}
-                        className="text-destructive focus:text-destructive"
-                      >
-                        <Undo2 className="h-3.5 w-3.5 mr-2" />
-                        Discard Changes
-                      </ContextMenuItem>
-                    </ContextMenuContent>
-                  }
-                />
-              ))}
-            </GroupHeader>
-          )}
-
-          {/* Untracked Files */}
-          {untrackedFiles.length > 0 && (
-            <GroupHeader
-              title="Untracked"
-              count={untrackedFiles.length}
-              isCollapsed={collapsed.has('untracked')}
-              onToggle={() => toggleGroup('untracked')}
-              testId="changes-untracked-section"
-            >
-              {untrackedFiles.map((file) => (
-                <FileRow
-                  key={`untracked-${file.relativePath}`}
-                  file={file}
-                  onViewDiff={handleViewDiff}
-                  onStageToggle={handleStageFile}
-                  contextMenu={
-                    <ContextMenuContent>
-                      <ContextMenuItem onClick={() => handleStageFile(file)}>
-                        <Plus className="h-3.5 w-3.5 mr-2" />
-                        Stage
-                      </ContextMenuItem>
-                      <ContextMenuSeparator />
-                      <ContextMenuItem
-                        onClick={() => handleDiscardFile(file)}
-                        className="text-destructive focus:text-destructive"
-                      >
-                        <Trash2 className="h-3.5 w-3.5 mr-2" />
-                        Delete
-                      </ContextMenuItem>
-                      <ContextMenuItem
-                        onClick={async () => {
-                          if (!worktreePath) return
-                          const success = await useGitStore
-                            .getState()
-                            .addToGitignore(worktreePath, file.relativePath)
-                          if (success) {
-                            toast.success(`Added ${file.relativePath} to .gitignore`)
-                          } else {
-                            toast.error('Failed to add to .gitignore')
-                          }
-                        }}
-                      >
-                        <EyeOff className="h-3.5 w-3.5 mr-2" />
-                        Add to .gitignore
-                      </ContextMenuItem>
-                    </ContextMenuContent>
-                  }
-                />
-              ))}
-            </GroupHeader>
-          )}
+                  {item.type === 'header' ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        'flex items-center justify-between w-full px-2 h-full',
+                        'text-xs font-medium text-muted-foreground hover:bg-accent/50',
+                        item.headerClassName,
+                        virtualRow.index > 0 && 'border-t border-border'
+                      )}
+                      onClick={() => toggleGroup(item.groupId)}
+                      data-testid={item.testId}
+                    >
+                      <span className="flex items-center gap-1">
+                        {item.icon ||
+                          (collapsed.has(item.groupId) ? (
+                            <ChevronRight className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          ))}
+                        {item.title}
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-muted">
+                          {item.count}
+                        </span>
+                      </span>
+                      {item.action && (
+                        <span onClick={(e) => e.stopPropagation()}>{item.action}</span>
+                      )}
+                    </button>
+                  ) : item.category === 'conflict' ? (
+                    <FileRow
+                      file={item.file}
+                      onViewDiff={handleViewDiff}
+                      onStageToggle={handleStageFile}
+                      contextMenu={
+                        <ContextMenuContent>
+                          <ContextMenuItem onClick={() => handleStageFile(item.file)}>
+                            <Plus className="h-3.5 w-3.5 mr-2" />
+                            Mark as Resolved
+                          </ContextMenuItem>
+                          <ContextMenuItem onClick={() => handleViewDiff(item.file)}>
+                            <FileDiff className="h-3.5 w-3.5 mr-2" />
+                            Open Diff
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      }
+                    />
+                  ) : item.category === 'staged' ? (
+                    <FileRow
+                      file={item.file}
+                      onViewDiff={handleViewDiff}
+                      onStageToggle={handleUnstageFile}
+                      contextMenu={
+                        <ContextMenuContent>
+                          <ContextMenuItem onClick={() => handleUnstageFile(item.file)}>
+                            <Minus className="h-3.5 w-3.5 mr-2" />
+                            Unstage
+                          </ContextMenuItem>
+                          <ContextMenuItem onClick={() => handleViewDiff(item.file)}>
+                            <FileDiff className="h-3.5 w-3.5 mr-2" />
+                            Open Diff
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      }
+                    />
+                  ) : item.category === 'modified' ? (
+                    <FileRow
+                      file={item.file}
+                      onViewDiff={handleViewDiff}
+                      onStageToggle={handleStageFile}
+                      contextMenu={
+                        <ContextMenuContent>
+                          <ContextMenuItem onClick={() => handleStageFile(item.file)}>
+                            <Plus className="h-3.5 w-3.5 mr-2" />
+                            Stage
+                          </ContextMenuItem>
+                          <ContextMenuItem onClick={() => handleViewDiff(item.file)}>
+                            <FileDiff className="h-3.5 w-3.5 mr-2" />
+                            Open Diff
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            onClick={() => handleDiscardFile(item.file)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Undo2 className="h-3.5 w-3.5 mr-2" />
+                            Discard Changes
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      }
+                    />
+                  ) : (
+                    <FileRow
+                      file={item.file}
+                      onViewDiff={handleViewDiff}
+                      onStageToggle={handleStageFile}
+                      contextMenu={
+                        <ContextMenuContent>
+                          <ContextMenuItem onClick={() => handleStageFile(item.file)}>
+                            <Plus className="h-3.5 w-3.5 mr-2" />
+                            Stage
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            onClick={() => handleDiscardFile(item.file)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 mr-2" />
+                            Delete
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={async () => {
+                              if (!worktreePath) return
+                              const success = await useGitStore
+                                .getState()
+                                .addToGitignore(worktreePath, item.file.relativePath)
+                              if (success) {
+                                toast.success(
+                                  `Added ${item.file.relativePath} to .gitignore`
+                                )
+                              } else {
+                                toast.error('Failed to add to .gitignore')
+                              }
+                            }}
+                          >
+                            <EyeOff className="h-3.5 w-3.5 mr-2" />
+                            Add to .gitignore
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      }
+                    />
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -714,56 +846,6 @@ export function ChangesView({
 
 /* ---- Sub-components ---- */
 
-interface GroupHeaderProps {
-  title: string
-  count: number
-  isCollapsed: boolean
-  onToggle: () => void
-  action?: React.ReactNode
-  icon?: React.ReactNode
-  headerClassName?: string
-  testId?: string
-  children: React.ReactNode
-}
-
-const GroupHeader = memo(function GroupHeader({
-  title,
-  count,
-  isCollapsed,
-  onToggle,
-  action,
-  icon,
-  headerClassName,
-  testId,
-  children
-}: GroupHeaderProps): React.JSX.Element {
-  return (
-    <div className="border-b border-border last:border-b-0" data-testid={testId}>
-      <button
-        type="button"
-        className={cn(
-          'flex items-center justify-between w-full px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent/50',
-          headerClassName
-        )}
-        onClick={onToggle}
-      >
-        <span className="flex items-center gap-1">
-          {icon ||
-            (isCollapsed ? (
-              <ChevronRight className="h-3 w-3" />
-            ) : (
-              <ChevronDown className="h-3 w-3" />
-            ))}
-          {title}
-          <span className="text-[10px] px-1 py-0.5 rounded bg-muted">{count}</span>
-        </span>
-        {action && <span onClick={(e) => e.stopPropagation()}>{action}</span>}
-      </button>
-      {!isCollapsed && <div className="pb-1">{children}</div>}
-    </div>
-  )
-})
-
 interface FileRowProps {
   file: GitFileStatus
   onViewDiff: (file: GitFileStatus) => void
@@ -804,20 +886,11 @@ const FileRow = memo(function FileRow({
                 }}
                 title={file.staged ? 'Unstage' : 'Stage'}
               >
-                {file.staged ? (
-                  <Minus className="h-3.5 w-3.5" />
-                ) : (
-                  <Plus className="h-3.5 w-3.5" />
-                )}
+                {file.staged ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
               </button>
             </div>
           ) : (
-            <FileIcon
-              name={fileName}
-              extension={ext}
-              isDirectory={false}
-              className="h-3.5 w-3.5"
-            />
+            <FileIcon name={fileName} extension={ext} isDirectory={false} className="h-3.5 w-3.5" />
           )}
           <span className="text-xs truncate flex-1" title={file.relativePath}>
             {file.relativePath}
@@ -852,6 +925,8 @@ interface MemberChangesProps {
   onViewDiff: (file: GitFileStatus, worktreePath: string) => void
 }
 
+const MEMBER_MAX_HEIGHT = 300
+
 const MemberChanges = memo(function MemberChanges({
   member,
   onStageFile,
@@ -862,6 +937,7 @@ const MemberChanges = memo(function MemberChanges({
   onViewDiff
 }: MemberChangesProps): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   const toggleGroup = useCallback((group: string) => {
     setCollapsed((prev) => {
@@ -896,119 +972,267 @@ const MemberChanges = memo(function MemberChanges({
     [onUnstageFile, wp]
   )
 
+  const flatItems = useMemo(() => {
+    const items: FlatChangeItem[] = []
+
+    if (member.conflicted.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-conflicts',
+        groupId: 'conflicts',
+        title: 'Merge Conflicts',
+        count: member.conflicted.length,
+        icon: <AlertTriangle className="h-3 w-3 text-red-500" />,
+        headerClassName: 'text-red-500'
+      })
+      if (!collapsed.has('conflicts')) {
+        for (const file of member.conflicted) {
+          items.push({
+            type: 'file',
+            key: `conflict-${file.relativePath}`,
+            file,
+            category: 'conflict'
+          })
+        }
+      }
+    }
+
+    if (member.staged.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-staged',
+        groupId: 'staged',
+        title: 'Staged Changes',
+        count: member.staged.length,
+        action: (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 text-[10px]"
+            onClick={() => onUnstageAll(wp)}
+            title="Unstage all"
+          >
+            <Minus className="h-3 w-3 mr-0.5" />
+            Unstage
+          </Button>
+        )
+      })
+      if (!collapsed.has('staged')) {
+        for (const file of member.staged) {
+          items.push({
+            type: 'file',
+            key: `staged-${file.relativePath}`,
+            file,
+            category: 'staged'
+          })
+        }
+      }
+    }
+
+    if (member.modified.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-modified',
+        groupId: 'modified',
+        title: 'Changes',
+        count: member.modified.length,
+        action: (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 text-[10px]"
+            onClick={() => onStageAll(wp)}
+            title="Stage all"
+          >
+            <Plus className="h-3 w-3 mr-0.5" />
+            Stage
+          </Button>
+        )
+      })
+      if (!collapsed.has('modified')) {
+        for (const file of member.modified) {
+          items.push({
+            type: 'file',
+            key: `modified-${file.relativePath}`,
+            file,
+            category: 'modified'
+          })
+        }
+      }
+    }
+
+    if (member.untracked.length > 0) {
+      items.push({
+        type: 'header',
+        key: 'h-untracked',
+        groupId: 'untracked',
+        title: 'Untracked',
+        count: member.untracked.length
+      })
+      if (!collapsed.has('untracked')) {
+        for (const file of member.untracked) {
+          items.push({
+            type: 'file',
+            key: `untracked-${file.relativePath}`,
+            file,
+            category: 'untracked'
+          })
+        }
+      }
+    }
+
+    return items
+  }, [member.conflicted, member.staged, member.modified, member.untracked, collapsed, onUnstageAll, onStageAll, wp])
+
+  const virtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => (flatItems[index].type === 'header' ? HEADER_HEIGHT : ROW_HEIGHT),
+    overscan: 10
+  })
+
+  const contentHeight = virtualizer.getTotalSize()
+
   return (
     <div className="pl-3 pb-1">
-      {/* Staged */}
-      {member.staged.length > 0 && (
-        <GroupHeader
-          title="Staged Changes"
-          count={member.staged.length}
-          isCollapsed={collapsed.has('staged')}
-          onToggle={() => toggleGroup('staged')}
-          action={
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-5 px-1.5 text-[10px]"
-              onClick={() => onUnstageAll(wp)}
-              title="Unstage all"
-            >
-              <Minus className="h-3 w-3 mr-0.5" />
-              Unstage
-            </Button>
-          }
+      {flatItems.length > 0 && (
+        <div
+          ref={scrollRef}
+          className="overflow-y-auto"
+          style={{ maxHeight: `${MEMBER_MAX_HEIGHT}px` }}
         >
-          {member.staged.map((file) => (
-            <FileRow
-              key={`staged-${file.relativePath}`}
-              file={file}
-              onViewDiff={handleViewDiff}
-              onStageToggle={handleUnstageToggle}
-              contextMenu={
-                <ContextMenuContent>
-                  <ContextMenuItem onClick={() => onUnstageFile(wp, file.relativePath)}>
-                    <Minus className="h-3.5 w-3.5 mr-2" />
-                    Unstage
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              }
-            />
-          ))}
-        </GroupHeader>
-      )}
-
-      {/* Modified */}
-      {member.modified.length > 0 && (
-        <GroupHeader
-          title="Changes"
-          count={member.modified.length}
-          isCollapsed={collapsed.has('modified')}
-          onToggle={() => toggleGroup('modified')}
-          action={
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-5 px-1.5 text-[10px]"
-              onClick={() => onStageAll(wp)}
-              title="Stage all"
-            >
-              <Plus className="h-3 w-3 mr-0.5" />
-              Stage
-            </Button>
-          }
-        >
-          {member.modified.map((file) => (
-            <FileRow
-              key={`modified-${file.relativePath}`}
-              file={file}
-              onViewDiff={handleViewDiff}
-              onStageToggle={handleStageToggle}
-              contextMenu={
-                <ContextMenuContent>
-                  <ContextMenuItem onClick={() => onStageFile(wp, file.relativePath)}>
-                    <Plus className="h-3.5 w-3.5 mr-2" />
-                    Stage
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    onClick={() => onDiscardChanges(wp, file.relativePath)}
-                    className="text-destructive focus:text-destructive"
-                  >
-                    <Undo2 className="h-3.5 w-3.5 mr-2" />
-                    Discard Changes
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              }
-            />
-          ))}
-        </GroupHeader>
-      )}
-
-      {/* Untracked */}
-      {member.untracked.length > 0 && (
-        <GroupHeader
-          title="Untracked"
-          count={member.untracked.length}
-          isCollapsed={collapsed.has('untracked')}
-          onToggle={() => toggleGroup('untracked')}
-        >
-          {member.untracked.map((file) => (
-            <FileRow
-              key={`untracked-${file.relativePath}`}
-              file={file}
-              onViewDiff={handleViewDiff}
-              onStageToggle={handleStageToggle}
-              contextMenu={
-                <ContextMenuContent>
-                  <ContextMenuItem onClick={() => onStageFile(wp, file.relativePath)}>
-                    <Plus className="h-3.5 w-3.5 mr-2" />
-                    Stage
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              }
-            />
-          ))}
-        </GroupHeader>
+          <div
+            style={{
+              height: `${contentHeight}px`,
+              width: '100%',
+              position: 'relative'
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const item = flatItems[virtualRow.index]
+              return (
+                <div
+                  key={item.key}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: `${virtualRow.size}px`,
+                    transform: `translateY(${virtualRow.start}px)`
+                  }}
+                >
+                  {item.type === 'header' ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        'flex items-center justify-between w-full px-2 h-full',
+                        'text-xs font-medium text-muted-foreground hover:bg-accent/50',
+                        item.headerClassName,
+                        virtualRow.index > 0 && 'border-t border-border'
+                      )}
+                      onClick={() => toggleGroup(item.groupId)}
+                    >
+                      <span className="flex items-center gap-1">
+                        {item.icon ||
+                          (collapsed.has(item.groupId) ? (
+                            <ChevronRight className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          ))}
+                        {item.title}
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-muted">
+                          {item.count}
+                        </span>
+                      </span>
+                      {item.action && (
+                        <span onClick={(e) => e.stopPropagation()}>{item.action}</span>
+                      )}
+                    </button>
+                  ) : item.category === 'conflict' ? (
+                    <FileRow
+                      file={item.file}
+                      onViewDiff={handleViewDiff}
+                      onStageToggle={handleStageToggle}
+                      contextMenu={
+                        <ContextMenuContent>
+                          <ContextMenuItem
+                            onClick={() => onStageFile(wp, item.file.relativePath)}
+                          >
+                            <Plus className="h-3.5 w-3.5 mr-2" />
+                            Mark as Resolved
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={() => onViewDiff(item.file, wp)}
+                          >
+                            <FileDiff className="h-3.5 w-3.5 mr-2" />
+                            Open Diff
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      }
+                    />
+                  ) : item.category === 'staged' ? (
+                    <FileRow
+                      file={item.file}
+                      onViewDiff={handleViewDiff}
+                      onStageToggle={handleUnstageToggle}
+                      contextMenu={
+                        <ContextMenuContent>
+                          <ContextMenuItem
+                            onClick={() => onUnstageFile(wp, item.file.relativePath)}
+                          >
+                            <Minus className="h-3.5 w-3.5 mr-2" />
+                            Unstage
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      }
+                    />
+                  ) : item.category === 'modified' ? (
+                    <FileRow
+                      file={item.file}
+                      onViewDiff={handleViewDiff}
+                      onStageToggle={handleStageToggle}
+                      contextMenu={
+                        <ContextMenuContent>
+                          <ContextMenuItem
+                            onClick={() => onStageFile(wp, item.file.relativePath)}
+                          >
+                            <Plus className="h-3.5 w-3.5 mr-2" />
+                            Stage
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            onClick={() => onDiscardChanges(wp, item.file.relativePath)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Undo2 className="h-3.5 w-3.5 mr-2" />
+                            Discard Changes
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      }
+                    />
+                  ) : (
+                    <FileRow
+                      file={item.file}
+                      onViewDiff={handleViewDiff}
+                      onStageToggle={handleStageToggle}
+                      contextMenu={
+                        <ContextMenuContent>
+                          <ContextMenuItem
+                            onClick={() => onStageFile(wp, item.file.relativePath)}
+                          >
+                            <Plus className="h-3.5 w-3.5 mr-2" />
+                            Stage
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      }
+                    />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
       )}
 
       {/* Commit form when staged changes exist */}

@@ -15,8 +15,11 @@ import {
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { patternMatches } from '@/lib/permissionUtils'
-import type { CommandApprovalRequest, SubCommandSuggestions } from '@/stores/useCommandApprovalStore'
+import { patternMatches, splitBashCommand } from '@/lib/permissionUtils'
+import type {
+  CommandApprovalRequest,
+  SubCommandSuggestions
+} from '@/stores/useCommandApprovalStore'
 
 interface CommandApprovalPromptProps {
   request: CommandApprovalRequest
@@ -169,7 +172,8 @@ function FlatPatternPicker({
 }
 
 /**
- * Display a bash command, splitting on && / || / ; into labelled rows.
+ * Display a bash command, splitting on && into labelled rows.
+ * Uses the smart parser to handle quotes, heredocs, and command substitutions correctly.
  * For non-bash or single commands: shows the plain command string.
  */
 function CommandDisplay({ commandStr }: { commandStr: string }) {
@@ -183,17 +187,8 @@ function CommandDisplay({ commandStr }: { commandStr: string }) {
   }
 
   const command = commandStr.slice(prefix.length)
-  const parts = command.split(/(\s+&&\s+|\s+\|\|\s+|\s+\|\s+|\s*;\s+)/)
-  const subCmds: string[] = []
-  const seps: string[] = []
-
-  for (const part of parts) {
-    if (/^\s*(&&|\|\||\||;)\s*$/.test(part)) {
-      seps.push(part.trim())
-    } else if (part.trim()) {
-      subCmds.push(part.trim())
-    }
-  }
+  // Use the smart parser that handles quotes, heredocs, and command substitutions
+  const subCmds = splitBashCommand(command)
 
   if (subCmds.length <= 1) {
     return (
@@ -213,9 +208,7 @@ function CommandDisplay({ commandStr }: { commandStr: string }) {
           {idx < subCmds.length - 1 && (
             <div className="flex items-center gap-1 py-0.5 px-2">
               <div className="h-px flex-1 bg-border/40" />
-              <span className="text-[10px] font-mono text-muted-foreground/60">
-                {seps[idx] ?? '&&'}
-              </span>
+              <span className="text-[10px] font-mono text-muted-foreground/60">&&</span>
               <div className="h-px flex-1 bg-border/40" />
             </div>
           )}
@@ -258,12 +251,9 @@ export function CommandApprovalPrompt({ request, onReply }: CommandApprovalPromp
     })
   }, [request.subCommandPatterns])
 
-  const hasSubCommands = Boolean(
-    uniqueSubCommandPatterns && uniqueSubCommandPatterns.length > 1
-  )
-  const [selectedSubPatterns, setSelectedSubPatterns] = useState<Record<number, string>>(
-    () =>
-      uniqueSubCommandPatterns ? buildDefaultSubPatterns(uniqueSubCommandPatterns) : {}
+  const hasSubCommands = Boolean(uniqueSubCommandPatterns && uniqueSubCommandPatterns.length > 1)
+  const [selectedSubPatterns, setSelectedSubPatterns] = useState<Record<number, string>>(() =>
+    uniqueSubCommandPatterns ? buildDefaultSubPatterns(uniqueSubCommandPatterns) : {}
   )
 
   // Check which sub-commands are already covered by the allowlist

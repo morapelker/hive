@@ -51,7 +51,7 @@ export function QuestionToolView({ input, output, error }: ToolViewProps) {
           const answer = answerMap.get(q.question)
           const answerLabels = answer ? answer.split(', ') : []
 
-          const options = q.options || []
+          const options = Array.isArray(q.options) ? q.options : []
 
           return (
             <div key={i}>

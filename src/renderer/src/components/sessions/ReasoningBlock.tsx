@@ -1,13 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, memo } from 'react'
 import { ChevronRight, Brain } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import Ansi from 'ansi-to-react'
+import { containsAnsi } from '@/lib/ansi-utils'
 
 interface ReasoningBlockProps {
   text: string
   isStreaming?: boolean
 }
 
-export function ReasoningBlock({ text, isStreaming = false }: ReasoningBlockProps) {
+export const ReasoningBlock = memo(function ReasoningBlock({ text, isStreaming = false }: ReasoningBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const userOverrideRef = useRef(false)
 
@@ -65,10 +67,10 @@ export function ReasoningBlock({ text, isStreaming = false }: ReasoningBlockProp
       {isExpanded && (
         <div className="border-t border-border/30 px-3 py-2" data-testid="reasoning-block-content">
           <p className="text-xs text-muted-foreground/80 italic whitespace-pre-wrap leading-relaxed font-mono">
-            {text}
+            {containsAnsi(text) ? <Ansi>{text}</Ansi> : text}
           </p>
         </div>
       )}
     </div>
   )
-}
+})

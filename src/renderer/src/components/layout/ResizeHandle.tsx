@@ -31,8 +31,7 @@ export function ResizeHandle({
     const handleMouseMove = (e: MouseEvent): void => {
       const pos = isVertical ? e.clientY : e.clientX
       const delta = pos - startPos
-      const adjustedDelta =
-        direction === 'right' || direction === 'down' ? -delta : delta
+      const adjustedDelta = direction === 'right' || direction === 'down' ? -delta : delta
       onResize(adjustedDelta)
       setStartPos(pos)
     }

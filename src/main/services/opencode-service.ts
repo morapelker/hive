@@ -615,6 +615,17 @@ class OpenCodeService {
     }
   }
 
+  clearSelectedModel(): void {
+    try {
+      const db = getDatabase()
+      db.deleteSetting(SELECTED_MODEL_DB_KEY)
+      log.info('Selected model cleared from backend')
+    } catch (error) {
+      log.error('Failed to clear selected model from backend', { error })
+      throw error
+    }
+  }
+
   /**
    * Send a prompt to an OpenCode session.
    * Accepts either a parts array (text + file parts) or a plain string for backward compatibility.
@@ -1046,6 +1057,13 @@ class OpenCodeService {
       } else if (event.properties.sessionID) {
         sessionId = event.properties.sessionID
       }
+    }
+
+    // Fallback: check for sessionID at the top level of the event itself.
+    // Some event types (e.g. permission.asked) may deliver the payload without
+    // a `properties` wrapper, or with the sessionID on the event root.
+    if (!sessionId && event.sessionID) {
+      sessionId = event.sessionID
     }
 
     if (!sessionId) {

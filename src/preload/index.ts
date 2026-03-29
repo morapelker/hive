@@ -1,4 +1,10 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
+
+// Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
+// point mapping. Any zoom level breaks coordinate sync and causes misaligned
+// rendering. This also resets zoom for users who accidentally changed it.
+webFrame.setZoomFactor(1)
+webFrame.setVisualZoomLevelLimits(1, 1)
 
 // Typed database API for renderer
 const db = {
@@ -70,10 +76,13 @@ const db = {
     addAttachment: (
       worktreeId: string,
       attachment: { type: 'jira' | 'figma'; url: string; label: string }
-    ) =>
-      ipcRenderer.invoke('db:worktree:addAttachment', { worktreeId, attachment }),
+    ) => ipcRenderer.invoke('db:worktree:addAttachment', { worktreeId, attachment }),
     removeAttachment: (worktreeId: string, attachmentId: string) =>
       ipcRenderer.invoke('db:worktree:removeAttachment', { worktreeId, attachmentId }),
+    attachPR: (worktreeId: string, prNumber: number, prUrl: string) =>
+      ipcRenderer.invoke('db:worktree:attachPR', { worktreeId, prNumber, prUrl }),
+    detachPR: (worktreeId: string) =>
+      ipcRenderer.invoke('db:worktree:detachPR', { worktreeId }),
     setPinned: (worktreeId: string, pinned: boolean) =>
       ipcRenderer.invoke('db:worktree:setPinned', { worktreeId, pinned }),
     getPinned: () => ipcRenderer.invoke('db:worktree:getPinned')
@@ -87,7 +96,8 @@ const db = {
       connection_id?: string | null
       name?: string | null
       opencode_session_id?: string | null
-      agent_sdk?: 'opencode' | 'claude-code'
+      agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+      mode?: 'build' | 'plan'
       model_provider_id?: string | null
       model_id?: string | null
       model_variant?: string | null
@@ -104,7 +114,7 @@ const db = {
         name?: string | null
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
-        agent_sdk?: 'opencode' | 'claude-code'
+        agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
         mode?: 'build' | 'plan'
         model_provider_id?: string | null
         model_id?: string | null
@@ -129,6 +139,14 @@ const db = {
       ipcRenderer.invoke('db:session:getByConnection', connectionId),
     getActiveByConnection: (connectionId: string) =>
       ipcRenderer.invoke('db:session:getActiveByConnection', connectionId)
+  },
+
+  sessionMessage: {
+    list: (sessionId: string) => ipcRenderer.invoke('db:sessionMessage:list', sessionId)
+  },
+
+  sessionActivity: {
+    list: (sessionId: string) => ipcRenderer.invoke('db:sessionActivity:list', sessionId)
   },
 
   // Spaces
@@ -187,6 +205,14 @@ const projectOps = {
   // Detect the primary programming language of a project
   detectLanguage: (projectPath: string): Promise<string | null> =>
     ipcRenderer.invoke('project:detectLanguage', projectPath),
+
+  // Find .xcworkspace file for Swift projects
+  findXcworkspace: (projectPath: string): Promise<string | null> =>
+    ipcRenderer.invoke('project:findXcworkspace', projectPath),
+
+  // Detect whether a project is an Android project
+  isAndroidProject: (projectPath: string): Promise<boolean> =>
+    ipcRenderer.invoke('project:isAndroidProject', projectPath),
 
   // Load custom language icons as data URLs
   loadLanguageIcons: (): Promise<Record<string, string>> =>
@@ -329,7 +355,8 @@ const worktreeOps = {
     projectPath: string,
     projectName: string,
     branchName: string,
-    prNumber?: number
+    prNumber?: number,
+    nameHint?: string
   ): Promise<{
     success: boolean
     worktree?: {
@@ -349,7 +376,8 @@ const worktreeOps = {
       projectPath,
       projectName,
       branchName,
-      prNumber
+      prNumber,
+      nameHint
     }),
 
   // Subscribe to branch-renamed events (auto-rename from main process)
@@ -438,6 +466,19 @@ const systemOps = {
     }
   },
 
+  // Subscribe to Edit > Paste from the application menu.
+  // Used to route paste to the Ghostty terminal when it is the active backend,
+  // since the menu accelerator intercepts Cmd+V before it reaches the native NSView.
+  onEditPaste: (callback: (text: string) => void): (() => void) => {
+    const handler = (_event: unknown, text: string): void => {
+      callback(text)
+    }
+    ipcRenderer.on('edit:paste', handler)
+    return () => {
+      ipcRenderer.removeListener('edit:paste', handler)
+    }
+  },
+
   // Open a URL in Chrome (or default browser) with optional custom command
   openInChrome: (url: string, customCommand?: string) =>
     ipcRenderer.invoke('system:openInChrome', { url, customCommand }),
@@ -497,7 +538,10 @@ const systemOps = {
 
   // Uninstall hive-server CLI from /usr/local/bin (requires admin elevation)
   uninstallServerFromPath: (): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('system:uninstallServerFromPath')
+    ipcRenderer.invoke('system:uninstallServerFromPath'),
+
+  // Get the current platform (darwin, win32, linux)
+  getPlatform: (): Promise<string> => ipcRenderer.invoke('system:getPlatform')
 }
 
 // Response logging operations API (only functional when --log is active)
@@ -863,6 +907,17 @@ const gitOps = {
     error?: string
   }> => ipcRenderer.invoke('git:getFileContent', { worktreePath, filePath }),
 
+  // Get raw file content as base64 from disk (for binary/image files)
+  getFileContentBase64: (
+    worktreePath: string,
+    filePath: string
+  ): Promise<{
+    success: boolean
+    data?: string
+    mimeType?: string
+    error?: string
+  }> => ipcRenderer.invoke('git:getFileContentBase64', { worktreePath, filePath }),
+
   // Get remote URL for a worktree
   getRemoteUrl: (
     worktreePath: string,
@@ -923,6 +978,39 @@ const gitOps = {
     error?: string
   }> => ipcRenderer.invoke('git:listPRs', { projectPath }),
 
+  // Get the state of a specific PR
+  getPRState: (
+    projectPath: string,
+    prNumber: number
+  ): Promise<{ success: boolean; state?: string; title?: string; error?: string }> =>
+    ipcRenderer.invoke('git:getPRState', { projectPath, prNumber }),
+
+  // Fetch inline review comments for a PR
+  getPRReviewComments: (
+    projectPath: string,
+    prNumber: number
+  ): Promise<{
+    success: boolean
+    comments?: Array<{
+      id: number
+      body: string
+      bodyHTML: string
+      path: string
+      line: number | null
+      originalLine: number | null
+      side: 'LEFT' | 'RIGHT'
+      diffHunk: string
+      user: { login: string; avatarUrl: string }
+      createdAt: string
+      updatedAt: string
+      inReplyToId: number | null
+      pullRequestReviewId: number | null
+      subjectType: 'line' | 'file'
+    }>
+    baseBranch?: string
+    error?: string
+  }> => ipcRenderer.invoke('git:getPRReviewComments', { projectPath, prNumber }),
+
   // Get file content from a specific git ref (HEAD, index)
   getRefContent: (
     worktreePath: string,
@@ -933,6 +1021,18 @@ const gitOps = {
     content?: string
     error?: string
   }> => ipcRenderer.invoke('git:getRefContent', worktreePath, ref, filePath),
+
+  // Get file content as base64 from a specific git ref (for binary/image files)
+  getRefContentBase64: (
+    worktreePath: string,
+    ref: string,
+    filePath: string
+  ): Promise<{
+    success: boolean
+    data?: string
+    mimeType?: string
+    error?: string
+  }> => ipcRenderer.invoke('git:getRefContentBase64', worktreePath, ref, filePath),
 
   // Stage a single hunk by applying a patch to the index
   stageHunk: (
@@ -1013,7 +1113,8 @@ const opencodeOps = {
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
         >,
-    model?: { providerID: string; modelID: string; variant?: string }
+    model?: { providerID: string; modelID: string; variant?: string },
+    options?: { codexFastMode?: boolean }
   ): Promise<{ success: boolean; error?: string }> => {
     const parts =
       typeof messageOrParts === 'string'
@@ -1023,7 +1124,8 @@ const opencodeOps = {
       worktreePath,
       sessionId: opencodeSessionId,
       parts,
-      model
+      model,
+      options
     })
   },
 
@@ -1050,7 +1152,7 @@ const opencodeOps = {
 
   // List available models from all configured providers
   listModels: (opts?: {
-    agentSdk?: 'opencode' | 'claude-code'
+    agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   }): Promise<{
     success: boolean
     providers: Record<string, unknown>
@@ -1058,19 +1160,21 @@ const opencodeOps = {
   }> => ipcRenderer.invoke('opencode:models', opts),
 
   // Set the selected model for prompts
-  setModel: (model: {
-    providerID: string
-    modelID: string
-    variant?: string
-    agentSdk?: 'opencode' | 'claude-code'
-  }): Promise<{ success: boolean; error?: string }> =>
+  setModel: (
+    model: {
+      providerID: string
+      modelID: string
+      variant?: string
+      agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+    } | null
+  ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('opencode:setModel', model),
 
   // Get model info (name, context limit)
   modelInfo: (
     worktreePath: string,
     modelId: string,
-    agentSdk?: 'opencode' | 'claude-code'
+    agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   ): Promise<{
     success: boolean
     model?: { id: string; name: string; limit: { context: number } }
@@ -1319,14 +1423,21 @@ const scriptOps = {
     ipcRenderer.invoke('port:get', { cwd })
 }
 
-// File operations API (read-only file viewer)
+// File operations API
 const fileOps = {
   readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
     ipcRenderer.invoke('file:read', filePath),
+  writeFile: (filePath: string, content: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('file:write', filePath, content),
   readPrompt: (
     promptName: string
   ): Promise<{ success: boolean; content?: string; error?: string }> =>
-    ipcRenderer.invoke('file:readPrompt', promptName)
+    ipcRenderer.invoke('file:readPrompt', promptName),
+  readImageAsBase64: (
+    filePath: string
+  ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> =>
+    ipcRenderer.invoke('file:readImageAsBase64', filePath),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file)
 }
 
 // Settings operations API
@@ -1480,6 +1591,9 @@ const terminalOps = {
   ghosttySetFocus: (worktreeId: string, focused: boolean): Promise<void> =>
     ipcRenderer.invoke('terminal:ghostty:setFocus', worktreeId, focused),
 
+  ghosttyPasteText: (worktreeId: string, text: string): Promise<void> =>
+    ipcRenderer.invoke('terminal:ghostty:pasteText', worktreeId, text),
+
   ghosttyDestroySurface: (worktreeId: string): Promise<void> =>
     ipcRenderer.invoke('terminal:ghostty:destroySurface', worktreeId),
 
@@ -1487,7 +1601,8 @@ const terminalOps = {
 }
 
 const updaterOps = {
-  checkForUpdate: (): Promise<void> => ipcRenderer.invoke('updater:check'),
+  checkForUpdate: (options?: { manual?: boolean }): Promise<void> =>
+    ipcRenderer.invoke('updater:check', options),
   downloadUpdate: (): Promise<void> => ipcRenderer.invoke('updater:download'),
   installUpdate: (): Promise<void> => ipcRenderer.invoke('updater:install'),
   setChannel: (channel: string): Promise<void> => ipcRenderer.invoke('updater:setChannel', channel),
@@ -1504,11 +1619,21 @@ const updaterOps = {
   },
 
   onUpdateAvailable: (
-    callback: (data: { version: string; releaseNotes?: string; releaseDate?: string }) => void
+    callback: (data: {
+      version: string
+      releaseNotes?: string
+      releaseDate?: string
+      isManualCheck?: boolean
+    }) => void
   ): (() => void) => {
     const handler = (
       _e: Electron.IpcRendererEvent,
-      data: { version: string; releaseNotes?: string; releaseDate?: string }
+      data: {
+        version: string
+        releaseNotes?: string
+        releaseDate?: string
+        isManualCheck?: boolean
+      }
     ): void => {
       callback(data)
     }
@@ -1518,8 +1643,13 @@ const updaterOps = {
     }
   },
 
-  onUpdateNotAvailable: (callback: (data: { version: string }) => void): (() => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, data: { version: string }): void => {
+  onUpdateNotAvailable: (
+    callback: (data: { version: string; isManualCheck?: boolean }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { version: string; isManualCheck?: boolean }
+    ): void => {
       callback(data)
     }
     ipcRenderer.on('updater:not-available', handler)
@@ -1563,8 +1693,13 @@ const updaterOps = {
     }
   },
 
-  onError: (callback: (data: { message: string }) => void): (() => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, data: { message: string }): void => {
+  onError: (
+    callback: (data: { message: string; isManualCheck?: boolean }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { message: string; isManualCheck?: boolean }
+    ): void => {
       callback(data)
     }
     ipcRenderer.on('updater:error', handler)
@@ -1598,16 +1733,75 @@ const connectionOps = {
 }
 
 const usageOps = {
-  fetch: () => ipcRenderer.invoke('usage:fetch')
+  fetch: () => ipcRenderer.invoke('usage:fetch'),
+  fetchOpenai: () => ipcRenderer.invoke('usage:fetchOpenai')
 }
 
 const analyticsOps = {
   track: (event: string, properties?: Record<string, unknown>) =>
     ipcRenderer.invoke('telemetry:track', event, properties),
-  setEnabled: (enabled: boolean) =>
-    ipcRenderer.invoke('telemetry:setEnabled', enabled),
-  isEnabled: () =>
-    ipcRenderer.invoke('telemetry:isEnabled') as Promise<boolean>
+  setEnabled: (enabled: boolean) => ipcRenderer.invoke('telemetry:setEnabled', enabled),
+  isEnabled: () => ipcRenderer.invoke('telemetry:isEnabled') as Promise<boolean>
+}
+
+const kanban = {
+  ticket: {
+    create: (data: {
+      project_id: string
+      title: string
+      description?: string | null
+      attachments?: unknown[]
+      column?: 'todo' | 'in_progress' | 'review' | 'done'
+      sort_order?: number
+      current_session_id?: string | null
+      worktree_id?: string | null
+      mode?: 'build' | 'plan' | null
+      plan_ready?: boolean
+    }) => ipcRenderer.invoke('kanban:ticket:create', data),
+    get: (id: string) => ipcRenderer.invoke('kanban:ticket:get', id),
+    getByProject: (projectId: string, includeArchived?: boolean) =>
+      ipcRenderer.invoke('kanban:ticket:getByProject', projectId, includeArchived),
+    update: (
+      id: string,
+      data: {
+        title?: string
+        description?: string | null
+        attachments?: unknown[]
+        column?: 'todo' | 'in_progress' | 'review' | 'done'
+        sort_order?: number
+        current_session_id?: string | null
+        worktree_id?: string | null
+        mode?: 'build' | 'plan' | null
+        plan_ready?: boolean
+      }
+    ) => ipcRenderer.invoke('kanban:ticket:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('kanban:ticket:delete', id),
+    archive: (id: string) => ipcRenderer.invoke('kanban:ticket:archive', id),
+    archiveAllDone: (projectId: string) => ipcRenderer.invoke('kanban:ticket:archiveAllDone', projectId),
+    unarchive: (id: string) => ipcRenderer.invoke('kanban:ticket:unarchive', id),
+    move: (id: string, column: 'todo' | 'in_progress' | 'review' | 'done', sortOrder: number) =>
+      ipcRenderer.invoke('kanban:ticket:move', id, column, sortOrder),
+    reorder: (id: string, sortOrder: number) =>
+      ipcRenderer.invoke('kanban:ticket:reorder', id, sortOrder),
+    getBySession: (sessionId: string) =>
+      ipcRenderer.invoke('kanban:ticket:getBySession', sessionId)
+  },
+  simpleMode: {
+    toggle: (projectId: string, enabled: boolean) =>
+      ipcRenderer.invoke('kanban:simpleMode:toggle', projectId, enabled)
+  },
+  followup: {
+    create: (data: {
+      ticket_id: string
+      content: string
+      role?: 'user' | 'assistant'
+      mode: 'build' | 'plan'
+      session_id?: string | null
+      source?: 'direct' | 'supercharge' | 'error_retry'
+    }) => ipcRenderer.invoke('kanban:followup:create', data),
+    getByTicket: (ticketId: string) =>
+      ipcRenderer.invoke('kanban:followup:getByTicket', ticketId)
+  }
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
@@ -1631,6 +1825,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('connectionOps', connectionOps)
     contextBridge.exposeInMainWorld('usageOps', usageOps)
     contextBridge.exposeInMainWorld('analyticsOps', analyticsOps)
+    contextBridge.exposeInMainWorld('kanban', kanban)
   } catch (error) {
     console.error(error)
   }
@@ -1667,4 +1862,6 @@ if (process.contextIsolated) {
   window.usageOps = usageOps
   // @ts-expect-error (define in dts)
   window.analyticsOps = analyticsOps
+  // @ts-expect-error (define in dts)
+  window.kanban = kanban
 }

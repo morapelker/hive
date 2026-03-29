@@ -35,11 +35,7 @@ export const gitQueryResolvers: Resolvers = {
           return await gitService.getUntrackedFileDiff(filePath)
         }
 
-        return await gitService.getDiff(
-          filePath,
-          staged,
-          contextLines ?? undefined
-        )
+        return await gitService.getDiff(filePath, staged, contextLines ?? undefined)
       } catch (error) {
         return {
           success: false,

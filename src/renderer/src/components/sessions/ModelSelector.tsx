@@ -37,9 +37,19 @@ function getVariantKeys(model: ModelInfo): string[] {
 
 interface ModelSelectorProps {
   sessionId?: string
+  // Controlled mode (for settings)
+  value?: { providerID: string; modelID: string; variant?: string } | null
+  onChange?: (model: { providerID: string; modelID: string; variant?: string }) => void
+  // Override the SDK used for model listing (e.g. force 'opencode' in settings when defaultAgentSdk is 'terminal')
+  agentSdkOverride?: 'opencode' | 'claude-code' | 'codex'
 }
 
-export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Element {
+export function ModelSelector({
+  sessionId,
+  value,
+  onChange,
+  agentSdkOverride
+}: ModelSelectorProps): React.JSX.Element {
   // Read per-session model from session store (with global fallback)
   const session = useSessionStore((state) => {
     if (!sessionId) return null
@@ -54,10 +64,10 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
     return null
   })
   const defaultAgentSdk = useSettingsStore((s) => s.defaultAgentSdk)
-  const agentSdk = session?.agent_sdk ?? defaultAgentSdk ?? 'opencode'
-  const globalModel = useSettingsStore((state) =>
-    resolveModelForSdk(agentSdk, state)
-  )
+  const rawAgentSdk = agentSdkOverride ?? session?.agent_sdk ?? defaultAgentSdk ?? 'opencode'
+  // Terminal SDK has no models — fall back to opencode for model listing
+  const agentSdk = rawAgentSdk === 'terminal' ? 'opencode' : rawAgentSdk
+  const globalModel = useSettingsStore((state) => resolveModelForSdk(agentSdk, state))
   const sessionModel =
     session?.model_id && session.model_provider_id
       ? {
@@ -66,7 +76,11 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
           variant: session.model_variant ?? undefined
         }
       : null
-  const selectedModel = sessionModel ?? globalModel
+  // Controlled mode: non-null value overrides; null means "use global fallback."
+  // SettingsModels passes null for cleared mode defaults — display the effective model, not empty.
+  const selectedModel =
+    value !== undefined && value !== null ? value : (sessionModel ?? globalModel)
+  const showModelProvider = useSettingsStore((s) => s.showModelProvider)
   const favoriteModels = useSettingsStore((s) => s.favoriteModels)
   const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel)
   const [providers, setProviders] = useState<ProviderModels[]>([])
@@ -152,7 +166,11 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
           ? variantKeys[0]
           : undefined
     const newModel = { providerID: model.providerID, modelID: model.id, variant }
-    if (sessionId) {
+
+    // Use controlled onChange if provided (for settings), otherwise update store
+    if (onChange) {
+      onChange(newModel)
+    } else if (sessionId) {
       useSessionStore.getState().setSessionModel(sessionId, newModel)
     } else {
       useSettingsStore.getState().setSelectedModelForSdk(agentSdk, newModel)
@@ -160,12 +178,20 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
   }
 
   function handleSelectVariant(model: ModelInfo, variant: string): void {
-    useSettingsStore.getState().setModelVariantDefault(model.providerID, model.id, variant)
     const newModel = { providerID: model.providerID, modelID: model.id, variant }
-    if (sessionId) {
-      useSessionStore.getState().setSessionModel(sessionId, newModel)
+
+    // Use controlled onChange if provided (for settings), otherwise update store
+    if (onChange) {
+      // In controlled mode, just notify parent - don't update global variant preference
+      onChange(newModel)
     } else {
-      useSettingsStore.getState().setSelectedModelForSdk(agentSdk, newModel)
+      // In uncontrolled mode, persist variant preference globally
+      useSettingsStore.getState().setModelVariantDefault(model.providerID, model.id, variant)
+      if (sessionId) {
+        useSessionStore.getState().setSessionModel(sessionId, newModel)
+      } else {
+        useSettingsStore.getState().setSelectedModelForSdk(agentSdk, newModel)
+      }
     }
   }
 
@@ -189,6 +215,14 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
     return null
   }, [selectedModel, providers])
 
+  const providerPrefix = useMemo(() => {
+    if (!showModelProvider) return null
+    if (agentSdk === 'claude-code') return 'ANTHROPIC'
+    return (
+      currentModel?.providerID?.toUpperCase() ?? selectedModel?.providerID?.toUpperCase() ?? null
+    )
+  }, [showModelProvider, agentSdk, currentModel, selectedModel])
+
   // Cycle thinking-level variant for Alt+T
   const cycleVariant = useCallback(() => {
     if (!currentModel) return
@@ -200,28 +234,39 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
     const nextIndex = (currentIndex + 1) % variantKeys.length
     const nextVariant = variantKeys[nextIndex]
 
-    useSettingsStore
-      .getState()
-      .setModelVariantDefault(currentModel.providerID, currentModel.id, nextVariant)
     const newModel = {
       providerID: currentModel.providerID,
       modelID: currentModel.id,
       variant: nextVariant
     }
-    if (sessionId) {
-      useSessionStore.getState().setSessionModel(sessionId, newModel)
+
+    // Use controlled onChange if provided (for settings), otherwise update store
+    if (onChange) {
+      // In controlled mode, just notify parent - don't update global variant preference
+      onChange(newModel)
     } else {
-      useSettingsStore.getState().setSelectedModelForSdk(agentSdk, newModel)
+      // In uncontrolled mode, persist variant preference globally
+      useSettingsStore
+        .getState()
+        .setModelVariantDefault(currentModel.providerID, currentModel.id, nextVariant)
+      if (sessionId) {
+        useSessionStore.getState().setSessionModel(sessionId, newModel)
+      } else {
+        useSettingsStore.getState().setSelectedModelForSdk(agentSdk, newModel)
+      }
     }
     toast.success(`Variant: ${nextVariant}`)
-  }, [selectedModel, currentModel, agentSdk, sessionId])
+  }, [selectedModel, currentModel, agentSdk, sessionId, onChange])
 
-  // Listen for centralized Alt+T shortcut via custom event
+  // Listen for centralized Alt+T shortcut via custom event (session selectors only).
+  // Controlled-mode selectors (e.g. Settings > Models) must not react to the global
+  // shortcut — otherwise every selector on the page cycles its variant at once.
   useEffect(() => {
+    if (onChange) return
     const handleCycleVariant = (): void => cycleVariant()
     window.addEventListener('hive:cycle-variant', handleCycleVariant)
     return () => window.removeEventListener('hive:cycle-variant', handleCycleVariant)
-  }, [cycleVariant])
+  }, [cycleVariant, onChange])
 
   // Determine display name for the pill
   const displayName = currentModel
@@ -261,136 +306,146 @@ export function ModelSelector({ sessionId }: ModelSelectorProps): React.JSX.Elem
   const hasVariants = currentVariantKeys.length > 0
 
   return (
-    <DropdownMenu
-      open={dropdownOpen}
-      onOpenChange={(open) => {
-        setDropdownOpen(open)
-        if (!open) setFilter('')
-        else setTimeout(() => filterInputRef.current?.focus(), 0)
-      }}
-    >
-      <DropdownMenuTrigger asChild>
-        <button
-          className={cn(
-            'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
-            'border select-none',
-            'bg-muted/50 border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-          )}
-          title="Select model"
-          aria-label={`Current model: ${displayName}. Click to change model`}
-          data-testid="model-selector"
-        >
-          <span className="truncate max-w-[140px]">{isLoading ? 'Loading...' : displayName}</span>
-          {hasVariants && selectedModel?.variant && (
-            <span
-              className="text-[10px] font-semibold text-primary uppercase"
-              data-testid="variant-indicator"
-            >
-              {selectedModel.variant}
-            </span>
-          )}
-          <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64 max-h-80 overflow-y-auto">
-        <div className="flex items-center gap-1.5 px-2 pb-1.5 pt-1">
-          <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
-          <input
-            ref={filterInputRef}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            onKeyDown={(e) => e.stopPropagation()}
-            placeholder="Filter models..."
-            className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
-          />
-        </div>
-        <DropdownMenuSeparator />
-        {favoriteModelObjects.length > 0 && (
-          <>
-            <DropdownMenuLabel className="text-xs text-muted-foreground flex items-center gap-1">
-              <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" /> Favorites
-            </DropdownMenuLabel>
-            {favoriteModelObjects.map((model) => (
-              <DropdownMenuItem
-                key={`fav-${model.providerID}:${model.id}`}
-                onClick={() => handleSelectModel(model)}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  toggleFavoriteModel(model.providerID, model.id)
-                }}
-                className="flex items-center justify-between gap-2 cursor-pointer"
+    <div className="flex items-center gap-1.5">
+      {providerPrefix && (
+        <span className="text-[10px] font-medium text-muted-foreground uppercase shrink-0">
+          {providerPrefix}
+        </span>
+      )}
+      <DropdownMenu
+        open={dropdownOpen}
+        onOpenChange={(open) => {
+          setDropdownOpen(open)
+          if (!open) setFilter('')
+          else setTimeout(() => filterInputRef.current?.focus(), 0)
+        }}
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            className={cn(
+              'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
+              'border select-none',
+              'bg-muted/50 border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+            )}
+            title="Select model"
+            aria-label={`Current model: ${displayName}. Click to change model`}
+            data-testid="model-selector"
+          >
+            <span className="truncate max-w-[140px]">{isLoading ? 'Loading...' : displayName}</span>
+            {hasVariants && selectedModel?.variant && (
+              <span
+                className="text-[10px] font-semibold text-primary uppercase"
+                data-testid="variant-indicator"
               >
-                <span className="flex items-center gap-1.5">
-                  <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
-                  <span className="truncate text-sm">{getDisplayName(model)}</span>
-                </span>
-                {isActiveModel(model) && <Check className="h-4 w-4 shrink-0 text-primary" />}
-              </DropdownMenuItem>
-            ))}
-            <DropdownMenuSeparator />
-          </>
-        )}
-        {filteredProviders.map((provider, index) => (
-          <div key={provider.providerID}>
-            {index > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuLabel className="text-xs text-muted-foreground">
-              {provider.providerName}
-            </DropdownMenuLabel>
-            {provider.models.map((model) => {
-              const active = isActiveModel(model)
-              const variantKeys = getVariantKeys(model)
-              return (
-                <div key={`${model.providerID}:${model.id}`}>
-                  <DropdownMenuItem
-                    onClick={() => handleSelectModel(model)}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      toggleFavoriteModel(model.providerID, model.id)
-                    }}
-                    className="flex items-center justify-between gap-2 cursor-pointer"
-                    data-testid={`model-item-${model.id}`}
-                  >
-                    <span className="flex items-center gap-1.5">
-                      {isFavorite(model) && (
-                        <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
-                      )}
-                      <span className="truncate text-sm">{getDisplayName(model)}</span>
-                    </span>
-                    {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                  </DropdownMenuItem>
-                  {variantKeys.length > 0 && active && (
-                    <div className="flex gap-1 pl-6 pb-1" data-testid={`variant-chips-${model.id}`}>
-                      {variantKeys.map((variant) => (
-                        <button
-                          key={variant}
-                          className={cn(
-                            'text-[10px] px-1.5 py-0.5 rounded',
-                            selectedModel?.variant === variant
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-muted text-muted-foreground hover:bg-accent'
-                          )}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleSelectVariant(model, variant)
-                          }}
-                          data-testid={`variant-chip-${variant}`}
-                        >
-                          {variant.toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+                {selectedModel.variant}
+              </span>
+            )}
+            <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-64 max-h-80 overflow-y-auto">
+          <div className="flex items-center gap-1.5 px-2 pb-1.5 pt-1">
+            <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <input
+              ref={filterInputRef}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={(e) => e.stopPropagation()}
+              placeholder="Filter models..."
+              className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
+            />
           </div>
-        ))}
-        {filteredProviders.length === 0 && !isLoading && (
-          <div className="px-2 py-4 text-center text-sm text-muted-foreground">
-            {filter ? 'No matching models' : 'No models available'}
-          </div>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          <DropdownMenuSeparator />
+          {favoriteModelObjects.length > 0 && (
+            <>
+              <DropdownMenuLabel className="text-xs text-muted-foreground flex items-center gap-1">
+                <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" /> Favorites
+              </DropdownMenuLabel>
+              {favoriteModelObjects.map((model) => (
+                <DropdownMenuItem
+                  key={`fav-${model.providerID}:${model.id}`}
+                  onClick={() => handleSelectModel(model)}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    toggleFavoriteModel(model.providerID, model.id)
+                  }}
+                  className="flex items-center justify-between gap-2 cursor-pointer"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
+                    <span className="truncate text-sm">{getDisplayName(model)}</span>
+                  </span>
+                  {isActiveModel(model) && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+            </>
+          )}
+          {filteredProviders.map((provider, index) => (
+            <div key={provider.providerID}>
+              {index > 0 && <DropdownMenuSeparator />}
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                {provider.providerName}
+              </DropdownMenuLabel>
+              {provider.models.map((model) => {
+                const active = isActiveModel(model)
+                const variantKeys = getVariantKeys(model)
+                return (
+                  <div key={`${model.providerID}:${model.id}`}>
+                    <DropdownMenuItem
+                      onClick={() => handleSelectModel(model)}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        toggleFavoriteModel(model.providerID, model.id)
+                      }}
+                      className="flex items-center justify-between gap-2 cursor-pointer"
+                      data-testid={`model-item-${model.id}`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {isFavorite(model) && (
+                          <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
+                        )}
+                        <span className="truncate text-sm">{getDisplayName(model)}</span>
+                      </span>
+                      {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                    </DropdownMenuItem>
+                    {variantKeys.length > 0 && active && (
+                      <div
+                        className="flex gap-1 pl-6 pb-1"
+                        data-testid={`variant-chips-${model.id}`}
+                      >
+                        {variantKeys.map((variant) => (
+                          <button
+                            key={variant}
+                            className={cn(
+                              'text-[10px] px-1.5 py-0.5 rounded',
+                              selectedModel?.variant === variant
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted text-muted-foreground hover:bg-accent'
+                            )}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleSelectVariant(model, variant)
+                            }}
+                            data-testid={`variant-chip-${variant}`}
+                          >
+                            {variant.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+          {filteredProviders.length === 0 && !isLoading && (
+            <div className="px-2 py-4 text-center text-sm text-muted-foreground">
+              {filter ? 'No matching models' : 'No models available'}
+            </div>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }

@@ -20,10 +20,7 @@ export function parseAttachmentUrl(url: string): AttachmentInfo | null {
     }
 
     // Figma: figma.com/design/*/Name or figma.com/file/*/Name
-    if (
-      parsed.hostname === 'figma.com' ||
-      parsed.hostname === 'www.figma.com'
-    ) {
+    if (parsed.hostname === 'figma.com' || parsed.hostname === 'www.figma.com') {
       const match = parsed.pathname.match(/\/(design|file|board|proto)\/[^/]+\/([^/?]+)/)
       if (match) {
         const name = decodeURIComponent(match[2]).replace(/-/g, ' ')

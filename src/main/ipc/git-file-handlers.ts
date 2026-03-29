@@ -4,8 +4,10 @@ import { promisify } from 'util'
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { readFileAsBase64 } from '../services/file-ops'
 import { telemetryService } from '../services/telemetry-service'
 import { openPathWithPreferredEditor } from './settings-handlers'
+import type { PRReviewComment } from '@shared/types/git'
 import {
   createGitService,
   parseWorktreeForBranch,
@@ -57,6 +59,31 @@ export interface GitBranchInfoResult {
   success: boolean
   branch?: GitBranchInfo
   error?: string
+}
+
+// GraphQL query to fetch review threads (inline file comments only)
+const PR_REVIEW_THREADS_QUERY = `query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){baseRefName reviewThreads(first:100){nodes{isResolved isOutdated diffSide comments(first:50){nodes{databaseId body bodyHTML author{login avatarUrl}path line originalLine diffHunk createdAt updatedAt subjectType pullRequestReview{databaseId}}}}}}}}` as const
+
+interface GQLReviewThread {
+  isResolved: boolean
+  isOutdated: boolean
+  diffSide: 'LEFT' | 'RIGHT'
+  comments: {
+    nodes: Array<{
+      databaseId: number
+      body: string
+      bodyHTML: string
+      author: { login: string; avatarUrl: string } | null
+      path: string
+      line: number | null
+      originalLine: number | null
+      diffHunk: string
+      createdAt: string
+      updatedAt: string
+      subjectType: 'LINE' | 'FILE'
+      pullRequestReview: { databaseId: number } | null
+    }>
+  }
 }
 
 export function registerGitFileHandlers(window: BrowserWindow): void {
@@ -525,6 +552,54 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 
+  // Get raw file content from disk as base64 (for binary/image files)
+  ipcMain.handle(
+    'git:getFileContentBase64',
+    async (
+      _event,
+      { worktreePath, filePath }: { worktreePath: string; filePath: string }
+    ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> => {
+      log.info('Getting file content as base64', { worktreePath, filePath })
+      try {
+        const fullPath = join(worktreePath, filePath)
+        return readFileAsBase64(fullPath)
+      } catch (error) {
+        const errMessage = error instanceof Error ? error.message : String(error)
+        log.error(
+          'Failed to get file content as base64',
+          error instanceof Error ? error : new Error(errMessage),
+          { worktreePath, filePath }
+        )
+        return { success: false, error: errMessage }
+      }
+    }
+  )
+
+  // Get file content from a specific git ref as base64 (for binary/image files)
+  ipcMain.handle(
+    'git:getRefContentBase64',
+    async (
+      _event,
+      worktreePath: string,
+      ref: string,
+      filePath: string
+    ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> => {
+      log.info('Getting ref content as base64', { worktreePath, ref, filePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.getRefContentBase64(ref, filePath)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        log.error(
+          'Failed to get ref content as base64',
+          error instanceof Error ? error : new Error(message),
+          { worktreePath, ref, filePath }
+        )
+        return { success: false, error: message }
+      }
+    }
+  )
+
   // Get diff stat (additions/deletions per file) for all uncommitted changes
   ipcMain.handle(
     'git:diffStat',
@@ -581,10 +656,14 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
           })
         }
 
-        if (mainWindow) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('git:statusChanged', { worktreePath })
         }
-        try { getEventBus().emit('git:statusChanged', { worktreePath }) } catch { /* EventBus not available */ }
+        try {
+          getEventBus().emit('git:statusChanged', { worktreePath })
+        } catch {
+          /* EventBus not available */
+        }
 
         return { success: true }
       } catch (error) {
@@ -671,11 +750,7 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
   // Stage a single hunk by applying a patch to the index
   ipcMain.handle(
     'git:stageHunk',
-    async (
-      _event,
-      worktreePath: string,
-      patch: string
-    ): Promise<GitOperationResult> => {
+    async (_event, worktreePath: string, patch: string): Promise<GitOperationResult> => {
       log.info('Staging hunk', { worktreePath })
       try {
         const gitService = createGitService(worktreePath)
@@ -693,11 +768,7 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
   // Unstage a single hunk by reverse-applying a patch from the index
   ipcMain.handle(
     'git:unstageHunk',
-    async (
-      _event,
-      worktreePath: string,
-      patch: string
-    ): Promise<GitOperationResult> => {
+    async (_event, worktreePath: string, patch: string): Promise<GitOperationResult> => {
       log.info('Unstaging hunk', { worktreePath })
       try {
         const gitService = createGitService(worktreePath)
@@ -715,11 +786,7 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
   // Revert a single hunk in the working tree
   ipcMain.handle(
     'git:revertHunk',
-    async (
-      _event,
-      worktreePath: string,
-      patch: string
-    ): Promise<GitOperationResult> => {
+    async (_event, worktreePath: string, patch: string): Promise<GitOperationResult> => {
       log.info('Reverting hunk', { worktreePath })
       try {
         const gitService = createGitService(worktreePath)
@@ -741,7 +808,11 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       _event,
       worktreePath: string,
       branch: string
-    ): Promise<{ success: boolean; files?: { relativePath: string; status: string }[]; error?: string }> => {
+    ): Promise<{
+      success: boolean
+      files?: { relativePath: string; status: string }[]
+      error?: string
+    }> => {
       try {
         const gitService = createGitService(worktreePath)
         return await gitService.getBranchDiffFiles(branch)
@@ -821,11 +892,9 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
         return { success: true, prs }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        log.error(
-          'Failed to list PRs',
-          error instanceof Error ? error : new Error(message),
-          { projectPath }
-        )
+        log.error('Failed to list PRs', error instanceof Error ? error : new Error(message), {
+          projectPath
+        })
 
         if (message.includes('gh: command not found') || message.includes('not found')) {
           return { success: false, prs: [], error: 'GitHub CLI (gh) is not installed' }
@@ -841,6 +910,114 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
           }
         }
         return { success: false, prs: [], error: message }
+      }
+    }
+  )
+
+  // Get the state of a specific PR via gh CLI
+  ipcMain.handle(
+    'git:getPRState',
+    async (
+      _event,
+      { projectPath, prNumber }: { projectPath: string; prNumber: number }
+    ): Promise<{ success: boolean; state?: string; title?: string; error?: string }> => {
+      log.info('Getting PR state via gh CLI', { projectPath, prNumber })
+      try {
+        const { stdout } = await execAsync(
+          `gh pr view ${prNumber} --json state,title`,
+          { cwd: projectPath }
+        )
+        const data = JSON.parse(stdout) as { state: string; title: string }
+        return { success: true, state: data.state, title: data.title }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error('Failed to get PR state', error instanceof Error ? error : new Error(message), {
+          projectPath,
+          prNumber
+        })
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Fetch inline review comments for a PR (file-level review threads only)
+  ipcMain.handle(
+    'git:getPRReviewComments',
+    async (
+      _event,
+      { projectPath, prNumber }: { projectPath: string; prNumber: number }
+    ): Promise<{ success: boolean; comments?: PRReviewComment[]; error?: string }> => {
+      log.info('Fetching PR review comments via GraphQL', { projectPath, prNumber })
+      try {
+        const { stdout: repoInfo } = await execAsync(
+          "gh repo view --json nameWithOwner -q '.nameWithOwner'",
+          { cwd: projectPath }
+        )
+        const [owner, repo] = repoInfo.trim().split('/')
+
+        const { stdout } = await execAsync(
+          `gh api graphql -f query='${PR_REVIEW_THREADS_QUERY}' -F owner='${owner}' -F repo='${repo}' -F pr=${prNumber}`,
+          { cwd: projectPath, maxBuffer: 10 * 1024 * 1024 }
+        )
+
+        const response = JSON.parse(stdout)
+        if (response.errors?.length) {
+          return { success: false, error: response.errors[0].message }
+        }
+
+        const pullRequest = response.data?.repository?.pullRequest
+        const baseBranch: string | undefined = pullRequest?.baseRefName ?? undefined
+        const threads: GQLReviewThread[] =
+          pullRequest?.reviewThreads?.nodes ?? []
+        const comments: PRReviewComment[] = []
+
+        for (const thread of threads) {
+          const nodes = thread.comments?.nodes
+          if (!nodes?.length) continue
+          const rootId = nodes[0].databaseId
+
+          for (let i = 0; i < nodes.length; i++) {
+            const c = nodes[i]
+            comments.push({
+              id: c.databaseId,
+              body: c.body ?? '',
+              bodyHTML: c.bodyHTML ?? '',
+              path: c.path ?? '',
+              line: c.line ?? null,
+              originalLine: c.originalLine ?? null,
+              side: thread.diffSide ?? 'RIGHT',
+              diffHunk: c.diffHunk ?? '',
+              user: {
+                login: c.author?.login ?? 'ghost',
+                avatarUrl: c.author?.avatarUrl ?? ''
+              },
+              createdAt: c.createdAt ?? '',
+              updatedAt: c.updatedAt ?? '',
+              inReplyToId: i === 0 ? null : rootId,
+              pullRequestReviewId: c.pullRequestReview?.databaseId ?? null,
+              subjectType: c.subjectType === 'FILE' ? 'file' : 'line'
+            })
+          }
+        }
+
+        return { success: true, comments, baseBranch }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error(
+          'Failed to fetch PR review comments',
+          error instanceof Error ? error : new Error(message),
+          { projectPath, prNumber }
+        )
+        if (message.includes('gh: command not found') || message.includes('not found'))
+          return { success: false, error: 'GitHub CLI (gh) is not installed' }
+        if (message.includes('Could not resolve to a Repository'))
+          return {
+            success: false,
+            error: 'Not a GitHub repository or not authenticated with gh'
+          }
+        if (message.includes('404'))
+          return { success: false, error: 'PR not found' }
+        return { success: false, error: message }
       }
     }
   )

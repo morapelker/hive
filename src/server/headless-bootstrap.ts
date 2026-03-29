@@ -8,6 +8,7 @@ import { startGraphQLServer, type ServerHandle } from './index'
 import { getDatabase } from '../main/db'
 import { resolveClaudeBinaryPath } from '../main/services/claude-binary-resolver'
 import { ClaudeCodeImplementer } from '../main/services/claude-code-implementer'
+import { CodexImplementer } from '../main/services/codex-implementer'
 import { AgentSdkManager } from '../main/services/agent-sdk-manager'
 import type { AgentSdkImplementer } from '../main/services/agent-sdk-types'
 import { rmSync } from 'node:fs'
@@ -35,6 +36,7 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
   claudeImpl.setDatabaseService(db)
   claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
 
+  // Placeholder for OpenCode — not available in headless mode
   const openCodePlaceholder = {
     id: 'opencode' as const,
     capabilities: {
@@ -69,7 +71,11 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
     renameSession: async () => {},
     setMainWindow: () => {}
   } satisfies AgentSdkImplementer
-  const sdkManager = new AgentSdkManager(openCodePlaceholder, claudeImpl)
+
+  // Registry of SDK implementers
+  const codexImpl = new CodexImplementer()
+  codexImpl.setDatabaseService(db)
+  const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
 
   // EventBus singleton
   const eventBus = getEventBus()
@@ -109,9 +115,7 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
     port,
     bindAddress: bind,
     insecure: config.insecure,
-    ...(config.insecure
-      ? {}
-      : { tlsCert: config.tls.certPath, tlsKey: config.tls.keyPath }),
+    ...(config.insecure ? {} : { tlsCert: config.tls.certPath, tlsKey: config.tls.keyPath }),
     context: { db, sdkManager, eventBus },
     getKeyHash: () => db.getSetting('headless_api_key_hash') || '',
     bruteForce

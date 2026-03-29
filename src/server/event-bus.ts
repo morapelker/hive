@@ -1,5 +1,9 @@
 import { EventEmitter } from 'events'
-import type { OpenCodeStreamEvent, FileTreeIndividualChangeEvent, ScriptOutputEvent } from '../shared/types'
+import type {
+  OpenCodeStreamEvent,
+  FileTreeIndividualChangeEvent,
+  ScriptOutputEvent
+} from '../shared/types'
 
 interface EventBusEvents {
   'opencode:stream': [event: OpenCodeStreamEvent]
@@ -19,11 +23,17 @@ export class EventBus {
     this.emitter.emit(event, ...args)
   }
 
-  on<K extends keyof EventBusEvents>(event: K, listener: (...args: EventBusEvents[K]) => void): void {
+  on<K extends keyof EventBusEvents>(
+    event: K,
+    listener: (...args: EventBusEvents[K]) => void
+  ): void {
     this.emitter.on(event, listener as (...args: unknown[]) => void)
   }
 
-  off<K extends keyof EventBusEvents>(event: K, listener: (...args: EventBusEvents[K]) => void): void {
+  off<K extends keyof EventBusEvents>(
+    event: K,
+    listener: (...args: EventBusEvents[K]) => void
+  ): void {
     this.emitter.off(event, listener as (...args: unknown[]) => void)
   }
 

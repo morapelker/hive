@@ -9,10 +9,14 @@ import {
 } from '@/components/ui/alert-dialog'
 
 interface AgentPickerDialogProps {
-  onSelect: (sdk: 'opencode' | 'claude-code') => void
+  onSelect: (sdk: 'opencode' | 'claude-code' | 'codex') => void
+  availableSdks: { opencode: boolean; claude: boolean; codex: boolean }
 }
 
-export function AgentPickerDialog({ onSelect }: AgentPickerDialogProps): React.JSX.Element {
+export function AgentPickerDialog({
+  onSelect,
+  availableSdks
+}: AgentPickerDialogProps): React.JSX.Element {
   return (
     <AlertDialog open={true}>
       <AlertDialogContent>
@@ -22,35 +26,52 @@ export function AgentPickerDialog({ onSelect }: AgentPickerDialogProps): React.J
             Choose Your AI Agent
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Both OpenCode and Claude Code are installed. Choose which one to use as the default for
-            new sessions. You can change this later in Settings.
+            Multiple AI agents are installed. Choose which one to use as the default for new
+            sessions. You can change this later in Settings.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="flex gap-3 pt-2">
-          <button
-            onClick={() => onSelect('opencode')}
-            className={cn(
-              'flex-1 px-4 py-3 rounded-lg border-2 border-border',
-              'hover:border-primary hover:bg-accent/50 transition-colors',
-              'text-center cursor-pointer'
-            )}
-          >
-            <div className="text-sm font-medium">OpenCode</div>
-            <div className="text-xs text-muted-foreground mt-1">Open-source AI coding agent</div>
-          </button>
-          <button
-            onClick={() => onSelect('claude-code')}
-            className={cn(
-              'flex-1 px-4 py-3 rounded-lg border-2 border-border',
-              'hover:border-primary hover:bg-accent/50 transition-colors',
-              'text-center cursor-pointer'
-            )}
-          >
-            <div className="text-sm font-medium">Claude Code</div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Anthropic&apos;s coding assistant
-            </div>
-          </button>
+          {availableSdks.opencode && (
+            <button
+              onClick={() => onSelect('opencode')}
+              className={cn(
+                'flex-1 px-4 py-3 rounded-lg border-2 border-border',
+                'hover:border-primary hover:bg-accent/50 transition-colors',
+                'text-center cursor-pointer'
+              )}
+            >
+              <div className="text-sm font-medium">OpenCode</div>
+              <div className="text-xs text-muted-foreground mt-1">Open-source AI coding agent</div>
+            </button>
+          )}
+          {availableSdks.claude && (
+            <button
+              onClick={() => onSelect('claude-code')}
+              className={cn(
+                'flex-1 px-4 py-3 rounded-lg border-2 border-border',
+                'hover:border-primary hover:bg-accent/50 transition-colors',
+                'text-center cursor-pointer'
+              )}
+            >
+              <div className="text-sm font-medium">Claude Code</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                Anthropic&apos;s coding assistant
+              </div>
+            </button>
+          )}
+          {availableSdks.codex && (
+            <button
+              onClick={() => onSelect('codex')}
+              className={cn(
+                'flex-1 px-4 py-3 rounded-lg border-2 border-border',
+                'hover:border-primary hover:bg-accent/50 transition-colors',
+                'text-center cursor-pointer'
+              )}
+            >
+              <div className="text-sm font-medium">Codex</div>
+              <div className="text-xs text-muted-foreground mt-1">OpenAI&apos;s coding agent</div>
+            </button>
+          )}
         </div>
       </AlertDialogContent>
     </AlertDialog>

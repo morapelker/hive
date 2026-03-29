@@ -55,14 +55,22 @@ class NotificationService {
 
     notification.show()
 
-    // Increment dock badge
+    // Increment dock/taskbar badge
     this.unreadCount++
-    app.dock?.setBadge(String(this.unreadCount))
+    if (process.platform === 'darwin') {
+      app.dock?.setBadge(String(this.unreadCount))
+    } else {
+      app.setBadgeCount(this.unreadCount)
+    }
   }
 
   private clearBadge(): void {
     this.unreadCount = 0
-    app.dock?.setBadge('')
+    if (process.platform === 'darwin') {
+      app.dock?.setBadge('')
+    } else {
+      app.setBadgeCount(0)
+    }
   }
 }
 

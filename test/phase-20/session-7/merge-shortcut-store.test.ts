@@ -44,16 +44,16 @@ describe('Session 7: Merge Shortcut Store + Definition', () => {
     expect(useGitStore.getState().selectedMergeBranch.size).toBe(0)
   })
 
-  test('merge shortcut is defined in DEFAULT_SHORTCUTS', () => {
-    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'git:merge')
+  test('filter-projects shortcut is defined in DEFAULT_SHORTCUTS', () => {
+    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'nav:filter-projects')
     expect(shortcut).toBeDefined()
-    expect(shortcut!.category).toBe('git')
-    expect(shortcut!.label).toBe('Merge')
+    expect(shortcut!.category).toBe('navigation')
+    expect(shortcut!.label).toBe('Filter Projects')
     expect(shortcut!.defaultBinding).toEqual({ key: 'g', modifiers: ['meta'] })
   })
 
-  test('merge shortcut has a description', () => {
-    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'git:merge')
-    expect(shortcut!.description).toBe('Merge selected branch')
+  test('filter-projects shortcut has a description', () => {
+    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'nav:filter-projects')
+    expect(shortcut!.description).toBe('Focus the project filter input')
   })
 })

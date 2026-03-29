@@ -3,6 +3,7 @@ import { useSettingsStore, type EditorOption } from '@/stores/useSettingsStore'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { Check, Loader2 } from 'lucide-react'
+import { isMac, isLinux } from '@/lib/platform'
 
 interface DetectedEditor {
   id: string
@@ -105,7 +106,7 @@ export function SettingsEditor(): React.JSX.Element {
           <Input
             value={customEditorCommand}
             onChange={(e) => updateSetting('customEditorCommand', e.target.value)}
-            placeholder="e.g., /usr/local/bin/code"
+            placeholder={isMac() ? 'e.g., /usr/local/bin/code' : isLinux() ? 'e.g., /usr/bin/code' : 'e.g., C:\\Program Files\\Microsoft VS Code\\code.exe'}
             className="font-mono text-sm"
             data-testid="custom-editor-command"
           />

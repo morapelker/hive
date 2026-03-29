@@ -67,7 +67,11 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
               dataBuffers.delete(worktreeId)
               if (buffered && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send(`terminal:data:${worktreeId}`, buffered)
-                try { getEventBus().emit('terminal:data', worktreeId, buffered) } catch { /* EventBus not available */ }
+                try {
+                  getEventBus().emit('terminal:data', worktreeId, buffered)
+                } catch {
+                  /* EventBus not available */
+                }
               }
             })
           }
@@ -77,7 +81,11 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
         const removeExit = ptyService.onExit(worktreeId, (code) => {
           if (!mainWindow.isDestroyed()) {
             mainWindow.webContents.send(`terminal:exit:${worktreeId}`, code)
-            try { getEventBus().emit('terminal:exit', worktreeId, code) } catch { /* EventBus not available */ }
+            try {
+              getEventBus().emit('terminal:exit', worktreeId, code)
+            } catch {
+              /* EventBus not available */
+            }
           }
           // Clean up listener tracking on exit
           listenerCleanups.delete(worktreeId)
@@ -238,6 +246,11 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   // Set focus state for a surface
   ipcMain.handle('terminal:ghostty:setFocus', (_event, worktreeId: string, focused: boolean) => {
     ghosttyService.setFocus(worktreeId, focused)
+  })
+
+  // Paste text into a Ghostty surface (programmatic paste, bypasses macOS focus)
+  ipcMain.handle('terminal:ghostty:pasteText', (_event, worktreeId: string, text: string) => {
+    ghosttyService.pasteText(worktreeId, text)
   })
 
   // Destroy a Ghostty surface for a worktree

@@ -5,7 +5,10 @@ import {
   useLayoutStore,
   useSessionHistoryStore,
   useCommandPaletteStore,
-  useFileSearchStore
+  useFileSearchStore,
+  useSettingsStore,
+  useKanbanStore,
+  useVimModeStore
 } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
@@ -101,6 +104,60 @@ function createNewSession(): void {
 }
 
 /**
+ * Checks whether any modal/dialog is currently open and closes it.
+ * Returns `true` if a modal was closed, `false` otherwise.
+ *
+ * Used as the highest-priority handler for Cmd+W / Ctrl+W so that
+ * pressing the shortcut dismisses the topmost overlay instead of
+ * closing a session or file tab.
+ */
+function tryCloseOpenModal(): boolean {
+  // Command palette (highest z-layer, often overlays other modals)
+  if (useCommandPaletteStore.getState().isOpen) {
+    useCommandPaletteStore.getState().close()
+    return true
+  }
+
+  // File search dialog
+  if (useFileSearchStore.getState().isOpen) {
+    useFileSearchStore.getState().close()
+    return true
+  }
+
+  // Settings modal
+  if (useSettingsStore.getState().isOpen) {
+    useSettingsStore.getState().closeSettings()
+    return true
+  }
+
+  // Session history panel
+  if (useSessionHistoryStore.getState().isOpen) {
+    useSessionHistoryStore.getState().closePanel()
+    return true
+  }
+
+  // Kanban ticket detail modal
+  if (useKanbanStore.getState().selectedTicketId !== null) {
+    useKanbanStore.getState().setSelectedTicketId(null)
+    return true
+  }
+
+  // Project settings dialog
+  if (useProjectStore.getState().settingsProjectId !== null) {
+    useProjectStore.getState().closeProjectSettings()
+    return true
+  }
+
+  // Vim mode help overlay
+  if (useVimModeStore.getState().helpOverlayOpen) {
+    useVimModeStore.getState().setHelpOverlayOpen(false)
+    return true
+  }
+
+  return false
+}
+
+/**
  * Centralized keyboard shortcuts hook.
  * Registers a single global keydown listener that dispatches to the
  * correct action based on the shortcut registry and user overrides.
@@ -175,6 +232,9 @@ export function useKeyboardShortcuts(): void {
     if (!window.systemOps?.onCloseSessionShortcut) return
 
     const cleanup = window.systemOps.onCloseSessionShortcut(() => {
+      // Priority 0: Close any open modal/dialog
+      if (tryCloseOpenModal()) return
+
       const { activeFilePath, activeDiff } = useFileViewerStore.getState()
 
       // Priority 1: Close active diff tab
@@ -185,7 +245,7 @@ export function useKeyboardShortcuts(): void {
 
       // Priority 2: Close active file tab
       if (activeFilePath) {
-        useFileViewerStore.getState().closeFile(activeFilePath)
+        useFileViewerStore.getState().requestCloseFile(activeFilePath)
         return
       }
 
@@ -195,7 +255,7 @@ export function useKeyboardShortcuts(): void {
         return
       }
 
-      // Priority 3: Close active session tab
+      // Priority 4: Close active session tab
       const { activeSessionId } = useSessionStore.getState()
       if (!activeSessionId) return
       useSessionStore
@@ -246,6 +306,9 @@ function getShortcutHandlers(
       binding: getEffectiveBinding('session:close'),
       allowInInput: true,
       handler: () => {
+        // Priority 0: Close any open modal/dialog
+        if (tryCloseOpenModal()) return
+
         const { activeFilePath, activeDiff } = useFileViewerStore.getState()
 
         // Priority 1: Close active diff tab
@@ -256,7 +319,7 @@ function getShortcutHandlers(
 
         // Priority 2: Close active file tab
         if (activeFilePath) {
-          useFileViewerStore.getState().closeFile(activeFilePath)
+          useFileViewerStore.getState().requestCloseFile(activeFilePath)
           return
         }
 
@@ -340,6 +403,25 @@ function getShortcutHandlers(
       allowInInput: false,
       handler: () => {
         toast.info('Use the + button in the sidebar to create a new worktree')
+      }
+    },
+    {
+      id: 'nav:filter-projects',
+      binding: getEffectiveBinding('nav:filter-projects'),
+      allowInInput: true,
+      handler: () => {
+        // Open left sidebar if collapsed
+        const { leftSidebarCollapsed, setLeftSidebarCollapsed } = useLayoutStore.getState()
+        if (leftSidebarCollapsed) {
+          setLeftSidebarCollapsed(false)
+        }
+        // Dispatch focus event (allow a tick for sidebar to render)
+        setTimeout(
+          () => {
+            window.dispatchEvent(new CustomEvent('hive:focus-project-filter'))
+          },
+          leftSidebarCollapsed ? 100 : 0
+        )
       }
     },
 

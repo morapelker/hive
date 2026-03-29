@@ -363,7 +363,9 @@
 
 /* Indeterminate progress bar bounce animation for agent working indicator.
    6-phase bouncing worm: grow → slide → shrink → grow → slide back → shrink.
-   Uses left/right on position:absolute to animate width + position together. */
+   Uses left/right on position:absolute to animate width + position together.
+   NOTE: Primary animation is driven via Web Animations API in IndeterminateProgressBar.tsx
+   for reliable cross-instance synchronization. These keyframes are retained as documentation. */
 @keyframes progress-bounce {
   0% {
     left: 0;
@@ -402,4 +404,76 @@
     right: 37.5%;
     opacity: 0.7;
   }
+}
+
+/* PR review comment HTML body styling (GitHub bodyHTML) */
+.pr-comment-html p {
+  margin: 0.25em 0;
+}
+.pr-comment-html code {
+  font-size: 0.85em;
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  background: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+.pr-comment-html pre {
+  margin: 0.5em 0;
+  padding: 0.5em 0.75em;
+  border-radius: 6px;
+  background: var(--muted);
+  overflow-x: auto;
+  font-size: 0.85em;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+.pr-comment-html pre code {
+  padding: 0;
+  background: none;
+}
+.pr-comment-html a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.pr-comment-html ul,
+.pr-comment-html ol {
+  padding-left: 1.25em;
+  margin: 0.25em 0;
+}
+.pr-comment-html blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.75em;
+  margin: 0.25em 0;
+  color: var(--muted-foreground);
+}
+.pr-comment-html strong {
+  font-weight: 600;
+}
+.pr-comment-html em {
+  font-style: italic;
+}
+.pr-comment-html img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+.pr-comment-html details {
+  margin: 0.5em 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.pr-comment-html details summary {
+  cursor: pointer;
+  padding: 0.25em 0.5em;
+  font-size: 0.9em;
+  color: var(--muted-foreground);
+  user-select: none;
+}
+.pr-comment-html details summary:hover {
+  color: var(--foreground);
+}
+.pr-comment-html details[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+.pr-comment-html details > *:not(summary) {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
 }

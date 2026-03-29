@@ -6,7 +6,8 @@ import {
   useThemeStore,
   useSessionHistoryStore,
   useLayoutStore,
-  useSettingsStore
+  useSettingsStore,
+  useKanbanStore
 } from '@/stores'
 import { THEME_PRESETS } from '@/lib/themes'
 import { useGitStore } from '@/stores/useGitStore'
@@ -14,6 +15,7 @@ import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
 import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { toast } from '@/lib/toast'
+import { revealLabel, isWindows, fileManagerName } from '@/lib/platform'
 
 /**
  * Hook that registers all available commands and returns filtered commands
@@ -35,6 +37,7 @@ export function useCommands() {
   const { togglePanel: toggleSessionHistory } = useSessionHistoryStore()
   const { stageAll, unstageAll, refreshStatuses, push, pull, isPushing, isPulling } = useGitStore()
   const { toggleLeftSidebar, toggleRightSidebar } = useLayoutStore()
+  const { toggleBoardView } = useKanbanStore()
   const { getDisplayString } = useShortcutStore()
   const {
     searchQuery,
@@ -196,6 +199,23 @@ export function useCommands() {
       },
 
       // =====================
+      // BOARD COMMANDS
+      // =====================
+      {
+        id: 'kanban:toggle',
+        label: 'Open Board',
+        description: 'Toggle the board view',
+        category: 'navigation',
+        icon: 'KanbanIcon',
+        keywords: ['kanban', 'board', 'tickets', 'todo'],
+        action: () => {
+          toggleBoardView()
+          closeCommandPalette()
+        },
+        isVisible: () => selectedProjectId !== null
+      },
+
+      // =====================
       // ACTION COMMANDS
       // =====================
       {
@@ -331,8 +351,8 @@ export function useCommands() {
       },
       {
         id: 'action:reveal-in-finder',
-        label: 'Reveal in Finder',
-        description: 'Show the current worktree in Finder/Explorer',
+        label: revealLabel(true),
+        description: `Show the current worktree in ${fileManagerName()}`,
         category: 'action',
         icon: 'FolderOpen',
         keywords: ['finder', 'explorer', 'reveal', 'show'],
@@ -345,7 +365,7 @@ export function useCommands() {
           try {
             await window.projectOps.showInFolder(worktreePath)
           } catch {
-            toast.error('Failed to reveal in Finder')
+            toast.error(`Failed to reveal in ${fileManagerName()}`)
           }
           closeCommandPalette()
         },
@@ -571,7 +591,9 @@ export function useCommands() {
       {
         id: 'action:install-server',
         label: "Install 'hive-server' Command in PATH",
-        description: 'Install the hive-server CLI to /usr/local/bin',
+        description: isWindows()
+          ? 'Install the hive-server CLI to %LOCALAPPDATA%\\Hive'
+          : 'Install the hive-server CLI to /usr/local/bin',
         category: 'action',
         icon: 'Terminal',
         keywords: ['install', 'server', 'path', 'headless', 'cli', 'terminal'],
@@ -593,7 +615,9 @@ export function useCommands() {
       {
         id: 'action:uninstall-server',
         label: "Uninstall 'hive-server' Command from PATH",
-        description: 'Remove the hive-server CLI from /usr/local/bin',
+        description: isWindows()
+          ? 'Remove the hive-server CLI from %LOCALAPPDATA%\\Hive'
+          : 'Remove the hive-server CLI from /usr/local/bin',
         category: 'action',
         icon: 'Trash2',
         keywords: ['uninstall', 'remove', 'server', 'path', 'cli'],
@@ -652,7 +676,8 @@ export function useCommands() {
     getActiveWorktreePath,
     closeCommandPalette,
     pushCommandLevel,
-    isPackaged
+    isPackaged,
+    toggleBoardView
   ])
 
   // Get filtered commands based on search query

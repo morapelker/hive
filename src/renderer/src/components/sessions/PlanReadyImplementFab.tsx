@@ -1,4 +1,19 @@
 import { cn } from '@/lib/utils'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+
+function MnemonicLabel({ letter, label }: { letter: string; label: string }): React.JSX.Element {
+  const index = label.toLowerCase().indexOf(letter.toLowerCase())
+  if (index === -1) return <span>{label}</span>
+  return (
+    <span>
+      {label.slice(0, index)}
+      <span className="font-semibold underline underline-offset-2 decoration-2">
+        {label[index]}
+      </span>
+      {label.slice(index + 1)}
+    </span>
+  )
+}
 
 interface PlanReadyImplementFabProps {
   onImplement: () => void
@@ -8,6 +23,7 @@ interface PlanReadyImplementFabProps {
   onSuperpowersLocal?: () => void
   superpowersAvailable?: boolean
   isConnectionSession?: boolean
+  onSaveAsTicket?: () => void
 }
 
 export function PlanReadyImplementFab({
@@ -17,8 +33,11 @@ export function PlanReadyImplementFab({
   onSuperpowers,
   onSuperpowersLocal,
   superpowersAvailable,
-  isConnectionSession
+  isConnectionSession,
+  onSaveAsTicket
 }: PlanReadyImplementFabProps): React.JSX.Element {
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+
   return (
     <div
       className={cn(
@@ -28,6 +47,23 @@ export function PlanReadyImplementFab({
         visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'
       )}
     >
+      {onSaveAsTicket && (
+        <button
+          onClick={onSaveAsTicket}
+          className={cn(
+            'h-8 rounded-full px-3',
+            'text-xs font-medium',
+            'bg-muted/80 text-foreground border border-border',
+            'shadow-md hover:bg-muted transition-colors duration-200',
+            'cursor-pointer',
+            visible ? 'opacity-100' : 'opacity-0'
+          )}
+          aria-label="Save plan as ticket"
+          data-testid="plan-ready-save-ticket-fab"
+        >
+          {vimModeEnabled ? <MnemonicLabel letter="s" label="Save as ticket" /> : 'Save as ticket'}
+        </button>
+      )}
       <button
         onClick={onHandoff}
         className={cn(
@@ -41,7 +77,7 @@ export function PlanReadyImplementFab({
         aria-label="Handoff plan"
         data-testid="plan-ready-handoff-fab"
       >
-        Handoff
+        {vimModeEnabled ? <MnemonicLabel letter="a" label="Handoff" /> : 'Handoff'}
       </button>
       {superpowersAvailable && !isConnectionSession && onSuperpowersLocal && (
         <button
@@ -57,7 +93,11 @@ export function PlanReadyImplementFab({
           aria-label="Supercharge plan locally"
           data-testid="plan-ready-supercharge-local-fab"
         >
-          Supercharge locally
+          {vimModeEnabled ? (
+            <MnemonicLabel letter="o" label="Supercharge locally" />
+          ) : (
+            'Supercharge locally'
+          )}
         </button>
       )}
       {superpowersAvailable && onSuperpowers && (
@@ -74,7 +114,7 @@ export function PlanReadyImplementFab({
           aria-label="Supercharge plan"
           data-testid="plan-ready-supercharge-fab"
         >
-          Supercharge
+          {vimModeEnabled ? <MnemonicLabel letter="u" label="Supercharge" /> : 'Supercharge'}
         </button>
       )}
       <button
@@ -90,7 +130,7 @@ export function PlanReadyImplementFab({
         aria-label="Implement plan"
         data-testid="plan-ready-implement-fab"
       >
-        Implement
+        {vimModeEnabled ? <MnemonicLabel letter="m" label="Implement" /> : 'Implement'}
       </button>
     </div>
   )

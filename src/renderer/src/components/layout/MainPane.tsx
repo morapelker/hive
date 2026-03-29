@@ -3,12 +3,16 @@ import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
 import { SessionTerminalView } from '@/components/sessions/SessionTerminalView'
 import { FileViewer } from '@/components/file-viewer'
-import { InlineDiffViewer } from '@/components/diff'
+import { InlineDiffViewer, ImageDiffView } from '@/components/diff'
+import { isImageFile } from '@shared/types/file-utils'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useProjectStore } from '@/stores/useProjectStore'
+import { KanbanBoard } from '@/components/kanban/KanbanBoard'
 
 const MonacoDiffView = lazy(() => import('@/components/diff/MonacoDiffView'))
 const WorktreeContextEditor = lazy(() =>
@@ -16,7 +20,6 @@ const WorktreeContextEditor = lazy(() =>
     default: m.WorktreeContextEditor
   }))
 )
-
 interface MainPaneProps {
   children?: React.ReactNode
 }
@@ -32,6 +35,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const contextEditorWorktreeId = useFileViewerStore((state) => state.contextEditorWorktreeId)
   const closedTerminalSessionIds = useSessionStore((state) => state.closedTerminalSessionIds)
   const ghosttyOverlaySuppressed = useLayoutStore((state) => state.ghosttyOverlaySuppressed)
+  const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
+  const selectedProjectId = useProjectStore((state) => state.selectedProjectId)
 
   // Subscribe to session maps so terminal list stays reactive
   const sessionsByWorktree = useSessionStore((state) => state.sessionsByWorktree)
@@ -169,6 +174,12 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       )
     }
 
+    // Kanban board view takes priority when active and a project is selected
+    // but yields to file/diff/context views when their tab is active
+    if (isBoardViewActive && selectedProjectId && !activeFilePath && !activeDiff && !contextEditorWorktreeId) {
+      return <KanbanBoard projectId={selectedProjectId} />
+    }
+
     // Loading sessions (including auto-start)
     if (isLoading) {
       return (
@@ -183,6 +194,21 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
 
     // Diff viewer is active
     if (activeDiff) {
+      // Image files get their own viewer (binary diffs don't work in text editors)
+      if (isImageFile(activeDiff.filePath)) {
+        return (
+          <ImageDiffView
+            worktreePath={activeDiff.worktreePath}
+            filePath={activeDiff.filePath}
+            fileName={activeDiff.fileName}
+            staged={activeDiff.staged}
+            isUntracked={activeDiff.isUntracked}
+            isNewFile={activeDiff.isNewFile}
+            compareBranch={activeDiff.compareBranch}
+            onClose={handleCloseDiff}
+          />
+        )
+      }
       // New/untracked files use the syntax highlighter view (but not in branch mode —
       // branch diffs always use Monaco since we have an empty original to compare against)
       if ((activeDiff.isNewFile || activeDiff.isUntracked) && !activeDiff.compareBranch) {
@@ -208,6 +234,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
           }
         >
           <MonacoDiffView
+            key={`${activeDiff.filePath}|${activeDiff.compareBranch ?? ''}|${activeDiff.staged}|${activeDiff.prReviewWorktreeId ?? ''}`}
             worktreePath={activeDiff.worktreePath}
             filePath={activeDiff.filePath}
             fileName={activeDiff.fileName}
@@ -215,6 +242,9 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
             isUntracked={activeDiff.isUntracked}
             isNewFile={activeDiff.isNewFile}
             compareBranch={activeDiff.compareBranch}
+            scrollToLine={activeDiff.scrollToLine}
+            scrollTrigger={activeDiff.scrollTrigger}
+            prReviewWorktreeId={activeDiff.prReviewWorktreeId}
             onClose={handleCloseDiff}
           />
         </Suspense>

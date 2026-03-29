@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useLayoutStore } from '@/stores/useLayoutStore'
-import { useProjectStore, useConnectionStore } from '@/stores'
+import { useProjectStore, useConnectionStore, useFilterStore, useSpaceStore } from '@/stores'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FolderGit2, Link, Loader2 } from 'lucide-react'
@@ -9,18 +9,29 @@ import {
   ProjectList,
   AddProjectButton,
   SortProjectsButton,
-  RecentToggleButton
+  RecentToggleButton,
+  FilterChips
 } from '@/components/projects'
 import { ConnectionList } from '@/components/connections'
 import { SpacesTabBar } from '@/components/spaces'
+import { ProjectFilter } from '@/components/projects/ProjectFilter'
 import { UsageIndicator } from './UsageIndicator'
 import { PinnedList } from './PinnedList'
 import { RecentList } from './RecentList'
 
 export function LeftSidebar(): React.JSX.Element {
   const { leftSidebarWidth, leftSidebarCollapsed, setLeftSidebarWidth } = useLayoutStore()
-  const expandAllProjects = useProjectStore((s) => s.expandAllProjects)
+  const projectCount = useProjectStore((s) => s.projects.length)
   const showUsageIndicator = useSettingsStore((s) => s.showUsageIndicator)
+  const [filterQuery, setFilterQuery] = useState('')
+
+  // Filter store for language filters
+  const activeLanguages = useFilterStore((s) => s.activeLanguages)
+  const removeLanguage = useFilterStore((s) => s.removeLanguage)
+  const clearAllFilters = useFilterStore((s) => s.clearAll)
+
+  // Space switching
+  const activeSpaceId = useSpaceStore((s) => s.activeSpaceId)
 
   // Connection mode state
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
@@ -31,12 +42,19 @@ export function LeftSidebar(): React.JSX.Element {
 
   const canFinalize = connectionModeSelectedIds.size >= 2
 
-  // Expand all projects when entering connection mode
+  // Clear filter when entering connection mode
   useEffect(() => {
     if (connectionModeActive) {
-      expandAllProjects()
+      setFilterQuery('')
+      clearAllFilters()
     }
-  }, [connectionModeActive, expandAllProjects])
+  }, [connectionModeActive, clearAllFilters])
+
+  // Clear language filters on space switch
+  useEffect(() => {
+    clearAllFilters()
+    setFilterQuery('')
+  }, [activeSpaceId, clearAllFilters])
 
   // Escape key exits connection mode
   useEffect(() => {
@@ -137,15 +155,27 @@ export function LeftSidebar(): React.JSX.Element {
             </div>
           </div>
         )}
-        <div className="flex-1 overflow-auto p-2">
+        {!connectionModeActive && projectCount > 1 && (
+          <div className="px-3 py-2 border-b">
+            <ProjectFilter value={filterQuery} onChange={setFilterQuery} />
+          </div>
+        )}
+        {activeLanguages.length > 0 && (
+          <div className="px-3 py-1.5 border-b">
+            <FilterChips languages={activeLanguages} onRemove={removeLanguage} />
+          </div>
+        )}
+        <div className="flex-1 overflow-auto p-2" data-testid="sidebar-scroll-container">
           <PinnedList />
           <RecentList />
           <ConnectionList />
-          <ProjectList onAddProject={handleAddProject} />
+          <ProjectList
+            onAddProject={handleAddProject}
+            filterQuery={filterQuery}
+            activeLanguages={activeLanguages}
+          />
         </div>
-        {!connectionModeActive && (
-          showUsageIndicator ? <UsageIndicator /> : <SpacesTabBar />
-        )}
+        {!connectionModeActive && (showUsageIndicator ? <UsageIndicator /> : <SpacesTabBar />)}
       </aside>
       <ResizeHandle onResize={handleResize} direction="left" />
     </div>

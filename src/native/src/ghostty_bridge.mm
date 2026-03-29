@@ -366,6 +366,33 @@ void GhosttyBridge::setSurfaceFocus(uint32_t surfaceId, bool focused) {
   ghostty_surface_set_focus(handle, focused);
 }
 
+void GhosttyBridge::pasteText(uint32_t surfaceId, const std::string& text) {
+  if (text.empty()) return;
+
+  ghostty_surface_t handle = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = surfaces_.find(surfaceId);
+    if (it == surfaces_.end() || !it->second.handle) return;
+    handle = it->second.handle;
+  }
+
+  // Release mutex before calling Ghostty — the text input can trigger
+  // callbacks that re-enter the bridge (same pattern as keyEvent).
+  ghostty_surface_text(handle, text.c_str(), text.length());
+}
+
+uint32_t GhosttyBridge::focusedSurfaceId() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (auto& [id, surface] : surfaces_) {
+    NSView* view = surface.view;
+    if (view && view.window && [view.window firstResponder] == view) {
+      return id;
+    }
+  }
+  return 0;
+}
+
 void GhosttyBridge::requestClose(uint32_t surfaceId) {
   ghostty_surface_t handle = nullptr;
   {

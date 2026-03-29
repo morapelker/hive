@@ -31,6 +31,8 @@ interface GhosttyAddon {
   ghosttyMousePos(surfaceId: number, x: number, y: number, mods: number): void
   ghosttyMouseScroll(surfaceId: number, dx: number, dy: number, mods: number): void
   ghosttySetFocus(surfaceId: number, focused: boolean): void
+  ghosttyPasteText(surfaceId: number, text: string): void
+  ghosttyFocusedSurfaceId(): number
   ghosttyDestroySurface(surfaceId: number): void
   ghosttyShutdown(): void
 }
@@ -385,6 +387,59 @@ class GhosttyService {
         'Failed to set surface focus',
         err instanceof Error ? err : new Error(String(err)),
         { worktreeId }
+      )
+    }
+  }
+
+  /**
+   * Paste text into a Ghostty surface (writes text as if typed).
+   * Used as a programmatic paste pathway independent of macOS focus state.
+   */
+  pasteText(worktreeId: string, text: string): void {
+    if (!this.addon) return
+
+    const info = this.surfaces.get(worktreeId)
+    if (!info) return
+
+    try {
+      this.addon.ghosttyPasteText(info.surfaceId, text)
+    } catch (err) {
+      log.error(
+        'Failed to paste text into surface',
+        err instanceof Error ? err : new Error(String(err)),
+        { worktreeId }
+      )
+    }
+  }
+
+  /**
+   * Returns the surface ID whose native NSView is the macOS first responder,
+   * or 0 if no Ghostty surface currently has focus.
+   */
+  focusedSurfaceId(): number {
+    if (!this.addon) return 0
+    try {
+      return this.addon.ghosttyFocusedSurfaceId()
+    } catch {
+      return 0
+    }
+  }
+
+  /**
+   * Paste clipboard text into whichever Ghostty surface currently has
+   * macOS first responder focus. No-op if no surface is focused.
+   */
+  pasteToFocusedSurface(text: string): void {
+    if (!this.addon || !text) return
+    const surfaceId = this.focusedSurfaceId()
+    if (surfaceId === 0) return
+    try {
+      this.addon.ghosttyPasteText(surfaceId, text)
+    } catch (err) {
+      log.error(
+        'Failed to paste to focused surface',
+        err instanceof Error ? err : new Error(String(err)),
+        { surfaceId }
       )
     }
   }

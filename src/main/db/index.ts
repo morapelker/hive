@@ -14,11 +14,21 @@ export type {
   SessionMessageCreate,
   SessionMessageUpdate,
   SessionMessageUpsertByOpenCode,
+  SessionActivity,
+  SessionActivityCreate,
+  SessionActivityKind,
+  SessionActivityTone,
   Setting,
   SessionSearchOptions,
   SessionWithWorktree,
   Space,
   SpaceCreate,
   SpaceUpdate,
-  ProjectSpaceAssignment
+  ProjectSpaceAssignment,
+  KanbanTicket,
+  KanbanTicketCreate,
+  KanbanTicketUpdate,
+  KanbanTicketColumn,
+  TicketFollowupMessage,
+  TicketFollowupMessageCreate
 } from './types'

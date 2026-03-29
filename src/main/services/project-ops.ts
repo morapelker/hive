@@ -64,9 +64,12 @@ export function isValidDirectory(path: string): boolean {
  * Validate a project path: checks it is a valid directory and a git repository.
  * Returns project info on success.
  */
-export function validateProject(
-  path: string
-): { success: boolean; path?: string; name?: string; error?: string } {
+export function validateProject(path: string): {
+  success: boolean
+  path?: string
+  name?: string
+  error?: string
+} {
   if (!isValidDirectory(path)) {
     return {
       success: false,

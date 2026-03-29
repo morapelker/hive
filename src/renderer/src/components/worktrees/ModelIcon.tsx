@@ -35,20 +35,22 @@ export function ModelIcon({ worktreeId, className }: ModelIconProps): React.JSX.
     return null
   })
 
-  const isClaudeCodeSdk = useSessionStore((s) => {
+  const latestAgentSdk = useSessionStore((s) => {
     const sessions = s.sessionsByWorktree.get(worktreeId)
-    if (!sessions?.length) return false
-    const latest = sessions[sessions.length - 1]
-    return latest.agent_sdk === 'claude-code'
+    if (!sessions?.length) return null
+    return sessions[sessions.length - 1].agent_sdk ?? null
   })
 
   if (!showModelIcons) return null
 
   // Claude Agent SDK always uses Claude models
-  if (isClaudeCodeSdk) {
-    return (
-      <img src={claudeIcon} alt="Claude" className={cn(className)} draggable={false} />
-    )
+  if (latestAgentSdk === 'claude-code') {
+    return <img src={claudeIcon} alt="Claude" className={cn(className)} draggable={false} />
+  }
+
+  // Codex SDK always uses OpenAI/GPT models
+  if (latestAgentSdk === 'codex') {
+    return <img src={openaiIcon} alt="OpenAI" className={cn(className)} draggable={false} />
   }
 
   const matched = getModelIcon(lastModelId)

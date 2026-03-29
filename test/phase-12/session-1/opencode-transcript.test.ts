@@ -142,22 +142,25 @@ describe('OpenCode transcript adapter', () => {
     expect(result.every((message) => typeof message.timestamp === 'string')).toBe(true)
   })
 
-  test('orders deterministically by time then id', () => {
+  test('preserves source order when messages share the same timestamp', () => {
     const input = [
-      { info: { id: 'msg-z' }, parts: [{ type: 'text', text: 'Z' }] },
       {
-        info: { id: 'msg-b', time: { created: 3000 } },
-        parts: [{ type: 'text', text: 'B' }]
+        id: 'item-2',
+        role: 'user',
+        timestamp: '2026-03-12T10:00:00.000Z',
+        parts: [{ type: 'text', text: 'First in source order' }]
       },
       {
-        info: { id: 'msg-a', time: { created: 3000 } },
-        parts: [{ type: 'text', text: 'A' }]
+        id: 'item-10',
+        role: 'assistant',
+        timestamp: '2026-03-12T10:00:00.000Z',
+        parts: [{ type: 'text', text: 'Second in source order' }]
       },
       { info: { id: 'msg-c' }, parts: [{ type: 'text', text: 'C' }] }
     ]
 
     const result = mapOpencodeMessagesToSessionViewMessages(input)
-    expect(result.map((message) => message.id)).toEqual(['msg-a', 'msg-b', 'msg-c', 'msg-z'])
+    expect(result.map((message) => message.id).slice(0, 2)).toEqual(['item-2', 'item-10'])
   })
 })
 

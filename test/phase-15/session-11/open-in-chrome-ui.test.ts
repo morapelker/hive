@@ -59,6 +59,15 @@ describe('Session 11: Open in Chrome UI', () => {
       expect(extractDevServerUrl(output)).toBe('http://localhost:5173')
     })
 
+    test('finds URL through ANSI color codes (Vite format)', () => {
+      const output = [
+        '\x1b[32m  VITE v6.1.1  ready in 219 ms\x1b[39m',
+        '  \x1b[32m➜\x1b[39m  \x1b[1mLocal:\x1b[22m   \x1b[36mhttp://localhost:\x1b[1m5173\x1b[22m/\x1b[39m',
+        '  \x1b[32m➜\x1b[39m  \x1b[1mNetwork:\x1b[22m  use --host to expose'
+      ]
+      expect(extractDevServerUrl(output)).toBe('http://localhost:5173/')
+    })
+
     test('does not match non-local URLs', () => {
       const output = ['Server at http://example.com:3000']
       expect(extractDevServerUrl(output)).toBeNull()

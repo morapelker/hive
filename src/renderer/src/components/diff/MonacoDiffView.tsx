@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import '@/lib/monaco-setup'
 import { DiffEditor, type Monaco } from '@monaco-editor/react'
 import { Loader2 } from 'lucide-react'
@@ -7,6 +7,9 @@ import { parseHunks, getMonacoLanguage } from '@/lib/diff-utils'
 import type { Hunk } from '@/lib/diff-utils'
 import { MonacoDiffToolbar } from './MonacoDiffToolbar'
 import { HunkActionGutter } from './HunkActionGutter'
+import { PrCommentGutter } from './PrCommentGutter'
+import { usePRReviewStore } from '@/stores/usePRReviewStore'
+import type { PRReviewComment } from '@shared/types/git'
 import type { editor } from 'monaco-editor'
 
 interface MonacoDiffViewProps {
@@ -17,8 +20,13 @@ interface MonacoDiffViewProps {
   isUntracked: boolean
   isNewFile?: boolean
   compareBranch?: string
+  scrollToLine?: number
+  scrollTrigger?: number
+  prReviewWorktreeId?: string
   onClose: () => void
 }
+
+const EMPTY_COMMENTS: PRReviewComment[] = []
 
 export default function MonacoDiffView({
   worktreePath,
@@ -27,13 +35,17 @@ export default function MonacoDiffView({
   staged,
   isUntracked,
   compareBranch,
+  scrollToLine,
+  scrollTrigger,
+  prReviewWorktreeId,
   onClose
 }: MonacoDiffViewProps): React.JSX.Element {
   const [originalContent, setOriginalContent] = useState<string | null>(null)
   const [modifiedContent, setModifiedContent] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [sideBySide, setSideBySide] = useState(true)
+  // PR review diffs always use inline mode so view zones render naturally
+  const [sideBySide, setSideBySide] = useState(!prReviewWorktreeId)
   const [hunks, setHunks] = useState<Hunk[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
   const isInitialLoad = useRef(true)
@@ -41,6 +53,20 @@ export default function MonacoDiffView({
 
   const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null)
   const modifiedEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
+  const [editorReady, setEditorReady] = useState(false)
+  const [zonesReady, setZonesReady] = useState(!prReviewWorktreeId)
+
+  // PR review comments for this file (when in PR review mode)
+  const allPrComments = usePRReviewStore(
+    (s) => (prReviewWorktreeId ? s.comments.get(prReviewWorktreeId) : undefined) ?? EMPTY_COMMENTS
+  )
+  const fileComments = useMemo(
+    () =>
+      prReviewWorktreeId
+        ? allPrComments.filter((c) => c.path === filePath)
+        : EMPTY_COMMENTS,
+    [allPrComments, filePath, prReviewWorktreeId]
+  )
 
   // Fetch file contents for the diff
   const fetchContent = useCallback(async () => {
@@ -83,9 +109,9 @@ export default function MonacoDiffView({
       } else {
         // Unstaged diff: original = Index (or HEAD if nothing staged), modified = Working tree
         const [origResult, modResult] = await Promise.all([
-          window.gitOps.getRefContent(worktreePath, '', filePath).catch(() =>
-            window.gitOps.getRefContent(worktreePath, 'HEAD', filePath)
-          ),
+          window.gitOps
+            .getRefContent(worktreePath, '', filePath)
+            .catch(() => window.gitOps.getRefContent(worktreePath, 'HEAD', filePath)),
           window.gitOps.getFileContent(worktreePath, filePath)
         ])
 
@@ -125,23 +151,37 @@ export default function MonacoDiffView({
   }, [worktreePath])
 
   // Handle Monaco mount
-  const handleEditorDidMount = useCallback(
-    (editor: editor.IStandaloneDiffEditor) => {
-      diffEditorRef.current = editor
-      modifiedEditorRef.current = editor.getModifiedEditor()
+  const handleEditorDidMount = useCallback((diffEd: editor.IStandaloneDiffEditor) => {
+    diffEditorRef.current = diffEd
+    modifiedEditorRef.current = diffEd.getModifiedEditor()
 
-      // Get initial diff changes
-      const changes = editor.getLineChanges()
-      setHunks(parseHunks(changes))
+    // Get initial diff changes
+    const changes = diffEd.getLineChanges()
+    setHunks(parseHunks(changes))
 
-      // Listen for diff updates
-      editor.onDidUpdateDiff(() => {
-        const newChanges = editor.getLineChanges()
-        setHunks(parseHunks(newChanges))
-      })
-    },
-    []
-  )
+    // Listen for diff updates
+    diffEd.onDidUpdateDiff(() => {
+      const newChanges = diffEd.getLineChanges()
+      setHunks(parseHunks(newChanges))
+    })
+
+    // Signal that the editor is mounted and ready for scrolling
+    setEditorReady(true)
+  }, [])
+
+  // Auto-scroll to the target line (e.g. when navigating from a PR comment).
+  // Waits for: editor mounted (editorReady), content loaded (!isLoading),
+  // and view zones created + sized (zonesReady — signalled by PrCommentGutter).
+  // scrollTrigger changes on every navigation so re-clicking the same comment
+  // (same scrollToLine value) still triggers a scroll.
+  useEffect(() => {
+    if (!scrollToLine || !editorReady || isLoading || !zonesReady) return
+    const modEditor = modifiedEditorRef.current
+    if (!modEditor) return
+
+    modEditor.revealLineInCenter(scrollToLine)
+    modEditor.setPosition({ lineNumber: scrollToLine, column: 1 })
+  }, [scrollToLine, scrollTrigger, editorReady, isLoading, zonesReady])
 
   // Register theme before Monaco loads
   const handleBeforeMount = useCallback((monaco: Monaco) => {
@@ -301,8 +341,7 @@ export default function MonacoDiffView({
             scrollBeyondLastLine: false,
             fontSize: 12,
             lineHeight: 20,
-            fontFamily:
-              'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
             automaticLayout: true,
             scrollbar: {
               verticalScrollbarSize: 10,
@@ -327,6 +366,17 @@ export default function MonacoDiffView({
             onContentChanged={handleContentChanged}
           />
         )}
+        {prReviewWorktreeId &&
+          fileComments.length > 0 &&
+          originalContent !== null &&
+          modifiedContent !== null && (
+            <PrCommentGutter
+              comments={fileComments}
+              modifiedEditor={modifiedEditorRef.current}
+              highlightLine={scrollToLine}
+              onZonesReady={() => setZonesReady(true)}
+            />
+          )}
       </div>
     </div>
   )

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Terminal, ChevronDown } from 'lucide-react'
+import { extractCommandText } from '@/lib/tool-input-utils'
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './types'
 
@@ -14,7 +15,7 @@ function stripAnsi(text: string): string {
 export function BashToolView({ input, output, error }: ToolViewProps) {
   const [showAll, setShowAll] = useState(false)
 
-  const command = (input.command || input.cmd || '') as string
+  const command = extractCommandText(input)
   const description = (input.description || '') as string
 
   const cleanOutput = output ? stripAnsi(output) : ''

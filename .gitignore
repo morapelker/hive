@@ -52,4 +52,19 @@ vendor/
 *.pfx
 
 # Local debug/playground scripts
-scripts/
+scripts/*
+!scripts/generate-icon.py
+!scripts/release-canary.sh
+!scripts/release.sh
+!scripts/prepare-win-deps.sh
+!scripts/codex-app-server-probe.ts
+
+# Claude worktrees
+.claude/worktrees/
+
+# Windows cross-build cache
+.win-natives/
+.mac-natives-backup/
+
+# Superpowers brainstorm artifacts
+.superpowers/brainstorm/

@@ -14,17 +14,8 @@ export class PathGuard {
   validatePath(inputPath: string): boolean {
     if (!inputPath || inputPath.trim() === '') return false
     const resolved = normalize(resolve(inputPath))
-    return this.allowedRoots.some(
-      (root) => resolved === root || resolved.startsWith(root + '/')
-    )
+    return this.allowedRoots.some((root) => resolved === root || resolved.startsWith(root + '/'))
   }
 }
 
-export const PATH_ARG_NAMES = [
-  'worktreePath',
-  'filePath',
-  'dirPath',
-  'cwd',
-  'path',
-  'projectPath'
-]
+export const PATH_ARG_NAMES = ['worktreePath', 'filePath', 'dirPath', 'cwd', 'path', 'projectPath']

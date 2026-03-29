@@ -17,9 +17,11 @@ fatal() { err "$1"; exit 1; }
 # ── Parse flags ──────────────────────────────────────────────────
 SHUTDOWN_AFTER=false
 SLEEP_AFTER=false
+AUTO_YES=false
 SUDO_KEEPALIVE_PID=""
 for arg in "$@"; do
   case "$arg" in
+    -y|--yes) AUTO_YES=true ;;
     --shutdown) SHUTDOWN_AFTER=true ;;
     --sleep) SLEEP_AFTER=true ;;
     *) fatal "Unknown argument: $arg" ;;
@@ -28,6 +30,10 @@ done
 
 if $SHUTDOWN_AFTER && $SLEEP_AFTER; then
   fatal "Cannot combine --shutdown and --sleep"
+fi
+
+if $AUTO_YES; then
+  warn "Auto-accepting all prompts (-y)"
 fi
 
 if $SHUTDOWN_AFTER; then
@@ -71,8 +77,10 @@ ok "Up to date with remote"
 CURRENT_BRANCH=$(git branch --show-current)
 if [[ "$CURRENT_BRANCH" != "main" ]]; then
   warn "You are on branch '$CURRENT_BRANCH', not 'main'."
-  read -rp "Continue anyway? [Y/n] " confirm
-  [[ "$confirm" =~ ^[Nn]$ ]] && exit 1
+  if ! $AUTO_YES; then
+    read -rp "Continue anyway? [Y/n] " confirm
+    [[ "$confirm" =~ ^[Nn]$ ]] && exit 1
+  fi
 fi
 
 # Check .env.signing exists
@@ -123,7 +131,14 @@ SUGGESTED_VERSION=$(node -p "
 info "Current version: ${YELLOW}v${CURRENT_VERSION}${NC}"
 
 # Prompt for new version with suggested default
-if [[ -n "$SUGGESTED_VERSION" ]]; then
+if $AUTO_YES; then
+  if [[ -n "$SUGGESTED_VERSION" ]]; then
+    NEW_VERSION="$SUGGESTED_VERSION"
+    ok "Auto-accepting version: ${NEW_VERSION}"
+  else
+    fatal "Cannot auto-accept version: no suggested version available"
+  fi
+elif [[ -n "$SUGGESTED_VERSION" ]]; then
   read -rp "Enter new version number (without 'v' prefix) [${SUGGESTED_VERSION}]: " NEW_VERSION
   NEW_VERSION="${NEW_VERSION:-$SUGGESTED_VERSION}"
 else
@@ -182,14 +197,16 @@ if [[ -n "$RELEASE_NOTES" ]]; then
   echo "$RELEASE_NOTES"
   echo -e "${CYAN}───────────────────────────────────────────────────${NC}"
   echo ""
-  read -rp "Edit release notes in \$EDITOR before publishing? [y/N] " edit_notes
-  if [[ "$edit_notes" =~ ^[Yy]$ ]]; then
-    NOTES_TMPFILE=$(mktemp "${TMPDIR:-/tmp}/hive-release-notes.XXXXXX")
-    echo "$RELEASE_NOTES" > "$NOTES_TMPFILE"
-    ${EDITOR:-vim} "$NOTES_TMPFILE"
-    RELEASE_NOTES=$(cat "$NOTES_TMPFILE")
-    rm -f "$NOTES_TMPFILE"
-    ok "Release notes updated"
+  if ! $AUTO_YES; then
+    read -rp "Edit release notes in \$EDITOR before publishing? [y/N] " edit_notes
+    if [[ "$edit_notes" =~ ^[Yy]$ ]]; then
+      NOTES_TMPFILE=$(mktemp "${TMPDIR:-/tmp}/hive-release-notes.XXXXXX")
+      echo "$RELEASE_NOTES" > "$NOTES_TMPFILE"
+      ${EDITOR:-vim} "$NOTES_TMPFILE"
+      RELEASE_NOTES=$(cat "$NOTES_TMPFILE")
+      rm -f "$NOTES_TMPFILE"
+      ok "Release notes updated"
+    fi
   fi
 else
   warn "No merged PRs found since v${CURRENT_VERSION}. Release will have no notes."
@@ -201,13 +218,16 @@ info "Will release: ${YELLOW}v${CURRENT_VERSION}${NC} → ${GREEN}v${NEW_VERSION
 info "This will:"
 echo "  1. Bump package.json to ${NEW_VERSION}"
 echo "  2. Commit, tag v${NEW_VERSION}, and push to origin"
-echo "  3. Build for arm64 + x64 (sign + notarize)"
-echo "  4. Publish DMGs/ZIPs to GitHub Release v${NEW_VERSION}"
-echo "  5. Update Homebrew cask with new SHA256 checksums"
-echo "  6. Push Homebrew repo"
+echo "  3. Build macOS for arm64 + x64 (sign + notarize)"
+echo "  4. Build Windows x64 (NSIS installer + ZIP)"
+echo "  5. Publish all artifacts to GitHub Release v${NEW_VERSION}"
+echo "  6. Update Homebrew cask with new SHA256 checksums"
+echo "  7. Push Homebrew repo"
 echo ""
-read -rp "Proceed? [Y/n] " confirm
-[[ "$confirm" =~ ^[Nn]$ ]] && { info "Aborted."; exit 0; }
+if ! $AUTO_YES; then
+  read -rp "Proceed? [Y/n] " confirm
+  [[ "$confirm" =~ ^[Nn]$ ]] && { info "Aborted."; exit 0; }
+fi
 
 # Arm EXIT trap AFTER user confirmation (so aborting doesn't trigger shutdown/notification)
 RELEASE_SUCCEEDED=false
@@ -351,6 +371,68 @@ cp "$DIST_DIR/latest-mac.yml" "$DIST_DIR/canary-mac.yml"
 gh release upload "v${NEW_VERSION}" "$DIST_DIR/canary-mac.yml" --repo "$REPO" --clobber
 ok "canary-mac.yml published (canary users will see this stable release)"
 
+# ── Phase 4.5: Windows build ──────────────────────────────────────
+# Windows build is non-fatal — macOS artifacts are already published.
+# If this fails, we warn but continue with the release.
+WIN_BUILD_OK=false
+tg "🪟 Hive release v${NEW_VERSION} — building Windows"
+if bash "$SCRIPT_DIR/prepare-win-deps.sh"; then
+  info "Packaging Windows build..."
+  info "This may take a few minutes."
+  # --config.npmRebuild=false: skip native module rebuild (we prepared Windows binaries manually)
+  if pnpm exec electron-builder --win --publish always --config.npmRebuild=false; then
+    WIN_BUILD_OK=true
+    ok "Windows assets uploaded to GitHub Releases"
+
+    # Also publish canary.yml (Windows) so canary-channel users see this stable release
+    if [[ -f "$DIST_DIR/latest.yml" ]]; then
+      cp "$DIST_DIR/latest.yml" "$DIST_DIR/canary.yml"
+      gh release upload "v${NEW_VERSION}" "$DIST_DIR/canary.yml" --repo "$REPO" --clobber
+      ok "canary.yml (Windows) published"
+    fi
+  else
+    warn "Windows build failed — macOS release will continue without Windows artifacts"
+    tg "⚠️ Hive release v${NEW_VERSION} — Windows build failed"
+  fi
+else
+  warn "Windows dependency preparation failed — skipping Windows build"
+  tg "⚠️ Hive release v${NEW_VERSION} — Windows deps preparation failed"
+fi
+
+# Always restore macOS native binaries so the working tree stays usable for development
+bash "$SCRIPT_DIR/prepare-win-deps.sh" --restore 2>/dev/null || true
+
+# ── Phase 4.6: Linux build ───────────────────────────────────────
+# Linux build is non-fatal — macOS artifacts are already published.
+# If this fails, we warn but continue with the release.
+LINUX_BUILD_OK=false
+tg "🐧 Hive release v${NEW_VERSION} — building Linux"
+if bash "$SCRIPT_DIR/prepare-linux-deps.sh"; then
+  info "Packaging Linux build..."
+  info "This may take a few minutes."
+  # --config.npmRebuild=false: skip native module rebuild (we prepared Linux binaries manually)
+  if pnpm exec electron-builder --linux --publish always --config.npmRebuild=false; then
+    LINUX_BUILD_OK=true
+    ok "Linux assets uploaded to GitHub Releases"
+
+    # Also publish canary-linux.yml so canary-channel users see this stable release
+    if [[ -f "$DIST_DIR/latest-linux.yml" ]]; then
+      cp "$DIST_DIR/latest-linux.yml" "$DIST_DIR/canary-linux.yml"
+      gh release upload "v${NEW_VERSION}" "$DIST_DIR/canary-linux.yml" --repo "$REPO" --clobber
+      ok "canary-linux.yml published"
+    fi
+  else
+    warn "Linux build failed — release will continue without Linux artifacts"
+    tg "⚠️ Hive release v${NEW_VERSION} — Linux build failed"
+  fi
+else
+  warn "Linux dependency preparation failed — skipping Linux build"
+  tg "⚠️ Hive release v${NEW_VERSION} — Linux deps preparation failed"
+fi
+
+# Always restore macOS native binaries after Linux build
+bash "$SCRIPT_DIR/prepare-linux-deps.sh" --restore 2>/dev/null || true
+
 # Un-draft the release and attach release notes
 info "Publishing release (removing draft status)..."
 if [[ -n "$RELEASE_NOTES" ]]; then
@@ -428,12 +510,33 @@ echo "  GitHub Release: https://github.com/${REPO}/releases/tag/v${NEW_VERSION}"
 echo "  Homebrew:       brew install --cask morapelker/hive/hive"
 echo ""
 echo "  Assets published:"
-echo "    • Hive-${NEW_VERSION}-arm64.dmg  (Apple Silicon)"
-echo "    • Hive-${NEW_VERSION}.dmg        (Intel)"
-echo "    • Hive-${NEW_VERSION}-arm64-mac.zip"
-echo "    • Hive-${NEW_VERSION}-mac.zip"
-echo "    • latest-mac.yml (auto-updater)"
+echo "    macOS:"
+echo "      • Hive-${NEW_VERSION}-arm64.dmg  (Apple Silicon)"
+echo "      • Hive-${NEW_VERSION}.dmg        (Intel)"
+echo "      • Hive-${NEW_VERSION}-arm64-mac.zip"
+echo "      • Hive-${NEW_VERSION}-mac.zip"
+echo "      • latest-mac.yml (auto-updater)"
+if $WIN_BUILD_OK; then
+  echo "    Windows:"
+  echo "      • Hive-Setup-${NEW_VERSION}.exe  (NSIS installer)"
+  echo "      • Hive-${NEW_VERSION}-win.zip    (portable)"
+  echo "      • latest.yml (auto-updater)"
+else
+  echo "    Windows: ⚠ build failed (macOS release published without Windows artifacts)"
+fi
+if $LINUX_BUILD_OK; then
+  echo "    Linux:"
+  echo "      • Hive-${NEW_VERSION}.AppImage   (AppImage)"
+  echo "      • hive_${NEW_VERSION}_amd64.deb  (Debian package)"
+  echo "      • hive-${NEW_VERSION}.tar.gz     (portable)"
+  echo "      • latest-linux.yml (auto-updater)"
+else
+  echo "    Linux: ⚠ build failed (release published without Linux artifacts)"
+fi
 echo ""
 
 RELEASE_SUCCEEDED=true
-tg "✅ Hive release v${NEW_VERSION} — released successfully"
+PLATFORMS="macOS"
+if $WIN_BUILD_OK; then PLATFORMS="$PLATFORMS + Windows"; fi
+if $LINUX_BUILD_OK; then PLATFORMS="$PLATFORMS + Linux"; fi
+tg "✅ Hive release v${NEW_VERSION} — released successfully ($PLATFORMS)"

@@ -64,7 +64,7 @@ describe('ClaudeCodeImplementer model catalog', () => {
     expect(info).toEqual({
       id: 'opus',
       name: 'Opus 4.6',
-      limit: { context: 200000, output: 32000 }
+      limit: { context: 1000000, output: 32000 }
     })
   })
 

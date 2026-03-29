@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { ToolCard } from './ToolCard'
 import { StreamingCursor } from './StreamingCursor'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -138,7 +139,7 @@ function renderParts(
   )
 }
 
-export function AssistantCanvas({
+export const AssistantCanvas = memo(function AssistantCanvas({
   content,
   timestamp: _timestamp,
   isStreaming = false,
@@ -165,4 +166,4 @@ export function AssistantCanvas({
       </div>
     </div>
   )
-}
+})

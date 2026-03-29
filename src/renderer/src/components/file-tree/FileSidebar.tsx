@@ -1,9 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useGitStore } from '@/stores/useGitStore'
 import { FileTree } from './FileTree'
 import { ChangesView } from './ChangesView'
 import { BranchDiffView } from './BranchDiffView'
+import { PrReviewViewer } from '@/components/pr-review/PrReviewViewer'
 
 interface ConnectionMemberInfo {
   worktree_path: string
@@ -28,7 +32,31 @@ export function FileSidebar({
   onFileClick,
   className
 }: FileSidebarProps): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<'changes' | 'files' | 'diffs'>('changes')
+  const [activeTab, setActiveTab] = useState<'changes' | 'files' | 'diffs' | 'comments'>('changes')
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+  const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
+  const hasAttachedPR = useGitStore(
+    (s) => !!(selectedWorktreeId && s.attachedPR.get(selectedWorktreeId))
+  )
+
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      if (!vimModeEnabled) return
+      const tab = (e as CustomEvent).detail?.tab
+      if (tab === 'changes' || tab === 'files' || tab === 'diffs' || tab === 'comments') {
+        setActiveTab(tab)
+      }
+    }
+    window.addEventListener('hive:right-sidebar-tab', handler)
+    return () => window.removeEventListener('hive:right-sidebar-tab', handler)
+  }, [vimModeEnabled])
+
+  // Switch away from comments tab if PR is detached
+  useEffect(() => {
+    if (!hasAttachedPR && activeTab === 'comments') {
+      setActiveTab('changes')
+    }
+  }, [hasAttachedPR, activeTab])
 
   return (
     <div className={cn('flex flex-col h-full', className)}>
@@ -42,7 +70,13 @@ export function FileSidebar({
           )}
           onClick={() => setActiveTab('changes')}
         >
-          Changes
+          {vimModeEnabled ? (
+            <>
+              <span className="text-primary">C</span>hanges
+            </>
+          ) : (
+            'Changes'
+          )}
           {activeTab === 'changes' && (
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}
@@ -56,7 +90,13 @@ export function FileSidebar({
           )}
           onClick={() => setActiveTab('files')}
         >
-          Files
+          {vimModeEnabled ? (
+            <>
+              <span className="text-primary">F</span>iles
+            </>
+          ) : (
+            'Files'
+          )}
           {activeTab === 'files' && (
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}
@@ -70,11 +110,39 @@ export function FileSidebar({
           )}
           onClick={() => setActiveTab('diffs')}
         >
-          Diffs
+          {vimModeEnabled ? (
+            <>
+              <span className="text-primary">D</span>iffs
+            </>
+          ) : (
+            'Diffs'
+          )}
           {activeTab === 'diffs' && (
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}
         </button>
+        {hasAttachedPR && (
+          <button
+            className={cn(
+              'px-3 py-1.5 text-xs font-medium transition-colors relative',
+              activeTab === 'comments'
+                ? 'text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+            onClick={() => setActiveTab('comments')}
+          >
+            {vimModeEnabled ? (
+              <>
+                C<span className="text-primary">o</span>mments
+              </>
+            ) : (
+              'Comments'
+            )}
+            {activeTab === 'comments' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+        )}
         <div className="flex-1" />
         <button
           onClick={onClose}
@@ -85,8 +153,10 @@ export function FileSidebar({
         </button>
       </div>
 
-      <div className="flex-1 overflow-hidden">
-        {activeTab === 'changes' ? (
+      <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+        {activeTab === 'comments' && selectedWorktreeId ? (
+          <PrReviewViewer worktreeId={selectedWorktreeId} />
+        ) : activeTab === 'changes' ? (
           <ChangesView
             worktreePath={worktreePath}
             isConnectionMode={isConnectionMode}

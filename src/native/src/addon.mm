@@ -300,6 +300,27 @@ void GhosttySetFocus(const Napi::CallbackInfo& info) {
 }
 
 // ---------------------------------------------------------------------------
+// ghosttyPasteText(surfaceId: number, text: string) → void
+// ---------------------------------------------------------------------------
+void GhosttyPasteText(const Napi::CallbackInfo& info) {
+  if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsString()) return;
+
+  uint32_t surfaceId = info[0].As<Napi::Number>().Uint32Value();
+  std::string text = info[1].As<Napi::String>().Utf8Value();
+
+  GhosttyBridge::instance().pasteText(surfaceId, text);
+}
+
+// ---------------------------------------------------------------------------
+// ghosttyFocusedSurfaceId() → number (0 = no Ghostty surface focused)
+// ---------------------------------------------------------------------------
+Napi::Value GhosttyFocusedSurfaceId(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  uint32_t id = GhosttyBridge::instance().focusedSurfaceId();
+  return Napi::Number::New(env, id);
+}
+
+// ---------------------------------------------------------------------------
 // ghosttyDestroySurface(surfaceId: number) → void
 // ---------------------------------------------------------------------------
 void GhosttyDestroySurface(const Napi::CallbackInfo& info) {
@@ -341,6 +362,10 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     Napi::Function::New(env, GhosttyMouseScroll));
   exports.Set("ghosttySetFocus",
     Napi::Function::New(env, GhosttySetFocus));
+  exports.Set("ghosttyPasteText",
+    Napi::Function::New(env, GhosttyPasteText));
+  exports.Set("ghosttyFocusedSurfaceId",
+    Napi::Function::New(env, GhosttyFocusedSurfaceId));
   exports.Set("ghosttyDestroySurface",
     Napi::Function::New(env, GhosttyDestroySurface));
   exports.Set("ghosttyShutdown",

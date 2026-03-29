@@ -1,4 +1,7 @@
+import { memo, useMemo } from 'react'
 import { cn } from '@/lib/utils'
+import { parseUserMessageAttachments } from '@/lib/parse-user-message-attachments'
+import { UserMessageAttachmentCards } from './UserMessageAttachmentCards'
 
 interface UserBubbleProps {
   content: string
@@ -7,17 +10,29 @@ interface UserBubbleProps {
   isAskMode?: boolean
 }
 
-export function UserBubble({ content, isPlanMode, isAskMode }: UserBubbleProps): React.JSX.Element {
+export const UserBubble = memo(function UserBubble({ content, isPlanMode, isAskMode }: UserBubbleProps): React.JSX.Element {
+  const { tickets, prComments, files, cleanText } = useMemo(
+    () => parseUserMessageAttachments(content),
+    [content]
+  )
+
+  const hasAttachments = tickets.length > 0 || prComments.length > 0 || files.length > 0
+
   return (
-    <div className="flex justify-end px-6 py-4" data-testid="message-user">
+    <div className="flex flex-col items-end px-6 py-4" data-testid="message-user">
+      {hasAttachments && (
+        <div className="max-w-[80%]">
+          <UserMessageAttachmentCards tickets={tickets} prComments={prComments} files={files} />
+        </div>
+      )}
       <div
         className={cn(
           'max-w-[80%] rounded-2xl px-4 py-3',
           isPlanMode
             ? 'bg-purple-500/10 text-foreground'
             : isAskMode
-            ? 'bg-amber-500/10 text-foreground'
-            : 'bg-primary/10 text-foreground'
+              ? 'bg-amber-500/10 text-foreground'
+              : 'bg-primary/10 text-foreground'
         )}
       >
         {isPlanMode && (
@@ -36,8 +51,8 @@ export function UserBubble({ content, isPlanMode, isAskMode }: UserBubbleProps):
             ASK
           </span>
         )}
-        <p className="text-sm whitespace-pre-wrap leading-relaxed">{content}</p>
+        <p className="text-sm whitespace-pre-wrap leading-relaxed">{cleanText}</p>
       </div>
     </div>
   )
-}
+})

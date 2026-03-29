@@ -16,7 +16,11 @@ export function parseColorQuad(color: string | null): ConnectionColorQuad {
   if (!color) return DEFAULT_COLOR_QUAD
   try {
     const parsed = JSON.parse(color)
-    if (Array.isArray(parsed) && parsed.length === 4 && parsed.every((c) => typeof c === 'string')) {
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 4 &&
+      parsed.every((c) => typeof c === 'string')
+    ) {
       return parsed as ConnectionColorQuad
     }
     // Legacy single-color string (e.g. "#3b82f6") — treat as activeBg with white text

@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { vi } from 'vitest'
+import { beforeEach, vi } from 'vitest'
 
 if (typeof window !== 'undefined') {
   // Synchronous rAF mock — fires the callback immediately so that
@@ -24,6 +24,30 @@ if (typeof window !== 'undefined') {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn()
     }))
+  })
+
+  if (typeof window.localStorage?.getItem !== 'function') {
+    const storage = new Map<string, string>()
+    Object.defineProperty(window, 'localStorage', {
+      writable: true,
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => storage.get(key) ?? null),
+        setItem: vi.fn((key: string, value: string) => {
+          storage.set(key, value)
+        }),
+        removeItem: vi.fn((key: string) => {
+          storage.delete(key)
+        }),
+        clear: vi.fn(() => {
+          storage.clear()
+        })
+      }
+    })
+  }
+
+  beforeEach(() => {
+    window.localStorage?.clear?.()
   })
 
   // Mock gitOps for components that use GitStatusPanel
@@ -87,7 +111,7 @@ if (typeof window !== 'undefined') {
         getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
         getAppPaths: vi.fn().mockResolvedValue({ userData: '/tmp', home: '/tmp', logs: '/tmp' }),
         isLogMode: vi.fn().mockResolvedValue(false),
-        detectAgentSdks: vi.fn().mockResolvedValue({ opencode: true, claude: true }),
+        detectAgentSdks: vi.fn().mockResolvedValue({ opencode: true, claude: true, codex: false }),
         quitApp: vi.fn().mockResolvedValue(undefined),
         openInApp: vi.fn().mockResolvedValue({ success: true }),
         openInChrome: vi.fn().mockResolvedValue({ success: true }),
@@ -96,7 +120,9 @@ if (typeof window !== 'undefined') {
         onFileSearchShortcut: vi.fn().mockReturnValue(() => {}),
         onNotificationNavigate: vi.fn().mockReturnValue(() => {}),
         onWindowFocused: vi.fn().mockReturnValue(() => {}),
-        updateMenuState: vi.fn().mockResolvedValue(undefined)
+        updateMenuState: vi.fn().mockResolvedValue(undefined),
+        isPackaged: vi.fn().mockResolvedValue(false),
+        getPlatform: vi.fn().mockResolvedValue('darwin')
       }
     })
   }

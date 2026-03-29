@@ -15,8 +15,25 @@ export const usePermissionStore = create<PermissionStore>((set, get) => ({
   addPermission: (sessionId, request) =>
     set((state) => {
       const map = new Map(state.pendingBySession)
+
+      // Cross-session dedup: remove from any other session that has this request ID.
+      // This prevents the same permission from appearing in two sessions simultaneously
+      // if both the live event path and hydration path race with different session targets.
+      for (const [existingSessionId, existingRequests] of map.entries()) {
+        if (existingSessionId === sessionId) continue
+        const filtered = existingRequests.filter((p) => p.id !== request.id)
+        if (filtered.length !== existingRequests.length) {
+          if (filtered.length === 0) {
+            map.delete(existingSessionId)
+          } else {
+            map.set(existingSessionId, filtered)
+          }
+        }
+      }
+
+      // Same-session dedup (existing logic)
       const existing = map.get(sessionId) || []
-      if (existing.some((p) => p.id === request.id)) return state
+      if (existing.some((p) => p.id === request.id)) return { pendingBySession: map }
       map.set(sessionId, [...existing, request])
       return { pendingBySession: map }
     }),

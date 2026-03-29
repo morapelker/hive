@@ -32,7 +32,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
   const selectedDiffBranch = useGitStore((state) => state.selectedDiffBranch)
   const setSelectedDiffBranch = useGitStore((state) => state.setSelectedDiffBranch)
 
-  const selectedBranch = worktreePath ? selectedDiffBranch.get(worktreePath) ?? null : null
+  const selectedBranch = worktreePath ? (selectedDiffBranch.get(worktreePath) ?? null) : null
 
   const [branches, setBranches] = useState<BranchInfo[]>([])
   const [files, setFiles] = useState<BranchDiffFile[]>([])
@@ -166,9 +166,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
   }, [branches, searchFilter])
 
   if (!worktreePath) {
-    return (
-      <div className="p-4 text-sm text-muted-foreground text-center">No worktree selected</div>
-    )
+    return <div className="p-4 text-sm text-muted-foreground text-center">No worktree selected</div>
   }
 
   return (
@@ -309,10 +307,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
                 <span className="text-xs truncate flex-1" title={file.relativePath}>
                   {file.relativePath}
                 </span>
-                <GitStatusIndicator
-                  status={toGitStatusCode(file.status)}
-                  className="mr-1"
-                />
+                <GitStatusIndicator status={toGitStatusCode(file.status)} className="mr-1" />
               </div>
             )
           })}

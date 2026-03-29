@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
-import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square, Archive } from 'lucide-react'
+import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square, Archive, X, Github } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
@@ -10,13 +10,19 @@ import { QueuedMessageBubble } from './QueuedMessageBubble'
 import { ContextIndicator } from './ContextIndicator'
 import { AttachmentButton } from './AttachmentButton'
 import { AttachmentPreview } from './AttachmentPreview'
+import { TicketAttachments } from './TicketAttachments'
+import { CodexFastToggle } from './CodexFastToggle'
 import type { Attachment } from './AttachmentPreview'
+import { buildMessageParts, buildDisplayContent, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
+import { TicketPickerModal } from '@/components/kanban/TicketPickerModal'
+import type { TicketAttachmentData } from '@/components/kanban/TicketPickerModal'
 import { SlashCommandPopover } from './SlashCommandPopover'
 import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
 import { useFileMentions } from '@/hooks/useFileMentions'
+import { useSessionTimer } from '@/hooks/useSessionTimer'
 import type { FlatFile } from '@/lib/file-search-utils'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -36,13 +42,20 @@ import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
-import { useWorktreeStore } from '@/stores'
+import { useWorktreeStore, useDropAttachmentStore } from '@/stores'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { usePRReviewStore } from '@/stores/usePRReviewStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
-import { COMPLETION_WORDS, formatCompletionDuration, formatElapsedTimer } from '@/lib/format-utils'
+import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
+import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
+import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { notifyKanbanSessionSync } from '@/stores/store-coordination'
+import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
+import { buildPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import beeIcon from '@/assets/bee.png'
 
 // Stable empty array to avoid creating new references in selectors
@@ -52,6 +65,27 @@ import { PermissionPrompt } from './PermissionPrompt'
 import { CommandApprovalPrompt } from './CommandApprovalPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
 import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, stripPlanModePrefix } from '@/lib/constants'
+
+/**
+ * Resolve an OpenCode session ID to the corresponding Hive session ID
+ * by looking up sessions with a matching `opencode_session_id` in the store.
+ * Returns null if no matching Hive session is found.
+ */
+function resolveHiveSessionIdFromOpencodeId(opencodeSessionId: string): string | null {
+  const sessionState = useSessionStore.getState()
+
+  for (const sessions of sessionState.sessionsByWorktree.values()) {
+    const match = sessions.find((s) => s.opencode_session_id === opencodeSessionId)
+    if (match) return match.id
+  }
+
+  for (const sessions of sessionState.sessionsByConnection.values()) {
+    const match = sessions.find((s) => s.opencode_session_id === opencodeSessionId)
+    if (match) return match.id
+  }
+
+  return null
+}
 
 interface SlashCommandInfo {
   name: string
@@ -134,6 +168,53 @@ export interface StreamingPart {
   compactionAuto?: boolean
 }
 
+function derivePendingCodexPlan(
+  sessionId: string,
+  messages: OpenCodeMessage[]
+): { requestId: string; planContent: string; toolUseID: string } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.role !== 'assistant') continue
+
+    for (let j = (message.parts?.length ?? 0) - 1; j >= 0; j--) {
+      const part = message.parts?.[j]
+      if (part?.type !== 'tool_use' || part.toolUse?.name !== 'ExitPlanMode') continue
+
+      const planContent = String(part.toolUse.input?.plan ?? '').trim()
+      if (!looksLikeCodexProposedPlan(planContent)) continue
+
+      const toolUseID = part.toolUse.id ?? ''
+      return {
+        requestId: toolUseID || `codex-plan-${sessionId}`,
+        planContent,
+        toolUseID
+      }
+    }
+  }
+
+  return null
+}
+
+function hasSuspiciousCodexRoleGrouping(messages: OpenCodeMessage[]): boolean {
+  const userIndices: number[] = []
+  const assistantIndices: number[] = []
+
+  messages.forEach((message, index) => {
+    if (message.role === 'user') userIndices.push(index)
+    if (message.role === 'assistant') assistantIndices.push(index)
+  })
+
+  if (userIndices.length < 2 || assistantIndices.length < 2) return false
+
+  const lastUserIndex = userIndices[userIndices.length - 1]
+  const firstAssistantIndex = assistantIndices[0]
+  return lastUserIndex < firstAssistantIndex
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 interface SessionViewProps {
   sessionId: string
 }
@@ -207,12 +288,36 @@ function extractSessionErrorMessage(data: unknown): string {
   )
 }
 
+function extractSessionErrorStderr(data: unknown): string | null {
+  const record = asRecord(data)
+  if (!record) return null
+
+  const nestedData = asRecord(record.data)
+  return asString(nestedData?.stderr) || asString(record.stderr) || null
+}
+
 function createLocalMessage(role: OpenCodeMessage['role'], content: string): OpenCodeMessage {
   return {
     id: `local-${crypto.randomUUID()}`,
     role,
     content,
     timestamp: new Date().toISOString()
+  }
+}
+
+async function loadCodexDurableState(
+  sessionId: string
+): Promise<{ messages: OpenCodeMessage[]; activities: SessionActivity[] }> {
+  if (!window.db.sessionMessage?.list || !window.db.sessionActivity?.list) {
+    return { messages: [], activities: [] }
+  }
+  const [messageRows, activityRows] = await Promise.all([
+    window.db.sessionMessage.list(sessionId),
+    window.db.sessionActivity.list(sessionId)
+  ])
+  return {
+    messages: deriveCodexTimelineMessages(messageRows, activityRows),
+    activities: activityRows
   }
 }
 
@@ -290,6 +395,49 @@ function ErrorState({ message, onRetry }: ErrorStateProps): React.JSX.Element {
   )
 }
 
+function PrCommentAttachments(): React.JSX.Element | null {
+  const attachedComments = usePRReviewStore((s) => s.attachedComments)
+  const removeAttachment = usePRReviewStore((s) => s.removeAttachment)
+
+  if (attachedComments.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap gap-2 mb-2">
+      {attachedComments.map((c) => {
+        const fileName = c.path.split('/').pop() ?? c.path
+        return (
+          <div
+            key={c.id}
+            className="group relative flex flex-col gap-1 px-3 py-2 rounded-lg bg-background border border-border text-sm max-w-[400px] min-w-[220px]"
+          >
+            <div className="flex items-center gap-2">
+              <Github className="h-3.5 w-3.5 shrink-0 text-foreground" />
+              <img
+                src={c.user.avatarUrl}
+                alt={c.user.login}
+                className="h-4 w-4 rounded-full shrink-0"
+              />
+              <span className="font-medium text-foreground truncate">{c.user.login}</span>
+              <button
+                onClick={() => removeAttachment(c.id)}
+                className="ml-auto shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <span className="text-xs text-muted-foreground truncate">
+              {fileName}:{c.line ?? '?'}
+            </span>
+            <span className="text-xs text-muted-foreground line-clamp-2">
+              {c.body.length > 80 ? c.body.slice(0, 80) + '...' : c.body}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // Main SessionView component
 export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   // State
@@ -305,6 +453,30 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }>
   >([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [ticketPickerOpen, setTicketPickerOpen] = useState(false)
+
+  // Consume files dropped from Finder via the global drop zone
+  const pendingDropFiles = useDropAttachmentStore((s) => s.pending)
+
+  useEffect(() => {
+    if (pendingDropFiles.length === 0) return
+    const items = useDropAttachmentStore.getState().consume()
+    setAttachments((prev) => {
+      const remaining = MAX_ATTACHMENTS - prev.length
+      if (remaining <= 0) {
+        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+        return prev
+      }
+      if (items.length > remaining) {
+        toast.warning(
+          `Only ${remaining} of ${items.length} files attached (maximum ${MAX_ATTACHMENTS})`
+        )
+      }
+      const toAdd = items.slice(0, remaining)
+      return [...prev, ...toAdd.map((item) => ({ id: crypto.randomUUID(), ...item }))]
+    })
+  }, [pendingDropFiles])
+
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([])
   const [showSlashCommands, setShowSlashCommands] = useState(false)
   const [revertMessageID, setRevertMessageID] = useState<string | null>(null)
@@ -316,6 +488,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     supportsUndo: boolean
     supportsRedo: boolean
   } | null>(null)
+
+  const messagesRef = useRef(messages)
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
 
   const sessionCapabilitiesRef = useRef(sessionCapabilities)
   useEffect(() => {
@@ -351,8 +528,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [isStreaming, setIsStreaming] = useState(false)
   const [sessionRetry, setSessionRetry] = useState<SessionRetryState | null>(null)
   const [sessionErrorMessage, setSessionErrorMessage] = useState<string | null>(null)
+  const [sessionErrorStderr, setSessionErrorStderr] = useState<string | null>(null)
   const [retryTickMs, setRetryTickMs] = useState<number>(Date.now())
-  const [elapsedTickMs, setElapsedTickMs] = useState(Date.now())
+  const [planSavedAsTicket, setPlanSavedAsTicket] = useState(false)
 
   // Prompt history key: works for both worktree and connection sessions
   const historyKey = worktreeId ?? connectionId
@@ -397,9 +575,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Check if this is an orphaned (read-only) session
   const isOrphanedSession = useSessionStore((state) => state.orphanedSessions.has(sessionId))
   const sessionAgentSdk = sessionRecord?.agent_sdk ?? 'opencode'
-  const globalModel = useSettingsStore((state) =>
-    resolveModelForSdk(sessionAgentSdk, state)
-  )
+  const globalModel = useSettingsStore((state) => resolveModelForSdk(sessionAgentSdk, state))
   const effectiveModel: SelectedModel | null =
     sessionRecord?.model_provider_id && sessionRecord.model_id
       ? {
@@ -410,8 +586,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       : globalModel
   const currentModelId = effectiveModel?.modelID ?? 'claude-opus-4-5-20251101'
   const currentProviderId = effectiveModel?.providerID ?? 'anthropic'
-  // Claude Code SDK uses native plan mode (ExitPlanMode) — skip PLAN_MODE_PREFIX
+  // Claude Code and Codex SDKs skip PLAN_MODE_PREFIX (they don't use the text-prefix approach)
   const isClaudeCode = sessionRecord?.agent_sdk === 'claude-code'
+  const skipPlanModePrefix = isClaudeCode || sessionRecord?.agent_sdk === 'codex'
 
   // Active question prompt from AI
   const activeQuestion = useQuestionStore((s) => s.getActiveQuestion(sessionId))
@@ -431,6 +608,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [streamingParts, setStreamingParts] = useState<StreamingPart[]>([])
   const streamingPartsRef = useRef<StreamingPart[]>([])
 
+  // XML tag detection state for Codex plan streaming.
+  // In plan mode, Codex wraps plan content in <proposed_plan>...</proposed_plan>.
+  // We scan the stream for these tags and route only the plan content into an
+  // ExitPlanMode tool card, leaving reasoning/preamble as regular chat text.
+  const planXmlDetectionRef = useRef<{
+    state: 'scanning' | 'routing' | 'done'
+    buffer: string // partial-tag buffer (≤ tag length chars)
+    cardId: string | null
+  }>({ state: 'scanning', buffer: '', cardId: null })
+
   // Legacy streaming content for backward compatibility
   const [streamingContent, setStreamingContent] = useState<string>('')
   const streamingContentRef = useRef<string>('')
@@ -444,9 +631,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const isAutoScrollEnabledRef = useRef(true)
   const [showScrollFab, setShowScrollFab] = useState(false)
   const lastScrollTopRef = useRef(0)
-  const scrollCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const isScrollCooldownActiveRef = useRef(false)
   const userHasScrolledUpRef = useRef(false)
+  const isProgrammaticScrollRef = useRef(false)
+  const programmaticScrollResetRef = useRef<number | null>(null)
+  const manualScrollIntentRef = useRef(false)
+  const pointerDownInScrollerRef = useRef(false)
 
   // Streaming rAF ref (frame-synced flushing for text updates)
   const rafRef = useRef<number | null>(null)
@@ -462,6 +651,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const cursorPositionRef = useRef(0)
   const [cursorPosition, setCursorPosition] = useState(0)
   const isPastingRef = useRef(false)
+  const isImeComposingRef = useRef(false)
 
   // Draft persistence refs
   const inputValueRef = useRef('')
@@ -488,6 +678,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // stripAtMentions setting
   const stripAtMentions = useSettingsStore((state) => state.stripAtMentions)
+  const codexFastMode = useSettingsStore((state) => state.codexFastMode)
+  const codexFastModeAccepted = useSettingsStore((state) => state.codexFastModeAccepted)
+  const updateSetting = useSettingsStore((state) => state.updateSetting)
+  const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+
+  const codexPromptOptions = useMemo(
+    () => (sessionAgentSdk === 'codex' ? { codexFastMode } : undefined),
+    [sessionAgentSdk, codexFastMode]
+  )
 
   // Streaming dedup refs
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
@@ -526,12 +725,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     let session: typeof sessionRecord = null
     for (const sessions of state.sessionsByWorktree.values()) {
       const found = sessions.find((s) => s.id === sessionId)
-      if (found) { session = found; break }
+      if (found) {
+        session = found
+        break
+      }
     }
     if (!session) {
       for (const sessions of state.sessionsByConnection.values()) {
         const found = sessions.find((s) => s.id === sessionId)
-        if (found) { session = found; break }
+        if (found) {
+          session = found
+          break
+        }
       }
     }
 
@@ -564,77 +769,104 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     )
   }, [])
 
-  // Auto-scroll to bottom when new messages arrive or streaming updates
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const markProgrammaticScroll = useCallback(() => {
+    isProgrammaticScrollRef.current = true
+    if (programmaticScrollResetRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollResetRef.current)
+    }
+    programmaticScrollResetRef.current = requestAnimationFrame(() => {
+      programmaticScrollResetRef.current = requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false
+        programmaticScrollResetRef.current = null
+      })
+    })
   }, [])
 
-  // Smart auto-scroll: detect upward scroll and lock out auto-scroll with cooldown
-  const SCROLL_COOLDOWN_MS = 2000
+  const resetAutoScrollState = useCallback(() => {
+    if (programmaticScrollResetRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollResetRef.current)
+      programmaticScrollResetRef.current = null
+    }
+    isProgrammaticScrollRef.current = false
+    manualScrollIntentRef.current = false
+    pointerDownInScrollerRef.current = false
+    isAutoScrollEnabledRef.current = true
+    setShowScrollFab(false)
+    userHasScrolledUpRef.current = false
+    const el = scrollContainerRef.current
+    if (el) {
+      lastScrollTopRef.current = el.scrollTop
+    }
+  }, [])
+
+  // Auto-scroll to bottom when new messages arrive or streaming updates
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = isStreaming ? 'instant' : 'smooth') => {
+      if (!messagesEndRef.current) return
+      markProgrammaticScroll()
+      messagesEndRef.current.scrollIntoView({ behavior })
+    },
+    [isStreaming, markProgrammaticScroll]
+  )
 
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current
     if (!el) return
 
     const currentScrollTop = el.scrollTop
-    const scrollingUp = currentScrollTop < lastScrollTopRef.current
     lastScrollTopRef.current = currentScrollTop
 
     const distanceFromBottom = el.scrollHeight - currentScrollTop - el.clientHeight
     const isNearBottom = distanceFromBottom < 80
+    const hasManualIntent = manualScrollIntentRef.current || pointerDownInScrollerRef.current
 
-    // Upward scroll during streaming → mark as intentional, disable + start cooldown
-    if (scrollingUp && (isSending || isStreaming)) {
-      userHasScrolledUpRef.current = true
-      isAutoScrollEnabledRef.current = false
-      setShowScrollFab(true)
-      isScrollCooldownActiveRef.current = true
-
-      // Reset cooldown timer
-      if (scrollCooldownRef.current !== null) {
-        clearTimeout(scrollCooldownRef.current)
-      }
-      scrollCooldownRef.current = setTimeout(() => {
-        scrollCooldownRef.current = null
-        isScrollCooldownActiveRef.current = false
-        // After cooldown, check if user has scrolled back to bottom
-        const elNow = scrollContainerRef.current
-        if (elNow) {
-          const dist = elNow.scrollHeight - elNow.scrollTop - elNow.clientHeight
-          if (dist < 80) {
-            isAutoScrollEnabledRef.current = true
-            setShowScrollFab(false)
-            userHasScrolledUpRef.current = false
-          }
-        }
-      }, SCROLL_COOLDOWN_MS)
+    if (isProgrammaticScrollRef.current) {
+      manualScrollIntentRef.current = false
       return
     }
 
-    // Near bottom and no active cooldown → re-enable auto-scroll
-    if (isNearBottom && !isScrollCooldownActiveRef.current) {
+    if (isNearBottom && hasManualIntent) {
       isAutoScrollEnabledRef.current = true
       setShowScrollFab(false)
       userHasScrolledUpRef.current = false
-    } else if (!isNearBottom && (isSending || isStreaming) && userHasScrolledUpRef.current) {
-      // Far from bottom during streaming, but only if user intentionally scrolled up
+      manualScrollIntentRef.current = false
+      return
+    }
+
+    if (!hasManualIntent) {
+      return
+    }
+
+    if (!isNearBottom && (isSending || isStreaming)) {
+      userHasScrolledUpRef.current = true
       isAutoScrollEnabledRef.current = false
       setShowScrollFab(true)
     }
+    manualScrollIntentRef.current = false
   }, [isSending, isStreaming])
 
-  // Handle FAB click — cancel cooldown, re-enable auto-scroll, scroll to bottom
   const handleScrollToBottomClick = useCallback(() => {
-    if (scrollCooldownRef.current !== null) {
-      clearTimeout(scrollCooldownRef.current)
-      scrollCooldownRef.current = null
-    }
-    isScrollCooldownActiveRef.current = false
-    isAutoScrollEnabledRef.current = true
-    setShowScrollFab(false)
-    userHasScrolledUpRef.current = false
-    scrollToBottom()
-  }, [scrollToBottom])
+    resetAutoScrollState()
+    scrollToBottom('smooth')
+  }, [resetAutoScrollState, scrollToBottom])
+
+  const handleScrollWheel = useCallback(() => {
+    manualScrollIntentRef.current = true
+  }, [])
+
+  const handleScrollPointerDown = useCallback(() => {
+    pointerDownInScrollerRef.current = true
+  }, [])
+
+  const handleScrollPointerUp = useCallback(() => {
+    pointerDownInScrollerRef.current = false
+    manualScrollIntentRef.current = false
+  }, [])
+
+  const handleScrollPointerCancel = useCallback(() => {
+    pointerDownInScrollerRef.current = false
+    manualScrollIntentRef.current = false
+  }, [])
 
   // Conditional auto-scroll: only scroll when enabled
   useEffect(() => {
@@ -645,15 +877,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Reset auto-scroll state on session switch
   useEffect(() => {
-    if (scrollCooldownRef.current !== null) {
-      clearTimeout(scrollCooldownRef.current)
-      scrollCooldownRef.current = null
-    }
-    isScrollCooldownActiveRef.current = false
-    isAutoScrollEnabledRef.current = true
-    setShowScrollFab(false)
-    userHasScrolledUpRef.current = false
-  }, [sessionId])
+    resetAutoScrollState()
+  }, [resetAutoScrollState, sessionId])
 
   // Instant scroll to bottom when session view becomes connected with messages.
   // This must wait for viewState === 'connected' because the message list DOM
@@ -661,7 +886,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   useEffect(() => {
     if (viewState.status === 'connected' && messages.length > 0) {
       requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
+        scrollToBottom('instant')
       })
     }
     // Only trigger on viewState and sessionId changes, NOT on every messages update
@@ -679,12 +904,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // The textarea only exists in the DOM when viewState is 'connected',
   // so we need to re-trigger focus when transitioning from 'connecting' → 'connected'.
   useEffect(() => {
+    if (vimModeEnabled) return
     if (textareaRef.current) {
       requestAnimationFrame(() => {
         textareaRef.current?.focus()
       })
     }
-  }, [sessionId, viewState.status])
+  }, [sessionId, viewState.status, vimModeEnabled])
 
   // Push per-session model to OpenCode on tab switch
   useEffect(() => {
@@ -748,14 +974,45 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [activePermission, sessionId])
 
-  // Clean up rAF and scroll cooldown on unmount
+  // Periodic permission hydration while the session is actively streaming.
+  // The live SSE event path may occasionally miss `permission.asked` events
+  // (e.g., due to event format mismatches), so we poll the REST API as a
+  // safety net to ensure the permission dialog appears promptly.
+  useEffect(() => {
+    if (!isStreaming || !worktreePath || activePermission) return
+
+    // First check after a short delay, then periodic
+    const timerId = setInterval(() => {
+      window.opencodeOps
+        ?.permissionList(worktreePath)
+        .then((result) => {
+          if (result.success && result.permissions) {
+            for (const req of result.permissions) {
+              const r = req as PermissionRequest
+              if (r.id && r.permission) {
+                const targetSessionId =
+                  (r.sessionID && resolveHiveSessionIdFromOpencodeId(r.sessionID)) || sessionId
+                usePermissionStore.getState().addPermission(targetSessionId, r)
+              }
+            }
+          }
+        })
+        .catch(() => {
+          // Silently ignore — this is a best-effort check
+        })
+    }, 3000)
+
+    return () => clearInterval(timerId)
+  }, [isStreaming, worktreePath, activePermission, sessionId])
+
+  // Clean up rAF-based streaming and scroll guards on unmount
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current)
       }
-      if (scrollCooldownRef.current !== null) {
-        clearTimeout(scrollCooldownRef.current)
+      if (programmaticScrollResetRef.current !== null) {
+        cancelAnimationFrame(programmaticScrollResetRef.current)
       }
     }
   }, [])
@@ -912,6 +1169,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setStreamingContent('')
     setIsStreaming(false)
     lastSentPromptRef.current = null
+    planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
   }, [])
 
   // Load session info and connect to OpenCode
@@ -933,11 +1191,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       worktreePath: null,
       opencodeSessionId: null
     }
+    const isCodexSession = sessionRecord?.agent_sdk === 'codex'
 
-    const loadMessages = async (source?: {
-      worktreePath?: string | null
-      opencodeSessionId?: string | null
-    }): Promise<OpenCodeMessage[]> => {
+    const loadMessages = async (
+      source?: {
+        worktreePath?: string | null
+        opencodeSessionId?: string | null
+      },
+      options?: {
+        preferDurableCodex?: boolean
+      }
+    ): Promise<OpenCodeMessage[]> => {
       const sourceWorktreePath = source?.worktreePath ?? transcriptSourceRef.current.worktreePath
       const sourceOpencodeSessionId =
         source?.opencodeSessionId ?? transcriptSourceRef.current.opencodeSessionId
@@ -958,8 +1222,37 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       let loadedMessages: OpenCodeMessage[] = []
       let loadedFromOpenCode = false
+      let codexActivities: SessionActivity[] = []
+      const currentStoredStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
 
-      if (canUseOpenCodeSource) {
+      if (isCodexSession) {
+        const durableState = await loadCodexDurableState(sessionId)
+        loadedMessages = durableState.messages
+        codexActivities = durableState.activities
+
+        if (options?.preferDurableCodex && hasSuspiciousCodexRoleGrouping(loadedMessages)) {
+          for (let attempt = 0; attempt < 4; attempt++) {
+            await delay(100 * (attempt + 1))
+            const retriedState = await loadCodexDurableState(sessionId)
+            loadedMessages = retriedState.messages
+            codexActivities = retriedState.activities
+            if (!hasSuspiciousCodexRoleGrouping(loadedMessages)) break
+          }
+        }
+      }
+
+      const preferLiveCodexSource =
+        isCodexSession &&
+        !options?.preferDurableCodex &&
+        canUseOpenCodeSource &&
+        (currentStoredStatus?.status === 'working' ||
+          currentStoredStatus?.status === 'planning' ||
+          loadedMessages.length === 0)
+
+      if (
+        (!isCodexSession || loadedMessages.length === 0 || preferLiveCodexSource) &&
+        canUseOpenCodeSource
+      ) {
         const result = await window.opencodeOps.getMessages(
           sourceWorktreePath,
           sourceOpencodeSessionId
@@ -968,7 +1261,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           loadedFromOpenCode = true
 
           const opencodeMessages = Array.isArray(result.messages) ? result.messages : []
-          loadedMessages = mapOpencodeMessagesToSessionViewMessages(opencodeMessages)
+          if (isCodexSession) {
+            loadedMessages = mergeCodexActivityMessages(
+              mapOpencodeMessagesToSessionViewMessages(opencodeMessages),
+              codexActivities
+            )
+          } else if (loadedMessages.length === 0) {
+            loadedMessages = mapOpencodeMessagesToSessionViewMessages(opencodeMessages)
+          }
 
           let totalCost = 0
           let snapshotTokens: TokenInfo | null = null
@@ -1023,7 +1323,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       // If there's a pending plan, override ExitPlanMode tool status to 'pending'
       // so the tool card shows as awaiting approval (transcript reports 'completed').
-      const pendingPlanForLoad = useSessionStore.getState().getPendingPlan(sessionId)
+      let pendingPlanForLoad = useSessionStore.getState().getPendingPlan(sessionId)
+      const sessionModeForLoad = useSessionStore.getState().getSessionMode(sessionId)
+      if (isCodexSession && !pendingPlanForLoad && sessionModeForLoad === 'plan') {
+        const derivedPendingPlan = derivePendingCodexPlan(sessionId, loadedMessages)
+        if (derivedPendingPlan) {
+          useSessionStore.getState().setPendingPlan(sessionId, derivedPendingPlan)
+          useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+          pendingPlanForLoad = derivedPendingPlan
+        }
+      }
       if (pendingPlanForLoad?.toolUseID) {
         for (const msg of loadedMessages) {
           if (msg.parts) {
@@ -1036,7 +1345,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
       }
 
-      if (loadedFromOpenCode) {
+      if (isCodexSession && loadedMessages.length > 0) {
+        setMessages(loadedMessages)
+      } else if (loadedFromOpenCode) {
         // Guard: don't replace existing messages with an empty transcript.
         // This prevents a race where getMessages returns before the SDK has
         // committed the final transcript, which would wipe the visible chat.
@@ -1101,7 +1412,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       })
 
       try {
-        const refreshedMessages = await loadMessages()
+        const refreshedMessages = await loadMessages(undefined, { preferDurableCodex: true })
 
         console.debug('[TOOL_DEBUG] finalizeResponse LOADED', {
           loadedCount: refreshedMessages.length,
@@ -1121,6 +1432,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         })
 
         if (
+          !isCodexSession &&
           refreshedMessages.length === 0 &&
           (streamedPartsSnapshot.length > 0 || streamedContentSnapshot.length > 0)
         ) {
@@ -1141,6 +1453,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
             ]
           })
+        }
+
+        if (
+          !isCodexSession &&
+          (streamedPartsSnapshot.length > 0 || streamedContentSnapshot.length > 0)
+        ) {
+          setMessages((currentMessages) =>
+            appendStreamedAssistantFallback(currentMessages, {
+              streamedContent: streamedContentSnapshot,
+              streamedParts: streamedPartsSnapshot
+            })
+          )
         }
       } catch (error) {
         console.error('Failed to refresh messages after stream completion:', error)
@@ -1171,6 +1495,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setStreamingParts([])
     setStreamingContent('')
     hasFinalizedCurrentResponseRef.current = false
+    planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
 
     // Subscribe to OpenCode stream events SYNCHRONOUSLY before any async work.
     // This prevents a race condition where session.idle arrives during async
@@ -1328,6 +1653,26 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
+          // Handle command approval replies
+          if (event.type === 'command.approval_replied') {
+            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+            if (requestId) {
+              useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
+              // Reset status if no more pending approvals (handles transition from background to active)
+              const remaining = useCommandApprovalStore.getState().getApprovals(sessionId)
+              if (remaining.length === 0) {
+                const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+                if (currentStatus?.status === 'command_approval') {
+                  const mode = useSessionStore.getState().getSessionMode(sessionId)
+                  useWorktreeStatusStore
+                    .getState()
+                    .setSessionStatus(sessionId, mode === 'plan' ? 'planning' : 'working')
+                }
+              }
+            }
+            return
+          }
+
           // Handle plan events (ExitPlanMode blocking tool)
           if (event.type === 'plan.ready') {
             const data = event.data as {
@@ -1356,45 +1701,87 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 }
               }
 
-              // Inject plan content into the ExitPlanMode tool_use input for rendering
-              if (planText && data.toolUseID) {
-                const hasExisting = streamingPartsRef.current.some(
-                  (p) => p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
-                )
-                if (hasExisting) {
-                  // Update existing streaming part
-                  updateStreamingPartsRef((parts) =>
-                    parts.map((p) =>
-                      p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
-                        ? {
-                            ...p,
-                            toolUse: {
-                              ...p.toolUse!,
-                              input: { ...p.toolUse!.input, plan: planText },
-                              status: 'pending' as const
-                            }
-                          }
-                        : p
-                    )
-                  )
-                } else {
-                  // Tool_use part not yet in streaming parts (race: content_block_start
-                  // hasn't been processed yet) — create it so the plan card renders
-                  updateStreamingPartsRef((parts) => [
-                    ...parts,
-                    {
-                      type: 'tool_use' as const,
+              // Finalize the streaming plan card (if XML tag detection created one)
+              // or create a new one from plan.ready data (fallback for Claude Code /
+              // sessions where <proposed_plan> tags weren't present).
+              const det = planXmlDetectionRef.current
+              const streamingCardId = det.cardId
+
+              // Flush any leftover scanning buffer as regular text
+              if (det.buffer) {
+                appendTextDelta(det.buffer)
+                det.buffer = ''
+              }
+              // Reset detection state
+              planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
+
+              if (streamingCardId) {
+                // Progressive card exists — finalize with clean plan text + real ID
+                updateStreamingPartsRef((parts) =>
+                  parts.map((p) => {
+                    if (p.type !== 'tool_use' || p.toolUse?.id !== streamingCardId) return p
+                    const finalPlan = planText || (p.toolUse!.input.plan as string) || ''
+                    return {
+                      ...p,
                       toolUse: {
-                        id: data.toolUseID,
-                        name: 'ExitPlanMode',
-                        input: { plan: planText },
-                        status: 'pending' as const,
-                        startTime: Date.now()
+                        ...p.toolUse!,
+                        id: data.toolUseID || p.toolUse!.id,
+                        input: { ...p.toolUse!.input, plan: finalPlan },
+                        status: 'pending' as const
                       }
                     }
-                  ])
-                }
+                  })
+                )
                 immediateFlush()
+              } else {
+                // No progressive card — strip XML from text parts and inject card
+                updateStreamingPartsRef((parts) =>
+                  parts.map((p) => {
+                    if (p.type !== 'text' || !p.text) return p
+                    const stripped = p.text
+                      .replace(/<proposed_plan>\s*[\s\S]*?\s*<\/proposed_plan>/gi, '')
+                      .trim()
+                    if (!stripped) return { ...p, text: '' }
+                    return { ...p, text: stripped }
+                  })
+                )
+
+                if (planText && data.toolUseID) {
+                  const hasExisting = streamingPartsRef.current.some(
+                    (p) => p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+                  )
+                  if (hasExisting) {
+                    updateStreamingPartsRef((parts) =>
+                      parts.map((p) =>
+                        p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+                          ? {
+                              ...p,
+                              toolUse: {
+                                ...p.toolUse!,
+                                input: { ...p.toolUse!.input, plan: planText },
+                                status: 'pending' as const
+                              }
+                            }
+                          : p
+                      )
+                    )
+                  } else {
+                    updateStreamingPartsRef((parts) => [
+                      ...parts,
+                      {
+                        type: 'tool_use' as const,
+                        toolUse: {
+                          id: data.toolUseID,
+                          name: 'ExitPlanMode',
+                          input: { plan: planText },
+                          status: 'pending' as const,
+                          startTime: Date.now()
+                        }
+                      }
+                    ])
+                  }
+                  immediateFlush()
+                }
               }
 
               useSessionStore.getState().setPendingPlan(sessionId, {
@@ -1402,6 +1789,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 planContent: planText,
                 toolUseID: data.toolUseID ?? ''
               })
+              setIsStreaming(false)
+              setIsSending(false)
+              setQueuedMessages([])
               useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
             }
             return
@@ -1418,6 +1808,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           if (event.type === 'session.error') {
             if (event.childSessionId) return
             setSessionErrorMessage(extractSessionErrorMessage(event.data))
+            setSessionErrorStderr(extractSessionErrorStderr(event.data))
+            // Notify kanban store so errored tickets auto-move to review
+            notifyKanbanSessionSync(sessionId, { type: 'session_error' })
             return
           }
 
@@ -1553,14 +1946,145 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             }
 
             if (part.type === 'text') {
-              // Update streaming text content with delta or full text
               const delta = event.data?.delta
-              if (delta) {
-                appendTextDelta(delta)
-              } else if (part.text) {
-                setTextContent(part.text)
+
+              // Codex plan mode: scan for <proposed_plan> XML tags and route
+              // only the plan content into an ExitPlanMode card. Text before/
+              // after the tags renders as normal chat text.
+              const isCodexPlan =
+                sessionRecord?.agent_sdk === 'codex' &&
+                useSessionStore.getState().getSessionMode(sessionId) === 'plan'
+
+              if (isCodexPlan) {
+                const textDelta = delta || part.text || ''
+                if (!textDelta) {
+                  setIsStreaming(true)
+                } else {
+                  const det = planXmlDetectionRef.current
+                  const OPEN_TAG = '<proposed_plan>'
+                  const CLOSE_TAG = '</proposed_plan>'
+
+                  if (det.state === 'scanning') {
+                    det.buffer += textDelta
+                    const tagIdx = det.buffer.toLowerCase().indexOf(OPEN_TAG)
+
+                    if (tagIdx !== -1) {
+                      // Found opening tag — split at the tag boundary
+                      const beforeTag = det.buffer.slice(0, tagIdx)
+                      const afterTag = det.buffer.slice(tagIdx + OPEN_TAG.length)
+                      det.buffer = ''
+
+                      if (beforeTag) appendTextDelta(beforeTag)
+
+                      // Check if closing tag is already present
+                      const closeIdx = afterTag.toLowerCase().indexOf(CLOSE_TAG)
+                      let planContent: string
+
+                      if (closeIdx !== -1) {
+                        planContent = afterTag.slice(0, closeIdx).trim()
+                        det.state = 'done'
+                        const afterClose = afterTag.slice(closeIdx + CLOSE_TAG.length)
+                        if (afterClose.trim()) appendTextDelta(afterClose)
+                      } else {
+                        planContent = afterTag
+                        det.state = 'routing'
+                      }
+
+                      const tempId = `codex-plan-streaming-${Date.now()}`
+                      det.cardId = tempId
+                      updateStreamingPartsRef((parts) => [
+                        ...parts,
+                        {
+                          type: 'tool_use' as const,
+                          toolUse: {
+                            id: tempId,
+                            name: 'ExitPlanMode',
+                            input: { plan: planContent },
+                            status: 'running' as const,
+                            startTime: Date.now()
+                          }
+                        }
+                      ])
+                      immediateFlush()
+                    } else {
+                      // No opening tag yet — flush text that can't be a partial tag match.
+                      // Any suffix of the buffer that matches a prefix of the open tag
+                      // must be retained (e.g. buffer ends with "<propo").
+                      const maxPartial = Math.min(det.buffer.length, OPEN_TAG.length - 1)
+                      let safePoint = det.buffer.length
+                      for (let len = maxPartial; len >= 1; len--) {
+                        if (OPEN_TAG.startsWith(det.buffer.slice(-len).toLowerCase())) {
+                          safePoint = det.buffer.length - len
+                          break
+                        }
+                      }
+                      if (safePoint > 0) {
+                        appendTextDelta(det.buffer.slice(0, safePoint))
+                        det.buffer = det.buffer.slice(safePoint)
+                      }
+                    }
+                  } else if (det.state === 'routing') {
+                    // Inside <proposed_plan> — append to card, watch for close tag
+                    const toolId = det.cardId!
+                    const currentCard = streamingPartsRef.current.find(
+                      (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
+                    )
+                    const currentPlan = (currentCard?.toolUse?.input?.plan as string) || ''
+                    const combined = currentPlan + textDelta
+                    const closeIdx = combined.toLowerCase().indexOf(CLOSE_TAG)
+
+                    if (closeIdx !== -1) {
+                      const planContent = combined.slice(0, closeIdx)
+                      const afterClose = combined.slice(closeIdx + CLOSE_TAG.length)
+                      det.state = 'done'
+
+                      updateStreamingPartsRef((parts) =>
+                        parts.map((p) =>
+                          p.type === 'tool_use' && p.toolUse?.id === toolId
+                            ? {
+                                ...p,
+                                toolUse: {
+                                  ...p.toolUse!,
+                                  input: { ...p.toolUse!.input, plan: planContent }
+                                }
+                              }
+                            : p
+                        )
+                      )
+                      scheduleFlush()
+                      if (afterClose.trim()) appendTextDelta(afterClose)
+                    } else {
+                      updateStreamingPartsRef((parts) =>
+                        parts.map((p) =>
+                          p.type === 'tool_use' && p.toolUse?.id === toolId
+                            ? {
+                                ...p,
+                                toolUse: {
+                                  ...p.toolUse!,
+                                  input: { ...p.toolUse!.input, plan: combined }
+                                }
+                              }
+                            : p
+                        )
+                      )
+                      scheduleFlush()
+                    }
+                  } else {
+                    // state === 'done' — after closing tag, route as regular text
+                    if (delta) appendTextDelta(delta)
+                    else if (part.text) setTextContent(part.text)
+                  }
+                  setIsStreaming(true)
+                }
+              } else {
+                // Normal text handling (non-Codex or non-plan mode)
+                if (delta) {
+                  appendTextDelta(delta)
+                } else if (part.text) {
+                  setTextContent(part.text)
+                }
+                setIsStreaming(true)
               }
-              setIsStreaming(true)
             } else if (part.type === 'tool') {
               // Tool part from OpenCode SDK - has callID, tool (name), state
               const toolId = part.callID || part.id || `tool-${Date.now()}`
@@ -1747,7 +2271,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // This catches edge cases where session.status events are unavailable.
             immediateFlush()
             setIsSending(false)
-            setQueuedMessages([])
+            // Only clear visual queue if no follow-ups remain
+            const hasFollowUps =
+              (useSessionStore.getState().pendingFollowUpMessages.get(sessionId)?.length ?? 0) > 0
+            if (!hasFollowUps) {
+              setQueuedMessages([])
+            }
             // Clear any stale command approvals when session goes idle
             useCommandApprovalStore.getState().clearSession(sessionId)
 
@@ -1771,9 +2300,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // can finalize the new response.
               setSessionRetry(null)
               setSessionErrorMessage(null)
+              setSessionErrorStderr(null)
               setIsStreaming(true)
               hasFinalizedCurrentResponseRef.current = false
               newPromptPendingRef.current = false
+              planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
               setIsSending(true)
 
               // Restore worktree status to working/planning
@@ -1788,6 +2319,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // If there are queued follow-up messages, send the next one instead of finalizing
               const followUp = useSessionStore.getState().consumeFollowUpMessage(sessionId)
               if (followUp) {
+                // Remove the first visual queued bubble (FIFO matches persistent queue order)
+                setQueuedMessages((prev) => prev.slice(1))
                 hasFinalizedCurrentResponseRef.current = false
                 setIsSending(true)
                 setMessages((prev) => [...prev, createLocalMessage('user', followUp)])
@@ -1824,6 +2357,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // Session is done — flush and finalize immediately
               setSessionRetry(null)
               setSessionErrorMessage(null)
+              setSessionErrorStderr(null)
               immediateFlush()
               setIsSending(false)
               setQueuedMessages([])
@@ -1860,6 +2394,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       setViewState({ status: 'connecting' })
       setSessionRetry(null)
       setSessionErrorMessage(null)
+      setSessionErrorStderr(null)
 
       // Part A: Instantly restore streaming indicators from the global status store.
       // useWorktreeStatusStore persists across SessionView remounts (key= causes remount),
@@ -1973,17 +2508,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               restoredParts = [...dbParts, ...extraParts]
             }
 
-            const hasActiveStreamingPart = restoredParts.some((part) => {
-              if (part.type === 'tool_use') {
-                return part.toolUse?.status === 'pending' || part.toolUse?.status === 'running'
-              }
-              if (part.type === 'subtask') {
-                return part.subtask?.status === 'running'
-              }
-              return false
-            })
-
-            if (hasActiveStreamingPart) {
+            if (restoredParts.length > 0) {
               streamingPartsRef.current = restoredParts
               setStreamingParts([...streamingPartsRef.current])
 
@@ -1992,6 +2517,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               streamingContentRef.current = content
               setStreamingContent(content)
               setIsStreaming(true)
+              setMessages((currentMessages) => {
+                const currentLast = currentMessages[currentMessages.length - 1]
+                if (
+                  currentLast &&
+                  currentLast.role === 'assistant' &&
+                  currentLast.id === lastMsg.id &&
+                  !currentLast.id.startsWith('local-')
+                ) {
+                  return currentMessages.slice(0, -1)
+                }
+                return currentMessages
+              })
             } else {
               streamingPartsRef.current = []
               streamingContentRef.current = ''
@@ -2024,7 +2561,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // to confirm, but this avoids a flash of "limit unavailable".
         if (sessionRecord?.agent_sdk === 'claude-code') {
           const claudeModels = [
-            { id: 'opus', context: 200000 },
+            { id: 'opus', context: 1000000 },
             { id: 'sonnet', context: 200000 },
             { id: 'haiku', context: 200000 }
           ]
@@ -2032,6 +2569,21 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Store without providerID (wildcard "*") so the limit is found
             // regardless of whether the session uses providerID "claude-code"
             // or "anthropic".
+            useContextStore.getState().setModelLimit(m.id, m.context)
+          }
+        }
+
+        // For Codex sessions, pre-seed known model limits so the context bar
+        // renders immediately before the first thread/tokenUsage/updated event.
+        if (sessionRecord?.agent_sdk === 'codex') {
+          const codexModels = [
+            { id: 'gpt-5.4', context: 258400 },
+            { id: 'gpt-5.3-codex', context: 258400 },
+            { id: 'gpt-5.3-codex-spark', context: 258400 },
+            { id: 'gpt-5.2-codex', context: 258400 }
+          ]
+          for (const m of codexModels) {
+            useContextStore.getState().setModelLimit(m.id, m.context, 'codex')
             useContextStore.getState().setModelLimit(m.id, m.context)
           }
         }
@@ -2095,7 +2647,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             })
         }
 
-        // Hydrate any pending permission requests (fire-and-forget)
+        // Hydrate any pending permission requests (fire-and-forget).
+        // The REST endpoint returns ALL pending permissions for the directory,
+        // so we use PermissionRequest.sessionID (OpenCode session ID) to route
+        // each permission to the correct Hive session rather than blindly
+        // assigning to the mounting session.
         const hydratePermissions = (path: string): void => {
           window.opencodeOps
             .permissionList(path)
@@ -2104,7 +2660,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 for (const req of result.permissions) {
                   const r = req as PermissionRequest
                   if (r.id && r.permission) {
-                    usePermissionStore.getState().addPermission(sessionId, r)
+                    const targetSessionId =
+                      (r.sessionID && resolveHiveSessionIdFromOpencodeId(r.sessionID)) || sessionId
+                    usePermissionStore.getState().addPermission(targetSessionId, r)
                   }
                 }
               }
@@ -2140,6 +2698,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
             // Start completion timer for auto-sent pending prompts (e.g. PR creation)
             messageSendTimes.set(sessionId, Date.now())
+            userExplicitSendTimes.set(sessionId, Date.now())
             // Set worktree status based on session mode
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
             lastSendMode.set(sessionId, currentMode)
@@ -2147,7 +2706,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               .getState()
               .setSessionStatus(sessionId, currentMode === 'plan' ? 'planning' : 'working')
             // Apply mode prefix for OpenCode sessions (Claude Code uses native plan mode)
-            const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
+            const modePrefix = currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX : ''
             const promptMessage = modePrefix + pendingMsg
             // Store the full prompt so the stream handler can detect SDK echoes
             lastSentPromptRef.current = promptMessage
@@ -2156,7 +2715,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             const parts: Array<{ type: 'text'; text: string }> = [
               { type: 'text' as const, text: promptMessage }
             ]
-            const result = await window.opencodeOps.prompt(path, opcId, parts, model)
+            const result = await window.opencodeOps.prompt(
+              path,
+              opcId,
+              parts,
+              model,
+              codexPromptOptions
+            )
             if (shouldAbortInit()) {
               if (!result.success) {
                 restorePendingAfterFailure()
@@ -2218,6 +2783,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               if (!hasPendingPlanOnReconnect) {
                 setSessionRetry(null)
                 setSessionErrorMessage(null)
+                setSessionErrorStderr(null)
                 setIsStreaming(true)
                 setIsSending(true)
                 const currentMode = useSessionStore.getState().getSessionMode(sessionId)
@@ -2231,6 +2797,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 setIsSending(false)
                 setSessionRetry(null)
                 setSessionErrorMessage(null)
+                setSessionErrorStderr(null)
                 // If the session was previously busy, the agent finished while we
                 // were away — show a completion badge instead of clearing to "Ready".
                 if (storedStatus?.status === 'working' || storedStatus?.status === 'planning') {
@@ -2341,6 +2908,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setRevertMessageID(null)
     setSessionRetry(null)
     setSessionErrorMessage(null)
+    setSessionErrorStderr(null)
     setWorktreePath(null)
     transcriptSourceRef.current = {
       worktreePath: null,
@@ -2428,9 +2996,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const loadedMessages = mapOpencodeMessagesToSessionViewMessages(
-        Array.isArray(transcriptResult.messages) ? transcriptResult.messages : []
-      )
+      const rawMessages = Array.isArray(transcriptResult.messages) ? transcriptResult.messages : []
+      let loadedMessages = mapOpencodeMessagesToSessionViewMessages(rawMessages)
+      if (session.agent_sdk === 'codex') {
+        const durableState = await loadCodexDurableState(sessionId)
+        loadedMessages = mergeCodexActivityMessages(loadedMessages, durableState.activities)
+      }
       setMessages(loadedMessages)
       setViewState({ status: 'connected' })
     } catch (error) {
@@ -2515,6 +3086,31 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   )
 
   const refreshMessagesFromOpenCode = useCallback(async (): Promise<boolean> => {
+    if (sessionRecord?.agent_sdk === 'codex') {
+      const durableState = await loadCodexDurableState(sessionId)
+      if (worktreePath && opencodeSessionId) {
+        const transcriptResult = await window.opencodeOps.getMessages(
+          worktreePath,
+          opencodeSessionId
+        )
+        if (transcriptResult.success) {
+          const liveMessages = mergeCodexActivityMessages(
+            mapOpencodeMessagesToSessionViewMessages(
+              Array.isArray(transcriptResult.messages) ? transcriptResult.messages : []
+            ),
+            durableState.activities
+          )
+          setMessages(liveMessages)
+          return liveMessages.length > 0
+        }
+      }
+
+      if (durableState.messages.length > 0) {
+        setMessages(durableState.messages)
+        return true
+      }
+    }
+
     if (!worktreePath || !opencodeSessionId) return false
 
     const transcriptResult = await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
@@ -2528,7 +3124,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     )
     setMessages(loadedMessages)
     return true
-  }, [worktreePath, opencodeSessionId])
+  }, [opencodeSessionId, sessionId, sessionRecord?.agent_sdk, worktreePath])
 
   const handleForkFromAssistantMessage = useCallback(
     async (message: OpenCodeMessage) => {
@@ -2551,13 +3147,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const messageIndex = messages.findIndex((candidate) => candidate.id === message.id)
+      const messageIndex = messagesRef.current.findIndex((candidate) => candidate.id === message.id)
       if (messageIndex === -1) {
         toast.error('Could not locate the selected message')
         return
       }
 
-      const cutoffMessage = messages
+      const cutoffMessage = messagesRef.current
         .slice(messageIndex + 1)
         .find((candidate) => !candidate.id.startsWith('local-'))
 
@@ -2595,7 +3191,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     },
     [
       forkingMessageId,
-      messages,
       opencodeSessionId,
       sessionId,
       sessionRecord,
@@ -2731,15 +3326,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           hasFinalizedCurrentResponseRef.current = false
           setIsSending(true)
 
-          // Handle scroll behavior
-          if (scrollCooldownRef.current !== null) {
-            clearTimeout(scrollCooldownRef.current)
-            scrollCooldownRef.current = null
-          }
-          isScrollCooldownActiveRef.current = false
-          isAutoScrollEnabledRef.current = true
-          setShowScrollFab(false)
-          userHasScrolledUpRef.current = false
+          resetAutoScrollState()
 
           // Start completion badge timer
           messageSendTimes.set(sessionId, Date.now())
@@ -2747,14 +3334,32 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           lastSendMode.set(sessionId, 'ask')
           useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
 
-          // Use the currently selected model
-          const selectedModel = getModelForRequests()
+          // Use the ask-specific model if configured, otherwise use session model
+          const { useSettingsStore } = await import('@/stores/useSettingsStore')
+          const settings = useSettingsStore.getState()
+          const askModel = settings.getModelForMode('ask') ?? settings.selectedModel
+          const selectedModel = askModel || getModelForRequests()
+
+          // Build PR review comment context for /ask
+          const prAskComments = usePRReviewStore.getState().attachedComments
+          let prAskContext = ''
+          if (prAskComments.length > 0) {
+            prAskContext =
+              prAskComments
+                .map(
+                  (c) =>
+                    `<pr-comment author="${c.user.login}" file="${c.path}" line="${c.line ?? 'file-level'}">\n${c.body}\n<diff-hunk>${c.diffHunk}</diff-hunk>\n</pr-comment>`
+                )
+                .join('\n\n') + '\n\n'
+          }
 
           // Prefix with ASK_MODE_PREFIX to prevent code changes
-          const prefixedQuestion = ASK_MODE_PREFIX + question
+          const prefixedQuestion = prAskContext + ASK_MODE_PREFIX + question
 
           // Add user message to UI immediately (before response)
-          setMessages((prev) => [...prev, createLocalMessage('user', prefixedQuestion)])
+          // Include attachment XML so cards render instantly
+          const askDisplayContent = buildDisplayContent(attachments, prefixedQuestion)
+          setMessages((prev) => [...prev, createLocalMessage('user', askDisplayContent)])
 
           // Mark that a new prompt is in flight
           newPromptPendingRef.current = true
@@ -2766,23 +3371,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           }
 
           // Build message parts (support file attachments if any)
-          const parts: MessagePart[] = [
-            ...attachments.map((a) => ({
-              type: 'file' as const,
-              mime: a.mime,
-              url: a.dataUrl,
-              filename: a.name
-            })),
-            { type: 'text' as const, text: prefixedQuestion }
-          ]
+          const parts = buildMessageParts(attachments, prefixedQuestion)
           setAttachments([])
+          usePRReviewStore.getState().clearAttachments()
 
           try {
             const result = await window.opencodeOps.prompt(
               worktreePath,
               opencodeSessionId,
               parts,
-              selectedModel
+              selectedModel,
+              codexPromptOptions
             )
 
             if (!result.success) {
@@ -2811,6 +3410,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           ...prev,
           { id: crypto.randomUUID(), content: trimmedValue, timestamp: Date.now() }
         ])
+        // Persist to the follow-up queue so the idle handler sends it
+        useSessionStore.getState().enqueueFollowUpMessage(sessionId, trimmedValue)
+        // Clear input but do NOT send — the idle handler will send when the agent finishes
+        setInputValue('')
+        inputValueRef.current = ''
+        fileMentions.clearMentions()
+        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+        window.db.session.updateDraft(sessionId, null)
+        return
       }
       setInputValue('')
       inputValueRef.current = ''
@@ -2818,15 +3426,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       window.db.session.updateDraft(sessionId, null)
 
-      // User just sent a message — cancel any scroll cooldown and resume auto-scroll
-      if (scrollCooldownRef.current !== null) {
-        clearTimeout(scrollCooldownRef.current)
-        scrollCooldownRef.current = null
-      }
-      isScrollCooldownActiveRef.current = false
-      isAutoScrollEnabledRef.current = true
-      setShowScrollFab(false)
-      userHasScrolledUpRef.current = false
+      resetAutoScrollState()
 
       // Clear any stale command approvals from previous turns
       useCommandApprovalStore.getState().clearSession(sessionId)
@@ -2845,6 +3445,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       try {
         setSessionRetry(null)
         setSessionErrorMessage(null)
+        setSessionErrorStderr(null)
 
         // When sending after an undo, trim the messages array to remove the
         // undone tail.  Simply clearing revertMessageID would make visibleMessages
@@ -2853,6 +3454,28 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const currentRevertId = revertMessageID
         setRevertMessageID(null)
         revertDiffRef.current = null
+
+        // Build the full display content for the optimistic message so that
+        // attachment cards (tickets, PR comments, files) render immediately
+        // instead of only appearing after a session reload from disk.
+        const optimisticMode = useSessionStore.getState().getSessionMode(sessionId)
+        const optimisticModePrefix = optimisticMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX : ''
+        const optimisticPrComments = usePRReviewStore.getState().attachedComments
+        let optimisticPrContext = ''
+        if (optimisticPrComments.length > 0) {
+          optimisticPrContext =
+            optimisticPrComments
+              .map(
+                (c) =>
+                  `<pr-comment author="${c.user.login}" file="${c.path}" line="${c.line ?? 'file-level'}">\n${c.body}\n<diff-hunk>${c.diffHunk}</diff-hunk>\n</pr-comment>`
+              )
+              .join('\n\n') + '\n\n'
+        }
+        const optimisticContent = buildDisplayContent(
+          attachments,
+          optimisticPrContext + optimisticModePrefix + trimmedValue
+        )
+
         setMessages((prev) => {
           let base = prev
           if (currentRevertId) {
@@ -2861,7 +3484,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               base = prev.slice(0, boundaryIndex)
             }
           }
-          return [...base, createLocalMessage('user', trimmedValue)]
+          return [...base, createLocalMessage('user', optimisticContent)]
         })
 
         // Mark that a new prompt is in flight — prevents finalizeResponse
@@ -2942,6 +3565,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
               lastSentPromptRef.current = trimmedValue
               setAttachments([])
+              usePRReviewStore.getState().clearAttachments()
               const result = await window.opencodeOps.command(
                 worktreePath,
                 opencodeSessionId,
@@ -2957,24 +3581,31 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } else {
               // Unknown command — send as regular prompt (SDK may handle it)
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-              const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
-              const promptMessage = modePrefix + trimmedValue
+              const modePrefix =
+                currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX : ''
+              // Build PR review comment context
+              const prAttachedComments = usePRReviewStore.getState().attachedComments
+              let prContext = ''
+              if (prAttachedComments.length > 0) {
+                prContext =
+                  prAttachedComments
+                    .map(
+                      (c) =>
+                        `<pr-comment author="${c.user.login}" file="${c.path}" line="${c.line ?? 'file-level'}">\n${c.body}\n<diff-hunk>${c.diffHunk}</diff-hunk>\n</pr-comment>`
+                    )
+                    .join('\n\n') + '\n\n'
+              }
+              const promptMessage = prContext + modePrefix + trimmedValue
               lastSentPromptRef.current = promptMessage
-              const parts: MessagePart[] = [
-                ...attachments.map((a) => ({
-                  type: 'file' as const,
-                  mime: a.mime,
-                  url: a.dataUrl,
-                  filename: a.name
-                })),
-                { type: 'text' as const, text: promptMessage }
-              ]
+              const parts = buildMessageParts(attachments, promptMessage)
               setAttachments([])
+              usePRReviewStore.getState().clearAttachments()
               const result = await window.opencodeOps.prompt(
                 worktreePath,
                 opencodeSessionId,
                 parts,
-                requestModel
+                requestModel,
+                codexPromptOptions
               )
               if (!result.success) {
                 console.error('Failed to send prompt to OpenCode:', result.error)
@@ -2985,27 +3616,33 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           } else {
             // Regular prompt — existing code (with mode prefix, attachments, etc.)
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-            const modePrefix = currentMode === 'plan' && !isClaudeCode ? PLAN_MODE_PREFIX : ''
-            const promptMessage = modePrefix + trimmedValue
+            const modePrefix = currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX : ''
+            // Build PR review comment context
+            const prAttachedComments = usePRReviewStore.getState().attachedComments
+            let prContext = ''
+            if (prAttachedComments.length > 0) {
+              prContext =
+                prAttachedComments
+                  .map(
+                    (c) =>
+                      `<pr-comment author="${c.user.login}" file="${c.path}" line="${c.line ?? 'file-level'}">\n${c.body}\n<diff-hunk>${c.diffHunk}</diff-hunk>\n</pr-comment>`
+                  )
+                  .join('\n\n') + '\n\n'
+            }
+            const promptMessage = prContext + modePrefix + trimmedValue
             // Store the full prompt so the stream handler can detect SDK echoes
             // of the user message (the SDK often re-emits the prompt without a
             // role field, making it indistinguishable from assistant text).
             lastSentPromptRef.current = promptMessage
-            const parts: MessagePart[] = [
-              ...attachments.map((a) => ({
-                type: 'file' as const,
-                mime: a.mime,
-                url: a.dataUrl,
-                filename: a.name
-              })),
-              { type: 'text' as const, text: promptMessage }
-            ]
+            const parts = buildMessageParts(attachments, promptMessage)
             setAttachments([])
+            usePRReviewStore.getState().clearAttachments()
             const result = await window.opencodeOps.prompt(
               worktreePath,
               opencodeSessionId,
               parts,
-              requestModel
+              requestModel,
+              codexPromptOptions
             )
             if (!result.success) {
               console.error('Failed to send prompt to OpenCode:', result.error)
@@ -3017,6 +3654,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         } else {
           // No OpenCode connection - show placeholder
           setAttachments([])
+          usePRReviewStore.getState().clearAttachments()
           console.warn('No OpenCode connection, showing placeholder response')
           setTimeout(() => {
             const placeholderContent =
@@ -3043,15 +3681,45 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       allSlashCommands,
       sessionCapabilities,
       revertMessageID,
-      isClaudeCode,
+      skipPlanModePrefix,
+      codexPromptOptions,
       refreshMessagesFromOpenCode,
       getModelForRequests,
       fileMentions,
+      resetAutoScrollState,
       stripAtMentions
     ]
   )
 
   const handlePlanReadyImplement = useCallback(async () => {
+    if (pendingPlan && !isClaudeCode) {
+      const pendingBeforeAction = pendingPlan
+      useSessionStore.getState().clearPendingPlan(sessionId)
+      useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+
+      // Transition ExitPlanMode tool card to "accepted" state
+      if (pendingBeforeAction.toolUseID) {
+        updateStreamingPartsRef((parts) =>
+          parts.map((p) =>
+            p.type === 'tool_use' && p.toolUse?.id === pendingBeforeAction.toolUseID
+              ? { ...p, toolUse: { ...p.toolUse!, status: 'success' as const } }
+              : p
+          )
+        )
+        immediateFlush()
+      }
+
+      await useSessionStore.getState().setSessionMode(sessionId, 'build')
+      lastSendMode.set(sessionId, 'build')
+      notifyKanbanSessionSync(sessionId, { type: 'implement' })
+      await handleSend(
+        sessionRecord?.agent_sdk === 'codex'
+          ? 'Implement the plan.'
+          : buildPlanImplementationPrompt(pendingBeforeAction.planContent)
+      )
+      return
+    }
+
     // Claude Code sessions must resolve a real pending ExitPlanMode request.
     if (isClaudeCode) {
       if (!worktreePath || !pendingPlan) {
@@ -3081,6 +3749,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
         await useSessionStore.getState().setSessionMode(sessionId, 'build')
         lastSendMode.set(sessionId, 'build')
+        notifyKanbanSessionSync(sessionId, { type: 'implement' })
 
         // The SDK resumes within the same prompt cycle after plan approval —
         // it won't emit a new session.status:busy event. Set status explicitly.
@@ -3109,6 +3778,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // OpenCode sessions: legacy non-blocking behavior.
     await useSessionStore.getState().setSessionMode(sessionId, 'build')
     lastSendMode.set(sessionId, 'build')
+    notifyKanbanSessionSync(sessionId, { type: 'implement' })
     await handleSend('Implement')
   }, [
     sessionId,
@@ -3122,7 +3792,32 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   const handlePlanReject = useCallback(
     async (feedback: string) => {
-      if (!worktreePath || !pendingPlan) return
+      if (!pendingPlan) return
+
+      if (!isClaudeCode) {
+        const pendingBeforeAction = pendingPlan
+        useSessionStore.getState().clearPendingPlan(sessionId)
+        useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+
+        // Transition ExitPlanMode tool card to "rejected" state
+        if (pendingBeforeAction?.toolUseID) {
+          updateStreamingPartsRef((parts) =>
+            parts.map((p) =>
+              p.type === 'tool_use' && p.toolUse?.id === pendingBeforeAction.toolUseID
+                ? { ...p, toolUse: { ...p.toolUse!, status: 'error' as const, error: feedback } }
+                : p
+            )
+          )
+          immediateFlush()
+        }
+
+        await useSessionStore.getState().setSessionMode(sessionId, 'plan')
+        lastSendMode.set(sessionId, 'plan')
+        await handleSend(feedback)
+        return
+      }
+
+      if (!worktreePath) return
       userExplicitSendTimes.set(sessionId, Date.now())
       const pendingBeforeAction = pendingPlan
       useSessionStore.getState().clearPendingPlan(sessionId)
@@ -3166,7 +3861,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
       }
     },
-    [sessionId, worktreePath, pendingPlan, updateStreamingPartsRef, immediateFlush]
+    [
+      sessionId,
+      worktreePath,
+      pendingPlan,
+      isClaudeCode,
+      updateStreamingPartsRef,
+      immediateFlush,
+      handleSend
+    ]
   )
 
   const handlePlanReadyHandoff = useCallback(async () => {
@@ -3179,6 +3882,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       return
     }
 
+    useSessionStore.getState().clearPendingPlan(sessionId)
+    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+
     if (connectionId) {
       const handoffPrompt = `Implement the following plan\n${lastAssistantMessage.content}`
       const sessionStore = useSessionStore.getState()
@@ -3189,6 +3895,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
       const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+      notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
       sessionStore.setActiveConnectionSession(result.session.id)
       await setModePromise
       return
@@ -3212,9 +3919,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
     sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+    notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
     sessionStore.setActiveSession(result.session.id)
     await setModePromise
-  }, [messages, worktreeId, sessionRecord?.project_id, connectionId])
+  }, [messages, worktreeId, sessionRecord?.project_id, connectionId, sessionId])
 
   const handlePlanReadySuperpowers = useCallback(async () => {
     // 1. Extract plan content
@@ -3226,6 +3934,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       toast.error('No plan content found to supercharge')
       return
     }
+
+    useSessionStore.getState().clearPendingPlan(sessionId)
+    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
 
     if (connectionId) {
       const sessionStore = useSessionStore.getState()
@@ -3240,6 +3951,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       sessionStore.setPendingFollowUpMessages(newSessionId, [
         'use the subagent development skill to implement the following plan:\n' + planContent
       ])
+      // Notify kanban store: supercharge re-attaches ticket to new session
+      notifyKanbanSessionSync(sessionId, {
+        type: 'supercharge',
+        newSessionId
+      })
       sessionStore.setActiveConnectionSession(newSessionId)
       await setModePromise
       return
@@ -3292,10 +4008,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       'use the subagent development skill to implement the following plan:\n' + planContent
     ])
 
+    // 5b. Notify kanban store: supercharge re-attaches ticket to new session
+    notifyKanbanSessionSync(sessionId, {
+      type: 'supercharge',
+      newSessionId
+    })
+
     // 6. Navigate to the new worktree
     worktreeStore.selectWorktree(dupResult.worktree.id)
     await setModePromise
-  }, [messages, worktreeId, pendingPlan, connectionId])
+  }, [messages, worktreeId, pendingPlan, connectionId, sessionId])
 
   const handlePlanReadySuperpowersLocal = useCallback(async () => {
     // 1. Extract plan content
@@ -3307,6 +4029,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       toast.error('No plan content found to supercharge')
       return
     }
+
+    useSessionStore.getState().clearPendingPlan(sessionId)
+    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
 
     // 2. Create session in the same worktree (no duplication)
     const currentWorktreeId = worktreeId
@@ -3331,10 +4056,57 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       'use the subagent development skill to implement the following plan:\n' + planContent
     ])
 
+    // 3b. Notify kanban store: supercharge re-attaches ticket to new session
+    notifyKanbanSessionSync(sessionId, {
+      type: 'supercharge',
+      newSessionId
+    })
+
     // 4. Navigate to the new session (same worktree)
     sessionStore.setActiveSession(newSessionId)
     await setModePromise
-  }, [messages, worktreeId, sessionRecord?.project_id, pendingPlan])
+  }, [messages, worktreeId, sessionRecord?.project_id, pendingPlan, sessionId])
+
+  const handlePlanReadySaveAsTicket = useCallback(async () => {
+    const projectId = sessionRecord?.project_id
+    if (!projectId) {
+      toast.error('No project associated with this session')
+      return
+    }
+
+    const planContent =
+      pendingPlan?.planContent ??
+      [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim().length > 0)
+        ?.content
+
+    if (!planContent) {
+      toast.error('No plan content found')
+      return
+    }
+
+    // Extract title from first markdown heading, or fall back to first non-empty line
+    const headingMatch = planContent.match(/^#+\s+(.+)$/m)
+    const title = headingMatch
+      ? headingMatch[1].trim()
+      : (planContent
+          .split('\n')
+          .find((line: string) => line.trim().length > 0)
+          ?.trim()
+          .slice(0, 100) ?? 'Plan ticket')
+
+    try {
+      await useKanbanStore.getState().createTicket(projectId, {
+        project_id: projectId,
+        title,
+        description: planContent,
+        column: 'todo'
+      })
+      setPlanSavedAsTicket(true)
+      toast.success('Saved as ticket')
+    } catch {
+      toast.error('Failed to save as ticket')
+    }
+  }, [messages, pendingPlan, sessionRecord?.project_id])
 
   // Abort streaming
   const handleAbort = useCallback(async () => {
@@ -3358,6 +4130,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         ) {
           return
         }
+      }
+
+      if (
+        e.key === 'Enter' &&
+        isComposingKeyboardEvent(
+          e.nativeEvent as KeyboardEvent & { keyCode?: number },
+          isImeComposingRef.current
+        )
+      ) {
+        return
       }
 
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -3462,13 +4244,41 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   )
 
   // Attachment handlers
-  const handleAttach = useCallback((file: { name: string; mime: string; dataUrl: string }) => {
+  const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
     setAttachments((prev) => [...prev, { id: crypto.randomUUID(), ...file }])
   }, [])
 
   const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
+
+  const handleTicketPickerSelect = useCallback(
+    (tickets: TicketAttachmentData[]) => {
+      setAttachments((prev) => {
+        const remaining = MAX_ATTACHMENTS - prev.length
+        if (remaining <= 0) {
+          toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+          return prev
+        }
+        const toAdd = tickets.slice(0, remaining).map((t) => ({
+          kind: 'ticket' as const,
+          id: crypto.randomUUID(),
+          name: t.title,
+          ticketId: t.ticketId,
+          title: t.title,
+          description: t.description,
+          attachments: t.attachments
+        }))
+        if (tickets.length > remaining) {
+          toast.warning(
+            `Only ${remaining} of ${tickets.length} tickets attached (${MAX_ATTACHMENTS} max)`
+          )
+        }
+        return [...prev, ...toAdd]
+      })
+    },
+    []
+  )
 
   // Slash command handlers
   const handleInputChange = useCallback(
@@ -3495,7 +4305,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         setHistoryIndex(null)
       }
 
-      if (value.startsWith('/') && value.length >= 1) {
+      if (value.startsWith('/') && !value.includes(' ')) {
         setShowSlashCommands(true)
       } else {
         setShowSlashCommands(false)
@@ -3556,6 +4366,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           const reader = new FileReader()
           reader.onload = () => {
             handleAttach({
+              kind: 'data',
               name: file.name || 'pasted-image.png',
               mime: file.type,
               dataUrl: reader.result as string
@@ -3573,6 +4384,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Don't intercept Tab inside the ticket creation modal — it needs
+        // natural tab navigation between title / description fields.
+        const createModal = document.querySelector('[data-testid="ticket-create-modal"]')
+        if (createModal?.contains(document.activeElement)) return
+
         e.preventDefault()
         e.stopPropagation()
         toggleSessionMode(sessionId)
@@ -3687,6 +4503,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }, [messages, revertMessageID])
 
   useEffect(() => {
+    if (sessionRecord?.agent_sdk === 'codex') return
     if (messages.length === 0) return
     // Defense-in-depth: don't overwrite the cache with a degraded state.
     // If the only messages are local-* (optimistic user messages not yet
@@ -3696,7 +4513,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const hasServerMessages = messages.some((m) => !m.id.startsWith('local-'))
     if (!hasServerMessages) return
     writeTranscriptCache(sessionId, messages)
-  }, [sessionId, messages])
+  }, [sessionId, messages, sessionRecord?.agent_sdk])
 
   // Determine if there's streaming content to show
   const hasStreamingContent = streamingParts.length > 0 || streamingContent.length > 0
@@ -3712,12 +4529,59 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         (streamingParts[streamingParts.length - 1].type === 'text' ||
           streamingParts[streamingParts.length - 1].type === 'tool_use')))
 
+  const codexPlanCandidate = useMemo(() => {
+    const pendingPlanText = pendingPlan?.planContent?.trim()
+    if (pendingPlanText) return pendingPlanText
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]
+      if (message.role !== 'assistant') continue
+
+      for (let j = (message.parts?.length ?? 0) - 1; j >= 0; j--) {
+        const part = message.parts?.[j]
+        const toolPlan =
+          part?.type === 'tool_use' && part.toolUse?.name === 'ExitPlanMode'
+            ? String(part.toolUse.input?.plan ?? '').trim()
+            : ''
+        if (toolPlan) return toolPlan
+      }
+
+      const messageText = message.content.trim()
+      if (messageText) return messageText
+    }
+
+    for (let i = streamingParts.length - 1; i >= 0; i--) {
+      const part = streamingParts[i]
+      const toolPlan =
+        part.type === 'tool_use' && part.toolUse?.name === 'ExitPlanMode'
+          ? String(part.toolUse.input?.plan ?? '').trim()
+          : ''
+      if (toolPlan) return toolPlan
+      if (part.type === 'text' && part.text?.trim()) return part.text.trim()
+    }
+
+    return ''
+  }, [messages, pendingPlan, streamingParts])
+
+  const hasCodexProposedPlan =
+    sessionRecord?.agent_sdk === 'codex' && looksLikeCodexProposedPlan(codexPlanCandidate)
+
   // Show the floating Implement FAB when:
   // 1. Claude Code sessions: ExitPlanMode is pending approval.
-  // 2. OpenCode sessions: legacy non-blocking plan mode completed.
+  // 2. Codex sessions: the pending plan content is a real <proposed_plan>.
+  // 3. OpenCode sessions: legacy non-blocking plan mode completed.
   const showPlanReadyImplementFab = isClaudeCode
     ? !!pendingPlan
-    : lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming && !pendingPlan
+    : sessionRecord?.agent_sdk === 'codex'
+      ? !!pendingPlan && hasCodexProposedPlan
+      : lastSendMode.get(sessionId) === 'plan' && !isSending && !isStreaming && !pendingPlan
+
+  // Reset "saved as ticket" flag when the plan changes (new plan → fresh button)
+  const pendingPlanRef = useRef(pendingPlan)
+  if (pendingPlanRef.current !== pendingPlan) {
+    pendingPlanRef.current = pendingPlan
+    if (planSavedAsTicket) setPlanSavedAsTicket(false)
+  }
 
   const retrySecondsRemaining = useMemo(() => {
     if (!sessionRetry?.next) return null
@@ -3738,18 +4602,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }, [sessionRetry?.next])
 
   const isActive = isStreaming || isSending
-  useEffect(() => {
-    if (!isActive) return
-    setElapsedTickMs(Date.now())
-    const timer = window.setInterval(() => setElapsedTickMs(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [isActive])
-
-  const elapsedTimerText = useMemo(() => {
-    const sendTime = userExplicitSendTimes.get(sessionId)
-    if (!sendTime) return null
-    return formatElapsedTimer(elapsedTickMs - sendTime)
-  }, [sessionId, elapsedTickMs])
+  const elapsedTimerText = useSessionTimer(sessionId, isActive)
 
   // Render based on view state
   if (viewState.status === 'connecting') {
@@ -3783,6 +4636,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           ref={scrollContainerRef}
           className="h-full overflow-y-auto"
           onScroll={handleScroll}
+          onWheel={handleScrollWheel}
+          onPointerDown={handleScrollPointerDown}
+          onPointerUp={handleScrollPointerUp}
+          onPointerCancel={handleScrollPointerCancel}
           data-testid="message-list"
         >
           {/* Read-only banner for orphaned sessions */}
@@ -3862,6 +4719,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                     <div>
                       <p className="text-sm font-medium">Session error</p>
                       <p className="mt-0.5 text-sm text-destructive/90">{sessionErrorMessage}</p>
+                      {sessionErrorStderr && (
+                        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-destructive/10 px-2 py-1.5 font-mono text-xs text-destructive/80">
+                          {sessionErrorStderr}
+                        </pre>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3949,6 +4811,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           onSuperpowers={handlePlanReadySuperpowers}
           onSuperpowersLocal={handlePlanReadySuperpowersLocal}
           isConnectionSession={!!connectionId}
+          onSaveAsTicket={sessionRecord?.project_id && !planSavedAsTicket ? handlePlanReadySaveAsTicket : undefined}
         />
         {/* Scroll-to-bottom FAB */}
         <ScrollToBottomFab
@@ -4023,6 +4886,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             onClose={fileMentions.dismiss}
             onNavigate={fileMentions.moveSelection}
           />
+          {/* PR review comment attachments — above the input container */}
+          <PrCommentAttachments />
+          {/* Ticket attachments — above the input container */}
+          <TicketAttachments attachments={attachments} onRemove={handleRemoveAttachment} />
           <div
             className={cn(
               'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
@@ -4058,6 +4925,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 setCursorPosition(pos)
               }}
               onKeyDown={handleKeyDown}
+              onCompositionStart={() => {
+                isImeComposingRef.current = true
+              }}
+              onCompositionEnd={() => {
+                isImeComposingRef.current = false
+              }}
               onPaste={handlePaste}
               disabled={!!activePermission || isOrphanedSession}
               placeholder={
@@ -4087,7 +4960,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             <div className="flex items-center justify-between px-3 pb-2.5">
               <div className="flex items-center gap-2">
                 <ModelSelector sessionId={sessionId} />
-                <AttachmentButton onAttach={handleAttach} disabled={isOrphanedSession} />
+                {sessionAgentSdk === 'codex' && (
+                  <CodexFastToggle
+                    enabled={codexFastMode}
+                    accepted={codexFastModeAccepted}
+                    onToggle={() => updateSetting('codexFastMode', !codexFastMode)}
+                    onAccept={() => updateSetting('codexFastModeAccepted', true)}
+                  />
+                )}
+                <AttachmentButton
+                  onAttach={handleAttach}
+                  projectId={sessionRecord?.project_id ?? null}
+                  onPickTicket={() => setTicketPickerOpen(true)}
+                  disabled={isOrphanedSession}
+                />
                 <ContextIndicator
                   sessionId={sessionId}
                   modelId={currentModelId}
@@ -4105,14 +4991,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                       : 'text-muted-foreground'
                   )}
                 >
-                  {elapsedTimerText
-                    ?? (pendingPlan
+                  {elapsedTimerText ??
+                    (pendingPlan
                       ? 'Enter to send feedback to revise the plan'
-                      : 'Enter to send, Shift+Enter for new line')}
+                      : `${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Shift+Enter for new line`)}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                {isStreaming && <IndeterminateProgressBar mode={mode} isAsking={!!activeQuestion} />}
+                {isStreaming && (
+                  <IndeterminateProgressBar mode={mode} isAsking={!!activeQuestion} />
+                )}
                 {isStreaming && !inputValue.trim() ? (
                   <Button
                     onClick={handleAbort}
@@ -4170,6 +5058,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           </div>
         </div>
       </div>
+
+      {/* Ticket picker modal for attaching board tickets */}
+      {sessionRecord?.project_id && (
+        <TicketPickerModal
+          projectId={sessionRecord.project_id}
+          open={ticketPickerOpen}
+          onOpenChange={setTicketPickerOpen}
+          onSelectTickets={handleTicketPickerSelect}
+        />
+      )}
     </div>
   )
 }

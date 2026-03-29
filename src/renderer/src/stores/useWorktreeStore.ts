@@ -3,6 +3,7 @@ import { useProjectStore } from './useProjectStore'
 import { useScriptStore, killRunScript } from './useScriptStore'
 import { useSessionStore } from './useSessionStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
+import { useGitStore } from './useGitStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
@@ -78,6 +79,8 @@ interface Worktree {
   last_model_variant: string | null
   created_at: string
   last_accessed_at: string
+  github_pr_number: number | null
+  github_pr_url: string | null
 }
 
 interface WorktreeState {
@@ -98,7 +101,7 @@ interface WorktreeState {
     projectId: string,
     projectPath: string,
     projectName: string
-  ) => Promise<{ success: boolean; error?: string }>
+  ) => Promise<{ success: boolean; worktree?: Worktree; error?: string; pullInfo?: unknown }>
   archiveWorktree: (
     worktreeId: string,
     worktreePath: string,
@@ -118,6 +121,13 @@ interface WorktreeState {
   getWorktreesForProject: (projectId: string) => Worktree[]
   getDefaultWorktree: (projectId: string) => Worktree | null
   setCreatingForProject: (projectId: string | null) => void
+  createWorktreeFromBranch: (
+    projectId: string,
+    projectPath: string,
+    projectName: string,
+    branchName: string,
+    nameHint?: string
+  ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
   duplicateWorktree: (
     projectId: string,
     projectPath: string,
@@ -183,6 +193,17 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           statusStore.setLastMessageTime(wt.id, wt.last_message_at)
         }
       }
+
+      // Hydrate attached PRs from DB into the git store
+      const gitStore = useGitStore.getState()
+      for (const wt of sortedWorktrees) {
+        if (wt.github_pr_number && wt.github_pr_url) {
+          gitStore.setAttachedPR(wt.id, {
+            number: wt.github_pr_number,
+            url: wt.github_pr_url
+          })
+        }
+      }
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : 'Failed to load worktrees',
@@ -221,7 +242,60 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       // Fire-and-forget: run setup script if configured
       fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
 
-      return { success: true }
+      return {
+        success: true,
+        worktree: result.worktree,
+        pullInfo: result.pullInfo
+      }
+    } catch (error) {
+      set({ creatingForProjectId: null })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create worktree'
+      }
+    }
+  },
+
+  // Create a new worktree from an existing branch
+  createWorktreeFromBranch: async (
+    projectId: string,
+    projectPath: string,
+    projectName: string,
+    branchName: string,
+    nameHint?: string
+  ) => {
+    set({ creatingForProjectId: projectId })
+    try {
+      const result = await window.worktreeOps.createFromBranch(
+        projectId,
+        projectPath,
+        projectName,
+        branchName,
+        undefined, // prNumber — not used from store
+        nameHint
+      )
+
+      if (!result.success || !result.worktree) {
+        set({ creatingForProjectId: null })
+        return { success: false, error: result.error || 'Failed to create worktree' }
+      }
+
+      // Add to store state (same pattern as createWorktree)
+      set((state) => {
+        const newMap = new Map(state.worktreesByProject)
+        const existing = newMap.get(projectId) || []
+        newMap.set(projectId, [result.worktree!, ...existing])
+        return {
+          worktreesByProject: newMap,
+          selectedWorktreeId: result.worktree!.id,
+          creatingForProjectId: null
+        }
+      })
+
+      // Fire-and-forget: run setup script if configured
+      fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
+
+      return { success: true, worktree: result.worktree }
     } catch (error) {
       set({ creatingForProjectId: null })
       return {
@@ -427,6 +501,17 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       get().touchWorktree(id)
       // Deconflict: clear any selected connection synchronously (same tick)
       clearConnectionSelection()
+
+      // Auto-detect language from worktree folder when project has none (fire-and-forget)
+      const worktrees = Array.from(get().worktreesByProject.values()).flat()
+      const worktree = worktrees.find((w) => w.id === id)
+      if (worktree) {
+        const ps = useProjectStore.getState()
+        const project = ps.projects.find((p) => p.id === worktree.project_id)
+        if (project && !project.language && !project.custom_icon) {
+          ps.refreshLanguage(project.id, worktree.path)
+        }
+      }
     }
   },
 

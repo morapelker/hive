@@ -6,6 +6,7 @@ import { getLogDir } from './logger'
 export interface AgentSdkDetection {
   opencode: boolean
   claude: boolean
+  codex: boolean
 }
 
 export interface AppPaths {
@@ -29,7 +30,7 @@ export function detectAgentSdks(): AgentSdkDetection {
       return false
     }
   }
-  return { opencode: check('opencode'), claude: check('claude') }
+  return { opencode: check('opencode'), claude: check('claude'), codex: check('codex') }
 }
 
 export function getAppPaths(): AppPaths {

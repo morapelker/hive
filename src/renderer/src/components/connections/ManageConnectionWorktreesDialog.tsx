@@ -160,9 +160,7 @@ export function ManageConnectionWorktreesDialog({
             <Settings2 className="h-4 w-4" />
             Connection Worktrees
           </DialogTitle>
-          <DialogDescription>
-            Manage which worktrees are part of this connection.
-          </DialogDescription>
+          <DialogDescription>Manage which worktrees are part of this connection.</DialogDescription>
         </DialogHeader>
 
         {/* Search/Filter */}

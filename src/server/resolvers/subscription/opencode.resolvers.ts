@@ -9,9 +9,7 @@ export const opencodeSubscriptionResolvers: Resolvers = {
         let resolve: (() => void) | null = null
         let batchTimer: ReturnType<typeof setTimeout> | null = null
         const BATCH_MS = 50
-        const sessionFilter = args.sessionIds
-          ? new Set(args.sessionIds)
-          : null
+        const sessionFilter = args.sessionIds ? new Set(args.sessionIds) : null
 
         const flush = () => {
           batchTimer = null
@@ -30,7 +28,9 @@ export const opencodeSubscriptionResolvers: Resolvers = {
         try {
           while (true) {
             if (queue.length === 0) {
-              await new Promise<void>(r => { resolve = r })
+              await new Promise<void>((r) => {
+                resolve = r
+              })
             }
             while (queue.length > 0) {
               yield { opencodeStream: queue.shift()! }
