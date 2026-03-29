@@ -3445,6 +3445,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         .getState()
         .setSessionStatus(sessionId, isPlanLike(currentModeForStatus) ? 'planning' : 'working')
 
+      // Auto-revert super-plan → plan immediately (one-shot mode).
+      // The captured `currentModeForStatus` preserves the original mode for prefix logic below.
+      if (currentModeForStatus === 'super-plan') {
+        useSessionStore.getState().setSessionMode(sessionId, 'plan')
+      }
+
       try {
         setSessionRetry(null)
         setSessionErrorMessage(null)
@@ -3461,7 +3467,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // Build the full display content for the optimistic message so that
         // attachment cards (tickets, PR comments, files) render immediately
         // instead of only appearing after a session reload from disk.
-        const optimisticMode = useSessionStore.getState().getSessionMode(sessionId)
+        const optimisticMode = currentModeForStatus
         const optimisticModePrefix =
           optimisticMode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
           : optimisticMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
@@ -3586,10 +3592,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               }
             } else {
               // Unknown command — send as regular prompt (SDK may handle it)
-              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
               const modePrefix =
-                currentMode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
-                : currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
+                currentModeForStatus === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+                : currentModeForStatus === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
                 : ''
               // Build PR review comment context
               const prAttachedComments = usePRReviewStore.getState().attachedComments
@@ -3623,10 +3628,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             }
           } else {
             // Regular prompt — existing code (with mode prefix, attachments, etc.)
-            const currentMode = useSessionStore.getState().getSessionMode(sessionId)
             const modePrefix =
-              currentMode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
-              : currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
+              currentModeForStatus === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+              : currentModeForStatus === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
               : ''
             // Build PR review comment context
             const prAttachedComments = usePRReviewStore.getState().attachedComments

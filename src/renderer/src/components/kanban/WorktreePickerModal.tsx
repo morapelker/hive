@@ -229,13 +229,17 @@ export function WorktreePickerModal({
   }, [])
 
   // ── Handle mode toggle ──────────────────────────────────────────
+  const superPlanModeEnabled = useSettingsStore((s) => s.superPlanModeEnabled)
+
   const toggleMode = useCallback(() => {
     setMode((prev) => {
-      const next = prev === 'build' ? 'plan' : prev === 'plan' ? 'super-plan' : 'build'
+      const next = superPlanModeEnabled
+        ? prev === 'build' ? 'plan' : prev === 'plan' ? 'super-plan' : 'build'
+        : prev === 'build' ? 'plan' : 'build'
       setPromptText(buildPrompt(next, ticket))
       return next
     })
-  }, [ticket])
+  }, [ticket, superPlanModeEnabled])
 
   // ── Handle Tab key: toggle mode + focus prompt textarea ────────
   // Must use window-level capture-phase listener to beat SessionView's
@@ -432,6 +436,12 @@ export function WorktreePickerModal({
           : mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
           : ''
         const fullPrompt = modePrefix + promptText.trim()
+
+        // Auto-revert super-plan → plan immediately (one-shot mode).
+        // The prefix is already captured in fullPrompt above.
+        if (mode === 'super-plan') {
+          useSessionStore.getState().setSessionMode(sessionId, 'plan')
+        }
 
         await window.opencodeOps.prompt(worktree.path, connectResult.sessionId, [
           { type: 'text', text: fullPrompt }

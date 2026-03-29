@@ -19,6 +19,7 @@ export function SettingsGeneral(): React.JSX.Element {
     showUsageIndicator,
     defaultAgentSdk,
     stripAtMentions,
+    superPlanModeEnabled,
     updateSetting,
     resetToDefaults
   } = useSettingsStore()
@@ -286,6 +287,34 @@ export function SettingsGeneral(): React.JSX.Element {
             className={cn(
               'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
               stripAtMentions ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Super Plan Mode */}
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-sm font-medium">Super Plan mode</label>
+          <p className="text-xs text-muted-foreground">
+            Add a &quot;Super Plan&quot; option when toggling modes that interviews you about every
+            aspect of a plan
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={superPlanModeEnabled}
+          onClick={() => updateSetting('superPlanModeEnabled', !superPlanModeEnabled)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            superPlanModeEnabled ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="super-plan-mode-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
+              superPlanModeEnabled ? 'translate-x-4' : 'translate-x-0'
             )}
           />
         </button>

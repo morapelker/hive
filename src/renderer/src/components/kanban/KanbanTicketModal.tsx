@@ -40,7 +40,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import { resolveModelForSdk } from '@/stores/useSettingsStore'
+import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
@@ -172,6 +172,12 @@ async function sendFollowupToSession(opts: {
     : ''
   const fullPrompt = modePrefix + opts.prompt
 
+  // Auto-revert super-plan → plan immediately (one-shot mode).
+  // The prefix is already captured in fullPrompt above.
+  if (opts.followUpMode === 'super-plan') {
+    useSessionStore.getState().setSessionMode(opts.sessionId, 'plan')
+  }
+
   messageSendTimes.set(opts.sessionId, Date.now())
   userExplicitSendTimes.set(opts.sessionId, Date.now())
   snapshotTokenBaseline(opts.sessionId)
@@ -202,6 +208,7 @@ async function sendFollowupToSession(opts: {
 
   // Update ticket mode only AFTER successful prompt — avoids stale state on failure
   await opts.updateTicket(opts.ticketId, opts.projectId, { mode: opts.followUpMode, plan_ready: false })
+
 }
 
 /** Determine what mode the modal should operate in */
@@ -707,9 +714,15 @@ function PlanReviewModeContent({
 
   const planContent = pendingPlan?.planContent ?? ticket.description ?? ''
 
+  const superPlanModeEnabled = useSettingsStore((s) => s.superPlanModeEnabled)
+
   const toggleMode = useCallback(() => {
-    setFollowUpMode((prev) => prev === 'build' ? 'plan' : prev === 'plan' ? 'super-plan' : 'build')
-  }, [])
+    setFollowUpMode((prev) =>
+      superPlanModeEnabled
+        ? prev === 'build' ? 'plan' : prev === 'plan' ? 'super-plan' : 'build'
+        : prev === 'build' ? 'plan' : 'build'
+    )
+  }, [superPlanModeEnabled])
 
   // Tab key toggles mode
   useEffect(() => {
@@ -1215,9 +1228,15 @@ function ReviewModeContent({
     ticket.worktree_id ? (s.scriptStates[ticket.worktree_id]?.runRunning ?? false) : false
   )
 
+  const superPlanModeEnabled = useSettingsStore((s) => s.superPlanModeEnabled)
+
   const toggleMode = useCallback(() => {
-    setFollowUpMode((prev) => prev === 'build' ? 'plan' : prev === 'plan' ? 'super-plan' : 'build')
-  }, [])
+    setFollowUpMode((prev) =>
+      superPlanModeEnabled
+        ? prev === 'build' ? 'plan' : prev === 'plan' ? 'super-plan' : 'build'
+        : prev === 'build' ? 'plan' : 'build'
+    )
+  }, [superPlanModeEnabled])
 
   // Tab key toggles mode
   useEffect(() => {
@@ -1509,9 +1528,15 @@ function ErrorModeContent({
     )
   )
 
+  const superPlanModeEnabled = useSettingsStore((s) => s.superPlanModeEnabled)
+
   const toggleMode = useCallback(() => {
-    setFollowUpMode((prev) => prev === 'build' ? 'plan' : prev === 'plan' ? 'super-plan' : 'build')
-  }, [])
+    setFollowUpMode((prev) =>
+      superPlanModeEnabled
+        ? prev === 'build' ? 'plan' : prev === 'plan' ? 'super-plan' : 'build'
+        : prev === 'build' ? 'plan' : 'build'
+    )
+  }, [superPlanModeEnabled])
 
   // ── Send followup for error retry ─────────────────────────────────
   const handleSendFollowup = useCallback(async () => {

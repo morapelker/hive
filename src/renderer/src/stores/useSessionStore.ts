@@ -4,7 +4,7 @@ import type { SelectedModel } from './useSettingsStore'
 import { useGitStore } from './useGitStore'
 import { useWorktreeStore } from './useWorktreeStore'
 import { notifyKanbanSessionSync } from './store-coordination'
-import { useKanbanStore } from './useKanbanStore'
+import { useSettingsStore } from './useSettingsStore'
 
 // Session mode type
 export type SessionMode = 'build' | 'plan' | 'super-plan'
@@ -771,18 +771,10 @@ export const useSessionStore = create<SessionState>()(
       toggleSessionMode: async (sessionId: string) => {
         const currentMode = get().modeBySession.get(sessionId) || 'build'
 
-        // Check if this session is linked to a kanban ticket
-        const kanbanTickets = useKanbanStore.getState().tickets
-        let isKanbanSession = false
-        for (const tickets of kanbanTickets.values()) {
-          if (tickets.some(t => t.current_session_id === sessionId)) {
-            isKanbanSession = true
-            break
-          }
-        }
+        const superPlanEnabled = useSettingsStore.getState().superPlanModeEnabled
 
         let newMode: SessionMode
-        if (isKanbanSession) {
+        if (superPlanEnabled) {
           // 3-way cycle: build → plan → super-plan → build
           if (currentMode === 'build') newMode = 'plan'
           else if (currentMode === 'plan') newMode = 'super-plan'
