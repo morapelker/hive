@@ -17,10 +17,17 @@ export interface ParsedFile {
   name: string
 }
 
+export interface ParsedDataAttachment {
+  mime: string
+  name: string
+  dataUrl: string
+}
+
 export interface ParsedUserAttachments {
   tickets: ParsedTicket[]
   prComments: ParsedPrComment[]
   files: ParsedFile[]
+  dataAttachments: ParsedDataAttachment[]
   cleanText: string
 }
 
@@ -41,12 +48,14 @@ const PR_COMMENT_RE =
 const ATTACHED_FILES_RE = /<attached_files>\n?([\s\S]*?)\n?<\/attached_files>/g
 const FILE_RE = /<file\s+path="([^"]*)">([\s\S]*?)<\/file>/g
 const DIFF_HUNK_RE = /<diff-hunk>([\s\S]*?)<\/diff-hunk>/
+const DATA_ATTACHMENT_RE = /<data-attachment\s+mime="([^"]*)"\s+name="([^"]*)">([\s\S]*?)<\/data-attachment>/g
 
 // ── Parser ──────────────────────────────────────────────────────────
 export function parseUserMessageAttachments(content: string): ParsedUserAttachments {
   const tickets: ParsedTicket[] = []
   const prComments: ParsedPrComment[] = []
   const files: ParsedFile[] = []
+  const dataAttachments: ParsedDataAttachment[] = []
 
   let cleaned = content
 
@@ -88,8 +97,18 @@ export function parseUserMessageAttachments(content: string): ParsedUserAttachme
   }
   cleaned = cleaned.replace(ATTACHED_FILES_RE, '')
 
+  // Extract data attachments
+  for (const m of content.matchAll(DATA_ATTACHMENT_RE)) {
+    dataAttachments.push({
+      mime: unescapeXmlAttr(m[1]),
+      name: unescapeXmlAttr(m[2]),
+      dataUrl: m[3].trim()
+    })
+  }
+  cleaned = cleaned.replace(DATA_ATTACHMENT_RE, '')
+
   // Collapse excessive blank lines left by removals
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim()
 
-  return { tickets, prComments, files, cleanText: cleaned }
+  return { tickets, prComments, files, dataAttachments, cleanText: cleaned }
 }

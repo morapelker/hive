@@ -59,6 +59,21 @@ export const buildMessageParts = (attachments: Attachment[], promptText: string)
 export const buildDisplayContent = (attachments: Attachment[], promptText: string): string => {
   const textParts: string[] = []
 
+  // Data attachments (images, PDFs) -> XML blocks
+  const dataAttachments = attachments.filter(
+    (a): a is Extract<Attachment, { kind: 'data' }> => a.kind === 'data'
+  )
+  if (dataAttachments.length > 0) {
+    textParts.push(
+      dataAttachments
+        .map(
+          (d) =>
+            `<data-attachment mime="${escapeXmlAttr(d.mime)}" name="${escapeXmlAttr(d.name)}">${d.dataUrl}</data-attachment>`
+        )
+        .join('\n')
+    )
+  }
+
   // Path attachments -> XML block
   const pathAttachments = attachments.filter(
     (a): a is Extract<Attachment, { kind: 'path' }> => a.kind === 'path'
