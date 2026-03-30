@@ -71,26 +71,34 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
   // ── Connection-mode helpers ────────────────────────────────────────
   // In connection mode, tickets come from different projects, so we look
   // up each ticket's own project_id instead of using the column-level prop.
-  const findTicketProjectId = useCallback(
-    (ticketId: string): string => {
-      if (connectionId) {
-        const ticket = tickets.find((t) => t.id === ticketId)
-        if (ticket) return ticket.project_id
-      }
-      return projectId
-    },
-    [connectionId, tickets, projectId]
-  )
 
   const findTicket = useCallback(
     (ticketId: string): KanbanTicket | undefined => {
       if (connectionId) {
-        return tickets.find((t) => t.id === ticketId)
+        // In connection mode, search across ALL tickets from all projects
+        // (the dragged ticket may come from a different column/project)
+        const allTickets = useKanbanStore.getState().tickets
+        for (const projectTickets of allTickets.values()) {
+          const found = projectTickets.find((t) => t.id === ticketId)
+          if (found) return found
+        }
+        return undefined
       }
       const allTickets = useKanbanStore.getState().tickets.get(projectId) ?? []
       return allTickets.find((t) => t.id === ticketId)
     },
-    [connectionId, tickets, projectId]
+    [connectionId, projectId]
+  )
+
+  const findTicketProjectId = useCallback(
+    (ticketId: string): string => {
+      if (connectionId) {
+        const ticket = findTicket(ticketId)
+        if (ticket) return ticket.project_id
+      }
+      return projectId
+    },
+    [connectionId, projectId, findTicket]
   )
 
   // Global drag state — true when ANY ticket is being dragged
@@ -98,6 +106,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
   const draggingTicketId = useKanbanStore((state) => state.draggingTicketId)
 
   // ── Simple mode toggle (In Progress column only) ───────────────
+  // In connection mode, projectId is '' — acts as a single toggle for the connection board
   const isSimpleMode = useKanbanStore(
     useCallback(
       (state) => state.simpleModeByProject[projectId] ?? false,
@@ -113,6 +122,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
   )
 
   // ── Archive toggle (Done column only) ───────────────────────────
+  // In connection mode, projectId is '' — acts as a single toggle for the connection board
   const showArchived = useKanbanStore(
     useCallback(
       (state) => state.showArchivedByProject[projectId] ?? false,
