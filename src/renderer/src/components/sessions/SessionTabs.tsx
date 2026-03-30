@@ -1278,6 +1278,7 @@ export function SessionTabs(): React.JSX.Element | null {
             onOpenChange={setShowImport}
             projectId={project.id}
             projectPath={project.path}
+            connectionId={isConnectionMode ? selectedConnectionId ?? undefined : undefined}
           />
         </>
       )}
