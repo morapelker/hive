@@ -72,7 +72,8 @@ export class JiraProvider implements TicketProvider {
   }
 
   async detectRepo(_projectPath: string): Promise<string | null> {
-    // Jira has no git-path mapping. The JiraImportModal reads the domain from settings directly.
+    // Jira projects are identified by domain, not by git remote URL.
+    // The import UI reads the domain directly from provider settings.
     return null
   }
 
@@ -85,9 +86,11 @@ export class JiraProvider implements TicketProvider {
     const domain = repo // repo = Jira domain
 
     if (!email || !token) {
+      log.warn('Missing Jira credentials, skipping request')
       return { issues: [], hasNextPage: false, totalCount: 0 }
     }
 
+    // state is intentionally ignored — JQL handles all filtering directly
     const { page, perPage, search } = options
     const jql = search?.trim() ?? ''
 
@@ -165,6 +168,7 @@ export class JiraProvider implements TicketProvider {
     const domain = repo
 
     if (!email || !token) {
+      log.warn('Missing Jira credentials, skipping request')
       return []
     }
 
@@ -248,7 +252,7 @@ export class JiraProvider implements TicketProvider {
     token: string
   } {
     return {
-      domain: settings.jira_domain?.trim() ?? '',
+      domain: (settings.jira_domain?.trim() ?? '').replace(/^https?:\/\//, ''),
       email: settings.jira_email?.trim() ?? '',
       token: settings.jira_api_token?.trim() ?? ''
     }
