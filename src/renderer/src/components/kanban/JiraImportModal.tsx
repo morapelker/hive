@@ -63,6 +63,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
     setPage(1)
     setJqlError(null)
     setImportProgress(null)
+    setTimeout(() => textareaRef.current?.focus(), 0)
   }, [open])
 
   // Fetch issues when committed JQL / page changes
@@ -93,6 +94,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
 
   const handleSearch = () => {
     const trimmed = jqlInput.trim()
+    if (!trimmed) return
     setPage(1)
     setCommittedJql(trimmed)
   }
@@ -231,7 +233,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
                     size="sm"
                     variant="default"
                     onClick={handleSearch}
-                    disabled={loading}
+                    disabled={loading || !jqlInput.trim()}
                     className="h-7 text-xs"
                   >
                     <Search className="h-3 w-3 mr-1.5" />
