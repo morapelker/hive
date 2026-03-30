@@ -27,6 +27,8 @@ import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { setKanbanDragData, useKanbanStore } from '@/stores/useKanbanStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useProjectStore } from '@/stores/useProjectStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
@@ -36,18 +38,40 @@ import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
 import type { KanbanTicket } from '../../../../main/db/types'
 
+// ── Project tag color palette ──────────────────────────────────────
+const PROJECT_TAG_COLORS = [
+  '#3b82f6', // blue
+  '#8b5cf6', // violet
+  '#ec4899', // pink
+  '#f59e0b', // amber
+  '#10b981', // emerald
+  '#06b6d4', // cyan
+  '#f97316', // orange
+  '#6366f1', // indigo
+]
+
+/** Deterministic color for a project within a connection's project list. */
+function getProjectColor(projectId: string, connectionProjectIds: string[]): string {
+  const idx = connectionProjectIds.indexOf(projectId)
+  if (idx === -1) return PROJECT_TAG_COLORS[0]
+  return PROJECT_TAG_COLORS[idx % PROJECT_TAG_COLORS.length]
+}
+
 interface KanbanTicketCardProps {
   ticket: KanbanTicket
   /** Position index within the column (used for drag transfer data) */
   index?: number
   /** Whether this ticket is archived (shown in archived section) */
   isArchived?: boolean
+  /** When viewing a connection board, the connection ID for project tag + jump-to-session */
+  connectionId?: string
 }
 
 export const KanbanTicketCard = memo(function KanbanTicketCard({
   ticket,
   index = 0,
-  isArchived = false
+  isArchived = false,
+  connectionId
 }: KanbanTicketCardProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -69,6 +93,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return null
       },
       [ticket.worktree_id]
+    )
+  )
+
+  // ── Lookup project name + color for connection board ─────────────
+  const projectTag = useProjectStore(
+    useCallback(
+      (state) => {
+        if (!connectionId) return null
+        const project = state.projects.find((p) => p.id === ticket.project_id)
+        if (!project) return null
+        const connectionProjectIds = useKanbanStore.getState().getConnectionProjectIds(connectionId)
+        return {
+          name: project.name,
+          color: getProjectColor(ticket.project_id, connectionProjectIds)
+        }
+      },
+      [connectionId, ticket.project_id]
     )
   )
 
@@ -246,12 +287,20 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     if (!ticket.current_session_id) return
     const kanbanStore = useKanbanStore.getState()
     if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
-    if (ticket.worktree_id) {
-      useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
-      useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
+    if (connectionId) {
+      // Connection mode: navigate to the connection and set session
+      useConnectionStore.getState().selectConnection(connectionId)
+      useSessionStore.getState().setActiveConnection(connectionId)
+      useSessionStore.getState().setActiveSession(ticket.current_session_id)
+    } else {
+      // Project mode: navigate to the worktree and set session
+      if (ticket.worktree_id) {
+        useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+        useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
+      }
+      useSessionStore.getState().setActiveSession(ticket.current_session_id)
     }
-    useSessionStore.getState().setActiveSession(ticket.current_session_id)
-  }, [ticket.current_session_id, ticket.worktree_id])
+  }, [ticket.current_session_id, ticket.worktree_id, connectionId])
 
   const isSimpleTicket = ticket.current_session_id === null
   const isFlowTicket = ticket.current_session_id !== null
@@ -327,7 +376,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive) && (
+            {(hasAttachments || worktreeName || projectTag || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive) && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {/* Archived badge */}
                 {isArchived && (
@@ -347,12 +396,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </span>
                 )}
 
-                {/* Worktree name badge */}
-                {worktreeName && (
+                {/* Project tag (connection mode) or worktree name badge */}
+                {projectTag ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: projectTag.color }} />
+                    {projectTag.name}
+                  </span>
+                ) : worktreeName ? (
                   <span className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     {worktreeName}
                   </span>
-                )}
+                ) : null}
 
                 {/* Run process alive indicator */}
                 {isRunProcessAlive && (
