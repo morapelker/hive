@@ -875,7 +875,7 @@ export function Header(): React.JSX.Element {
             </DropdownMenu>
           </Popover>
         )}
-        {selectedProjectId && (
+        {(selectedProjectId || selectedConnectionId) && (
           <Button
             variant="ghost"
             size="icon"
