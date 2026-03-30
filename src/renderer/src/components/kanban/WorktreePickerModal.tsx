@@ -491,8 +491,8 @@ export function WorktreePickerModal({
   ])
 
   // ── Mode toggle chip ────────────────────────────────────────────
-  const ModeIcon = mode === 'build' ? Hammer : mode === 'plan' ? Map : Sparkles
-  const modeLabel = mode === 'build' ? 'Build' : mode === 'plan' ? 'Plan' : 'Super Plan'
+  const ModeIcon = mode === 'build' ? Hammer : Map
+  const modeLabel = mode === 'build' ? 'Build' : 'Plan'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -521,9 +521,7 @@ export function WorktreePickerModal({
                 'border select-none',
                 mode === 'build'
                   ? 'bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20'
-                  : mode === 'plan'
-                    ? 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
-                    : 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20'
+                  : 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
               )}
               title={`${modeLabel} mode`}
               aria-label={`Current mode: ${modeLabel}. Click to switch`}
