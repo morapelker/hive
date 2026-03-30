@@ -35,15 +35,15 @@ export function SettingsIntegrations() {
       }
       setSchemas(schemaMap)
 
-      // Load saved values from localStorage
+      // Load saved values from dedicated provider-settings key
       try {
-        const raw = localStorage.getItem('hive-settings')
+        const raw = localStorage.getItem('hive-provider-settings')
         if (raw) {
-          const parsed = JSON.parse(raw)
+          const parsed = JSON.parse(raw) as Record<string, string>
           const saved: Record<string, string> = {}
           for (const fields of Object.values(schemaMap)) {
             for (const field of fields) {
-              const val = parsed?.state?.[field.key]
+              const val = parsed[field.key]
               if (typeof val === 'string') saved[field.key] = val
             }
           }
@@ -59,13 +59,12 @@ export function SettingsIntegrations() {
     setValues((prev) => ({ ...prev, [key]: value }))
     setTestResult({})
 
-    // Persist to localStorage (same store as hive-settings)
+    // Persist to dedicated localStorage key (separate from Zustand's hive-settings)
     try {
-      const raw = localStorage.getItem('hive-settings') ?? '{}'
-      const parsed = JSON.parse(raw)
-      if (!parsed.state) parsed.state = {}
-      parsed.state[key] = value
-      localStorage.setItem('hive-settings', JSON.stringify(parsed))
+      const raw = localStorage.getItem('hive-provider-settings') ?? '{}'
+      const parsed = JSON.parse(raw) as Record<string, string>
+      parsed[key] = value
+      localStorage.setItem('hive-provider-settings', JSON.stringify(parsed))
     } catch {
       // ignore
     }

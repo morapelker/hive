@@ -1,21 +1,15 @@
 /**
- * Read ticket-import provider settings from the persisted Zustand store.
- * This reads from localStorage directly because the settings are stored
- * in the hive-settings Zustand persist key.
+ * Read ticket-import provider settings from localStorage.
+ * Provider credentials are stored in a dedicated 'hive-provider-settings' key
+ * to avoid being overwritten by the Zustand useSettingsStore which persists
+ * to the 'hive-settings' key with a partialize function.
  */
 export function getProviderSettings(): Record<string, string> {
   try {
-    const raw = localStorage.getItem('hive-settings')
+    const raw = localStorage.getItem('hive-provider-settings')
     if (raw) {
-      const parsed = JSON.parse(raw)
-      const settings: Record<string, string> = {}
-      if (parsed?.state?.github_pat) {
-        settings.github_pat = parsed.state.github_pat
-      }
-      if (parsed?.state?.jira_domain) settings.jira_domain = parsed.state.jira_domain
-      if (parsed?.state?.jira_email) settings.jira_email = parsed.state.jira_email
-      if (parsed?.state?.jira_api_token) settings.jira_api_token = parsed.state.jira_api_token
-      return settings
+      const parsed = JSON.parse(raw) as Record<string, string>
+      return { ...parsed }
     }
   } catch {
     // ignore parse errors
