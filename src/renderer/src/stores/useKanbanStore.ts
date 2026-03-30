@@ -11,6 +11,7 @@ import {
   type KanbanSessionEvent
 } from './store-coordination'
 import { isPlanLike } from '../lib/constants'
+import { useConnectionStore } from './useConnectionStore'
 
 // ── Shared drag state (module-level, avoids DataTransfer issues in Electron) ──
 export interface KanbanDragData {
@@ -117,6 +118,11 @@ interface KanbanState {
   getTicketsForProject: (projectId: string) => KanbanTicket[]
   getTicketsByColumn: (projectId: string, column: KanbanTicketColumn) => KanbanTicket[]
   getArchivedTicketsByColumn: (projectId: string, column: KanbanTicketColumn) => KanbanTicket[]
+
+  // ── Connection-level accessors ──────────────────────────────────────
+  getConnectionProjectIds: (connectionId: string) => string[]
+  loadTicketsForConnection: (connectionId: string) => Promise<void>
+  getTicketsByColumnForConnection: (connectionId: string, column: KanbanTicketColumn) => KanbanTicket[]
 
   // ── Helpers ────────────────────────────────────────────────────────
   computeSortOrder: (tickets: KanbanTicket[], targetIndex: number) => number
@@ -528,6 +534,37 @@ export const useKanbanStore = create<KanbanState>()(
         return tickets
           .filter((t) => t.column === column && t.archived_at)
           .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? ''))
+      },
+
+      // ── getConnectionProjectIds ─────────────────────────────────
+      getConnectionProjectIds: (connectionId: string): string[] => {
+        const connection = useConnectionStore
+          .getState()
+          .connections.find((c) => c.id === connectionId)
+        if (!connection) return []
+        return [...new Set(connection.members.map((m) => m.project_id))]
+      },
+
+      // ── loadTicketsForConnection ────────────────────────────────
+      loadTicketsForConnection: async (connectionId: string) => {
+        const projectIds = get().getConnectionProjectIds(connectionId)
+        await Promise.all(projectIds.map((pid) => get().loadTickets(pid)))
+      },
+
+      // ── getTicketsByColumnForConnection ─────────────────────────
+      getTicketsByColumnForConnection: (connectionId: string, column: KanbanTicketColumn): KanbanTicket[] => {
+        const projectIds = get().getConnectionProjectIds(connectionId)
+        const allTickets = get().tickets
+        const merged: KanbanTicket[] = []
+        for (const pid of projectIds) {
+          const tickets = allTickets.get(pid) ?? []
+          for (const t of tickets) {
+            if (t.column === column && !t.archived_at) {
+              merged.push(t)
+            }
+          }
+        }
+        return merged.sort((a, b) => a.sort_order - b.sort_order)
       },
 
       // ── computeSortOrder ─────────────────────────────────────────
