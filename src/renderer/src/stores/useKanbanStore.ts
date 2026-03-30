@@ -548,9 +548,25 @@ export const useKanbanStore = create<KanbanState>()(
       // ── loadTicketsForConnection ────────────────────────────────
       loadTicketsForConnection: async (connectionId: string) => {
         const projectIds = get().getConnectionProjectIds(connectionId)
+        if (projectIds.length === 0) return
+
         set({ isLoading: true })
         try {
-          await Promise.all(projectIds.map((pid) => get().loadTickets(pid)))
+          const includeArchived = (pid: string) => get().showArchivedByProject[pid] ?? false
+          const results = await Promise.all(
+            projectIds.map((pid) => window.kanban.ticket.getByProject(pid, includeArchived(pid)))
+          )
+
+          // Batch update all projects at once
+          set((state) => {
+            const newTickets = new Map(state.tickets)
+            projectIds.forEach((pid, i) => {
+              newTickets.set(pid, results[i])
+            })
+            return { tickets: newTickets }
+          })
+        } catch (error) {
+          console.error('Failed to load tickets for connection:', error)
         } finally {
           set({ isLoading: false })
         }
