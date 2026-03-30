@@ -42,7 +42,7 @@ import { resolveClaudeBinaryPath } from './services/claude-binary-resolver'
 import type { AgentSdkImplementer } from './services/agent-sdk-types'
 import { telemetryService } from './services/telemetry-service'
 import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
-import { initTicketProviderManager, GitHubProvider } from './services/ticket-providers'
+import { initTicketProviderManager, GitHubProvider, JiraProvider } from './services/ticket-providers'
 
 const log = createLogger({ component: 'Main' })
 
@@ -539,7 +539,7 @@ app.whenReady().then(async () => {
   registerConnectionHandlers()
   registerUsageHandlers()
   registerKanbanHandlers()
-  initTicketProviderManager([new GitHubProvider()])
+  initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
   registerTicketImportHandlers()
 
   // Telemetry IPC
