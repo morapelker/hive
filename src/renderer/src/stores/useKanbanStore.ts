@@ -548,23 +548,20 @@ export const useKanbanStore = create<KanbanState>()(
       // ── loadTicketsForConnection ────────────────────────────────
       loadTicketsForConnection: async (connectionId: string) => {
         const projectIds = get().getConnectionProjectIds(connectionId)
-        await Promise.all(projectIds.map((pid) => get().loadTickets(pid)))
+        set({ isLoading: true })
+        try {
+          await Promise.all(projectIds.map((pid) => get().loadTickets(pid)))
+        } finally {
+          set({ isLoading: false })
+        }
       },
 
       // ── getTicketsByColumnForConnection ─────────────────────────
       getTicketsByColumnForConnection: (connectionId: string, column: KanbanTicketColumn): KanbanTicket[] => {
         const projectIds = get().getConnectionProjectIds(connectionId)
-        const allTickets = get().tickets
-        const merged: KanbanTicket[] = []
-        for (const pid of projectIds) {
-          const tickets = allTickets.get(pid) ?? []
-          for (const t of tickets) {
-            if (t.column === column && !t.archived_at) {
-              merged.push(t)
-            }
-          }
-        }
-        return merged.sort((a, b) => a.sort_order - b.sort_order)
+        const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
+        merged.sort((a, b) => a.sort_order - b.sort_order)
+        return merged
       },
 
       // ── computeSortOrder ─────────────────────────────────────────
