@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw } from 'lucide-react'
+import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon } from 'lucide-react'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { cn } from '@/lib/utils'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
@@ -110,6 +110,33 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         }
       },
       [connectionId, ticket.project_id]
+    )
+  )
+
+  // ── Detect connection session on project board ──────────────────
+  const connectionSession = useSessionStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id || connectionId) return null
+        for (const [connId, sessions] of state.sessionsByConnection.entries()) {
+          const found = sessions.find((s) => s.id === ticket.current_session_id)
+          if (found) return { connectionId: connId }
+        }
+        return null
+      },
+      [ticket.current_session_id, connectionId]
+    )
+  )
+
+  // ── Lookup connection name for project board badge ─────────────
+  const connectionName = useConnectionStore(
+    useCallback(
+      (state) => {
+        if (!connectionSession) return null
+        const conn = state.connections.find((c) => c.id === connectionSession.connectionId)
+        return conn?.custom_name || conn?.name || null
+      },
+      [connectionSession]
     )
   )
 
@@ -293,14 +320,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       useSessionStore.getState().setActiveConnection(connectionId)
       useSessionStore.getState().setActiveSession(ticket.current_session_id)
     } else {
-      // Project mode: navigate to the worktree and set session
-      if (ticket.worktree_id) {
+      // Project mode: navigate to the worktree/connection and set session
+      if (connectionSession) {
+        // Ticket has a connection session — navigate to connection context
+        useConnectionStore.getState().selectConnection(connectionSession.connectionId)
+        useSessionStore.getState().setActiveConnection(connectionSession.connectionId)
+        useSessionStore.getState().setActiveSession(ticket.current_session_id)
+      } else if (ticket.worktree_id) {
         useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
         useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
+        useSessionStore.getState().setActiveSession(ticket.current_session_id)
+      } else {
+        useSessionStore.getState().setActiveSession(ticket.current_session_id)
       }
-      useSessionStore.getState().setActiveSession(ticket.current_session_id)
     }
-  }, [ticket.current_session_id, ticket.worktree_id, connectionId])
+  }, [ticket.current_session_id, ticket.worktree_id, connectionId, connectionSession])
 
   const isSimpleTicket = ticket.current_session_id === null
   const isFlowTicket = ticket.current_session_id !== null
@@ -376,7 +410,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || projectTag || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive) && (
+            {(hasAttachments || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive) && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {/* Archived badge */}
                 {isArchived && (
@@ -407,6 +441,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     {worktreeName}
                   </span>
                 ) : null}
+
+                {/* Connection badge — shown on project board when ticket has connection session */}
+                {!connectionId && connectionName && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <LinkIcon className="h-3 w-3" />
+                    {connectionName}
+                  </span>
+                )}
 
                 {/* Run process alive indicator */}
                 {isRunProcessAlive && (
@@ -497,8 +539,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </ContextMenuItem>
           )}
 
-          {/* Jump to session — only for flow tickets (has session) */}
-          {isFlowTicket && (
+          {/* Jump to session — only for flow tickets with reachable session */}
+          {isFlowTicket && !(connectionSession && !connectionName) && (
             <ContextMenuItem
               data-testid="ctx-jump-to-session"
               onClick={handleJumpToSession}
