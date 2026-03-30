@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { resolveModelForSdk } from '@/stores/useSettingsStore'
@@ -91,22 +92,25 @@ function findWorktreePathById(worktreeId: string): string | null {
 
 /** Find a session by ID across worktree and connection session maps */
 function findSessionById(sessionId: string): {
-  session: { id: string; worktree_id: string | null; opencode_session_id: string | null; agent_sdk: string }
+  session: { id: string; worktree_id: string | null; connection_id: string | null; opencode_session_id: string | null; agent_sdk: string }
   worktreePath: string | null
+  connectionId: string | null
+  /** Working directory for opencode ops — worktree path or connection path */
+  workingPath: string | null
 } | null {
   const sessionStore = useSessionStore.getState()
   for (const sessions of sessionStore.sessionsByWorktree.values()) {
     const found = sessions.find((s) => s.id === sessionId)
     if (found) {
       const worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
-      return { session: found, worktreePath }
+      return { session: found, worktreePath, connectionId: null, workingPath: worktreePath }
     }
   }
-  for (const sessions of sessionStore.sessionsByConnection.values()) {
+  for (const [connId, sessions] of sessionStore.sessionsByConnection.entries()) {
     const found = sessions.find((s) => s.id === sessionId)
     if (found) {
-      const worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
-      return { session: found, worktreePath }
+      const connectionPath = useConnectionStore.getState().connections.find(c => c.id === connId)?.path ?? null
+      return { session: found, worktreePath: null, connectionId: connId, workingPath: connectionPath }
     }
   }
   console.warn(`[KanbanTicketModal] findSessionById: session not found in any map — sessionId=${sessionId}`)
@@ -158,11 +162,11 @@ async function sendFollowupToSession(opts: {
     throw new Error(`Session not found: ${opts.sessionId}`)
   }
 
-  const { session, worktreePath } = result
+  const { session, workingPath } = result
 
-  if (!worktreePath) {
-    console.error(`[KanbanTicketModal] sendFollowupToSession: worktreePath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}`)
-    throw new Error(`Worktree path not found for session: ${opts.sessionId}`)
+  if (!workingPath) {
+    console.error(`[KanbanTicketModal] sendFollowupToSession: workingPath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}, connection_id=${session.connection_id}`)
+    throw new Error(`Working path not found for session: ${opts.sessionId}`)
   }
 
   if (!session.opencode_session_id) {
@@ -208,7 +212,7 @@ async function sendFollowupToSession(opts: {
     source: 'direct'
   }).catch(() => {})
 
-  const promptResult = await window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
+  const promptResult = await window.opencodeOps.prompt(workingPath, session.opencode_session_id, [
     { type: 'text', text: fullPrompt }
   ], model)
 
@@ -348,9 +352,12 @@ function KanbanTicketModalContent({
   const modalMode = activeQuestion ? 'question' : baseModalMode
 
   // ── Session stream resolution ────────────────────────────────────
-  const worktreePath = sessionRecord?.worktree_id
-    ? findWorktreePathById(sessionRecord.worktree_id)
-    : null
+  let worktreePath: string | null = null
+  if (sessionRecord?.worktree_id) {
+    worktreePath = findWorktreePathById(sessionRecord.worktree_id)
+  } else if (sessionRecord?.connection_id) {
+    worktreePath = useConnectionStore.getState().connections.find(c => c.id === sessionRecord.connection_id)?.path ?? null
+  }
   const opcSessionId: string | null = sessionRecord?.opencode_session_id ?? null
   const hasSession = !!(ticket.current_session_id && worktreePath && opcSessionId)
 
@@ -838,11 +845,16 @@ function PlanReviewModeContent({
         useSessionStore.getState().clearPendingPlan(sessionId)
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
 
-        if (isClaudeCode && sessionRecord?.worktree_id) {
-          const worktreePath = findWorktreePathById(sessionRecord.worktree_id)
-          if (!worktreePath) {
-            console.error(`[KanbanTicketModal] planReject: worktreePath not found — worktree_id=${sessionRecord.worktree_id}`)
-            toast.error('Failed to reject plan: worktree not found')
+        if (isClaudeCode && (sessionRecord?.worktree_id || sessionRecord?.connection_id)) {
+          let rejectPath: string | null = null
+          if (sessionRecord.worktree_id) {
+            rejectPath = findWorktreePathById(sessionRecord.worktree_id)
+          } else if (sessionRecord.connection_id) {
+            rejectPath = useConnectionStore.getState().connections.find(c => c.id === sessionRecord.connection_id)?.path ?? null
+          }
+          if (!rejectPath) {
+            console.error(`[KanbanTicketModal] planReject: working path not found — worktree_id=${sessionRecord.worktree_id}, connection_id=${sessionRecord.connection_id}`)
+            toast.error('Failed to reject plan: working path not found')
             return
           }
           await updateTicket(ticket.id, ticket.project_id, { plan_ready: false, mode: 'plan' })
@@ -927,14 +939,19 @@ function PlanReviewModeContent({
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { plan_ready: false, mode: 'build' })
 
       // For opencode agents, approve the plan if there's a pending one
-      if (pendingPlan && sessionRecord?.worktree_id) {
-        const worktreePath = findWorktreePathById(sessionRecord.worktree_id)
-        if (!worktreePath) {
-          console.error(`[KanbanTicketModal] handleImplement: worktreePath not found — worktree_id=${sessionRecord.worktree_id}`)
-          toast.error('Failed to approve plan: worktree not found')
+      if (pendingPlan && (sessionRecord?.worktree_id || sessionRecord?.connection_id)) {
+        let approvePath: string | null = null
+        if (sessionRecord.worktree_id) {
+          approvePath = findWorktreePathById(sessionRecord.worktree_id)
+        } else if (sessionRecord.connection_id) {
+          approvePath = useConnectionStore.getState().connections.find(c => c.id === sessionRecord.connection_id)?.path ?? null
+        }
+        if (!approvePath) {
+          console.error(`[KanbanTicketModal] handleImplement: working path not found — worktree_id=${sessionRecord.worktree_id}, connection_id=${sessionRecord.connection_id}`)
+          toast.error('Failed to approve plan: working path not found')
           return
         }
-        await window.opencodeOps.planApprove(worktreePath, sessionId, pendingPlan.requestId)
+        await window.opencodeOps.planApprove(approvePath, sessionId, pendingPlan.requestId)
       }
 
       toast.success('Implementation started')
@@ -1203,7 +1220,7 @@ function PlanReviewModeContent({
         <Button
           type="button"
           data-testid="plan-review-handoff-btn"
-          disabled={isActioning}
+          disabled={isActioning || !ticket.worktree_id}
           onClick={handleHandoff}
           className="gap-1.5"
           variant="outline"
@@ -1214,7 +1231,7 @@ function PlanReviewModeContent({
         <Button
           type="button"
           data-testid="plan-review-supercharge-local-btn"
-          disabled={isActioning}
+          disabled={isActioning || !ticket.worktree_id}
           onClick={handleSuperchargeLocal}
           className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
         >
@@ -1224,7 +1241,7 @@ function PlanReviewModeContent({
         <Button
           type="button"
           data-testid="plan-review-supercharge-btn"
-          disabled={isActioning}
+          disabled={isActioning || !ticket.worktree_id}
           onClick={handleSupercharge}
           className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
           variant="outline"
@@ -1739,8 +1756,13 @@ function QuestionModeContent({
 }) {
   const handleReply = useCallback(async (requestId: string, answers: string[][]) => {
     try {
-      const worktreePath = ticket.worktree_id ? findWorktreePathById(ticket.worktree_id) : null
-      await window.opencodeOps.questionReply(requestId, answers, worktreePath || undefined)
+      let questionPath: string | null = null
+      if (ticket.worktree_id) {
+        questionPath = findWorktreePathById(ticket.worktree_id)
+      } else if (ticket.current_session_id) {
+        questionPath = findSessionById(ticket.current_session_id)?.workingPath ?? null
+      }
+      await window.opencodeOps.questionReply(requestId, answers, questionPath || undefined)
       // Optimistically set session back to working so the progress bar resumes immediately
       if (ticket.current_session_id) {
         useWorktreeStatusStore.getState().setSessionStatus(
@@ -1757,8 +1779,13 @@ function QuestionModeContent({
 
   const handleReject = useCallback(async (requestId: string) => {
     try {
-      const worktreePath = ticket.worktree_id ? findWorktreePathById(ticket.worktree_id) : null
-      await window.opencodeOps.questionReject(requestId, worktreePath || undefined)
+      let questionPath: string | null = null
+      if (ticket.worktree_id) {
+        questionPath = findWorktreePathById(ticket.worktree_id)
+      } else if (ticket.current_session_id) {
+        questionPath = findSessionById(ticket.current_session_id)?.workingPath ?? null
+      }
+      await window.opencodeOps.questionReject(requestId, questionPath || undefined)
       // Optimistically set session back to working so the progress bar resumes immediately
       if (ticket.current_session_id) {
         useWorktreeStatusStore.getState().setSessionStatus(
