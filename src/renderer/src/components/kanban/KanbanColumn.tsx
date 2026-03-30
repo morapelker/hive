@@ -48,9 +48,10 @@ interface KanbanColumnProps {
   tickets: KanbanTicket[]
   archivedTickets?: KanbanTicket[]
   projectId: string
+  connectionId?: string
 }
 
-export function KanbanColumn({ column, tickets, archivedTickets, projectId }: KanbanColumnProps) {
+export function KanbanColumn({ column, tickets, archivedTickets, projectId, connectionId }: KanbanColumnProps) {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -66,6 +67,31 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
   const isDoneColumn = column === 'done'
   const isTodoColumn = column === 'todo'
   const isInProgressColumn = column === 'in_progress'
+
+  // ── Connection-mode helpers ────────────────────────────────────────
+  // In connection mode, tickets come from different projects, so we look
+  // up each ticket's own project_id instead of using the column-level prop.
+  const findTicketProjectId = useCallback(
+    (ticketId: string): string => {
+      if (connectionId) {
+        const ticket = tickets.find((t) => t.id === ticketId)
+        if (ticket) return ticket.project_id
+      }
+      return projectId
+    },
+    [connectionId, tickets, projectId]
+  )
+
+  const findTicket = useCallback(
+    (ticketId: string): KanbanTicket | undefined => {
+      if (connectionId) {
+        return tickets.find((t) => t.id === ticketId)
+      }
+      const allTickets = useKanbanStore.getState().tickets.get(projectId) ?? []
+      return allTickets.find((t) => t.id === ticketId)
+    },
+    [connectionId, tickets, projectId]
+  )
 
   // Global drag state — true when ANY ticket is being dragged
   const isDragging = useKanbanStore((state) => state.isDragging)
@@ -103,13 +129,25 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
 
   const handleArchiveAll = useCallback(async () => {
     try {
-      const count = await useKanbanStore.getState().archiveAllDone(projectId)
-      toast.success(`Archived ${count} ticket${count !== 1 ? 's' : ''}`)
+      if (connectionId) {
+        // In connection mode, archive done tickets across all member projects.
+        // Step 11 will fully implement a dedicated connection-aware archive method;
+        // for now, iterate over each member project individually.
+        const projectIds = useKanbanStore.getState().getConnectionProjectIds(connectionId)
+        let total = 0
+        for (const pid of projectIds) {
+          total += await useKanbanStore.getState().archiveAllDone(pid)
+        }
+        toast.success(`Archived ${total} ticket${total !== 1 ? 's' : ''}`)
+      } else {
+        const count = await useKanbanStore.getState().archiveAllDone(projectId)
+        toast.success(`Archived ${count} ticket${count !== 1 ? 's' : ''}`)
+      }
     } catch {
       toast.error('Failed to archive tickets')
     }
     setShowArchiveAllConfirm(false)
-  }, [projectId])
+  }, [projectId, connectionId])
 
   const handleToggleCollapse = useCallback(() => {
     setIsCollapsed((prev) => !prev)
@@ -177,13 +215,13 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
 
       if (sourceColumn !== column) {
         // ── Cross-column move ─────────────────────────────────
+        const ticketProjectId = findTicketProjectId(ticketId)
         const isSimpleMode = store.simpleModeByProject[projectId] ?? false
 
         // S9: when dropping on In Progress and simple mode is off,
         //   open the worktree picker modal instead of moving directly.
         if (isInProgressColumn && !isSimpleMode) {
-          const allTickets = store.tickets.get(projectId) ?? []
-          const draggedTicket = allTickets.find((t) => t.id === ticketId)
+          const draggedTicket = findTicket(ticketId)
           if (draggedTicket) {
             setWorktreePickerTicket(draggedTicket)
             return // Don't move yet — modal handles the move
@@ -192,8 +230,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
 
         // S11: backward drag from In Progress to To Do — confirm if ticket has active session
         if (isTodoColumn && sourceColumn === 'in_progress') {
-          const allTickets = store.tickets.get(projectId) ?? []
-          const draggedTicket = allTickets.find((t) => t.id === ticketId)
+          const draggedTicket = findTicket(ticketId)
           if (draggedTicket?.current_session_id) {
             // Show confirmation dialog
             setPendingBackwardDrag({ ticketId, targetIndex })
@@ -203,17 +240,18 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
 
         // Default: move directly
         const sortOrder = store.computeSortOrder(tickets, targetIndex)
-        store.moveTicket(ticketId, projectId, column, sortOrder)
+        store.moveTicket(ticketId, ticketProjectId, column, sortOrder)
       } else {
         // ── Same-column reorder ───────────────────────────────
+        const ticketProjectId = findTicketProjectId(ticketId)
         const filteredTickets = tickets.filter((t) => t.id !== ticketId)
         const adjustedIndex =
           targetIndex > sourceIndex ? targetIndex - 1 : targetIndex
         const sortOrder = store.computeSortOrder(filteredTickets, adjustedIndex)
-        store.reorderTicket(ticketId, projectId, sortOrder)
+        store.reorderTicket(ticketId, ticketProjectId, sortOrder)
       }
     },
-    [column, projectId, tickets, isInProgressColumn, isTodoColumn]
+    [column, projectId, tickets, isInProgressColumn, isTodoColumn, findTicketProjectId, findTicket]
   )
 
   // ── Backward drag confirmation handler ───────────────────────────
@@ -224,11 +262,11 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
     const { ticketId, targetIndex } = pendingBackwardDrag
 
     const store = useKanbanStore.getState()
+    const ticketProjectId = findTicketProjectId(ticketId)
 
     try {
       // Stop the actual session
-      const allTickets = store.tickets.get(projectId) ?? []
-      const draggedTicket = allTickets.find((t) => t.id === ticketId)
+      const draggedTicket = findTicket(ticketId)
       if (draggedTicket?.current_session_id) {
         // Abort the running agent process (not just the DB status)
         const session = await window.db.session.get(draggedTicket.current_session_id)
@@ -251,7 +289,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
       }
 
       // Clear session link on the ticket
-      await store.updateTicket(ticketId, projectId, {
+      await store.updateTicket(ticketId, ticketProjectId, {
         current_session_id: null,
         worktree_id: null,
         mode: null,
@@ -260,10 +298,10 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
 
       // Move to todo
       const sortOrder = store.computeSortOrder(
-        store.getTicketsByColumn(projectId, 'todo'),
+        store.getTicketsByColumn(ticketProjectId, 'todo'),
         targetIndex
       )
-      await store.moveTicket(ticketId, projectId, 'todo', sortOrder)
+      await store.moveTicket(ticketId, ticketProjectId, 'todo', sortOrder)
 
       toast.success('Session stopped and ticket moved to To Do')
     } catch {
@@ -271,7 +309,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
     }
 
     setPendingBackwardDrag(null)
-  }, [pendingBackwardDrag, projectId])
+  }, [pendingBackwardDrag, projectId, findTicketProjectId, findTicket])
 
   // ── Drop indicator element ────────────────────────────────────────
   const dropIndicator = (
@@ -412,7 +450,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
                 >
                   {isDragOver && dropIndex === index && dropIndicator}
                   <div data-card-index={index} className={draggingTicketId === ticket.id ? 'h-0 min-h-0 overflow-hidden' : undefined}>
-                    <KanbanTicketCard ticket={ticket} index={index} />
+                    <KanbanTicketCard ticket={ticket} index={index} connectionId={connectionId} />
                   </div>
                 </motion.div>
               ))}
@@ -428,7 +466,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
                   </div>
                   {archivedTickets.map((ticket) => (
                     <div key={ticket.id}>
-                      <KanbanTicketCard ticket={ticket} index={-1} isArchived />
+                      <KanbanTicketCard ticket={ticket} index={-1} isArchived connectionId={connectionId} />
                     </div>
                   ))}
                 </>
@@ -456,6 +494,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
           open={isCreateModalOpen}
           onOpenChange={setIsCreateModalOpen}
           projectId={projectId}
+          connectionId={connectionId}
         />
       )}
 
@@ -463,11 +502,12 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId }: Ka
       {isInProgressColumn && worktreePickerTicket && (
         <WorktreePickerModal
           ticket={worktreePickerTicket}
-          projectId={projectId}
+          projectId={connectionId ? worktreePickerTicket.project_id : projectId}
           open={true}
           onOpenChange={(open) => {
             if (!open) setWorktreePickerTicket(null)
           }}
+          connectionId={connectionId}
         />
       )}
 
