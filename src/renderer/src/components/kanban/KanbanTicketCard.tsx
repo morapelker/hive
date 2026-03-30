@@ -97,36 +97,44 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
 
   // ── Lookup project name + color for connection board ─────────────
-  const projectTag = useProjectStore(
+  // Selector returns a primitive (string | null) to avoid Zustand infinite
+  // re-render loops caused by new object references on every evaluation.
+  const projectName = useProjectStore(
     useCallback(
       (state) => {
         if (!connectionId) return null
-        const project = state.projects.find((p) => p.id === ticket.project_id)
-        if (!project) return null
-        const connectionProjectIds = useKanbanStore.getState().getConnectionProjectIds(connectionId)
-        return {
-          name: project.name,
-          color: getProjectColor(ticket.project_id, connectionProjectIds)
-        }
+        return state.projects.find((p) => p.id === ticket.project_id)?.name ?? null
       },
       [connectionId, ticket.project_id]
     )
   )
 
+  const projectTag = useMemo(() => {
+    if (!connectionId || !projectName) return null
+    const connectionProjectIds = useKanbanStore.getState().getConnectionProjectIds(connectionId)
+    return {
+      name: projectName,
+      color: getProjectColor(ticket.project_id, connectionProjectIds)
+    }
+  }, [connectionId, projectName, ticket.project_id])
+
   // ── Detect connection session on project board ──────────────────
-  const connectionSession = useSessionStore(
+  // Selector returns a primitive (string | null) to avoid Zustand infinite
+  // re-render loops caused by new object references on every evaluation.
+  const connectionSessionId = useSessionStore(
     useCallback(
       (state) => {
         if (!ticket.current_session_id || connectionId) return null
         for (const [connId, sessions] of state.sessionsByConnection.entries()) {
-          const found = sessions.find((s) => s.id === ticket.current_session_id)
-          if (found) return { connectionId: connId }
+          if (sessions.some((s) => s.id === ticket.current_session_id)) return connId
         }
         return null
       },
       [ticket.current_session_id, connectionId]
     )
   )
+
+  const connectionSession = connectionSessionId ? { connectionId: connectionSessionId } : null
 
   // ── Lookup connection name for project board badge ─────────────
   const connectionName = useConnectionStore(
