@@ -12,6 +12,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   FileCode,
   FileText,
   GitCompareArrows,
@@ -19,7 +20,9 @@ import {
   AlertCircle,
   Check,
   TerminalSquare,
-  Download
+  Download,
+  Github,
+  ClipboardList
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -38,6 +41,7 @@ import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { ImportTicketsModal } from '@/components/kanban/ImportTicketsModal'
+import { JiraImportModal } from '@/components/kanban/JiraImportModal'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useHintStore } from '@/stores/useHintStore'
 import { cn, parseColorQuad } from '@/lib/utils'
@@ -52,6 +56,12 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem
+} from '@/components/ui/dropdown-menu'
 
 interface SessionTabProps {
   sessionId: string
@@ -511,6 +521,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null)
   const [isTicketCreateOpen, setIsTicketCreateOpen] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [showJiraImport, setShowJiraImport] = useState(false)
 
   const {
     activeWorktreeId,
@@ -1252,17 +1263,31 @@ export function SessionTabs(): React.JSX.Element | null {
         </button>
       )}
 
-      {/* Import button — kanban mode, sits on the tab bar line */}
+      {/* Import dropdown — kanban mode, sits on the tab bar line */}
       {isBoardViewActive && (
-        <button
-          onClick={() => setShowImport(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0 border-l border-border cursor-pointer select-none"
-          data-testid="kanban-import-btn"
-          title="Import tickets"
-        >
-          <Download className="h-3.5 w-3.5" />
-          Import
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0 border-l border-border cursor-pointer select-none"
+              data-testid="kanban-import-btn"
+              title="Import tickets"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Import
+              <ChevronDown className="h-3 w-3 opacity-50" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setShowImport(true)}>
+              <Github className="h-4 w-4 mr-2" />
+              Import from GitHub
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowJiraImport(true)}>
+              <ClipboardList className="h-4 w-4 mr-2" />
+              Import from Jira
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
 
       {/* Ticket creation modal — kanban mode */}
@@ -1278,6 +1303,11 @@ export function SessionTabs(): React.JSX.Element | null {
             onOpenChange={setShowImport}
             projectId={project.id}
             projectPath={project.path}
+          />
+          <JiraImportModal
+            open={showJiraImport}
+            onOpenChange={setShowJiraImport}
+            projectId={project.id}
           />
         </>
       )}
