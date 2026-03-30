@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Eye, EyeOff, Plus, X, Ticket, Figma, Link as LinkIcon } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useConnectionStore } from '@/stores'
 import { parseAttachmentUrl } from '@/lib/attachment-utils'
 import type { AttachmentInfo } from '@/lib/attachment-utils'
 import { toast } from '@/lib/toast'
@@ -27,10 +28,11 @@ interface TicketCreateModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
+  connectionId?: string
 }
 
 // ── Component ───────────────────────────────────────────────────────
-export function TicketCreateModal({ open, onOpenChange, projectId }: TicketCreateModalProps) {
+export function TicketCreateModal({ open, onOpenChange, projectId, connectionId }: TicketCreateModalProps) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [showPreview, setShowPreview] = useState(false)
@@ -38,9 +40,26 @@ export function TicketCreateModal({ open, onOpenChange, projectId }: TicketCreat
   const [showAttachInput, setShowAttachInput] = useState(false)
   const [attachUrl, setAttachUrl] = useState('')
   const [isCreating, setIsCreating] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState('')
 
   const titleInputRef = useRef<HTMLInputElement>(null)
   const createTicket = useKanbanStore((state) => state.createTicket)
+
+  const isConnectionMode = !!connectionId
+  const connections = useConnectionStore((state) => state.connections)
+  const connectionProjects = useMemo(() => {
+    if (!connectionId) return []
+    const connection = connections.find((c) => c.id === connectionId)
+    if (!connection) return []
+    const seen = new Set<string>()
+    return connection.members.reduce<{ id: string; name: string }[]>((acc, m) => {
+      if (!seen.has(m.project_id)) {
+        seen.add(m.project_id)
+        acc.push({ id: m.project_id, name: m.project_name })
+      }
+      return acc
+    }, [])
+  }, [connectionId, connections])
 
   // Allow natural Tab navigation between form fields — block SessionView's
   // global capture-phase Tab handler which would toggle Build/Plan mode instead.
@@ -69,10 +88,11 @@ export function TicketCreateModal({ open, onOpenChange, projectId }: TicketCreat
       setShowAttachInput(false)
       setAttachUrl('')
       setIsCreating(false)
+      setSelectedProjectId(connectionProjects[0]?.id ?? '')
       // Auto-focus the title input after dialog animation
       setTimeout(() => titleInputRef.current?.focus(), 50)
     }
-  }, [open])
+  }, [open, connectionProjects])
 
   // ── Attachment handling ────────────────────────────────────────────
   const detectedAttachment = attachUrl.trim() ? parseAttachmentUrl(attachUrl.trim()) : null
@@ -95,10 +115,13 @@ export function TicketCreateModal({ open, onOpenChange, projectId }: TicketCreat
   const handleCreate = useCallback(async () => {
     if (!title.trim() || isCreating) return
 
+    const targetProjectId = isConnectionMode ? selectedProjectId : projectId
+    if (!targetProjectId) return
+
     setIsCreating(true)
     try {
-      await createTicket(projectId, {
-        project_id: projectId,
+      await createTicket(targetProjectId, {
+        project_id: targetProjectId,
         title: title.trim(),
         description: description.trim() || null,
         attachments: attachments.map((a) => ({ type: a.type, url: a.url, label: a.label })),
@@ -111,7 +134,7 @@ export function TicketCreateModal({ open, onOpenChange, projectId }: TicketCreat
     } finally {
       setIsCreating(false)
     }
-  }, [title, description, attachments, isCreating, createTicket, projectId, onOpenChange])
+  }, [title, description, attachments, isCreating, createTicket, projectId, selectedProjectId, isConnectionMode, onOpenChange])
 
   const handleCancel = useCallback(() => {
     onOpenChange(false)
@@ -141,6 +164,24 @@ export function TicketCreateModal({ open, onOpenChange, projectId }: TicketCreat
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Project picker (connection mode only) */}
+          {isConnectionMode && connectionProjects.length > 0 && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Project
+              </label>
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm"
+              >
+                {connectionProjects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Title */}
           <div className="space-y-1.5">
             <label htmlFor="ticket-title" className="text-sm font-medium text-foreground">
