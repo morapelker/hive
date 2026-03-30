@@ -75,7 +75,9 @@ export function registerTicketImportHandlers(): void {
           continue
         }
 
-        const column = issue.state === 'closed' ? 'done' : 'todo'
+        const column = issue.state === 'closed' ? 'done'
+          : issue.state === 'in_progress' ? 'in_progress'
+          : 'todo'
         db.createKanbanTicket({
           project_id: projectId,
           title: issue.title,

@@ -63,7 +63,7 @@ export function createTicketImportAdapter() {
             externalId: string
             title: string
             body: string | null
-            state: 'open' | 'closed'
+            state: 'open' | 'closed' | 'in_progress'
             url: string
             createdAt: string
             updatedAt: string
