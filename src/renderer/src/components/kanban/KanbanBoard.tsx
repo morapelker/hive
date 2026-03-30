@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect } from 'react'
 import { LayoutGroup, motion } from 'motion/react'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn'
@@ -34,11 +34,9 @@ export function KanbanBoard({ projectId, projectPath: _projectPath, connectionId
   }, [projectId, connectionId, isConnectionMode, loadTickets, loadTicketsForConnection])
 
   // Aggregate archived tickets across all connection member projects for the done column
-  const connectionArchivedDoneTickets = useMemo(() => {
-    if (!isConnectionMode) return undefined
-    const projectIds = getConnectionProjectIds(connectionId)
-    return projectIds.flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
-  }, [isConnectionMode, connectionId, getConnectionProjectIds, getArchivedTicketsByColumn])
+  const connectionArchivedDoneTickets = isConnectionMode
+    ? getConnectionProjectIds(connectionId!).flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
+    : undefined
 
   return (
     <LayoutGroup>
