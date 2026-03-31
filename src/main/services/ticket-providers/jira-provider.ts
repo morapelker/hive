@@ -79,49 +79,51 @@ export class JiraProvider implements TicketProvider {
 
   async listIssues(
     repo: string,
-    options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string },
+    options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
     settings: Record<string, string>
   ): Promise<RemoteIssueListResult> {
     const { domain, email, token } = this.extractCredentials(settings)
 
     if (!email || !token) {
       log.warn('Missing Jira credentials, skipping request')
-      return { issues: [], hasNextPage: false, totalCount: 0 }
+      return { issues: [], hasNextPage: false, totalCount: -1 }
     }
 
     // state is intentionally ignored — JQL handles all filtering directly
-    const { page, perPage, search } = options
+    const { perPage, search, nextPageToken } = options
     const jql = search?.trim() ?? ''
 
     // User must provide a JQL query; without one, return empty result
     if (!jql) {
-      return { issues: [], hasNextPage: false, totalCount: 0 }
+      return { issues: [], hasNextPage: false, totalCount: -1 }
     }
 
-    const startAt = (page - 1) * perPage
+    const body: Record<string, unknown> = {
+      jql,
+      maxResults: perPage,
+      fields: ['summary', 'description', 'status', 'created', 'updated']
+    }
+    if (nextPageToken) {
+      body.nextPageToken = nextPageToken
+    }
 
     try {
       const res = await this.jiraFetch(
-        `https://${domain}/rest/api/3/search`,
+        `https://${domain}/rest/api/3/search/jql`,
         email,
         token,
         {
           method: 'POST',
-          body: JSON.stringify({
-            jql,
-            startAt,
-            maxResults: perPage,
-            fields: ['summary', 'description', 'status', 'created', 'updated']
-          })
+          body: JSON.stringify(body)
         }
       )
 
       if (!res.ok) {
-        const body = await res.text().catch(() => '')
+        const resBody = await res.text().catch(() => '')
 
         // Surface structured Jira JQL error messages
         try {
-          const parsed = JSON.parse(body) as { errorMessages?: string[]; warningMessages?: string[] }
+          const parsed = JSON.parse(resBody) as { errorMessages?: string[]; warningMessages?: string[] }
           if (parsed.errorMessages && parsed.errorMessages.length > 0) {
             log.error('Jira JQL error', undefined, { status: res.status, errorMessages: parsed.errorMessages })
             throw new Error(`Jira JQL error: ${parsed.errorMessages.join(' ')}`)
@@ -133,28 +135,27 @@ export class JiraProvider implements TicketProvider {
         }
 
         log.error('Failed to list Jira issues', undefined, { status: res.status, domain })
-        return { issues: [], hasNextPage: false, totalCount: 0 }
+        return { issues: [], hasNextPage: false, totalCount: -1 }
       }
 
       const data = (await res.json()) as {
         issues: Array<Record<string, unknown>>
-        startAt: number
-        maxResults: number
-        total: number
+        nextPageToken?: string
       }
 
-      const hasNextPage = data.startAt + data.maxResults < data.total
+      const hasNextPage = !!data.nextPageToken
 
       return {
         issues: data.issues.map((issue) => this.mapIssue(issue, domain)),
         hasNextPage,
-        totalCount: data.total
+        totalCount: -1,
+        nextPageToken: data.nextPageToken
       }
     } catch (err) {
       if (err instanceof Error) {
         throw err
       }
-      return { issues: [], hasNextPage: false, totalCount: 0 }
+      return { issues: [], hasNextPage: false, totalCount: -1 }
     }
   }
 

@@ -44,6 +44,9 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
   const [page, setPage] = useState(1)
   const [hasNextPage, setHasNextPage] = useState(false)
   const [jqlError, setJqlError] = useState<string | null>(null)
+  // Token-based pagination for Jira's /search/jql API
+  // pageTokens[n] = token needed to fetch page n+1 (index 0 = null for page 1)
+  const pageTokensRef = useRef<(string | null)[]>([null])
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [importing, setImporting] = useState(false)
@@ -61,6 +64,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
     setIssues([])
     setSelected(new Set())
     setPage(1)
+    pageTokensRef.current = [null]
     setJqlError(null)
     setImportProgress(null)
     setTimeout(() => textareaRef.current?.focus(), 0)
@@ -72,16 +76,22 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
     setLoading(true)
     setJqlError(null)
 
+    const token = pageTokensRef.current[page - 1] ?? undefined
+
     window.ticketImport
       .listIssues(
         'jira',
         domain,
-        { page, perPage: PER_PAGE, state: 'all', search: committedJql },
+        { page, perPage: PER_PAGE, state: 'all', search: committedJql, nextPageToken: token },
         getProviderSettings()
       )
       .then((result) => {
         setIssues(result.issues)
         setHasNextPage(result.hasNextPage)
+        // Store the next page token so we can navigate forward
+        if (result.nextPageToken) {
+          pageTokensRef.current[page] = result.nextPageToken
+        }
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err)
@@ -96,6 +106,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
     const trimmed = jqlInput.trim()
     if (!trimmed) return
     setPage(1)
+    pageTokensRef.current = [null]
     setCommittedJql(trimmed)
   }
 

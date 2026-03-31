@@ -24,6 +24,7 @@ export interface RemoteIssueListResult {
   issues: RemoteIssue[]
   hasNextPage: boolean
   totalCount: number
+  nextPageToken?: string
 }
 
 export interface RemoteStatus {
@@ -46,6 +47,7 @@ export interface TicketProvider {
       perPage: number
       state: 'open' | 'closed' | 'all'
       search?: string
+      nextPageToken?: string
     },
     settings: Record<string, string>
   ): Promise<RemoteIssueListResult>
