@@ -572,6 +572,10 @@ export function SessionTabs(): React.JSX.Element | null {
   // Determine whether we are in connection mode or worktree mode
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
 
+  // When in connection mode with board view, the board's own in-column buttons
+  // handle ticket creation and import, so we hide the session tab bar buttons.
+  const isConnectionBoardActive = isBoardViewActive && isConnectionMode
+
   // Get the worktree and project info for the selected worktree
   const selectedWorktree = useWorktreeStore((state) => {
     if (!selectedWorktreeId) return null
@@ -986,8 +990,8 @@ export function SessionTabs(): React.JSX.Element | null {
       data-testid="session-tabs"
     >
       {/* New session / new ticket button - on the left */}
-      {isBoardViewActive ? (
-        /* Kanban mode: plus button opens the ticket creation modal */
+      {isBoardViewActive && !isConnectionBoardActive ? (
+        /* Kanban mode: plus button opens the ticket creation modal (hidden in connection board — board has its own) */
         <button
           onClick={() => setIsTicketCreateOpen(true)}
           className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
@@ -996,7 +1000,7 @@ export function SessionTabs(): React.JSX.Element | null {
         >
           <Plus className="h-4 w-4" />
         </button>
-      ) : (
+      ) : !isBoardViewActive ? (
         /* Normal mode: right-click shows provider menu with session type options */
         <ContextMenu
           onOpenChange={(open) => {
@@ -1039,7 +1043,7 @@ export function SessionTabs(): React.JSX.Element | null {
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
-      )}
+      ) : null}
 
       {/* Left scroll arrow */}
       {showLeftArrow && (
@@ -1263,8 +1267,8 @@ export function SessionTabs(): React.JSX.Element | null {
         </button>
       )}
 
-      {/* Import dropdown — kanban mode, sits on the tab bar line */}
-      {isBoardViewActive && (
+      {/* Import dropdown — kanban mode, sits on the tab bar line (hidden in connection board — board has its own) */}
+      {isBoardViewActive && !isConnectionBoardActive && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -1297,12 +1301,14 @@ export function SessionTabs(): React.JSX.Element | null {
             open={isTicketCreateOpen}
             onOpenChange={setIsTicketCreateOpen}
             projectId={project.id}
+            connectionId={isConnectionMode ? selectedConnectionId ?? undefined : undefined}
           />
           <ImportTicketsModal
             open={showImport}
             onOpenChange={setShowImport}
             projectId={project.id}
             projectPath={project.path}
+            connectionId={isConnectionMode ? selectedConnectionId ?? undefined : undefined}
           />
           <JiraImportModal
             open={showJiraImport}

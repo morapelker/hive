@@ -177,6 +177,11 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       )
     }
 
+    // Connection board view
+    if (isBoardViewActive && selectedConnectionId && !activeFilePath && !activeDiff && !contextEditorWorktreeId) {
+      return <KanbanBoard connectionId={selectedConnectionId} />
+    }
+
     // Kanban board view takes priority when active and a project is selected
     // but yields to file/diff/context views when their tab is active
     if (isBoardViewActive && selectedProjectId && !activeFilePath && !activeDiff && !contextEditorWorktreeId) {

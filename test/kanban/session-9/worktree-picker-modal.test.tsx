@@ -288,7 +288,9 @@ describe('Session 9: Worktree Picker Modal', () => {
     expect(screen.getByTestId('worktree-picker-modal')).toBeInTheDocument()
     expect(screen.getByText('feature-auth')).toBeInTheDocument()
     expect(screen.getByText('feature-api')).toBeInTheDocument()
-    expect(screen.getByText('main')).toBeInTheDocument()
+    // "main" worktree exists in the list (use worktree-item testid since "main" also
+    // appears in the source-branch trigger when "New worktree" is pre-selected)
+    expect(screen.getByTestId('worktree-item-wt-default')).toHaveTextContent('main')
   })
 
   test('each worktree shows active ticket count badge', () => {
@@ -331,7 +333,7 @@ describe('Session 9: Worktree Picker Modal', () => {
 
   // ── Auto-select current worktree tests ──────────────────────────
 
-  test('auto-selects the current worktree from store when modal opens', () => {
+  test('defaults to "New worktree" when modal opens', () => {
     act(() => {
       useWorktreeStore.setState({ selectedWorktreeId: 'wt-2' })
     })
@@ -345,16 +347,20 @@ describe('Session 9: Worktree Picker Modal', () => {
       />
     )
 
-    // wt-2 should be auto-selected (has ring highlight)
-    const wt2Item = screen.getByTestId('worktree-item-wt-2')
-    expect(wt2Item.className).toContain('ring-primary')
+    // "New worktree" should be auto-selected (has ring highlight), not the global worktree
+    const newWtItem = screen.getByTestId('worktree-item-new')
+    expect(newWtItem.className).toContain('ring-primary')
 
-    // Send button should be enabled since a worktree is auto-selected
+    // Existing worktree should NOT be highlighted
+    const wt2Item = screen.getByTestId('worktree-item-wt-2')
+    expect(wt2Item.className).not.toContain('ring-primary')
+
+    // Send button should be enabled since "New worktree" is auto-selected
     const sendBtn = screen.getByTestId('wt-picker-send-btn')
     expect(sendBtn).not.toBeDisabled()
   })
 
-  test('does not auto-select worktree from a different project', () => {
+  test('defaults to "New worktree" even when global worktree is from another project', () => {
     act(() => {
       useWorktreeStore.setState({ selectedWorktreeId: 'wt-other-project' })
     })
@@ -368,9 +374,12 @@ describe('Session 9: Worktree Picker Modal', () => {
       />
     )
 
-    // No worktree should be selected — send button disabled
+    // "New worktree" should still be selected — send button enabled
+    const newWtItem = screen.getByTestId('worktree-item-new')
+    expect(newWtItem.className).toContain('ring-primary')
+
     const sendBtn = screen.getByTestId('wt-picker-send-btn')
-    expect(sendBtn).toBeDisabled()
+    expect(sendBtn).not.toBeDisabled()
   })
 
   // ── Build/Plan toggle tests ──────────────────────────────────────
@@ -497,7 +506,7 @@ describe('Session 9: Worktree Picker Modal', () => {
 
   // ── Send button state tests ──────────────────────────────────────
 
-  test('Send button is disabled when no worktree selected', () => {
+  test('Send button is enabled by default (New worktree is pre-selected)', () => {
     render(
       <WorktreePickerModal
         ticket={defaultTicket}
@@ -507,11 +516,12 @@ describe('Session 9: Worktree Picker Modal', () => {
       />
     )
 
+    // "New worktree" is selected by default, so Send should be enabled
     const sendBtn = screen.getByTestId('wt-picker-send-btn')
-    expect(sendBtn).toBeDisabled()
+    expect(sendBtn).not.toBeDisabled()
   })
 
-  test('Send button is enabled when worktree is selected', () => {
+  test('Send button stays enabled when switching to an existing worktree', () => {
     render(
       <WorktreePickerModal
         ticket={defaultTicket}
@@ -521,7 +531,7 @@ describe('Session 9: Worktree Picker Modal', () => {
       />
     )
 
-    // Select a worktree
+    // Switch from default "New worktree" to an existing worktree
     const wt1Item = screen.getByTestId('worktree-item-wt-1')
     fireEvent.click(wt1Item)
 
@@ -623,7 +633,7 @@ describe('Session 9: Worktree Picker Modal', () => {
 
   // ── Source branch picker tests ──────────────────────────────────
 
-  test('shows source branch selector when New worktree is selected', async () => {
+  test('shows source branch selector by default (New worktree is pre-selected)', async () => {
     render(
       <WorktreePickerModal
         ticket={defaultTicket}
@@ -633,15 +643,7 @@ describe('Session 9: Worktree Picker Modal', () => {
       />
     )
 
-    // Source branch trigger should not be visible before selecting "New worktree"
-    expect(screen.queryByTestId('source-branch-trigger')).not.toBeInTheDocument()
-
-    // Click "New worktree"
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('worktree-item-new'))
-    })
-
-    // Source branch trigger should now be visible with default branch name
+    // Source branch trigger should be visible immediately since "New worktree" is default
     const trigger = screen.getByTestId('source-branch-trigger')
     expect(trigger).toBeInTheDocument()
     expect(trigger).toHaveTextContent('main')
@@ -677,17 +679,12 @@ describe('Session 9: Worktree Picker Modal', () => {
       />
     )
 
-    // Click "New worktree"
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('worktree-item-new'))
-    })
-
-    // The trigger should show "develop" (the branch_name of the default worktree)
+    // "New worktree" is selected by default — trigger should show "develop"
     const trigger = screen.getByTestId('source-branch-trigger')
     expect(trigger).toHaveTextContent('develop')
   })
 
-  test('source branch selector loads branches lazily', async () => {
+  test('source branch selector loads branches on open (New worktree is default)', async () => {
     render(
       <WorktreePickerModal
         ticket={defaultTicket}
@@ -697,13 +694,7 @@ describe('Session 9: Worktree Picker Modal', () => {
       />
     )
 
-    // On initial render, listBranchesWithStatus should NOT have been called
-    expect(mockGitOps.listBranchesWithStatus).not.toHaveBeenCalled()
-
-    // Click "New worktree" to trigger lazy branch loading
-    fireEvent.click(screen.getByTestId('worktree-item-new'))
-
-    // Now listBranchesWithStatus should be called
+    // Since "New worktree" is selected by default, branches should load immediately
     await waitFor(() => {
       expect(mockGitOps.listBranchesWithStatus).toHaveBeenCalledWith('/test/my-project')
     })
@@ -818,7 +809,7 @@ describe('Session 9: Worktree Picker Modal', () => {
   })
 
   describe('ticket-title worktree naming', () => {
-    test('shows canonicalized ticket title preview when "New worktree" is selected', async () => {
+    test('shows canonicalized ticket title preview by default (New worktree pre-selected)', () => {
       const ticket = makeTicket({ title: 'Add dark mode toggle' })
 
       render(
@@ -830,16 +821,11 @@ describe('Session 9: Worktree Picker Modal', () => {
         />
       )
 
-      // Click "New worktree"
-      await act(async () => {
-        fireEvent.click(screen.getByTestId('worktree-item-new'))
-      })
-
-      // The preview text should appear in the source-branch row
+      // "New worktree" is selected by default — preview should be visible immediately
       expect(screen.getByText('add-dark-mode-toggle')).toBeInTheDocument()
     })
 
-    test('does not show preview when ticket title produces empty canonical name', async () => {
+    test('does not show preview when ticket title produces empty canonical name', () => {
       const ticket = makeTicket({ title: '🔥🚀💥' })
 
       render(
@@ -851,11 +837,7 @@ describe('Session 9: Worktree Picker Modal', () => {
         />
       )
 
-      await act(async () => {
-        fireEvent.click(screen.getByTestId('worktree-item-new'))
-      })
-
-      // The "from" row should exist but no preview span with font-mono class
+      // "New worktree" is selected by default — "from" row should exist but no preview
       const fromRow = screen.getByText('from').closest('div')
       expect(fromRow).toBeInTheDocument()
       const previewSpans = fromRow?.querySelectorAll('.font-mono')
@@ -876,12 +858,7 @@ describe('Session 9: Worktree Picker Modal', () => {
         />
       )
 
-      // Select "New worktree"
-      await act(async () => {
-        fireEvent.click(screen.getByTestId('worktree-item-new'))
-      })
-
-      // Click Send
+      // "New worktree" is already selected by default — click Send directly
       await act(async () => {
         fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
       })
