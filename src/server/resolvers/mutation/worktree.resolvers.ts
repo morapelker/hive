@@ -11,6 +11,15 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapWorktree(row: any) {
   if (!row) return null
+
+  let attachments: Array<{ id: string; type: string; url: string; label: string }> = []
+  try {
+    const parsed = row.attachments ? JSON.parse(row.attachments) : []
+    attachments = Array.isArray(parsed) ? parsed : []
+  } catch {
+    attachments = []
+  }
+
   return {
     id: row.id,
     projectId: row.project_id,
@@ -25,6 +34,11 @@ function mapWorktree(row: any) {
     lastModelProviderId: row.last_model_provider_id,
     lastModelId: row.last_model_id,
     lastModelVariant: row.last_model_variant,
+    attachments,
+    pinned: Boolean(row.pinned),
+    context: row.context ?? null,
+    githubPrNumber: row.github_pr_number ?? null,
+    githubPrUrl: row.github_pr_url ?? null,
     createdAt: row.created_at,
     lastAccessedAt: row.last_accessed_at
   }
