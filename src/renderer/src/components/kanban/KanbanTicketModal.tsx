@@ -89,7 +89,7 @@ function findWorktreePathById(worktreeId: string): string | null {
   return findWorktreeById(worktreeId)?.path ?? null
 }
 
-/** Find a session by ID across worktree and connection session maps, with DB fallback */
+/** Find a session by ID in worktree session map, with DB fallback */
 async function findSessionById(sessionId: string): Promise<{
   session: { id: string; worktree_id: string | null; opencode_session_id: string | null; agent_sdk: string; model_provider_id: string | null; model_id: string | null; model_variant: string | null }
   worktreePath: string | null
@@ -97,13 +97,6 @@ async function findSessionById(sessionId: string): Promise<{
   // Fast path: check in-memory store
   const sessionStore = useSessionStore.getState()
   for (const sessions of sessionStore.sessionsByWorktree.values()) {
-    const found = sessions.find((s) => s.id === sessionId)
-    if (found) {
-      const worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
-      return { session: found, worktreePath }
-    }
-  }
-  for (const sessions of sessionStore.sessionsByConnection.values()) {
     const found = sessions.find((s) => s.id === sessionId)
     if (found) {
       const worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
@@ -145,12 +138,6 @@ function resolveSessionModel(
     const found = sessions.find((s) => s.id === sessionId)
     if (found) { session = found; break }
   }
-  if (!session) {
-    for (const sessions of state.sessionsByConnection.values()) {
-      const found = sessions.find((s) => s.id === sessionId)
-      if (found) { session = found; break }
-    }
-  }
   // Fallback: use provided session data when session not in store (DB fallback path)
   if (!session && sessionDataFallback) {
     session = sessionDataFallback
@@ -168,14 +155,12 @@ function resolveSessionModel(
   return resolveModelForSdk(agentSdk) ?? undefined
 }
 
-/** Send a followup prompt to an existing session and update ticket mode */
+/** Send a followup prompt to an existing session */
 async function sendFollowupToSession(opts: {
   sessionId: string
   prompt: string
   followUpMode: FollowUpMode
   ticketId: string
-  projectId: string
-  updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
 }): Promise<void> {
   const result = await findSessionById(opts.sessionId)
   if (!result) {
@@ -251,10 +236,6 @@ async function sendFollowupToSession(opts: {
     console.error(`[KanbanTicketModal] sendFollowupToSession: prompt returned failure — error=${promptResult.error}`)
     throw new Error(promptResult.error || 'Failed to send prompt to session')
   }
-
-  // Update ticket mode only AFTER successful prompt — avoids stale state on failure
-  await opts.updateTicket(opts.ticketId, opts.projectId, { mode: opts.followUpMode, plan_ready: false })
-
 }
 
 /** Determine what mode the modal should operate in */
@@ -329,10 +310,6 @@ function KanbanTicketModalContent({
           const found = sessions.find((s) => s.id === ticket.current_session_id)
           if (found) return found.status
         }
-        for (const sessions of state.sessionsByConnection.values()) {
-          const found = sessions.find((s) => s.id === ticket.current_session_id)
-          if (found) return found.status
-        }
         return null
       },
       [ticket.current_session_id]
@@ -347,19 +324,25 @@ function KanbanTicketModalContent({
           const found = sessions.find((s) => s.id === ticket.current_session_id)
           if (found) return found
         }
-        for (const sessions of state.sessionsByConnection.values()) {
-          const found = sessions.find((s) => s.id === ticket.current_session_id)
-          if (found) return found
-        }
         return null
       },
       [ticket.current_session_id]
     )
   )
 
+  // Eagerly load sessions when a ticket has a session but it's not in the
+  // in-memory store (e.g. the worktree isn't currently selected).  Guard
+  // with a ref so we only attempt once per ticket to avoid infinite loops
+  // when the session genuinely doesn't exist in the loaded worktree.
+  const hasAttemptedSessionLoad = useRef(false)
   useEffect(() => {
-    if (!ticket.current_session_id || sessionRecord) return
+    if (!ticket.current_session_id || sessionRecord) {
+      hasAttemptedSessionLoad.current = false
+      return
+    }
     if (!ticket.worktree_id || !ticket.project_id) return
+    if (hasAttemptedSessionLoad.current) return
+    hasAttemptedSessionLoad.current = true
     useSessionStore.getState().loadSessions(ticket.worktree_id, ticket.project_id)
   }, [ticket.current_session_id, ticket.worktree_id, ticket.project_id, sessionRecord])
 
@@ -926,8 +909,6 @@ function PlanReviewModeContent({
         prompt: feedback,
         followUpMode,
         ticketId: ticket.id,
-        projectId: ticket.project_id,
-        updateTicket
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
         const reason = err instanceof Error ? err.message : String(err)
@@ -1399,8 +1380,6 @@ function ReviewModeContent({
         prompt,
         followUpMode: mode,
         ticketId,
-        projectId,
-        updateTicket
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
         const reason = err instanceof Error ? err.message : String(err)
@@ -1644,10 +1623,9 @@ function ErrorModeContent({
         prompt: followUpText.trim(),
         followUpMode,
         ticketId: ticket.id,
-        projectId: ticket.project_id,
-        updateTicket
       })
 
+      await updateTicket(ticket.id, ticket.project_id, { mode: followUpMode, plan_ready: false })
       toast.success('Retry sent')
       onClose()
     } catch {
