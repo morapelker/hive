@@ -18,6 +18,7 @@ import { createUpdaterOpsAdapter } from './graphql/adapters/updater-ops'
 import { createUsageOpsAdapter } from './graphql/adapters/usage-ops'
 import { createAnalyticsOpsAdapter } from './graphql/adapters/analytics-ops'
 import { createKanbanAdapter } from './graphql/adapters/kanban'
+import { createTicketImportAdapter } from './graphql/adapters/ticket-import'
 
 export interface TransportResult {
   mode: 'electron' | 'web'
@@ -55,6 +56,7 @@ export function installTransport(): TransportResult {
   window.usageOps = createUsageOpsAdapter()
   window.analyticsOps = createAnalyticsOpsAdapter()
   window.kanban = createKanbanAdapter()
+  window.ticketImport = createTicketImportAdapter()
 
   return { mode, needsAuth: false }
 }
