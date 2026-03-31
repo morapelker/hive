@@ -68,3 +68,7 @@ scripts/*
 
 # Superpowers brainstorm artifacts
 .superpowers/brainstorm/
+
+__generated__
+
+*.tsbuildinfo

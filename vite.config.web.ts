@@ -18,13 +18,14 @@ export default defineConfig({
     emptyOutDir: true
   },
   server: {
+    allowedHosts: true,
     proxy: {
       '/graphql': {
-        target: 'http://localhost:8443',
+        target: 'http://127.0.0.1:59999',
         ws: true
       },
       '/api': {
-        target: 'http://localhost:8443'
+        target: 'http://127.0.0.1:59999'
       }
     }
   }

@@ -40,6 +40,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "build:web-entry": "esbuild src/main/web-entry.ts --bundle --platform=node --outfile=out/main/web-entry.js --external:electron --external:electron-vite --external:node-pty --external:better-sqlite3 --alias:@shared=./src/shared --alias:@main=./src/main --alias:@=./src/renderer/src",
     "start": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "pnpm run build && pnpm run build:web && cp -r dist/web out/web && electron-builder --dir",
@@ -60,10 +61,14 @@
     "release:win": "bash scripts/release-win.sh",
     "install:mac": "bash scripts/install.sh",
     "codegen": "graphql-codegen --config src/shared/codegen.ts",
-    "dev:web": "vite --config vite.config.web.ts",
+    "dev:web": "vite --config vite.config.web.ts --port 59998 --host 0.0.0.0",
+    "dev:web:server": "pnpm run build:web-entry && node out/main/web-entry.js --web --insecure --port 59999",
+    "dev:web:all": "pnpm run build:web-entry && concurrently \"node out/main/web-entry.js --web --insecure --port 59999\" \"vite --config vite.config.web.ts --port 59998 --host 0.0.0.0\"",
     "build:web": "vite build --config vite.config.web.ts",
     "build:headless": "pnpm build && pnpm build:web && cp -r dist/web out/web",
-    "start:server": "electron out/main/index.js --headless"
+    "start:server": "electron out/main/index.js --headless",
+    "start:web": "node out/main/web-entry.js --web",
+    "start:web:http": "node out/main/web-entry.js --web --insecure"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.83",
@@ -153,6 +158,7 @@
     "electron": "^41.0.0",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
+    "esbuild": "^0.27.4",
     "eslint": "^9.17.0",
     "eslint-plugin-react": "^7.37.2",
     "eslint-plugin-react-hooks": "^5.1.0",

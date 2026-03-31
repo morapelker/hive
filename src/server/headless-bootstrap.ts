@@ -16,6 +16,7 @@ import type { AgentSdkImplementer } from '../main/services/agent-sdk-types'
 export interface HeadlessBootstrapOpts {
   port?: number
   bind?: string
+  insecure?: boolean
 }
 
 let serverHandle: ServerHandle | null = null
@@ -24,6 +25,7 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
   const config = loadHeadlessConfig()
   const port = opts.port ?? config.port
   const bind = opts.bind ?? config.bindAddress
+  const insecure = opts.insecure ?? config.insecure
 
   // Initialize database (same singleton as GUI mode)
   const db = getDatabase()
@@ -82,7 +84,7 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
 
   // Ensure TLS certs (skip in insecure/HTTP mode)
   let fingerprint: string | null = null
-  if (!config.insecure) {
+  if (!insecure) {
     const tlsDir = join(homedir(), '.hive', 'tls')
     fingerprint = ensureTlsCerts(tlsDir, (fp) => {
       db.setSetting('headless_cert_fingerprint', fp)
@@ -124,14 +126,19 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
   } else {
     // Default: look for bundled web UI in known locations
     const candidates = [
+      // Relative to current file (out/main/)
       join(__dirname, 'web'),
       join(__dirname, '..', 'web'),
       join(__dirname, '..', '..', 'out', 'web'),
-      join(__dirname, '..', '..', 'dist', 'web')
+      join(__dirname, '..', '..', 'dist', 'web'),
+      // Relative to process.cwd() (project root)
+      join(process.cwd(), 'out', 'web'),
+      join(process.cwd(), 'dist', 'web')
     ]
     for (const candidate of candidates) {
       if (existsSync(join(candidate, 'index.html'))) {
         webRoot = candidate
+        console.log(`Found web UI at: ${candidate}`)
         break
       }
     }
@@ -141,15 +148,15 @@ export async function headlessBootstrap(opts: HeadlessBootstrapOpts): Promise<vo
   serverHandle = startGraphQLServer({
     port,
     bindAddress: bind,
-    insecure: config.insecure,
-    ...(config.insecure ? {} : { tlsCert: config.tls.certPath, tlsKey: config.tls.keyPath }),
+    insecure,
+    ...(insecure ? {} : { tlsCert: config.tls.certPath, tlsKey: config.tls.keyPath }),
     webRoot,
     context: { db, sdkManager, eventBus },
     getKeyHash: () => db.getSetting('headless_api_key_hash') || '',
     bruteForce
   })
 
-  const protocol = config.insecure ? 'http' : 'https'
+  const protocol = insecure ? 'http' : 'https'
   console.log(`Hive headless server running on ${protocol}://${bind}:${port}/graphql`)
   if (webRoot) {
     console.log(`Web UI available at ${protocol}://${bind}:${port}/`)

@@ -11,6 +11,11 @@ export default defineConfig({
         '@main': resolve('src/main'),
         '@shared': resolve('src/shared')
       }
+    },
+    build: {
+      lib: {
+        entry: resolve('src/main/index.ts')
+      }
     }
   },
   preload: {

@@ -21,9 +21,9 @@ export interface HeadlessConfig {
 }
 
 const DEFAULTS: HeadlessConfig = {
-  port: 8443,
-  bindAddress: '0.0.0.0',
-  insecure: false,
+  port: 59999,
+  bindAddress: '127.0.0.1',
+  insecure: true,
   webRoot: null,
   tls: {
     certPath: join(homedir(), '.hive', 'tls', 'server.crt'),
