@@ -128,6 +128,7 @@ export class XtermBackend implements TerminalBackend {
   private fitAddon: FitAddon | null = null
   private searchAddon: SearchAddon | null = null
   private resizeObserver: ResizeObserver | null = null
+  private mountCallId: string = ''
   private removeDataListener: (() => void) | null = null
   private removeExitListener: (() => void) | null = null
   private inputDisposable: { dispose: () => void } | null = null
@@ -140,6 +141,8 @@ export class XtermBackend implements TerminalBackend {
   onClearRequest?: () => void
 
   mount(container: HTMLDivElement, opts: TerminalOpts, callbacks: TerminalBackendCallbacks): void {
+    this.mountCallId = `[mount_${Date.now()}_${Math.random().toString(36).substr(2, 4)}]`
+    console.log(`[XTERM_MOUNT] ${this.mountCallId} START worktreeId=${opts.worktreeId}`)
     this.worktreeId = opts.worktreeId
     container.innerHTML = ''
 
@@ -252,19 +255,25 @@ export class XtermBackend implements TerminalBackend {
     })
 
     // Wire PTY output -> terminal display
+    console.log(`[XTERM_MOUNT] ${this.mountCallId} Registering window.terminalOps.onData callback`)
     this.removeDataListener = window.terminalOps.onData(this.worktreeId, (data) => {
+      console.log(`[XTERM_DATA_RECEIVED] ${this.mountCallId} data length=${data.length}`)
       terminal.write(data)
     })
 
     // Wire PTY exit -> status change
+    console.log(`[XTERM_MOUNT] ${this.mountCallId} Registering window.terminalOps.onExit callback`)
     this.removeExitListener = window.terminalOps.onExit(this.worktreeId, (code) => {
+      console.log(`[XTERM_EXIT_RECEIVED] ${this.mountCallId} code=${code}`)
       terminal.write(`\r\n\x1b[90m[Process exited with code ${code}]\x1b[0m\r\n`)
       callbacks.onStatusChange('exited', code)
     })
 
     // Create the PTY
     callbacks.onStatusChange('creating')
+    console.log(`[XTERM_MOUNT] ${this.mountCallId} Calling window.terminalOps.create`)
     window.terminalOps.create(this.worktreeId, opts.cwd, opts.shell).then((result) => {
+      console.log(`[XTERM_MOUNT] ${this.mountCallId} terminal:create returned, success=${result.success}`)
       if (result.success) {
         callbacks.onStatusChange('running')
 
@@ -365,9 +374,12 @@ export class XtermBackend implements TerminalBackend {
   }
 
   dispose(): void {
+    console.log(`[XTERM_DISPOSE] ${this.mountCallId} START worktreeId=${this.worktreeId}`)
     this.resizeObserver?.disconnect()
     this.inputDisposable?.dispose()
+    console.log(`[XTERM_DISPOSE] ${this.mountCallId} Calling removeDataListener()`)
     this.removeDataListener?.()
+    console.log(`[XTERM_DISPOSE] ${this.mountCallId} Calling removeExitListener()`)
     this.removeExitListener?.()
     this.searchAddon = null
     this.terminal?.dispose()
@@ -377,5 +389,6 @@ export class XtermBackend implements TerminalBackend {
     this.removeDataListener = null
     this.removeExitListener = null
     this.inputDisposable = null
+    console.log(`[XTERM_DISPOSE] ${this.mountCallId} DONE`)
   }
 }

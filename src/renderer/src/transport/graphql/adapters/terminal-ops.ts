@@ -1,4 +1,4 @@
-import { graphqlQuery, graphqlSubscribe } from '../client'
+import { graphqlQuery, graphqlMutate, graphqlSubscribe } from '../client'
 import { notAvailableInWeb } from '../../stubs/electron-only'
 import type { TerminalOpsApi } from '../../types'
 
@@ -24,15 +24,13 @@ export function createTerminalOpsAdapter(): TerminalOpsApi {
     },
 
     write(worktreeId: string, data: string): void {
-      // Fire-and-forget
-      graphqlQuery<{ terminalWrite: boolean }>(
+      // Fire-and-forget over WebSocket for lower latency
+      graphqlMutate(
         `mutation ($worktreeId: ID!, $data: String!) {
           terminalWrite(worktreeId: $worktreeId, data: $data)
         }`,
         { worktreeId, data }
-      ).catch(() => {
-        // fire-and-forget: ignore errors
-      })
+      )
     },
 
     async resize(worktreeId: string, cols: number, rows: number): Promise<void> {
@@ -61,27 +59,41 @@ export function createTerminalOpsAdapter(): TerminalOpsApi {
     },
 
     onData(worktreeId: string, callback: (data: string) => void): () => void {
-      return graphqlSubscribe<{ terminalData: { worktreeId: string; data: string } }>(
+      const subId = `[sub_${Date.now()}_${Math.random().toString(36).substr(2, 4)}]`
+      console.log(`[TERMINAL_OPS onData] ${subId} CREATING subscription for worktreeId=${worktreeId}`)
+      const cleanup = graphqlSubscribe<{ terminalData: { worktreeId: string; data: string } }>(
         `subscription ($worktreeId: ID!) {
           terminalData(worktreeId: $worktreeId) { worktreeId data }
         }`,
         { worktreeId },
         (event) => {
+          console.log(`[TERMINAL_OPS onData] ${subId} RECEIVED data length=${event.terminalData.data.length}`)
           callback(event.terminalData.data)
         }
       )
+      return () => {
+        console.log(`[TERMINAL_OPS onData] ${subId} CLEANUP called for worktreeId=${worktreeId}`)
+        cleanup()
+      }
     },
 
     onExit(worktreeId: string, callback: (code: number) => void): () => void {
-      return graphqlSubscribe<{ terminalExit: { worktreeId: string; code: number } }>(
+      const subId = `[exitSub_${Date.now()}_${Math.random().toString(36).substr(2, 4)}]`
+      console.log(`[TERMINAL_OPS onExit] ${subId} CREATING subscription for worktreeId=${worktreeId}`)
+      const cleanup = graphqlSubscribe<{ terminalExit: { worktreeId: string; code: number } }>(
         `subscription ($worktreeId: ID!) {
           terminalExit(worktreeId: $worktreeId) { worktreeId code }
         }`,
         { worktreeId },
         (event) => {
+          console.log(`[TERMINAL_OPS onExit] ${subId} RECEIVED exit code=${event.terminalExit.code}`)
           callback(event.terminalExit.code)
         }
       )
+      return () => {
+        console.log(`[TERMINAL_OPS onExit] ${subId} CLEANUP called for worktreeId=${worktreeId}`)
+        cleanup()
+      }
     },
 
     // ─── Ghostty stubs (not available in web mode) ──────────────

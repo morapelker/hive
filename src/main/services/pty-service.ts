@@ -18,8 +18,10 @@ interface PtyInstance {
   pty: pty.IPty
   cwd: string
   backend: TerminalBackend
-  dataListeners: Array<(data: string) => void>
-  exitListeners: Array<(code: number, signal: number) => void>
+  dataListener: ((data: string) => void) | null
+  exitListener: ((code: number, signal: number) => void) | null
+  /** Debug: track listener registration order */
+  listenerRegLog: string[]
 }
 
 export interface PtyCreateOpts {
@@ -84,15 +86,16 @@ class PtyService {
       pty: ptyProcess,
       cwd: opts.cwd,
       backend: opts.backend || 'node-pty',
-      dataListeners: [],
-      exitListeners: []
+      dataListener: null,
+      exitListener: null,
+      listenerRegLog: []
     }
 
     // Wire up data events
     ptyProcess.onData((data) => {
-      for (const listener of instance.dataListeners) {
+      if (instance.dataListener) {
         try {
-          listener(data)
+          instance.dataListener(data)
         } catch (err) {
           log.error(
             'Error in PTY data listener',
@@ -108,9 +111,9 @@ class PtyService {
       const code = exitCode ?? -1
       const sig = signal ?? 0
       log.info('PTY exited', { id, exitCode: code, signal: sig })
-      for (const listener of instance.exitListeners) {
+      if (instance.exitListener) {
         try {
-          listener(code, sig)
+          instance.exitListener(code, sig)
         } catch (err) {
           log.error(
             'Error in PTY exit listener',
@@ -181,11 +184,18 @@ class PtyService {
       log.warn('PTY not found for onData', { id })
       return () => {}
     }
-    instance.dataListeners.push(callback)
+    const stack = new Error().stack?.split('\n')[2]?.trim() || 'unknown'
+    const regId = `[reg_${Date.now()}_${Math.random().toString(36).substr(2, 4)}]`
+    instance.listenerRegLog.push(`${regId} REGISTER onData, hadPrevious=${instance.dataListener !== null}, caller=${stack}`)
+    log.info(`[PTY onData REGISTER] id=${id} ${regId} hadPrevious=${instance.dataListener !== null} caller=${stack}`)
+    instance.dataListener = callback
     return () => {
-      const idx = instance.dataListeners.indexOf(callback)
-      if (idx !== -1) {
-        instance.dataListeners.splice(idx, 1)
+      if (instance.dataListener === callback) {
+        instance.dataListener = null
+        log.info(`[PTY onData REMOVE] id=${id} ${regId} cleared`)
+        instance.listenerRegLog.push(`${regId} REMOVE onData`)
+      } else {
+        log.warn(`[PTY onData REMOVE] id=${id} ${regId} callback already replaced`)
       }
     }
   }
@@ -196,11 +206,12 @@ class PtyService {
       log.warn('PTY not found for onExit', { id })
       return () => {}
     }
-    instance.exitListeners.push(callback)
+    log.info(`[PTY onExit REGISTER] id=${id} hadPrevious=${instance.exitListener !== null}`)
+    instance.exitListener = callback
     return () => {
-      const idx = instance.exitListeners.indexOf(callback)
-      if (idx !== -1) {
-        instance.exitListeners.splice(idx, 1)
+      if (instance.exitListener === callback) {
+        instance.exitListener = null
+        log.info(`[PTY onExit REMOVE] id=${id} cleared`)
       }
     }
   }
@@ -215,6 +226,17 @@ class PtyService {
 
   has(id: string): boolean {
     return this.ptys.has(id)
+  }
+
+  /** Debug: get listener stats for a PTY */
+  getListenerStats(id: string): { hasDataListener: boolean; hasExitListener: boolean; log: string[] } | null {
+    const instance = this.ptys.get(id)
+    if (!instance) return null
+    return {
+      hasDataListener: instance.dataListener !== null,
+      hasExitListener: instance.exitListener !== null,
+      log: instance.listenerRegLog.slice(-10) // last 10 entries
+    }
   }
 
   getBackend(id: string): TerminalBackend | undefined {

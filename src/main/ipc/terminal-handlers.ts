@@ -19,6 +19,11 @@ const listenerCleanups = new Map<string, { removeData: () => void; removeExit: (
 const dataBuffers = new Map<string, string>()
 const flushScheduled = new Set<string>()
 
+// Per-worktree async lock to serialize terminal:create calls.
+// Without this, concurrent mounts (React Strict Mode double-mount) race on PTY creation,
+// both passing the alreadyExists check and registering duplicate listeners.
+const createLocks = new Map<string, Promise<void>>()
+
 export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   // Set main window reference on the Ghostty service
   ghosttyService.setMainWindow(mainWindow)
@@ -31,26 +36,47 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(
     'terminal:create',
     async (_event, worktreeId: string, cwd: string, shell?: string) => {
-      log.info('IPC: terminal:create', { worktreeId, cwd, shell })
+      // Serialize concurrent create calls per worktreeId to prevent race conditions
+      // (React Strict Mode double-mount, rapid tab switches, etc.)
+      const previousLock = createLocks.get(worktreeId)
+      let resolveLock!: () => void
+      const thisLock = new Promise<void>((r) => {
+        resolveLock = r
+      })
+      createLocks.set(worktreeId, thisLock)
+      if (previousLock) {
+        await previousLock
+      }
+
+      try {
+        log.info('IPC: terminal:create', { worktreeId, cwd, shell })
+        const createCallId = `[create_${Date.now()}_${Math.random().toString(36).substr(2, 4)}]`
+      log.info(`[TERMINAL_CREATE] ${createCallId} worktreeId=${worktreeId}`)
+      
       try {
         // Check if PTY already exists before creating — if it does, skip listener registration
         const alreadyExists = ptyService.has(worktreeId)
+        log.info(`[TERMINAL_CREATE] ${createCallId} alreadyExists=${alreadyExists}`)
+
         const { cols, rows } = ptyService.create(worktreeId, { cwd, shell: shell || undefined })
 
         if (alreadyExists) {
           log.info('PTY already exists, skipping listener registration', { worktreeId })
+          log.info(`[TERMINAL_CREATE] ${createCallId} SKIPPED - PTY exists, returning early`)
           return { success: true, cols, rows }
         }
 
         // Clean up any stale listeners for this worktreeId (shouldn't happen, but defensive)
         const existing = listenerCleanups.get(worktreeId)
         if (existing) {
+          log.warn(`[TERMINAL_CREATE] ${createCallId} WARNING - stale listeners found, cleaning up`)
           existing.removeData()
           existing.removeExit()
           listenerCleanups.delete(worktreeId)
         }
 
         // Wire PTY output to renderer (batched via setImmediate)
+        log.info(`[TERMINAL_CREATE] ${createCallId} Registering ptyService.onData callback`)
         const removeData = ptyService.onData(worktreeId, (data) => {
           if (mainWindow.isDestroyed()) return
 
@@ -66,6 +92,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
               const buffered = dataBuffers.get(worktreeId)
               dataBuffers.delete(worktreeId)
               if (buffered && !mainWindow.isDestroyed()) {
+                log.info(`[TERMINAL_DATA_FLUSH] ${createCallId} emitting to EventBus, length=${buffered.length}`)
                 mainWindow.webContents.send(`terminal:data:${worktreeId}`, buffered)
                 try {
                   getEventBus().emit('terminal:data', worktreeId, buffered)
@@ -78,6 +105,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
         })
 
         // Wire PTY exit to renderer
+        log.info(`[TERMINAL_CREATE] ${createCallId} Registering ptyService.onExit callback`)
         const removeExit = ptyService.onExit(worktreeId, (code) => {
           if (!mainWindow.isDestroyed()) {
             mainWindow.webContents.send(`terminal:exit:${worktreeId}`, code)
@@ -92,6 +120,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
         })
 
         listenerCleanups.set(worktreeId, { removeData, removeExit })
+        log.info(`[TERMINAL_CREATE] ${createCallId} DONE - listeners registered and stored in listenerCleanups`)
 
         return { success: true, cols, rows }
       } catch (error) {
@@ -104,6 +133,12 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
         }
+      } finally {
+        // Release the lock
+        if (createLocks.get(worktreeId) === thisLock) {
+          createLocks.delete(worktreeId)
+        }
+        resolveLock()
       }
     }
   )
@@ -121,12 +156,16 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   // Destroy a PTY
   ipcMain.handle('terminal:destroy', (_event, worktreeId: string) => {
     log.info('IPC: terminal:destroy', { worktreeId })
+    log.info(`[TERMINAL_DESTROY] worktreeId=${worktreeId}`)
     // Clean up listener tracking
     const cleanup = listenerCleanups.get(worktreeId)
     if (cleanup) {
+      log.info(`[TERMINAL_DESTROY] Removing data and exit listeners from listenerCleanups`)
       cleanup.removeData()
       cleanup.removeExit()
       listenerCleanups.delete(worktreeId)
+    } else {
+      log.warn(`[TERMINAL_DESTROY] No listener cleanup found for worktreeId=${worktreeId}`)
     }
     // Discard any pending buffered data
     dataBuffers.delete(worktreeId)

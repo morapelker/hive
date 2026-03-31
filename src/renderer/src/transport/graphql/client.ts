@@ -40,6 +40,41 @@ export async function graphqlQuery<T = unknown>(
   return json.data as T
 }
 
+/**
+ * Execute a GraphQL mutation over WebSocket instead of HTTP.
+ * This is faster for high-frequency operations like terminal keystrokes.
+ */
+export function graphqlMutate(
+  query: string,
+  variables: Record<string, unknown>
+): () => void {
+  let settled = false
+  let cleanup: (() => void) | null = null
+
+  // Use subscribe pattern but resolve immediately for fire-and-forget mutations
+  cleanup = wsClient.subscribe(
+    { query, variables },
+    {
+      next: (result) => {
+        if (result.errors?.length) {
+          console.warn('graphqlMutate error:', result.errors[0].message)
+        }
+      },
+      error: (err) => {
+        console.warn('graphqlMutate error:', err)
+      },
+      complete: () => {
+        settled = true
+      }
+    }
+  )
+
+  // Return cleanup function
+  return () => {
+    cleanup?.()
+  }
+}
+
 export function graphqlSubscribe<T = unknown>(
   query: string,
   variables: Record<string, unknown> | undefined,
