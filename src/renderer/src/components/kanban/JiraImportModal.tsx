@@ -52,6 +52,10 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null)
 
+  // Accumulates every issue object fetched across pages so cross-page
+  // selections can be resolved back to full RemoteIssue data at import time.
+  const allFetchedIssuesRef = useRef<Map<string, RemoteIssue>>(new Map())
+
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Read domain from settings on open
@@ -63,6 +67,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
     setCommittedJql(null)
     setIssues([])
     setSelected(new Set())
+    allFetchedIssuesRef.current = new Map()
     setPage(1)
     pageTokensRef.current = [null]
     setJqlError(null)
@@ -88,6 +93,10 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
       .then((result) => {
         setIssues(result.issues)
         setHasNextPage(result.hasNextPage)
+        // Accumulate fetched issues so cross-page selections resolve at import time
+        for (const issue of result.issues) {
+          allFetchedIssuesRef.current.set(issue.externalId, issue)
+        }
         // Store the next page token so we can navigate forward
         if (result.nextPageToken) {
           pageTokensRef.current[page] = result.nextPageToken
@@ -107,6 +116,8 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
     if (!trimmed) return
     setPage(1)
     pageTokensRef.current = [null]
+    allFetchedIssuesRef.current = new Map()
+    setSelected(new Set())
     setCommittedJql(trimmed)
   }
 
@@ -127,18 +138,32 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
   }
 
   const toggleSelectAll = () => {
-    if (selected.size === issues.length) {
-      setSelected(new Set())
-    } else {
-      setSelected(new Set(issues.map((i) => i.externalId)))
-    }
+    const currentPageIds = issues.map((i) => i.externalId)
+    const allCurrentPageSelected = currentPageIds.every((id) => selected.has(id))
+
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allCurrentPageSelected) {
+        // Deselect only this page's issues — keep cross-page selections
+        for (const id of currentPageIds) next.delete(id)
+      } else {
+        // Select all on this page — add to existing cross-page selections
+        for (const id of currentPageIds) next.add(id)
+      }
+      return next
+    })
   }
 
   const handleImport = async () => {
     if (!domain || selected.size === 0) return
     setImporting(true)
 
-    const toImport = issues.filter((i) => selected.has(i.externalId))
+    // Resolve selected IDs from the accumulated map (covers all pages visited)
+    const toImport: RemoteIssue[] = []
+    for (const id of selected) {
+      const issue = allFetchedIssuesRef.current.get(id)
+      if (issue) toImport.push(issue)
+    }
     setImportProgress({ current: 0, total: toImport.length })
 
     try {
@@ -281,7 +306,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
                     {/* Select all header */}
                     <div className="flex items-center gap-3 px-4 py-2 bg-muted/30 sticky top-0 z-10">
                       <Checkbox
-                        checked={selected.size === issues.length && issues.length > 0}
+                        checked={issues.length > 0 && issues.every((i) => selected.has(i.externalId))}
                         onCheckedChange={toggleSelectAll}
                       />
                       <span className="text-xs text-muted-foreground">
