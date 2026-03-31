@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { resolveModelForSdk } from '@/stores/useSettingsStore'
@@ -52,6 +53,7 @@ import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScript
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
 import { SessionStreamPanel } from './SessionStreamPanel'
+import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import type { KanbanTicket, KanbanTicketUpdate } from '../../../../main/db/types'
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -61,8 +63,8 @@ type FollowUpMode = 'build' | 'plan' | 'super-plan'
 /** Standard (non-dual-pane) DialogContent className per modal mode */
 const MODE_DIALOG_CLASS: Record<ModalMode, string> = {
   edit: 'sm:max-w-lg',
-  plan_review: 'sm:max-w-2xl max-h-[80vh] flex flex-col',
-  review: 'sm:max-w-2xl max-h-[80vh] flex flex-col',
+  plan_review: 'sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden',
+  review: 'sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden',
   error: 'sm:max-w-lg',
   question: 'sm:max-w-lg'
 }
@@ -89,10 +91,13 @@ function findWorktreePathById(worktreeId: string): string | null {
   return findWorktreeById(worktreeId)?.path ?? null
 }
 
-/** Find a session by ID in worktree session map, with DB fallback */
+/** Find a session by ID across worktree and connection session maps, with DB fallback */
 async function findSessionById(sessionId: string): Promise<{
-  session: { id: string; worktree_id: string | null; opencode_session_id: string | null; agent_sdk: string; model_provider_id: string | null; model_id: string | null; model_variant: string | null }
+  session: { id: string; worktree_id: string | null; connection_id: string | null; opencode_session_id: string | null; agent_sdk: string; model_provider_id: string | null; model_id: string | null; model_variant: string | null }
   worktreePath: string | null
+  connectionId: string | null
+  /** Working directory for opencode ops — worktree path or connection path */
+  workingPath: string | null
 } | null> {
   // Fast path: check in-memory store
   const sessionStore = useSessionStore.getState()
@@ -100,7 +105,14 @@ async function findSessionById(sessionId: string): Promise<{
     const found = sessions.find((s) => s.id === sessionId)
     if (found) {
       const worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
-      return { session: found, worktreePath }
+      return { session: found, worktreePath, connectionId: null, workingPath: worktreePath }
+    }
+  }
+  for (const [connId, sessions] of sessionStore.sessionsByConnection.entries()) {
+    const found = sessions.find((s) => s.id === sessionId)
+    if (found) {
+      const connectionPath = useConnectionStore.getState().connections.find(c => c.id === connId)?.path ?? null
+      return { session: found, worktreePath: null, connectionId: connId, workingPath: connectionPath }
     }
   }
   // DB fallback: session not in store (worktree not currently selected)
@@ -116,13 +128,16 @@ async function findSessionById(sessionId: string): Promise<{
     session: {
       id: dbSession.id,
       worktree_id: dbSession.worktree_id,
+      connection_id: null,
       opencode_session_id: dbSession.opencode_session_id,
       agent_sdk: dbSession.agent_sdk,
       model_provider_id: dbSession.model_provider_id,
       model_id: dbSession.model_id,
       model_variant: dbSession.model_variant
     },
-    worktreePath
+    worktreePath,
+    connectionId: null,
+    workingPath: worktreePath
   }
 }
 
@@ -168,11 +183,11 @@ async function sendFollowupToSession(opts: {
     throw new Error(`Session not found: ${opts.sessionId}`)
   }
 
-  const { session, worktreePath } = result
+  const { session, workingPath } = result
 
-  if (!worktreePath) {
-    console.error(`[KanbanTicketModal] sendFollowupToSession: worktreePath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}`)
-    throw new Error(`Worktree path not found for session: ${opts.sessionId}`)
+  if (!workingPath) {
+    console.error(`[KanbanTicketModal] sendFollowupToSession: workingPath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}, connection_id=${session.connection_id}`)
+    throw new Error(`Working path not found for session: ${opts.sessionId}`)
   }
 
   if (!session.opencode_session_id) {
@@ -228,7 +243,7 @@ async function sendFollowupToSession(opts: {
   // implementer throws "session not found" because its Map was never populated.
   await window.opencodeOps.reconnect(worktreePath, session.opencode_session_id, opts.sessionId)
 
-  const promptResult = await window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
+  const promptResult = await window.opencodeOps.prompt(workingPath, session.opencode_session_id, [
     { type: 'text', text: fullPrompt }
   ], model)
 
@@ -373,9 +388,12 @@ function KanbanTicketModalContent({
   const modalMode = activeQuestion ? 'question' : baseModalMode
 
   // ── Session stream resolution ────────────────────────────────────
-  const worktreePath = sessionRecord?.worktree_id
-    ? findWorktreePathById(sessionRecord.worktree_id)
-    : null
+  let worktreePath: string | null = null
+  if (sessionRecord?.worktree_id) {
+    worktreePath = findWorktreePathById(sessionRecord.worktree_id)
+  } else if (sessionRecord?.connection_id) {
+    worktreePath = useConnectionStore.getState().connections.find(c => c.id === sessionRecord.connection_id)?.path ?? null
+  }
   const opcSessionId: string | null = sessionRecord?.opencode_session_id ?? null
   const hasSession = !!(ticket.current_session_id && worktreePath && opcSessionId)
 
@@ -576,7 +594,18 @@ function EditModeContent({
     <>
       <DialogHeader>
         <div className="flex items-center justify-between">
-          <DialogTitle>Edit Ticket</DialogTitle>
+          <div className="flex items-center gap-2">
+            <DialogTitle>Edit Ticket</DialogTitle>
+            {ticket.external_provider && ticket.external_url && (
+              <button
+                onClick={() => window.systemOps.openInChrome(ticket.external_url!)}
+                className="transition-opacity hover:opacity-80"
+                title={`Open ${getProviderLabel(ticket.external_provider)} #${ticket.external_id}`}
+              >
+                <ProviderIcon provider={ticket.external_provider} />
+              </button>
+            )}
+          </div>
           <JumpToSessionButton ticket={ticket} onClose={onClose} />
         </div>
         <DialogDescription>Update ticket details.</DialogDescription>
@@ -863,11 +892,16 @@ function PlanReviewModeContent({
         useSessionStore.getState().clearPendingPlan(sessionId)
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
 
-        if (isClaudeCode && sessionRecord?.worktree_id) {
-          const worktreePath = findWorktreePathById(sessionRecord.worktree_id)
-          if (!worktreePath) {
-            console.error(`[KanbanTicketModal] planReject: worktreePath not found — worktree_id=${sessionRecord.worktree_id}`)
-            toast.error('Failed to reject plan: worktree not found')
+        if (isClaudeCode && (sessionRecord?.worktree_id || sessionRecord?.connection_id)) {
+          let rejectPath: string | null = null
+          if (sessionRecord.worktree_id) {
+            rejectPath = findWorktreePathById(sessionRecord.worktree_id)
+          } else if (sessionRecord.connection_id) {
+            rejectPath = useConnectionStore.getState().connections.find(c => c.id === sessionRecord.connection_id)?.path ?? null
+          }
+          if (!rejectPath) {
+            console.error(`[KanbanTicketModal] planReject: working path not found — worktree_id=${sessionRecord.worktree_id}, connection_id=${sessionRecord.connection_id}`)
+            toast.error('Failed to reject plan: working path not found')
             return
           }
           await updateTicket(ticket.id, ticket.project_id, { plan_ready: false, mode: 'plan' })
@@ -955,14 +989,19 @@ function PlanReviewModeContent({
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { plan_ready: false, mode: 'build' })
 
       // For opencode agents, approve the plan if there's a pending one
-      if (pendingPlan && sessionRecord?.worktree_id) {
-        const worktreePath = findWorktreePathById(sessionRecord.worktree_id)
-        if (!worktreePath) {
-          console.error(`[KanbanTicketModal] handleImplement: worktreePath not found — worktree_id=${sessionRecord.worktree_id}`)
-          toast.error('Failed to approve plan: worktree not found')
+      if (pendingPlan && (sessionRecord?.worktree_id || sessionRecord?.connection_id)) {
+        let approvePath: string | null = null
+        if (sessionRecord.worktree_id) {
+          approvePath = findWorktreePathById(sessionRecord.worktree_id)
+        } else if (sessionRecord.connection_id) {
+          approvePath = useConnectionStore.getState().connections.find(c => c.id === sessionRecord.connection_id)?.path ?? null
+        }
+        if (!approvePath) {
+          console.error(`[KanbanTicketModal] handleImplement: working path not found — worktree_id=${sessionRecord.worktree_id}, connection_id=${sessionRecord.connection_id}`)
+          toast.error('Failed to approve plan: working path not found')
           return
         }
-        await window.opencodeOps.planApprove(worktreePath, sessionId, pendingPlan.requestId)
+        await window.opencodeOps.planApprove(approvePath, sessionId, pendingPlan.requestId)
       }
 
       toast.success('Implementation started')
@@ -1173,7 +1212,7 @@ function PlanReviewModeContent({
 
       <div
         data-testid="plan-review-content"
-        className="flex-1 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-4 prose prose-sm dark:prose-invert max-w-none"
+        className="flex-1 min-h-0 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-4 prose prose-sm dark:prose-invert max-w-none"
       >
         <MarkdownRenderer content={planContent} />
       </div>
@@ -1227,11 +1266,11 @@ function PlanReviewModeContent({
         </div>
       </div>
 
-      <DialogFooter className="flex-shrink-0 gap-1.5">
+      <DialogFooter className="flex-shrink-0 gap-1.5 flex-wrap">
         <Button
           type="button"
           data-testid="plan-review-handoff-btn"
-          disabled={isActioning}
+          disabled={isActioning || !ticket.worktree_id}
           onClick={handleHandoff}
           className="gap-1.5"
           variant="outline"
@@ -1242,7 +1281,7 @@ function PlanReviewModeContent({
         <Button
           type="button"
           data-testid="plan-review-supercharge-local-btn"
-          disabled={isActioning}
+          disabled={isActioning || !ticket.worktree_id}
           onClick={handleSuperchargeLocal}
           className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
         >
@@ -1252,7 +1291,7 @@ function PlanReviewModeContent({
         <Button
           type="button"
           data-testid="plan-review-supercharge-btn"
-          disabled={isActioning}
+          disabled={isActioning || !ticket.worktree_id}
           onClick={handleSupercharge}
           className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
           variant="outline"
@@ -1474,7 +1513,7 @@ function ReviewModeContent({
       {!dualPane && (
         <div
           data-testid="review-content"
-          className="flex-1 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-4 space-y-3"
+          className="flex-1 min-h-0 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-4 space-y-3"
         >
           {reviewDescription ? (
             <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -1769,8 +1808,13 @@ function QuestionModeContent({
 }) {
   const handleReply = useCallback(async (requestId: string, answers: string[][]) => {
     try {
-      const worktreePath = ticket.worktree_id ? findWorktreePathById(ticket.worktree_id) : null
-      await window.opencodeOps.questionReply(requestId, answers, worktreePath || undefined)
+      let questionPath: string | null = null
+      if (ticket.worktree_id) {
+        questionPath = findWorktreePathById(ticket.worktree_id)
+      } else if (ticket.current_session_id) {
+        questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
+      }
+      await window.opencodeOps.questionReply(requestId, answers, questionPath || undefined)
       // Optimistically set session back to working so the progress bar resumes immediately
       if (ticket.current_session_id) {
         useWorktreeStatusStore.getState().setSessionStatus(
@@ -1787,8 +1831,13 @@ function QuestionModeContent({
 
   const handleReject = useCallback(async (requestId: string) => {
     try {
-      const worktreePath = ticket.worktree_id ? findWorktreePathById(ticket.worktree_id) : null
-      await window.opencodeOps.questionReject(requestId, worktreePath || undefined)
+      let questionPath: string | null = null
+      if (ticket.worktree_id) {
+        questionPath = findWorktreePathById(ticket.worktree_id)
+      } else if (ticket.current_session_id) {
+        questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
+      }
+      await window.opencodeOps.questionReject(requestId, questionPath || undefined)
       // Optimistically set session back to working so the progress bar resumes immediately
       if (ticket.current_session_id) {
         useWorktreeStatusStore.getState().setSessionStatus(

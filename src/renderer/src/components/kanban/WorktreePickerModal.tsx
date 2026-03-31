@@ -19,6 +19,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
@@ -49,6 +50,8 @@ interface WorktreePickerModalProps {
   onSendComplete?: () => void
   /** When true, only assigns worktree_id without creating a session or moving columns */
   preAssignOnly?: boolean
+  /** When set, operates in connection mode — no worktree selection, uses connection path */
+  connectionId?: string
 }
 
 /** In-memory: last-chosen source branch per project (resets on app restart) */
@@ -81,8 +84,10 @@ export function WorktreePickerModal({
   open,
   onOpenChange,
   onSendComplete,
-  preAssignOnly = false
+  preAssignOnly = false,
+  connectionId
 }: WorktreePickerModalProps) {
+  const isConnectionMode = !!connectionId
   const [mode, setMode] = useState<PickerMode>('build')
   const [superArmed, setSuperArmed] = useState(false)
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null)
@@ -187,20 +192,9 @@ export function WorktreePickerModal({
   useEffect(() => {
     if (open) {
       setMode('build')
-      // Auto-select: prefer ticket's pre-assigned worktree, then global selection
-      const { selectedWorktreeId: currentId, worktreesByProject } =
-        useWorktreeStore.getState()
-      const projectWts = worktreesByProject.get(projectId) ?? []
-
-      if (ticket.worktree_id && projectWts.some((wt) => wt.id === ticket.worktree_id)) {
-        // Ticket has a pre-assigned worktree that still exists — select it
-        setSelectedWorktreeId(ticket.worktree_id)
-      } else {
-        // Fall back to the globally selected worktree if it belongs to this project
-        const match = currentId ? projectWts.find((wt) => wt.id === currentId) : null
-        setSelectedWorktreeId(match ? currentId : null)
-      }
-      setIsNewWorktree(false)
+      // Default to "New worktree" — it's the most common choice when starting work
+      setSelectedWorktreeId(null)
+      setIsNewWorktree(true)
       setPromptText(buildPrompt('build', ticket))
       setIsSending(false)
       setSelectedModel(null)
@@ -307,11 +301,97 @@ export function WorktreePickerModal({
   }, [])
 
   // ── Send flow ───────────────────────────────────────────────────
-  const canSend = (selectedWorktreeId !== null || isNewWorktree) && !isSending
+  const canSend = isConnectionMode
+    ? !isSending
+    : (selectedWorktreeId !== null || isNewWorktree) && !isSending
 
   const handleSend = useCallback(async () => {
     if (!canSend) return
     setIsSending(true)
+
+    // ── Connection mode path ──────────────────────────────────────
+    if (isConnectionMode && connectionId) {
+      try {
+        // Create connection session
+        const createConnectionSession = useSessionStore.getState().createConnectionSession
+        const sessionResult = await createConnectionSession(connectionId, agentSdk, mode)
+
+        if (!sessionResult.success || !sessionResult.session) {
+          toast.error(sessionResult.error || 'Failed to create session')
+          setIsSending(false)
+          return
+        }
+
+        const sessionId = sessionResult.session.id
+        const sessionAgentSdk = sessionResult.session.agent_sdk
+
+        // Apply model override
+        const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
+        if (selectedModel) {
+          await useSessionStore.getState().setSessionModel(sessionId, selectedModel)
+        }
+
+        // Update ticket — worktree_id stays null for connection sessions
+        const sortOrder = useKanbanStore.getState().computeSortOrder(
+          useKanbanStore.getState().getTicketsByColumnForConnection(connectionId, 'in_progress'),
+          0
+        )
+
+        await updateTicket(ticket.id, ticket.project_id, {
+          current_session_id: sessionId,
+          worktree_id: null,
+          mode,
+          column: 'in_progress',
+          sort_order: sortOrder,
+          plan_ready: false
+        })
+
+        // Close modal
+        onSendComplete?.()
+        onOpenChange(false)
+        toast.success('Session started')
+
+        // Connect to opencode using connection path
+        const connectionPath = useConnectionStore.getState().connections.find(c => c.id === connectionId)?.path
+        if (!connectionPath) return
+
+        const connectResult = await window.opencodeOps.connect(connectionPath, sessionId)
+        if (!connectResult.success || !connectResult.sessionId) return
+
+        useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
+        await window.db.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
+
+        // Set status tracking
+        messageSendTimes.set(sessionId, Date.now())
+        userExplicitSendTimes.set(sessionId, Date.now())
+        snapshotTokenBaseline(sessionId)
+        lastSendMode.set(sessionId, mode)
+        useWorktreeStatusStore.getState().setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
+
+        // Send prompt
+        if (promptText.trim()) {
+          const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
+          const modePrefix = mode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+            : mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
+            : ''
+          const fullPrompt = modePrefix + promptText.trim()
+
+          if (mode === 'super-plan') {
+            useSessionStore.getState().setSessionMode(sessionId, 'plan')
+          }
+
+          await window.opencodeOps.prompt(connectionPath, connectResult.sessionId, [
+            { type: 'text', text: fullPrompt }
+          ], effectiveModel)
+        }
+        return  // Done with connection path
+      } catch {
+        toast.error('Failed to start session')
+      } finally {
+        setIsSending(false)
+      }
+      return  // Don't fall through to worktree logic
+    }
 
     try {
       let worktreeId = selectedWorktreeId
@@ -483,11 +563,14 @@ export function WorktreePickerModal({
     updateTicket,
     ticket.id,
     ticket.title,
+    ticket.project_id,
     onSendComplete,
     onOpenChange,
     preAssignOnly,
     selectedModel,
-    autoResolvedModel
+    autoResolvedModel,
+    isConnectionMode,
+    connectionId
   ])
 
   // ── Mode toggle chip ────────────────────────────────────────────
@@ -506,7 +589,7 @@ export function WorktreePickerModal({
             {preAssignOnly ? 'Assign Worktree' : 'Start Session'}
           </DialogTitle>
           <DialogDescription>
-            {preAssignOnly ? 'Pre-assign a worktree to' : 'Pick a worktree for'}{' '}
+            {preAssignOnly ? 'Pre-assign a worktree to' : isConnectionMode ? 'Start a session for' : 'Pick a worktree for'}{' '}
             <span className="font-medium text-foreground">{ticket.title}</span>
           </DialogDescription>
           {/* Build/Plan chip toggle — below description to avoid overlapping the X close button */}
@@ -558,8 +641,8 @@ export function WorktreePickerModal({
         </DialogHeader>
 
         <div className="space-y-5">
-          {/* ── Worktree list ──────────────────────────────────── */}
-          <div className="space-y-2">
+          {/* ── Worktree list (hidden in connection mode) ────── */}
+          {!isConnectionMode && <div className="space-y-2">
             <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Worktree
             </label>
@@ -703,7 +786,7 @@ export function WorktreePickerModal({
                 )
               })}
             </div>
-          </div>
+          </div>}
 
           {/* ── Provider & Model picker (hidden in pre-assign mode) ── */}
           {!preAssignOnly && (

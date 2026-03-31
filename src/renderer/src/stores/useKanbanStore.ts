@@ -11,6 +11,7 @@ import {
   type KanbanSessionEvent
 } from './store-coordination'
 import { isPlanLike } from '../lib/constants'
+import { useConnectionStore } from './useConnectionStore'
 
 // ── Shared drag state (module-level, avoids DataTransfer issues in Electron) ──
 export interface KanbanDragData {
@@ -117,6 +118,11 @@ interface KanbanState {
   getTicketsForProject: (projectId: string) => KanbanTicket[]
   getTicketsByColumn: (projectId: string, column: KanbanTicketColumn) => KanbanTicket[]
   getArchivedTicketsByColumn: (projectId: string, column: KanbanTicketColumn) => KanbanTicket[]
+
+  // ── Connection-level accessors ──────────────────────────────────────
+  getConnectionProjectIds: (connectionId: string) => string[]
+  loadTicketsForConnection: (connectionId: string) => Promise<void>
+  getTicketsByColumnForConnection: (connectionId: string, column: KanbanTicketColumn) => KanbanTicket[]
 
   // ── Helpers ────────────────────────────────────────────────────────
   computeSortOrder: (tickets: KanbanTicket[], targetIndex: number) => number
@@ -528,6 +534,50 @@ export const useKanbanStore = create<KanbanState>()(
         return tickets
           .filter((t) => t.column === column && t.archived_at)
           .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? ''))
+      },
+
+      // ── getConnectionProjectIds ─────────────────────────────────
+      getConnectionProjectIds: (connectionId: string): string[] => {
+        const connection = useConnectionStore
+          .getState()
+          .connections.find((c) => c.id === connectionId)
+        if (!connection) return []
+        return [...new Set(connection.members.map((m) => m.project_id))]
+      },
+
+      // ── loadTicketsForConnection ────────────────────────────────
+      loadTicketsForConnection: async (connectionId: string) => {
+        const projectIds = get().getConnectionProjectIds(connectionId)
+        if (projectIds.length === 0) return
+
+        set({ isLoading: true })
+        try {
+          const includeArchived = (pid: string) => get().showArchivedByProject[pid] ?? false
+          const results = await Promise.all(
+            projectIds.map((pid) => window.kanban.ticket.getByProject(pid, includeArchived(pid)))
+          )
+
+          // Batch update all projects at once
+          set((state) => {
+            const newTickets = new Map(state.tickets)
+            projectIds.forEach((pid, i) => {
+              newTickets.set(pid, results[i])
+            })
+            return { tickets: newTickets }
+          })
+        } catch (error) {
+          console.error('Failed to load tickets for connection:', error)
+        } finally {
+          set({ isLoading: false })
+        }
+      },
+
+      // ── getTicketsByColumnForConnection ─────────────────────────
+      getTicketsByColumnForConnection: (connectionId: string, column: KanbanTicketColumn): KanbanTicket[] => {
+        const projectIds = get().getConnectionProjectIds(connectionId)
+        const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
+        merged.sort((a, b) => a.sort_order - b.sort_order)
+        return merged
       },
 
       // ── computeSortOrder ─────────────────────────────────────────
