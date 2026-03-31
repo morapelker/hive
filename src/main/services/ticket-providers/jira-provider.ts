@@ -82,8 +82,7 @@ export class JiraProvider implements TicketProvider {
     options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string },
     settings: Record<string, string>
   ): Promise<RemoteIssueListResult> {
-    const { email, token } = this.extractCredentials(settings)
-    const domain = repo // repo = Jira domain
+    const { domain, email, token } = this.extractCredentials(settings)
 
     if (!email || !token) {
       log.warn('Missing Jira credentials, skipping request')
@@ -164,8 +163,7 @@ export class JiraProvider implements TicketProvider {
     externalId: string,
     settings: Record<string, string>
   ): Promise<RemoteStatus[]> {
-    const { email, token } = this.extractCredentials(settings)
-    const domain = repo
+    const { domain, email, token } = this.extractCredentials(settings)
 
     if (!email || !token) {
       log.warn('Missing Jira credentials, skipping request')
@@ -208,8 +206,7 @@ export class JiraProvider implements TicketProvider {
     statusId: string,
     settings: Record<string, string>
   ): Promise<{ success: boolean; error?: string }> {
-    const { email, token } = this.extractCredentials(settings)
-    const domain = repo
+    const { domain, email, token } = this.extractCredentials(settings)
 
     if (!email || !token) {
       return { success: false, error: 'Jira email and API token are required.' }
@@ -252,7 +249,7 @@ export class JiraProvider implements TicketProvider {
     token: string
   } {
     return {
-      domain: (settings.jira_domain?.trim() ?? '').replace(/^https?:\/\//, ''),
+      domain: (settings.jira_domain?.trim() ?? '').replace(/^https?:\/\//, '').replace(/\/+$/, ''),
       email: settings.jira_email?.trim() ?? '',
       token: settings.jira_api_token?.trim() ?? ''
     }
