@@ -6,6 +6,7 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { WebSocketServer } from 'ws'
+import ip from 'ip'
 import type { GraphQLContext } from './context'
 import { mergeResolvers } from './resolvers'
 import { extractBearerToken, verifyApiKey, BruteForceTracker } from './plugins/auth'
@@ -13,43 +14,23 @@ import { handleAuthEndpoint } from './plugins/auth-endpoint'
 import { createStaticHandler } from './static-handler'
 
 /**
- * Check if an IP address is private/local (non-public).
- * Returns true for localhost, private networks, and link-local addresses.
+ * Check if an IP matches the ALLOWED_IP CIDR from environment.
+ * ALLOWED_IP=0.0.0.0/0 allows all IPs
+ * ALLOWED_IP=127.0.0.0/8 allows localhost
+ * ALLOWED_IP=192.168.0.0/16 allows 192.168.x.x
+ * If ALLOWED_IP is not set, defaults to localhost only.
  */
-function isPrivateIp(ip: string): boolean {
-  // Remove IPv6 prefix if present (::ffff: for IPv4-mapped IPv6)
-  const cleanIp = ip.replace(/^::ffff:/, '')
-
-  // IPv6 localhost
-  if (cleanIp === '::1' || cleanIp === '0:0:0:0:0:0:0:1') return true
-
-  // IPv6 unique local (fc00::/7)
-  if (cleanIp.startsWith('fc') || cleanIp.startsWith('fd')) return true
-
-  // IPv6 link-local (fe80::/10)
-  if (cleanIp.startsWith('fe8') || cleanIp.startsWith('fe9') || cleanIp.startsWith('fea') || cleanIp.startsWith('feb')) return true
-
-  // IPv4 localhost (127.0.0.0/8)
-  if (cleanIp.startsWith('127.')) return true
-
-  // IPv4 Class A private (10.0.0.0/8)
-  if (cleanIp.startsWith('10.')) return true
-
-  // IPv4 Class B private (172.16.0.0/12)
-  const parts = cleanIp.split('.')
-  if (parts.length === 4) {
-    const first = parseInt(parts[0], 10)
-    const second = parseInt(parts[1], 10)
-    if (first === 172 && second >= 16 && second <= 31) return true
-
-    // IPv4 Class C private (192.168.0.0/16)
-    if (first === 192 && second === 168) return true
-
-    // IPv4 link-local (169.254.0.0/16)
-    if (first === 169 && second === 254) return true
+function isIpAllowed(clientIp: string, allowedCidr?: string, forwardedFor?: string): boolean {
+  let cleanIp = clientIp.replace(/^::ffff:/, '')
+  if (forwardedFor) {
+    cleanIp = forwardedFor.split(',')[0].trim().replace(/^::ffff:/, '')
   }
 
-  return false
+  if (!allowedCidr) {
+    return ip.isLoopback(cleanIp)
+  }
+
+  return ip.cidrSubnet(allowedCidr).contains(cleanIp)
 }
 
 function loadSchemaSDL(): string {
@@ -91,6 +72,9 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
   const typeDefs = loadSchemaSDL()
   const resolvers = mergeResolvers()
   const schema = createSchema({ typeDefs, resolvers })
+
+  // Read ALLOWED_IP from environment for CIDR-based IP filtering
+  const allowedIp = process.env.ALLOWED_IP
 
   const yoga = createYoga({
     schema,
@@ -141,11 +125,12 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
     const url = req.url ?? '/'
     const pathname = url.split('?')[0]
 
-    // 0. Reject requests from public IPs (security: web mode is local-only)
+    // 0. Reject requests from IPs not matching ALLOWED_IP CIDR
     const clientIp = req.socket.remoteAddress || 'unknown'
-    if (!isPrivateIp(clientIp)) {
+    const forwardedFor = req.headers['x-forwarded-for'] as string | undefined
+    if (!isIpAllowed(clientIp, allowedIp, forwardedFor)) {
       res.writeHead(403, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Forbidden: Web mode is only accessible from local/private networks' }))
+      res.end(JSON.stringify({ error: 'Forbidden: IP not allowed' }))
       return
     }
 
@@ -205,8 +190,9 @@ export function startGraphQLServer(opts: ServerOptions): ServerHandle {
           (ctx.extra as { request: { socket: { remoteAddress?: string } } }).request.socket
             .remoteAddress || 'unknown'
 
-        // Reject connections from public IPs (security: web mode is local-only)
-        if (!isPrivateIp(clientIp)) return false
+        // Reject connections from IPs not matching ALLOWED_IP CIDR
+        const wsForwardedFor = ctx.extra.request.headers['x-forwarded-for'] as string | undefined
+        if (!isIpAllowed(clientIp, allowedIp, wsForwardedFor)) return false
 
         if (opts.bruteForce.isBlocked(clientIp)) return false
 

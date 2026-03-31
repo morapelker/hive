@@ -113,6 +113,7 @@
     "graphql-ws": "^6.0.7",
     "graphql-yoga": "^5.18.0",
     "highlight.js": "^11.11.1",
+    "ip": "^2.0.1",
     "lucide-react": "^0.468.0",
     "monaco-editor": "^0.55.1",
     "motion": "^12.38.0",
