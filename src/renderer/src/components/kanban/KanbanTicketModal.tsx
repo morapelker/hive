@@ -89,11 +89,12 @@ function findWorktreePathById(worktreeId: string): string | null {
   return findWorktreeById(worktreeId)?.path ?? null
 }
 
-/** Find a session by ID across worktree and connection session maps */
-function findSessionById(sessionId: string): {
-  session: { id: string; worktree_id: string | null; opencode_session_id: string | null; agent_sdk: string }
+/** Find a session by ID across worktree and connection session maps, with DB fallback */
+async function findSessionById(sessionId: string): Promise<{
+  session: { id: string; worktree_id: string | null; opencode_session_id: string | null; agent_sdk: string; model_provider_id: string | null; model_id: string | null; model_variant: string | null }
   worktreePath: string | null
-} | null {
+} | null> {
+  // Fast path: check in-memory store
   const sessionStore = useSessionStore.getState()
   for (const sessions of sessionStore.sessionsByWorktree.values()) {
     const found = sessions.find((s) => s.id === sessionId)
@@ -109,16 +110,36 @@ function findSessionById(sessionId: string): {
       return { session: found, worktreePath }
     }
   }
-  console.warn(`[KanbanTicketModal] findSessionById: session not found in any map — sessionId=${sessionId}`)
-  return null
+  // DB fallback: session not in store (worktree not currently selected)
+  const dbSession = await window.db.session.get(sessionId)
+  if (!dbSession) {
+    console.warn(`[KanbanTicketModal] findSessionById: session not found in store or DB — sessionId=${sessionId}`)
+    return null
+  }
+  const worktreePath = dbSession.worktree_id
+    ? (await window.db.worktree.get(dbSession.worktree_id))?.path ?? null
+    : null
+  return {
+    session: {
+      id: dbSession.id,
+      worktree_id: dbSession.worktree_id,
+      opencode_session_id: dbSession.opencode_session_id,
+      agent_sdk: dbSession.agent_sdk,
+      model_provider_id: dbSession.model_provider_id,
+      model_id: dbSession.model_id,
+      model_variant: dbSession.model_variant
+    },
+    worktreePath
+  }
 }
 
 /** Resolve the model to use for a session's next prompt (mirrors SessionView.getModelForRequests) */
 function resolveSessionModel(
-  sessionId: string
+  sessionId: string,
+  sessionDataFallback?: { model_provider_id: string | null; model_id: string | null; model_variant: string | null; agent_sdk: string }
 ): { providerID: string; modelID: string; variant?: string } | undefined {
+  // Primary: scan store (picks up mode-specific defaults applied by setSessionMode)
   const state = useSessionStore.getState()
-  // Search both worktree and connection session maps
   let session: { model_provider_id: string | null; model_id: string | null; model_variant: string | null; agent_sdk: string } | null = null
   for (const sessions of state.sessionsByWorktree.values()) {
     const found = sessions.find((s) => s.id === sessionId)
@@ -129,6 +150,10 @@ function resolveSessionModel(
       const found = sessions.find((s) => s.id === sessionId)
       if (found) { session = found; break }
     }
+  }
+  // Fallback: use provided session data when session not in store (DB fallback path)
+  if (!session && sessionDataFallback) {
+    session = sessionDataFallback
   }
   // Session has an explicit model — use it
   if (session?.model_provider_id && session.model_id) {
@@ -152,7 +177,7 @@ async function sendFollowupToSession(opts: {
   projectId: string
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
 }): Promise<void> {
-  const result = findSessionById(opts.sessionId)
+  const result = await findSessionById(opts.sessionId)
   if (!result) {
     console.error(`[KanbanTicketModal] sendFollowupToSession: session not found — sessionId=${opts.sessionId}`)
     throw new Error(`Session not found: ${opts.sessionId}`)
@@ -197,22 +222,33 @@ async function sendFollowupToSession(opts: {
     .setSessionStatus(opts.sessionId, isPlanLike(opts.followUpMode) ? 'planning' : 'working')
 
   // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
-  const model = resolveSessionModel(opts.sessionId)
+  const model = resolveSessionModel(opts.sessionId, result.session)
 
-  // Persist the followup message
-  window.kanban.followup.create({
-    ticket_id: opts.ticketId,
-    content: opts.prompt,
-    mode: opts.followUpMode,
-    session_id: opts.sessionId,
-    source: 'direct'
-  }).catch(() => {})
+  // Persist the followup message (non-critical — API may not be wired up yet)
+  try {
+    window.kanban?.followup?.create({
+      ticket_id: opts.ticketId,
+      content: opts.prompt,
+      mode: opts.followUpMode,
+      session_id: opts.sessionId,
+      source: 'direct'
+    })?.catch(() => {})
+  } catch {
+    // followup persistence is best-effort
+  }
+
+  // Ensure the session is loaded in the agent SDK implementer's in-memory map.
+  // SessionView does this on mount via initializeSession(), but the kanban
+  // followup path bypasses SessionView entirely.  Without this, the Claude Code
+  // implementer throws "session not found" because its Map was never populated.
+  await window.opencodeOps.reconnect(worktreePath, session.opencode_session_id, opts.sessionId)
 
   const promptResult = await window.opencodeOps.prompt(worktreePath, session.opencode_session_id, [
     { type: 'text', text: fullPrompt }
   ], model)
 
   if (promptResult && !promptResult.success) {
+    console.error(`[KanbanTicketModal] sendFollowupToSession: prompt returned failure — error=${promptResult.error}`)
     throw new Error(promptResult.error || 'Failed to send prompt to session')
   }
 
@@ -320,6 +356,12 @@ function KanbanTicketModalContent({
       [ticket.current_session_id]
     )
   )
+
+  useEffect(() => {
+    if (!ticket.current_session_id || sessionRecord) return
+    if (!ticket.worktree_id || !ticket.project_id) return
+    useSessionStore.getState().loadSessions(ticket.worktree_id, ticket.project_id)
+  }, [ticket.current_session_id, ticket.worktree_id, ticket.project_id, sessionRecord])
 
   const pendingPlan = useSessionStore(
     useCallback(
@@ -875,6 +917,7 @@ function PlanReviewModeContent({
         .getState()
         .setSessionStatus(sessionId, isPlanLike(followUpMode) ? 'planning' : 'working')
 
+      await updateTicket(ticket.id, ticket.project_id, { mode: followUpMode, plan_ready: false })
       toast.success('Followup sent')
       onClose()
 
@@ -885,12 +928,16 @@ function PlanReviewModeContent({
         ticketId: ticket.id,
         projectId: ticket.project_id,
         updateTicket
-      }).catch(() => {
-        toast.error('Failed to send followup')
+      }).catch((err) => {
+        console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
+        const reason = err instanceof Error ? err.message : String(err)
+        toast.error(`Failed to send followup: ${reason}`)
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       })
-    } catch {
-      toast.error('Failed to send followup')
+    } catch (err) {
+      console.error('[KanbanTicketModal] handleSendFollowup failed:', err)
+      const reason = err instanceof Error ? err.message : String(err)
+      toast.error(`Failed to send followup: ${reason}`)
     } finally {
       setIsSending(false)
     }
@@ -1340,6 +1387,7 @@ function ReviewModeContent({
         .getState()
         .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
 
+      await updateTicket(ticketId, projectId, { mode, plan_ready: false })
       toast.success('Followup sent')
       onClose()
 
@@ -1353,12 +1401,16 @@ function ReviewModeContent({
         ticketId,
         projectId,
         updateTicket
-      }).catch(() => {
-        toast.error('Failed to send followup')
+      }).catch((err) => {
+        console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
+        const reason = err instanceof Error ? err.message : String(err)
+        toast.error(`Failed to send followup: ${reason}`)
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       })
-    } catch {
-      toast.error('Failed to move ticket')
+    } catch (err) {
+      console.error('[KanbanTicketModal] handleSendFollowup failed:', err)
+      const reason = err instanceof Error ? err.message : String(err)
+      toast.error(`Failed to move ticket: ${reason}`)
     } finally {
       setIsSending(false)
     }
