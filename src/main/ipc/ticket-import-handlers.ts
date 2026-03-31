@@ -47,7 +47,7 @@ export function registerTicketImportHandlers(): void {
       _event,
       providerId: TicketProviderId,
       repo: string,
-      options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string },
+      options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
       settings: Record<string, string>
     ) => {
       const provider = getTicketProviderManager().getProvider(providerId)

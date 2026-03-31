@@ -76,7 +76,7 @@ export function createTicketImportAdapter() {
         `query ($input: ListIssuesInput!, $settings: String!) {
           ticketImportListIssues(input: $input, settings: $settings) {
             issues { externalId title body state url createdAt updatedAt }
-            hasNextPage totalCount
+            hasNextPage totalCount nextPageToken
           }
         }`,
         {

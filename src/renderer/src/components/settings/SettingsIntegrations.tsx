@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import { toast } from 'sonner'
+import { saveProviderSettingsToDatabase, loadProviderSettingsFromDatabase } from '@/lib/provider-settings'
 
 interface ProviderInfo {
   id: string
@@ -35,12 +36,12 @@ export function SettingsIntegrations() {
       }
       setSchemas(schemaMap)
 
-      // Load saved values from dedicated provider-settings key
+      // Load saved values from dedicated provider-settings key (fast initial read)
+      let saved: Record<string, string> = {}
       try {
         const raw = localStorage.getItem('hive-provider-settings')
         if (raw) {
           const parsed = JSON.parse(raw) as Record<string, string>
-          const saved: Record<string, string> = {}
           for (const fields of Object.values(schemaMap)) {
             for (const field of fields) {
               const val = parsed[field.key]
@@ -52,22 +53,48 @@ export function SettingsIntegrations() {
       } catch {
         // ignore
       }
+
+      // Load from database (source of truth) and merge — DB wins over localStorage
+      try {
+        const dbSettings = await loadProviderSettingsFromDatabase()
+        if (dbSettings) {
+          const merged = { ...saved }
+          for (const fields of Object.values(schemaMap)) {
+            for (const field of fields) {
+              const dbVal = dbSettings[field.key]
+              if (typeof dbVal === 'string') merged[field.key] = dbVal
+            }
+          }
+          setValues(merged)
+          // Sync localStorage from database so getProviderSettings() stays current
+          localStorage.setItem('hive-provider-settings', JSON.stringify(merged))
+        } else if (Object.keys(saved).length > 0) {
+          // No DB values yet — seed the database from localStorage
+          await saveProviderSettingsToDatabase(saved)
+        }
+      } catch {
+        // ignore — localStorage values are already loaded
+      }
     })
   }, [])
 
   const handleFieldChange = (key: string, value: string) => {
-    setValues((prev) => ({ ...prev, [key]: value }))
-    setTestResult({})
+    setValues((prev) => {
+      const updated = { ...prev, [key]: value }
 
-    // Persist to dedicated localStorage key (separate from Zustand's hive-settings)
-    try {
-      const raw = localStorage.getItem('hive-provider-settings') ?? '{}'
-      const parsed = JSON.parse(raw) as Record<string, string>
-      parsed[key] = value
-      localStorage.setItem('hive-provider-settings', JSON.stringify(parsed))
-    } catch {
-      // ignore
-    }
+      // Persist to dedicated localStorage key (separate from Zustand's hive-settings)
+      try {
+        localStorage.setItem('hive-provider-settings', JSON.stringify(updated))
+      } catch {
+        // ignore
+      }
+
+      // Persist to SQLite database (durable source of truth)
+      saveProviderSettingsToDatabase(updated)
+
+      return updated
+    })
+    setTestResult({})
   }
 
   const handleTest = async (providerId: string) => {
