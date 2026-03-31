@@ -1,4 +1,4 @@
-import { useMemo, memo } from 'react'
+import { useMemo, memo, forwardRef, useImperativeHandle } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertCircle, RefreshCw } from 'lucide-react'
 import { MessageRenderer } from './MessageRenderer'
@@ -40,14 +40,18 @@ export interface VirtualizedMessageListProps {
   queuedMessages: { id: string; content: string }[]
   completionEntry: { word?: string; durationMs?: number } | null
   scrollElement: HTMLDivElement | null
-  messagesEndRef: React.RefObject<HTMLDivElement | null>
+}
+
+export interface VirtualizedMessageListHandle {
+  scrollToEnd: (behavior?: ScrollBehavior) => void
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export const VirtualizedMessageList = memo(function VirtualizedMessageList({
+export const VirtualizedMessageList = memo(
+  forwardRef<VirtualizedMessageListHandle, VirtualizedMessageListProps>(function VirtualizedMessageList({
   messages,
   streamingMessage,
   isStreaming,
@@ -65,9 +69,8 @@ export const VirtualizedMessageList = memo(function VirtualizedMessageList({
   hasVisibleWritingCursor,
   queuedMessages,
   completionEntry,
-  scrollElement,
-  messagesEndRef
-}: VirtualizedMessageListProps): React.JSX.Element {
+  scrollElement
+}: VirtualizedMessageListProps, ref): React.JSX.Element {
   // Build the flat item array that drives the virtualizer
   const items = useMemo(() => {
     const result: VirtualItem[] = []
@@ -132,6 +135,14 @@ export const VirtualizedMessageList = memo(function VirtualizedMessageList({
     estimateSize: () => 150,
     overscan: 5
   })
+
+  useImperativeHandle(ref, () => ({
+    scrollToEnd: (behavior?: ScrollBehavior) => {
+      if (items.length > 0) {
+        virtualizer.scrollToIndex(items.length - 1, { align: 'end', behavior: behavior ?? 'instant' })
+      }
+    }
+  }), [virtualizer, items.length])
 
   // Render a single virtual item
   const renderItem = (item: VirtualItem) => {
@@ -291,7 +302,6 @@ export const VirtualizedMessageList = memo(function VirtualizedMessageList({
           )
         })}
       </div>
-      <div ref={messagesEndRef} />
     </div>
   )
-})
+}))

@@ -530,7 +530,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const inlineConnectionSessionId = useSessionStore((s) => s.inlineConnectionSessionId)
 
-  // useShallow for Map/Set-valued state (avoids reference-change re-renders when grouping)
+  // useShallow: subscribes to these 5 fields only, re-renders when any field reference changes
   const { sessionsByWorktree, tabOrderByWorktree, sessionsByConnection, tabOrderByConnection, orphanedSessions } = useSessionStore(
     useShallow((s) => ({
       sessionsByWorktree: s.sessionsByWorktree,
