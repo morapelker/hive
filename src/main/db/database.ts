@@ -99,7 +99,8 @@ export class DatabaseService {
       pinned: (row.pinned as number) ?? 0,
       context: (row.context as string) ?? null,
       github_pr_number: (row.github_pr_number as number) ?? null,
-      github_pr_url: (row.github_pr_url as string) ?? null
+      github_pr_url: (row.github_pr_url as string) ?? null,
+      base_branch: (row.base_branch as string) ?? null
     } as Worktree
   }
 
@@ -530,13 +531,14 @@ export class DatabaseService {
       context: null,
       github_pr_number: null,
       github_pr_url: null,
+      base_branch: data.base_branch ?? null,
       created_at: now,
       last_accessed_at: now
     }
 
     db.prepare(
-      `INSERT INTO worktrees (id, project_id, name, branch_name, path, status, is_default, branch_renamed, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO worktrees (id, project_id, name, branch_name, path, status, is_default, branch_renamed, base_branch, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       worktree.id,
       worktree.project_id,
@@ -546,6 +548,7 @@ export class DatabaseService {
       worktree.status,
       isDefault ? 1 : 0,
       worktree.branch_renamed,
+      worktree.base_branch,
       worktree.created_at,
       worktree.last_accessed_at
     )

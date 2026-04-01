@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 16
+export const CURRENT_SCHEMA_VERSION = 17
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -395,5 +395,11 @@ export const MIGRATIONS: Migration[] = [
       DROP INDEX IF EXISTS idx_worktrees_project_status;
       DROP INDEX IF EXISTS idx_worktrees_status_message;
     `
+  },
+  {
+    version: 17,
+    name: 'add_worktree_base_branch',
+    up: `ALTER TABLE worktrees ADD COLUMN base_branch TEXT DEFAULT NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]
