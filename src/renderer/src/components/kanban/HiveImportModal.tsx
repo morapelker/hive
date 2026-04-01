@@ -43,7 +43,7 @@ export function HiveImportModal({
 
   // Determine which tickets are new vs updates by checking existing tickets in the store
   const ticketStatuses = useMemo(() => {
-    const projectTickets = existingTickets[projectId] ?? []
+    const projectTickets = existingTickets.get(projectId) ?? []
     const existingIdSet = new Set(projectTickets.map((t) => t.id))
     return tickets.map((t) => ({
       ...t,
