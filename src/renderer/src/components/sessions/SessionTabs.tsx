@@ -23,7 +23,9 @@ import {
   TerminalSquare,
   Download,
   Github,
-  ClipboardList
+  ClipboardList,
+  Upload,
+  FileJson
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -44,6 +46,7 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { ImportTicketsModal } from '@/components/kanban/ImportTicketsModal'
 import { JiraImportModal } from '@/components/kanban/JiraImportModal'
+import { HiveImportModal } from '@/components/kanban/HiveImportModal'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useHintStore } from '@/stores/useHintStore'
 import { cn, parseColorQuad } from '@/lib/utils'
@@ -62,7 +65,8 @@ import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
-  DropdownMenuItem
+  DropdownMenuItem,
+  DropdownMenuSeparator
 } from '@/components/ui/dropdown-menu'
 
 interface SessionTabProps {
@@ -524,6 +528,8 @@ export function SessionTabs(): React.JSX.Element | null {
   const [isTicketCreateOpen, setIsTicketCreateOpen] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [showJiraImport, setShowJiraImport] = useState(false)
+  const [showHiveImport, setShowHiveImport] = useState(false)
+  const [hiveImportTickets, setHiveImportTickets] = useState<Array<{ id: string; title: string; description?: string | null; attachments?: unknown[]; column?: string }>>([])
 
   // Individual selectors for state values
   const activeWorktreeId = useSessionStore((s) => s.activeWorktreeId)
@@ -1299,6 +1305,31 @@ export function SessionTabs(): React.JSX.Element | null {
               <ClipboardList className="h-4 w-4 mr-2" />
               Import from Jira
             </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={async () => {
+                const result = await window.kanban.board.openImportFile()
+                if (result) {
+                  setHiveImportTickets(result.tickets)
+                  setShowHiveImport(true)
+                }
+              }}
+            >
+              <FileJson className="h-4 w-4 mr-2" />
+              Import from Hive JSON
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={async () => {
+                if (!project) return
+                const result = await window.kanban.board.export(project.id, project.name)
+                if (result.success) {
+                  toast.success(`Exported ${result.ticketCount} tickets`)
+                }
+              }}
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              Export Board
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       )}
@@ -1323,6 +1354,15 @@ export function SessionTabs(): React.JSX.Element | null {
             open={showJiraImport}
             onOpenChange={setShowJiraImport}
             projectId={project.id}
+          />
+          <HiveImportModal
+            open={showHiveImport}
+            onOpenChange={(open) => {
+              setShowHiveImport(open)
+              if (!open) setHiveImportTickets([])
+            }}
+            projectId={project.id}
+            tickets={hiveImportTickets}
           />
         </>
       )}

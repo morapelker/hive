@@ -1621,7 +1621,7 @@ export class DatabaseService {
     const db = this.getDb()
     const now = new Date().toISOString()
 
-    const id = randomUUID()
+    const id = data.id ?? randomUUID()
     const column = data.column ?? 'todo'
     let sortOrder: number
     if (data.sort_order != null) {

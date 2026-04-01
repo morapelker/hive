@@ -1789,6 +1789,31 @@ const kanban = {
   simpleMode: {
     toggle: (projectId: string, enabled: boolean) =>
       ipcRenderer.invoke('kanban:simpleMode:toggle', projectId, enabled)
+  },
+  board: {
+    export: (projectId: string, projectName: string): Promise<{ success: boolean; ticketCount: number; path?: string }> =>
+      ipcRenderer.invoke('kanban:board:export', projectId, projectName),
+    openImportFile: (): Promise<{
+      tickets: Array<{
+        id: string
+        title: string
+        description?: string | null
+        attachments?: unknown[]
+        column?: string
+      }>
+      projectName?: string
+    } | null> => ipcRenderer.invoke('kanban:board:openImportFile'),
+    importTickets: (
+      projectId: string,
+      tickets: Array<{
+        id: string
+        title: string
+        description?: string | null
+        attachments?: unknown[]
+        column?: string
+      }>
+    ): Promise<{ created: number; updated: number }> =>
+      ipcRenderer.invoke('kanban:board:importTickets', projectId, tickets)
   }
 }
 

@@ -1307,6 +1307,29 @@ declare global {
       simpleMode: {
         toggle: (projectId: string, enabled: boolean) => Promise<void>
       }
+      board: {
+        export: (projectId: string, projectName: string) => Promise<{ success: boolean; ticketCount: number; path?: string }>
+        openImportFile: () => Promise<{
+          tickets: Array<{
+            id: string
+            title: string
+            description?: string | null
+            attachments?: unknown[]
+            column?: string
+          }>
+          projectName?: string
+        } | null>
+        importTickets: (
+          projectId: string,
+          tickets: Array<{
+            id: string
+            title: string
+            description?: string | null
+            attachments?: unknown[]
+            column?: string
+          }>
+        ) => Promise<{ created: number; updated: number }>
+      }
     }
     ticketImport: {
       listProviders: () => Promise<Array<{ id: string; name: string; icon: string }>>

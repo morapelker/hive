@@ -353,6 +353,7 @@ export interface KanbanTicket {
 }
 
 export interface KanbanTicketCreate {
+  id?: string
   project_id: string
   title: string
   description?: string | null
