@@ -897,6 +897,32 @@ const gitOps = {
     conflicts?: string[]
   }> => ipcRenderer.invoke('git:merge', worktreePath, sourceBranch),
 
+  // Abort an in-progress merge
+  mergeAbort: (
+    worktreePath: string
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => ipcRenderer.invoke('git:mergeAbort', worktreePath),
+
+  // Check if a worktree has uncommitted changes
+  hasUncommittedChanges: (
+    worktreePath: string
+  ): Promise<boolean> => ipcRenderer.invoke('git:hasUncommittedChanges', worktreePath),
+
+  // Get branch divergence stats vs base branch
+  branchDiffShortStat: (
+    worktreePath: string,
+    baseBranch: string
+  ): Promise<{
+    success: boolean
+    filesChanged: number
+    insertions: number
+    deletions: number
+    commitsAhead: number
+    error?: string
+  }> => ipcRenderer.invoke('git:branchDiffShortStat', worktreePath, baseBranch),
+
   // Get raw file content from disk
   getFileContent: (
     worktreePath: string,
@@ -1784,11 +1810,38 @@ const kanban = {
     reorder: (id: string, sortOrder: number) =>
       ipcRenderer.invoke('kanban:ticket:reorder', id, sortOrder),
     getBySession: (sessionId: string) =>
-      ipcRenderer.invoke('kanban:ticket:getBySession', sessionId)
+      ipcRenderer.invoke('kanban:ticket:getBySession', sessionId),
+    addTokens: (id: string, tokens: number) =>
+      ipcRenderer.invoke('kanban:ticket:addTokens', id, tokens),
   },
   simpleMode: {
     toggle: (projectId: string, enabled: boolean) =>
       ipcRenderer.invoke('kanban:simpleMode:toggle', projectId, enabled)
+  },
+  board: {
+    export: (projectId: string, projectName: string): Promise<{ success: boolean; ticketCount: number; path?: string }> =>
+      ipcRenderer.invoke('kanban:board:export', projectId, projectName),
+    openImportFile: (): Promise<{
+      tickets: Array<{
+        id: string
+        title: string
+        description?: string | null
+        attachments?: unknown[]
+        column?: string
+      }>
+      projectName?: string
+    } | null> => ipcRenderer.invoke('kanban:board:openImportFile'),
+    importTickets: (
+      projectId: string,
+      tickets: Array<{
+        id: string
+        title: string
+        description?: string | null
+        attachments?: unknown[]
+        column?: string
+      }>
+    ): Promise<{ created: number; updated: number }> =>
+      ipcRenderer.invoke('kanban:board:importTickets', projectId, tickets)
   }
 }
 
@@ -1812,20 +1865,21 @@ const ticketImport = {
   listIssues: (
     providerId: string,
     repo: string,
-    options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string },
+    options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
     settings: Record<string, string>
   ): Promise<{
     issues: Array<{
       externalId: string
       title: string
       body: string | null
-      state: 'open' | 'closed'
+      state: 'open' | 'closed' | 'in_progress'
       url: string
       createdAt: string
       updatedAt: string
     }>
     hasNextPage: boolean
     totalCount: number
+    nextPageToken?: string
   }> => ipcRenderer.invoke('ticketImport:listIssues', providerId, repo, options, settings),
   importIssues: (
     providerId: string,

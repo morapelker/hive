@@ -26,6 +26,7 @@ interface GqlKanbanTicket {
   externalProvider: string | null
   externalId: string | null
   externalUrl: string | null
+  totalTokens: number
 }
 
 interface GqlTicketFollowupMessage {
@@ -53,7 +54,8 @@ function mapTicket(t: GqlKanbanTicket) {
     archived_at: t.archived ? t.updatedAt : null,
     external_provider: t.externalProvider ?? null,
     external_id: t.externalId ?? null,
-    external_url: t.externalUrl ?? null
+    external_url: t.externalUrl ?? null,
+    total_tokens: t.totalTokens ?? 0
   }
 }
 
@@ -74,7 +76,7 @@ function mapFollowup(f: GqlTicketFollowupMessage) {
   }
 }
 
-const TICKET_FIELDS = `id projectId sessionId worktreeId title description column sortOrder archived createdAt updatedAt externalProvider externalId externalUrl`
+const TICKET_FIELDS = `id projectId sessionId worktreeId title description column sortOrder archived createdAt updatedAt externalProvider externalId externalUrl totalTokens`
 const FOLLOWUP_FIELDS = `id ticketId message createdAt`
 
 export function createKanbanAdapter(): KanbanApi {
@@ -207,6 +209,16 @@ export function createKanbanAdapter(): KanbanApi {
           { sessionId }
         )
         return result.kanbanTicketsBySession.map(mapTicket)
+      },
+
+      async addTokens(id, tokens) {
+        const result = await graphqlQuery<{ kanbanAddTicketTokens: GqlKanbanTicket | null }>(
+          `mutation ($id: ID!, $tokens: Int!) {
+            kanbanAddTicketTokens(id: $id, tokens: $tokens) { ${TICKET_FIELDS} }
+          }`,
+          { id, tokens }
+        )
+        return mapTicketOrNull(result.kanbanAddTicketTokens)
       }
     },
 

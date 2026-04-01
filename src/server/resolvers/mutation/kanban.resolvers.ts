@@ -18,7 +18,8 @@ function mapKanbanTicket(row: any) {
     sortOrder: row.sort_order,
     archived: !!row.archived_at,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    totalTokens: row.total_tokens ?? 0
   }
 }
 
@@ -86,6 +87,11 @@ export const kanbanMutationResolvers: Resolvers = {
     kanbanReorderTicket: async (_parent, { id, sortOrder }, ctx) => {
       ctx.db.reorderKanbanTicket(id, sortOrder)
       return { success: true }
+    },
+
+    kanbanAddTicketTokens: async (_parent, { id, tokens }, ctx) => {
+      ctx.db.addTicketTokens(id, tokens)
+      return mapKanbanTicket(ctx.db.getKanbanTicket(id))
     },
 
     kanbanToggleSimpleMode: async (_parent, { projectId, enabled }, ctx) => {

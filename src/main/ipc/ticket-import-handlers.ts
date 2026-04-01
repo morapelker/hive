@@ -47,7 +47,7 @@ export function registerTicketImportHandlers(): void {
       _event,
       providerId: TicketProviderId,
       repo: string,
-      options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string },
+      options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
       settings: Record<string, string>
     ) => {
       const provider = getTicketProviderManager().getProvider(providerId)
@@ -75,7 +75,9 @@ export function registerTicketImportHandlers(): void {
           continue
         }
 
-        const column = issue.state === 'closed' ? 'done' : 'todo'
+        const column = issue.state === 'closed' ? 'done'
+          : issue.state === 'in_progress' ? 'in_progress'
+          : 'todo'
         db.createKanbanTicket({
           project_id: projectId,
           title: issue.title,

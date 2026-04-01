@@ -474,6 +474,62 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 
+  // Abort an in-progress merge
+  ipcMain.handle(
+    'git:mergeAbort',
+    async (_event, worktreePath: string): Promise<GitOperationResult> => {
+      log.info('Aborting merge', { worktreePath })
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.mergeAbort()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error('Failed to abort merge', error instanceof Error ? error : new Error(message), {
+          worktreePath
+        })
+        return { success: false, error: message }
+      }
+    }
+  )
+
+  // Check if a worktree has uncommitted changes (lightweight boolean check)
+  ipcMain.handle(
+    'git:hasUncommittedChanges',
+    async (_event, worktreePath: string): Promise<boolean> => {
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.hasUncommittedChanges()
+      } catch {
+        return false
+      }
+    }
+  )
+
+  // Get branch divergence stats (files changed, insertions, deletions, commits ahead)
+  ipcMain.handle(
+    'git:branchDiffShortStat',
+    async (_event, worktreePath: string, baseBranch: string): Promise<{
+      success: boolean
+      filesChanged: number
+      insertions: number
+      deletions: number
+      commitsAhead: number
+      error?: string
+    }> => {
+      try {
+        const gitService = createGitService(worktreePath)
+        return await gitService.getBranchDiffShortStat(baseBranch)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error('Failed to get branch diff stat', error instanceof Error ? error : new Error(message), {
+          worktreePath,
+          baseBranch
+        })
+        return { success: false, filesChanged: 0, insertions: 0, deletions: 0, commitsAhead: 0, error: message }
+      }
+    }
+  )
+
   // Get remote URL for a worktree
   ipcMain.handle(
     'git:getRemoteUrl',

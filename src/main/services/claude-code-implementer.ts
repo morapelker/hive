@@ -2786,6 +2786,20 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               }
             }
           })
+        } else if (subtype === 'status') {
+          const status = (msg as Record<string, unknown>).status as string | undefined
+          if (status === 'compacting') {
+            this.sendToRenderer('opencode:stream', {
+              type: 'message.part.updated',
+              sessionId: hiveSessionId,
+              childSessionId,
+              data: {
+                part: {
+                  type: 'compaction_started'
+                }
+              }
+            })
+          }
         }
         break
       }

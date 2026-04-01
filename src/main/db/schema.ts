@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 14
+export const CURRENT_SCHEMA_VERSION = 18
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -375,5 +375,37 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE kanban_tickets DROP COLUMN external_id;
       ALTER TABLE kanban_tickets DROP COLUMN external_provider;
     `
+  },
+  {
+    version: 16,
+    name: 'add_composite_performance_indexes',
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_sessions_worktree_status
+        ON sessions(worktree_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sessions_connection_status
+        ON sessions(connection_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_worktrees_project_status
+        ON worktrees(project_id, status, last_accessed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_worktrees_status_message
+        ON worktrees(status, last_message_at DESC);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_sessions_worktree_status;
+      DROP INDEX IF EXISTS idx_sessions_connection_status;
+      DROP INDEX IF EXISTS idx_worktrees_project_status;
+      DROP INDEX IF EXISTS idx_worktrees_status_message;
+    `
+  },
+  {
+    version: 17,
+    name: 'add_worktree_base_branch',
+    up: `ALTER TABLE worktrees ADD COLUMN base_branch TEXT DEFAULT NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 18,
+    name: 'add_ticket_total_tokens',
+    up: `ALTER TABLE kanban_tickets ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

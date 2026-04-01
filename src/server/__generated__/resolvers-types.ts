@@ -52,6 +52,12 @@ export type AttachmentInput = {
   url: Scalars['String']['input'];
 };
 
+export type AuthResult = {
+  __typename?: 'AuthResult';
+  error?: Maybe<Scalars['String']['output']>;
+  success: Scalars['Boolean']['output'];
+};
+
 export type CommandApprovalReplyInput = {
   approved: Scalars['Boolean']['input'];
   hiveSessionId: Scalars['String']['input'];
@@ -173,6 +179,11 @@ export type DeleteWorktreeInput = {
   projectPath: Scalars['String']['input'];
   worktreeId: Scalars['ID']['input'];
   worktreePath: Scalars['String']['input'];
+};
+
+export type DetectRepoResult = {
+  __typename?: 'DetectRepoResult';
+  repo?: Maybe<Scalars['String']['output']>;
 };
 
 export type DetectedApp = {
@@ -468,9 +479,33 @@ export type GitStatusChangedEvent = {
   worktreePath: Scalars['String']['output'];
 };
 
+export type ImportIssueInput = {
+  body?: InputMaybe<Scalars['String']['input']>;
+  externalId: Scalars['String']['input'];
+  state: Scalars['String']['input'];
+  title: Scalars['String']['input'];
+  url: Scalars['String']['input'];
+};
+
+export type ImportIssuesInput = {
+  issues: Array<ImportIssueInput>;
+  projectId: Scalars['String']['input'];
+  providerId: Scalars['String']['input'];
+  repo: Scalars['String']['input'];
+};
+
+export type ImportResult = {
+  __typename?: 'ImportResult';
+  imported: Array<Scalars['String']['output']>;
+  skipped: Array<Scalars['String']['output']>;
+};
+
 export type KanbanCreateTicketInput = {
   column: KanbanTicketColumn;
   description?: InputMaybe<Scalars['String']['input']>;
+  externalId?: InputMaybe<Scalars['String']['input']>;
+  externalProvider?: InputMaybe<Scalars['String']['input']>;
+  externalUrl?: InputMaybe<Scalars['String']['input']>;
   projectId: Scalars['String']['input'];
   sessionId?: InputMaybe<Scalars['String']['input']>;
   sortOrder?: InputMaybe<Scalars['Float']['input']>;
@@ -484,11 +519,15 @@ export type KanbanTicket = {
   column: KanbanTicketColumn;
   createdAt: Scalars['String']['output'];
   description?: Maybe<Scalars['String']['output']>;
+  externalId?: Maybe<Scalars['String']['output']>;
+  externalProvider?: Maybe<Scalars['String']['output']>;
+  externalUrl?: Maybe<Scalars['String']['output']>;
   id: Scalars['String']['output'];
   projectId: Scalars['String']['output'];
   sessionId?: Maybe<Scalars['String']['output']>;
   sortOrder: Scalars['Float']['output'];
   title: Scalars['String']['output'];
+  totalTokens: Scalars['Int']['output'];
   updatedAt: Scalars['String']['output'];
   worktreeId?: Maybe<Scalars['String']['output']>;
 };
@@ -506,6 +545,15 @@ export type KanbanUpdateTicketInput = {
   sortOrder?: InputMaybe<Scalars['Float']['input']>;
   title?: InputMaybe<Scalars['String']['input']>;
   worktreeId?: InputMaybe<Scalars['String']['input']>;
+};
+
+export type ListIssuesInput = {
+  page: Scalars['Int']['input'];
+  perPage: Scalars['Int']['input'];
+  providerId: Scalars['String']['input'];
+  repo: Scalars['String']['input'];
+  search?: InputMaybe<Scalars['String']['input']>;
+  state: Scalars['String']['input'];
 };
 
 export type MessagePartInput = {
@@ -565,6 +613,7 @@ export type Mutation = {
   gitUnwatchWorktree: SuccessResult;
   gitWatchBranch: SuccessResult;
   gitWatchWorktree: SuccessResult;
+  kanbanAddTicketTokens?: Maybe<KanbanTicket>;
   kanbanArchiveAllDone: SuccessResult;
   kanbanArchiveTicket?: Maybe<KanbanTicket>;
   kanbanCreateTicket: KanbanTicket;
@@ -613,6 +662,9 @@ export type Mutation = {
   terminalDestroy: Scalars['Boolean']['output'];
   terminalResize: Scalars['Boolean']['output'];
   terminalWrite: Scalars['Boolean']['output'];
+  ticketImportAuthenticate: AuthResult;
+  ticketImportIssues: ImportResult;
+  ticketImportUpdateRemoteStatus: AuthResult;
   touchProject: Scalars['Boolean']['output'];
   touchWorktree: Scalars['Boolean']['output'];
   updateProject?: Maybe<Project>;
@@ -847,6 +899,12 @@ export type MutationGitWatchBranchArgs = {
 
 export type MutationGitWatchWorktreeArgs = {
   worktreePath: Scalars['String']['input'];
+};
+
+
+export type MutationKanbanAddTicketTokensArgs = {
+  id: Scalars['ID']['input'];
+  tokens: Scalars['Int']['input'];
 };
 
 
@@ -1107,6 +1165,23 @@ export type MutationTerminalResizeArgs = {
 export type MutationTerminalWriteArgs = {
   data: Scalars['String']['input'];
   worktreeId: Scalars['ID']['input'];
+};
+
+
+export type MutationTicketImportAuthenticateArgs = {
+  providerId: Scalars['String']['input'];
+  settings: Scalars['String']['input'];
+};
+
+
+export type MutationTicketImportIssuesArgs = {
+  input: ImportIssuesInput;
+};
+
+
+export type MutationTicketImportUpdateRemoteStatusArgs = {
+  input: UpdateRemoteStatusInput;
+  settings: Scalars['String']['input'];
 };
 
 
@@ -1484,6 +1559,11 @@ export type Query = {
   systemDetectAgentSdks: AgentSdkDetection;
   systemLogDir: Scalars['String']['output'];
   systemServerStatus: ServerStatus;
+  ticketImportAvailableStatuses: Array<RemoteStatus>;
+  ticketImportDetectRepo: DetectRepoResult;
+  ticketImportListIssues: RemoteIssueListResult;
+  ticketImportProviders: Array<TicketProviderInfo>;
+  ticketImportSettingsSchema: Array<SettingsFieldInfo>;
   usageFetch: UsageResult;
   usageFetchOpenai: UsageResult;
   worktree?: Maybe<Worktree>;
@@ -1784,6 +1864,31 @@ export type QuerySpaceProjectIdsArgs = {
 };
 
 
+export type QueryTicketImportAvailableStatusesArgs = {
+  externalId: Scalars['String']['input'];
+  providerId: Scalars['String']['input'];
+  repo: Scalars['String']['input'];
+  settings: Scalars['String']['input'];
+};
+
+
+export type QueryTicketImportDetectRepoArgs = {
+  projectPath: Scalars['String']['input'];
+  providerId: Scalars['String']['input'];
+};
+
+
+export type QueryTicketImportListIssuesArgs = {
+  input: ListIssuesInput;
+  settings: Scalars['String']['input'];
+};
+
+
+export type QueryTicketImportSettingsSchemaArgs = {
+  providerId: Scalars['String']['input'];
+};
+
+
 export type QueryUsageFetchArgs = {
   providers?: InputMaybe<Array<Scalars['String']['input']>>;
 };
@@ -1812,6 +1917,30 @@ export type QuestionReplyInput = {
   answers: Array<Array<Scalars['String']['input']>>;
   requestId: Scalars['String']['input'];
   worktreePath?: InputMaybe<Scalars['String']['input']>;
+};
+
+export type RemoteIssue = {
+  __typename?: 'RemoteIssue';
+  body?: Maybe<Scalars['String']['output']>;
+  createdAt: Scalars['String']['output'];
+  externalId: Scalars['String']['output'];
+  state: Scalars['String']['output'];
+  title: Scalars['String']['output'];
+  updatedAt: Scalars['String']['output'];
+  url: Scalars['String']['output'];
+};
+
+export type RemoteIssueListResult = {
+  __typename?: 'RemoteIssueListResult';
+  hasNextPage: Scalars['Boolean']['output'];
+  issues: Array<RemoteIssue>;
+  totalCount: Scalars['Int']['output'];
+};
+
+export type RemoteStatus = {
+  __typename?: 'RemoteStatus';
+  id: Scalars['String']['output'];
+  label: Scalars['String']['output'];
 };
 
 export type RenameBranchInput = {
@@ -1944,6 +2073,15 @@ export type SettingEntry = {
   value: Scalars['String']['output'];
 };
 
+export type SettingsFieldInfo = {
+  __typename?: 'SettingsFieldInfo';
+  key: Scalars['String']['output'];
+  label: Scalars['String']['output'];
+  placeholder?: Maybe<Scalars['String']['output']>;
+  required: Scalars['Boolean']['output'];
+  type: Scalars['String']['output'];
+};
+
 export type Space = {
   __typename?: 'Space';
   createdAt: Scalars['String']['output'];
@@ -2028,6 +2166,13 @@ export type TerminalExitEvent = {
   worktreeId: Scalars['ID']['output'];
 };
 
+export type TicketProviderInfo = {
+  __typename?: 'TicketProviderInfo';
+  icon: Scalars['String']['output'];
+  id: Scalars['String']['output'];
+  name: Scalars['String']['output'];
+};
+
 export type UpdateProjectInput = {
   archiveScript?: InputMaybe<Scalars['String']['input']>;
   autoAssignPort?: InputMaybe<Scalars['Boolean']['input']>;
@@ -2039,6 +2184,13 @@ export type UpdateProjectInput = {
   runScript?: InputMaybe<Scalars['String']['input']>;
   setupScript?: InputMaybe<Scalars['String']['input']>;
   tags?: InputMaybe<Array<Scalars['String']['input']>>;
+};
+
+export type UpdateRemoteStatusInput = {
+  externalId: Scalars['String']['input'];
+  providerId: Scalars['String']['input'];
+  repo: Scalars['String']['input'];
+  statusId: Scalars['String']['input'];
 };
 
 export type UpdateSessionInput = {
@@ -2202,6 +2354,7 @@ export type ResolversTypes = ResolversObject<{
   AppPaths: ResolverTypeWrapper<AppPaths>;
   Attachment: ResolverTypeWrapper<Attachment>;
   AttachmentInput: AttachmentInput;
+  AuthResult: ResolverTypeWrapper<AuthResult>;
   Boolean: ResolverTypeWrapper<Scalars['Boolean']['output']>;
   CommandApprovalReplyInput: CommandApprovalReplyInput;
   Connection: ResolverTypeWrapper<Connection>;
@@ -2217,6 +2370,7 @@ export type ResolversTypes = ResolversObject<{
   CreateSpaceInput: CreateSpaceInput;
   CreateWorktreeInput: CreateWorktreeInput;
   DeleteWorktreeInput: DeleteWorktreeInput;
+  DetectRepoResult: ResolverTypeWrapper<DetectRepoResult>;
   DetectedApp: ResolverTypeWrapper<DetectedApp>;
   DuplicateWorktreeInput: DuplicateWorktreeInput;
   FileReadImageResult: ResolverTypeWrapper<FileReadImageResult>;
@@ -2259,12 +2413,16 @@ export type ResolversTypes = ResolversObject<{
   GitRemoteUrlResult: ResolverTypeWrapper<GitRemoteUrlResult>;
   GitStatusChangedEvent: ResolverTypeWrapper<GitStatusChangedEvent>;
   ID: ResolverTypeWrapper<Scalars['ID']['output']>;
+  ImportIssueInput: ImportIssueInput;
+  ImportIssuesInput: ImportIssuesInput;
+  ImportResult: ResolverTypeWrapper<ImportResult>;
   Int: ResolverTypeWrapper<Scalars['Int']['output']>;
   JSON: ResolverTypeWrapper<Scalars['JSON']['output']>;
   KanbanCreateTicketInput: KanbanCreateTicketInput;
   KanbanTicket: ResolverTypeWrapper<KanbanTicket>;
   KanbanTicketColumn: KanbanTicketColumn;
   KanbanUpdateTicketInput: KanbanUpdateTicketInput;
+  ListIssuesInput: ListIssuesInput;
   MessagePartInput: MessagePartInput;
   ModelInput: ModelInput;
   Mutation: ResolverTypeWrapper<Record<PropertyKey, never>>;
@@ -2298,6 +2456,9 @@ export type ResolversTypes = ResolversObject<{
   ProjectValidateResult: ResolverTypeWrapper<ProjectValidateResult>;
   Query: ResolverTypeWrapper<Record<PropertyKey, never>>;
   QuestionReplyInput: QuestionReplyInput;
+  RemoteIssue: ResolverTypeWrapper<RemoteIssue>;
+  RemoteIssueListResult: ResolverTypeWrapper<RemoteIssueListResult>;
+  RemoteStatus: ResolverTypeWrapper<RemoteStatus>;
   RenameBranchInput: RenameBranchInput;
   RenameSessionInput: RenameSessionInput;
   ScriptArchiveResult: ResolverTypeWrapper<ScriptArchiveResult>;
@@ -2313,6 +2474,7 @@ export type ResolversTypes = ResolversObject<{
   SessionWithWorktree: ResolverTypeWrapper<SessionWithWorktree>;
   SetModelInput: SetModelInput;
   SettingEntry: ResolverTypeWrapper<SettingEntry>;
+  SettingsFieldInfo: ResolverTypeWrapper<SettingsFieldInfo>;
   Space: ResolverTypeWrapper<Space>;
   String: ResolverTypeWrapper<Scalars['String']['output']>;
   Subscription: ResolverTypeWrapper<Record<PropertyKey, never>>;
@@ -2320,7 +2482,9 @@ export type ResolversTypes = ResolversObject<{
   TerminalCreateResult: ResolverTypeWrapper<TerminalCreateResult>;
   TerminalDataEvent: ResolverTypeWrapper<TerminalDataEvent>;
   TerminalExitEvent: ResolverTypeWrapper<TerminalExitEvent>;
+  TicketProviderInfo: ResolverTypeWrapper<TicketProviderInfo>;
   UpdateProjectInput: UpdateProjectInput;
+  UpdateRemoteStatusInput: UpdateRemoteStatusInput;
   UpdateSessionInput: UpdateSessionInput;
   UpdateSpaceInput: UpdateSpaceInput;
   UpdateWorktreeInput: UpdateWorktreeInput;
@@ -2338,6 +2502,7 @@ export type ResolversParentTypes = ResolversObject<{
   AppPaths: AppPaths;
   Attachment: Attachment;
   AttachmentInput: AttachmentInput;
+  AuthResult: AuthResult;
   Boolean: Scalars['Boolean']['output'];
   CommandApprovalReplyInput: CommandApprovalReplyInput;
   Connection: Connection;
@@ -2353,6 +2518,7 @@ export type ResolversParentTypes = ResolversObject<{
   CreateSpaceInput: CreateSpaceInput;
   CreateWorktreeInput: CreateWorktreeInput;
   DeleteWorktreeInput: DeleteWorktreeInput;
+  DetectRepoResult: DetectRepoResult;
   DetectedApp: DetectedApp;
   DuplicateWorktreeInput: DuplicateWorktreeInput;
   FileReadImageResult: FileReadImageResult;
@@ -2395,11 +2561,15 @@ export type ResolversParentTypes = ResolversObject<{
   GitRemoteUrlResult: GitRemoteUrlResult;
   GitStatusChangedEvent: GitStatusChangedEvent;
   ID: Scalars['ID']['output'];
+  ImportIssueInput: ImportIssueInput;
+  ImportIssuesInput: ImportIssuesInput;
+  ImportResult: ImportResult;
   Int: Scalars['Int']['output'];
   JSON: Scalars['JSON']['output'];
   KanbanCreateTicketInput: KanbanCreateTicketInput;
   KanbanTicket: KanbanTicket;
   KanbanUpdateTicketInput: KanbanUpdateTicketInput;
+  ListIssuesInput: ListIssuesInput;
   MessagePartInput: MessagePartInput;
   ModelInput: ModelInput;
   Mutation: Record<PropertyKey, never>;
@@ -2433,6 +2603,9 @@ export type ResolversParentTypes = ResolversObject<{
   ProjectValidateResult: ProjectValidateResult;
   Query: Record<PropertyKey, never>;
   QuestionReplyInput: QuestionReplyInput;
+  RemoteIssue: RemoteIssue;
+  RemoteIssueListResult: RemoteIssueListResult;
+  RemoteStatus: RemoteStatus;
   RenameBranchInput: RenameBranchInput;
   RenameSessionInput: RenameSessionInput;
   ScriptArchiveResult: ScriptArchiveResult;
@@ -2446,6 +2619,7 @@ export type ResolversParentTypes = ResolversObject<{
   SessionWithWorktree: SessionWithWorktree;
   SetModelInput: SetModelInput;
   SettingEntry: SettingEntry;
+  SettingsFieldInfo: SettingsFieldInfo;
   Space: Space;
   String: Scalars['String']['output'];
   Subscription: Record<PropertyKey, never>;
@@ -2453,7 +2627,9 @@ export type ResolversParentTypes = ResolversObject<{
   TerminalCreateResult: TerminalCreateResult;
   TerminalDataEvent: TerminalDataEvent;
   TerminalExitEvent: TerminalExitEvent;
+  TicketProviderInfo: TicketProviderInfo;
   UpdateProjectInput: UpdateProjectInput;
+  UpdateRemoteStatusInput: UpdateRemoteStatusInput;
   UpdateSessionInput: UpdateSessionInput;
   UpdateSpaceInput: UpdateSpaceInput;
   UpdateWorktreeInput: UpdateWorktreeInput;
@@ -2481,6 +2657,11 @@ export type AttachmentResolvers<ContextType = GraphQLContext, ParentType extends
   label?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   type?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   url?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+}>;
+
+export type AuthResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['AuthResult'] = ResolversParentTypes['AuthResult']> = ResolversObject<{
+  error?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
 }>;
 
 export type ConnectionResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['Connection'] = ResolversParentTypes['Connection']> = ResolversObject<{
@@ -2542,6 +2723,10 @@ export type ConnectionWithMembersResolvers<ContextType = GraphQLContext, ParentT
   path?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   status?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   updatedAt?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+}>;
+
+export type DetectRepoResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['DetectRepoResult'] = ResolversParentTypes['DetectRepoResult']> = ResolversObject<{
+  repo?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
 }>;
 
 export type DetectedAppResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['DetectedApp'] = ResolversParentTypes['DetectedApp']> = ResolversObject<{
@@ -2766,6 +2951,11 @@ export type GitStatusChangedEventResolvers<ContextType = GraphQLContext, ParentT
   worktreePath?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
 }>;
 
+export type ImportResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['ImportResult'] = ResolversParentTypes['ImportResult']> = ResolversObject<{
+  imported?: Resolver<Array<ResolversTypes['String']>, ParentType, ContextType>;
+  skipped?: Resolver<Array<ResolversTypes['String']>, ParentType, ContextType>;
+}>;
+
 export interface JsonScalarConfig extends GraphQLScalarTypeConfig<ResolversTypes['JSON'], any> {
   name: 'JSON';
 }
@@ -2775,11 +2965,15 @@ export type KanbanTicketResolvers<ContextType = GraphQLContext, ParentType exten
   column?: Resolver<ResolversTypes['KanbanTicketColumn'], ParentType, ContextType>;
   createdAt?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   description?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  externalId?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  externalProvider?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  externalUrl?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   id?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   projectId?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   sessionId?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   sortOrder?: Resolver<ResolversTypes['Float'], ParentType, ContextType>;
   title?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  totalTokens?: Resolver<ResolversTypes['Int'], ParentType, ContextType>;
   updatedAt?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   worktreeId?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
 }>;
@@ -2826,6 +3020,7 @@ export type MutationResolvers<ContextType = GraphQLContext, ParentType extends R
   gitUnwatchWorktree?: Resolver<ResolversTypes['SuccessResult'], ParentType, ContextType, RequireFields<MutationGitUnwatchWorktreeArgs, 'worktreePath'>>;
   gitWatchBranch?: Resolver<ResolversTypes['SuccessResult'], ParentType, ContextType, RequireFields<MutationGitWatchBranchArgs, 'worktreePath'>>;
   gitWatchWorktree?: Resolver<ResolversTypes['SuccessResult'], ParentType, ContextType, RequireFields<MutationGitWatchWorktreeArgs, 'worktreePath'>>;
+  kanbanAddTicketTokens?: Resolver<Maybe<ResolversTypes['KanbanTicket']>, ParentType, ContextType, RequireFields<MutationKanbanAddTicketTokensArgs, 'id' | 'tokens'>>;
   kanbanArchiveAllDone?: Resolver<ResolversTypes['SuccessResult'], ParentType, ContextType, RequireFields<MutationKanbanArchiveAllDoneArgs, 'projectId'>>;
   kanbanArchiveTicket?: Resolver<Maybe<ResolversTypes['KanbanTicket']>, ParentType, ContextType, RequireFields<MutationKanbanArchiveTicketArgs, 'id'>>;
   kanbanCreateTicket?: Resolver<ResolversTypes['KanbanTicket'], ParentType, ContextType, RequireFields<MutationKanbanCreateTicketArgs, 'input'>>;
@@ -2874,6 +3069,9 @@ export type MutationResolvers<ContextType = GraphQLContext, ParentType extends R
   terminalDestroy?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType, RequireFields<MutationTerminalDestroyArgs, 'worktreeId'>>;
   terminalResize?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType, RequireFields<MutationTerminalResizeArgs, 'cols' | 'rows' | 'worktreeId'>>;
   terminalWrite?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType, RequireFields<MutationTerminalWriteArgs, 'data' | 'worktreeId'>>;
+  ticketImportAuthenticate?: Resolver<ResolversTypes['AuthResult'], ParentType, ContextType, RequireFields<MutationTicketImportAuthenticateArgs, 'providerId' | 'settings'>>;
+  ticketImportIssues?: Resolver<ResolversTypes['ImportResult'], ParentType, ContextType, RequireFields<MutationTicketImportIssuesArgs, 'input'>>;
+  ticketImportUpdateRemoteStatus?: Resolver<ResolversTypes['AuthResult'], ParentType, ContextType, RequireFields<MutationTicketImportUpdateRemoteStatusArgs, 'input' | 'settings'>>;
   touchProject?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType, RequireFields<MutationTouchProjectArgs, 'id'>>;
   touchWorktree?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType, RequireFields<MutationTouchWorktreeArgs, 'id'>>;
   updateProject?: Resolver<Maybe<ResolversTypes['Project']>, ParentType, ContextType, RequireFields<MutationUpdateProjectArgs, 'id' | 'input'>>;
@@ -3124,12 +3322,38 @@ export type QueryResolvers<ContextType = GraphQLContext, ParentType extends Reso
   systemDetectAgentSdks?: Resolver<ResolversTypes['AgentSdkDetection'], ParentType, ContextType>;
   systemLogDir?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   systemServerStatus?: Resolver<ResolversTypes['ServerStatus'], ParentType, ContextType>;
+  ticketImportAvailableStatuses?: Resolver<Array<ResolversTypes['RemoteStatus']>, ParentType, ContextType, RequireFields<QueryTicketImportAvailableStatusesArgs, 'externalId' | 'providerId' | 'repo' | 'settings'>>;
+  ticketImportDetectRepo?: Resolver<ResolversTypes['DetectRepoResult'], ParentType, ContextType, RequireFields<QueryTicketImportDetectRepoArgs, 'projectPath' | 'providerId'>>;
+  ticketImportListIssues?: Resolver<ResolversTypes['RemoteIssueListResult'], ParentType, ContextType, RequireFields<QueryTicketImportListIssuesArgs, 'input' | 'settings'>>;
+  ticketImportProviders?: Resolver<Array<ResolversTypes['TicketProviderInfo']>, ParentType, ContextType>;
+  ticketImportSettingsSchema?: Resolver<Array<ResolversTypes['SettingsFieldInfo']>, ParentType, ContextType, RequireFields<QueryTicketImportSettingsSchemaArgs, 'providerId'>>;
   usageFetch?: Resolver<ResolversTypes['UsageResult'], ParentType, ContextType, Partial<QueryUsageFetchArgs>>;
   usageFetchOpenai?: Resolver<ResolversTypes['UsageResult'], ParentType, ContextType>;
   worktree?: Resolver<Maybe<ResolversTypes['Worktree']>, ParentType, ContextType, RequireFields<QueryWorktreeArgs, 'id'>>;
   worktreeExists?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType, RequireFields<QueryWorktreeExistsArgs, 'worktreePath'>>;
   worktreeHasCommits?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType, RequireFields<QueryWorktreeHasCommitsArgs, 'projectPath'>>;
   worktreesByProject?: Resolver<Array<ResolversTypes['Worktree']>, ParentType, ContextType, RequireFields<QueryWorktreesByProjectArgs, 'projectId'>>;
+}>;
+
+export type RemoteIssueResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['RemoteIssue'] = ResolversParentTypes['RemoteIssue']> = ResolversObject<{
+  body?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  createdAt?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  externalId?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  state?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  title?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  updatedAt?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  url?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+}>;
+
+export type RemoteIssueListResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['RemoteIssueListResult'] = ResolversParentTypes['RemoteIssueListResult']> = ResolversObject<{
+  hasNextPage?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+  issues?: Resolver<Array<ResolversTypes['RemoteIssue']>, ParentType, ContextType>;
+  totalCount?: Resolver<ResolversTypes['Int'], ParentType, ContextType>;
+}>;
+
+export type RemoteStatusResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['RemoteStatus'] = ResolversParentTypes['RemoteStatus']> = ResolversObject<{
+  id?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  label?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
 }>;
 
 export type ScriptArchiveResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['ScriptArchiveResult'] = ResolversParentTypes['ScriptArchiveResult']> = ResolversObject<{
@@ -3210,6 +3434,14 @@ export type SettingEntryResolvers<ContextType = GraphQLContext, ParentType exten
   value?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
 }>;
 
+export type SettingsFieldInfoResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['SettingsFieldInfo'] = ResolversParentTypes['SettingsFieldInfo']> = ResolversObject<{
+  key?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  label?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  placeholder?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  required?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+  type?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+}>;
+
 export type SpaceResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['Space'] = ResolversParentTypes['Space']> = ResolversObject<{
   createdAt?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   iconType?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
@@ -3250,6 +3482,12 @@ export type TerminalDataEventResolvers<ContextType = GraphQLContext, ParentType 
 export type TerminalExitEventResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['TerminalExitEvent'] = ResolversParentTypes['TerminalExitEvent']> = ResolversObject<{
   code?: Resolver<ResolversTypes['Int'], ParentType, ContextType>;
   worktreeId?: Resolver<ResolversTypes['ID'], ParentType, ContextType>;
+}>;
+
+export type TicketProviderInfoResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['TicketProviderInfo'] = ResolversParentTypes['TicketProviderInfo']> = ResolversObject<{
+  icon?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  id?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  name?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
 }>;
 
 export type UsageResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['UsageResult'] = ResolversParentTypes['UsageResult']> = ResolversObject<{
@@ -3296,6 +3534,7 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   AgentSdkDetection?: AgentSdkDetectionResolvers<ContextType>;
   AppPaths?: AppPathsResolvers<ContextType>;
   Attachment?: AttachmentResolvers<ContextType>;
+  AuthResult?: AuthResultResolvers<ContextType>;
   Connection?: ConnectionResolvers<ContextType>;
   ConnectionAddMemberResult?: ConnectionAddMemberResultResolvers<ContextType>;
   ConnectionCreateResult?: ConnectionCreateResultResolvers<ContextType>;
@@ -3303,6 +3542,7 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   ConnectionMemberWithDetails?: ConnectionMemberWithDetailsResolvers<ContextType>;
   ConnectionRemoveMemberResult?: ConnectionRemoveMemberResultResolvers<ContextType>;
   ConnectionWithMembers?: ConnectionWithMembersResolvers<ContextType>;
+  DetectRepoResult?: DetectRepoResultResolvers<ContextType>;
   DetectedApp?: DetectedAppResolvers<ContextType>;
   FileReadImageResult?: FileReadImageResultResolvers<ContextType>;
   FileReadResult?: FileReadResultResolvers<ContextType>;
@@ -3338,6 +3578,7 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   GitRefContentResult?: GitRefContentResultResolvers<ContextType>;
   GitRemoteUrlResult?: GitRemoteUrlResultResolvers<ContextType>;
   GitStatusChangedEvent?: GitStatusChangedEventResolvers<ContextType>;
+  ImportResult?: ImportResultResolvers<ContextType>;
   JSON?: GraphQLScalarType;
   KanbanTicket?: KanbanTicketResolvers<ContextType>;
   Mutation?: MutationResolvers<ContextType>;
@@ -3364,6 +3605,9 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   ProjectSpaceAssignment?: ProjectSpaceAssignmentResolvers<ContextType>;
   ProjectValidateResult?: ProjectValidateResultResolvers<ContextType>;
   Query?: QueryResolvers<ContextType>;
+  RemoteIssue?: RemoteIssueResolvers<ContextType>;
+  RemoteIssueListResult?: RemoteIssueListResultResolvers<ContextType>;
+  RemoteStatus?: RemoteStatusResolvers<ContextType>;
   ScriptArchiveResult?: ScriptArchiveResultResolvers<ContextType>;
   ScriptOutputEvent?: ScriptOutputEventResolvers<ContextType>;
   ScriptRunResult?: ScriptRunResultResolvers<ContextType>;
@@ -3372,12 +3616,14 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   SessionStatusPayload?: SessionStatusPayloadResolvers<ContextType>;
   SessionWithWorktree?: SessionWithWorktreeResolvers<ContextType>;
   SettingEntry?: SettingEntryResolvers<ContextType>;
+  SettingsFieldInfo?: SettingsFieldInfoResolvers<ContextType>;
   Space?: SpaceResolvers<ContextType>;
   Subscription?: SubscriptionResolvers<ContextType>;
   SuccessResult?: SuccessResultResolvers<ContextType>;
   TerminalCreateResult?: TerminalCreateResultResolvers<ContextType>;
   TerminalDataEvent?: TerminalDataEventResolvers<ContextType>;
   TerminalExitEvent?: TerminalExitEventResolvers<ContextType>;
+  TicketProviderInfo?: TicketProviderInfoResolvers<ContextType>;
   UsageResult?: UsageResultResolvers<ContextType>;
   Worktree?: WorktreeResolvers<ContextType>;
   WorktreeBranchRenamedEvent?: WorktreeBranchRenamedEventResolvers<ContextType>;

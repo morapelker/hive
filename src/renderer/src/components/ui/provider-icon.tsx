@@ -1,4 +1,4 @@
-import { Github, type LucideIcon } from 'lucide-react'
+import { Github, ClipboardList, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // ── Per-provider style config ────────────────────────────────────────
@@ -15,6 +15,12 @@ const PROVIDER_CONFIG: Record<string, ProviderConfig> = {
     bg: 'bg-zinc-200 dark:bg-zinc-700',
     color: 'text-zinc-700 dark:text-zinc-200',
     label: 'GitHub',
+  },
+  jira: {
+    Icon: ClipboardList,
+    bg: 'bg-blue-100 dark:bg-blue-900',
+    color: 'text-blue-600 dark:text-blue-300',
+    label: 'Jira',
   },
 }
 

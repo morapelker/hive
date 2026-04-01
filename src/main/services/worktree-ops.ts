@@ -168,7 +168,8 @@ export async function createWorktreeOp(
       project_id: params.projectId,
       name: result.name,
       branch_name: result.branchName,
-      path: result.path
+      path: result.path,
+      base_branch: result.baseBranch
     })
 
     // Copy context from the most recently accessed worktree in this project
@@ -425,7 +426,8 @@ export async function duplicateWorktreeOp(
       project_id: params.projectId,
       name: result.name,
       branch_name: result.branchName,
-      path: result.path
+      path: result.path,
+      base_branch: result.baseBranch
     })
 
     // Copy context from source worktree
@@ -535,7 +537,8 @@ export async function createWorktreeFromBranchOp(
       project_id: params.projectId,
       name: result.name || params.branchName,
       branch_name: result.branchName || params.branchName,
-      path: result.path
+      path: result.path,
+      base_branch: result.baseBranch
     })
 
     // Mark branch as renamed when created from a ticket title hint

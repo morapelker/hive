@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw } from 'lucide-react'
+import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon } from 'lucide-react'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { cn } from '@/lib/utils'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
@@ -27,6 +27,8 @@ import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { setKanbanDragData, useKanbanStore } from '@/stores/useKanbanStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useProjectStore } from '@/stores/useProjectStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
@@ -34,7 +36,27 @@ import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
+import { formatTokenCount } from '@/lib/format-utils'
 import type { KanbanTicket } from '../../../../main/db/types'
+
+// ── Project tag color palette ──────────────────────────────────────
+const PROJECT_TAG_COLORS = [
+  '#3b82f6', // blue
+  '#8b5cf6', // violet
+  '#ec4899', // pink
+  '#f59e0b', // amber
+  '#10b981', // emerald
+  '#06b6d4', // cyan
+  '#f97316', // orange
+  '#6366f1', // indigo
+]
+
+/** Deterministic color for a project within a connection's project list. */
+function getProjectColor(projectId: string, connectionProjectIds: string[]): string {
+  const idx = connectionProjectIds.indexOf(projectId)
+  if (idx === -1) return PROJECT_TAG_COLORS[0]
+  return PROJECT_TAG_COLORS[idx % PROJECT_TAG_COLORS.length]
+}
 
 interface KanbanTicketCardProps {
   ticket: KanbanTicket
@@ -42,13 +64,21 @@ interface KanbanTicketCardProps {
   index?: number
   /** Whether this ticket is archived (shown in archived section) */
   isArchived?: boolean
+  /** When viewing a connection board, the connection ID for project tag + jump-to-session */
+  connectionId?: string
+  /** When viewing the pinned board (multi-project), show project tags */
+  isPinnedMode?: boolean
 }
 
 export const KanbanTicketCard = memo(function KanbanTicketCard({
   ticket,
   index = 0,
-  isArchived = false
+  isArchived = false,
+  connectionId,
+  isPinnedMode
 }: KanbanTicketCardProps) {
+  const isMultiProjectMode = !!connectionId || !!isPinnedMode
+
   const [isDragging, setIsDragging] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showWorktreePicker, setShowWorktreePicker] = useState(false)
@@ -69,6 +99,68 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return null
       },
       [ticket.worktree_id]
+    )
+  )
+
+  // ── Lookup project name + color for connection board ─────────────
+  // Selector returns a primitive (string | null) to avoid Zustand infinite
+  // re-render loops caused by new object references on every evaluation.
+  const projectName = useProjectStore(
+    useCallback(
+      (state) => {
+        if (!isMultiProjectMode) return null
+        return state.projects.find((p) => p.id === ticket.project_id)?.name ?? null
+      },
+      [isMultiProjectMode, ticket.project_id]
+    )
+  )
+
+  const projectTag = useMemo(() => {
+    if (!projectName) return null
+    if (connectionId) {
+      const connectionProjectIds = useKanbanStore.getState().getConnectionProjectIds(connectionId)
+      return {
+        name: projectName,
+        color: getProjectColor(ticket.project_id, connectionProjectIds)
+      }
+    }
+    if (isPinnedMode) {
+      const pinnedProjectIds = useKanbanStore.getState().getPinnedProjectIdsArray()
+      return {
+        name: projectName,
+        color: getProjectColor(ticket.project_id, pinnedProjectIds)
+      }
+    }
+    return null
+  }, [connectionId, isPinnedMode, projectName, ticket.project_id])
+
+  // ── Detect connection session on project board ──────────────────
+  // Selector returns a primitive (string | null) to avoid Zustand infinite
+  // re-render loops caused by new object references on every evaluation.
+  const connectionSessionId = useSessionStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id || connectionId) return null
+        for (const [connId, sessions] of state.sessionsByConnection.entries()) {
+          if (sessions.some((s) => s.id === ticket.current_session_id)) return connId
+        }
+        return null
+      },
+      [ticket.current_session_id, connectionId]
+    )
+  )
+
+  const connectionSession = connectionSessionId ? { connectionId: connectionSessionId } : null
+
+  // ── Lookup connection name for project board badge ─────────────
+  const connectionName = useConnectionStore(
+    useCallback(
+      (state) => {
+        if (!connectionSession) return null
+        const conn = state.connections.find((c) => c.id === connectionSession.connectionId)
+        return conn?.custom_name || conn?.name || null
+      },
+      [connectionSession]
     )
   )
 
@@ -120,10 +212,19 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     (isBusy || isAsking) && ticket.column === 'in_progress'
   )
 
-  const tokenText = useSessionTokenDelta(
+  // Accumulated total for done column
+  const doneTokenText = ticket.column === 'done' && ticket.total_tokens > 0
+    ? formatTokenCount(ticket.total_tokens)
+    : null
+
+  // Per-turn delta for active columns (unchanged)
+  const turnTokenText = useSessionTokenDelta(
     ticket.current_session_id,
     (isBusy || isAsking) && ticket.column === 'in_progress'
   )
+
+  // Done column shows accumulated total; everything else shows per-turn delta
+  const tokenText = doneTokenText ?? turnTokenText
 
   // ── Detect if the linked worktree has a live run process ──────
   const isRunProcessAlive = useScriptStore(
@@ -246,12 +347,33 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     if (!ticket.current_session_id) return
     const kanbanStore = useKanbanStore.getState()
     if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
-    if (ticket.worktree_id) {
-      useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
-      useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
+    if (kanbanStore.isPinnedBoardActive) kanbanStore.togglePinnedBoard()
+    if (connectionId) {
+      // Connection mode: navigate to the connection and set session
+      useConnectionStore.getState().selectConnection(connectionId)
+      useSessionStore.getState().setActiveConnection(connectionId)
+      useSessionStore.getState().setActiveSession(ticket.current_session_id)
+    } else {
+      // Project mode: navigate to the worktree/connection and set session
+      if (connectionSession) {
+        // Ticket has a connection session — navigate to connection context
+        useConnectionStore.getState().selectConnection(connectionSession.connectionId)
+        useSessionStore.getState().setActiveConnection(connectionSession.connectionId)
+        useSessionStore.getState().setActiveSession(ticket.current_session_id)
+      } else if (ticket.worktree_id) {
+        useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+        useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
+        useSessionStore.getState().setActiveSession(ticket.current_session_id)
+      } else {
+        // In pinned mode the current project context may not match the ticket's project;
+        // navigate to it so the user lands in the right project.
+        if (isPinnedMode && ticket.project_id) {
+          useProjectStore.getState().selectProject(ticket.project_id)
+        }
+        useSessionStore.getState().setActiveSession(ticket.current_session_id)
+      }
     }
-    useSessionStore.getState().setActiveSession(ticket.current_session_id)
-  }, [ticket.current_session_id, ticket.worktree_id])
+  }, [ticket.current_session_id, ticket.worktree_id, ticket.project_id, connectionId, connectionSession, isPinnedMode])
 
   const isSimpleTicket = ticket.current_session_id === null
   const isFlowTicket = ticket.current_session_id !== null
@@ -312,22 +434,24 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </span>
                 )}
                 {ticket.external_provider && (
-                  <a
-                    href={ticket.external_url ?? '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (ticket.external_url) {
+                        window.systemOps.openInChrome(ticket.external_url)
+                      }
+                    }}
                     className="transition-opacity hover:opacity-80"
                     title={`${getProviderLabel(ticket.external_provider)} #${ticket.external_id}`}
                   >
                     <ProviderIcon provider={ticket.external_provider} />
-                  </a>
+                  </button>
                 )}
               </div>
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive) && (
+            {(hasAttachments || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive) && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {/* Archived badge */}
                 {isArchived && (
@@ -347,10 +471,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </span>
                 )}
 
-                {/* Worktree name badge */}
-                {worktreeName && (
+                {/* Project tag (connection mode) or worktree name badge */}
+                {projectTag ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: projectTag.color }} />
+                    {projectTag.name}
+                  </span>
+                ) : worktreeName ? (
                   <span className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     {worktreeName}
+                  </span>
+                ) : null}
+
+                {/* Connection badge — shown on project board when ticket has connection session */}
+                {!connectionId && connectionName && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <LinkIcon className="h-3 w-3" />
+                    {connectionName}
                   </span>
                 )}
 
@@ -443,8 +580,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </ContextMenuItem>
           )}
 
-          {/* Jump to session — only for flow tickets (has session) */}
-          {isFlowTicket && (
+          {/* Jump to session — only for flow tickets with reachable session */}
+          {isFlowTicket && !(connectionSession && !connectionName) && (
             <ContextMenuItem
               data-testid="ctx-jump-to-session"
               onClick={handleJumpToSession}

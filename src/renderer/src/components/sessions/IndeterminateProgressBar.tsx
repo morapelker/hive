@@ -5,6 +5,7 @@ import type { SessionMode } from '@/stores/useSessionStore'
 interface IndeterminateProgressBarProps {
   mode: SessionMode
   isAsking?: boolean
+  isCompacting?: boolean
   className?: string
 }
 
@@ -31,6 +32,7 @@ const BOUNCE_TIMING: KeyframeAnimationOptions = {
 export function IndeterminateProgressBar({
   mode,
   isAsking,
+  isCompacting,
   className
 }: IndeterminateProgressBarProps) {
   const barRef = useRef<HTMLDivElement>(null)
@@ -52,31 +54,42 @@ export function IndeterminateProgressBar({
     return () => anim.cancel()
   }, [])
 
-  const bgTrack = isAsking
-    ? 'bg-amber-500/15'
-    : mode === 'build'
-      ? 'bg-blue-500/15'
-      : mode === 'super-plan'
-        ? 'bg-orange-500/15'
-        : 'bg-violet-500/15'
-  const bgBar = isAsking
-    ? 'bg-amber-500'
-    : mode === 'build'
-      ? 'bg-blue-500'
-      : mode === 'super-plan'
-        ? 'bg-orange-500'
-        : 'bg-violet-500'
+  const bgTrack = isCompacting
+    ? 'bg-red-500/15'
+    : isAsking
+      ? 'bg-amber-500/15'
+      : mode === 'build'
+        ? 'bg-blue-500/15'
+        : mode === 'super-plan'
+          ? 'bg-orange-500/15'
+          : 'bg-violet-500/15'
+  const bgBar = isCompacting
+    ? 'bg-red-500'
+    : isAsking
+      ? 'bg-amber-500'
+      : mode === 'build'
+        ? 'bg-blue-500'
+        : mode === 'super-plan'
+          ? 'bg-orange-500'
+          : 'bg-violet-500'
 
   return (
-    <div
-      role="progressbar"
-      aria-label={isAsking ? 'Waiting for answer' : 'Agent is working'}
-      className={cn('relative w-36 h-4 rounded-full overflow-hidden', bgTrack, className)}
-    >
+    <div className={cn('flex flex-col items-center w-36', className)}>
+      {isCompacting && (
+        <span className="text-[10px] font-semibold text-red-500 leading-none mb-0.5">
+          Compacting
+        </span>
+      )}
       <div
-        ref={barRef}
-        className={cn('progress-bounce-bar absolute top-0 bottom-0 rounded-full', bgBar)}
-      />
+        role="progressbar"
+        aria-label={isCompacting ? 'Compacting conversation' : isAsking ? 'Waiting for answer' : 'Agent is working'}
+        className={cn('relative w-full h-4 rounded-full overflow-hidden', bgTrack)}
+      >
+        <div
+          ref={barRef}
+          className={cn('progress-bounce-bar absolute top-0 bottom-0 rounded-full', bgBar)}
+        />
+      </div>
     </div>
   )
 }

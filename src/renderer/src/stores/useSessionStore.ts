@@ -42,6 +42,8 @@ interface SessionState {
   tabOrderByWorktree: Map<string, string[]>
   // Mode per session - keyed by session ID
   modeBySession: Map<string, SessionMode>
+  // Super armed state per session - keyed by session ID (memory only, not persisted)
+  superArmedBySession: Map<string, boolean>
   // Pending initial messages - keyed by session ID (e.g., code review prompts)
   pendingMessages: Map<string, string>
   // Pending plan approvals - keyed by session ID (from ExitPlanMode blocking tool)
@@ -102,7 +104,9 @@ interface SessionState {
   getSessionsForWorktree: (worktreeId: string) => Session[]
   getTabOrderForWorktree: (worktreeId: string) => string[]
   getSessionMode: (sessionId: string) => SessionMode
+  getSuperArmed: (sessionId: string) => boolean
   toggleSessionMode: (sessionId: string) => Promise<void>
+  toggleSuperMode: (sessionId: string) => Promise<void>
   setSessionMode: (sessionId: string, mode: SessionMode) => Promise<void>
   setSessionModel: (
     sessionId: string,
@@ -172,6 +176,7 @@ export const useSessionStore = create<SessionState>()(
       sessionsByWorktree: new Map(),
       tabOrderByWorktree: new Map(),
       modeBySession: new Map(),
+      superArmedBySession: new Map(),
       pendingMessages: new Map(),
       pendingPlans: new Map(),
       pendingFollowUpMessages: new Map(),
@@ -876,6 +881,11 @@ export const useSessionStore = create<SessionState>()(
         return get().modeBySession.get(sessionId) || 'build'
       },
 
+      // Get super armed state for a session (defaults to false)
+      getSuperArmed: (sessionId: string): boolean => {
+        return get().superArmedBySession.get(sessionId) ?? false
+      },
+
       // Get session by ID from either worktree or connection sessions
       getSessionById: (sessionId: string): Session | null => {
         for (const sessions of get().sessionsByWorktree.values()) {
@@ -889,21 +899,52 @@ export const useSessionStore = create<SessionState>()(
         return null
       },
 
-      // Toggle session mode between build and plan
+      // Hydrate a session from the DB into the in-memory store.
+      // Called when findSessionById discovers a session via DB fallback so
+      // that getWorktreeStatus() and zustand selectors can find it going forward.
+      // Does NOT modify tabOrder, activeSessionId, or loading state.
+      hydrateSession: (session: Session) => {
+        // Already in store? Skip.
+        if (get().getSessionById(session.id)) return
+
+        set((state) => {
+          if (session.worktree_id) {
+            const newMap = new Map(state.sessionsByWorktree)
+            const existing = newMap.get(session.worktree_id) || []
+            if (existing.some((s) => s.id === session.id)) return state
+            newMap.set(session.worktree_id, [...existing, session])
+
+            const newModeMap = new Map(state.modeBySession)
+            newModeMap.set(session.id, session.mode || 'build')
+
+            return { sessionsByWorktree: newMap, modeBySession: newModeMap }
+          } else if (session.connection_id) {
+            const newMap = new Map(state.sessionsByConnection)
+            const existing = newMap.get(session.connection_id) || []
+            if (existing.some((s) => s.id === session.id)) return state
+            newMap.set(session.connection_id, [...existing, session])
+
+            const newModeMap = new Map(state.modeBySession)
+            newModeMap.set(session.id, session.mode || 'build')
+
+            return { sessionsByConnection: newMap, modeBySession: newModeMap }
+          }
+          return state
+        })
+      },
+
+      // Toggle session mode between build and plan/super-plan (2-way cycle)
+      // From 'build': go to 'super-plan' if superArmed, else 'plan'
+      // From 'plan' or 'super-plan': go to 'build'
       toggleSessionMode: async (sessionId: string) => {
         const currentMode = get().modeBySession.get(sessionId) || 'build'
 
-        const superPlanEnabled = useSettingsStore.getState().superPlanModeEnabled
-
         let newMode: SessionMode
-        if (superPlanEnabled) {
-          // 3-way cycle: build → plan → super-plan → build
-          if (currentMode === 'build') newMode = 'plan'
-          else if (currentMode === 'plan') newMode = 'super-plan'
-          else newMode = 'build'  // super-plan → build
+        if (currentMode === 'build') {
+          newMode = get().getSuperArmed(sessionId) ? 'super-plan' : 'plan'
         } else {
-          // 2-way cycle: build ↔ plan
-          newMode = currentMode === 'build' ? 'plan' : 'build'
+          // 'plan' or 'super-plan' → back to 'build'
+          newMode = 'build'
         }
 
         // Update local state immediately
@@ -911,6 +952,48 @@ export const useSessionStore = create<SessionState>()(
           const newModeMap = new Map(state.modeBySession)
           newModeMap.set(sessionId, newMode)
           return { modeBySession: newModeMap }
+        })
+
+        // Persist to database
+        try {
+          await window.db.session.update(sessionId, { mode: newMode })
+        } catch (error) {
+          console.error('Failed to persist session mode:', error)
+        }
+
+        // Auto-apply mode-specific model if configured
+        await get().applyModeDefaultModel(sessionId, newMode)
+
+        // Notify Kanban board of mode change
+        notifyKanbanSessionSync(sessionId, { type: 'mode_change', sessionMode: newMode })
+      },
+
+      // Toggle super mode for a session (only works when in plan modes)
+      // 'plan' → 'super-plan' (superArmed = true)
+      // 'super-plan' → 'plan' (superArmed = false)
+      toggleSuperMode: async (sessionId: string) => {
+        const currentMode = get().modeBySession.get(sessionId) || 'build'
+
+        let newMode: SessionMode
+        let newSuperArmed: boolean
+        if (currentMode === 'plan') {
+          newMode = 'super-plan'
+          newSuperArmed = true
+        } else if (currentMode === 'super-plan') {
+          newMode = 'plan'
+          newSuperArmed = false
+        } else {
+          // Only works in plan modes; do nothing
+          return
+        }
+
+        // Update both maps atomically
+        set((state) => {
+          const newModeMap = new Map(state.modeBySession)
+          newModeMap.set(sessionId, newMode)
+          const newSuperArmedMap = new Map(state.superArmedBySession)
+          newSuperArmedMap.set(sessionId, newSuperArmed)
+          return { modeBySession: newModeMap, superArmedBySession: newSuperArmedMap }
         })
 
         // Persist to database

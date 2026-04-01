@@ -477,3 +477,59 @@
   margin-left: 0.5em;
   margin-right: 0.5em;
 }
+
+/* Sparkle border animation for SUPER toggle when active.
+   Rotating conic-gradient masked to border-only ring via mask-composite.
+   @property enables CSS transition of custom angle (Chromium/Electron). */
+@property --sparkle-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes sparkle-rotate {
+  to {
+    --sparkle-angle: 360deg;
+  }
+}
+
+.super-sparkle {
+  position: relative;
+  z-index: 0;
+}
+
+.super-sparkle::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--sparkle-angle),
+    transparent 0%,
+    rgba(249, 115, 22, 0.9) 10%,
+    transparent 20%,
+    transparent 33%,
+    rgba(251, 191, 36, 0.9) 43%,
+    transparent 53%,
+    transparent 66%,
+    rgba(249, 115, 22, 0.9) 76%,
+    transparent 86%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: sparkle-rotate 3s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .super-sparkle::before {
+    animation: none;
+  }
+}

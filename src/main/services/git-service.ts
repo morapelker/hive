@@ -30,6 +30,7 @@ export interface CreateWorktreeResult {
   branchName?: string
   path?: string
   error?: string
+  baseBranch?: string
   pullInfo?: {
     pulled: boolean
     updated: boolean
@@ -331,6 +332,7 @@ export class GitService {
           name: breedName,
           branchName: breedName,
           path: worktreePath,
+          baseBranch: defaultBranch,
           pullInfo: {
             pulled: pullResult.success && autoPull,
             updated: pullResult.updated || false
@@ -996,6 +998,56 @@ export class GitService {
     }
   }
 
+  async mergeAbort(): Promise<GitOperationResult> {
+    try {
+      await this.git.raw(['merge', '--abort'])
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { success: false, error: message }
+    }
+  }
+
+  async hasUncommittedChanges(): Promise<boolean> {
+    try {
+      const output = await this.git.raw(['status', '--porcelain'])
+      return output.trim().length > 0
+    } catch {
+      return false
+    }
+  }
+
+  async getBranchDiffShortStat(baseBranch: string): Promise<{
+    success: boolean
+    filesChanged: number
+    insertions: number
+    deletions: number
+    commitsAhead: number
+    error?: string
+  }> {
+    try {
+      // Get file/line stats
+      const shortstat = await this.git.raw(['diff', '--shortstat', `${baseBranch}...HEAD`])
+      let filesChanged = 0, insertions = 0, deletions = 0
+      // Parse "N files changed, N insertions(+), N deletions(-)"
+      const filesMatch = shortstat.match(/(\d+) files? changed/)
+      const insMatch = shortstat.match(/(\d+) insertions?/)
+      const delMatch = shortstat.match(/(\d+) deletions?/)
+      if (filesMatch) filesChanged = parseInt(filesMatch[1], 10)
+      if (insMatch) insertions = parseInt(insMatch[1], 10)
+      if (delMatch) deletions = parseInt(delMatch[1], 10)
+
+      // Get commits ahead count
+      const revList = await this.git.raw(['rev-list', '--count', `${baseBranch}..HEAD`])
+      const commitsAhead = parseInt(revList.trim(), 10) || 0
+
+      return { success: true, filesChanged, insertions, deletions, commitsAhead }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { success: false, filesChanged: 0, insertions: 0, deletions: 0, commitsAhead: 0, error: message }
+    }
+  }
+
   /**
    * Get diff for a specific file
    * @param filePath - Relative path to the file
@@ -1275,7 +1327,7 @@ export class GitService {
         cpSync(srcPath, destPath)
       }
 
-      return { success: true, name: newBranchName, branchName: newBranchName, path: worktreePath }
+      return { success: true, name: newBranchName, branchName: newBranchName, path: worktreePath, baseBranch: sourceBranch }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       log.error(
@@ -1413,7 +1465,8 @@ export class GitService {
           const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
           if (branch === branchName && wtPath) {
             // Already checked out — duplicate it
-            return this.duplicateWorktree(branchName, wtPath, projectName, options?.nameHint)
+            const dupResult = await this.duplicateWorktree(branchName, wtPath, projectName, options?.nameHint)
+            return { ...dupResult, baseBranch: branchName }
           }
         }
       }
@@ -1494,6 +1547,7 @@ export class GitService {
             path: worktreePath,
             branchName: worktreeName,
             name: worktreeName,
+            baseBranch: branchName,
             pullInfo: {
               pulled: prNumber == null && pullResult.success && autoPull,
               updated: pullResult.updated || false

@@ -99,7 +99,8 @@ export class DatabaseService {
       pinned: (row.pinned as number) ?? 0,
       context: (row.context as string) ?? null,
       github_pr_number: (row.github_pr_number as number) ?? null,
-      github_pr_url: (row.github_pr_url as string) ?? null
+      github_pr_url: (row.github_pr_url as string) ?? null,
+      base_branch: (row.base_branch as string) ?? null
     } as Worktree
   }
 
@@ -132,7 +133,8 @@ export class DatabaseService {
       archived_at: (row.archived_at as string) ?? null,
       external_provider: (row.external_provider as string) ?? null,
       external_id: (row.external_id as string) ?? null,
-      external_url: (row.external_url as string) ?? null
+      external_url: (row.external_url as string) ?? null,
+      total_tokens: (row.total_tokens as number) ?? 0
     }
   }
 
@@ -530,13 +532,14 @@ export class DatabaseService {
       context: null,
       github_pr_number: null,
       github_pr_url: null,
+      base_branch: data.base_branch ?? null,
       created_at: now,
       last_accessed_at: now
     }
 
     db.prepare(
-      `INSERT INTO worktrees (id, project_id, name, branch_name, path, status, is_default, branch_renamed, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO worktrees (id, project_id, name, branch_name, path, status, is_default, branch_renamed, base_branch, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       worktree.id,
       worktree.project_id,
@@ -546,6 +549,7 @@ export class DatabaseService {
       worktree.status,
       isDefault ? 1 : 0,
       worktree.branch_renamed,
+      worktree.base_branch,
       worktree.created_at,
       worktree.last_accessed_at
     )
@@ -1621,9 +1625,17 @@ export class DatabaseService {
     const db = this.getDb()
     const now = new Date().toISOString()
 
-    const id = randomUUID()
+    const id = data.id ?? randomUUID()
     const column = data.column ?? 'todo'
-    const sortOrder = data.sort_order ?? 0
+    let sortOrder: number
+    if (data.sort_order != null) {
+      sortOrder = data.sort_order
+    } else {
+      const maxRow = db.prepare(
+        'SELECT MAX(sort_order) as max_sort FROM kanban_tickets WHERE project_id = ? AND "column" = ? AND archived_at IS NULL'
+      ).get(data.project_id, column) as { max_sort: number | null } | undefined
+      sortOrder = (maxRow?.max_sort ?? -1) + 1
+    }
     const description = data.description ?? null
     const attachmentsJson = data.attachments ? JSON.stringify(data.attachments) : '[]'
     const currentSessionId = data.current_session_id ?? null
@@ -1671,6 +1683,7 @@ export class DatabaseService {
       external_provider: externalProvider,
       external_id: externalId,
       external_url: externalUrl,
+      total_tokens: 0,
       created_at: now,
       updated_at: now
     })
@@ -1816,6 +1829,14 @@ export class DatabaseService {
       now,
       id
     )
+  }
+
+  addTicketTokens(ticketId: string, tokens: number): void {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      'UPDATE kanban_tickets SET total_tokens = total_tokens + ?, updated_at = ? WHERE id = ?'
+    ).run(tokens, now, ticketId)
   }
 
   getKanbanTicketsBySession(sessionId: string): KanbanTicket[] {

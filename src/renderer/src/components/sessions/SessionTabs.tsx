@@ -1,5 +1,6 @@
 import {
   Fragment,
+  memo,
   useEffect,
   useRef,
   useState,
@@ -12,6 +13,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   FileCode,
   FileText,
   GitCompareArrows,
@@ -19,10 +21,15 @@ import {
   AlertCircle,
   Check,
   TerminalSquare,
-  Download
+  Download,
+  Github,
+  ClipboardList,
+  Upload,
+  FileJson
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useShallow } from 'zustand/react/shallow'
 import {
   useFileViewerStore,
   type FileViewerTab,
@@ -38,6 +45,8 @@ import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { ImportTicketsModal } from '@/components/kanban/ImportTicketsModal'
+import { JiraImportModal } from '@/components/kanban/JiraImportModal'
+import { HiveImportModal } from '@/components/kanban/HiveImportModal'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useHintStore } from '@/stores/useHintStore'
 import { cn, parseColorQuad } from '@/lib/utils'
@@ -52,6 +61,13 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator
+} from '@/components/ui/dropdown-menu'
 
 interface SessionTabProps {
   sessionId: string
@@ -74,7 +90,7 @@ interface SessionTabProps {
   hintCode?: string
 }
 
-function SessionTab({
+const SessionTab = memo(function SessionTab({
   sessionId,
   name,
   isActive,
@@ -254,7 +270,7 @@ function SessionTab({
       </ContextMenuContent>
     </ContextMenu>
   )
-}
+})
 
 interface FileTabProps {
   filePath: string
@@ -442,7 +458,7 @@ interface ConnectionSessionTabProps {
   connectionName: string
 }
 
-function ConnectionSessionTab({
+const ConnectionSessionTab = memo(function ConnectionSessionTab({
   sessionId,
   name,
   isActive,
@@ -501,7 +517,7 @@ function ConnectionSessionTab({
       <span className="truncate flex-1">{name || 'Untitled'}</span>
     </div>
   )
-}
+})
 
 export function SessionTabs(): React.JSX.Element | null {
   const tabsContainerRef = useRef<HTMLDivElement>(null)
@@ -511,35 +527,45 @@ export function SessionTabs(): React.JSX.Element | null {
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null)
   const [isTicketCreateOpen, setIsTicketCreateOpen] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [showJiraImport, setShowJiraImport] = useState(false)
+  const [showHiveImport, setShowHiveImport] = useState(false)
+  const [hiveImportTickets, setHiveImportTickets] = useState<Array<{ id: string; title: string; description?: string | null; attachments?: unknown[]; column?: string }>>([])
 
-  const {
-    activeWorktreeId,
-    activeSessionId,
-    sessionsByWorktree,
-    tabOrderByWorktree,
-    sessionsByConnection,
-    tabOrderByConnection,
-    orphanedSessions,
-    loadSessions,
-    createSession,
-    closeSession,
-    setActiveSession,
-    reorderTabs,
-    updateSessionName,
-    closeOtherSessions,
-    closeSessionsToRight,
-    loadConnectionSessions,
-    createConnectionSession,
-    setActiveConnectionSession,
-    reorderConnectionTabs,
-    closeOtherConnectionSessions,
-    closeConnectionSessionsToRight,
-    inlineConnectionSessionId,
-    setInlineConnectionSession,
-    clearInlineConnectionSession,
-    loadConnectionSessionsBackground,
-    closeOrphanedSessions
-  } = useSessionStore()
+  // Individual selectors for state values
+  const activeWorktreeId = useSessionStore((s) => s.activeWorktreeId)
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  const inlineConnectionSessionId = useSessionStore((s) => s.inlineConnectionSessionId)
+
+  // useShallow: subscribes to these 5 fields only, re-renders when any field reference changes
+  const { sessionsByWorktree, tabOrderByWorktree, sessionsByConnection, tabOrderByConnection, orphanedSessions } = useSessionStore(
+    useShallow((s) => ({
+      sessionsByWorktree: s.sessionsByWorktree,
+      tabOrderByWorktree: s.tabOrderByWorktree,
+      sessionsByConnection: s.sessionsByConnection,
+      tabOrderByConnection: s.tabOrderByConnection,
+      orphanedSessions: s.orphanedSessions
+    }))
+  )
+
+  // Individual selectors for functions (stable by default in zustand, but still avoids full-store subscription)
+  const loadSessions = useSessionStore((s) => s.loadSessions)
+  const createSession = useSessionStore((s) => s.createSession)
+  const closeSession = useSessionStore((s) => s.closeSession)
+  const setActiveSession = useSessionStore((s) => s.setActiveSession)
+  const reorderTabs = useSessionStore((s) => s.reorderTabs)
+  const updateSessionName = useSessionStore((s) => s.updateSessionName)
+  const closeOtherSessions = useSessionStore((s) => s.closeOtherSessions)
+  const closeSessionsToRight = useSessionStore((s) => s.closeSessionsToRight)
+  const loadConnectionSessions = useSessionStore((s) => s.loadConnectionSessions)
+  const createConnectionSession = useSessionStore((s) => s.createConnectionSession)
+  const setActiveConnectionSession = useSessionStore((s) => s.setActiveConnectionSession)
+  const reorderConnectionTabs = useSessionStore((s) => s.reorderConnectionTabs)
+  const closeOtherConnectionSessions = useSessionStore((s) => s.closeOtherConnectionSessions)
+  const closeConnectionSessionsToRight = useSessionStore((s) => s.closeConnectionSessionsToRight)
+  const setInlineConnectionSession = useSessionStore((s) => s.setInlineConnectionSession)
+  const clearInlineConnectionSession = useSessionStore((s) => s.clearInlineConnectionSession)
+  const loadConnectionSessionsBackground = useSessionStore((s) => s.loadConnectionSessionsBackground)
+  const closeOrphanedSessions = useSessionStore((s) => s.closeOrphanedSessions)
 
   const {
     openFiles,
@@ -560,6 +586,10 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Determine whether we are in connection mode or worktree mode
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
+
+  // When in connection mode with board view, the board's own in-column buttons
+  // handle ticket creation and import, so we hide the session tab bar buttons.
+  const isConnectionBoardActive = isBoardViewActive && isConnectionMode
 
   // Get the worktree and project info for the selected worktree
   const selectedWorktree = useWorktreeStore((state) => {
@@ -975,8 +1005,8 @@ export function SessionTabs(): React.JSX.Element | null {
       data-testid="session-tabs"
     >
       {/* New session / new ticket button - on the left */}
-      {isBoardViewActive ? (
-        /* Kanban mode: plus button opens the ticket creation modal */
+      {isBoardViewActive && !isConnectionBoardActive ? (
+        /* Kanban mode: plus button opens the ticket creation modal (hidden in connection board — board has its own) */
         <button
           onClick={() => setIsTicketCreateOpen(true)}
           className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
@@ -985,7 +1015,7 @@ export function SessionTabs(): React.JSX.Element | null {
         >
           <Plus className="h-4 w-4" />
         </button>
-      ) : (
+      ) : !isBoardViewActive ? (
         /* Normal mode: right-click shows provider menu with session type options */
         <ContextMenu
           onOpenChange={(open) => {
@@ -1028,7 +1058,7 @@ export function SessionTabs(): React.JSX.Element | null {
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
-      )}
+      ) : null}
 
       {/* Left scroll arrow */}
       {showLeftArrow && (
@@ -1252,17 +1282,56 @@ export function SessionTabs(): React.JSX.Element | null {
         </button>
       )}
 
-      {/* Import button — kanban mode, sits on the tab bar line */}
-      {isBoardViewActive && (
-        <button
-          onClick={() => setShowImport(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0 border-l border-border cursor-pointer select-none"
-          data-testid="kanban-import-btn"
-          title="Import tickets"
-        >
-          <Download className="h-3.5 w-3.5" />
-          Import
-        </button>
+      {/* Import dropdown — kanban mode, sits on the tab bar line (hidden in connection board — board has its own) */}
+      {isBoardViewActive && !isConnectionBoardActive && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0 border-l border-border cursor-pointer select-none"
+              data-testid="kanban-import-btn"
+              title="Import tickets"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Import
+              <ChevronDown className="h-3 w-3 opacity-50" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setShowImport(true)}>
+              <Github className="h-4 w-4 mr-2" />
+              Import from GitHub
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowJiraImport(true)}>
+              <ClipboardList className="h-4 w-4 mr-2" />
+              Import from Jira
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={async () => {
+                const result = await window.kanban.board.openImportFile()
+                if (result) {
+                  setHiveImportTickets(result.tickets)
+                  setShowHiveImport(true)
+                }
+              }}
+            >
+              <FileJson className="h-4 w-4 mr-2" />
+              Import from Hive JSON
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={async () => {
+                if (!project) return
+                const result = await window.kanban.board.export(project.id, project.name)
+                if (result.success) {
+                  toast.success(`Exported ${result.ticketCount} tickets`)
+                }
+              }}
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              Export Board
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
 
       {/* Ticket creation modal — kanban mode */}
@@ -1272,12 +1341,28 @@ export function SessionTabs(): React.JSX.Element | null {
             open={isTicketCreateOpen}
             onOpenChange={setIsTicketCreateOpen}
             projectId={project.id}
+            connectionId={isConnectionMode ? selectedConnectionId ?? undefined : undefined}
           />
           <ImportTicketsModal
             open={showImport}
             onOpenChange={setShowImport}
             projectId={project.id}
             projectPath={project.path}
+            connectionId={isConnectionMode ? selectedConnectionId ?? undefined : undefined}
+          />
+          <JiraImportModal
+            open={showJiraImport}
+            onOpenChange={setShowJiraImport}
+            projectId={project.id}
+          />
+          <HiveImportModal
+            open={showHiveImport}
+            onOpenChange={(open) => {
+              setShowHiveImport(open)
+              if (!open) setHiveImportTickets([])
+            }}
+            projectId={project.id}
+            tickets={hiveImportTickets}
           />
         </>
       )}

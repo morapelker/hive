@@ -215,7 +215,7 @@ export function useCommands() {
           toggleBoardView()
           closeCommandPalette()
         },
-        isVisible: () => selectedProjectId !== null
+        isVisible: () => true
       },
 
       // =====================

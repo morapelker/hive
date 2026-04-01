@@ -248,6 +248,7 @@ type Mutation {
   kanbanUnarchiveTicket(id: ID!): KanbanTicket
   kanbanMoveTicket(id: ID!, column: KanbanTicketColumn!, sortOrder: Float!): KanbanTicket
   kanbanReorderTicket(id: ID!, sortOrder: Float!): SuccessResult!
+  kanbanAddTicketTokens(id: ID!, tokens: Int!): KanbanTicket
   kanbanToggleSimpleMode(projectId: ID!, enabled: Boolean!): SuccessResult!
 
   # --- Logging ---

@@ -20,6 +20,7 @@ type KanbanTicket {
   externalProvider: String
   externalId: String
   externalUrl: String
+  totalTokens: Int!
 }
 
 input KanbanCreateTicketInput {

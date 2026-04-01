@@ -104,7 +104,6 @@ export interface AppSettings {
 
   // Privacy
   telemetryEnabled: boolean
-  superPlanModeEnabled: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -152,8 +151,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     defaultBehavior: 'ask',
     enabled: false
   },
-  telemetryEnabled: true,
-  superPlanModeEnabled: false
+  telemetryEnabled: true
 }
 
 interface SettingsState extends AppSettings {
@@ -256,8 +254,7 @@ function extractSettings(state: SettingsState): AppSettings {
     skippedUpdateVersion: state.skippedUpdateVersion,
     initialSetupComplete: state.initialSetupComplete,
     commandFilter: state.commandFilter,
-    telemetryEnabled: state.telemetryEnabled,
-    superPlanModeEnabled: state.superPlanModeEnabled
+    telemetryEnabled: state.telemetryEnabled
   }
 }
 
@@ -467,8 +464,7 @@ export const useSettingsStore = create<SettingsState>()(
         skippedUpdateVersion: state.skippedUpdateVersion,
         initialSetupComplete: state.initialSetupComplete,
         commandFilter: state.commandFilter,
-        telemetryEnabled: state.telemetryEnabled,
-        superPlanModeEnabled: state.superPlanModeEnabled
+        telemetryEnabled: state.telemetryEnabled
       })
     }
   )

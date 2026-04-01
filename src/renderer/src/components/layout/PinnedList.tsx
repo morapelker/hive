@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Figma,
   GitBranchPlus,
+  KanbanSquare,
   Link,
   Loader2,
   Map as MapIcon,
@@ -55,6 +56,9 @@ import {
   useSettingsStore
 } from '@/stores'
 import { HintBadge } from '@/components/ui/HintBadge'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
@@ -72,6 +76,8 @@ export function PinnedList(): React.JSX.Element | null {
   const pinnedWorktreeIds = usePinnedStore((s) => s.pinnedWorktreeIds)
   const pinnedConnectionIds = usePinnedStore((s) => s.pinnedConnectionIds)
   const loaded = usePinnedStore((s) => s.loaded)
+  const isPinnedBoardActive = useKanbanStore((s) => s.isPinnedBoardActive)
+  const togglePinnedBoard = useKanbanStore((s) => s.togglePinnedBoard)
 
   // Load pinned items on mount
   useEffect(() => {
@@ -95,6 +101,32 @@ export function PinnedList(): React.JSX.Element | null {
       <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-muted-foreground">
         <Pin className="h-3 w-3" />
         <span>Pinned</span>
+        <div className="ml-auto">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => {
+                  if (!isPinnedBoardActive) {
+                    const fileStore = useFileViewerStore.getState()
+                    fileStore.setActiveFile(null)
+                    fileStore.clearActiveDiff()
+                    fileStore.closeContextEditor()
+                  }
+                  togglePinnedBoard()
+                }}
+                className={cn(
+                  'p-0.5 rounded hover:bg-muted transition-colors',
+                  isPinnedBoardActive && 'text-primary bg-muted'
+                )}
+              >
+                <KanbanSquare className="h-3 w-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={4}>
+              Pinned Projects Board
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
       {items.map((item) =>
         item.kind === 'worktree' ? (

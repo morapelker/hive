@@ -11,6 +11,8 @@ import {
   type KanbanSessionEvent
 } from './store-coordination'
 import { isPlanLike } from '../lib/constants'
+import { useConnectionStore } from './useConnectionStore'
+import { usePinnedStore } from './usePinnedStore'
 
 // ── Shared drag state (module-level, avoids DataTransfer issues in Electron) ──
 export interface KanbanDragData {
@@ -89,6 +91,12 @@ interface KanbanState {
   draggingTicketId: string | null
   /** Per-project archive visibility toggle — NOT persisted to localStorage */
   showArchivedByProject: Record<string, boolean>
+  /** Pending "move to done" data — set when a feature-branch ticket is dropped on Done, triggering the merge dialog */
+  pendingDoneMove: {
+    ticketId: string
+    projectId: string
+    sortOrder: number
+  } | null
 
   // ── Actions ────────────────────────────────────────────────────────
   setSelectedTicketId: (id: string | null) => void
@@ -109,6 +117,9 @@ interface KanbanState {
   archiveAllDone: (projectId: string) => Promise<number>
   unarchiveTicket: (ticketId: string, projectId: string) => Promise<void>
   setShowArchived: (projectId: string, show: boolean) => void
+  setPendingDoneMove: (data: { ticketId: string; projectId: string; sortOrder: number }) => void
+  clearPendingDoneMove: () => void
+  completeDoneMove: () => Promise<void>
 
   // ── Session coordination ────────────────────────────────────────────
   syncTicketWithSession: (sessionId: string, event: KanbanSessionEvent) => void
@@ -117,6 +128,18 @@ interface KanbanState {
   getTicketsForProject: (projectId: string) => KanbanTicket[]
   getTicketsByColumn: (projectId: string, column: KanbanTicketColumn) => KanbanTicket[]
   getArchivedTicketsByColumn: (projectId: string, column: KanbanTicketColumn) => KanbanTicket[]
+
+  // ── Connection-level accessors ──────────────────────────────────────
+  getConnectionProjectIds: (connectionId: string) => string[]
+  loadTicketsForConnection: (connectionId: string) => Promise<void>
+  getTicketsByColumnForConnection: (connectionId: string, column: KanbanTicketColumn) => KanbanTicket[]
+
+  // ── Pinned board accessors ──────────────────────────────────────────
+  isPinnedBoardActive: boolean
+  togglePinnedBoard: () => void
+  loadTicketsForPinnedProjects: () => Promise<void>
+  getTicketsByColumnForPinned: (column: KanbanTicketColumn) => KanbanTicket[]
+  getPinnedProjectIdsArray: () => string[]
 
   // ── Helpers ────────────────────────────────────────────────────────
   computeSortOrder: (tickets: KanbanTicket[], targetIndex: number) => number
@@ -129,11 +152,13 @@ export const useKanbanStore = create<KanbanState>()(
       tickets: new Map(),
       isLoading: false,
       isBoardViewActive: false,
+      isPinnedBoardActive: false,
       simpleModeByProject: {} as Record<string, boolean>,
       selectedTicketId: null,
       isDragging: false,
       draggingTicketId: null,
       showArchivedByProject: {} as Record<string, boolean>,
+      pendingDoneMove: null,
 
       // ── setSelectedTicketId ────────────────────────────────────────
       setSelectedTicketId: (id: string | null) => {
@@ -321,7 +346,10 @@ export const useKanbanStore = create<KanbanState>()(
           showArchivedByProject: { ...state.showArchivedByProject, [projectId]: show }
         }))
         // Re-fetch tickets with updated archive visibility
-        get().loadTickets(projectId)
+        // (multi-project boards use '' as key and re-fetch via their own effect)
+        if (projectId) {
+          get().loadTickets(projectId)
+        }
       },
 
       // ── moveTicket (optimistic) ──────────────────────────────────
@@ -424,6 +452,23 @@ export const useKanbanStore = create<KanbanState>()(
                       .catch(() => {})
                   }
                 }
+                // Accumulate token delta to ticket's persistent total
+                if (event.tokenDelta && event.tokenDelta > 0) {
+                  window.kanban.ticket.addTokens(ticket.id, event.tokenDelta)
+                    .then((updated) => {
+                      if (updated) {
+                        set((state) => {
+                          const next = new Map(state.tickets)
+                          const tickets = (next.get(projectId) ?? []).map((t) =>
+                            t.id === ticket.id ? { ...t, total_tokens: updated.total_tokens } : t
+                          )
+                          next.set(projectId, tickets)
+                          return { tickets: next }
+                        })
+                      }
+                    })
+                    .catch(() => {})
+                }
                 break
               }
 
@@ -506,6 +551,22 @@ export const useKanbanStore = create<KanbanState>()(
         }
       },
 
+      // ── Merge-on-done state ──────────────────────────────────────────
+      setPendingDoneMove: (data) => {
+        set({ pendingDoneMove: data })
+      },
+
+      clearPendingDoneMove: () => {
+        set({ pendingDoneMove: null })
+      },
+
+      completeDoneMove: async () => {
+        const pending = get().pendingDoneMove
+        if (!pending) return
+        set({ pendingDoneMove: null })
+        await get().moveTicket(pending.ticketId, pending.projectId, 'done', pending.sortOrder)
+      },
+
       // ── getTicketsForProject ─────────────────────────────────────
       getTicketsForProject: (projectId: string): KanbanTicket[] => {
         const tickets = get().tickets.get(projectId) ?? []
@@ -528,6 +589,95 @@ export const useKanbanStore = create<KanbanState>()(
         return tickets
           .filter((t) => t.column === column && t.archived_at)
           .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? ''))
+      },
+
+      // ── getConnectionProjectIds ─────────────────────────────────
+      getConnectionProjectIds: (connectionId: string): string[] => {
+        const connection = useConnectionStore
+          .getState()
+          .connections.find((c) => c.id === connectionId)
+        if (!connection) return []
+        return [...new Set(connection.members.map((m) => m.project_id))]
+      },
+
+      // ── loadTicketsForConnection ────────────────────────────────
+      loadTicketsForConnection: async (connectionId: string) => {
+        const projectIds = get().getConnectionProjectIds(connectionId)
+        if (projectIds.length === 0) return
+
+        set({ isLoading: true })
+        try {
+          const includeArchived = (pid: string) => get().showArchivedByProject[pid] ?? get().showArchivedByProject[''] ?? false
+          const results = await Promise.all(
+            projectIds.map((pid) => window.kanban.ticket.getByProject(pid, includeArchived(pid)))
+          )
+
+          // Batch update all projects at once
+          set((state) => {
+            const newTickets = new Map(state.tickets)
+            projectIds.forEach((pid, i) => {
+              newTickets.set(pid, results[i])
+            })
+            return { tickets: newTickets }
+          })
+        } catch (error) {
+          console.error('Failed to load tickets for connection:', error)
+        } finally {
+          set({ isLoading: false })
+        }
+      },
+
+      // ── getTicketsByColumnForConnection ─────────────────────────
+      getTicketsByColumnForConnection: (connectionId: string, column: KanbanTicketColumn): KanbanTicket[] => {
+        const projectIds = get().getConnectionProjectIds(connectionId)
+        const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
+        merged.sort((a, b) => a.sort_order - b.sort_order)
+        return merged
+      },
+
+      // ── togglePinnedBoard ────────────────────────────────────────
+      togglePinnedBoard: () => {
+        set((state) => ({ isPinnedBoardActive: !state.isPinnedBoardActive }))
+      },
+
+      // ── loadTicketsForPinnedProjects ─────────────────────────────
+      loadTicketsForPinnedProjects: async () => {
+        const projectIds = [...usePinnedStore.getState().pinnedProjectIds]
+        if (projectIds.length === 0) return
+
+        set({ isLoading: true })
+        try {
+          const includeArchived = (pid: string) => get().showArchivedByProject[pid] ?? get().showArchivedByProject[''] ?? false
+          const results = await Promise.all(
+            projectIds.map((pid) => window.kanban.ticket.getByProject(pid, includeArchived(pid)))
+          )
+
+          // Batch update all projects at once
+          set((state) => {
+            const newTickets = new Map(state.tickets)
+            projectIds.forEach((pid, i) => {
+              newTickets.set(pid, results[i])
+            })
+            return { tickets: newTickets }
+          })
+        } catch (error) {
+          console.error('Failed to load tickets for pinned projects:', error)
+        } finally {
+          set({ isLoading: false })
+        }
+      },
+
+      // ── getTicketsByColumnForPinned ──────────────────────────────
+      getTicketsByColumnForPinned: (column: KanbanTicketColumn): KanbanTicket[] => {
+        const projectIds = [...usePinnedStore.getState().pinnedProjectIds]
+        const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
+        merged.sort((a, b) => a.sort_order - b.sort_order)
+        return merged
+      },
+
+      // ── getPinnedProjectIdsArray ─────────────────────────────────
+      getPinnedProjectIdsArray: (): string[] => {
+        return [...usePinnedStore.getState().pinnedProjectIds].sort()
       },
 
       // ── computeSortOrder ─────────────────────────────────────────
@@ -555,6 +705,7 @@ export const useKanbanStore = create<KanbanState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         isBoardViewActive: state.isBoardViewActive,
+        isPinnedBoardActive: state.isPinnedBoardActive,
         simpleModeByProject: state.simpleModeByProject
       })
     }

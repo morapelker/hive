@@ -35,17 +35,20 @@ const mockDbSession = {
     completed_at: null
   }),
   getActiveByWorktree: vi.fn().mockResolvedValue([]),
-  update: vi.fn().mockResolvedValue(undefined)
+  update: vi.fn().mockResolvedValue(undefined),
+  get: vi.fn().mockResolvedValue(null)
 }
 
 const mockDbWorktree = {
   getActiveByProject: vi.fn().mockResolvedValue([]),
-  update: vi.fn().mockResolvedValue(undefined)
+  update: vi.fn().mockResolvedValue(undefined),
+  get: vi.fn().mockResolvedValue(null)
 }
 
 const mockOpencodeOps = {
   connect: vi.fn().mockResolvedValue({ success: true, sessionId: 'opc-session-1' }),
   prompt: vi.fn().mockResolvedValue({ success: true }),
+  reconnect: vi.fn().mockResolvedValue({ success: true }),
   planApprove: vi.fn().mockResolvedValue({ success: true }),
   abort: vi.fn().mockResolvedValue({ success: true })
 }
@@ -165,6 +168,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 
 // ── Import components under test ────────────────────────────────────
 import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
@@ -433,6 +437,30 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
       expect(screen.getByTestId('plan-review-implement-btn')).toBeInTheDocument()
       expect(screen.getByTestId('plan-review-handoff-btn')).toBeInTheDocument()
       expect(screen.getByTestId('plan-review-supercharge-btn')).toBeInTheDocument()
+    })
+
+    test('hides action buttons when pendingPlan is null', () => {
+      // Override pendingPlans to empty (no ExitPlanMode pending)
+      act(() => {
+        useSessionStore.setState({
+          sessionsByWorktree: new Map([['wt-1', [makeSession()]]]),
+          pendingPlans: new Map()
+        })
+      })
+
+      render(<KanbanTicketModal />)
+
+      // Plan review content still renders (ticket description as fallback)
+      expect(screen.getByTestId('plan-review-content')).toBeInTheDocument()
+
+      // Action buttons should NOT be present without a pending plan
+      expect(screen.queryByTestId('plan-review-implement-btn')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('plan-review-handoff-btn')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('plan-review-supercharge-btn')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('plan-review-supercharge-local-btn')).not.toBeInTheDocument()
+
+      // Followup input should still be available
+      expect(screen.getByTestId('plan-review-followup-input')).toBeInTheDocument()
     })
 
     test('Implement calls correct session store actions', async () => {
@@ -1109,6 +1137,382 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
         'todo',
         expect.any(Number)
       )
+    })
+  })
+
+  // ── Worktree path DB fallback ───────────────────────────────────────
+  describe('Worktree path DB fallback', () => {
+    const orphanTicket = makeTicket({
+      id: 'ticket-orphan',
+      column: 'review',
+      current_session_id: 'session-orphan',
+      worktree_id: 'wt-orphan',
+      mode: 'plan'
+    })
+
+    test('sends followup when worktree not in memory store (DB fallback)', async () => {
+      // Session in sessionsByWorktree but worktree NOT in worktreesByProject
+      act(() => {
+        useKanbanStore.setState({
+          tickets: new Map([['proj-1', [orphanTicket]]]),
+          selectedTicketId: 'ticket-orphan'
+        })
+        useSessionStore.setState({
+          sessionsByWorktree: new Map([
+            ['wt-orphan', [makeSession({ id: 'session-orphan', worktree_id: 'wt-orphan', status: 'completed' })]]
+          ])
+        })
+        // worktreesByProject is empty — worktree not loaded in sidebar
+        useWorktreeStore.setState({ worktreesByProject: new Map() })
+      })
+
+      // DB fallback returns the worktree path — chain two mockResolvedValueOnce
+      // because the component's dbWorktreePath effect also calls get() on mount
+      mockDbWorktree.get
+        .mockResolvedValueOnce({ path: '/test/orphan-worktree' })  // consumed by Bug 4 useEffect on mount
+        .mockResolvedValueOnce({ path: '/test/orphan-worktree' })  // consumed by sendFollowupToSession → findSessionById
+
+      render(<KanbanTicketModal />)
+
+      const input = screen.getByTestId('review-followup-input') as HTMLTextAreaElement
+      fireEvent.change(input, { target: { value: 'Continue with the plan' } })
+
+      const sendBtn = screen.getByTestId('review-send-followup-btn')
+      await act(async () => {
+        fireEvent.click(sendBtn)
+      })
+
+      await waitFor(() => {
+        expect(mockDbWorktree.get).toHaveBeenCalledWith('wt-orphan')
+        expect(mockOpencodeOps.reconnect).toHaveBeenCalledWith(
+          '/test/orphan-worktree',
+          'opc-session-1',
+          'session-orphan'
+        )
+        expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
+          '/test/orphan-worktree',
+          'opc-session-1',
+          expect.any(Array),
+          undefined
+        )
+      })
+    })
+
+    test('shows error when worktree not in memory and not in DB', async () => {
+      act(() => {
+        useKanbanStore.setState({
+          tickets: new Map([['proj-1', [orphanTicket]]]),
+          selectedTicketId: 'ticket-orphan'
+        })
+        useSessionStore.setState({
+          sessionsByWorktree: new Map([
+            ['wt-orphan', [makeSession({ id: 'session-orphan', worktree_id: 'wt-orphan', status: 'completed' })]]
+          ])
+        })
+        useWorktreeStore.setState({ worktreesByProject: new Map() })
+      })
+
+      // DB also returns null — worktree truly gone
+      mockDbWorktree.get.mockResolvedValueOnce(null)
+
+      render(<KanbanTicketModal />)
+
+      const input = screen.getByTestId('review-followup-input') as HTMLTextAreaElement
+      fireEvent.change(input, { target: { value: 'Continue with the plan' } })
+
+      const sendBtn = screen.getByTestId('review-send-followup-btn')
+      await act(async () => {
+        fireEvent.click(sendBtn)
+      })
+
+      await waitFor(() => {
+        expect(mockDbWorktree.get).toHaveBeenCalledWith('wt-orphan')
+        expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
+      })
+    })
+  })
+
+  describe('Session reconnect on modal open', () => {
+    const reconnectTicket = makeTicket({
+      id: 'ticket-reconnect',
+      column: 'review',
+      current_session_id: 'session-reconnect',
+      worktree_id: 'wt-1',
+      mode: 'build',
+      description: 'Review the implementation'
+    })
+
+    beforeEach(() => {
+      act(() => {
+        useKanbanStore.setState({
+          tickets: new Map([['proj-1', [reconnectTicket]]]),
+          selectedTicketId: 'ticket-reconnect'
+        })
+        useSessionStore.setState({
+          sessionsByWorktree: new Map([
+            ['wt-1', [makeSession({ id: 'session-reconnect', status: 'completed' })]]
+          ])
+        })
+      })
+    })
+
+    test('calls reconnect when modal opens with a session', async () => {
+      render(<KanbanTicketModal />)
+
+      await waitFor(() => {
+        expect(mockOpencodeOps.reconnect).toHaveBeenCalledWith(
+          '/test/feature-auth',
+          'opc-session-1',
+          'session-reconnect'
+        )
+      })
+    })
+
+    test('does not call reconnect when modal opens without a session', () => {
+      const noSessionTicket = makeTicket({
+        id: 'ticket-no-session',
+        column: 'todo',
+        current_session_id: null,
+        worktree_id: null
+      })
+      act(() => {
+        useKanbanStore.setState({
+          tickets: new Map([['proj-1', [noSessionTicket]]]),
+          selectedTicketId: 'ticket-no-session'
+        })
+      })
+
+      render(<KanbanTicketModal />)
+
+      expect(mockOpencodeOps.reconnect).not.toHaveBeenCalled()
+    })
+  })
+
+  // ════════════════════════════════════════════════════════════════════
+  // SESSION NOT IN MEMORY STORE (DB FALLBACK) TESTS
+  // ════════════════════════════════════════════════════════════════════
+
+  describe('Session not in memory store (DB fallback)', () => {
+    const dbFallbackTicket = makeTicket({
+      id: 'ticket-db-fallback',
+      column: 'review',
+      current_session_id: 'session-db-only',
+      worktree_id: 'wt-db',
+      mode: 'plan'
+    })
+
+    test('loads session from DB when not in sessionsByWorktree and calls reconnect', async () => {
+      // Session NOT in sessionsByWorktree — both maps empty
+      act(() => {
+        useKanbanStore.setState({
+          tickets: new Map([['proj-1', [dbFallbackTicket]]]),
+          selectedTicketId: 'ticket-db-fallback'
+        })
+        useSessionStore.setState({
+          sessionsByWorktree: new Map(),
+          sessionsByConnection: new Map()
+        })
+        useWorktreeStore.setState({ worktreesByProject: new Map() })
+      })
+
+      // DB fallback returns the session and its worktree
+      mockDbSession.get.mockResolvedValueOnce({
+        id: 'session-db-only',
+        worktree_id: 'wt-db',
+        connection_id: null,
+        name: 'DB Session',
+        status: 'completed',
+        opencode_session_id: 'opc-db-session',
+        agent_sdk: 'opencode',
+        mode: 'plan',
+        model_provider_id: null,
+        model_id: null,
+        model_variant: null,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        completed_at: '2026-01-01T00:01:00Z'
+      })
+      mockDbWorktree.get.mockResolvedValue({ path: '/test/db-worktree' })
+
+      render(<KanbanTicketModal />)
+
+      // The DB fallback effect should fire, loading the session via findSessionById
+      // which hits window.db.session.get, then the reconnect effect should trigger
+      await waitFor(() => {
+        expect(mockDbSession.get).toHaveBeenCalledWith('session-db-only')
+        expect(mockOpencodeOps.reconnect).toHaveBeenCalledWith(
+          '/test/db-worktree',
+          'opc-db-session',
+          'session-db-only'
+        )
+      })
+    })
+
+    test('hydrates session into sessionsByWorktree after DB fallback', async () => {
+      // Session NOT in sessionsByWorktree — both maps empty
+      act(() => {
+        useKanbanStore.setState({
+          tickets: new Map([['proj-1', [dbFallbackTicket]]]),
+          selectedTicketId: 'ticket-db-fallback'
+        })
+        useSessionStore.setState({
+          sessionsByWorktree: new Map(),
+          sessionsByConnection: new Map()
+        })
+        useWorktreeStore.setState({ worktreesByProject: new Map() })
+      })
+
+      const dbSessionData = {
+        id: 'session-db-only',
+        worktree_id: 'wt-db',
+        connection_id: null,
+        name: 'DB Session',
+        status: 'completed',
+        opencode_session_id: 'opc-db-session',
+        agent_sdk: 'opencode',
+        mode: 'plan',
+        model_provider_id: null,
+        model_id: null,
+        model_variant: null,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        completed_at: '2026-01-01T00:01:00Z'
+      }
+
+      mockDbSession.get.mockResolvedValueOnce(dbSessionData)
+      mockDbWorktree.get.mockResolvedValue({ path: '/test/db-worktree' })
+
+      // Before rendering, session is NOT in the store
+      expect(useSessionStore.getState().sessionsByWorktree.get('wt-db')).toBeUndefined()
+
+      render(<KanbanTicketModal />)
+
+      // After the DB fallback fires, findSessionById should hydrate the
+      // session into sessionsByWorktree so getWorktreeStatus() can find it.
+      await waitFor(() => {
+        const sessions = useSessionStore.getState().sessionsByWorktree.get('wt-db')
+        expect(sessions).toBeDefined()
+        expect(sessions!.some((s) => s.id === 'session-db-only')).toBe(true)
+      })
+    })
+
+    test('sends followup when session only in DB', async () => {
+      act(() => {
+        useKanbanStore.setState({
+          tickets: new Map([['proj-1', [dbFallbackTicket]]]),
+          selectedTicketId: 'ticket-db-fallback'
+        })
+        useSessionStore.setState({
+          sessionsByWorktree: new Map(),
+          sessionsByConnection: new Map()
+        })
+        useWorktreeStore.setState({ worktreesByProject: new Map() })
+      })
+
+      // DB returns the session for the rendering path (dbSessionInfo effect)
+      mockDbSession.get.mockResolvedValue({
+        id: 'session-db-only',
+        worktree_id: 'wt-db',
+        connection_id: null,
+        name: 'DB Session',
+        status: 'completed',
+        opencode_session_id: 'opc-db-session',
+        agent_sdk: 'opencode',
+        mode: 'plan',
+        model_provider_id: null,
+        model_id: null,
+        model_variant: null,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        completed_at: '2026-01-01T00:01:00Z'
+      })
+      mockDbWorktree.get.mockResolvedValue({ path: '/test/db-worktree' })
+
+      render(<KanbanTicketModal />)
+
+      // Wait for the DB fallback to resolve and the review mode to appear
+      const input = await waitFor(() => {
+        return screen.getByTestId('review-followup-input') as HTMLTextAreaElement
+      })
+
+      // Wait for the DB fallback to resolve, which triggers a re-render
+      // when effectiveSession populates and hasSession becomes true.
+      await waitFor(() => {
+        expect(mockOpencodeOps.reconnect).toHaveBeenCalled()
+      })
+
+      // Now fill in the followup text AFTER the re-render has settled,
+      // so the textarea's onChange handler updates the correct state.
+      const stableInput = screen.getByTestId('review-followup-input') as HTMLTextAreaElement
+      fireEvent.change(stableInput, { target: { value: 'Continue the work' } })
+
+      const sendBtn = screen.getByTestId('review-send-followup-btn')
+      await act(async () => {
+        fireEvent.click(sendBtn)
+      })
+
+      // sendFollowupToSession is fire-and-forget with multiple async hops
+      await waitFor(() => {
+        expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
+          '/test/db-worktree',
+          'opc-db-session',
+          expect.any(Array),
+          undefined
+        )
+      }, { timeout: 3000 })
+    })
+
+    test('finds session in sessionsByConnection when not in sessionsByWorktree', async () => {
+      const connectionTicket = makeTicket({
+        id: 'ticket-conn-only',
+        column: 'review',
+        current_session_id: 'session-conn',
+        worktree_id: null,
+        mode: 'build'
+      })
+
+      const connSession = makeSession({
+        id: 'session-conn',
+        worktree_id: null,
+        connection_id: 'conn-1',
+        status: 'completed'
+      })
+
+      act(() => {
+        useKanbanStore.setState({
+          tickets: new Map([['proj-1', [connectionTicket]]]),
+          selectedTicketId: 'ticket-conn-only'
+        })
+        useSessionStore.setState({
+          sessionsByWorktree: new Map(),
+          sessionsByConnection: new Map([['conn-1', [connSession]]])
+        })
+        useConnectionStore.setState({
+          connections: [{
+            id: 'conn-1',
+            name: 'Connection 1',
+            custom_name: null,
+            status: 'active' as const,
+            path: '/test/connection-path',
+            color: null,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            members: []
+          }]
+        })
+      })
+
+      render(<KanbanTicketModal />)
+
+      // The session is found via sessionsByConnection, so reconnect should
+      // be called with the connection path
+      await waitFor(() => {
+        expect(mockOpencodeOps.reconnect).toHaveBeenCalledWith(
+          '/test/connection-path',
+          'opc-session-1',
+          'session-conn'
+        )
+      })
     })
   })
 })

@@ -42,6 +42,8 @@ export interface KanbanSessionEvent {
   sessionMode?: 'build' | 'plan'
   /** For supercharge: the newly-created session that replaces the old one */
   newSessionId?: string
+  /** Tokens consumed during the session — accumulated to the ticket's persistent total */
+  tokenDelta?: number
 }
 
 type KanbanSessionSyncFn = (sessionId: string, event: KanbanSessionEvent) => void

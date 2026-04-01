@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useProjectStore } from './useProjectStore'
+import { useKanbanStore } from './useKanbanStore'
 import { useScriptStore, killRunScript } from './useScriptStore'
 import { useSessionStore } from './useSessionStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
@@ -501,6 +502,11 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       get().touchWorktree(id)
       // Deconflict: clear any selected connection synchronously (same tick)
       clearConnectionSelection()
+      // Close pinned board when navigating to a specific worktree
+      const kanbanState = useKanbanStore.getState()
+      if (kanbanState.isPinnedBoardActive) {
+        kanbanState.togglePinnedBoard()
+      }
 
       // Auto-detect language from worktree folder when project has none (fire-and-forget)
       const worktrees = Array.from(get().worktreesByProject.values()).flat()

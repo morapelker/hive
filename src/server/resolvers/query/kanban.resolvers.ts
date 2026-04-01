@@ -21,7 +21,8 @@ function mapKanbanTicket(row: any) {
     updatedAt: row.updated_at,
     externalProvider: row.external_provider ?? null,
     externalId: row.external_id ?? null,
-    externalUrl: row.external_url ?? null
+    externalUrl: row.external_url ?? null,
+    totalTokens: row.total_tokens ?? 0
   }
 }
 

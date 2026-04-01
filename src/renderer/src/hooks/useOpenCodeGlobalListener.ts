@@ -193,6 +193,20 @@ export function useOpenCodeGlobalListener(): void {
           const rawActiveId = useSessionStore.getState().activeSessionId
           const activeId = useKanbanStore.getState().isBoardViewActive ? null : rawActiveId
 
+          // Handle session materialization globally so the Zustand store
+          // is always up-to-date with the real SDK session ID.  Without this,
+          // sessions created via the kanban board (where SessionView / useSessionStream
+          // are never mounted) keep their placeholder `pending::UUID` ID forever,
+          // and reconnect / getMessages fail because the backend uses the real ID.
+          if (event.type === 'session.materialized') {
+            const newId = (event.data as Record<string, unknown> | undefined)
+              ?.newSessionId as string | undefined
+            if (newId) {
+              useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
+            }
+            return
+          }
+
           // Handle model limits from Claude Code session init
           if (event.type === 'session.model_limits') {
             const models = event.data?.models as

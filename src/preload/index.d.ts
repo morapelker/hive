@@ -65,6 +65,7 @@ interface Worktree {
   context: string | null
   github_pr_number: number | null
   github_pr_url: string | null
+  base_branch: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -1049,6 +1050,25 @@ declare global {
         error?: string
         conflicts?: string[]
       }>
+      // Abort an in-progress merge
+      mergeAbort: (worktreePath: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
+      // Check if a worktree has uncommitted changes
+      hasUncommittedChanges: (worktreePath: string) => Promise<boolean>
+      // Get branch divergence stats vs base branch
+      branchDiffShortStat: (
+        worktreePath: string,
+        baseBranch: string
+      ) => Promise<{
+        success: boolean
+        filesChanged: number
+        insertions: number
+        deletions: number
+        commitsAhead: number
+        error?: string
+      }>
       // Get raw file content from disk
       getFileContent: (
         worktreePath: string,
@@ -1303,9 +1323,33 @@ declare global {
         ) => Promise<KanbanTicket | null>
         reorder: (id: string, sortOrder: number) => Promise<void>
         getBySession: (sessionId: string) => Promise<KanbanTicket[]>
+        addTokens: (id: string, tokens: number) => Promise<KanbanTicket | null>
       }
       simpleMode: {
         toggle: (projectId: string, enabled: boolean) => Promise<void>
+      }
+      board: {
+        export: (projectId: string, projectName: string) => Promise<{ success: boolean; ticketCount: number; path?: string }>
+        openImportFile: () => Promise<{
+          tickets: Array<{
+            id: string
+            title: string
+            description?: string | null
+            attachments?: unknown[]
+            column?: string
+          }>
+          projectName?: string
+        } | null>
+        importTickets: (
+          projectId: string,
+          tickets: Array<{
+            id: string
+            title: string
+            description?: string | null
+            attachments?: unknown[]
+            column?: string
+          }>
+        ) => Promise<{ created: number; updated: number }>
       }
     }
     ticketImport: {
@@ -1324,20 +1368,21 @@ declare global {
       listIssues: (
         providerId: string,
         repo: string,
-        options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string },
+        options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
         settings: Record<string, string>
       ) => Promise<{
         issues: Array<{
           externalId: string
           title: string
           body: string | null
-          state: 'open' | 'closed'
+          state: 'open' | 'closed' | 'in_progress'
           url: string
           createdAt: string
           updatedAt: string
         }>
         hasNextPage: boolean
         totalCount: number
+        nextPageToken?: string
       }>
       importIssues: (
         providerId: string,

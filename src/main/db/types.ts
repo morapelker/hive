@@ -57,6 +57,7 @@ export interface Worktree {
   context: string | null
   github_pr_number: number | null
   github_pr_url: string | null
+  base_branch: string | null
   created_at: string
   last_accessed_at: string
 }
@@ -67,6 +68,7 @@ export interface WorktreeCreate {
   branch_name: string
   path: string
   is_default?: boolean
+  base_branch?: string | null
 }
 
 export interface WorktreeUpdate {
@@ -350,9 +352,11 @@ export interface KanbanTicket {
   external_provider: string | null
   external_id: string | null
   external_url: string | null
+  total_tokens: number
 }
 
 export interface KanbanTicketCreate {
+  id?: string
   project_id: string
   title: string
   description?: string | null

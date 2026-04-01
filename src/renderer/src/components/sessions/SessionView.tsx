@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
-import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square, Archive, X } from 'lucide-react'
+import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square, Archive, X, Github, Minimize2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
-import { MessageRenderer } from './MessageRenderer'
 import { ModeToggle } from './ModeToggle'
+import { SuperToggle } from './SuperToggle'
 import { ModelSelector } from './ModelSelector'
-import { QueuedMessageBubble } from './QueuedMessageBubble'
+import { VirtualizedMessageList, type VirtualizedMessageListHandle } from './VirtualizedMessageList'
 import { ContextIndicator } from './ContextIndicator'
 import { AttachmentButton } from './AttachmentButton'
 import { AttachmentPreview } from './AttachmentPreview'
@@ -52,13 +52,12 @@ import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
-import { COMPLETION_WORDS, formatCompletionDuration } from '@/lib/format-utils'
+import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { buildPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
-import beeIcon from '@/assets/bee.png'
 
 // Stable empty array to avoid creating new references in selectors
 const EMPTY_FILE_INDEX: FlatFile[] = []
@@ -528,6 +527,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [connectionId, setConnectionId] = useState<string | null>(null)
   const [opencodeSessionId, setOpencodeSessionId] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
+  const [isCompacting, setIsCompacting] = useState(false)
   const [sessionRetry, setSessionRetry] = useState<SessionRetryState | null>(null)
   const [sessionErrorMessage, setSessionErrorMessage] = useState<string | null>(null)
   const [sessionErrorStderr, setSessionErrorStderr] = useState<string | null>(null)
@@ -625,9 +625,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const streamingContentRef = useRef<string>('')
 
   // Refs
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const virtualizedListRef = useRef<VirtualizedMessageListHandle>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
+  const scrollContainerCallbackRef = useCallback((el: HTMLDivElement | null) => {
+    scrollContainerRef.current = el
+    setScrollElement(el)
+  }, [])
 
   // Smart auto-scroll tracking
   const isAutoScrollEnabledRef = useRef(true)
@@ -804,9 +809,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Auto-scroll to bottom when new messages arrive or streaming updates
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = isStreaming ? 'instant' : 'smooth') => {
-      if (!messagesEndRef.current) return
       markProgrammaticScroll()
-      messagesEndRef.current.scrollIntoView({ behavior })
+      virtualizedListRef.current?.scrollToEnd(behavior)
     },
     [isStreaming, markProgrammaticScroll]
   )
@@ -1170,6 +1174,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     streamingContentRef.current = ''
     setStreamingContent('')
     setIsStreaming(false)
+    setIsCompacting(false)
     lastSentPromptRef.current = null
     planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
   }, [])
@@ -1948,6 +1953,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             }
 
             if (part.type === 'text') {
+              setIsCompacting(false)
               const delta = event.data?.delta
 
               // Codex plan mode: scan for <proposed_plan> XML tags and route
@@ -2088,6 +2094,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 setIsStreaming(true)
               }
             } else if (part.type === 'tool') {
+              setIsCompacting(false)
               // Tool part from OpenCode SDK - has callID, tool (name), state
               const toolId = part.callID || part.id || `tool-${Date.now()}`
               const toolName = part.tool || undefined
@@ -2189,7 +2196,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               ])
               immediateFlush()
               setIsStreaming(true)
+            } else if (part.type === 'compaction_started') {
+              setIsCompacting(true)
+              setIsStreaming(true)
+              immediateFlush()
             } else if (part.type === 'compaction') {
+              setIsCompacting(false)
               updateStreamingPartsRef((parts) => [
                 ...parts,
                 { type: 'compaction' as const, compactionAuto: part.auto === true }
@@ -2273,6 +2285,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // This catches edge cases where session.status events are unavailable.
             immediateFlush()
             setIsSending(false)
+            setIsCompacting(false)
             // Only clear visual queue if no follow-ups remain
             const hasFollowUps =
               (useSessionStore.getState().pendingFollowUpMessages.get(sessionId)?.length ?? 0) > 0
@@ -2303,6 +2316,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setSessionRetry(null)
               setSessionErrorMessage(null)
               setSessionErrorStderr(null)
+              setIsCompacting(false)
               setIsStreaming(true)
               hasFinalizedCurrentResponseRef.current = false
               newPromptPendingRef.current = false
@@ -2317,6 +2331,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } else if (status.type === 'idle') {
               // Don't overwrite plan_ready — session is blocked waiting for plan approval
               if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
+              setIsCompacting(false)
 
               // If there are queued follow-up messages, send the next one instead of finalizing
               const followUp = useSessionStore.getState().consumeFollowUpMessage(sessionId)
@@ -2825,10 +2841,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setSessionRetry({})
             }
 
-            // Refresh transcript using the confirmed live OpenCode session ID.
-            // This avoids keeping a stale/partial pre-connect transcript.
-            await loadMessages({ worktreePath: wtPath, opencodeSessionId: existingOpcSessionId })
-            if (shouldAbortInit()) return
+            // Reload transcript for busy/retry sessions (new messages may have arrived
+            // between first load and reconnect completion). For idle sessions the first
+            // load already has the complete transcript.
+            if (reconnectResult.sessionStatus !== 'idle') {
+              await loadMessages({ worktreePath: wtPath, opencodeSessionId: existingOpcSessionId })
+              if (shouldAbortInit()) return
+            }
 
             await sendPendingMessage(wtPath, existingOpcSessionId)
             return
@@ -4542,6 +4561,30 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Determine if there's streaming content to show
   const hasStreamingContent = streamingParts.length > 0 || streamingContent.length > 0
 
+  const streamingStartTimeRef = useRef<string>('')
+  const streamingMessage = useMemo(() => {
+    if (!hasStreamingContent) {
+      streamingStartTimeRef.current = ''
+      return null
+    }
+    if (!streamingStartTimeRef.current) {
+      streamingStartTimeRef.current = new Date().toISOString()
+    }
+    return {
+      id: 'streaming' as const,
+      role: 'assistant' as const,
+      content: streamingContent,
+      timestamp: streamingStartTimeRef.current,
+      parts: streamingParts
+    }
+  }, [hasStreamingContent, streamingContent, streamingParts])
+
+  const handleRedoRevert = useCallback(() => {
+    setInputValue('/redo')
+    inputValueRef.current = '/redo'
+    textareaRef.current?.focus()
+  }, [])
+
   // The StreamingCursor (blinking cursor) only renders after text or tool_use parts.
   // Parts like reasoning, step_start, step_finish, compaction don't show it.
   // When those are the only parts, we still need the 3-dot loading indicator.
@@ -4657,7 +4700,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       {/* Message list with scroll tracking */}
       <div className="relative flex-1 min-h-0">
         <div
-          ref={scrollContainerRef}
+          ref={scrollContainerCallbackRef}
           className="h-full overflow-y-auto"
           onScroll={handleScroll}
           onWheel={handleScrollWheel}
@@ -4701,133 +4744,28 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               </div>
             </div>
           ) : (
-            <div className="py-4">
-              {visibleMessages.map((message) => (
-                <MessageRenderer
-                  key={message.id}
-                  message={message}
-                  cwd={worktreePath}
-                  onForkAssistantMessage={handleForkFromAssistantMessage}
-                  forkDisabled={forkingMessageId !== null && forkingMessageId !== message.id}
-                  isForking={forkingMessageId === message.id}
-                />
-              ))}
-              {/* Revert banner — shows when messages have been undone */}
-              {revertMessageID && revertedUserCount > 0 && (
-                <div
-                  className="mx-6 my-3 rounded-lg border border-border/50 bg-muted/30 px-4 py-3"
-                  data-testid="revert-banner"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">
-                      {revertedUserCount} {revertedUserCount === 1 ? 'message' : 'messages'}{' '}
-                      reverted
-                    </span>
-                    <button
-                      className="text-xs text-primary hover:text-primary/80 font-medium transition-colors"
-                      onClick={() => {
-                        setInputValue('/redo')
-                        inputValueRef.current = '/redo'
-                        textareaRef.current?.focus()
-                      }}
-                    >
-                      /redo to restore
-                    </button>
-                  </div>
-                </div>
-              )}
-              {sessionErrorMessage && (
-                <div
-                  className="mx-6 my-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3"
-                  data-testid="session-error-banner"
-                >
-                  <div className="flex items-start gap-2 text-destructive">
-                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium">Session error</p>
-                      <p className="mt-0.5 text-sm text-destructive/90">{sessionErrorMessage}</p>
-                      {sessionErrorStderr && (
-                        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-destructive/10 px-2 py-1.5 font-mono text-xs text-destructive/80">
-                          {sessionErrorStderr}
-                        </pre>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-              {sessionRetry && (
-                <div
-                  className="mx-6 my-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3"
-                  data-testid="session-retry-banner"
-                >
-                  <div className="flex items-start gap-2 text-destructive">
-                    <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
-                    <div>
-                      <p className="text-sm font-medium">
-                        Retrying
-                        {retrySecondsRemaining !== null ? ` in ${retrySecondsRemaining}s` : ''}{' '}
-                        (attempt {sessionRetry.attempt ?? 1})
-                      </p>
-                      {sessionRetry.message && (
-                        <p className="mt-0.5 text-sm text-destructive/90">{sessionRetry.message}</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-              {/* Streaming message */}
-              {hasStreamingContent && (
-                <MessageRenderer
-                  message={{
-                    id: 'streaming',
-                    role: 'assistant',
-                    content: streamingContent,
-                    timestamp: new Date().toISOString(),
-                    parts: streamingParts
-                  }}
-                  isStreaming={isStreaming}
-                  cwd={worktreePath}
-                  onForkAssistantMessage={handleForkFromAssistantMessage}
-                  forkDisabled={true}
-                />
-              )}
-              {/* Typing indicator — shows while busy unless the blinking cursor is visible */}
-              {isSending && !hasVisibleWritingCursor && (
-                <div className="px-6 py-5" data-testid="typing-indicator">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" />
-                    <span
-                      className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
-                      style={{ animationDelay: '0.1s' }}
-                    />
-                    <span
-                      className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
-                      style={{ animationDelay: '0.2s' }}
-                    />
-                  </div>
-                </div>
-              )}
-              {/* Queued messages rendered as visible bubbles */}
-              {queuedMessages.map((msg) => (
-                <QueuedMessageBubble key={msg.id} content={msg.content} />
-              ))}
-              {/* Plan content is now rendered inside the ExitPlanMode tool card */}
-              {/* Completion badge — shows after streaming finishes */}
-              {completionEntry && !isSending && (
-                <div
-                  className="flex items-center gap-1.5 px-6 py-2 text-xs"
-                  style={{ color: '#C15F3C' }}
-                  data-testid="completion-badge"
-                >
-                  <img src={beeIcon} alt="bee" className="h-7 w-7" />
-                  <span className="font-medium">
-                    {completionEntry.word ?? 'Worked'} for{' '}
-                    {formatCompletionDuration(completionEntry.durationMs ?? 0)}
-                  </span>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
+            <VirtualizedMessageList
+              ref={virtualizedListRef}
+              messages={visibleMessages}
+              streamingMessage={streamingMessage}
+              isStreaming={isStreaming}
+              isSending={isSending}
+              isCompacting={isCompacting}
+              cwd={worktreePath}
+              onForkAssistantMessage={handleForkFromAssistantMessage}
+              forkingMessageId={forkingMessageId}
+              revertMessageID={revertMessageID}
+              revertedUserCount={revertedUserCount}
+              onRedoRevert={handleRedoRevert}
+              sessionErrorMessage={sessionErrorMessage}
+              sessionErrorStderr={sessionErrorStderr}
+              sessionRetry={sessionRetry}
+              retrySecondsRemaining={retrySecondsRemaining}
+              hasVisibleWritingCursor={hasVisibleWritingCursor}
+              queuedMessages={queuedMessages}
+              completionEntry={completionEntry}
+              scrollElement={scrollElement}
+            />
           )}
         </div>
         <PlanReadyImplementFab
@@ -4928,8 +4866,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             )}
           >
             {/* Top row: mode toggle */}
-            <div className="px-3 pt-2.5 pb-1">
+            <div className="px-3 pt-2.5 pb-1 flex items-center gap-1.5">
               <ModeToggle sessionId={sessionId} />
+              <SuperToggle sessionId={sessionId} />
             </div>
 
             {/* Attachment previews */}
@@ -4986,8 +4925,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             />
 
             {/* Bottom row: model selector + context indicator + hint text + send/implement buttons */}
-            <div className="flex items-center justify-between px-3 pb-2.5">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between px-3 pb-2.5 @container">
+              <div className="flex items-center gap-2 min-w-0 overflow-hidden">
                 <ModelSelector sessionId={sessionId} />
                 {sessionAgentSdk === 'codex' && (
                   <CodexFastToggle
@@ -5010,7 +4949,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 />
                 <span
                   className={cn(
-                    'text-xs tabular-nums',
+                    'text-xs tabular-nums whitespace-nowrap',
                     elapsedTimerText && isActive
                       ? activeQuestion
                         ? 'text-amber-500 font-semibold'
@@ -5025,12 +4964,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   {elapsedTimerText ??
                     (pendingPlan
                       ? 'Enter to send feedback to revise the plan'
-                      : `${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Shift+Enter for new line`)}
+                      : <span className="hidden @min-[42rem]:inline">{`${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Shift+Enter for new line`}</span>)}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
                 {isStreaming && (
-                  <IndeterminateProgressBar mode={mode} isAsking={!!activeQuestion} />
+                  <IndeterminateProgressBar mode={mode} isAsking={!!activeQuestion} isCompacting={isCompacting} />
                 )}
                 {isStreaming && !inputValue.trim() ? (
                   <Button

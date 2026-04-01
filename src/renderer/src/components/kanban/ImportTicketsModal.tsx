@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Download, Search, ExternalLink, Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import {
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useConnectionStore } from '@/stores'
 import { getProviderSettings } from '@/lib/provider-settings'
 import { toast } from 'sonner'
 
@@ -19,7 +20,7 @@ interface RemoteIssue {
   externalId: string
   title: string
   body: string | null
-  state: 'open' | 'closed'
+  state: 'open' | 'closed' | 'in_progress'
   url: string
   createdAt: string
   updatedAt: string
@@ -30,6 +31,7 @@ interface ImportTicketsModalProps {
   onOpenChange: (open: boolean) => void
   projectId: string
   projectPath: string
+  connectionId?: string
 }
 
 const PER_PAGE = 30
@@ -38,9 +40,33 @@ export function ImportTicketsModal({
   open,
   onOpenChange,
   projectId,
-  projectPath
+  projectPath,
+  connectionId
 }: ImportTicketsModalProps) {
   const loadTickets = useKanbanStore((s) => s.loadTickets)
+
+  const isConnectionMode = !!connectionId
+  const connections = useConnectionStore((state) => state.connections)
+  const connectionProjects = useMemo(() => {
+    if (!connectionId) return []
+    const connection = connections.find((c) => c.id === connectionId)
+    if (!connection) return []
+    const seen = new Set<string>()
+    return connection.members.reduce<{ id: string; name: string; path: string }[]>((acc, m) => {
+      if (!seen.has(m.project_id)) {
+        seen.add(m.project_id)
+        acc.push({ id: m.project_id, name: m.project_name, path: m.worktree_path })
+      }
+      return acc
+    }, [])
+  }, [connectionId, connections])
+
+  const [selectedProjectId, setSelectedProjectId] = useState('')
+
+  const effectiveProjectId = isConnectionMode ? selectedProjectId : projectId
+  const effectiveProjectPath = isConnectionMode
+    ? connectionProjects.find((p) => p.id === selectedProjectId)?.path ?? projectPath
+    : projectPath
 
   const [repo, setRepo] = useState<string | null>(null)
   const [manualRepo, setManualRepo] = useState('')
@@ -61,12 +87,9 @@ export function ImportTicketsModal({
 
   const effectiveRepo = repo ?? (manualRepo.includes('/') ? manualRepo.trim() : null)
 
-  // Auto-detect repo on open
+  // Reset form state when modal opens
   useEffect(() => {
     if (!open) return
-    setDetectingRepo(true)
-    setDetectionFailed(false)
-    setRepo(null)
     setManualRepo('')
     setIssues([])
     setSelected(new Set())
@@ -75,9 +98,20 @@ export function ImportTicketsModal({
     setSearchInput('')
     setShowClosed(false)
     setImportProgress(null)
+    setSelectedProjectId(connectionProjects[0]?.id ?? '')
+  }, [open, connectionProjects])
+
+  // Auto-detect repo when modal opens or selected project changes
+  useEffect(() => {
+    if (!open) return
+    setDetectingRepo(true)
+    setDetectionFailed(false)
+    setRepo(null)
+    setIssues([])
+    setSelected(new Set())
 
     window.ticketImport
-      .detectRepo('github', projectPath)
+      .detectRepo('github', effectiveProjectPath)
       .then(({ repo: detected }) => {
         if (detected) {
           setRepo(detected)
@@ -87,7 +121,7 @@ export function ImportTicketsModal({
       })
       .catch(() => setDetectionFailed(true))
       .finally(() => setDetectingRepo(false))
-  }, [open, projectPath])
+  }, [open, effectiveProjectPath])
 
   // Fetch issues when repo/page/search/showClosed changes
   useEffect(() => {
@@ -145,7 +179,7 @@ export function ImportTicketsModal({
     try {
       const result = await window.ticketImport.importIssues(
         'github',
-        projectId,
+        effectiveProjectId,
         effectiveRepo,
         toImport.map((i) => ({
           externalId: i.externalId,
@@ -163,7 +197,7 @@ export function ImportTicketsModal({
       if (result.skipped.length > 0) msgs.push(`Skipped ${result.skipped.length} duplicate${result.skipped.length > 1 ? 's' : ''}`)
       toast.success(msgs.join('. '))
 
-      await loadTickets(projectId)
+      await loadTickets(effectiveProjectId)
       onOpenChange(false)
     } catch (err) {
       toast.error(`Import failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -189,6 +223,24 @@ export function ImportTicketsModal({
         </DialogHeader>
 
         <div className="flex-1 min-h-0 flex flex-col">
+          {/* Project picker (connection mode only) */}
+          {isConnectionMode && connectionProjects.length > 0 && (
+            <div className="px-4 pt-3 pb-2 border-b shrink-0">
+              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Project
+              </label>
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="w-full mt-1 rounded-md border border-border/60 bg-background px-3 py-2 text-sm"
+              >
+                {connectionProjects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Repo detection / manual entry */}
           {detectingRepo && (
             <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
@@ -269,7 +321,6 @@ export function ImportTicketsModal({
                       >
                         <Checkbox
                           checked={selected.has(issue.externalId)}
-                          onCheckedChange={() => toggleSelect(issue.externalId)}
                           className="mt-0.5"
                         />
                         <div className="flex-1 min-w-0">

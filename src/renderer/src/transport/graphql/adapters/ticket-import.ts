@@ -54,7 +54,7 @@ export function createTicketImportAdapter() {
     async listIssues(
       providerId: string,
       repo: string,
-      options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string },
+      options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
       settings: Record<string, string>
     ) {
       const result = await graphqlQuery<{
@@ -63,19 +63,20 @@ export function createTicketImportAdapter() {
             externalId: string
             title: string
             body: string | null
-            state: 'open' | 'closed'
+            state: 'open' | 'closed' | 'in_progress'
             url: string
             createdAt: string
             updatedAt: string
           }>
           hasNextPage: boolean
           totalCount: number
+          nextPageToken?: string
         }
       }>(
         `query ($input: ListIssuesInput!, $settings: String!) {
           ticketImportListIssues(input: $input, settings: $settings) {
             issues { externalId title body state url createdAt updatedAt }
-            hasNextPage totalCount
+            hasNextPage totalCount nextPageToken
           }
         }`,
         {

@@ -14,7 +14,9 @@ import {
   Archive,
   ChevronDown,
   FileSearch,
-  X
+  X,
+  ExternalLink,
+  Copy
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { Button } from '@/components/ui/button'
@@ -25,6 +27,13 @@ import {
   DropdownMenuItem
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from '@/components/ui/popover'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator
+} from '@/components/ui/context-menu'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/stores/useLayoutStore'
@@ -456,6 +465,17 @@ export function Header(): React.JSX.Element {
     setPrLiveState(null)
   }, [selectedWorktreeId])
 
+  const handleOpenPRInBrowser = useCallback(() => {
+    if (!attachedPR?.url) return
+    window.systemOps.openInChrome(attachedPR.url)
+  }, [attachedPR?.url])
+
+  const handleCopyPRUrl = useCallback(() => {
+    if (!attachedPR?.url) return
+    navigator.clipboard.writeText(attachedPR.url)
+    toast.success('PR URL copied')
+  }, [attachedPR?.url])
+
   const handleFixConflicts = async () => {
     if (!selectedWorktreeId || !selectedProjectId || !selectedWorktree?.path) return
 
@@ -683,89 +703,111 @@ export function Header(): React.JSX.Element {
         )}
         {/* PR Badge with Popover Picker — shown when a PR is attached and not creating */}
         {!isConnectionMode && isGitHub && hasAttachedPR && !isCreatingPR && (
-          <Popover open={prPickerOpen} onOpenChange={setPrPickerOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs"
-                title={`PR #${attachedPR!.number}`}
-                data-testid="pr-badge"
-              >
-                <GitPullRequest className="h-3.5 w-3.5 mr-1" />
-                PR #{attachedPR!.number}
-                {prLiveState?.state === 'MERGED' && (
-                  <span className="text-muted-foreground ml-1">· merged</span>
-                )}
-                {prLiveState?.state === 'CLOSED' && (
-                  <span className="text-muted-foreground ml-1">· closed</span>
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-80 p-0">
-              {/* Attached PR header */}
-              <div className="px-3 py-2 border-b">
-                <div className="text-xs font-medium text-muted-foreground">
-                  Attached: #{attachedPR!.number}
-                </div>
-                {prLiveState?.title && (
-                  <div className="text-sm truncate">
-                    {prLiveState.title}
-                    {prLiveState.state && (
-                      <span className="text-muted-foreground ml-1 text-xs">
-                        ({prLiveState.state.toLowerCase()})
-                      </span>
+          <ContextMenu>
+            <Popover open={prPickerOpen} onOpenChange={setPrPickerOpen}>
+              <ContextMenuTrigger asChild>
+                <PopoverTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    title={`PR #${attachedPR!.number} (right-click for options)`}
+                    data-testid="pr-badge"
+                  >
+                    <GitPullRequest className="h-3.5 w-3.5 mr-1" />
+                    PR #{attachedPR!.number}
+                    {prLiveState?.state === 'MERGED' && (
+                      <span className="text-muted-foreground ml-1">· merged</span>
                     )}
+                    {prLiveState?.state === 'CLOSED' && (
+                      <span className="text-muted-foreground ml-1">· closed</span>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+              </ContextMenuTrigger>
+              <PopoverContent align="end" className="w-80 p-0">
+                {/* Attached PR header */}
+                <div className="px-3 py-2 border-b">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    Attached: #{attachedPR!.number}
                   </div>
-                )}
-              </div>
-              {/* PR list */}
-              <div className="max-h-48 overflow-y-auto">
-                {prListLoading ? (
-                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />
-                    Loading PRs...
-                  </div>
-                ) : prList.length === 0 ? (
-                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                    No open PRs found
-                  </div>
-                ) : (
-                  prList.map((pr) => (
-                    <button
-                      key={pr.number}
-                      className={cn(
-                        'w-full text-left px-3 py-2 text-sm hover:bg-accent cursor-pointer',
-                        'flex items-center gap-2',
-                        pr.number === attachedPR!.number && 'bg-accent/50'
+                  {prLiveState?.title && (
+                    <div className="text-sm truncate">
+                      {prLiveState.title}
+                      {prLiveState.state && (
+                        <span className="text-muted-foreground ml-1 text-xs">
+                          ({prLiveState.state.toLowerCase()})
+                        </span>
                       )}
-                      onClick={() => handleSelectPR(pr)}
-                      data-testid={`pr-picker-item-${pr.number}`}
-                    >
-                      <span className={cn(
-                        'text-xs font-mono shrink-0',
-                        pr.number === attachedPR!.number && 'text-primary font-bold'
-                      )}>
-                        {pr.number === attachedPR!.number ? '●' : ' '} #{pr.number}
-                      </span>
-                      <span className="truncate">{pr.title}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-              {/* Detach action */}
-              <div className="border-t">
-                <button
-                  className="w-full text-left px-3 py-2 text-sm text-destructive hover:bg-destructive/10 cursor-pointer flex items-center gap-1"
-                  onClick={handleDetachPR}
-                  data-testid="pr-detach-button"
-                >
-                  <X className="h-3.5 w-3.5" />
-                  Detach PR
-                </button>
-              </div>
-            </PopoverContent>
-          </Popover>
+                    </div>
+                  )}
+                </div>
+                {/* PR list */}
+                <div className="max-h-48 overflow-y-auto">
+                  {prListLoading ? (
+                    <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />
+                      Loading PRs...
+                    </div>
+                  ) : prList.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                      No open PRs found
+                    </div>
+                  ) : (
+                    prList.map((pr) => (
+                      <button
+                        key={pr.number}
+                        className={cn(
+                          'w-full text-left px-3 py-2 text-sm hover:bg-accent cursor-pointer',
+                          'flex items-center gap-2',
+                          pr.number === attachedPR!.number && 'bg-accent/50'
+                        )}
+                        onClick={() => handleSelectPR(pr)}
+                        data-testid={`pr-picker-item-${pr.number}`}
+                      >
+                        <span className={cn(
+                          'text-xs font-mono shrink-0',
+                          pr.number === attachedPR!.number && 'text-primary font-bold'
+                        )}>
+                          {pr.number === attachedPR!.number ? '●' : ' '} #{pr.number}
+                        </span>
+                        <span className="truncate">{pr.title}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+                {/* Detach action */}
+                <div className="border-t">
+                  <button
+                    className="w-full text-left px-3 py-2 text-sm text-destructive hover:bg-destructive/10 cursor-pointer flex items-center gap-1"
+                    onClick={handleDetachPR}
+                    data-testid="pr-detach-button"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Detach PR
+                  </button>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <ContextMenuContent>
+              <ContextMenuItem onClick={handleOpenPRInBrowser}>
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Open PR in Browser
+              </ContextMenuItem>
+              <ContextMenuItem onClick={handleCopyPRUrl}>
+                <Copy className="h-4 w-4 mr-2" />
+                Copy PR URL
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onClick={handleDetachPR}
+                className="text-destructive focus:text-destructive focus:bg-destructive/10"
+              >
+                <X className="h-4 w-4 mr-2" />
+                Detach PR
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         )}
         {/* Creating PR spinner */}
         {!isConnectionMode && isGitHub && isCreatingPR && (
@@ -875,29 +917,27 @@ export function Header(): React.JSX.Element {
             </DropdownMenu>
           </Popover>
         )}
-        {selectedProjectId && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              if (!isBoardViewActive) {
-                // Clear any active file/diff/context views so the board can render
-                const fileStore = useFileViewerStore.getState()
-                fileStore.setActiveFile(null)
-                fileStore.clearActiveDiff()
-                fileStore.closeContextEditor()
-              }
-              toggleBoardView()
-            }}
-            title={isBoardViewActive ? 'Close Board' : 'Open Board'}
-            data-testid="kanban-board-toggle"
-            className={cn(
-              isBoardViewActive && 'bg-accent text-accent-foreground'
-            )}
-          >
-            <KanbanIcon className="h-4 w-4" />
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => {
+            if (!isBoardViewActive) {
+              // Clear any active file/diff/context views so the board can render
+              const fileStore = useFileViewerStore.getState()
+              fileStore.setActiveFile(null)
+              fileStore.clearActiveDiff()
+              fileStore.closeContextEditor()
+            }
+            toggleBoardView()
+          }}
+          title={isBoardViewActive ? 'Close Board' : 'Open Board'}
+          data-testid="kanban-board-toggle"
+          className={cn(
+            isBoardViewActive && 'bg-accent text-accent-foreground'
+          )}
+        >
+          <KanbanIcon className="h-4 w-4" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"

@@ -170,11 +170,27 @@ describe('Session 5: View Toggle', () => {
     expect(toggleBtn).toBeInTheDocument()
   })
 
-  test('Header does not render kanban toggle when no project selected', () => {
+  test('Header renders kanban toggle even when no project selected', () => {
     setProjectSelected(null)
     render(<Header />)
 
-    expect(screen.queryByTestId('kanban-board-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('kanban-board-toggle')).toBeInTheDocument()
+  })
+
+  test('clicking toggle button works with nothing selected', async () => {
+    setProjectSelected(null)
+    setWorktreeSelected(null)
+
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(false)
+
+    render(<Header />)
+    const toggleBtn = screen.getByTestId('kanban-board-toggle')
+
+    await act(async () => {
+      fireEvent.click(toggleBtn)
+    })
+
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
   })
 
   test('clicking toggle button calls toggleBoardView', async () => {
@@ -198,6 +214,33 @@ describe('Session 5: View Toggle', () => {
   test('MainPane renders board placeholder when isBoardViewActive is true', () => {
     setProjectSelected('proj-1')
     setWorktreeSelected('wt-1')
+
+    act(() => {
+      useKanbanStore.setState({ isBoardViewActive: true })
+    })
+
+    render(<MainPane />)
+
+    expect(screen.getByTestId('kanban-board')).toBeInTheDocument()
+  })
+
+  test('MainPane renders empty kanban state when board active but no project selected', () => {
+    setProjectSelected(null)
+    setWorktreeSelected(null)
+
+    act(() => {
+      useKanbanStore.setState({ isBoardViewActive: true })
+    })
+
+    render(<MainPane />)
+
+    expect(screen.getByText('Select a project to view its board')).toBeInTheDocument()
+    expect(screen.queryByTestId('kanban-board')).not.toBeInTheDocument()
+  })
+
+  test('MainPane renders kanban board when project selected but no worktree', () => {
+    setProjectSelected('proj-1')
+    setWorktreeSelected(null)
 
     act(() => {
       useKanbanStore.setState({ isBoardViewActive: true })

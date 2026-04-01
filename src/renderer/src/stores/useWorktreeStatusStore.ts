@@ -85,7 +85,8 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       const mode = lastSendMode.get(sessionId) as 'build' | 'plan' | undefined
       notifyKanbanSessionSync(sessionId, {
         type: 'session_completed',
-        sessionMode: mode
+        sessionMode: mode,
+        tokenDelta: metadata?.tokenDelta
       })
     } else if (status === 'plan_ready') {
       notifyKanbanSessionSync(sessionId, { type: 'plan_ready' })

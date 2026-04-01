@@ -1,6 +1,6 @@
 // src/main/services/ticket-providers/ticket-provider-types.ts
 
-export type TicketProviderId = 'github'
+export type TicketProviderId = 'github' | 'jira'
 
 export interface SettingsField {
   key: string
@@ -14,7 +14,7 @@ export interface RemoteIssue {
   externalId: string
   title: string
   body: string | null
-  state: 'open' | 'closed'
+  state: 'open' | 'closed' | 'in_progress'
   url: string
   createdAt: string
   updatedAt: string
@@ -24,6 +24,7 @@ export interface RemoteIssueListResult {
   issues: RemoteIssue[]
   hasNextPage: boolean
   totalCount: number
+  nextPageToken?: string
 }
 
 export interface RemoteStatus {
@@ -46,6 +47,7 @@ export interface TicketProvider {
       perPage: number
       state: 'open' | 'closed' | 'all'
       search?: string
+      nextPageToken?: string
     },
     settings: Record<string, string>
   ): Promise<RemoteIssueListResult>
