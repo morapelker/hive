@@ -4925,8 +4925,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             />
 
             {/* Bottom row: model selector + context indicator + hint text + send/implement buttons */}
-            <div className="flex items-center justify-between px-3 pb-2.5">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between px-3 pb-2.5 @container">
+              <div className="flex items-center gap-2 min-w-0 overflow-hidden">
                 <ModelSelector sessionId={sessionId} />
                 {sessionAgentSdk === 'codex' && (
                   <CodexFastToggle
@@ -4949,7 +4949,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 />
                 <span
                   className={cn(
-                    'text-xs tabular-nums',
+                    'text-xs tabular-nums whitespace-nowrap',
                     elapsedTimerText && isActive
                       ? activeQuestion
                         ? 'text-amber-500 font-semibold'
@@ -4964,7 +4964,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   {elapsedTimerText ??
                     (pendingPlan
                       ? 'Enter to send feedback to revise the plan'
-                      : `${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Shift+Enter for new line`)}
+                      : <span className="hidden @min-[42rem]:inline">{`${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Shift+Enter for new line`}</span>)}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
