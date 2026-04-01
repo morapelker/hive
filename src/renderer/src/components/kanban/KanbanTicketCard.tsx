@@ -355,10 +355,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
         useSessionStore.getState().setActiveSession(ticket.current_session_id)
       } else {
+        // In pinned mode the current project context may not match the ticket's project;
+        // navigate to it so the user lands in the right project.
+        if (isPinnedMode && ticket.project_id) {
+          useProjectStore.getState().selectProject(ticket.project_id)
+        }
         useSessionStore.getState().setActiveSession(ticket.current_session_id)
       }
     }
-  }, [ticket.current_session_id, ticket.worktree_id, connectionId, connectionSession])
+  }, [ticket.current_session_id, ticket.worktree_id, ticket.project_id, connectionId, connectionSession, isPinnedMode])
 
   const isSimpleTicket = ticket.current_session_id === null
   const isFlowTicket = ticket.current_session_id !== null

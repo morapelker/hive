@@ -63,18 +63,18 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
     }, [])
   }, [connectionId, connections])
 
+  const pinnedProjectIds = usePinnedStore((s) => s.pinnedProjectIds)
+  const allProjects = useProjectStore((s) => s.projects)
   const pinnedProjects = useMemo(() => {
     if (!isPinnedMode) return []
-    const pinnedProjectIds = [...usePinnedStore.getState().pinnedProjectIds]
-    const projects = useProjectStore.getState().projects
-    return pinnedProjectIds
+    return [...pinnedProjectIds]
       .map((pid) => {
-        const project = projects.find((p) => p.id === pid)
+        const project = allProjects.find((p) => p.id === pid)
         return project ? { id: pid, name: project.name } : null
       })
       .filter((p): p is { id: string; name: string } => p !== null)
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [isPinnedMode])
+  }, [isPinnedMode, pinnedProjectIds, allProjects])
 
   const isMultiProjectMode = isConnectionMode || !!isPinnedMode
   const availableProjects = isConnectionMode ? connectionProjects : pinnedProjects

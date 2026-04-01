@@ -336,7 +336,10 @@ export const useKanbanStore = create<KanbanState>()(
           showArchivedByProject: { ...state.showArchivedByProject, [projectId]: show }
         }))
         // Re-fetch tickets with updated archive visibility
-        get().loadTickets(projectId)
+        // (multi-project boards use '' as key and re-fetch via their own effect)
+        if (projectId) {
+          get().loadTickets(projectId)
+        }
       },
 
       // ── moveTicket (optimistic) ──────────────────────────────────
