@@ -36,6 +36,7 @@ import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
+import { formatTokenCount } from '@/lib/format-utils'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 // ── Project tag color palette ──────────────────────────────────────
@@ -211,10 +212,19 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     (isBusy || isAsking) && ticket.column === 'in_progress'
   )
 
-  const tokenText = useSessionTokenDelta(
+  // Accumulated total for done column
+  const doneTokenText = ticket.column === 'done' && ticket.total_tokens > 0
+    ? formatTokenCount(ticket.total_tokens)
+    : null
+
+  // Per-turn delta for active columns (unchanged)
+  const turnTokenText = useSessionTokenDelta(
     ticket.current_session_id,
     (isBusy || isAsking) && ticket.column === 'in_progress'
   )
+
+  // Done column shows accumulated total; everything else shows per-turn delta
+  const tokenText = doneTokenText ?? turnTokenText
 
   // ── Detect if the linked worktree has a live run process ──────
   const isRunProcessAlive = useScriptStore(
