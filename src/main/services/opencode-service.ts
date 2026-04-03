@@ -465,6 +465,14 @@ class OpenCodeService {
       // just update the Hive session mapping. Skip subscription to avoid count leak.
       if (instance.sessionMap.has(scopedKey)) {
         instance.sessionMap.set(scopedKey, hiveSessionId)
+
+        // The directory subscription may have been cancelled if all sessions
+        // disconnected (unsubscribeFromDirectory deletes the entry when
+        // sessionCount hits 0). Re-subscribe to restore event flow.
+        if (!instance.directorySubscriptions.has(worktreePath)) {
+          this.subscribeToDirectory(instance, worktreePath)
+        }
+
         log.info('Session already registered, updated mapping', {
           opencodeSessionId,
           hiveSessionId

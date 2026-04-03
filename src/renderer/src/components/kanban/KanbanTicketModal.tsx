@@ -249,7 +249,10 @@ async function sendFollowupToSession(opts: {
   // SessionView does this on mount via initializeSession(), but the kanban
   // followup path bypasses SessionView entirely.  Without this, the Claude Code
   // implementer throws "session not found" because its Map was never populated.
-  await window.opencodeOps.reconnect(workingPath, session.opencode_session_id, opts.sessionId)
+  const reconnectResult = await window.opencodeOps.reconnect(workingPath, session.opencode_session_id, opts.sessionId)
+  if (!reconnectResult.success) {
+    throw new Error(`Failed to reconnect to session: ${opts.sessionId}`)
+  }
 
   const promptResult = await window.opencodeOps.prompt(workingPath, session.opencode_session_id, [
     { type: 'text', text: fullPrompt }
@@ -1109,6 +1112,20 @@ function PlanReviewModeContent({
             .setSessionStatus(sessionId, 'planning')
           toast.success('Plan rejected with feedback')
           onClose()
+
+          // Send the rejection feedback to the session in background.
+          // UI is already updated (plan cleared, status set, modal closed).
+          sendFollowupToSession({
+            sessionId,
+            prompt: feedback,
+            followUpMode,
+            ticketId: ticket.id,
+          }).catch((err) => {
+            console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
+            const reason = err instanceof Error ? err.message : String(err)
+            toast.error(`Failed to send followup: ${reason}`)
+            useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+          })
           return
         }
       }
