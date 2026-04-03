@@ -47,7 +47,7 @@ Hive er en AI-agent orkestrator. Se alle dine kørende agenter i én sidebar, kl
 Arbejd på flere branches samtidigt uden stashing eller switching. Opret, arkivér og organisér worktrees med ét klik. Hver worktree får et unikt bybaseret navn for nem identifikation.
 
 ### 🤖 **Indbyggede AI-kodningssessioner**
-Kør AI-kodningsagenter direkte i Hive med både **OpenCode** og **Claude Code** support. Stream svar i realtid, se tool calls blive udført, og godkend tilladelser efter behov. Fuld undo/redo support holder dig i kontrol.
+Kør AI-kodningsagenter direkte i Hive med **OpenCode**, **Claude Code** og **Codex** support. Stream svar i realtid, se tool calls blive udført, og godkend tilladelser efter behov. Fuld undo/redo support holder dig i kontrol.
 
 ### 📁 **Smart Filstifinder**
 Se hvad der er ændret med et blik med live git-statusindikatorer. Se diffs inline, gennemse filhistorik og navigér i din kodebase uden at forlade appen. Integreret Monaco-editor giver en fuld VS Code-oplevelse.
@@ -113,7 +113,7 @@ Kom i gang på under 2 minutter:
 Vælg dit projekt → Klik **"Ny Worktree"** → Vælg en branch (eller opret en ny)
 
 ### 3️⃣ **Begynd at kode med AI**
-Åbn en worktree → Klik **"Ny Session"** → Begynd at kode med OpenCode eller Claude
+Åbn en worktree → Klik **"Ny Session"** → Begynd at kode med OpenCode, Claude, eller Codex
 
 > 💡 **Pro tip**: Tryk `Cmd+K` når som helst for at åbne kommandopaletten og navigere hurtigt!
 
@@ -308,7 +308,7 @@ Hive bruger Electrons tre-procesmodel med streng sandboxing:
 │               (Node.js + SQLite)                     │
 │                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │ Database  │ │   Git    │ │ OpenCode Service  │   │
+│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
 │  │ Service   │ │ Service  │ │  (AI Sessions)    │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 │                      │                               │
@@ -342,7 +342,7 @@ src/
 ├── main/                  # Electron hovedproces (Node.js)
 │   ├── db/                # SQLite database + skema + migrationer
 │   ├── ipc/               # IPC handler-moduler
-│   └── services/          # Git, OpenCode, logger, fil-services
+│   └── services/          # Git, AI agents, logger, fil-services
 ├── preload/               # Bro-lag (typede window.* API'er)
 └── renderer/src/          # React SPA
     ├── components/        # UI organiseret efter domæne
@@ -361,7 +361,7 @@ src/
 | Styling   | [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | State     | [Zustand 5](https://zustand.docs.pmnd.rs/)                                       |
 | Database  | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (WAL-tilstand)          |
-| AI        | [OpenCode SDK](https://opencode.ai)                                              |
+| AI        | [OpenCode](https://opencode.ai), [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview), [Codex](https://github.com/openai/codex)                                              |
 | Git       | [simple-git](https://github.com/steveukx/git-js)                                 |
 | Build     | [electron-vite](https://electron-vite.org/)                                      |
 

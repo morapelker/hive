@@ -126,6 +126,7 @@ Archived worktrees are moved to `~/.hive-archive` and can be:
 3. Choose your AI provider:
    - **OpenCode**: Full-featured with undo/redo support
    - **Claude Code**: Anthropic's coding assistant
+   - **Codex**: OpenAI's coding agent
 
 ### During a Session
 
@@ -145,6 +146,7 @@ Always review what the AI wants to do before approving!
 #### Undo/Redo
 - **OpenCode**: Full undo/redo support with `Cmd+Z` / `Cmd+Shift+Z`
 - **Claude Code**: Undo only (rewind to previous state)
+- **Codex**: Undo only (rollback to previous state)
 
 ### Session Management
 

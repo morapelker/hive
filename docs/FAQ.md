@@ -145,11 +145,13 @@ Look for these indicators:
 ### Which AI providers does Hive support?
 - **OpenCode SDK** - Default provider with full features
 - **Claude Code SDK** - Anthropic's Claude assistant
+- **Codex CLI** - OpenAI's Codex coding agent
 
 ### Do I need API keys?
 It depends on your configuration:
 - OpenCode: May require API key depending on setup
 - Claude Code: Requires Anthropic API key
+- Codex: Requires `OPENAI_API_KEY` environment variable
 
 ### How do I set up API keys?
 1. Open Settings (`Cmd+,`)
@@ -173,6 +175,7 @@ Yes. All AI interactions happen directly between your machine and the AI provide
 ### Can I undo AI changes?
 - **OpenCode**: Full undo/redo support
 - **Claude Code**: Undo only (rewind functionality)
+- **Codex**: Undo only (thread rollback)
 
 ### Why did my AI session disconnect?
 Common reasons:

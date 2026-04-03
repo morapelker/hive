@@ -51,7 +51,7 @@ Hive הוא מתזמר סוכני AI. ראו את כל הסוכנים הפעיל
 עבדו על מספר ענפים בו-זמנית בלי stashing או switching. צרו, ארכבו וארגנו עצי עבודה בלחיצה אחת. כל worktree מקבל שם ייחודי מבוסס ערים לזיהוי קל.
 
 ### 🤖 **סשני קידוד AI מובנים**
-הריצו סוכני קידוד AI ישירות בתוך Hive עם תמיכה ב-**OpenCode** וב-**Claude Code**. צפו בתגובות בזמן אמת, עקבו אחרי קריאות כלים בביצוע, ואשרו הרשאות לפי הצורך. תמיכה מלאה ב-undo/redo שומרת אתכם בשליטה.
+הריצו סוכני קידוד AI ישירות בתוך Hive עם תמיכה ב-**OpenCode**, **Claude Code**, ו-**Codex**. צפו בתגובות בזמן אמת, עקבו אחרי קריאות כלים בביצוע, ואשרו הרשאות לפי הצורך. תמיכה מלאה ב-undo/redo שומרת אתכם בשליטה.
 
 ### 📁 **סייר קבצים חכם**
 ראו מה השתנה במבט עם מחווני סטטוס git חיים. צפו ב-diffs ישירות, דפדפו בהיסטוריית קבצים, ונווטו בקוד בלי לעזוב את האפליקציה. עורך Monaco המשולב מספק חווית VS Code מלאה.
@@ -117,7 +117,7 @@ brew install --cask hive
 בחרו את הפרויקט שלכם → לחצו **"Worktree חדש"** → בחרו ענף (או צרו חדש)
 
 ### 3️⃣ **התחילו לקודד עם AI**
-פתחו worktree → לחצו **"סשן חדש"** → התחילו לקודד עם OpenCode או Claude
+פתחו worktree → לחצו **"סשן חדש"** → התחילו לקודד עם OpenCode, Claude, או Codex
 
 > 💡 **טיפ מקצועי**: לחצו `Cmd+K` בכל עת כדי לפתוח את פלטת הפקודות ולנווט במהירות!
 
@@ -320,7 +320,7 @@ Hive משתמש במודל שלוש התהליכים של Electron עם sandboxi
 │               (Node.js + SQLite)                     │
 │                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │ Database  │ │   Git    │ │ OpenCode Service  │   │
+│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
 │  │ Service   │ │ Service  │ │  (AI Sessions)    │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 │                      │                               │
@@ -354,7 +354,7 @@ src/
 ├── main/                  # תהליך Electron ראשי (Node.js)
 │   ├── db/                # מסד נתונים SQLite + סכמה + מיגרציות
 │   ├── ipc/               # מודולי מטפלי IPC
-│   └── services/          # שירותי Git, OpenCode, לוגר, קבצים
+│   └── services/          # שירותי Git, AI agents, לוגר, קבצים
 ├── preload/               # שכבת גשר (ממשקי window.* מוקלדים)
 └── renderer/src/          # אפליקציית React SPA
     ├── components/        # ממשק משתמש מאורגן לפי תחום
@@ -373,7 +373,7 @@ src/
 | עיצוב   | [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | מצב     | [Zustand 5](https://zustand.docs.pmnd.rs/)                                       |
 | מסד נתונים  | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (מצב WAL)          |
-| AI        | [OpenCode SDK](https://opencode.ai)                                              |
+| AI        | [OpenCode](https://opencode.ai), [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview), [Codex](https://github.com/openai/codex)                                              |
 | Git       | [simple-git](https://github.com/steveukx/git-js)                                 |
 | בנייה     | [electron-vite](https://electron-vite.org/)                                      |
 

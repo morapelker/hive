@@ -71,7 +71,7 @@ These shortcuts work anywhere in the application:
 | `Cmd+Shift+A` | New AI Session | Start new AI coding session |
 | `Cmd+Enter` | Send Message | Send message in AI chat |
 | `Shift+Enter` | New Line | Add new line in message |
-| `Cmd+Z` | Undo AI Action | Undo last AI action (OpenCode only) |
+| `Cmd+Z` | Undo AI Action | Undo last AI action (OpenCode, Claude Code, Codex) |
 | `Cmd+Shift+Z` | Redo AI Action | Redo AI action (OpenCode only) |
 | `Cmd+L` | Clear Chat | Clear AI chat history |
 | `Cmd+S` | Save Session | Save current session |

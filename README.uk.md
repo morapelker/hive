@@ -47,7 +47,7 @@ Hive — це оркестратор AI-агентів. Бачите всіх з
 Працюйте одночасно в кількох гілках без stash або перемикання. Створюйте, архівуйте та організовуйте worktree одним клацанням. Кожен worktree отримує унікальне ім'я на основі міста для легкої ідентифікації.
 
 ### 🤖 **Вбудовані сесії AI-кодування**
-Запускайте AI-агентів для кодування прямо в Hive з підтримкою **OpenCode** та **Claude Code**. Стрімте відповіді в реальному часі, спостерігайте за викликами інструментів та затверджуйте дозволи за потреби. Повна підтримка скасування/повтору тримає вас під контролем.
+Запускайте AI-агентів для кодування прямо в Hive з підтримкою **OpenCode**, **Claude Code** та **Codex**. Стрімте відповіді в реальному часі, спостерігайте за викликами інструментів та затверджуйте дозволи за потреби. Повна підтримка скасування/повтору тримає вас під контролем.
 
 ### 📁 **Розумний файловий менеджер**
 Бачте зміни з першого погляду завдяки індикаторам статусу git в реальному часі. Переглядайте diff прямо в дереві, вивчайте історію файлів та навігуйте кодовою базою, не залишаючи додатка. Вбудований редактор Monaco забезпечує повноцінний досвід рівня VS Code.
@@ -113,7 +113,7 @@ brew install --cask hive
 Оберіть проєкт → Натисніть **«New Worktree»** → Оберіть гілку (або створіть нову)
 
 ### 3️⃣ **Почніть кодувати з AI**
-Відкрийте worktree → Натисніть **«New Session»** → Почніть кодувати з OpenCode або Claude
+Відкрийте worktree → Натисніть **«New Session»** → Почніть кодувати з OpenCode, Claude або Codex
 
 > 💡 **Порада**: Натисніть `Cmd+K` будь-коли, щоб відкрити палітру команд і швидко навігувати!
 
@@ -308,7 +308,7 @@ Hive використовує трипроцесну модель Electron зі 
 │               (Node.js + SQLite)                     │
 │                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │ Database  │ │   Git    │ │ OpenCode Service  │   │
+│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
 │  │ Service   │ │ Service  │ │  (AI-сесії)       │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 │                      │                               │
@@ -342,7 +342,7 @@ src/
 ├── main/                  # Головний процес Electron (Node.js)
 │   ├── db/                # База даних SQLite + схема + міграції
 │   ├── ipc/               # Модулі обробників IPC
-│   └── services/          # Git, OpenCode, логер, файлові сервіси
+│   └── services/          # Git, AI agents, логер, файлові сервіси
 ├── preload/               # Містковий шар (типізовані API window.*)
 └── renderer/src/          # React SPA
     ├── components/        # UI по доменах
@@ -361,7 +361,7 @@ src/
 | Стилі   | [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | Стан     | [Zustand 5](https://zustand.docs.pmnd.rs/)                                       |
 | БД  | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (режим WAL)          |
-| AI        | [OpenCode SDK](https://opencode.ai)                                              |
+| AI        | [OpenCode](https://opencode.ai), [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview), [Codex](https://github.com/openai/codex)                                              |
 | Git       | [simple-git](https://github.com/steveukx/git-js)                                 |
 | Збірка     | [electron-vite](https://electron-vite.org/)                                      |
 

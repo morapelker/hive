@@ -47,7 +47,7 @@
 Εργαστείτε σε πολλαπλά branches ταυτόχρονα χωρίς stashing ή switching. Δημιουργήστε, αρχειοθετήστε και οργανώστε worktrees με ένα κλικ. Κάθε worktree παίρνει ένα μοναδικό όνομα βασισμένο σε πόλεις για εύκολη αναγνώριση.
 
 ### 🤖 **Ενσωματωμένες AI Coding Συνεδρίες**
-Εκτελέστε AI coding agents απευθείας μέσα στο Hive με υποστήριξη τόσο για **OpenCode** όσο και για **Claude Code**. Παρακολουθήστε απαντήσεις σε πραγματικό χρόνο, δείτε tool calls να εκτελούνται, και εγκρίνετε δικαιώματα όπως χρειάζεται. Πλήρης υποστήριξη undo/redo σας κρατά στον έλεγχο.
+Εκτελέστε AI coding agents απευθείας μέσα στο Hive με υποστήριξη για **OpenCode**, **Claude Code** και **Codex**. Παρακολουθήστε απαντήσεις σε πραγματικό χρόνο, δείτε tool calls να εκτελούνται, και εγκρίνετε δικαιώματα όπως χρειάζεται. Πλήρης υποστήριξη undo/redo σας κρατά στον έλεγχο.
 
 ### 📁 **Έξυπνος Εξερευνητής Αρχείων**
 Δείτε τι άλλαξε με μια ματιά με live δείκτες κατάστασης git. Δείτε diffs inline, περιηγηθείτε στο ιστορικό αρχείων, και πλοηγηθείτε στον κώδικά σας χωρίς να φύγετε από την εφαρμογή. Ο ενσωματωμένος Monaco editor παρέχει πλήρη εμπειρία VS Code.
@@ -113,7 +113,7 @@ brew install --cask hive
 Επιλέξτε το έργο σας → Κλικ **"Νέο Worktree"** → Επιλέξτε branch (ή δημιουργήστε νέο)
 
 ### 3️⃣ **Ξεκινήστε να κωδικοποιείτε με AI**
-Ανοίξτε ένα worktree → Κλικ **"Νέα Συνεδρία"** → Ξεκινήστε να κωδικοποιείτε με OpenCode ή Claude
+Ανοίξτε ένα worktree → Κλικ **"Νέα Συνεδρία"** → Ξεκινήστε να κωδικοποιείτε με OpenCode, Claude, ή Codex
 
 > 💡 **Συμβουλή**: Πατήστε `Cmd+K` οποτεδήποτε για να ανοίξετε την παλέτα εντολών και να πλοηγηθείτε γρήγορα!
 
@@ -308,7 +308,7 @@ pnpm dev
 │               (Node.js + SQLite)                     │
 │                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │ Database  │ │   Git    │ │ OpenCode Service  │   │
+│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
 │  │ Service   │ │ Service  │ │  (AI Sessions)    │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 │                      │                               │
@@ -342,7 +342,7 @@ src/
 ├── main/                  # Κύρια διεργασία Electron (Node.js)
 │   ├── db/                # Βάση δεδομένων SQLite + σχήμα + μεταναστεύσεις
 │   ├── ipc/               # Modules χειρισμού IPC
-│   └── services/          # Υπηρεσίες Git, OpenCode, logger, αρχείων
+│   └── services/          # Υπηρεσίες Git, AI agents, logger, αρχείων
 ├── preload/               # Επίπεδο γέφυρας (τυποποιημένα window.* APIs)
 └── renderer/src/          # React SPA
     ├── components/        # UI οργανωμένο ανά τομέα
@@ -361,7 +361,7 @@ src/
 | Styling   | [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | State     | [Zustand 5](https://zustand.docs.pmnd.rs/)                                       |
 | Βάση Δεδομένων  | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (λειτουργία WAL)          |
-| AI        | [OpenCode SDK](https://opencode.ai)                                              |
+| AI        | [OpenCode](https://opencode.ai), [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview), [Codex](https://github.com/openai/codex)                                              |
 | Git       | [simple-git](https://github.com/steveukx/git-js)                                 |
 | Build     | [electron-vite](https://electron-vite.org/)                                      |
 

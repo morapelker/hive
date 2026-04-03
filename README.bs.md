@@ -47,7 +47,7 @@ Hive je AI agent orkestrator. Vidite sve pokrenute agente u jednom sidebaru, kli
 Radite na više brancheva istovremeno bez stashiranja ili prebacivanja. Kreirajte, arhivirajte i organizirajte worktreeje jednim klikom. Svaki worktree dobija jedinstveno ime bazirano na gradovima za lakšu identifikaciju.
 
 ### 🤖 **Ugrađene AI Coding Sesije**
-Pokrenite AI coding agente direktno u Hive sa podrškom za **OpenCode** i **Claude Code**. Pratite odgovore u realnom vremenu, gledajte izvršavanje tool poziva i odobravajte dozvole po potrebi. Puna undo/redo podrška vas drži u kontroli.
+Pokrenite AI coding agente direktno u Hive sa podrškom za **OpenCode**, **Claude Code** i **Codex**. Pratite odgovore u realnom vremenu, gledajte izvršavanje tool poziva i odobravajte dozvole po potrebi. Puna undo/redo podrška vas drži u kontroli.
 
 ### 📁 **Pametni File Explorer**
 Vidite šta se promijenilo na prvi pogled sa live git status indikatorima. Pregledajte diffove inline, pretražite historiju fajlova i navigirajte kroz codebase bez napuštanja aplikacije. Integrirani Monaco editor pruža potpuni VS Code doživljaj.
@@ -113,7 +113,7 @@ Otvorite Hive → Kliknite **"Dodaj Projekat"** → Izaberite bilo koji git repo
 Izaberite projekat → Kliknite **"Novi Worktree"** → Izaberite branch (ili kreirajte novi)
 
 ### 3️⃣ **Počnite kodirati sa AI**
-Otvorite worktree → Kliknite **"Nova Sesija"** → Počnite kodirati sa OpenCode ili Claude
+Otvorite worktree → Kliknite **"Nova Sesija"** → Počnite kodirati sa OpenCode, Claude, ili Codex
 
 > 💡 **Pro savjet**: Pritisnite `Cmd+K` bilo kada za otvaranje command palete i brzu navigaciju!
 
@@ -308,7 +308,7 @@ Hive koristi Electron-ov model sa tri procesa uz strogi sandboxing:
 │               (Node.js + SQLite)                     │
 │                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │ Database  │ │   Git    │ │ OpenCode Service  │   │
+│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
 │  │ Service   │ │ Service  │ │  (AI Sessions)    │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 │                      │                               │
@@ -342,7 +342,7 @@ src/
 ├── main/                  # Electron glavni proces (Node.js)
 │   ├── db/                # SQLite baza podataka + šema + migracije
 │   ├── ipc/               # IPC handler moduli
-│   └── services/          # Git, OpenCode, logger, file servisi
+│   └── services/          # Git, AI agents, logger, file servisi
 ├── preload/               # Bridge sloj (tipizirani window.* API-ji)
 └── renderer/src/          # React SPA
     ├── components/        # UI organiziran po domenu
@@ -361,7 +361,7 @@ src/
 | Styling   | [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | State     | [Zustand 5](https://zustand.docs.pmnd.rs/)                                       |
 | Baza podataka  | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (WAL režim)          |
-| AI        | [OpenCode SDK](https://opencode.ai)                                              |
+| AI        | [OpenCode](https://opencode.ai), [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview), [Codex](https://github.com/openai/codex)                                              |
 | Git       | [simple-git](https://github.com/steveukx/git-js)                                 |
 | Build     | [electron-vite](https://electron-vite.org/)                                      |
 

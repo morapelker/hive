@@ -54,7 +54,7 @@ Hive ist ein KI-Agent-Orchestrator. Sieh alle laufenden Agenten in einer Seitenl
 Arbeite gleichzeitig an mehreren Branches ohne Stashing oder Wechseln. Erstelle, archiviere und organisiere Worktrees mit einem Klick. Jeder Worktree erhält einen einzigartigen stadtbasierten Namen zur leichten Identifikation.
 
 ### 🤖 **Integrierte KI-Coding-Sessions**
-Führe KI-Coding-Agenten direkt in Hive aus mit **OpenCode** und **Claude Code** Unterstützung. Streame Antworten in Echtzeit, beobachte Tool-Aufrufe und genehmige Berechtigungen nach Bedarf. Vollständige Rückgängig/Wiederherstellen-Unterstützung behält die Kontrolle.
+Führe KI-Coding-Agenten direkt in Hive aus mit **OpenCode**, **Claude Code** und **Codex** Unterstützung. Streame Antworten in Echtzeit, beobachte Tool-Aufrufe und genehmige Berechtigungen nach Bedarf. Vollständige Rückgängig/Wiederherstellen-Unterstützung behält die Kontrolle.
 
 ### 📁 **Intelligenter Datei-Explorer**
 Sieh auf einen Blick, was sich geändert hat, mit Live-Git-Status-Indikatoren. Zeige Diffs inline an, durchsuche die Datei-Historie und navigiere durch deine Codebasis, ohne die App zu verlassen. Der integrierte Monaco-Editor bietet ein vollständiges VS Code Erlebnis.
@@ -120,7 +120,7 @@ In unter 2 Minuten startklar:
 Wähle dein Projekt → Klicke **„New Worktree"** → Wähle einen Branch (oder erstelle einen neuen)
 
 ### 3️⃣ **Beginne mit KI zu coden**
-Öffne einen Worktree → Klicke **„New Session"** → Beginne mit OpenCode oder Claude zu coden
+Öffne einen Worktree → Klicke **„New Session"** → Beginne mit OpenCode, Claude, oder Codex zu coden
 
 > 💡 **Profi-Tipp**: Drücke jederzeit `Cmd+K` um die Befehlspalette zu öffnen und schnell zu navigieren!
 
@@ -315,7 +315,7 @@ Hive verwendet Electrons Drei-Prozesse-Modell mit striktem Sandboxing:
 │               (Node.js + SQLite)                     │
 │                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │ Database  │ │   Git    │ │ OpenCode Service  │   │
+│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
 │  │ Service   │ │ Service  │ │  (KI-Sessions)    │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 │                      │                               │
@@ -349,7 +349,7 @@ src/
 ├── main/                  # Electron Hauptprozess (Node.js)
 │   ├── db/                # SQLite-Datenbank + Schema + Migrationen
 │   ├── ipc/               # IPC-Handler-Module
-│   └── services/          # Git, OpenCode, Logger, Dateidienste
+│   └── services/          # Git, AI agents, Logger, Dateidienste
 ├── preload/               # Brücken-Schicht (typisierte window.* APIs)
 └── renderer/src/          # React SPA
     ├── components/        # UI nach Domänen organisiert
@@ -368,7 +368,7 @@ src/
 | Styling   | [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | Zustand     | [Zustand 5](https://zustand.docs.pmnd.rs/)                                       |
 | Datenbank  | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (WAL-Modus)          |
-| KI        | [OpenCode SDK](https://opencode.ai)                                              |
+| KI        | [OpenCode](https://opencode.ai), [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview), [Codex](https://github.com/openai/codex)                                              |
 | Git       | [simple-git](https://github.com/steveukx/git-js)                                 |
 | Build     | [electron-vite](https://electron-vite.org/)                                      |
 

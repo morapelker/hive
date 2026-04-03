@@ -47,7 +47,7 @@ Hive bir AI ajan orkestratörüdür. Çalışan tüm ajanlarınızı tek bir ken
 Stash yapmadan veya dal değiştirmeden aynı anda birden fazla dalda çalışın. Tek tıkla worktree oluşturun, arşivleyin ve düzenleyin. Her worktree kolay tanımlama için şehir tabanlı benzersiz bir ad alır.
 
 ### 🤖 **Yerleşik AI Kodlama Oturumları**
-**OpenCode** ve **Claude Code** desteğiyle AI kodlama ajanlarını doğrudan Hive içinde çalıştırın. Yanıtları gerçek zamanlı aktarın, araç çağrılarının yürütülmesini izleyin ve gerektiğinde izinleri onaylayın. Tam geri al/yinele desteği sizi kontrol altında tutar.
+**OpenCode**, **Claude Code** ve **Codex** desteğiyle AI kodlama ajanlarını doğrudan Hive içinde çalıştırın. Yanıtları gerçek zamanlı aktarın, araç çağrılarının yürütülmesini izleyin ve gerektiğinde izinleri onaylayın. Tam geri al/yinele desteği sizi kontrol altında tutar.
 
 ### 📁 **Akıllı Dosya Gezgini**
 Canlı git durum göstergeleriyle nelerin değiştiğini bir bakışta görün. Diff'leri satır içi görüntüleyin, dosya geçmişini göz atın ve uygulamadan çıkmadan kod tabanınızda gezinin. Entegre Monaco editörü tam bir VS Code deneyimi sunar.
@@ -113,7 +113,7 @@ Hive'ı açın → **"Add Project"** tıklayın → Makinenizdeki herhangi bir g
 Projenizi seçin → **"New Worktree"** tıklayın → Bir dal seçin (veya yeni oluşturun)
 
 ### 3️⃣ **AI ile Kodlamaya Başlayın**
-Bir worktree açın → **"New Session"** tıklayın → OpenCode veya Claude ile kodlamaya başlayın
+Bir worktree açın → **"New Session"** tıklayın → OpenCode, Claude veya Codex ile kodlamaya başlayın
 
 > 💡 **Pro ipucu**: Komut paletini açmak ve hızlıca gezinmek için istediğiniz zaman `Cmd+K` tuşuna basın!
 
@@ -308,7 +308,7 @@ Hive, katı sandbox'lama ile Electron'un üç süreçli modelini kullanır:
 │               (Node.js + SQLite)                     │
 │                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │ Database  │ │   Git    │ │ OpenCode Service  │   │
+│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
 │  │ Service   │ │ Service  │ │  (AI Oturumları)  │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 │                      │                               │
@@ -342,7 +342,7 @@ src/
 ├── main/                  # Electron ana süreci (Node.js)
 │   ├── db/                # SQLite veritabanı + şema + migrasyonlar
 │   ├── ipc/               # IPC işleyici modülleri
-│   └── services/          # Git, OpenCode, logger, dosya servisleri
+│   └── services/          # Git, AI agents, logger, dosya servisleri
 ├── preload/               # Köprü katmanı (tipli window.* API'ler)
 └── renderer/src/          # React SPA
     ├── components/        # Alana göre düzenlenmiş UI
@@ -361,7 +361,7 @@ src/
 | Stil   | [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | Durum     | [Zustand 5](https://zustand.docs.pmnd.rs/)                                       |
 | Veritabanı  | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (WAL modu)          |
-| AI        | [OpenCode SDK](https://opencode.ai)                                              |
+| AI        | [OpenCode](https://opencode.ai), [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview), [Codex](https://github.com/openai/codex)                                              |
 | Git       | [simple-git](https://github.com/steveukx/git-js)                                 |
 | Derleme     | [electron-vite](https://electron-vite.org/)                                      |
 

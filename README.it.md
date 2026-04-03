@@ -54,7 +54,7 @@ Hive è un orchestratore di agenti IA. Vedi tutti i tuoi agenti in esecuzione in
 Lavora su più branch simultaneamente senza stash o cambio di branch. Crea, archivia e organizza worktree con un clic. Ogni worktree riceve un nome unico basato su una città per una facile identificazione.
 
 ### 🤖 **Sessioni di codifica IA integrate**
-Esegui agenti di codifica IA direttamente dentro Hive con supporto per **OpenCode** e **Claude Code**. Trasmetti risposte in tempo reale, osserva l'esecuzione delle chiamate agli strumenti e approva i permessi secondo necessità. Il supporto completo annulla/ripristina ti mantiene al controllo.
+Esegui agenti di codifica IA direttamente dentro Hive con supporto per **OpenCode**, **Claude Code** e **Codex**. Trasmetti risposte in tempo reale, osserva l'esecuzione delle chiamate agli strumenti e approva i permessi secondo necessità. Il supporto completo annulla/ripristina ti mantiene al controllo.
 
 ### 📁 **Esplora file intelligente**
 Vedi cosa è cambiato a colpo d'occhio con indicatori di stato git in tempo reale. Visualizza le diff in linea, naviga la cronologia dei file ed esplora il tuo codice senza uscire dall'app. L'editor Monaco integrato offre un'esperienza completa stile VS Code.
@@ -120,7 +120,7 @@ Apri Hive → Clic **"Add Project"** → Seleziona qualsiasi repository git sul 
 Seleziona il tuo progetto → Clic **"New Worktree"** → Scegli un branch (o creane uno nuovo)
 
 ### 3️⃣ **Inizia a codificare con l'IA**
-Apri un worktree → Clic **"New Session"** → Inizia a codificare con OpenCode o Claude
+Apri un worktree → Clic **"New Session"** → Inizia a codificare con OpenCode, Claude, o Codex
 
 > 💡 **Consiglio pro**: Premi `Cmd+K` in qualsiasi momento per aprire la palette dei comandi e navigare velocemente!
 
@@ -315,7 +315,7 @@ Hive usa il modello a tre processi di Electron con sandboxing rigoroso:
 │               (Node.js + SQLite)                     │
 │                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │ Database  │ │   Git    │ │ OpenCode Service  │   │
+│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
 │  │ Service   │ │ Service  │ │  (Sessioni IA)    │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 │                      │                               │
@@ -349,7 +349,7 @@ src/
 ├── main/                  # Processo principale Electron (Node.js)
 │   ├── db/                # Database SQLite + schema + migrazioni
 │   ├── ipc/               # Moduli gestori IPC
-│   └── services/          # Git, OpenCode, logger, servizi file
+│   └── services/          # Git, AI agents, logger, servizi file
 ├── preload/               # Livello ponte (API window.* tipizzate)
 └── renderer/src/          # React SPA
     ├── components/        # UI organizzata per dominio
@@ -368,7 +368,7 @@ src/
 | Stile   | [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | Stato     | [Zustand 5](https://zustand.docs.pmnd.rs/)                                       |
 | Database  | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (modalità WAL)          |
-| IA        | [OpenCode SDK](https://opencode.ai)                                              |
+| IA        | [OpenCode](https://opencode.ai), [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview), [Codex](https://github.com/openai/codex)                                              |
 | Git       | [simple-git](https://github.com/steveukx/git-js)                                 |
 | Build     | [electron-vite](https://electron-vite.org/)                                      |
 
