@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
 import { isMac } from '@/lib/platform'
 import { useIsWebMode } from '@/hooks/useIsWebMode'
 import { getWebAuth } from '@/transport/graphql/auth'
