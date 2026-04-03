@@ -77,6 +77,10 @@ interface SessionState {
   // Orphaned sessions (from archived worktrees) - read-only, not attached to any worktree
   orphanedSessions: Map<string, Session>
 
+  // Pinned session state — sessions pinned to the kanban board
+  pinnedSessionIds: Set<string>
+  activePinnedSessionId: string | null
+
   // Actions
   acknowledgeClosedTerminals: (ids: Set<string>) => void
   openOrphanedSession: (session: Session) => void
@@ -129,6 +133,12 @@ interface SessionState {
   setPendingPlan: (sessionId: string, plan: PendingPlan) => void
   clearPendingPlan: (sessionId: string) => void
   getPendingPlan: (sessionId: string) => PendingPlan | null
+
+  // Pinned session actions
+  pinSessionToBoard: (sessionId: string) => Promise<void>
+  unpinSessionFromBoard: (sessionId: string) => void
+  setActivePinnedSession: (sessionId: string | null) => void
+  loadPinnedSessions: (worktreeId: string) => Promise<void>
 
   // Inline connection session actions
   setInlineConnectionSession: (sessionId: string | null) => void
@@ -197,6 +207,10 @@ export const useSessionStore = create<SessionState>()(
       // Orphaned sessions
       orphanedSessions: new Map(),
 
+      // Pinned session state
+      pinnedSessionIds: new Set<string>(),
+      activePinnedSessionId: null,
+
       acknowledgeClosedTerminals: (ids: Set<string>) => {
         set((state) => {
           const remaining = new Set(state.closedTerminalSessionIds)
@@ -215,6 +229,11 @@ export const useSessionStore = create<SessionState>()(
         try {
           // Only load active sessions - completed sessions appear in history only
           const sessions = await window.db.session.getActiveByWorktree(worktreeId)
+
+          // Also load pinned sessions for this worktree
+          const pinnedSessions = await window.db.session.getPinnedSessions(worktreeId)
+          const pinnedIds = new Set(pinnedSessions.map((s: { id: string }) => s.id))
+
           // Sort by updated_at descending (most recent first)
           const sortedSessions = sessions.sort(
             (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
@@ -274,6 +293,7 @@ export const useSessionStore = create<SessionState>()(
               sessionsByWorktree: newSessionsMap,
               tabOrderByWorktree: newTabOrderMap,
               modeBySession: newModeMap,
+              pinnedSessionIds: pinnedIds,
               isLoading: false,
               activeSessionId
             }
@@ -1706,6 +1726,55 @@ export const useSessionStore = create<SessionState>()(
           useFileViewerStore.getState().setActiveFile(null)
           useFileViewerStore.getState().clearActiveDiff()
         })
+      },
+
+      // Pinned session actions
+      pinSessionToBoard: async (sessionId: string) => {
+        // Optimistic update
+        set((state) => {
+          const newPinnedIds = new Set(state.pinnedSessionIds)
+          newPinnedIds.add(sessionId)
+          return { pinnedSessionIds: newPinnedIds }
+        })
+        try {
+          await window.db.session.setPinnedToBoard(sessionId, true)
+        } catch {
+          // Rollback on failure
+          set((state) => {
+            const newPinnedIds = new Set(state.pinnedSessionIds)
+            newPinnedIds.delete(sessionId)
+            return { pinnedSessionIds: newPinnedIds }
+          })
+        }
+      },
+
+      unpinSessionFromBoard: (sessionId: string) => {
+        set((state) => {
+          const newPinnedIds = new Set(state.pinnedSessionIds)
+          newPinnedIds.delete(sessionId)
+          return {
+            pinnedSessionIds: newPinnedIds,
+            activePinnedSessionId:
+              state.activePinnedSessionId === sessionId ? null : state.activePinnedSessionId
+          }
+        })
+        // Fire-and-forget DB update
+        window.db.session.setPinnedToBoard(sessionId, false).catch(() => {})
+      },
+
+      setActivePinnedSession: (sessionId: string | null) => {
+        set({ activePinnedSessionId: sessionId })
+      },
+
+      loadPinnedSessions: async (worktreeId: string) => {
+        try {
+          const pinnedSessions = await window.db.session.getPinnedSessions(worktreeId)
+          set({
+            pinnedSessionIds: new Set(pinnedSessions.map((s) => s.id))
+          })
+        } catch {
+          // Silently fail — pinned sessions are non-critical
+        }
       },
 
       // Close all orphaned sessions (called when navigating away)
