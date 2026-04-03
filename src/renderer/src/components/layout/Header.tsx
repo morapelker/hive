@@ -479,7 +479,7 @@ export function Header(): React.JSX.Element {
     toast.success('PR URL copied')
   }, [attachedPR?.url])
 
-  const handleFixConflicts = async (modeOverride?: 'build' | 'plan') => {
+  const handleFixConflicts = useCallback(async (modeOverride?: 'build' | 'plan') => {
     if (!selectedWorktreeId || !selectedProjectId || !selectedWorktree?.path) return
 
     const resolvedMode = modeOverride ?? (mergeConflictMode === 'always-ask' ? 'build' : mergeConflictMode)
@@ -506,7 +506,7 @@ export function Header(): React.JSX.Element {
       sessionId: session.id,
       seenBusy: false
     })
-  }
+  }, [mergeConflictMode, selectedWorktreeId, selectedProjectId, selectedWorktree, createSession, updateSessionName, setPendingMessage, setActiveSession])
 
   const isFixConflictsLoading =
     !!selectedWorktree?.path &&
@@ -587,6 +587,7 @@ export function Header(): React.JSX.Element {
                     <AlertTriangle className="h-3.5 w-3.5 mr-1" />
                   )}
                   {isFixConflictsLoading ? 'Fixing conflicts...' : 'Fix conflicts'}
+                  {!isFixConflictsLoading && <ChevronDown className="h-3 w-3 ml-1" />}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
