@@ -57,6 +57,7 @@ import {
   useSettingsStore
 } from '@/stores'
 import { HintBadge } from '@/components/ui/HintBadge'
+import { Tip } from '@/components/ui/Tip'
 import { useGitStore } from '@/stores/useGitStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -86,6 +87,7 @@ interface WorktreeItemProps {
   worktree: Worktree
   projectPath: string
   index?: number
+  isFirstItem?: boolean
   isDragging?: boolean
   isDragOver?: boolean
   onDragStart?: (e: React.DragEvent) => void
@@ -97,6 +99,7 @@ interface WorktreeItemProps {
 export function WorktreeItem({
   worktree,
   projectPath,
+  isFirstItem,
   isDragging,
   isDragOver,
   onDragStart,
@@ -519,7 +522,7 @@ export function WorktreeItem({
   }
 
   // --- Normal rendering (with menus, drag, etc.) ---
-  return (
+  const tree = (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
@@ -914,4 +917,15 @@ export function WorktreeItem({
       />
     </ContextMenu>
   )
+
+  // Wrap first worktree item with tip for discoverability
+  if (isFirstItem) {
+    return (
+      <Tip tipId="worktree-connect">
+        <div>{tree}</div>
+      </Tip>
+    )
+  }
+
+  return tree
 }

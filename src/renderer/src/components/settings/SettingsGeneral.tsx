@@ -13,6 +13,7 @@ export function SettingsGeneral(): React.JSX.Element {
     autoStartSession,
     autoPullBeforeWorktree,
     vimModeEnabled,
+    tipsEnabled,
     breedType,
     showModelIcons,
     showModelProvider,
@@ -114,6 +115,33 @@ export function SettingsGeneral(): React.JSX.Element {
             className={cn(
               'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
               vimModeEnabled ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Tips */}
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-sm font-medium">Show tips</label>
+          <p className="text-xs text-muted-foreground">
+            Show helpful tips when discovering new features
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={tipsEnabled}
+          onClick={() => updateSetting('tipsEnabled', !tipsEnabled)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            tipsEnabled ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="tips-enabled-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
+              tipsEnabled ? 'translate-x-4' : 'translate-x-0'
             )}
           />
         </button>

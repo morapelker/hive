@@ -84,6 +84,7 @@ export function WorktreeList({ project }: WorktreeListProps): React.JSX.Element 
           worktree={worktree}
           projectPath={project.path}
           index={index}
+          isFirstItem={index === 0}
           isDragging={draggedWorktreeId === worktree.id}
           isDragOver={dragOverWorktreeId === worktree.id}
           onDragStart={(e) => handleDragStart(e, worktree.id)}

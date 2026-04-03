@@ -105,6 +105,9 @@ export interface AppSettings {
 
   // Privacy
   telemetryEnabled: boolean
+
+  // Tips
+  tipsEnabled: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -153,7 +156,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     enabled: false,
     enterToApprove: false
   },
-  telemetryEnabled: true
+  telemetryEnabled: true,
+  tipsEnabled: true
 }
 
 interface SettingsState extends AppSettings {
@@ -256,7 +260,8 @@ function extractSettings(state: SettingsState): AppSettings {
     skippedUpdateVersion: state.skippedUpdateVersion,
     initialSetupComplete: state.initialSetupComplete,
     commandFilter: state.commandFilter,
-    telemetryEnabled: state.telemetryEnabled
+    telemetryEnabled: state.telemetryEnabled,
+    tipsEnabled: state.tipsEnabled
   }
 }
 

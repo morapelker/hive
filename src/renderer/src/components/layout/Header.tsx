@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { isMac } from '@/lib/platform'
 import { useIsWebMode } from '@/hooks/useIsWebMode'
 import { getWebAuth } from '@/transport/graphql/auth'
@@ -46,6 +46,8 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useTipStore } from '@/stores/useTipStore'
+import { Tip } from '@/components/ui/Tip'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { QuickActions } from './QuickActions'
 import { usePRDetection } from '@/hooks/usePRDetection'
@@ -108,7 +110,20 @@ export function Header(): React.JSX.Element {
   const showVimHints = vimModeEnabled && vimMode === 'normal'
   const isBoardViewActive = useKanbanStore((s) => s.isBoardViewActive)
   const toggleBoardView = useKanbanStore((s) => s.toggleBoardView)
+  const kanbanIconSeen = useTipStore((s) => s.isTipSeen('kanban-icon'))
   const [conflictFixFlow, setConflictFixFlow] = useState<ConflictFixFlow | null>(null)
+
+  // Track first-time kanban exit for the kanban-reenter tip
+  const [justExitedKanban, setJustExitedKanban] = useState(false)
+  const prevBoardActive = useRef(isBoardViewActive)
+  useEffect(() => {
+    if (prevBoardActive.current && !isBoardViewActive) {
+      setJustExitedKanban(true)
+    }
+    prevBoardActive.current = isBoardViewActive
+  }, [isBoardViewActive])
+
+  const hasProjects = projects.length > 0
 
   // Monitor PR session stream events for PR URL detection
   usePRDetection(selectedWorktreeId)
@@ -673,28 +688,33 @@ export function Header(): React.JSX.Element {
             </DropdownMenu>
           </Popover>
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => {
-            const fileStore = useFileViewerStore.getState()
-            if (!isBoardViewActive) {
-              fileStore.clearActiveViews()
-              toggleBoardView()
-            } else if (fileStore.hasActiveOverlay()) {
-              fileStore.clearActiveViews()
-            } else {
-              toggleBoardView()
-            }
-          }}
-          title={isBoardViewActive ? 'Close Board' : 'Open Board'}
-          data-testid="kanban-board-toggle"
-          className={cn(
-            isBoardViewActive && 'bg-accent text-accent-foreground'
-          )}
+        <Tip
+          tipId={kanbanIconSeen ? 'kanban-reenter' : 'kanban-icon'}
+          enabled={kanbanIconSeen ? justExitedKanban : hasProjects}
         >
-          <KanbanIcon className="h-4 w-4" />
-        </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              const fileStore = useFileViewerStore.getState()
+              if (!isBoardViewActive) {
+                fileStore.clearActiveViews()
+                toggleBoardView()
+              } else if (fileStore.hasActiveOverlay()) {
+                fileStore.clearActiveViews()
+              } else {
+                toggleBoardView()
+              }
+            }}
+            title={isBoardViewActive ? 'Close Board' : 'Open Board'}
+            data-testid="kanban-board-toggle"
+            className={cn(
+              isBoardViewActive && 'bg-accent text-accent-foreground'
+            )}
+          >
+            <KanbanIcon className="h-4 w-4" />
+          </Button>
+        </Tip>
         <Button
           variant="ghost"
           size="icon"
