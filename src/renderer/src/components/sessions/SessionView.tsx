@@ -4806,6 +4806,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             <CommandApprovalPrompt
               key={activeCommandApproval.id}
               request={activeCommandApproval}
+              sessionId={sessionId}
               onReply={handleCommandApprovalReply}
             />
           </div>

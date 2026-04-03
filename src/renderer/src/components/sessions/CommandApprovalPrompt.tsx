@@ -24,6 +24,7 @@ import type {
 
 interface CommandApprovalPromptProps {
   request: CommandApprovalRequest
+  sessionId?: string // Optional sessionId to track when switching between sessions
   onReply: (
     requestId: string,
     approved: boolean,
@@ -228,7 +229,7 @@ function buildDefaultSubPatterns(groups: SubCommandSuggestions[]): Record<number
   return defaults
 }
 
-export function CommandApprovalPrompt({ request, onReply }: CommandApprovalPromptProps) {
+export function CommandApprovalPrompt({ request, sessionId, onReply }: CommandApprovalPromptProps) {
   const [sending, setSending] = useState(false)
   const [patternPickerMode, setPatternPickerMode] = useState<'allow' | 'block' | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -345,9 +346,15 @@ export function CommandApprovalPrompt({ request, onReply }: CommandApprovalPromp
 
   // Auto-focus the approval prompt when it appears or when switching between sessions
   // This ensures Enter key works immediately even when navigating between chats
+  // Use double RAF to ensure focus happens after all layout and render cycles complete
+  // Depend on both request.id and sessionId to re-focus when switching sessions
   useEffect(() => {
-    containerRef.current?.focus()
-  }, [request.id])
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        containerRef.current?.focus()
+      })
+    })
+  }, [request.id, sessionId])
 
   // Enter key handler: approve once (default) or confirm pattern if picker is open
   // Only enabled when user has opted in via settings, and skips when user is typing in chat
