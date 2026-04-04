@@ -10,6 +10,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 
@@ -390,49 +393,63 @@ export function ModelSelector({
               {provider.models.map((model) => {
                 const active = isActiveModel(model)
                 const variantKeys = getVariantKeys(model)
+                const hasModelVariants = variantKeys.length > 0
                 return (
                   <div key={`${model.providerID}:${model.id}`}>
-                    <DropdownMenuItem
-                      onClick={() => handleSelectModel(model)}
-                      onContextMenu={(e) => {
-                        e.preventDefault()
-                        toggleFavoriteModel(model.providerID, model.id)
-                      }}
-                      className="flex items-center justify-between gap-2 cursor-pointer"
-                      data-testid={`model-item-${model.id}`}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        {isFavorite(model) && (
-                          <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
-                        )}
-                        <span className="truncate text-sm">{getDisplayName(model)}</span>
-                      </span>
-                      {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                    </DropdownMenuItem>
-                    {variantKeys.length > 0 && active && (
-                      <div
-                        className="flex gap-1 pl-6 pb-1"
-                        data-testid={`variant-chips-${model.id}`}
-                      >
-                        {variantKeys.map((variant) => (
-                          <button
-                            key={variant}
-                            className={cn(
-                              'text-[10px] px-1.5 py-0.5 rounded',
-                              selectedModel?.variant === variant
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-muted text-muted-foreground hover:bg-accent'
+                    {hasModelVariants ? (
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            toggleFavoriteModel(model.providerID, model.id)
+                          }}
+                          data-testid={`model-item-${model.id}`}
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            {isFavorite(model) && (
+                              <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
                             )}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleSelectVariant(model, variant)
-                            }}
-                            data-testid={`variant-chip-${variant}`}
-                          >
-                            {variant.toUpperCase()}
-                          </button>
-                        ))}
-                      </div>
+                            <span className="truncate text-sm">{getDisplayName(model)}</span>
+                          </span>
+                          {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent className="w-44" alignOffset={-4}>
+                          {variantKeys.map((variant) => {
+                            const variantActive = active && selectedModel?.variant === variant
+                            return (
+                              <DropdownMenuItem
+                                key={variant}
+                                onClick={() => handleSelectVariant(model, variant)}
+                                className="flex items-center justify-between gap-2 cursor-pointer"
+                                data-testid={`variant-item-${model.id}-${variant}`}
+                              >
+                                <span className="text-xs font-medium uppercase">{variant}</span>
+                                {variantActive && (
+                                  <Check className="h-4 w-4 shrink-0 text-primary" />
+                                )}
+                              </DropdownMenuItem>
+                            )
+                          })}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                    ) : (
+                      <DropdownMenuItem
+                        onClick={() => handleSelectModel(model)}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
+                          toggleFavoriteModel(model.providerID, model.id)
+                        }}
+                        className="flex items-center justify-between gap-2 cursor-pointer"
+                        data-testid={`model-item-${model.id}`}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {isFavorite(model) && (
+                            <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
+                          )}
+                          <span className="truncate text-sm">{getDisplayName(model)}</span>
+                        </span>
+                        {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                      </DropdownMenuItem>
                     )}
                   </div>
                 )
