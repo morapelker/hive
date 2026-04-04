@@ -112,6 +112,7 @@ export function Header(): React.JSX.Element {
   const vimMode = useVimModeStore((s) => s.mode)
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const mergeConflictMode = useSettingsStore((s) => s.mergeConflictMode)
+  const boardMode = useSettingsStore((s) => s.boardMode)
   const showVimHints = vimModeEnabled && vimMode === 'normal'
   const isBoardViewActive = useKanbanStore((s) => s.isBoardViewActive)
   const toggleBoardView = useKanbanStore((s) => s.toggleBoardView)
@@ -735,33 +736,35 @@ export function Header(): React.JSX.Element {
             </DropdownMenu>
           </Popover>
         )}
-        <Tip
-          tipId={kanbanIconSeen ? 'kanban-reenter' : 'kanban-icon'}
-          enabled={kanbanIconSeen ? justExitedKanban : hasProjects}
-        >
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              const fileStore = useFileViewerStore.getState()
-              if (!isBoardViewActive) {
-                fileStore.clearActiveViews()
-                toggleBoardView()
-              } else if (fileStore.hasActiveOverlay()) {
-                fileStore.clearActiveViews()
-              } else {
-                toggleBoardView()
-              }
-            }}
-            title={isBoardViewActive ? 'Close Board' : 'Open Board'}
-            data-testid="kanban-board-toggle"
-            className={cn(
-              isBoardViewActive && 'bg-accent text-accent-foreground'
-            )}
+        {boardMode === 'toggle' && (
+          <Tip
+            tipId={kanbanIconSeen ? 'kanban-reenter' : 'kanban-icon'}
+            enabled={kanbanIconSeen ? justExitedKanban : hasProjects}
           >
-            <KanbanIcon className="h-4 w-4" />
-          </Button>
-        </Tip>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                const fileStore = useFileViewerStore.getState()
+                if (!isBoardViewActive) {
+                  fileStore.clearActiveViews()
+                  toggleBoardView()
+                } else if (fileStore.hasActiveOverlay()) {
+                  fileStore.clearActiveViews()
+                } else {
+                  toggleBoardView()
+                }
+              }}
+              title={isBoardViewActive ? 'Close Board' : 'Open Board'}
+              data-testid="kanban-board-toggle"
+              className={cn(
+                isBoardViewActive && 'bg-accent text-accent-foreground'
+              )}
+            >
+              <KanbanIcon className="h-4 w-4" />
+            </Button>
+          </Tip>
+        )}
         <Button
           variant="ghost"
           size="icon"
