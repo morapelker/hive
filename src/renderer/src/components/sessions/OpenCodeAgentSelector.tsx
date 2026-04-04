@@ -121,15 +121,21 @@ export function OpenCodeAgentSelector({
                   setSessionAgent(sessionId, agent.name)
                   setOpen(false)
                 }}
-                title={agent.description}
                 className={cn(
-                  'block w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors whitespace-nowrap',
+                  'group/item relative block w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors whitespace-nowrap',
                   selectedAgent === agent.name || (!selectedAgent && agent.name === agents[0]?.name)
                     ? 'text-foreground font-medium'
                     : 'text-muted-foreground'
                 )}
               >
                 {agent.name}
+                {agent.description && (
+                  <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 z-50 hidden group-hover/item:block">
+                    <div className="rounded bg-popover border border-border px-2 py-1 text-[11px] text-foreground shadow-md whitespace-nowrap">
+                      {agent.description}
+                    </div>
+                  </div>
+                )}
               </button>
             ))}
           </div>,
