@@ -47,7 +47,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import { resolveModelForSdk } from '@/stores/useSettingsStore'
+import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
@@ -1316,7 +1316,14 @@ function PlanReviewModeContent({
       const handoffPrompt = `Implement the following plan\n${planContent}`
       await sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-      sessionStore.setActiveSession(result.session.id)
+
+      // In sticky-tab mode, stay on the board; otherwise navigate to the new session
+      const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
+      if (useSettingsStore.getState().boardMode === 'sticky-tab') {
+        sessionStore.setActiveSession(BOARD_TAB_ID)
+      } else {
+        sessionStore.setActiveSession(result.session.id)
+      }
 
       // Clear plan_ready badge and link to new session
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {

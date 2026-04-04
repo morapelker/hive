@@ -491,6 +491,12 @@ export function WorktreePickerModal({
         plan_ready: false
       })
 
+      // In sticky-tab mode, stay on the board instead of switching to the new session
+      if (useSettingsStore.getState().boardMode === 'sticky-tab') {
+        const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
+        useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
+      }
+
       // Close modal immediately — session starts in background
       onSendComplete?.()
       onOpenChange(false)
