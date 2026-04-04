@@ -49,6 +49,7 @@ export interface AppSettings {
   breedType: 'dogs' | 'cats'
   vimModeEnabled: boolean
   mergeConflictMode: MergeConflictMode
+  boardMode: 'toggle' | 'sticky-tab'
 
   // Editor
   defaultEditor: EditorOption
@@ -118,6 +119,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   breedType: 'dogs',
   vimModeEnabled: false,
   mergeConflictMode: 'build',
+  boardMode: 'toggle',
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
@@ -239,6 +241,7 @@ function extractSettings(state: SettingsState): AppSettings {
     breedType: state.breedType,
     vimModeEnabled: state.vimModeEnabled,
     mergeConflictMode: state.mergeConflictMode,
+    boardMode: state.boardMode,
     defaultEditor: state.defaultEditor,
     customEditorCommand: state.customEditorCommand,
     defaultTerminal: state.defaultTerminal,
@@ -450,6 +453,7 @@ export const useSettingsStore = create<SettingsState>()(
         breedType: state.breedType,
         vimModeEnabled: state.vimModeEnabled,
         mergeConflictMode: state.mergeConflictMode,
+        boardMode: state.boardMode,
         defaultEditor: state.defaultEditor,
         customEditorCommand: state.customEditorCommand,
         defaultTerminal: state.defaultTerminal,
