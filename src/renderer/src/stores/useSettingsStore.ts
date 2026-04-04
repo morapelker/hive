@@ -323,6 +323,41 @@ export const useSettingsStore = create<SettingsState>()(
         if (key === 'updateChannel' && window.updaterOps?.setChannel) {
           window.updaterOps.setChannel(value as string)
         }
+        // Handle board mode switching side effects
+        if (key === 'boardMode') {
+          // setTimeout ensures the state update completes before side effects run.
+          // Dynamic import() avoids circular dependency (useSessionStore imports useSettingsStore).
+          setTimeout(() => {
+            import('./useKanbanStore').then(({ useKanbanStore }) => {
+              import('./useSessionStore').then(({ useSessionStore, BOARD_TAB_ID }) => {
+                if (value === 'sticky-tab') {
+                  // Toggle → Sticky Tab: deactivate toggle board view, activate board tab
+                  if (useKanbanStore.getState().isBoardViewActive) {
+                    useKanbanStore.getState().toggleBoardView()
+                  }
+                  useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
+                } else {
+                  // Sticky Tab → Toggle: if on board tab, fall back to first real session
+                  const sessionState = useSessionStore.getState()
+                  if (sessionState.activeSessionId === BOARD_TAB_ID) {
+                    const worktreeId = sessionState.activeWorktreeId
+                    if (worktreeId) {
+                      const tabOrder =
+                        sessionState.tabOrderByWorktree.get(worktreeId) || []
+                      const sessions =
+                        sessionState.sessionsByWorktree.get(worktreeId) || []
+                      const fallbackId =
+                        tabOrder[0] || (sessions.length > 0 ? sessions[0].id : null)
+                      useSessionStore.getState().setActiveSession(fallbackId)
+                    } else {
+                      useSessionStore.getState().setActiveSession(null)
+                    }
+                  }
+                }
+              })
+            })
+          }, 0)
+        }
       },
 
       setSelectedModel: async (
