@@ -30,7 +30,7 @@ import {
   GitPullRequest
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
-import { useSessionStore } from '@/stores/useSessionStore'
+import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useShallow } from 'zustand/react/shallow'
 import {
   useFileViewerStore,
@@ -587,6 +587,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
   const pinnedSessionIds = useSessionStore((state) => state.pinnedSessionIds)
   const activePinnedSessionId = useSessionStore((state) => state.activePinnedSessionId)
+  const boardMode = useSettingsStore((s) => s.boardMode)
 
   // Determine whether we are in connection mode or worktree mode
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
@@ -1009,8 +1010,51 @@ export function SessionTabs(): React.JSX.Element | null {
       data-testid="session-tabs"
     >
       {/* New session / new ticket button - on the left */}
-      {isBoardViewActive && !isConnectionBoardActive ? (
-        /* Kanban mode: plus button opens the ticket creation modal (hidden in connection board — board has its own) */
+      {boardMode === 'sticky-tab' ? (
+        /* Sticky-tab mode: always show session create button (tickets are created from within the board) */
+        <ContextMenu
+          onOpenChange={(open) => {
+            if (open) pushGhosttySuppression('session-tabs-context')
+            else popGhosttySuppression('session-tabs-context')
+          }}
+        >
+          <ContextMenuTrigger asChild>
+            <button
+              onClick={handleCreateSession}
+              className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
+              data-testid="create-session"
+              title="Create new session (right-click for options)"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            {availableAgentSdks?.opencode && (
+              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
+                New OpenCode Session
+              </ContextMenuItem>
+            )}
+            {availableAgentSdks?.claude && (
+              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
+                New Claude Code Session
+              </ContextMenuItem>
+            )}
+            {availableAgentSdks?.codex && (
+              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('codex')}>
+                New Codex Session
+              </ContextMenuItem>
+            )}
+            {(availableAgentSdks?.opencode ||
+              availableAgentSdks?.claude ||
+              availableAgentSdks?.codex) && <ContextMenuSeparator />}
+            <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
+              <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
+              New Terminal
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      ) : isBoardViewActive && !isConnectionBoardActive ? (
+        /* Toggle mode kanban: plus button opens the ticket creation modal (hidden in connection board — board has its own) */
         <button
           onClick={() => setIsTicketCreateOpen(true)}
           className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
@@ -1020,7 +1064,7 @@ export function SessionTabs(): React.JSX.Element | null {
           <Plus className="h-4 w-4" />
         </button>
       ) : !isBoardViewActive ? (
-        /* Normal mode: right-click shows provider menu with session type options */
+        /* Toggle mode normal: right-click shows provider menu with session type options */
         <ContextMenu
           onOpenChange={(open) => {
             if (open) pushGhosttySuppression('session-tabs-context')
@@ -1082,9 +1126,115 @@ export function SessionTabs(): React.JSX.Element | null {
         style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
         data-testid="session-tabs-scroll-container"
       >
-        {isBoardViewActive ? (
+        {boardMode === 'sticky-tab' ? (
           <>
-            {/* Kanban board tab */}
+            {/* Sticky board tab — permanent, no close button, not draggable */}
+            <div
+              data-testid="sticky-board-tab"
+              onClick={() => {
+                useFileViewerStore.getState().clearActiveViews()
+                useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
+              }}
+              className={cn(
+                'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
+                'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
+                activeSessionId === BOARD_TAB_ID && !isFileTabActive
+                  ? 'bg-background text-foreground'
+                  : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+              )}
+            >
+              <KanbanIcon className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
+              <span className="truncate flex-1">Board</span>
+              {activeSessionId === BOARD_TAB_ID && !isFileTabActive && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+              )}
+            </div>
+            {/* Normal session tabs alongside the sticky board tab */}
+            {orderedSessions.length === 0 &&
+            !(
+              !isConnectionMode &&
+              connectionsForWorktree.some((c) => (sessionsByConnection.get(c.id) || []).length > 0)
+            ) ? null : (
+              <>
+                {/* Sticky connection session tabs (worktree mode only) */}
+                {!isConnectionMode &&
+                  connectionsForWorktree.map((connection) => {
+                    const connectionSessions = sessionsByConnection.get(connection.id) || []
+                    const connectionTabOrder = tabOrderByConnection.get(connection.id) || []
+                    const orderedConnectionSessions = connectionTabOrder
+                      .map((id) => connectionSessions.find((s) => s.id === id))
+                      .filter((s): s is NonNullable<typeof s> => s !== undefined)
+
+                    if (orderedConnectionSessions.length === 0) return null
+
+                    return (
+                      <Fragment key={connection.id}>
+                        {/* Thin visual separator before each connection group */}
+                        <div className="w-px bg-border/60 self-stretch my-1" aria-hidden="true" />
+                        {orderedConnectionSessions.map((session) => (
+                          <ConnectionSessionTab
+                            key={session.id}
+                            sessionId={session.id}
+                            name={session.name || 'Untitled'}
+                            isActive={session.id === inlineConnectionSessionId && !isFileTabActive}
+                            onClick={() => handleConnectionSessionTabClick(session.id)}
+                            connectionColor={connection.color}
+                            connectionName={connection.name}
+                          />
+                        ))}
+                      </Fragment>
+                    )
+                  })}
+
+                {/* Session tabs */}
+                {allSessions.map((session) => {
+                  const isOrphaned = orphanedSessions.has(session.id)
+                  return (
+                    <SessionTab
+                      key={session.id}
+                      sessionId={session.id}
+                      name={session.name || 'Untitled'}
+                      agentSdk={session.agent_sdk}
+                      isActive={
+                        session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId
+                      }
+                      onClick={() => handleSessionTabClick(session.id)}
+                      onClose={(e) => handleCloseSession(e, session.id)}
+                      onMiddleClick={(e) => handleCloseSession(e, session.id)}
+                      onRename={(newName) => handleRenameSession(session.id, newName)}
+                      onDragStart={(e) => handleDragStart(e, session.id)}
+                      onDragOver={(e) => handleDragOver(e, session.id)}
+                      onDrop={(e) => handleDrop(e, session.id)}
+                      onDragEnd={handleDragEnd}
+                      isDragging={draggedTabId === session.id}
+                      isDragOver={dragOverTabId === session.id}
+                      worktreeId={resolvedScopeId}
+                      onCloseOthers={
+                        isOrphaned || !resolvedScopeId
+                          ? undefined
+                          : () =>
+                              isConnectionMode
+                                ? closeOtherConnectionSessions(resolvedScopeId, session.id)
+                                : closeOtherSessions(resolvedScopeId, session.id)
+                      }
+                      onCloseToRight={
+                        isOrphaned || !resolvedScopeId
+                          ? undefined
+                          : () =>
+                              isConnectionMode
+                                ? closeConnectionSessionsToRight(resolvedScopeId, session.id)
+                                : closeSessionsToRight(resolvedScopeId, session.id)
+                      }
+                      hintCode={sessionHints.sessionHintMap.get(session.id)}
+                    />
+                  )
+                })}
+              </>
+            )}
+          </>
+        ) : isBoardViewActive ? (
+          <>
+            {/* Toggle mode: Kanban board tab */}
             <div
               data-testid="kanban-board-tab"
               onClick={() => {
@@ -1149,7 +1299,7 @@ export function SessionTabs(): React.JSX.Element | null {
             })}
           </>
         ) : (
-          /* Normal mode: empty state OR connection tabs + session tabs */
+          /* Normal mode (toggle, board not active): empty state OR session tabs */
           orderedSessions.length === 0 &&
           !(
             !isConnectionMode &&
