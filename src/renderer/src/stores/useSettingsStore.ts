@@ -328,34 +328,36 @@ export const useSettingsStore = create<SettingsState>()(
           // setTimeout ensures the state update completes before side effects run.
           // Dynamic import() avoids circular dependency (useSessionStore imports useSettingsStore).
           setTimeout(() => {
-            import('./useKanbanStore').then(({ useKanbanStore }) => {
-              import('./useSessionStore').then(({ useSessionStore, BOARD_TAB_ID }) => {
-                if (value === 'sticky-tab') {
-                  // Toggle → Sticky Tab: deactivate toggle board view, activate board tab
-                  if (useKanbanStore.getState().isBoardViewActive) {
-                    useKanbanStore.getState().toggleBoardView()
-                  }
-                  useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
-                } else {
-                  // Sticky Tab → Toggle: if on board tab, fall back to first real session
-                  const sessionState = useSessionStore.getState()
-                  if (sessionState.activeSessionId === BOARD_TAB_ID) {
-                    const worktreeId = sessionState.activeWorktreeId
-                    if (worktreeId) {
-                      const tabOrder =
-                        sessionState.tabOrderByWorktree.get(worktreeId) || []
-                      const sessions =
-                        sessionState.sessionsByWorktree.get(worktreeId) || []
-                      const fallbackId =
-                        tabOrder[0] || (sessions.length > 0 ? sessions[0].id : null)
-                      useSessionStore.getState().setActiveSession(fallbackId)
-                    } else {
-                      useSessionStore.getState().setActiveSession(null)
-                    }
+            Promise.all([
+              import('./useKanbanStore'),
+              import('./useSessionStore')
+            ]).then(([{ useKanbanStore }, { useSessionStore, BOARD_TAB_ID }]) => {
+              if (value === 'sticky-tab') {
+                // Toggle → Sticky Tab: deactivate toggle board view, activate board tab
+                if (useKanbanStore.getState().isBoardViewActive) {
+                  useKanbanStore.getState().toggleBoardView()
+                }
+                useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
+              } else {
+                // Sticky Tab → Toggle: if on board tab, fall back to first real session
+                const sessionStore = useSessionStore.getState()
+                if (sessionStore.activeSessionId === BOARD_TAB_ID) {
+                  const worktreeId = sessionStore.activeWorktreeId
+                  if (worktreeId) {
+                    const tabOrder =
+                      sessionStore.tabOrderByWorktree.get(worktreeId) || []
+                    const sessions =
+                      sessionStore.sessionsByWorktree.get(worktreeId) || []
+                    const fallbackId =
+                      tabOrder.find((id) => id !== BOARD_TAB_ID) ||
+                      (sessions.length > 0 ? sessions[0].id : null)
+                    sessionStore.setActiveSession(fallbackId)
+                  } else {
+                    sessionStore.setActiveSession(null)
                   }
                 }
-              })
-            })
+              }
+            }).catch(console.error)
           }, 0)
         }
       },
