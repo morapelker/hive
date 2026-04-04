@@ -12,6 +12,7 @@ export function SettingsGeneral(): React.JSX.Element {
   const {
     autoStartSession,
     autoPullBeforeWorktree,
+    boardMode,
     vimModeEnabled,
     mergeConflictMode,
     tipsEnabled,
@@ -92,6 +93,40 @@ export function SettingsGeneral(): React.JSX.Element {
             )}
           />
         </button>
+      </div>
+
+      {/* Board Mode */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Board Mode</label>
+        <p className="text-xs text-muted-foreground">
+          Choose how the Kanban board is accessed.
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => updateSetting('boardMode', 'toggle')}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              boardMode === 'toggle'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="board-mode-toggle"
+          >
+            Toggle
+          </button>
+          <button
+            onClick={() => updateSetting('boardMode', 'sticky-tab')}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              boardMode === 'sticky-tab'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="board-mode-sticky-tab"
+          >
+            Sticky Tab
+          </button>
+        </div>
       </div>
 
       {/* Vim mode */}
