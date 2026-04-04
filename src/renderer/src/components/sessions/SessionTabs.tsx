@@ -1004,14 +1004,93 @@ export function SessionTabs(): React.JSX.Element | null {
   // Determine if a file/diff tab is the active one
   const isFileTabActive = activeFilePath !== null
 
+  /** Renders connection tabs + session tabs — shared between sticky-tab and normal mode */
+  const renderSessionTabs = () => (
+    <>
+      {/* Sticky connection session tabs (worktree mode only) */}
+      {!isConnectionMode &&
+        connectionsForWorktree.map((connection) => {
+          const connectionSessions = sessionsByConnection.get(connection.id) || []
+          const connectionTabOrder = tabOrderByConnection.get(connection.id) || []
+          const orderedConnectionSessions = connectionTabOrder
+            .map((id) => connectionSessions.find((s) => s.id === id))
+            .filter((s): s is NonNullable<typeof s> => s !== undefined)
+
+          if (orderedConnectionSessions.length === 0) return null
+
+          return (
+            <Fragment key={connection.id}>
+              {/* Thin visual separator before each connection group */}
+              <div className="w-px bg-border/60 self-stretch my-1" aria-hidden="true" />
+              {orderedConnectionSessions.map((session) => (
+                <ConnectionSessionTab
+                  key={session.id}
+                  sessionId={session.id}
+                  name={session.name || 'Untitled'}
+                  isActive={session.id === inlineConnectionSessionId && !isFileTabActive}
+                  onClick={() => handleConnectionSessionTabClick(session.id)}
+                  connectionColor={connection.color}
+                  connectionName={connection.name}
+                />
+              ))}
+            </Fragment>
+          )
+        })}
+
+      {/* Session tabs */}
+      {allSessions.map((session) => {
+        const isOrphaned = orphanedSessions.has(session.id)
+        return (
+          <SessionTab
+            key={session.id}
+            sessionId={session.id}
+            name={session.name || 'Untitled'}
+            agentSdk={session.agent_sdk}
+            isActive={
+              session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId
+            }
+            onClick={() => handleSessionTabClick(session.id)}
+            onClose={(e) => handleCloseSession(e, session.id)}
+            onMiddleClick={(e) => handleCloseSession(e, session.id)}
+            onRename={(newName) => handleRenameSession(session.id, newName)}
+            onDragStart={(e) => handleDragStart(e, session.id)}
+            onDragOver={(e) => handleDragOver(e, session.id)}
+            onDrop={(e) => handleDrop(e, session.id)}
+            onDragEnd={handleDragEnd}
+            isDragging={draggedTabId === session.id}
+            isDragOver={dragOverTabId === session.id}
+            worktreeId={resolvedScopeId}
+            onCloseOthers={
+              isOrphaned || !resolvedScopeId
+                ? undefined
+                : () =>
+                    isConnectionMode
+                      ? closeOtherConnectionSessions(resolvedScopeId, session.id)
+                      : closeOtherSessions(resolvedScopeId, session.id)
+            }
+            onCloseToRight={
+              isOrphaned || !resolvedScopeId
+                ? undefined
+                : () =>
+                    isConnectionMode
+                      ? closeConnectionSessionsToRight(resolvedScopeId, session.id)
+                      : closeSessionsToRight(resolvedScopeId, session.id)
+            }
+            hintCode={sessionHints.sessionHintMap.get(session.id)}
+          />
+        )
+      })}
+    </>
+  )
+
   return (
     <div
       className="flex items-center border-b border-border bg-muted/30"
       data-testid="session-tabs"
     >
       {/* New session / new ticket button - on the left */}
-      {boardMode === 'sticky-tab' ? (
-        /* Sticky-tab mode: always show session create button (tickets are created from within the board) */
+      {boardMode === 'sticky-tab' || !isBoardViewActive ? (
+        /* Session create button with right-click provider menu */
         <ContextMenu
           onOpenChange={(open) => {
             if (open) pushGhosttySuppression('session-tabs-context')
@@ -1063,49 +1142,6 @@ export function SessionTabs(): React.JSX.Element | null {
         >
           <Plus className="h-4 w-4" />
         </button>
-      ) : !isBoardViewActive ? (
-        /* Toggle mode normal: right-click shows provider menu with session type options */
-        <ContextMenu
-          onOpenChange={(open) => {
-            if (open) pushGhosttySuppression('session-tabs-context')
-            else popGhosttySuppression('session-tabs-context')
-          }}
-        >
-          <ContextMenuTrigger asChild>
-            <button
-              onClick={handleCreateSession}
-              className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
-              data-testid="create-session"
-              title="Create new session (right-click for options)"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
-            {availableAgentSdks?.opencode && (
-              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
-                New OpenCode Session
-              </ContextMenuItem>
-            )}
-            {availableAgentSdks?.claude && (
-              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
-                New Claude Code Session
-              </ContextMenuItem>
-            )}
-            {availableAgentSdks?.codex && (
-              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('codex')}>
-                New Codex Session
-              </ContextMenuItem>
-            )}
-            {(availableAgentSdks?.opencode ||
-              availableAgentSdks?.claude ||
-              availableAgentSdks?.codex) && <ContextMenuSeparator />}
-            <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
-              <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
-              New Terminal
-            </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
       ) : null}
 
       {/* Left scroll arrow */}
@@ -1131,9 +1167,18 @@ export function SessionTabs(): React.JSX.Element | null {
             {/* Sticky board tab — permanent, no close button, not draggable */}
             <div
               data-testid="sticky-board-tab"
+              role="tab"
+              tabIndex={0}
               onClick={() => {
                 useFileViewerStore.getState().clearActiveViews()
                 useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  useFileViewerStore.getState().clearActiveViews()
+                  useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
+                }
               }}
               className={cn(
                 'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
@@ -1150,87 +1195,7 @@ export function SessionTabs(): React.JSX.Element | null {
               )}
             </div>
             {/* Normal session tabs alongside the sticky board tab */}
-            {orderedSessions.length === 0 &&
-            !(
-              !isConnectionMode &&
-              connectionsForWorktree.some((c) => (sessionsByConnection.get(c.id) || []).length > 0)
-            ) ? null : (
-              <>
-                {/* Sticky connection session tabs (worktree mode only) */}
-                {!isConnectionMode &&
-                  connectionsForWorktree.map((connection) => {
-                    const connectionSessions = sessionsByConnection.get(connection.id) || []
-                    const connectionTabOrder = tabOrderByConnection.get(connection.id) || []
-                    const orderedConnectionSessions = connectionTabOrder
-                      .map((id) => connectionSessions.find((s) => s.id === id))
-                      .filter((s): s is NonNullable<typeof s> => s !== undefined)
-
-                    if (orderedConnectionSessions.length === 0) return null
-
-                    return (
-                      <Fragment key={connection.id}>
-                        {/* Thin visual separator before each connection group */}
-                        <div className="w-px bg-border/60 self-stretch my-1" aria-hidden="true" />
-                        {orderedConnectionSessions.map((session) => (
-                          <ConnectionSessionTab
-                            key={session.id}
-                            sessionId={session.id}
-                            name={session.name || 'Untitled'}
-                            isActive={session.id === inlineConnectionSessionId && !isFileTabActive}
-                            onClick={() => handleConnectionSessionTabClick(session.id)}
-                            connectionColor={connection.color}
-                            connectionName={connection.name}
-                          />
-                        ))}
-                      </Fragment>
-                    )
-                  })}
-
-                {/* Session tabs */}
-                {allSessions.map((session) => {
-                  const isOrphaned = orphanedSessions.has(session.id)
-                  return (
-                    <SessionTab
-                      key={session.id}
-                      sessionId={session.id}
-                      name={session.name || 'Untitled'}
-                      agentSdk={session.agent_sdk}
-                      isActive={
-                        session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId
-                      }
-                      onClick={() => handleSessionTabClick(session.id)}
-                      onClose={(e) => handleCloseSession(e, session.id)}
-                      onMiddleClick={(e) => handleCloseSession(e, session.id)}
-                      onRename={(newName) => handleRenameSession(session.id, newName)}
-                      onDragStart={(e) => handleDragStart(e, session.id)}
-                      onDragOver={(e) => handleDragOver(e, session.id)}
-                      onDrop={(e) => handleDrop(e, session.id)}
-                      onDragEnd={handleDragEnd}
-                      isDragging={draggedTabId === session.id}
-                      isDragOver={dragOverTabId === session.id}
-                      worktreeId={resolvedScopeId}
-                      onCloseOthers={
-                        isOrphaned || !resolvedScopeId
-                          ? undefined
-                          : () =>
-                              isConnectionMode
-                                ? closeOtherConnectionSessions(resolvedScopeId, session.id)
-                                : closeOtherSessions(resolvedScopeId, session.id)
-                      }
-                      onCloseToRight={
-                        isOrphaned || !resolvedScopeId
-                          ? undefined
-                          : () =>
-                              isConnectionMode
-                                ? closeConnectionSessionsToRight(resolvedScopeId, session.id)
-                                : closeSessionsToRight(resolvedScopeId, session.id)
-                      }
-                      hintCode={sessionHints.sessionHintMap.get(session.id)}
-                    />
-                  )
-                })}
-              </>
-            )}
+            {renderSessionTabs()}
           </>
         ) : isBoardViewActive ? (
           <>
@@ -1312,81 +1277,7 @@ export function SessionTabs(): React.JSX.Element | null {
               No sessions yet. Click + to create one.
             </div>
           ) : (
-            <>
-              {/* Sticky connection session tabs (worktree mode only) */}
-              {!isConnectionMode &&
-                connectionsForWorktree.map((connection) => {
-                  const connectionSessions = sessionsByConnection.get(connection.id) || []
-                  const connectionTabOrder = tabOrderByConnection.get(connection.id) || []
-                  const orderedConnectionSessions = connectionTabOrder
-                    .map((id) => connectionSessions.find((s) => s.id === id))
-                    .filter((s): s is NonNullable<typeof s> => s !== undefined)
-
-                  if (orderedConnectionSessions.length === 0) return null
-
-                  return (
-                    <Fragment key={connection.id}>
-                      {/* Thin visual separator before each connection group */}
-                      <div className="w-px bg-border/60 self-stretch my-1" aria-hidden="true" />
-                      {orderedConnectionSessions.map((session) => (
-                        <ConnectionSessionTab
-                          key={session.id}
-                          sessionId={session.id}
-                          name={session.name || 'Untitled'}
-                          isActive={session.id === inlineConnectionSessionId && !isFileTabActive}
-                          onClick={() => handleConnectionSessionTabClick(session.id)}
-                          connectionColor={connection.color}
-                          connectionName={connection.name}
-                        />
-                      ))}
-                    </Fragment>
-                  )
-                })}
-
-              {/* Session tabs */}
-              {allSessions.map((session) => {
-                const isOrphaned = orphanedSessions.has(session.id)
-                return (
-                  <SessionTab
-                    key={session.id}
-                    sessionId={session.id}
-                    name={session.name || 'Untitled'}
-                    agentSdk={session.agent_sdk}
-                    isActive={
-                      session.id === activeSessionId && !isFileTabActive && !inlineConnectionSessionId
-                    }
-                    onClick={() => handleSessionTabClick(session.id)}
-                    onClose={(e) => handleCloseSession(e, session.id)}
-                    onMiddleClick={(e) => handleCloseSession(e, session.id)}
-                    onRename={(newName) => handleRenameSession(session.id, newName)}
-                    onDragStart={(e) => handleDragStart(e, session.id)}
-                    onDragOver={(e) => handleDragOver(e, session.id)}
-                    onDrop={(e) => handleDrop(e, session.id)}
-                    onDragEnd={handleDragEnd}
-                    isDragging={draggedTabId === session.id}
-                    isDragOver={dragOverTabId === session.id}
-                    worktreeId={resolvedScopeId}
-                    onCloseOthers={
-                      isOrphaned || !resolvedScopeId
-                        ? undefined
-                        : () =>
-                            isConnectionMode
-                              ? closeOtherConnectionSessions(resolvedScopeId, session.id)
-                              : closeOtherSessions(resolvedScopeId, session.id)
-                    }
-                    onCloseToRight={
-                      isOrphaned || !resolvedScopeId
-                        ? undefined
-                        : () =>
-                            isConnectionMode
-                              ? closeConnectionSessionsToRight(resolvedScopeId, session.id)
-                              : closeSessionsToRight(resolvedScopeId, session.id)
-                    }
-                    hintCode={sessionHints.sessionHintMap.get(session.id)}
-                  />
-                )
-              })}
-            </>
+            renderSessionTabs()
           )
         )}
 
