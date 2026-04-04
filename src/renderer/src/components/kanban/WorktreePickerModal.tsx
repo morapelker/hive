@@ -65,14 +65,24 @@ export function _resetLastSourceBranch(): void {
 }
 
 // ── Prompt template builders ────────────────────────────────────────
-function buildPrompt(mode: PickerMode, ticket: KanbanTicket): string {
-  const prefix =
-    mode === 'build'
-      ? 'Please implement the following ticket.'
-      : mode === 'plan'
-        ? 'Please review the following ticket and create a detailed implementation plan.'
-        : 'Please review the following ticket and create a detailed implementation plan.'  // super-plan same as plan
+function getModePrefix(mode: PickerMode): string {
+  return mode === 'build'
+    ? 'Please implement the following ticket.'
+    : 'Please review the following ticket and create a detailed implementation plan.'
+}
 
+function swapModePrefix(text: string, fromMode: PickerMode, toMode: PickerMode): string {
+  const fromPrefix = getModePrefix(fromMode)
+  const toPrefix = getModePrefix(toMode)
+  if (fromPrefix === toPrefix) return text          // plan ↔ super-plan: same prefix
+  if (text.startsWith(fromPrefix)) {
+    return toPrefix + text.slice(fromPrefix.length)  // swap prefix, keep the rest
+  }
+  return text                                        // prefix not found: don't touch
+}
+
+function buildPrompt(mode: PickerMode, ticket: KanbanTicket): string {
+  const prefix = getModePrefix(mode)
   const description = ticket.description ?? ''
   return `${prefix}\n\n<ticket title="${ticket.title}">${description}</ticket>`
 }
@@ -226,29 +236,24 @@ export function WorktreePickerModal({
   // ── Handle mode toggle ──────────────────────────────────────────
   const toggleMode = useCallback(() => {
     setMode((prev) => {
-      let next: PickerMode
-      if (prev === 'build') {
-        next = superArmed ? 'super-plan' : 'plan'
-      } else {
-        next = 'build'
-      }
-      setPromptText(buildPrompt(next, ticket))
+      const next: PickerMode = prev === 'build'
+        ? (superArmed ? 'super-plan' : 'plan')
+        : 'build'
+      setPromptText((current) => swapModePrefix(current, prev, next))
       return next
     })
-  }, [ticket, superArmed])
+  }, [superArmed])
 
   // ── Handle SUPER toggle ─────────────────────────────────────────
   const toggleSuper = useCallback(() => {
     if (mode === 'plan') {
       setMode('super-plan')
       setSuperArmed(true)
-      setPromptText(buildPrompt('super-plan', ticket))
     } else if (mode === 'super-plan') {
       setMode('plan')
       setSuperArmed(false)
-      setPromptText(buildPrompt('plan', ticket))
     }
-  }, [mode, ticket])
+  }, [mode])
 
   // ── Handle Tab key: toggle mode + focus prompt textarea ────────
   // Must use window-level capture-phase listener to beat SessionView's
