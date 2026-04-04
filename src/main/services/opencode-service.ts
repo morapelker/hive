@@ -547,6 +547,31 @@ class OpenCodeService {
   }
 
   /**
+   * List available agents from OpenCode
+   */
+  async listAgents(
+    worktreePath?: string
+  ): Promise<Array<{ name: string; description?: string; mode: string }>> {
+    log.info('Listing OpenCode agents')
+    const instance = await this.getOrCreateInstance()
+    try {
+      const result = await instance.client.app.agents({
+        query: worktreePath ? { directory: worktreePath } : undefined
+      })
+      return (result.data || []).map(
+        (a: { name: string; description?: string; mode?: string }) => ({
+          name: a.name,
+          description: a.description,
+          mode: a.mode ?? 'primary'
+        })
+      )
+    } catch (error) {
+      log.warn('Failed to list OpenCode agents', { error })
+      return []
+    }
+  }
+
+  /**
    * Get model info (name, context limit) for a specific model
    */
   async getModelInfo(
@@ -647,7 +672,8 @@ class OpenCodeService {
           | { type: 'text'; text: string }
           | { type: 'file'; mime: string; url: string; filename?: string }
         >,
-    modelOverride?: { providerID: string; modelID: string; variant?: string }
+    modelOverride?: { providerID: string; modelID: string; variant?: string },
+    agentOverride?: string
   ): Promise<void> {
     const parts =
       typeof messageOrParts === 'string'
@@ -675,7 +701,8 @@ class OpenCodeService {
         body: {
           model,
           variant,
-          parts
+          parts,
+          ...(agentOverride ? { agent: agentOverride } : {})
         }
       })
 

@@ -63,7 +63,8 @@ export function createOpenCodeOpsAdapter(): OpenCodeOpsApi {
       opencodeSessionId: string,
       messageOrParts: string | MessagePart[],
       model?: { providerID: string; modelID: string; variant?: string },
-      _options?: { codexFastMode?: boolean }
+      _options?: { codexFastMode?: boolean },
+      agent?: string
     ): Promise<{ success: boolean; error?: string }> {
       const input: Record<string, unknown> = {
         worktreePath,
@@ -76,6 +77,9 @@ export function createOpenCodeOpsAdapter(): OpenCodeOpsApi {
       }
       if (model) {
         input.model = model
+      }
+      if (agent) {
+        input.agent = agent
       }
 
       const data = await graphqlQuery<{
@@ -202,11 +206,7 @@ export function createOpenCodeOpsAdapter(): OpenCodeOpsApi {
       model?: { id: string; name: string; limit: { context: number } }
       error?: string
     }> {
-      const sdk = agentSdk
-        ? agentSdk === 'claude-code'
-          ? 'claude_code'
-          : agentSdk
-        : undefined
+      const sdk = agentSdk ? (agentSdk === 'claude-code' ? 'claude_code' : agentSdk) : undefined
       const data = await graphqlQuery<{
         opencodeModelInfo: { success: boolean; model: unknown; error?: string }
       }>(
@@ -594,6 +594,34 @@ export function createOpenCodeOpsAdapter(): OpenCodeOpsApi {
         }
       )
       return data.opencodeFork
+    },
+
+    async listAgents(opts?: { worktreePath?: string }): Promise<{
+      success: boolean
+      agents: Array<{ name: string; description?: string; mode: string }>
+      error?: string
+    }> {
+      const data = await graphqlQuery<{
+        opencodeAgents: {
+          success: boolean
+          agents: Array<{ name: string; description?: string; mode: string }>
+          error?: string
+        }
+      }>(
+        `query ($worktreePath: String) {
+          opencodeAgents(worktreePath: $worktreePath) {
+            success error
+            agents { name description mode }
+          }
+        }`,
+        { worktreePath: opts?.worktreePath }
+      )
+      const r = data.opencodeAgents
+      return {
+        success: r.success,
+        agents: r.agents ?? [],
+        error: r.error ?? undefined
+      }
     },
 
     // ─── Stream subscription (CRITICAL) ─────────────────────────

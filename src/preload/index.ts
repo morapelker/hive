@@ -81,8 +81,7 @@ const db = {
       ipcRenderer.invoke('db:worktree:removeAttachment', { worktreeId, attachmentId }),
     attachPR: (worktreeId: string, prNumber: number, prUrl: string) =>
       ipcRenderer.invoke('db:worktree:attachPR', { worktreeId, prNumber, prUrl }),
-    detachPR: (worktreeId: string) =>
-      ipcRenderer.invoke('db:worktree:detachPR', { worktreeId }),
+    detachPR: (worktreeId: string) => ipcRenderer.invoke('db:worktree:detachPR', { worktreeId }),
     setPinned: (worktreeId: string, pinned: boolean) =>
       ipcRenderer.invoke('db:worktree:setPinned', { worktreeId, pinned }),
     getPinned: () => ipcRenderer.invoke('db:worktree:getPinned')
@@ -918,9 +917,8 @@ const gitOps = {
   }> => ipcRenderer.invoke('git:mergeAbort', worktreePath),
 
   // Check if a worktree has uncommitted changes
-  hasUncommittedChanges: (
-    worktreePath: string
-  ): Promise<boolean> => ipcRenderer.invoke('git:hasUncommittedChanges', worktreePath),
+  hasUncommittedChanges: (worktreePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('git:hasUncommittedChanges', worktreePath),
 
   // Get branch divergence stats vs base branch
   branchDiffShortStat: (
@@ -1152,7 +1150,8 @@ const opencodeOps = {
           | { type: 'file'; mime: string; url: string; filename?: string }
         >,
     model?: { providerID: string; modelID: string; variant?: string },
-    options?: { codexFastMode?: boolean }
+    options?: { codexFastMode?: boolean },
+    agent?: string
   ): Promise<{ success: boolean; error?: string }> => {
     const parts =
       typeof messageOrParts === 'string'
@@ -1163,7 +1162,8 @@ const opencodeOps = {
       sessionId: opencodeSessionId,
       parts,
       model,
-      options
+      options,
+      agent
     })
   },
 
@@ -1391,6 +1391,15 @@ const opencodeOps = {
       sessionId: opencodeSessionId,
       messageId
     }),
+
+  // List available OpenCode agents
+  listAgents: (opts?: {
+    worktreePath?: string
+  }): Promise<{
+    success: boolean
+    agents: Array<{ name: string; description?: string; mode: string }>
+    error?: string
+  }> => ipcRenderer.invoke('opencode:agents', opts),
 
   // Subscribe to streaming events
   onStream: (callback: (event: OpenCodeStreamEvent) => void): (() => void) => {
@@ -1815,7 +1824,8 @@ const kanban = {
     ) => ipcRenderer.invoke('kanban:ticket:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('kanban:ticket:delete', id),
     archive: (id: string) => ipcRenderer.invoke('kanban:ticket:archive', id),
-    archiveAllDone: (projectId: string) => ipcRenderer.invoke('kanban:ticket:archiveAllDone', projectId),
+    archiveAllDone: (projectId: string) =>
+      ipcRenderer.invoke('kanban:ticket:archiveAllDone', projectId),
     unarchive: (id: string) => ipcRenderer.invoke('kanban:ticket:unarchive', id),
     move: (id: string, column: 'todo' | 'in_progress' | 'review' | 'done', sortOrder: number) =>
       ipcRenderer.invoke('kanban:ticket:move', id, column, sortOrder),
@@ -1827,15 +1837,17 @@ const kanban = {
       ipcRenderer.invoke('kanban:ticket:addTokens', id, tokens),
     syncPR: (worktreeId: string, prNumber: number, prUrl: string) =>
       ipcRenderer.invoke('kanban:ticket:syncPR', worktreeId, prNumber, prUrl),
-    clearPR: (worktreeId: string) =>
-      ipcRenderer.invoke('kanban:ticket:clearPR', worktreeId),
+    clearPR: (worktreeId: string) => ipcRenderer.invoke('kanban:ticket:clearPR', worktreeId)
   },
   simpleMode: {
     toggle: (projectId: string, enabled: boolean) =>
       ipcRenderer.invoke('kanban:simpleMode:toggle', projectId, enabled)
   },
   board: {
-    export: (projectId: string, projectName: string): Promise<{ success: boolean; ticketCount: number; path?: string }> =>
+    export: (
+      projectId: string,
+      projectName: string
+    ): Promise<{ success: boolean; ticketCount: number; path?: string }> =>
       ipcRenderer.invoke('kanban:board:export', projectId, projectName),
     openImportFile: (): Promise<{
       tickets: Array<{
@@ -1866,22 +1878,26 @@ const ticketImport = {
     ipcRenderer.invoke('ticketImport:listProviders'),
   getSettingsSchema: (
     providerId: string
-  ): Promise<Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>> =>
-    ipcRenderer.invoke('ticketImport:getSettingsSchema', providerId),
+  ): Promise<
+    Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>
+  > => ipcRenderer.invoke('ticketImport:getSettingsSchema', providerId),
   authenticate: (
     providerId: string,
     settings: Record<string, string>
   ): Promise<{ success: boolean; error: string | null }> =>
     ipcRenderer.invoke('ticketImport:authenticate', providerId, settings),
-  detectRepo: (
-    providerId: string,
-    projectPath: string
-  ): Promise<{ repo: string | null }> =>
+  detectRepo: (providerId: string, projectPath: string): Promise<{ repo: string | null }> =>
     ipcRenderer.invoke('ticketImport:detectRepo', providerId, projectPath),
   listIssues: (
     providerId: string,
     repo: string,
-    options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
+    options: {
+      page: number
+      perPage: number
+      state: 'open' | 'closed' | 'all'
+      search?: string
+      nextPageToken?: string
+    },
     settings: Record<string, string>
   ): Promise<{
     issues: Array<{
@@ -1901,7 +1917,13 @@ const ticketImport = {
     providerId: string,
     projectId: string,
     repo: string,
-    issues: Array<{ externalId: string; title: string; body: string | null; state: string; url: string }>
+    issues: Array<{
+      externalId: string
+      title: string
+      body: string | null
+      state: string
+      url: string
+    }>
   ): Promise<{ imported: string[]; skipped: string[] }> =>
     ipcRenderer.invoke('ticketImport:importIssues', providerId, projectId, repo, issues),
   getAvailableStatuses: (
@@ -1918,7 +1940,14 @@ const ticketImport = {
     statusId: string,
     settings: Record<string, string>
   ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('ticketImport:updateRemoteStatus', providerId, repo, externalId, statusId, settings)
+    ipcRenderer.invoke(
+      'ticketImport:updateRemoteStatus',
+      providerId,
+      repo,
+      externalId,
+      statusId,
+      settings
+    )
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

@@ -44,6 +44,8 @@ interface SessionState {
   modeBySession: Map<string, SessionMode>
   // Super armed state per session - keyed by session ID (memory only, not persisted)
   superArmedBySession: Map<string, boolean>
+  // Selected opencode agent per session - keyed by session ID (memory only)
+  agentBySession: Map<string, string>
   // Pending initial messages - keyed by session ID (e.g., code review prompts)
   pendingMessages: Map<string, string>
   // Pending plan approvals - keyed by session ID (from ExitPlanMode blocking tool)
@@ -134,6 +136,10 @@ interface SessionState {
   clearPendingPlan: (sessionId: string) => void
   getPendingPlan: (sessionId: string) => PendingPlan | null
 
+  // OpenCode agent selection per session
+  setSessionAgent: (sessionId: string, agent: string | null) => void
+  getSessionAgent: (sessionId: string) => string | null
+
   // Pinned session actions
   pinSessionToBoard: (sessionId: string) => Promise<void>
   unpinSessionFromBoard: (sessionId: string) => void
@@ -187,6 +193,7 @@ export const useSessionStore = create<SessionState>()(
       tabOrderByWorktree: new Map(),
       modeBySession: new Map(),
       superArmedBySession: new Map(),
+      agentBySession: new Map(),
       pendingMessages: new Map(),
       pendingPlans: new Map(),
       pendingFollowUpMessages: new Map(),
@@ -620,7 +627,12 @@ export const useSessionStore = create<SessionState>()(
           }
 
           // 2. Clear all prompt stores BEFORE activating session to prevent stale/malformed data
-          const [{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }] = await Promise.all([
+          const [
+            { useQuestionStore },
+            { usePermissionStore },
+            { useCommandApprovalStore },
+            { useFileViewerStore }
+          ] = await Promise.all([
             import('./useQuestionStore'),
             import('./usePermissionStore'),
             import('./useCommandApprovalStore'),
@@ -692,7 +704,12 @@ export const useSessionStore = create<SessionState>()(
           }
 
           // 2. Clear all prompt stores BEFORE activating session
-          const [{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }] = await Promise.all([
+          const [
+            { useQuestionStore },
+            { usePermissionStore },
+            { useCommandApprovalStore },
+            { useFileViewerStore }
+          ] = await Promise.all([
             import('./useQuestionStore'),
             import('./usePermissionStore'),
             import('./useCommandApprovalStore'),
@@ -1370,6 +1387,24 @@ export const useSessionStore = create<SessionState>()(
         return get().pendingPlans.get(sessionId) ?? null
       },
 
+      // ─── OpenCode agent selection per session ────────────────────────────
+
+      setSessionAgent: (sessionId: string, agent: string | null) => {
+        set((state) => {
+          const updated = new Map(state.agentBySession)
+          if (agent === null) {
+            updated.delete(sessionId)
+          } else {
+            updated.set(sessionId, agent)
+          }
+          return { agentBySession: updated }
+        })
+      },
+
+      getSessionAgent: (sessionId: string): string | null => {
+        return get().agentBySession.get(sessionId) ?? null
+      },
+
       // ─── Inline connection session actions ─────────────────────────────
 
       setInlineConnectionSession: (sessionId: string | null) => {
@@ -1726,13 +1761,20 @@ export const useSessionStore = create<SessionState>()(
           import('./usePermissionStore'),
           import('./useCommandApprovalStore'),
           import('./useFileViewerStore')
-        ]).then(([{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }]) => {
-          useQuestionStore.getState().clearSession(session.id)
-          usePermissionStore.getState().clearSession(session.id)
-          useCommandApprovalStore.getState().clearSession(session.id)
-          useFileViewerStore.getState().setActiveFile(null)
-          useFileViewerStore.getState().clearActiveDiff()
-        })
+        ]).then(
+          ([
+            { useQuestionStore },
+            { usePermissionStore },
+            { useCommandApprovalStore },
+            { useFileViewerStore }
+          ]) => {
+            useQuestionStore.getState().clearSession(session.id)
+            usePermissionStore.getState().clearSession(session.id)
+            useCommandApprovalStore.getState().clearSession(session.id)
+            useFileViewerStore.getState().setActiveFile(null)
+            useFileViewerStore.getState().clearActiveDiff()
+          }
+        )
       },
 
       // Pinned session actions
@@ -1791,7 +1833,8 @@ export const useSessionStore = create<SessionState>()(
       // Close all orphaned sessions (called when navigating away)
       closeOrphanedSessions: () => {
         set((state) => {
-          const hasOrphanedActive = state.activeSessionId && state.orphanedSessions.has(state.activeSessionId)
+          const hasOrphanedActive =
+            state.activeSessionId && state.orphanedSessions.has(state.activeSessionId)
 
           return {
             orphanedSessions: new Map(),

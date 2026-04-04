@@ -36,7 +36,12 @@ type Query {
   # --- AI Operations ---
   opencodeMessages(worktreePath: String!, sessionId: String!): OpenCodeMessagesResult!
   opencodeModels(agentSdk: AgentSdk): OpenCodeModelsResult!
-  opencodeModelInfo(worktreePath: String!, modelId: String!, agentSdk: AgentSdk): OpenCodeModelInfoResult!
+  opencodeAgents(worktreePath: String): OpenCodeAgentsResult!
+  opencodeModelInfo(
+    worktreePath: String!
+    modelId: String!
+    agentSdk: AgentSdk
+  ): OpenCodeModelInfoResult!
   opencodeSessionInfo(worktreePath: String!, sessionId: String!): OpenCodeSessionInfoResult!
   opencodeCommands(worktreePath: String!, sessionId: String): OpenCodeCommandsResult!
   opencodeCapabilities(sessionId: String): OpenCodeCapabilitiesResult!
@@ -56,9 +61,17 @@ type Query {
   gitRemoteUrl(worktreePath: String!, remote: String): GitRemoteUrlResult!
   gitListPRs(projectPath: String!): GitPRListResult!
   gitBranchDiffFiles(worktreePath: String!, baseBranch: String!): GitBranchDiffFilesResult!
-  gitBranchFileDiff(worktreePath: String!, baseBranch: String!, filePath: String!): GitBranchFileDiffResult!
+  gitBranchFileDiff(
+    worktreePath: String!
+    baseBranch: String!
+    filePath: String!
+  ): GitBranchFileDiffResult!
   gitFileContentBase64(worktreePath: String!, filePath: String!): GitFileContentBase64Result!
-  gitRefContentBase64(worktreePath: String!, ref: String!, filePath: String!): GitFileContentBase64Result!
+  gitRefContentBase64(
+    worktreePath: String!
+    ref: String!
+    filePath: String!
+  ): GitFileContentBase64Result!
   gitPRState(worktreePath: String!, prNumber: Int!): GitPRStateResult!
   gitPRReviewComments(worktreePath: String!, prNumber: Int!): GitPRReviewCommentsResult!
 
@@ -109,7 +122,12 @@ type Query {
   ticketImportSettingsSchema(providerId: String!): [SettingsFieldInfo!]!
   ticketImportDetectRepo(providerId: String!, projectPath: String!): DetectRepoResult!
   ticketImportListIssues(input: ListIssuesInput!, settings: String!): RemoteIssueListResult!
-  ticketImportAvailableStatuses(providerId: String!, repo: String!, externalId: String!, settings: String!): [RemoteStatus!]!
+  ticketImportAvailableStatuses(
+    providerId: String!
+    repo: String!
+    externalId: String!
+    settings: String!
+  ): [RemoteStatus!]!
 
   # --- Usage ---
   usageFetch(providers: [String!]): UsageResult!

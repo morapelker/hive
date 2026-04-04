@@ -63,6 +63,19 @@ export const opencodeQueryResolvers: Resolvers = {
       }
     },
 
+    opencodeAgents: async (_parent, { worktreePath }, _ctx) => {
+      try {
+        const agents = await openCodeService.listAgents(worktreePath ?? undefined)
+        return { success: true, agents }
+      } catch (error) {
+        return {
+          success: false,
+          agents: [],
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    },
+
     opencodeModelInfo: async (_parent, { worktreePath, modelId, agentSdk }, ctx) => {
       try {
         if (agentSdk && agentSdk !== 'opencode' && ctx.sdkManager) {
@@ -124,7 +137,7 @@ export const opencodeQueryResolvers: Resolvers = {
 
     opencodePermissionList: async (_parent, { worktreePath }, ctx) => {
       try {
-        const permissions = await openCodeService.permissionList(worktreePath)
+        const permissions = await openCodeService.permissionList(worktreePath ?? undefined)
         const allPermissions = [...(permissions as any[])]
 
         // Also collect permissions from non-OpenCode implementers
@@ -132,7 +145,7 @@ export const opencodeQueryResolvers: Resolvers = {
           for (const sdkId of ['claude-code', 'codex'] as const) {
             try {
               const impl = ctx.sdkManager.getImplementer(sdkId)
-              const sdkPerms = await impl.permissionList(worktreePath)
+              const sdkPerms = await impl.permissionList(worktreePath ?? undefined)
               allPermissions.push(...(sdkPerms as any[]))
             } catch {
               // Implementer may not exist or may throw — skip

@@ -320,9 +320,7 @@ declare global {
           prNumber: number,
           prUrl: string
         ) => Promise<{ success: boolean; error?: string }>
-        detachPR: (
-          worktreeId: string
-        ) => Promise<{ success: boolean; error?: string }>
+        detachPR: (worktreeId: string) => Promise<{ success: boolean; error?: string }>
         setPinned: (
           worktreeId: string,
           pinned: boolean
@@ -580,7 +578,8 @@ declare global {
         opencodeSessionId: string,
         messageOrParts: string | MessagePart[],
         model?: { providerID: string; modelID: string; variant?: string },
-        options?: { codexFastMode?: boolean }
+        options?: { codexFastMode?: boolean },
+        agent?: string
       ) => Promise<{ success: boolean; error?: string }>
       // Abort a streaming session
       abort: (
@@ -732,6 +731,12 @@ declare global {
         opencodeSessionId: string,
         messageId?: string
       ) => Promise<{ success: boolean; sessionId?: string; error?: string }>
+      // List available OpenCode agents
+      listAgents: (opts?: { worktreePath?: string }) => Promise<{
+        success: boolean
+        agents: Array<{ name: string; description?: string; mode: string }>
+        error?: string
+      }>
       // Subscribe to streaming events
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
     }
@@ -776,7 +781,10 @@ declare global {
         content?: string
         error?: string
       }>
-      writeFile: (filePath: string, content: string) => Promise<{
+      writeFile: (
+        filePath: string,
+        content: string
+      ) => Promise<{
         success: boolean
         error?: string
       }>
@@ -1342,7 +1350,10 @@ declare global {
         toggle: (projectId: string, enabled: boolean) => Promise<void>
       }
       board: {
-        export: (projectId: string, projectName: string) => Promise<{ success: boolean; ticketCount: number; path?: string }>
+        export: (
+          projectId: string,
+          projectName: string
+        ) => Promise<{ success: boolean; ticketCount: number; path?: string }>
         openImportFile: () => Promise<{
           tickets: Array<{
             id: string
@@ -1369,19 +1380,24 @@ declare global {
       listProviders: () => Promise<Array<{ id: string; name: string; icon: string }>>
       getSettingsSchema: (
         providerId: string
-      ) => Promise<Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>>
+      ) => Promise<
+        Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>
+      >
       authenticate: (
         providerId: string,
         settings: Record<string, string>
       ) => Promise<{ success: boolean; error: string | null }>
-      detectRepo: (
-        providerId: string,
-        projectPath: string
-      ) => Promise<{ repo: string | null }>
+      detectRepo: (providerId: string, projectPath: string) => Promise<{ repo: string | null }>
       listIssues: (
         providerId: string,
         repo: string,
-        options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
+        options: {
+          page: number
+          perPage: number
+          state: 'open' | 'closed' | 'all'
+          search?: string
+          nextPageToken?: string
+        },
         settings: Record<string, string>
       ) => Promise<{
         issues: Array<{
@@ -1401,7 +1417,13 @@ declare global {
         providerId: string,
         projectId: string,
         repo: string,
-        issues: Array<{ externalId: string; title: string; body: string | null; state: string; url: string }>
+        issues: Array<{
+          externalId: string
+          title: string
+          body: string | null
+          state: string
+          url: string
+        }>
       ) => Promise<{ imported: string[]; skipped: string[] }>
       getAvailableStatuses: (
         providerId: string,

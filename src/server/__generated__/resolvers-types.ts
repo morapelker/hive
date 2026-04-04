@@ -1259,6 +1259,20 @@ export type MutationWorktreeSetPinnedArgs = {
   worktreeId: Scalars['ID']['input'];
 };
 
+export type OpenCodeAgent = {
+  __typename?: 'OpenCodeAgent';
+  description?: Maybe<Scalars['String']['output']>;
+  mode: Scalars['String']['output'];
+  name: Scalars['String']['output'];
+};
+
+export type OpenCodeAgentsResult = {
+  __typename?: 'OpenCodeAgentsResult';
+  agents: Array<OpenCodeAgent>;
+  error?: Maybe<Scalars['String']['output']>;
+  success: Scalars['Boolean']['output'];
+};
+
 export type OpenCodeCapabilities = {
   __typename?: 'OpenCodeCapabilities';
   supportsCommands: Scalars['Boolean']['output'];
@@ -1348,6 +1362,7 @@ export type OpenCodePermissionListResult = {
 };
 
 export type OpenCodePromptInput = {
+  agent?: InputMaybe<Scalars['String']['input']>;
   message?: InputMaybe<Scalars['String']['input']>;
   model?: InputMaybe<ModelInput>;
   opencodeSessionId: Scalars['String']['input'];
@@ -1461,6 +1476,7 @@ export type Project = {
   createdAt: Scalars['String']['output'];
   customIcon?: Maybe<Scalars['String']['output']>;
   description?: Maybe<Scalars['String']['output']>;
+  detectedIcon?: Maybe<Scalars['String']['output']>;
   id: Scalars['ID']['output'];
   language?: Maybe<Scalars['String']['output']>;
   lastAccessedAt: Scalars['String']['output'];
@@ -1525,6 +1541,7 @@ export type Query = {
   kanbanTicket?: Maybe<KanbanTicket>;
   kanbanTicketsByProject: Array<KanbanTicket>;
   kanbanTicketsBySession: Array<KanbanTicket>;
+  opencodeAgents: OpenCodeAgentsResult;
   opencodeCapabilities: OpenCodeCapabilitiesResult;
   opencodeCommands: OpenCodeCommandsResult;
   opencodeMessages: OpenCodeMessagesResult;
@@ -1536,6 +1553,7 @@ export type Query = {
   pinnedWorktrees: Array<Worktree>;
   project?: Maybe<Project>;
   projectByPath?: Maybe<Project>;
+  projectDetectFavicon?: Maybe<Scalars['String']['output']>;
   projectDetectLanguage?: Maybe<Scalars['String']['output']>;
   projectIconPath?: Maybe<Scalars['String']['output']>;
   projectIdsSortedByLastMessage: Array<Scalars['ID']['output']>;
@@ -1744,6 +1762,11 @@ export type QueryKanbanTicketsBySessionArgs = {
 };
 
 
+export type QueryOpencodeAgentsArgs = {
+  worktreePath?: InputMaybe<Scalars['String']['input']>;
+};
+
+
 export type QueryOpencodeCapabilitiesArgs = {
   sessionId?: InputMaybe<Scalars['String']['input']>;
 };
@@ -1791,6 +1814,11 @@ export type QueryProjectArgs = {
 
 export type QueryProjectByPathArgs = {
   path: Scalars['String']['input'];
+};
+
+
+export type QueryProjectDetectFaviconArgs = {
+  projectPath: Scalars['String']['input'];
 };
 
 
@@ -2178,6 +2206,7 @@ export type UpdateProjectInput = {
   autoAssignPort?: InputMaybe<Scalars['Boolean']['input']>;
   customIcon?: InputMaybe<Scalars['String']['input']>;
   description?: InputMaybe<Scalars['String']['input']>;
+  detectedIcon?: InputMaybe<Scalars['String']['input']>;
   language?: InputMaybe<Scalars['String']['input']>;
   lastAccessedAt?: InputMaybe<Scalars['String']['input']>;
   name?: InputMaybe<Scalars['String']['input']>;
@@ -2426,6 +2455,8 @@ export type ResolversTypes = ResolversObject<{
   MessagePartInput: MessagePartInput;
   ModelInput: ModelInput;
   Mutation: ResolverTypeWrapper<Record<PropertyKey, never>>;
+  OpenCodeAgent: ResolverTypeWrapper<OpenCodeAgent>;
+  OpenCodeAgentsResult: ResolverTypeWrapper<OpenCodeAgentsResult>;
   OpenCodeCapabilities: ResolverTypeWrapper<OpenCodeCapabilities>;
   OpenCodeCapabilitiesResult: ResolverTypeWrapper<OpenCodeCapabilitiesResult>;
   OpenCodeCommand: ResolverTypeWrapper<OpenCodeCommand>;
@@ -2573,6 +2604,8 @@ export type ResolversParentTypes = ResolversObject<{
   MessagePartInput: MessagePartInput;
   ModelInput: ModelInput;
   Mutation: Record<PropertyKey, never>;
+  OpenCodeAgent: OpenCodeAgent;
+  OpenCodeAgentsResult: OpenCodeAgentsResult;
   OpenCodeCapabilities: OpenCodeCapabilities;
   OpenCodeCapabilitiesResult: OpenCodeCapabilitiesResult;
   OpenCodeCommand: OpenCodeCommand;
@@ -3087,6 +3120,18 @@ export type MutationResolvers<ContextType = GraphQLContext, ParentType extends R
   worktreeSetPinned?: Resolver<ResolversTypes['SuccessResult'], ParentType, ContextType, RequireFields<MutationWorktreeSetPinnedArgs, 'pinned' | 'worktreeId'>>;
 }>;
 
+export type OpenCodeAgentResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['OpenCodeAgent'] = ResolversParentTypes['OpenCodeAgent']> = ResolversObject<{
+  description?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  mode?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  name?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+}>;
+
+export type OpenCodeAgentsResultResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['OpenCodeAgentsResult'] = ResolversParentTypes['OpenCodeAgentsResult']> = ResolversObject<{
+  agents?: Resolver<Array<ResolversTypes['OpenCodeAgent']>, ParentType, ContextType>;
+  error?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  success?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+}>;
+
 export type OpenCodeCapabilitiesResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['OpenCodeCapabilities'] = ResolversParentTypes['OpenCodeCapabilities']> = ResolversObject<{
   supportsCommands?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
   supportsModelSelection?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
@@ -3227,6 +3272,7 @@ export type ProjectResolvers<ContextType = GraphQLContext, ParentType extends Re
   createdAt?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   customIcon?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   description?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
+  detectedIcon?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   id?: Resolver<ResolversTypes['ID'], ParentType, ContextType>;
   language?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   lastAccessedAt?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
@@ -3288,6 +3334,7 @@ export type QueryResolvers<ContextType = GraphQLContext, ParentType extends Reso
   kanbanTicket?: Resolver<Maybe<ResolversTypes['KanbanTicket']>, ParentType, ContextType, RequireFields<QueryKanbanTicketArgs, 'id'>>;
   kanbanTicketsByProject?: Resolver<Array<ResolversTypes['KanbanTicket']>, ParentType, ContextType, RequireFields<QueryKanbanTicketsByProjectArgs, 'projectId'>>;
   kanbanTicketsBySession?: Resolver<Array<ResolversTypes['KanbanTicket']>, ParentType, ContextType, RequireFields<QueryKanbanTicketsBySessionArgs, 'sessionId'>>;
+  opencodeAgents?: Resolver<ResolversTypes['OpenCodeAgentsResult'], ParentType, ContextType, Partial<QueryOpencodeAgentsArgs>>;
   opencodeCapabilities?: Resolver<ResolversTypes['OpenCodeCapabilitiesResult'], ParentType, ContextType, Partial<QueryOpencodeCapabilitiesArgs>>;
   opencodeCommands?: Resolver<ResolversTypes['OpenCodeCommandsResult'], ParentType, ContextType, RequireFields<QueryOpencodeCommandsArgs, 'worktreePath'>>;
   opencodeMessages?: Resolver<ResolversTypes['OpenCodeMessagesResult'], ParentType, ContextType, RequireFields<QueryOpencodeMessagesArgs, 'sessionId' | 'worktreePath'>>;
@@ -3299,6 +3346,7 @@ export type QueryResolvers<ContextType = GraphQLContext, ParentType extends Reso
   pinnedWorktrees?: Resolver<Array<ResolversTypes['Worktree']>, ParentType, ContextType>;
   project?: Resolver<Maybe<ResolversTypes['Project']>, ParentType, ContextType, RequireFields<QueryProjectArgs, 'id'>>;
   projectByPath?: Resolver<Maybe<ResolversTypes['Project']>, ParentType, ContextType, RequireFields<QueryProjectByPathArgs, 'path'>>;
+  projectDetectFavicon?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType, RequireFields<QueryProjectDetectFaviconArgs, 'projectPath'>>;
   projectDetectLanguage?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType, RequireFields<QueryProjectDetectLanguageArgs, 'projectPath'>>;
   projectIconPath?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType, RequireFields<QueryProjectIconPathArgs, 'filename'>>;
   projectIdsSortedByLastMessage?: Resolver<Array<ResolversTypes['ID']>, ParentType, ContextType>;
@@ -3582,6 +3630,8 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   JSON?: GraphQLScalarType;
   KanbanTicket?: KanbanTicketResolvers<ContextType>;
   Mutation?: MutationResolvers<ContextType>;
+  OpenCodeAgent?: OpenCodeAgentResolvers<ContextType>;
+  OpenCodeAgentsResult?: OpenCodeAgentsResultResolvers<ContextType>;
   OpenCodeCapabilities?: OpenCodeCapabilitiesResolvers<ContextType>;
   OpenCodeCapabilitiesResult?: OpenCodeCapabilitiesResultResolvers<ContextType>;
   OpenCodeCommand?: OpenCodeCommandResolvers<ContextType>;

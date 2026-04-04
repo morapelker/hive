@@ -103,6 +103,7 @@ export function registerOpenCodeHandlers(
       | string
       | Array<{ type: string; text?: string; mime?: string; url?: string; filename?: string }>
     let model: { providerID: string; modelID: string; variant?: string } | undefined
+    let agent: string | undefined
     let options: PromptOptions | undefined
 
     // Support object-style call: { worktreePath, sessionId, parts }
@@ -130,6 +131,7 @@ export function registerOpenCodeHandlers(
       if (rawOptions && typeof rawOptions.codexFastMode === 'boolean') {
         options = { codexFastMode: rawOptions.codexFastMode }
       }
+      agent = typeof obj.agent === 'string' ? obj.agent : undefined
     } else {
       // Legacy positional args: (worktreePath, sessionId, message)
       worktreePath = args[0] as string
@@ -220,13 +222,19 @@ export function registerOpenCodeHandlers(
         const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
         if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
           const impl = sdkManager.getImplementer(sdkId)
-          await impl.prompt(worktreePath, opencodeSessionId, messageOrParts, model, options)
+          await impl.prompt(worktreePath, opencodeSessionId, messageOrParts as any, model, options)
           telemetryService.track('prompt_sent', { agent_sdk: sdkId })
           return { success: true }
         }
       }
       // Fall through to existing OpenCode path
-      await openCodeService.prompt(worktreePath, opencodeSessionId, messageOrParts, model)
+      await openCodeService.prompt(
+        worktreePath,
+        opencodeSessionId,
+        messageOrParts as any,
+        model,
+        agent
+      )
       telemetryService.track('prompt_sent', { agent_sdk: 'opencode' })
       return { success: true }
     } catch (error) {
@@ -293,6 +301,22 @@ export function registerOpenCodeHandlers(
       }
     }
   )
+
+  // Get available agents from OpenCode
+  ipcMain.handle('opencode:agents', async (_event, opts?: { worktreePath?: string }) => {
+    log.info('IPC: opencode:agents', { worktreePath: opts?.worktreePath })
+    try {
+      const agents = await openCodeService.listAgents(opts?.worktreePath)
+      return { success: true, agents }
+    } catch (error) {
+      log.error('IPC: opencode:agents failed', { error })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        agents: []
+      }
+    }
+  })
 
   // Set the selected model
   ipcMain.handle(

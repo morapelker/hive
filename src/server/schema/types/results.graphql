@@ -36,6 +36,12 @@ type OpenCodeModelsResult {
   error: String
 }
 
+type OpenCodeAgentsResult {
+  success: Boolean!
+  agents: [OpenCodeAgent!]!
+  error: String
+}
+
 type OpenCodeModelInfoResult {
   success: Boolean!
   model: JSON

@@ -68,13 +68,20 @@ export const opencodeMutationResolvers: Resolvers = {
 
     opencodePrompt: async (_parent, { input }, ctx) => {
       try {
-        const { worktreePath, opencodeSessionId, message, parts, model } = input
+        const { worktreePath, opencodeSessionId, message, parts, model, agent } = input as any
         const messageParts = parts ?? [{ type: 'text', text: message ?? '' }]
         await withSdkDispatch(
           ctx,
           opencodeSessionId,
-          () => openCodeService.prompt(worktreePath, opencodeSessionId, messageParts, model),
-          (impl) => impl.prompt(worktreePath, opencodeSessionId, messageParts, model)
+          () =>
+            openCodeService.prompt(
+              worktreePath,
+              opencodeSessionId,
+              messageParts,
+              model,
+              agent ?? undefined
+            ),
+          (impl) => impl.prompt(worktreePath, opencodeSessionId, messageParts as any, model)
         )
         return { success: true }
       } catch (error) {
@@ -167,11 +174,18 @@ export const opencodeMutationResolvers: Resolvers = {
 
     opencodeCommand: async (_parent, { input }, ctx) => {
       try {
-        const { worktreePath, opencodeSessionId, command, args, model } = input
+        const { worktreePath, opencodeSessionId, command, args, model } = input as any
         await withSdkDispatch(
           ctx,
           opencodeSessionId,
-          () => openCodeService.sendCommand(worktreePath, opencodeSessionId, command, args, model),
+          () =>
+            openCodeService.sendCommand(
+              worktreePath,
+              opencodeSessionId,
+              command,
+              args,
+              model ?? undefined
+            ),
           (impl) => impl.sendCommand(worktreePath, opencodeSessionId, command, args)
         )
         return { success: true }

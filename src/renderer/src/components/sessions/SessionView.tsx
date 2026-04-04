@@ -1,5 +1,16 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
-import { Send, ListPlus, Loader2, AlertCircle, RefreshCw, Square, Archive, X, Github, Minimize2 } from 'lucide-react'
+import {
+  Send,
+  ListPlus,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  Square,
+  Archive,
+  X,
+  Github,
+  Minimize2
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ProviderIcon } from '@/components/ui/provider-icon'
@@ -7,6 +18,7 @@ import { toast } from '@/lib/toast'
 import { ModeToggle } from './ModeToggle'
 import { SuperToggle } from './SuperToggle'
 import { ModelSelector } from './ModelSelector'
+import { OpenCodeAgentSelector } from './OpenCodeAgentSelector'
 import { VirtualizedMessageList, type VirtualizedMessageListHandle } from './VirtualizedMessageList'
 import { ContextIndicator } from './ContextIndicator'
 import { AttachmentButton } from './AttachmentButton'
@@ -14,7 +26,11 @@ import { AttachmentPreview } from './AttachmentPreview'
 import { TicketAttachments } from './TicketAttachments'
 import { CodexFastToggle } from './CodexFastToggle'
 import type { Attachment } from './AttachmentPreview'
-import { buildMessageParts, buildDisplayContent, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
+import {
+  buildMessageParts,
+  buildDisplayContent,
+  MAX_ATTACHMENTS
+} from '@/lib/file-attachment-utils'
 import { TicketPickerModal } from '@/components/kanban/TicketPickerModal'
 import type { TicketAttachmentData } from '@/components/kanban/TicketPickerModal'
 import { SlashCommandPopover } from './SlashCommandPopover'
@@ -65,7 +81,13 @@ import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import { CommandApprovalPrompt } from './CommandApprovalPrompt'
 import type { ToolStatus, ToolUseInfo } from './ToolCard'
-import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX, stripPlanModePrefix, isPlanLike } from '@/lib/constants'
+import {
+  PLAN_MODE_PREFIX,
+  ASK_MODE_PREFIX,
+  SUPER_PLAN_MODE_PREFIX,
+  stripPlanModePrefix,
+  isPlanLike
+} from '@/lib/constants'
 
 /**
  * Resolve an OpenCode session ID to the corresponding Hive session ID
@@ -577,6 +599,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Check if this is an orphaned (read-only) session
   const isOrphanedSession = useSessionStore((state) => state.orphanedSessions.has(sessionId))
   const sessionAgentSdk = sessionRecord?.agent_sdk ?? 'opencode'
+  // Selected opencode agent for this session (null = use server default)
+  const selectedOpencodeAgent = useSessionStore(
+    (state) => state.agentBySession.get(sessionId) ?? null
+  )
   const globalModel = useSettingsStore((state) => resolveModelForSdk(sessionAgentSdk, state))
   const effectiveModel: SelectedModel | null =
     sessionRecord?.model_provider_id && sessionRecord.model_id
@@ -2727,9 +2753,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               .setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
             // Apply mode prefix for OpenCode sessions (Claude Code uses native plan mode)
             const modePrefix =
-              currentMode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
-              : currentMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
-              : ''
+              currentMode === 'super-plan'
+                ? SUPER_PLAN_MODE_PREFIX
+                : currentMode === 'plan' && !skipPlanModePrefix
+                  ? PLAN_MODE_PREFIX
+                  : ''
             const promptMessage = modePrefix + pendingMsg
             // Store the full prompt so the stream handler can detect SDK echoes
             lastSentPromptRef.current = promptMessage
@@ -2743,7 +2771,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               opcId,
               parts,
               model,
-              codexPromptOptions
+              codexPromptOptions,
+              selectedOpencodeAgent ?? undefined
             )
             if (shouldAbortInit()) {
               if (!result.success) {
@@ -3216,14 +3245,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         setForkingMessageId(null)
       }
     },
-    [
-      forkingMessageId,
-      opencodeSessionId,
-      sessionId,
-      sessionRecord,
-      worktreeId,
-      worktreePath
-    ]
+    [forkingMessageId, opencodeSessionId, sessionId, sessionRecord, worktreeId, worktreePath]
   )
 
   // Handle send message
@@ -3409,7 +3431,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               opencodeSessionId,
               parts,
               selectedModel,
-              codexPromptOptions
+              codexPromptOptions,
+              selectedOpencodeAgent ?? undefined
             )
 
             if (!result.success) {
@@ -3495,9 +3518,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // instead of only appearing after a session reload from disk.
         const optimisticMode = currentModeForStatus
         const optimisticModePrefix =
-          optimisticMode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
-          : optimisticMode === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
-          : ''
+          optimisticMode === 'super-plan'
+            ? SUPER_PLAN_MODE_PREFIX
+            : optimisticMode === 'plan' && !skipPlanModePrefix
+              ? PLAN_MODE_PREFIX
+              : ''
         const optimisticPrComments = usePRReviewStore.getState().attachedComments
         let optimisticPrContext = ''
         if (optimisticPrComments.length > 0) {
@@ -3619,9 +3644,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             } else {
               // Unknown command — send as regular prompt (SDK may handle it)
               const modePrefix =
-                currentModeForStatus === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
-                : currentModeForStatus === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
-                : ''
+                currentModeForStatus === 'super-plan'
+                  ? SUPER_PLAN_MODE_PREFIX
+                  : currentModeForStatus === 'plan' && !skipPlanModePrefix
+                    ? PLAN_MODE_PREFIX
+                    : ''
               // Build PR review comment context
               const prAttachedComments = usePRReviewStore.getState().attachedComments
               let prContext = ''
@@ -3644,7 +3671,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 opencodeSessionId,
                 parts,
                 requestModel,
-                codexPromptOptions
+                codexPromptOptions,
+                selectedOpencodeAgent ?? undefined
               )
               if (!result.success) {
                 console.error('Failed to send prompt to OpenCode:', result.error)
@@ -3655,9 +3683,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           } else {
             // Regular prompt — existing code (with mode prefix, attachments, etc.)
             const modePrefix =
-              currentModeForStatus === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
-              : currentModeForStatus === 'plan' && !skipPlanModePrefix ? PLAN_MODE_PREFIX
-              : ''
+              currentModeForStatus === 'super-plan'
+                ? SUPER_PLAN_MODE_PREFIX
+                : currentModeForStatus === 'plan' && !skipPlanModePrefix
+                  ? PLAN_MODE_PREFIX
+                  : ''
             // Build PR review comment context
             const prAttachedComments = usePRReviewStore.getState().attachedComments
             let prContext = ''
@@ -3683,7 +3713,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               opencodeSessionId,
               parts,
               requestModel,
-              codexPromptOptions
+              codexPromptOptions,
+              selectedOpencodeAgent ?? undefined
             )
             if (!result.success) {
               console.error('Failed to send prompt to OpenCode:', result.error)
@@ -4295,33 +4326,30 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
-  const handleTicketPickerSelect = useCallback(
-    (tickets: TicketAttachmentData[]) => {
-      setAttachments((prev) => {
-        const remaining = MAX_ATTACHMENTS - prev.length
-        if (remaining <= 0) {
-          toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
-          return prev
-        }
-        const toAdd = tickets.slice(0, remaining).map((t) => ({
-          kind: 'ticket' as const,
-          id: crypto.randomUUID(),
-          name: t.title,
-          ticketId: t.ticketId,
-          title: t.title,
-          description: t.description,
-          attachments: t.attachments
-        }))
-        if (tickets.length > remaining) {
-          toast.warning(
-            `Only ${remaining} of ${tickets.length} tickets attached (${MAX_ATTACHMENTS} max)`
-          )
-        }
-        return [...prev, ...toAdd]
-      })
-    },
-    []
-  )
+  const handleTicketPickerSelect = useCallback((tickets: TicketAttachmentData[]) => {
+    setAttachments((prev) => {
+      const remaining = MAX_ATTACHMENTS - prev.length
+      if (remaining <= 0) {
+        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+        return prev
+      }
+      const toAdd = tickets.slice(0, remaining).map((t) => ({
+        kind: 'ticket' as const,
+        id: crypto.randomUUID(),
+        name: t.title,
+        ticketId: t.ticketId,
+        title: t.title,
+        description: t.description,
+        attachments: t.attachments
+      }))
+      if (tickets.length > remaining) {
+        toast.warning(
+          `Only ${remaining} of ${tickets.length} tickets attached (${MAX_ATTACHMENTS} max)`
+        )
+      }
+      return [...prev, ...toAdd]
+    })
+  }, [])
 
   // Slash command handlers
   const handleInputChange = useCallback(
@@ -4781,7 +4809,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           onSuperpowers={handlePlanReadySuperpowers}
           onSuperpowersLocal={handlePlanReadySuperpowersLocal}
           isConnectionSession={!!connectionId}
-          onSaveAsTicket={sessionRecord?.project_id && !planSavedAsTicket ? handlePlanReadySaveAsTicket : undefined}
+          onSaveAsTicket={
+            sessionRecord?.project_id && !planSavedAsTicket
+              ? handlePlanReadySaveAsTicket
+              : undefined
+          }
         />
         {/* Scroll-to-bottom FAB */}
         <ScrollToBottomFab
@@ -4875,6 +4907,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             <div className="px-3 pt-2.5 pb-1 flex items-center gap-1.5">
               <ModeToggle sessionId={sessionId} />
               <SuperToggle sessionId={sessionId} />
+              {sessionAgentSdk === 'opencode' && (
+                <OpenCodeAgentSelector sessionId={sessionId} worktreePath={worktreePath} />
+              )}
             </div>
 
             {/* Attachment previews */}
@@ -4968,14 +5003,20 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   )}
                 >
                   {elapsedTimerText ??
-                    (pendingPlan
-                      ? 'Enter to send feedback to revise the plan'
-                      : <span className="hidden @min-[42rem]:inline">{`${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Shift+Enter for new line`}</span>)}
+                    (pendingPlan ? (
+                      'Enter to send feedback to revise the plan'
+                    ) : (
+                      <span className="hidden @min-[42rem]:inline">{`${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Shift+Enter for new line`}</span>
+                    ))}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
                 {isStreaming && (
-                  <IndeterminateProgressBar mode={mode} isAsking={!!activeQuestion} isCompacting={isCompacting} />
+                  <IndeterminateProgressBar
+                    mode={mode}
+                    isAsking={!!activeQuestion}
+                    isCompacting={isCompacting}
+                  />
                 )}
                 {isStreaming && !inputValue.trim() ? (
                   <Button
