@@ -70,6 +70,8 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator
 } from '@/components/ui/dropdown-menu'
+import { Tip } from '@/components/ui/Tip'
+import { useTipStore } from '@/stores/useTipStore'
 
 interface SessionTabProps {
   sessionId: string
@@ -632,6 +634,12 @@ export function SessionTabs(): React.JSX.Element | null {
   // eliminate race conditions between the two async operations.
   const autoStartSession = useSettingsStore((state) => state.autoStartSession)
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
+  const defaultAgentSdk = useSettingsStore((state) => state.defaultAgentSdk)
+  const multipleProvidersAvailable = [
+    availableAgentSdks?.opencode,
+    availableAgentSdks?.claude,
+    availableAgentSdks?.codex
+  ].filter(Boolean).length >= 2
   const autoStartedRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -807,6 +815,13 @@ export function SessionTabs(): React.JSX.Element | null {
       if (!result.success) {
         toast.error(result.error || 'Failed to create session')
       }
+      // Tip logic for AI providers (not terminal)
+      if (sdk !== 'terminal') {
+        useTipStore.getState().markTipAsSeen('provider-right-click')
+        if (sdk !== defaultAgentSdk) {
+          useTipStore.getState().setNonDefaultProviderChosen(true)
+        }
+      }
       return
     }
 
@@ -815,6 +830,13 @@ export function SessionTabs(): React.JSX.Element | null {
     const result = await createSession(selectedWorktreeId, project.id, sdk)
     if (!result.success) {
       toast.error(result.error || 'Failed to create session')
+    }
+    // Tip logic for AI providers (not terminal)
+    if (sdk !== 'terminal') {
+      useTipStore.getState().markTipAsSeen('provider-right-click')
+      if (sdk !== defaultAgentSdk) {
+        useTipStore.getState().setNonDefaultProviderChosen(true)
+      }
     }
   }
 
@@ -1021,47 +1043,51 @@ export function SessionTabs(): React.JSX.Element | null {
         </button>
       ) : !isBoardViewActive ? (
         /* Normal mode: right-click shows provider menu with session type options */
-        <ContextMenu
-          onOpenChange={(open) => {
-            if (open) pushGhosttySuppression('session-tabs-context')
-            else popGhosttySuppression('session-tabs-context')
-          }}
-        >
-          <ContextMenuTrigger asChild>
-            <button
-              onClick={handleCreateSession}
-              className="p-1.5 hover:bg-accent transition-colors shrink-0 border-r border-border"
-              data-testid="create-session"
-              title="Create new session (right-click for options)"
+        <Tip tipId="provider-right-click" enabled={multipleProvidersAvailable}>
+          <div className="shrink-0">
+            <ContextMenu
+              onOpenChange={(open) => {
+                if (open) pushGhosttySuppression('session-tabs-context')
+                else popGhosttySuppression('session-tabs-context')
+              }}
             >
-              <Plus className="h-4 w-4" />
-            </button>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
-            {availableAgentSdks?.opencode && (
-              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
-                New OpenCode Session
-              </ContextMenuItem>
-            )}
-            {availableAgentSdks?.claude && (
-              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
-                New Claude Code Session
-              </ContextMenuItem>
-            )}
-            {availableAgentSdks?.codex && (
-              <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('codex')}>
-                New Codex Session
-              </ContextMenuItem>
-            )}
-            {(availableAgentSdks?.opencode ||
-              availableAgentSdks?.claude ||
-              availableAgentSdks?.codex) && <ContextMenuSeparator />}
-            <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
-              <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
-              New Terminal
-            </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
+              <ContextMenuTrigger asChild>
+                <button
+                  onClick={handleCreateSession}
+                  className="p-1.5 hover:bg-accent transition-colors border-r border-border"
+                  data-testid="create-session"
+                  title="Create new session (right-click for options)"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                {availableAgentSdks?.opencode && (
+                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('opencode')}>
+                    New OpenCode Session
+                  </ContextMenuItem>
+                )}
+                {availableAgentSdks?.claude && (
+                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
+                    New Claude Code Session
+                  </ContextMenuItem>
+                )}
+                {availableAgentSdks?.codex && (
+                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('codex')}>
+                    New Codex Session
+                  </ContextMenuItem>
+                )}
+                {(availableAgentSdks?.opencode ||
+                  availableAgentSdks?.claude ||
+                  availableAgentSdks?.codex) && <ContextMenuSeparator />}
+                <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
+                  <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
+                  New Terminal
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+          </div>
+        </Tip>
       ) : null}
 
       {/* Left scroll arrow */}

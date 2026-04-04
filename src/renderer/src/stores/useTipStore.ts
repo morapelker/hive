@@ -17,12 +17,16 @@ interface TipState {
   // Internal — tracks pending timers so they can be cancelled
   _showTimer: ReturnType<typeof setTimeout> | null
 
+  nonDefaultProviderChosen: boolean
+
   // Actions
   loadSeenTips: () => Promise<void>
   requestTip: (tipId: string) => void
   dismissTip: (tipId: string) => void
   disableAllTips: () => void
   isTipSeen: (tipId: string) => boolean
+  markTipAsSeen: (tipId: string) => void
+  setNonDefaultProviderChosen: (value: boolean) => void
 }
 
 async function persistSeenTips(seenTipIds: string[]): Promise<void> {
@@ -40,6 +44,7 @@ export const useTipStore = create<TipState>()((set, get) => ({
   activeTipId: null,
   queue: [],
   _showTimer: null,
+  nonDefaultProviderChosen: false,
 
   loadSeenTips: async () => {
     try {
@@ -141,5 +146,24 @@ export const useTipStore = create<TipState>()((set, get) => ({
 
   isTipSeen: (tipId: string) => {
     return get().seenTipIds.includes(tipId)
+  },
+
+  markTipAsSeen: (tipId: string) => {
+    const { seenTipIds, queue } = get()
+
+    // Skip if already seen
+    if (seenTipIds.includes(tipId)) return
+
+    // Add to seen (do NOT clear activeTipId — a different tip may be showing)
+    const newSeenTipIds = [...seenTipIds, tipId]
+    const newQueue = queue.filter((id) => id !== tipId)
+    set({ seenTipIds: newSeenTipIds, queue: newQueue })
+
+    // Persist to DB
+    persistSeenTips(newSeenTipIds)
+  },
+
+  setNonDefaultProviderChosen: (value: boolean) => {
+    set({ nonDefaultProviderChosen: value })
   }
 }))
