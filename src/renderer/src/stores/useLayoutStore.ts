@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
 export type BottomPanelTab = 'setup' | 'run' | 'terminal'
+export type CollapsedPanel = 'none' | 'top' | 'bottom'
 
 const LEFT_SIDEBAR_DEFAULT = 240
 const LEFT_SIDEBAR_MIN = 200
@@ -22,7 +23,10 @@ interface LayoutState {
   rightSidebarCollapsed: boolean
   bottomPanelTab: BottomPanelTab
   ghosttyOverlaySuppressed: boolean
+  collapsedPanel: CollapsedPanel
   splitFractionByEntity: Record<string, number>
+  toggleTopPanel: () => void
+  toggleBottomPanel: () => void
   setLeftSidebarWidth: (width: number) => void
   toggleLeftSidebar: () => void
   setLeftSidebarCollapsed: (collapsed: boolean) => void
@@ -45,7 +49,20 @@ export const useLayoutStore = create<LayoutState>()(
       rightSidebarCollapsed: false,
       bottomPanelTab: 'setup' as BottomPanelTab,
       ghosttyOverlaySuppressed: false,
+      collapsedPanel: 'none' as CollapsedPanel,
       splitFractionByEntity: {} as Record<string, number>,
+
+      toggleTopPanel: () => {
+        set((state) => ({
+          collapsedPanel: state.collapsedPanel === 'top' ? 'none' : 'top'
+        }))
+      },
+
+      toggleBottomPanel: () => {
+        set((state) => ({
+          collapsedPanel: state.collapsedPanel === 'bottom' ? 'none' : 'bottom'
+        }))
+      },
 
       setLeftSidebarWidth: (width: number) => {
         const clampedWidth = Math.min(Math.max(width, LEFT_SIDEBAR_MIN), LEFT_SIDEBAR_MAX)
@@ -110,6 +127,7 @@ export const useLayoutStore = create<LayoutState>()(
         leftSidebarCollapsed: state.leftSidebarCollapsed,
         rightSidebarWidth: state.rightSidebarWidth,
         rightSidebarCollapsed: state.rightSidebarCollapsed,
+        collapsedPanel: state.collapsedPanel,
         splitFractionByEntity: state.splitFractionByEntity
       })
     }

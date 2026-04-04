@@ -84,20 +84,20 @@ export function ContextIndicator({
           ) : (
             <div>{formatNumber(used)} tokens (limit unavailable)</div>
           )}
-          <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-80">
+          <div className="border-t border-border pt-1.5 space-y-0.5 text-[10px] text-muted-foreground">
             <div>Input: {formatNumber(tokens.input)}</div>
             <div>Cache read: {formatNumber(tokens.cacheRead)}</div>
             <div>Cache write: {formatNumber(tokens.cacheWrite)}</div>
           </div>
           {(tokens.output > 0 || tokens.reasoning > 0) && (
-            <div className="border-t border-background/20 pt-1.5 space-y-0.5 text-[10px] opacity-60">
-              <div className="opacity-100 text-[10px]">Generated (not in context)</div>
+            <div className="border-t border-border pt-1.5 space-y-0.5 text-[10px] text-muted-foreground">
+              <div className="text-[10px]">Generated (not in context)</div>
               {tokens.output > 0 && <div>Output: {formatNumber(tokens.output)}</div>}
               {tokens.reasoning > 0 && <div>Reasoning: {formatNumber(tokens.reasoning)}</div>}
             </div>
           )}
           {cost > 0 && (
-            <div className="border-t border-background/20 pt-1.5">
+            <div className="border-t border-border pt-1.5">
               <div>Session cost: ${cost.toFixed(4)}</div>
             </div>
           )}

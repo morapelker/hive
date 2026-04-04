@@ -243,21 +243,34 @@ export const useSessionStore = create<SessionState>()(
 
           set((state) => {
             const newSessionsMap = new Map(state.sessionsByWorktree)
-            newSessionsMap.set(worktreeId, sortedSessions)
+
+            // Merge: preserve sessions in the store that the DB read may have missed.
+            // This prevents a race where createSession adds a session to the store,
+            // but a concurrent loadSessions (triggered by selectedWorktreeId change)
+            // reads from the DB before the write commits and overwrites with an empty list.
+            const existingInStore = newSessionsMap.get(worktreeId) || []
+            const dbSessionIds = new Set(sortedSessions.map((s) => s.id))
+            const missingFromDb = existingInStore.filter((s) => !dbSessionIds.has(s.id))
+            const merged = missingFromDb.length > 0
+              ? [...sortedSessions, ...missingFromDb]
+              : sortedSessions
+            newSessionsMap.set(worktreeId, merged)
 
             // Initialize tab order if not exists - use session IDs in sorted order
             const newTabOrderMap = new Map(state.tabOrderByWorktree)
+            // Use merged list (not just sortedSessions) for tab-order sync
+            // so that recently-created sessions aren't dropped from the order.
+            const allSessionIds = new Set(merged.map((s) => s.id))
             if (!newTabOrderMap.has(worktreeId)) {
               newTabOrderMap.set(
                 worktreeId,
-                sortedSessions.map((s) => s.id)
+                merged.map((s) => s.id)
               )
             } else {
               // Sync tab order with actual sessions (remove deleted, add new)
               const existingOrder = newTabOrderMap.get(worktreeId)!
-              const sessionIds = new Set(sortedSessions.map((s) => s.id))
-              const validOrder = existingOrder.filter((id) => sessionIds.has(id))
-              const newIds = sortedSessions
+              const validOrder = existingOrder.filter((id) => allSessionIds.has(id))
+              const newIds = merged
                 .map((s) => s.id)
                 .filter((id) => !validOrder.includes(id))
               newTabOrderMap.set(worktreeId, [...validOrder, ...newIds])
@@ -265,7 +278,7 @@ export const useSessionStore = create<SessionState>()(
 
             // Populate mode map from loaded sessions
             const newModeMap = new Map(state.modeBySession)
-            for (const session of sortedSessions) {
+            for (const session of merged) {
               if (!newModeMap.has(session.id)) {
                 newModeMap.set(session.id, session.mode || 'build')
               }

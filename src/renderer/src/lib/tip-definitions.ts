@@ -30,5 +30,21 @@ export const TIP_DEFINITIONS: Record<string, TipDefinition> = {
     trigger: 'mount',
     priority: 3,
     side: 'right'
+  },
+  'provider-right-click': {
+    id: 'provider-right-click',
+    description: 'Right-click to start a new session with a different provider.',
+    trigger: 'mount',
+    priority: 4,
+    side: 'bottom',
+    align: 'start'
+  },
+  'settings-default-provider': {
+    id: 'settings-default-provider',
+    description: 'You can permanently change your default provider from the settings.',
+    trigger: 'action',
+    priority: 5,
+    side: 'bottom',
+    align: 'end'
   }
 }

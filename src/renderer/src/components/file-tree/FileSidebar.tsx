@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X } from 'lucide-react'
+import { X, ChevronUp, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -22,6 +22,8 @@ interface FileSidebarProps {
   onClose: () => void
   onFileClick: (node: { path: string; name: string; isDirectory: boolean }) => void
   className?: string
+  isCollapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
 export function FileSidebar({
@@ -30,7 +32,9 @@ export function FileSidebar({
   connectionMembers,
   onClose,
   onFileClick,
-  className
+  className,
+  isCollapsed,
+  onToggleCollapse
 }: FileSidebarProps): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<'changes' | 'files' | 'diffs' | 'comments'>('changes')
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
@@ -144,6 +148,19 @@ export function FileSidebar({
           </button>
         )}
         <div className="flex-1" />
+        {onToggleCollapse && (
+          <button
+            onClick={onToggleCollapse}
+            className="p-1 text-muted-foreground hover:text-foreground rounded"
+            aria-label={isCollapsed ? 'Expand panel' : 'Collapse panel'}
+          >
+            {isCollapsed ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronUp className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
         <button
           onClick={onClose}
           className="p-1 text-muted-foreground hover:text-foreground rounded"
@@ -153,29 +170,31 @@ export function FileSidebar({
         </button>
       </div>
 
-      <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-        {activeTab === 'comments' && selectedWorktreeId ? (
-          <PrReviewViewer worktreeId={selectedWorktreeId} />
-        ) : activeTab === 'changes' ? (
-          <ChangesView
-            worktreePath={worktreePath}
-            isConnectionMode={isConnectionMode}
-            connectionMembers={connectionMembers}
-          />
-        ) : activeTab === 'diffs' ? (
-          <BranchDiffView worktreePath={worktreePath} />
-        ) : (
-          <FileTree
-            worktreePath={worktreePath}
-            isConnectionMode={isConnectionMode}
-            onClose={onClose}
-            onFileClick={onFileClick}
-            hideHeader
-            hideGitIndicators
-            hideGitContextActions
-          />
-        )}
-      </div>
+      {!isCollapsed && (
+        <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+          {activeTab === 'comments' && selectedWorktreeId ? (
+            <PrReviewViewer worktreeId={selectedWorktreeId} />
+          ) : activeTab === 'changes' ? (
+            <ChangesView
+              worktreePath={worktreePath}
+              isConnectionMode={isConnectionMode}
+              connectionMembers={connectionMembers}
+            />
+          ) : activeTab === 'diffs' ? (
+            <BranchDiffView worktreePath={worktreePath} />
+          ) : (
+            <FileTree
+              worktreePath={worktreePath}
+              isConnectionMode={isConnectionMode}
+              onClose={onClose}
+              onFileClick={onFileClick}
+              hideHeader
+              hideGitIndicators
+              hideGitContextActions
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -16,6 +16,9 @@ export function RightSidebar(): React.JSX.Element {
   const bottomPanelTab = useLayoutStore((s) => s.bottomPanelTab)
   const splitFractionByEntity = useLayoutStore((s) => s.splitFractionByEntity)
   const setSplitFraction = useLayoutStore((s) => s.setSplitFraction)
+  const collapsedPanel = useLayoutStore((s) => s.collapsedPanel)
+  const toggleTopPanel = useLayoutStore((s) => s.toggleTopPanel)
+  const toggleBottomPanel = useLayoutStore((s) => s.toggleBottomPanel)
 
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
@@ -111,7 +114,14 @@ export function RightSidebar(): React.JSX.Element {
         {/* Top half: Tabbed sidebar (Changes / Files) */}
         <div
           className="flex flex-col min-h-0 overflow-hidden"
-          style={{ flex: `${splitFraction} 1 0%` }}
+          style={{
+            flex:
+              collapsedPanel === 'top'
+                ? '0 0 auto'
+                : collapsedPanel === 'bottom'
+                  ? '1 1 0%'
+                  : `${splitFraction} 1 0%`
+          }}
           data-testid="right-sidebar-top"
         >
           <ErrorBoundary
@@ -129,20 +139,36 @@ export function RightSidebar(): React.JSX.Element {
               onClose={toggleRightSidebar}
               onFileClick={handleFileClick}
               className="flex-1 min-h-0"
+              isCollapsed={collapsedPanel === 'top'}
+              onToggleCollapse={toggleTopPanel}
             />
           </ErrorBoundary>
         </div>
 
         {/* Draggable divider between top and bottom panels */}
-        <ResizeHandle onResize={handleVerticalResize} direction="up" />
+        {collapsedPanel === 'none' && (
+          <ResizeHandle onResize={handleVerticalResize} direction="up" />
+        )}
 
         {/* Bottom half: Tab panel */}
         <div
           className="flex flex-col min-h-0 overflow-hidden"
-          style={{ flex: `${1 - splitFraction} 1 0%` }}
+          style={{
+            flex:
+              collapsedPanel === 'bottom'
+                ? '0 0 auto'
+                : collapsedPanel === 'top'
+                  ? '1 1 0%'
+                  : `${1 - splitFraction} 1 0%`
+          }}
           data-testid="right-sidebar-bottom"
         >
-          <BottomPanel terminalSlot={terminalManager} isConnectionMode={isConnectionMode} />
+          <BottomPanel
+            terminalSlot={terminalManager}
+            isConnectionMode={isConnectionMode}
+            isCollapsed={collapsedPanel === 'bottom'}
+            onToggleCollapse={toggleBottomPanel}
+          />
         </div>
       </aside>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Globe } from 'lucide-react'
+import { Globe, ChevronUp, ChevronDown } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { isMac, isLinux } from '@/lib/platform'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
@@ -24,11 +25,17 @@ interface BottomPanelProps {
   terminalSlot: React.ReactNode
   /** When true, only the terminal tab is shown (setup/run are worktree-specific) */
   isConnectionMode?: boolean
+  /** When true, the panel content is hidden (but kept mounted to preserve PTY state) */
+  isCollapsed?: boolean
+  /** Called when the user clicks the collapse/expand chevron */
+  onToggleCollapse?: () => void
 }
 
 export function BottomPanel({
   terminalSlot,
-  isConnectionMode
+  isConnectionMode,
+  isCollapsed,
+  onToggleCollapse
 }: BottomPanelProps): React.JSX.Element {
   const activeTab = useLayoutStore((s) => s.bottomPanelTab)
   const effectiveTab = isConnectionMode ? 'terminal' : activeTab
@@ -106,9 +113,12 @@ export function BottomPanel({
           </button>
         ))}
 
-        {/* Spacer + Open in Chrome button */}
+        {/* Flex spacer pushes Chrome URL button and chevron to the right */}
+        <div className="flex-1" />
+
+        {/* Open in Chrome button */}
         {detectedUrl && (
-          <div className="relative ml-auto shrink-0">
+          <div className="relative shrink-0">
             <button
               onClick={() => {
                 window.systemOps.openInChrome(detectedUrl, customChromeCommand || undefined)
@@ -162,8 +172,24 @@ export function BottomPanel({
             )}
           </div>
         )}
+
+        {/* Collapse/expand chevron */}
+        {onToggleCollapse && (
+          <button
+            onClick={onToggleCollapse}
+            className="p-1 text-muted-foreground hover:text-foreground rounded"
+            aria-label={isCollapsed ? 'Expand panel' : 'Collapse panel'}
+          >
+            {isCollapsed ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
       </div>
-      <div className="flex-1 min-h-0 overflow-hidden" data-testid="bottom-panel-content">
+      {/* Use CSS hidden (not conditional rendering) to keep TerminalManager mounted and preserve PTY state */}
+      <div className={cn("flex-1 min-h-0 overflow-hidden", isCollapsed && "hidden")} data-testid="bottom-panel-content">
         {effectiveTab === 'setup' && <SetupTab worktreeId={selectedWorktreeId} />}
         {effectiveTab === 'run' && <RunTab worktreeId={selectedWorktreeId} />}
         {/* Terminal slot is always rendered but hidden when not active, preserving PTY state */}

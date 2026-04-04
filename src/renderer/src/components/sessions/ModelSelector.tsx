@@ -361,23 +361,53 @@ export function ModelSelector({
               <DropdownMenuLabel className="text-xs text-muted-foreground flex items-center gap-1">
                 <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" /> Favorites
               </DropdownMenuLabel>
-              {favoriteModelObjects.map((model) => (
-                <DropdownMenuItem
-                  key={`fav-${model.providerID}:${model.id}`}
-                  onClick={() => handleSelectModel(model)}
-                  onContextMenu={(e) => {
-                    e.preventDefault()
-                    toggleFavoriteModel(model.providerID, model.id)
-                  }}
-                  className="flex items-center justify-between gap-2 cursor-pointer"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
-                    <span className="truncate text-sm">{getDisplayName(model)}</span>
-                  </span>
-                  {isActiveModel(model) && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                </DropdownMenuItem>
-              ))}
+              {favoriteModelObjects.map((model) => {
+                const favActive = isActiveModel(model)
+                const favVariantKeys = getVariantKeys(model)
+                return (
+                  <div key={`fav-${model.providerID}:${model.id}`}>
+                    <DropdownMenuItem
+                      onClick={() => handleSelectModel(model)}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        toggleFavoriteModel(model.providerID, model.id)
+                      }}
+                      className="flex items-center justify-between gap-2 cursor-pointer"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
+                        <span className="truncate text-sm">{getDisplayName(model)}</span>
+                      </span>
+                      {favActive && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                    </DropdownMenuItem>
+                    {favVariantKeys.length > 0 && (
+                      <div className="flex gap-1 pl-6 pb-1">
+                        {favVariantKeys.map((variant) => {
+                          const isActiveVariant =
+                            favActive && selectedModel?.variant === variant
+                          return (
+                            <button
+                              key={variant}
+                              className={cn(
+                                'text-[10px] px-1.5 py-0.5 rounded',
+                                isActiveVariant
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted text-muted-foreground hover:bg-accent'
+                              )}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleSelectVariant(model, variant)
+                              }}
+                            >
+                              {variant.toUpperCase()}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
               <DropdownMenuSeparator />
             </>
           )}
@@ -409,29 +439,33 @@ export function ModelSelector({
                       </span>
                       {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
                     </DropdownMenuItem>
-                    {variantKeys.length > 0 && active && (
+                    {variantKeys.length > 0 && (
                       <div
                         className="flex gap-1 pl-6 pb-1"
                         data-testid={`variant-chips-${model.id}`}
                       >
-                        {variantKeys.map((variant) => (
-                          <button
-                            key={variant}
-                            className={cn(
-                              'text-[10px] px-1.5 py-0.5 rounded',
-                              selectedModel?.variant === variant
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-muted text-muted-foreground hover:bg-accent'
-                            )}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleSelectVariant(model, variant)
-                            }}
-                            data-testid={`variant-chip-${variant}`}
-                          >
-                            {variant.toUpperCase()}
-                          </button>
-                        ))}
+                        {variantKeys.map((variant) => {
+                          const isActiveVariant =
+                            active && selectedModel?.variant === variant
+                          return (
+                            <button
+                              key={variant}
+                              className={cn(
+                                'text-[10px] px-1.5 py-0.5 rounded',
+                                isActiveVariant
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted text-muted-foreground hover:bg-accent'
+                              )}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleSelectVariant(model, variant)
+                              }}
+                              data-testid={`variant-chip-${variant}`}
+                            >
+                              {variant.toUpperCase()}
+                            </button>
+                          )
+                        })}
                       </div>
                     )}
                   </div>

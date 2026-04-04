@@ -16,6 +16,14 @@ const DEFAULT_MODEL = {
 
 const SELECTED_MODEL_DB_KEY = 'selected_model'
 
+// Default reasoning effort variants for OpenCode models that support reasoning.
+// Key order matters: first key becomes the default variant via Object.keys()[0].
+const OPENCODE_REASONING_VARIANTS: Record<string, Record<string, unknown>> = {
+  high: {},
+  medium: {},
+  low: {}
+}
+
 // Event types we care about for streaming
 export interface StreamEvent {
   type: string
@@ -176,6 +184,36 @@ function spawnOpenCodeServer(
       proc.kill()
     }
   }))
+}
+
+/**
+ * Enrich provider model data with reasoning-effort variants when the server
+ * does not already supply them.  Models that already carry non-empty variants
+ * from the server are left untouched; all others receive the default set.
+ *
+ * The OpenCode prompt API accepts `variant` for any model, so it is safe to
+ * attach effort variants universally — the server ignores unknown variants for
+ * models that do not support them.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function enrichModelsWithVariants(providers: any[]): any[] {
+  return providers.map((provider) => {
+    if (!provider?.models || typeof provider.models !== 'object') return provider
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const enrichedModels: Record<string, any> = {}
+    for (const [modelId, model] of Object.entries(provider.models)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const m = model as any
+      if (m?.variants && typeof m.variants === 'object' && Object.keys(m.variants).length > 0) {
+        // Server already provides variants – preserve as-is
+        enrichedModels[modelId] = m
+      } else {
+        // Attach default reasoning-effort variants
+        enrichedModels[modelId] = { ...m, variants: OPENCODE_REASONING_VARIANTS }
+      }
+    }
+    return { ...provider, models: enrichedModels }
+  })
 }
 
 class OpenCodeService {
@@ -538,8 +576,9 @@ class OpenCodeService {
     try {
       const result = await instance.client.config.providers()
       const providers = result.data?.providers || []
-      log.info('Got available models', { providerCount: providers.length })
-      return providers
+      const enriched = enrichModelsWithVariants(providers)
+      log.info('Got available models', { providerCount: enriched.length })
+      return enriched
     } catch (error) {
       log.error('Failed to get available models', { error })
       throw error

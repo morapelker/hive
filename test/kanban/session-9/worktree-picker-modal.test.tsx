@@ -504,6 +504,47 @@ describe('Session 9: Worktree Picker Modal', () => {
     expect(textarea.value).toContain('</ticket>')
   })
 
+  test('toggling mode swaps prefix but preserves user edits to body', () => {
+    render(
+      <WorktreePickerModal ticket={defaultTicket} projectId="proj-1" open={true} onOpenChange={() => {}} />
+    )
+    const textarea = screen.getByTestId('wt-picker-prompt') as HTMLTextAreaElement
+    const toggle = screen.getByTestId('wt-picker-mode-toggle')
+
+    // Edit only the body portion (append custom text)
+    const edited = textarea.value + '\n\nAlso add unit tests.'
+    fireEvent.change(textarea, { target: { value: edited } })
+
+    // Toggle build → plan: prefix should swap, appended text preserved
+    fireEvent.click(toggle)
+    expect(textarea.value).toContain('Please review the following ticket and create a detailed implementation plan.')
+    expect(textarea.value).toContain('Also add unit tests.')
+
+    // Toggle plan → build: prefix swaps back, appended text still there
+    fireEvent.click(toggle)
+    expect(textarea.value).toContain('Please implement the following ticket.')
+    expect(textarea.value).toContain('Also add unit tests.')
+  })
+
+  test('toggling mode does not change text when prefix was edited by user', () => {
+    render(
+      <WorktreePickerModal ticket={defaultTicket} projectId="proj-1" open={true} onOpenChange={() => {}} />
+    )
+    const textarea = screen.getByTestId('wt-picker-prompt') as HTMLTextAreaElement
+    const toggle = screen.getByTestId('wt-picker-mode-toggle')
+
+    // Replace the entire prompt with custom text (no recognizable prefix)
+    fireEvent.change(textarea, { target: { value: 'My completely custom prompt' } })
+
+    // Toggle mode — text should not change
+    fireEvent.click(toggle)
+    expect(textarea.value).toBe('My completely custom prompt')
+
+    // Toggle back — still untouched
+    fireEvent.click(toggle)
+    expect(textarea.value).toBe('My completely custom prompt')
+  })
+
   // ── Send button state tests ──────────────────────────────────────
 
   test('Send button is enabled by default (New worktree is pre-selected)', () => {
