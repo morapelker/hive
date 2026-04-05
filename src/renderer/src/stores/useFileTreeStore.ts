@@ -31,6 +31,10 @@ interface FileTreeState {
   // Actions
   loadFileTree: (worktreePath: string) => Promise<void>
   loadFileIndex: (worktreePath: string) => Promise<void>
+  loadFileIndexForConnection: (
+    connectionId: string,
+    members: Array<{ symlinkName: string; worktreePath: string }>
+  ) => Promise<void>
   loadChildren: (worktreePath: string, dirPath: string) => Promise<void>
   setExpanded: (worktreePath: string, paths: Set<string>) => void
   toggleExpanded: (worktreePath: string, path: string) => void
@@ -127,6 +131,9 @@ export const useFileTreeStore = create<FileTreeState>()(
             const loadingMap = new Map(state.fileIndexLoadingByWorktree)
             if (result.success && result.files) {
               indexMap.set(worktreePath, result.files)
+            } else {
+              // Log failure but don't throw - allows graceful degradation
+              console.error('[FileTreeStore] Failed to scan files:', result.error, 'path:', worktreePath)
             }
             loadingMap.set(worktreePath, false)
             return { fileIndexByWorktree: indexMap, fileIndexLoadingByWorktree: loadingMap }
@@ -136,10 +143,97 @@ export const useFileTreeStore = create<FileTreeState>()(
           // updates flow even when the Files sidebar tab is hidden.
           // startWatching guards against duplicate subscriptions internally.
           get().startWatching(worktreePath)
-        } catch {
+        } catch (error) {
+          console.error('[FileTreeStore] Exception scanning files:', error, 'path:', worktreePath)
           set((state) => {
             const loadingMap = new Map(state.fileIndexLoadingByWorktree)
             loadingMap.set(worktreePath, false)
+            return { fileIndexLoadingByWorktree: loadingMap }
+          })
+        }
+      },
+
+      // Load and aggregate file index for a connection from all member worktrees
+      loadFileIndexForConnection: async (
+        connectionId: string,
+        members: Array<{ symlinkName: string; worktreePath: string }>
+      ) => {
+        // Use connectionId as the key for the aggregated file list
+        const cacheKey = `connection:${connectionId}`
+
+        // Prevent duplicate concurrent loads
+        if (get().fileIndexLoadingByWorktree.get(cacheKey)) return
+
+        set((state) => {
+          const newMap = new Map(state.fileIndexLoadingByWorktree)
+          newMap.set(cacheKey, true)
+          return { fileIndexLoadingByWorktree: newMap }
+        })
+
+        try {
+          // Load files from all member worktrees in parallel
+          const filePromises = members.map((member) =>
+            window.fileTreeOps.scanFlat(member.worktreePath).then((result) => ({
+              member,
+              result
+            }))
+          )
+          const results = await Promise.all(filePromises)
+
+          // Aggregate all files from all member worktrees
+          // Prefix each file's relativePath with the member's symlink name
+          const aggregatedFiles: FlatFile[] = []
+          let hasFailures = false
+
+          results.forEach(({ member, result }) => {
+            if (result.success && result.files) {
+              // Prefix files with symlink name to disambiguate files with same names
+              const prefixedFiles = result.files.map((file) => ({
+                ...file,
+                relativePath: `${member.symlinkName}/${file.relativePath}`
+              }))
+              aggregatedFiles.push(...prefixedFiles)
+            } else {
+              hasFailures = true
+            }
+          })
+
+          // Only store the index if we got at least some results
+          // If all scans failed and aggregatedFiles is empty, don't store it
+          // so the reference-equality guard (fileIndex === EMPTY_FILE_INDEX) will retry
+          if (aggregatedFiles.length === 0 && hasFailures) {
+            console.error(
+              `[FileTreeStore] All member scans failed for connection ${connectionId} - not storing empty index`
+            )
+            set((state) => {
+              const loadingMap = new Map(state.fileIndexLoadingByWorktree)
+              loadingMap.set(cacheKey, false)
+              return { fileIndexLoadingByWorktree: loadingMap }
+            })
+            return
+          }
+
+          // Remove duplicates based on prefixed relativePath
+          const uniqueFiles = Array.from(
+            new Map(aggregatedFiles.map((f) => [f.relativePath, f])).values()
+          )
+
+          set((state) => {
+            const indexMap = new Map(state.fileIndexByWorktree)
+            const loadingMap = new Map(state.fileIndexLoadingByWorktree)
+            indexMap.set(cacheKey, uniqueFiles)
+            loadingMap.set(cacheKey, false)
+            return { fileIndexByWorktree: indexMap, fileIndexLoadingByWorktree: loadingMap }
+          })
+
+          console.log(
+            `[FileTreeStore] Loaded ${uniqueFiles.length} files for connection ${connectionId} from ${members.length} members`
+          )
+        } catch (error) {
+          console.error('[FileTreeStore] Exception loading connection files:', error, 'connectionId:', connectionId)
+          set((state) => {
+            const loadingMap = new Map(state.fileIndexLoadingByWorktree)
+            loadingMap.set(cacheKey, false)
             return { fileIndexLoadingByWorktree: loadingMap }
           })
         }
