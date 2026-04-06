@@ -57,6 +57,7 @@ import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/mes
 import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
+import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import {
   buildSdkPlanImplementationPrompt,
   looksLikeCodexProposedPlan
@@ -64,6 +65,7 @@ import {
 
 // Stable empty array to avoid creating new references in selectors
 const EMPTY_FILE_INDEX: FlatFile[] = []
+const EMPTY_STRING_ARRAY: string[] = []
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import { CommandApprovalPrompt } from './CommandApprovalPrompt'
@@ -523,6 +525,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
+  const persistedFollowUpMessages =
+    useSessionStore((state) => state.pendingFollowUpMessages.get(sessionId)) ?? EMPTY_STRING_ARRAY
 
   // OpenCode state
   const [worktreePath, setWorktreePath] = useState<string | null>(null)
@@ -558,6 +562,25 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Prompt history navigation
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    setQueuedMessages((prev) => {
+      const sameLength = prev.length === persistedFollowUpMessages.length
+      const sameContent =
+        sameLength &&
+        prev.every((entry, index) => entry.content === persistedFollowUpMessages[index])
+
+      if (sameContent) {
+        return prev
+      }
+
+      return persistedFollowUpMessages.map((content, index) => ({
+        id: prev[index]?.content === content ? prev[index].id : crypto.randomUUID(),
+        content,
+        timestamp: prev[index]?.content === content ? prev[index].timestamp : Date.now() + index
+      }))
+    })
+  }, [persistedFollowUpMessages])
 
   const savedDraftRef = useRef<string>('')
 
@@ -2336,67 +2359,96 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               if (useSessionStore.getState().getPendingPlan(sessionId)) return
 
               setIsCompacting(false)
+              let optimisticMessageId: string | null = null
 
-              // If there are queued follow-up messages, send the next one instead of finalizing
-              const followUp = useSessionStore.getState().consumeFollowUpMessage(sessionId)
-              if (followUp) {
-                // Remove the first visual queued bubble (FIFO matches persistent queue order)
-                setQueuedMessages((prev) => prev.slice(1))
-                hasFinalizedCurrentResponseRef.current = false
-                setIsSending(true)
-                setMessages((prev) => [...prev, createLocalMessage('user', followUp)])
-                newPromptPendingRef.current = true
-                messageSendTimes.set(sessionId, Date.now())
-                lastSendMode.set(sessionId, 'build')
-                useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
-                lastSentPromptRef.current = followUp
-                const wtPath = transcriptSourceRef.current.worktreePath
-                const opcSid = transcriptSourceRef.current.opencodeSessionId
-                if (!wtPath || !opcSid) {
-                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, followUp)
-                  useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+              void handleSessionIdleFollowUp({
+                sessionId,
+                isBlocked: () => {
+                  const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+                  return currentStatus?.status === 'command_approval'
+                },
+                dequeueFollowUp: () => useSessionStore.getState().consumeFollowUpMessage(sessionId),
+                requeueFollowUp: (message) =>
+                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message),
+                onBeforeDispatch: (message) => {
+                  const optimisticMessage = createLocalMessage('user', message)
+                  optimisticMessageId = optimisticMessage.id
+                  setQueuedMessages((prev) => prev.slice(1))
+                  hasFinalizedCurrentResponseRef.current = false
+                  setIsStreaming(true)
+                  setIsSending(true)
+                  setMessages((prev) => [...prev, optimisticMessage])
+                  newPromptPendingRef.current = true
+                  messageSendTimes.set(sessionId, Date.now())
+                  lastSendMode.set(sessionId, 'build')
+                  useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+                  lastSentPromptRef.current = message
+                },
+                dispatchFollowUp: async (message) => {
+                  const wtPath = transcriptSourceRef.current.worktreePath
+                  const opcSid = transcriptSourceRef.current.opencodeSessionId
+                  if (!wtPath || !opcSid) {
+                    return false
+                  }
+
+                  const result = await window.opencodeOps.prompt(
+                    wtPath,
+                    opcSid,
+                    [{ type: 'text', text: message }],
+                    getModelForRequests()
+                  )
+
+                  if (!result.success) {
+                    console.error('Failed to send follow-up message:', result.error)
+                    return false
+                  }
+
+                  return true
+                },
+                onDispatchFailure: (message) => {
+                  toast.error('Failed to send follow-up prompt')
+                  setIsStreaming(false)
                   setIsSending(false)
-                  return
+                  useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+                  setQueuedMessages((prev) => [
+                    {
+                      id: `queued-${crypto.randomUUID()}`,
+                      content: message,
+                      timestamp: Date.now()
+                    },
+                    ...prev
+                  ])
+                  if (optimisticMessageId) {
+                    setMessages((prev) =>
+                      prev.filter((entry) => entry.id !== optimisticMessageId)
+                    )
+                  }
+                },
+                onComplete: () => {
+                  // Session is done — flush and finalize immediately
+                  setSessionRetry(null)
+                  setSessionErrorMessage(null)
+                  setSessionErrorStderr(null)
+                  immediateFlush()
+                  setIsSending(false)
+                  setQueuedMessages([])
+                  // Clear any stale command approvals when session goes idle
+                  useCommandApprovalStore.getState().clearSession(sessionId)
+
+                  if (!hasFinalizedCurrentResponseRef.current) {
+                    hasFinalizedCurrentResponseRef.current = true
+                    void finalizeResponse()
+                  }
+
+                  // Set completion badge with duration since user sent the message
+                  const sendTime = messageSendTimes.get(sessionId)
+                  const durationMs = sendTime ? Date.now() - sendTime : 0
+                  const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+                  const tokenDelta = computeTokenDelta(sessionId)
+                  const statusStore = useWorktreeStatusStore.getState()
+                  statusStore.setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
                 }
-                window.opencodeOps
-                  .prompt(wtPath, opcSid, [{ type: 'text', text: followUp }], getModelForRequests())
-                  .then((result) => {
-                    if (!result.success) {
-                      console.error('Failed to send follow-up message:', result.error)
-                      toast.error('Failed to send follow-up prompt')
-                      setIsSending(false)
-                    }
-                  })
-                  .catch((err) => {
-                    console.error('Failed to send follow-up message:', err)
-                    toast.error('Failed to send follow-up prompt')
-                    setIsSending(false)
-                  })
-                return
-              }
-
-              // Session is done — flush and finalize immediately
-              setSessionRetry(null)
-              setSessionErrorMessage(null)
-              setSessionErrorStderr(null)
-              immediateFlush()
-              setIsSending(false)
-              setQueuedMessages([])
-              // Clear any stale command approvals when session goes idle
-              useCommandApprovalStore.getState().clearSession(sessionId)
-
-              if (!hasFinalizedCurrentResponseRef.current) {
-                hasFinalizedCurrentResponseRef.current = true
-                void finalizeResponse()
-              }
-
-              // Set completion badge with duration since user sent the message
-              const sendTime = messageSendTimes.get(sessionId)
-              const durationMs = sendTime ? Date.now() - sendTime : 0
-              const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
-              const tokenDelta = computeTokenDelta(sessionId)
-              const statusStore = useWorktreeStatusStore.getState()
-              statusStore.setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
+              })
             } else if (status.type === 'retry') {
               setIsStreaming(true)
               setIsSending(true)

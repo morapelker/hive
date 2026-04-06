@@ -8,6 +8,7 @@ import {
 } from '../../src/renderer/src/components/sessions/SessionView'
 import { useSessionStore } from '../../src/renderer/src/stores/useSessionStore'
 import { lastSendMode } from '../../src/renderer/src/lib/message-send-times'
+import { resetSessionFollowUpDispatchState } from '../../src/renderer/src/lib/session-follow-up-dispatch'
 import { useWorktreeStatusStore } from '../../src/renderer/src/stores/useWorktreeStatusStore'
 
 // Mock clipboard API
@@ -153,6 +154,18 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockConsoleInfo.mockReset()
   lastSendMode.clear()
+  resetSessionFollowUpDispatchState()
+
+  if (!HTMLElement.prototype.animate) {
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      value: vi.fn(() => ({
+        cancel: vi.fn(),
+        currentTime: 0
+      })),
+      writable: true,
+      configurable: true
+    })
+  }
 
   useSessionStore.setState({
     sessionsByWorktree: new Map([['wt-1', [createSessionRecord()]]]),
@@ -611,6 +624,49 @@ describe('Session 8: Session View', () => {
       expect(promptArgs?.[2]).toEqual([{ type: 'text', text: 'Implement the plan.' }])
       expect(JSON.stringify(promptArgs?.[2])).not.toContain('PLEASE IMPLEMENT THIS PLAN:')
       expect(screen.queryByTestId('queued-message-bubble')).not.toBeInTheDocument()
+    })
+
+    test('active-session follow-up failure requeues the message and clears the working badge', async () => {
+      let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+
+      useSessionStore.setState({
+        pendingFollowUpMessages: new Map([['test-session-1', ['follow-up retry']]])
+      })
+      ;(window.opencodeOps.onStream as ReturnType<typeof vi.fn>).mockImplementation((callback) => {
+        streamCallback = callback as (event: Record<string, unknown>) => void
+        return () => {}
+      })
+      ;(window.opencodeOps.prompt as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        error: 'network failure'
+      })
+
+      render(<SessionView sessionId="test-session-1" />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-list')).toBeInTheDocument()
+      })
+
+      act(() => {
+        streamCallback?.({
+          sessionId: 'test-session-1',
+          type: 'session.status',
+          statusPayload: { type: 'idle' },
+          data: { status: { type: 'idle' } }
+        })
+      })
+
+      await waitFor(() => {
+        expect(window.opencodeOps.prompt).toHaveBeenCalledTimes(1)
+      })
+
+      await waitFor(() => {
+        expect(useSessionStore.getState().pendingFollowUpMessages.get('test-session-1')).toEqual([
+          'follow-up retry'
+        ])
+      })
+
+      expect(useWorktreeStatusStore.getState().sessionStatuses['test-session-1'] ?? null).toBeNull()
     })
 
     test('Claude keeps showing the toolbox for any pending plan approval', async () => {
