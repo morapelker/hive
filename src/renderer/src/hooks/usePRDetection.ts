@@ -4,6 +4,70 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
 export const PR_URL_PATTERN = /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/
+const PR_CREATION_CUE_PATTERN =
+  /(created pr\s*#\d+|created pull request|pull request created|creating pull request|gh pr create)/i
+
+interface PRCandidate {
+  prNumber: number
+  prUrl: string
+}
+
+function extractLastPrCandidate(
+  text: string,
+  options: { requireCreationCue?: boolean } = {}
+): PRCandidate | null {
+  if (!text) return null
+  if (options.requireCreationCue && !PR_CREATION_CUE_PATTERN.test(text)) return null
+
+  const matches = Array.from(text.matchAll(new RegExp(PR_URL_PATTERN.source, 'g')))
+  const lastMatch = matches.at(-1)
+  if (!lastMatch) return null
+
+  return {
+    prNumber: parseInt(lastMatch[1], 10),
+    prUrl: lastMatch[0]
+  }
+}
+
+function collectStringLeaves(
+  value: unknown,
+  seen: WeakSet<object>,
+  depth: number,
+  out: string[]
+): void {
+  if (typeof value === 'string') {
+    out.push(value)
+    return
+  }
+
+  if (value === null || value === undefined || depth <= 0) return
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStringLeaves(item, seen, depth - 1, out))
+    return
+  }
+
+  if (typeof value === 'object') {
+    if (seen.has(value)) return
+    seen.add(value)
+
+    Object.values(value).forEach((item) => collectStringLeaves(item, seen, depth - 1, out))
+  }
+}
+
+function extractTextFromUnknown(value: unknown): string {
+  const out: string[] = []
+  collectStringLeaves(value, new WeakSet<object>(), 6, out)
+  return out.join('\n')
+}
+
+function serializeForFingerprint(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? ''
+  } catch {
+    return extractTextFromUnknown(value)
+  }
+}
 
 /**
  * Watches stream events for a PR session and detects when a GitHub PR URL
@@ -50,6 +114,8 @@ export function usePRDetection(worktreeId: string | null): void {
 
   // Accumulate streamed text to detect PR URLs across deltas
   const accumulatedTextRef = useRef('')
+  const transcriptFingerprintsRef = useRef<string[]>([])
+  const transcriptInitializedRef = useRef(false)
 
   useEffect(() => {
     // Only monitor when actively creating
@@ -57,20 +123,20 @@ export function usePRDetection(worktreeId: string | null): void {
 
     // Reset accumulated text
     accumulatedTextRef.current = ''
+    transcriptFingerprintsRef.current = []
+    transcriptInitializedRef.current = false
 
-    const checkForPrUrl = (text: string): void => {
-      const match = text.match(PR_URL_PATTERN)
-      if (match) {
-        const currentCreation = prCreationRef.current
-        const currentWorktreeId = worktreeIdRef.current
-        if (currentCreation && currentWorktreeId && currentCreation.creating) {
-          const prNumber = parseInt(match[1], 10)
-          // Persist to DB + optimistic cache
-          attachPR(currentWorktreeId, prNumber, match[0])
-          // Clear ephemeral creation state
-          setPrCreation(currentWorktreeId, null)
-        }
-      }
+    const maybeAttachCandidate = (candidate: PRCandidate | null): void => {
+      if (!candidate) return
+
+      const currentCreation = prCreationRef.current
+      const currentWorktreeId = worktreeIdRef.current
+      if (!currentCreation || !currentWorktreeId || !currentCreation.creating) return
+
+      // Persist to DB + optimistic cache
+      attachPR(currentWorktreeId, candidate.prNumber, candidate.prUrl)
+      // Clear ephemeral creation state
+      setPrCreation(currentWorktreeId, null)
     }
 
     const unsubscribe = window.opencodeOps?.onStream
@@ -100,7 +166,7 @@ export function usePRDetection(worktreeId: string | null): void {
               } else if (typeof part.text === 'string' && part.text.length > 0) {
                 accumulatedTextRef.current = part.text
               }
-              checkForPrUrl(accumulatedTextRef.current)
+              maybeAttachCandidate(extractLastPrCandidate(accumulatedTextRef.current))
               return
             }
 
@@ -108,13 +174,9 @@ export function usePRDetection(worktreeId: string | null): void {
             if (part.type === 'tool') {
               const output = part.state?.output ?? part.output
               if (typeof output === 'string') {
-                checkForPrUrl(output)
+                maybeAttachCandidate(extractLastPrCandidate(output))
               } else if (output !== undefined && output !== null) {
-                try {
-                  checkForPrUrl(JSON.stringify(output))
-                } catch {
-                  // ignore non-serializable tool outputs
-                }
+                maybeAttachCandidate(extractLastPrCandidate(extractTextFromUnknown(output)))
               }
             }
 
@@ -126,7 +188,7 @@ export function usePRDetection(worktreeId: string | null): void {
             const messageText =
               event.data?.message?.content ?? event.data?.content ?? event.data?.info?.content
             if (typeof messageText === 'string') {
-              checkForPrUrl(messageText)
+              maybeAttachCandidate(extractLastPrCandidate(messageText))
             }
           }
         })
@@ -154,19 +216,33 @@ export function usePRDetection(worktreeId: string | null): void {
         const result = await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
         if (!result.success || !Array.isArray(result.messages) || cancelled) return
 
-        const serialized = JSON.stringify(result.messages)
-        const match = serialized.match(PR_URL_PATTERN)
-        if (!match) return
+        const messages = result.messages
+        const nextFingerprints = messages.map((message) => serializeForFingerprint(message))
 
-        const currentCreation = prCreationRef.current
-        const currentWorktreeId = worktreeIdRef.current
-        if (!currentCreation || !currentWorktreeId || !currentCreation.creating) return
+        if (!transcriptInitializedRef.current) {
+          transcriptInitializedRef.current = true
+          transcriptFingerprintsRef.current = nextFingerprints
 
-        const prNumber = parseInt(match[1], 10)
-        // Persist to DB + optimistic cache
-        attachPR(currentWorktreeId, prNumber, match[0])
-        // Clear ephemeral creation state
-        setPrCreation(currentWorktreeId, null)
+          const latestMessage = messages.at(-1)
+          maybeAttachCandidate(
+            extractLastPrCandidate(extractTextFromUnknown(latestMessage), {
+              requireCreationCue: true
+            })
+          )
+          return
+        }
+
+        const previousFingerprints = transcriptFingerprintsRef.current
+        transcriptFingerprintsRef.current = nextFingerprints
+
+        const changedSegments: string[] = []
+        for (let index = 0; index < messages.length; index += 1) {
+          if (nextFingerprints[index] !== previousFingerprints[index]) {
+            changedSegments.push(extractTextFromUnknown(messages[index]))
+          }
+        }
+
+        maybeAttachCandidate(extractLastPrCandidate(changedSegments.join('\n')))
       } catch {
         // Non-fatal: next poll tick will retry
       }

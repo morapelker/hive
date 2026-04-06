@@ -1,7 +1,6 @@
-import { describe, test, expect, beforeEach, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { useGitStore } from '../../../src/renderer/src/stores/useGitStore'
 
-// Mock useWorktreeStore (required by useGitStore internals)
 vi.mock('../../../src/renderer/src/stores/useWorktreeStore', () => ({
   useWorktreeStore: {
     getState: vi.fn(() => ({
@@ -10,97 +9,94 @@ vi.mock('../../../src/renderer/src/stores/useWorktreeStore', () => ({
   }
 }))
 
-describe('Session 2: PR Lifecycle Store State', () => {
+describe('Session 2: PR lifecycle store state', () => {
   beforeEach(() => {
     useGitStore.setState({
-      prInfo: new Map()
+      prCreation: new Map(),
+      attachedPR: new Map()
     })
   })
 
-  test('prInfo starts as an empty map', () => {
+  test('prCreation starts as an empty map', () => {
     const state = useGitStore.getState()
-    expect(state.prInfo).toBeInstanceOf(Map)
-    expect(state.prInfo.size).toBe(0)
+    expect(state.prCreation).toBeInstanceOf(Map)
+    expect(state.prCreation.size).toBe(0)
   })
 
-  test('setPrState adds a new PR info entry', () => {
-    useGitStore.getState().setPrState('wt-1', {
-      state: 'creating',
-      sessionId: 'session-123',
-      targetBranch: 'origin/main'
-    })
-    const info = useGitStore.getState().prInfo.get('wt-1')
-    expect(info).toBeDefined()
-    expect(info?.state).toBe('creating')
-    expect(info?.sessionId).toBe('session-123')
-    expect(info?.targetBranch).toBe('origin/main')
+  test('attachedPR starts as an empty map', () => {
+    const state = useGitStore.getState()
+    expect(state.attachedPR).toBeInstanceOf(Map)
+    expect(state.attachedPR.size).toBe(0)
   })
 
-  test('setPrState updates existing entry', () => {
-    useGitStore.getState().setPrState('wt-1', { state: 'creating' })
-    useGitStore.getState().setPrState('wt-1', {
-      state: 'created',
-      prNumber: 42,
-      prUrl: 'https://github.com/org/repo/pull/42'
-    })
-    const info = useGitStore.getState().prInfo.get('wt-1')
-    expect(info?.state).toBe('created')
-    expect(info?.prNumber).toBe(42)
-    expect(info?.prUrl).toBe('https://github.com/org/repo/pull/42')
-  })
-
-  test('different worktrees have independent PR states', () => {
-    useGitStore.getState().setPrState('wt-1', { state: 'created', prNumber: 1 })
-    useGitStore.getState().setPrState('wt-2', { state: 'merged', prNumber: 2 })
-    expect(useGitStore.getState().prInfo.get('wt-1')?.state).toBe('created')
-    expect(useGitStore.getState().prInfo.get('wt-1')?.prNumber).toBe(1)
-    expect(useGitStore.getState().prInfo.get('wt-2')?.state).toBe('merged')
-    expect(useGitStore.getState().prInfo.get('wt-2')?.prNumber).toBe(2)
-  })
-
-  test('setPrState does not affect other worktree entries', () => {
-    useGitStore.getState().setPrState('wt-1', { state: 'creating', sessionId: 's1' })
-    useGitStore.getState().setPrState('wt-2', { state: 'none' })
-
-    // Update only wt-1
-    useGitStore.getState().setPrState('wt-1', {
-      state: 'created',
-      prNumber: 99,
-      prUrl: 'https://github.com/org/repo/pull/99'
+  test('setPrCreation adds a creating state for a worktree', () => {
+    useGitStore.getState().setPrCreation('wt-1', {
+      creating: true,
+      sessionId: 'session-123'
     })
 
-    // wt-2 should be unchanged
-    const wt2Info = useGitStore.getState().prInfo.get('wt-2')
-    expect(wt2Info?.state).toBe('none')
-  })
-
-  test('prInfo supports all valid states', () => {
-    const states = ['none', 'creating', 'created', 'merged'] as const
-    for (const state of states) {
-      useGitStore.getState().setPrState('wt-test', { state })
-      expect(useGitStore.getState().prInfo.get('wt-test')?.state).toBe(state)
-    }
-  })
-
-  test('setPrState preserves optional fields when provided', () => {
-    useGitStore.getState().setPrState('wt-1', {
-      state: 'created',
-      prNumber: 42,
-      prUrl: 'https://github.com/org/repo/pull/42',
-      targetBranch: 'main',
-      sessionId: 'session-abc'
+    expect(useGitStore.getState().prCreation.get('wt-1')).toEqual({
+      creating: true,
+      sessionId: 'session-123'
     })
-    const info = useGitStore.getState().prInfo.get('wt-1')
-    expect(info?.prNumber).toBe(42)
-    expect(info?.prUrl).toBe('https://github.com/org/repo/pull/42')
-    expect(info?.targetBranch).toBe('main')
-    expect(info?.sessionId).toBe('session-abc')
   })
 
-  test('prInfo is in-memory only (no persistence key)', () => {
-    // The store should not persist prInfo -- it resets on app restart
-    // Verify initial state is empty (no persisted data loaded)
-    const freshState = useGitStore.getState()
-    expect(freshState.prInfo.size).toBe(0)
+  test('setPrCreation clears a worktree entry when passed null', () => {
+    useGitStore.getState().setPrCreation('wt-1', {
+      creating: true,
+      sessionId: 'session-123'
+    })
+    useGitStore.getState().setPrCreation('wt-1', null)
+
+    expect(useGitStore.getState().prCreation.has('wt-1')).toBe(false)
+  })
+
+  test('setAttachedPR stores an attached PR for a worktree', () => {
+    useGitStore.getState().setAttachedPR('wt-1', {
+      number: 42,
+      url: 'https://github.com/org/repo/pull/42'
+    })
+
+    expect(useGitStore.getState().attachedPR.get('wt-1')).toEqual({
+      number: 42,
+      url: 'https://github.com/org/repo/pull/42'
+    })
+  })
+
+  test('setAttachedPR replaces an existing attached PR', () => {
+    useGitStore.getState().setAttachedPR('wt-1', {
+      number: 101,
+      url: 'https://github.com/org/repo/pull/101'
+    })
+    useGitStore.getState().setAttachedPR('wt-1', {
+      number: 280,
+      url: 'https://github.com/org/repo/pull/280'
+    })
+
+    expect(useGitStore.getState().attachedPR.get('wt-1')).toEqual({
+      number: 280,
+      url: 'https://github.com/org/repo/pull/280'
+    })
+  })
+
+  test('prCreation and attachedPR remain independent across worktrees', () => {
+    useGitStore.getState().setPrCreation('wt-1', {
+      creating: true,
+      sessionId: 'session-1'
+    })
+    useGitStore.getState().setAttachedPR('wt-2', {
+      number: 55,
+      url: 'https://github.com/org/repo/pull/55'
+    })
+
+    expect(useGitStore.getState().prCreation.get('wt-1')?.sessionId).toBe('session-1')
+    expect(useGitStore.getState().attachedPR.get('wt-2')?.number).toBe(55)
+    expect(useGitStore.getState().attachedPR.has('wt-1')).toBe(false)
+    expect(useGitStore.getState().prCreation.has('wt-2')).toBe(false)
+  })
+
+  test('PR lifecycle state is memory-backed only', () => {
+    expect(useGitStore.getState().prCreation.size).toBe(0)
+    expect(useGitStore.getState().attachedPR.size).toBe(0)
   })
 })
