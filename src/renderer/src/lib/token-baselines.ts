@@ -17,13 +17,13 @@ export function sumAllTokens(t: TokenInfo | undefined): number {
 
 /** Snapshot the current cumulative token total as the baseline for this session. */
 export function snapshotTokenBaseline(sessionId: string): void {
-  const tokens = useContextStore.getState().tokensBySession[sessionId]
+  const tokens = useContextStore.getState().tokensBySession?.[sessionId]
   tokenBaselines.set(sessionId, sumAllTokens(tokens))
 }
 
 /** Compute the token delta (current total minus baseline). Never negative. */
 export function computeTokenDelta(sessionId: string): number {
-  const tokens = useContextStore.getState().tokensBySession[sessionId]
+  const tokens = useContextStore.getState().tokensBySession?.[sessionId]
   const current = sumAllTokens(tokens)
   const baseline = tokenBaselines.get(sessionId) ?? 0
   return Math.max(0, current - baseline)

@@ -42,13 +42,17 @@ interface ModelSelectorProps {
   onChange?: (model: { providerID: string; modelID: string; variant?: string }) => void
   // Override the SDK used for model listing (e.g. force 'opencode' in settings when defaultAgentSdk is 'terminal')
   agentSdkOverride?: 'opencode' | 'claude-code' | 'codex'
+  disableTitleTooltip?: boolean
+  hideProviderPrefix?: boolean
 }
 
 export function ModelSelector({
   sessionId,
   value,
   onChange,
-  agentSdkOverride
+  agentSdkOverride,
+  disableTitleTooltip = false,
+  hideProviderPrefix = false
 }: ModelSelectorProps): React.JSX.Element {
   // Read per-session model from session store (with global fallback)
   const session = useSessionStore((state) => {
@@ -216,12 +220,12 @@ export function ModelSelector({
   }, [selectedModel, providers])
 
   const providerPrefix = useMemo(() => {
-    if (!showModelProvider) return null
+    if (hideProviderPrefix || !showModelProvider) return null
     if (agentSdk === 'claude-code') return 'ANTHROPIC'
     return (
       currentModel?.providerID?.toUpperCase() ?? selectedModel?.providerID?.toUpperCase() ?? null
     )
-  }, [showModelProvider, agentSdk, currentModel, selectedModel])
+  }, [hideProviderPrefix, showModelProvider, agentSdk, currentModel, selectedModel])
 
   // Cycle thinking-level variant for Alt+T
   const cycleVariant = useCallback(() => {
@@ -327,7 +331,7 @@ export function ModelSelector({
               'border select-none',
               'bg-muted/50 border-border text-muted-foreground hover:bg-muted hover:text-foreground'
             )}
-            title="Select model"
+            title={disableTitleTooltip ? undefined : 'Select model'}
             aria-label={`Current model: ${displayName}. Click to change model`}
             data-testid="model-selector"
           >

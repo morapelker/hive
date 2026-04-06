@@ -7,6 +7,15 @@ import { notifyKanbanSessionSync } from './store-coordination'
 import { useSettingsStore } from './useSettingsStore'
 
 export const BOARD_TAB_ID = '__board__'
+export const BOARD_ASSISTANT_SESSION_NAME_PREFIX = '[Board Assistant]'
+
+export function isBoardAssistantSessionName(name: string | null | undefined): boolean {
+  return typeof name === 'string' && name.startsWith(BOARD_ASSISTANT_SESSION_NAME_PREFIX)
+}
+
+function isVisibleSession(session: { name: string | null }): boolean {
+  return !isBoardAssistantSessionName(session.name)
+}
 
 // Session mode type
 export type SessionMode = 'build' | 'plan' | 'super-plan'
@@ -238,9 +247,9 @@ export const useSessionStore = create<SessionState>()(
           const pinnedIds = new Set(pinnedSessions.map((s: { id: string }) => s.id))
 
           // Sort by updated_at descending (most recent first)
-          const sortedSessions = sessions.sort(
-            (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-          )
+          const sortedSessions = sessions
+            .filter(isVisibleSession)
+            .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
           set((state) => {
             const newSessionsMap = new Map(state.sessionsByWorktree)
@@ -249,7 +258,7 @@ export const useSessionStore = create<SessionState>()(
             // This prevents a race where createSession adds a session to the store,
             // but a concurrent loadSessions (triggered by selectedWorktreeId change)
             // reads from the DB before the write commits and overwrites with an empty list.
-            const existingInStore = newSessionsMap.get(worktreeId) || []
+            const existingInStore = (newSessionsMap.get(worktreeId) || []).filter(isVisibleSession)
             const dbSessionIds = new Set(sortedSessions.map((s) => s.id))
             const missingFromDb = existingInStore.filter((s) => !dbSessionIds.has(s.id))
             const merged = missingFromDb.length > 0
@@ -848,7 +857,9 @@ export const useSessionStore = create<SessionState>()(
 
         if (worktreeId) {
           // Check if we already have sessions for this worktree
-          const existingSessions = state.sessionsByWorktree.get(worktreeId)
+          const existingSessions = (state.sessionsByWorktree.get(worktreeId) || []).filter(
+            isVisibleSession
+          )
           if (existingSessions) {
             // Try to restore persisted active session for this worktree
             const persistedSessionId = state.activeSessionByWorktree[worktreeId]
@@ -959,12 +970,17 @@ export const useSessionStore = create<SessionState>()(
 
       // Get sessions for a worktree
       getSessionsForWorktree: (worktreeId: string) => {
-        return get().sessionsByWorktree.get(worktreeId) || []
+        return (get().sessionsByWorktree.get(worktreeId) || []).filter(isVisibleSession)
       },
 
       // Get tab order for a worktree
       getTabOrderForWorktree: (worktreeId: string) => {
-        return get().tabOrderByWorktree.get(worktreeId) || []
+        const visibleIds = new Set(
+          (get().sessionsByWorktree.get(worktreeId) || [])
+            .filter(isVisibleSession)
+            .map((session) => session.id)
+        )
+        return (get().tabOrderByWorktree.get(worktreeId) || []).filter((id) => visibleIds.has(id))
       },
 
       // Get session mode (defaults to 'build')
@@ -997,6 +1013,7 @@ export const useSessionStore = create<SessionState>()(
       hydrateSession: (session: Session) => {
         // Already in store? Skip.
         if (get().getSessionById(session.id)) return
+        if (isBoardAssistantSessionName(session.name)) return
 
         set((state) => {
           if (session.worktree_id) {
@@ -1449,9 +1466,9 @@ export const useSessionStore = create<SessionState>()(
       loadConnectionSessionsBackground: async (connectionId: string) => {
         try {
           const sessions = await window.db.session.getActiveByConnection(connectionId)
-          const sortedSessions = sessions.sort(
-            (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-          )
+          const sortedSessions = sessions
+            .filter(isVisibleSession)
+            .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
           set((state) => {
             const newSessionsMap = new Map(state.sessionsByConnection)
@@ -1501,9 +1518,9 @@ export const useSessionStore = create<SessionState>()(
         set({ isLoading: true, error: null })
         try {
           const sessions = await window.db.session.getActiveByConnection(connectionId)
-          const sortedSessions = sessions.sort(
-            (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-          )
+          const sortedSessions = sessions
+            .filter(isVisibleSession)
+            .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
           set((state) => {
             const newSessionsMap = new Map(state.sessionsByConnection)
@@ -1707,7 +1724,9 @@ export const useSessionStore = create<SessionState>()(
         set({ activeConnectionId: connectionId, activeWorktreeId: null })
 
         if (connectionId) {
-          const existingSessions = state.sessionsByConnection.get(connectionId)
+          const existingSessions = (state.sessionsByConnection.get(connectionId) || []).filter(
+            isVisibleSession
+          )
           if (existingSessions) {
             const persistedSessionId = state.activeSessionByConnection[connectionId]
             const boardMode = useSettingsStore.getState().boardMode
@@ -1743,12 +1762,17 @@ export const useSessionStore = create<SessionState>()(
 
       // Get sessions for a connection
       getSessionsForConnection: (connectionId: string) => {
-        return get().sessionsByConnection.get(connectionId) || []
+        return (get().sessionsByConnection.get(connectionId) || []).filter(isVisibleSession)
       },
 
       // Get tab order for a connection
       getTabOrderForConnection: (connectionId: string) => {
-        return get().tabOrderByConnection.get(connectionId) || []
+        const visibleIds = new Set(
+          (get().sessionsByConnection.get(connectionId) || [])
+            .filter(isVisibleSession)
+            .map((session) => session.id)
+        )
+        return (get().tabOrderByConnection.get(connectionId) || []).filter((id) => visibleIds.has(id))
       },
 
       // Reorder connection tabs

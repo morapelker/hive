@@ -14,6 +14,8 @@ export interface UseSessionStreamParams {
   sessionId: string // The hive session ID (used to filter stream events)
   worktreePath: string // Filesystem path to the worktree
   opencodeSessionId: string // The opencode SDK session ID
+  enabled?: boolean
+  onMaterializedSessionId?: (opencodeSessionId: string) => void
 }
 
 export interface UseSessionStreamResult {
@@ -31,7 +33,9 @@ export interface UseSessionStreamResult {
 export function useSessionStream({
   sessionId,
   worktreePath,
-  opencodeSessionId
+  opencodeSessionId,
+  enabled = true,
+  onMaterializedSessionId
 }: UseSessionStreamParams): UseSessionStreamResult {
   // ---- State ----
   const [messages, setMessages] = useState<OpenCodeMessage[]>([])
@@ -174,8 +178,16 @@ export function useSessionStream({
   // ---- Main effect ----
 
   useEffect(() => {
+    if (!enabled || !sessionId || !worktreePath || !opencodeSessionId) {
+      resetStreamingState()
+      setMessages([])
+      setIsLoading(false)
+      return
+    }
+
     const currentGeneration = ++generationRef.current
     hasFinalizedRef.current = false
+    setIsLoading(true)
 
     // Part A: Instantly restore streaming indicators from the global status store.
     // This provides immediate UI feedback before async message load completes.
@@ -548,6 +560,7 @@ export function useSessionStream({
           else if (event.type === 'session.materialized') {
             const newId = (event.data as Record<string, unknown> | undefined)?.newSessionId as string | undefined
             if (newId) {
+              onMaterializedSessionId?.(newId)
               useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
             }
           }
@@ -679,6 +692,8 @@ export function useSessionStream({
     sessionId,
     worktreePath,
     opencodeSessionId,
+    enabled,
+    onMaterializedSessionId,
     appendTextDelta,
     setTextContent,
     upsertToolUse,

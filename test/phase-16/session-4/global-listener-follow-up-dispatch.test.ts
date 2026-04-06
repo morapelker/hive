@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, renderHook } from '@testing-library/react'
+import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
+import { resetSessionFollowUpDispatchState } from '@/lib/session-follow-up-dispatch'
 
 let streamCallback: ((event: Record<string, unknown>) => void) | null = null
 
@@ -63,6 +64,8 @@ const setSessionStatusSpy = vi.fn()
 const setLastMessageTimeSpy = vi.fn()
 const addWorktreeToRecentSpy = vi.fn()
 const addConnectionToRecentSpy = vi.fn()
+const fetchUsageForProviderSpy = vi.fn().mockResolvedValue(undefined)
+const fetchUsageSpy = vi.fn().mockResolvedValue(undefined)
 
 const followUpQueues = new Map<string, string[]>()
 
@@ -169,6 +172,16 @@ vi.mock('@/stores/useContextStore', () => ({
   }
 }))
 
+vi.mock('@/stores', () => ({
+  useUsageStore: {
+    getState: () => ({
+      fetchUsageForProvider: fetchUsageForProviderSpy,
+      fetchUsage: fetchUsageSpy
+    })
+  },
+  resolveUsageProvider: vi.fn(() => 'opencode')
+}))
+
 function hasCompletedStatus(sessionId: string): boolean {
   return setSessionStatusSpy.mock.calls.some((call) => {
     const calledSessionId = call[0]
@@ -193,6 +206,7 @@ function createDeferred<T>() {
 describe('Global listener background follow-up dispatcher', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetSessionFollowUpDispatchState()
     streamCallback = null
     followUpQueues.clear()
     sessionStoreState.activeSessionId = 'session-A'
@@ -261,9 +275,11 @@ describe('Global listener background follow-up dispatcher', () => {
     await flushAsync()
 
     expect(mockPrompt).toHaveBeenCalledTimes(1)
-    expect(followUpQueues.get('session-B')).toEqual(['follow-up 2'])
+    await waitFor(() => {
+      expect(followUpQueues.get('session-B')).toEqual(['follow-up 2'])
+      expect(hasCompletedStatus('session-B')).toBe(true)
+    })
     expect(setSessionStatusSpy).toHaveBeenCalledWith('session-B', 'working')
-    expect(hasCompletedStatus('session-B')).toBe(true)
   })
 
   test('duplicate idle events while dispatch in-flight do not double-dispatch', async () => {
@@ -298,13 +314,15 @@ describe('Global listener background follow-up dispatcher', () => {
     deferred.resolve({ success: true })
     await flushAsync()
 
-    expect(mockPrompt).toHaveBeenCalledTimes(1)
-    // One dequeue for initial dispatch, one dequeue when processing deferred idle.
-    expect(sessionStoreState.dequeueFollowUpMessage).toHaveBeenCalledTimes(2)
-    expect(hasCompletedStatus('session-B')).toBe(true)
+    await waitFor(() => {
+      expect(mockPrompt).toHaveBeenCalledTimes(1)
+      // One dequeue for initial dispatch, one dequeue when processing deferred idle.
+      expect(sessionStoreState.dequeueFollowUpMessage).toHaveBeenCalledTimes(2)
+      expect(hasCompletedStatus('session-B')).toBe(true)
+    })
   })
 
-  test('background idle with no follow-up keeps existing completed behavior', () => {
+  test('background idle with no follow-up keeps existing completed behavior', async () => {
     sessionStoreState.sessionsByWorktree = new Map([
       ['wt-1', [{ id: 'session-B', opencode_session_id: 'opc-123' }]]
     ])
@@ -320,7 +338,9 @@ describe('Global listener background follow-up dispatcher', () => {
     })
 
     expect(mockPrompt).not.toHaveBeenCalled()
-    expect(hasCompletedStatus('session-B')).toBe(true)
+    await waitFor(() => {
+      expect(hasCompletedStatus('session-B')).toBe(true)
+    })
   })
 
   test('active session idle is ignored by global listener even with queued follow-up', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -16,6 +16,7 @@ import { computeTokenDelta } from '@/lib/token-baselines'
 import { messageSendTimes } from '@/lib/message-send-times'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
+import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 
 interface PromptDispatchContext {
@@ -168,9 +169,6 @@ function markBackgroundSessionCompleted(sessionId: string): void {
  * - Branch auto-rename notifications from the main process
  */
 export function useOpenCodeGlobalListener(): void {
-  const backgroundFollowUpDispatchingRef = useRef<Set<string>>(new Set())
-  const deferredIdleWhileDispatchingRef = useRef<Set<string>>(new Set())
-
   // Listen for branch auto-rename events from the main process
   useEffect(() => {
     const unsubscribe = window.worktreeOps?.onBranchRenamed
@@ -536,90 +534,42 @@ export function useOpenCodeGlobalListener(): void {
           // Active session is handled by SessionView.
           if (sessionId === activeId) return
 
-          const dispatchBackgroundFollowUp = (message: string): void => {
-            backgroundFollowUpDispatchingRef.current.add(sessionId)
+          void handleSessionIdleFollowUp({
+            sessionId,
+            isBlocked: () => {
+              if (useSessionStore.getState().getPendingPlan(sessionId)) return true
+              const current = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+              return current?.status === 'command_approval'
+            },
+            dequeueFollowUp: () => useSessionStore.getState().dequeueFollowUpMessage(sessionId),
+            requeueFollowUp: (message) =>
+              useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message),
+            onBeforeDispatch: () => {
+              const mode = useSessionStore.getState().getSessionMode(sessionId)
+              useWorktreeStatusStore
+                .getState()
+                .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
+            },
+            dispatchFollowUp: async (message) => {
+              const context = await resolvePromptDispatchContext(sessionId)
+              if (!context || !window.opencodeOps?.prompt) return false
+              if (context.opencodeSessionId.startsWith('pending::')) return false
 
-            void (async () => {
-              let dispatchSucceeded = false
-              try {
-                const context = await resolvePromptDispatchContext(sessionId)
-                if (!context || !window.opencodeOps?.prompt) {
-                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
-                  markBackgroundSessionCompleted(sessionId)
-                  return
-                }
+              const result = await window.opencodeOps.prompt(
+                context.worktreePath,
+                context.opencodeSessionId,
+                [{ type: 'text', text: message }]
+              )
 
-                if (context.opencodeSessionId.startsWith('pending::')) {
-                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
-                  markBackgroundSessionCompleted(sessionId)
-                  return
-                }
-
-                const mode = useSessionStore.getState().getSessionMode(sessionId)
-                useWorktreeStatusStore
-                  .getState()
-                  .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
-
-                const result = await window.opencodeOps.prompt(
-                  context.worktreePath,
-                  context.opencodeSessionId,
-                  [{ type: 'text', text: message }]
-                )
-
-                if (!result.success) {
-                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
-                  markBackgroundSessionCompleted(sessionId)
-                  return
-                }
-
-                dispatchSucceeded = true
-              } catch {
-                useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message)
-                markBackgroundSessionCompleted(sessionId)
-              } finally {
-                backgroundFollowUpDispatchingRef.current.delete(sessionId)
-
-                if (!deferredIdleWhileDispatchingRef.current.has(sessionId)) {
-                  return
-                }
-
-                deferredIdleWhileDispatchingRef.current.delete(sessionId)
-
-                // If dispatch failed, we've already requeued + set completed above.
-                if (!dispatchSucceeded) return
-
-                // Don't overwrite plan_ready — session is blocked waiting for plan approval
-                if (useSessionStore.getState().getPendingPlan(sessionId)) return
-
-                // Don't overwrite command_approval — session is blocked waiting for command approval
-                const followUpStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-                if (followUpStatus?.status === 'command_approval') return
-
-                const nextFollowUp = useSessionStore.getState().dequeueFollowUpMessage(sessionId)
-                if (nextFollowUp) {
-                  dispatchBackgroundFollowUp(nextFollowUp)
-                  return
-                }
-
-                markBackgroundSessionCompleted(sessionId)
-              }
-            })()
-          }
-
-          // Background queued follow-ups should be dispatched here so they survive tab switches.
-          if (backgroundFollowUpDispatchingRef.current.has(sessionId)) {
-            deferredIdleWhileDispatchingRef.current.add(sessionId)
-            return
-          }
-
-          const followUp = useSessionStore.getState().dequeueFollowUpMessage(sessionId)
-          if (followUp) {
-            dispatchBackgroundFollowUp(followUp)
-
-            return
-          }
-
-          markBackgroundSessionCompleted(sessionId)
+              return result.success
+            },
+            onDispatchFailure: () => {
+              markBackgroundSessionCompleted(sessionId)
+            },
+            onComplete: () => {
+              markBackgroundSessionCompleted(sessionId)
+            }
+          })
         })
       : () => {}
 
