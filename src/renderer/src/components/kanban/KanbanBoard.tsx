@@ -3,8 +3,11 @@ import { LayoutGroup, motion } from 'motion/react'
 import { Pin } from 'lucide-react'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
+import { useBoardChatStore } from '@/stores/useBoardChatStore'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn'
 import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
+import { BoardChatDrawer } from '@/components/kanban/BoardChatDrawer'
+import { BoardChatLauncher } from '@/components/kanban/BoardChatLauncher'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import type { KanbanTicketColumn } from '../../../../main/db/types'
 
@@ -17,7 +20,7 @@ interface KanbanBoardProps {
   isPinnedMode?: boolean
 }
 
-export function KanbanBoard({ projectId, projectPath: _projectPath, connectionId, isPinnedMode }: KanbanBoardProps) {
+export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode }: KanbanBoardProps) {
   const loadTickets = useKanbanStore((state) => state.loadTickets)
   const loadTicketsForConnection = useKanbanStore((state) => state.loadTicketsForConnection)
   const loadTicketsForPinnedProjects = useKanbanStore((state) => state.loadTicketsForPinnedProjects)
@@ -28,6 +31,9 @@ export function KanbanBoard({ projectId, projectPath: _projectPath, connectionId
   const getConnectionProjectIds = useKanbanStore((state) => state.getConnectionProjectIds)
   const getPinnedProjectIdsArray = useKanbanStore((state) => state.getPinnedProjectIdsArray)
   const pinnedProjectIds = usePinnedStore((state) => state.pinnedProjectIds)
+  const isBoardChatOpen = useBoardChatStore((state) => state.isOpen)
+  const boardChatStatus = useBoardChatStore((state) => state.status)
+  const openBoardChat = useBoardChatStore((state) => state.openDrawer)
 
   // Subscribe to the multi-project archive toggle ('' key used by pinned/connection boards)
   const showArchivedAll = useKanbanStore(
@@ -61,7 +67,7 @@ export function KanbanBoard({ projectId, projectPath: _projectPath, connectionId
 
   return (
     <LayoutGroup>
-      <div className="flex flex-1 flex-col min-h-0">
+      <div className="relative flex min-h-0 flex-1 flex-col">
         {isPinnedMode && (
           <div className="flex items-center gap-2 px-3 pt-3 pb-0">
             <Pin className="h-4 w-4 text-muted-foreground" />
@@ -119,6 +125,28 @@ export function KanbanBoard({ projectId, projectPath: _projectPath, connectionId
             <MergeOnDoneDialog />
           </motion.div>
         )}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-end p-4">
+          <div className="pointer-events-auto flex flex-col items-end gap-3">
+            {!isBoardChatOpen && (
+              <BoardChatLauncher
+                disabled={Boolean(isPinnedMode)}
+                disabledReason={
+                  isPinnedMode
+                    ? 'Board Assistant is not available on pinned multi-project boards yet.'
+                    : undefined
+                }
+                onClick={openBoardChat}
+                status={boardChatStatus}
+              />
+            )}
+            <BoardChatDrawer
+              projectId={projectId}
+              projectPath={projectPath}
+              connectionId={connectionId}
+              isPinnedMode={isPinnedMode}
+            />
+          </div>
+        </div>
       </div>
     </LayoutGroup>
   )
