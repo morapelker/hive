@@ -5,7 +5,6 @@ import {
   Loader2,
   ChevronDown,
   GitBranch,
-  Globe,
   Search,
   Archive,
   Trash2
@@ -179,18 +178,16 @@ export function GitPushPull({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [branchDropdownOpen])
 
-  // Filter and sort branches — local first, then remote; exclude current branch
+  // Filter branches — only local branches, exclude current branch
   const filteredBranches = useMemo(() => {
     const currentBranch = branchInfo?.name
     const lowerFilter = branchFilter.toLowerCase()
-    const filtered = branches.filter(
-      (b) => b.name.toLowerCase().includes(lowerFilter) && b.name !== currentBranch
-    )
-
-    return filtered.sort((a, b) => {
-      if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1
-      return a.name.localeCompare(b.name)
-    })
+    return branches
+      .filter(
+        (b) =>
+          !b.isRemote && b.name.toLowerCase().includes(lowerFilter) && b.name !== currentBranch
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
   }, [branches, branchFilter, branchInfo?.name])
 
   const handleBranchSelect = useCallback(
@@ -488,7 +485,7 @@ export function GitPushPull({
                 ) : (
                   filteredBranches.map((branch) => (
                     <button
-                      key={`${branch.name}-${branch.isRemote}`}
+                      key={branch.name}
                       type="button"
                       className={cn(
                         'flex items-center gap-1.5 w-full px-2 py-1.5 text-xs text-left',
@@ -499,9 +496,6 @@ export function GitPushPull({
                     >
                       <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
                       <span className="flex-1 truncate">{branch.name}</span>
-                      {branch.isRemote && (
-                        <Globe className="h-2.5 w-2.5 shrink-0 text-muted-foreground" />
-                      )}
                     </button>
                   ))
                 )}
