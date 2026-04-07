@@ -1918,6 +1918,22 @@ export class DatabaseService {
     ).run(now, worktreeId)
   }
 
+  attachPRToTicket(ticketId: string, projectId: string, prNumber: number, prUrl: string): void {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      'UPDATE kanban_tickets SET github_pr_number = ?, github_pr_url = ?, updated_at = ? WHERE id = ? AND project_id = ?'
+    ).run(prNumber, prUrl, now, ticketId, projectId)
+  }
+
+  detachPRFromTicket(ticketId: string, projectId: string): void {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      'UPDATE kanban_tickets SET github_pr_number = NULL, github_pr_url = NULL, updated_at = ? WHERE id = ? AND project_id = ?'
+    ).run(now, ticketId, projectId)
+  }
+
   detachWorktreeFromTickets(worktreeId: string): number {
     const db = this.getDb()
     const now = new Date().toISOString()

@@ -145,6 +145,8 @@ interface KanbanState {
   // ── PR data sync ───────────────────────────────────────────────────
   syncPRToTicket: (worktreeId: string, prNumber: number, prUrl: string) => void
   clearPRFromTicket: (worktreeId: string) => void
+  attachPRToTicket: (ticketId: string, projectId: string, prNumber: number, prUrl: string) => void
+  detachPRFromTicket: (ticketId: string, projectId: string) => void
 
   // ── Helpers ────────────────────────────────────────────────────────
   computeSortOrder: (tickets: KanbanTicket[], targetIndex: number) => number
@@ -777,6 +779,34 @@ export const useKanbanStore = create<KanbanState>()(
             }
           }
           return anyChanged ? { tickets: newTickets } : {}
+        })
+      },
+
+      // ── attachPRToTicket ──────────────────────────────────────────
+      attachPRToTicket: (ticketId: string, projectId: string, prNumber: number, prUrl: string) => {
+        set((state) => {
+          const projectTickets = state.tickets.get(projectId)
+          if (!projectTickets) return {}
+          const updated = projectTickets.map((t) =>
+            t.id === ticketId ? { ...t, github_pr_number: prNumber, github_pr_url: prUrl } : t
+          )
+          const newTickets = new Map(state.tickets)
+          newTickets.set(projectId, updated)
+          return { tickets: newTickets }
+        })
+      },
+
+      // ── detachPRFromTicket ──────────────────────────────────────────
+      detachPRFromTicket: (ticketId: string, projectId: string) => {
+        set((state) => {
+          const projectTickets = state.tickets.get(projectId)
+          if (!projectTickets) return {}
+          const updated = projectTickets.map((t) =>
+            t.id === ticketId ? { ...t, github_pr_number: null, github_pr_url: null } : t
+          )
+          const newTickets = new Map(state.tickets)
+          newTickets.set(projectId, updated)
+          return { tickets: newTickets }
         })
       },
 

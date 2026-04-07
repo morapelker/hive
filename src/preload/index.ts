@@ -1829,6 +1829,10 @@ const kanban = {
       ipcRenderer.invoke('kanban:ticket:syncPR', worktreeId, prNumber, prUrl),
     clearPR: (worktreeId: string) =>
       ipcRenderer.invoke('kanban:ticket:clearPR', worktreeId),
+    attachPR: (ticketId: string, projectId: string, prNumber: number, prUrl: string) =>
+      ipcRenderer.invoke('kanban:ticket:attachPR', ticketId, projectId, prNumber, prUrl),
+    detachPR: (ticketId: string, projectId: string) =>
+      ipcRenderer.invoke('kanban:ticket:detachPR', ticketId, projectId),
     detachWorktree: (worktreeId: string) =>
       ipcRenderer.invoke('kanban:ticket:detachWorktree', worktreeId),
   },

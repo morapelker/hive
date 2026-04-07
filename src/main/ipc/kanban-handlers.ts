@@ -69,6 +69,14 @@ export function registerKanbanHandlers(): void {
     return getDatabase().clearPRFromTickets(worktreeId)
   })
 
+  ipcMain.handle('kanban:ticket:attachPR', (_event, ticketId: string, projectId: string, prNumber: number, prUrl: string) => {
+    return getDatabase().attachPRToTicket(ticketId, projectId, prNumber, prUrl)
+  })
+
+  ipcMain.handle('kanban:ticket:detachPR', (_event, ticketId: string, projectId: string) => {
+    return getDatabase().detachPRFromTicket(ticketId, projectId)
+  })
+
   ipcMain.handle('kanban:ticket:detachWorktree', (_event, worktreeId: string) => {
     return getDatabase().detachWorktreeFromTickets(worktreeId)
   })

@@ -1337,6 +1337,8 @@ declare global {
         addTokens: (id: string, tokens: number) => Promise<KanbanTicket | null>
         syncPR: (worktreeId: string, prNumber: number, prUrl: string) => Promise<void>
         clearPR: (worktreeId: string) => Promise<void>
+        attachPR: (ticketId: string, projectId: string, prNumber: number, prUrl: string) => Promise<void>
+        detachPR: (ticketId: string, projectId: string) => Promise<void>
         detachWorktree: (worktreeId: string) => Promise<number>
       }
       simpleMode: {
