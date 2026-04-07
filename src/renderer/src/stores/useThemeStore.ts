@@ -126,8 +126,10 @@ export const useThemeStore = create<ThemeState>()(
           applyThemePreset(preset)
         }
 
-        // Write back the (possibly corrected) ID to DB
-        await saveThemeToDatabase(resolved)
+        // Write back the corrected ID to DB only if it changed
+        if (!dbValue || dbValue !== resolved) {
+          await saveThemeToDatabase(resolved)
+        }
       },
 
       previewTheme: (id: string) => {
@@ -199,7 +201,7 @@ if (typeof window !== 'undefined') {
       const parsed = JSON.parse(storedTheme)
 
       if (parsed.state?.themeId && typeof parsed.state.themeId === 'string') {
-        // Current v2 format
+        // v2 format or legacy v0 preset-ID format
         themeId = resolveThemeId(parsed.state.themeId)
       } else if (parsed.state?.mode && typeof parsed.state.mode === 'string') {
         // v1 format: { mode: 'dark' | 'light' }
