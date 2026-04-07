@@ -38,76 +38,76 @@
 }
 
 :root {
-  --radius: 0.5rem;
-  /* Light theme defaults (Daylight) */
-  --background: hsl(0 0% 100%);
-  --foreground: hsl(260 15% 12%);
-  --card: hsl(0 0% 100%);
-  --card-foreground: hsl(260 15% 12%);
-  --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(260 15% 12%);
-  --primary: hsl(270 60% 50%);
-  --primary-foreground: hsl(0 0% 100%);
-  --secondary: hsl(260 15% 95%);
-  --secondary-foreground: hsl(260 15% 20%);
-  --muted: hsl(260 15% 95%);
-  --muted-foreground: hsl(260 10% 45%);
-  --accent: hsl(260 15% 95%);
-  --accent-foreground: hsl(260 15% 20%);
-  --destructive: hsl(0 62% 50%);
-  --destructive-foreground: hsl(0 0% 100%);
-  --border: hsl(260 10% 90%);
-  --input: hsl(260 10% 90%);
-  --ring: hsl(270 60% 50%);
+  --radius: 0.625rem;
+  /* Light theme */
+  --background: var(--color-white);
+  --foreground: var(--color-neutral-800);
+  --card: var(--color-white);
+  --card-foreground: var(--color-neutral-800);
+  --popover: var(--color-white);
+  --popover-foreground: var(--color-neutral-800);
+  --primary: oklch(0.488 0.217 270);
+  --primary-foreground: var(--color-white);
+  --secondary: --alpha(var(--color-black) / 4%);
+  --secondary-foreground: var(--color-neutral-800);
+  --muted: --alpha(var(--color-black) / 4%);
+  --muted-foreground: var(--color-neutral-500);
+  --accent: --alpha(var(--color-black) / 4%);
+  --accent-foreground: var(--color-neutral-800);
+  --destructive: var(--color-red-500);
+  --destructive-foreground: var(--color-white);
+  --border: --alpha(var(--color-black) / 8%);
+  --input: --alpha(var(--color-black) / 10%);
+  --ring: oklch(0.488 0.217 270);
   --chart-1: oklch(64.62% 0.171 250.71);
   --chart-2: oklch(60.04% 0.118 184.7);
   --chart-3: oklch(39.87% 0.07 227.39);
   --chart-4: oklch(74.37% 0.144 85.12);
   --chart-5: oklch(64.47% 0.222 41.12);
-  --sidebar: hsl(260 15% 97%);
-  --sidebar-foreground: hsl(260 10% 45%);
-  --sidebar-primary: hsl(270 60% 50%);
-  --sidebar-primary-foreground: hsl(0 0% 100%);
-  --sidebar-accent: hsl(260 15% 93%);
-  --sidebar-accent-foreground: hsl(260 15% 20%);
-  --sidebar-border: hsl(260 10% 90%);
-  --sidebar-ring: hsl(270 60% 50%);
+  --sidebar: --alpha(var(--color-black) / 2%);
+  --sidebar-foreground: var(--color-neutral-500);
+  --sidebar-primary: oklch(0.488 0.217 270);
+  --sidebar-primary-foreground: var(--color-white);
+  --sidebar-accent: --alpha(var(--color-black) / 4%);
+  --sidebar-accent-foreground: var(--color-neutral-800);
+  --sidebar-border: --alpha(var(--color-black) / 8%);
+  --sidebar-ring: oklch(0.488 0.217 270);
 }
 
 .dark {
-  /* Dark theme defaults (Amethyst) */
-  --background: hsl(260 15% 8%);
-  --foreground: hsl(260 10% 95%);
-  --card: hsl(260 15% 10%);
-  --card-foreground: hsl(260 10% 95%);
-  --popover: hsl(260 15% 10%);
-  --popover-foreground: hsl(260 10% 95%);
-  --primary: hsl(270 60% 55%);
-  --primary-foreground: hsl(0 0% 100%);
-  --secondary: hsl(260 15% 16%);
-  --secondary-foreground: hsl(260 10% 90%);
-  --muted: hsl(260 15% 16%);
-  --muted-foreground: hsl(260 10% 55%);
-  --accent: hsl(260 15% 16%);
-  --accent-foreground: hsl(260 10% 90%);
-  --destructive: hsl(0 62% 50%);
-  --destructive-foreground: hsl(0 0% 100%);
-  --border: hsl(260 15% 18%);
-  --input: hsl(260 15% 18%);
-  --ring: hsl(270 60% 55%);
+  /* Dark theme */
+  --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
+  --foreground: var(--color-neutral-100);
+  --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
+  --card-foreground: var(--color-neutral-100);
+  --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
+  --popover-foreground: var(--color-neutral-100);
+  --primary: oklch(0.588 0.217 270);
+  --primary-foreground: var(--color-white);
+  --secondary: --alpha(var(--color-white) / 4%);
+  --secondary-foreground: var(--color-neutral-200);
+  --muted: --alpha(var(--color-white) / 4%);
+  --muted-foreground: var(--color-neutral-400);
+  --accent: --alpha(var(--color-white) / 4%);
+  --accent-foreground: var(--color-neutral-100);
+  --destructive: var(--color-red-500);
+  --destructive-foreground: var(--color-white);
+  --border: --alpha(var(--color-white) / 6%);
+  --input: --alpha(var(--color-white) / 8%);
+  --ring: oklch(0.588 0.217 270);
   --chart-1: oklch(70.34% 0.127 227.39);
   --chart-2: oklch(69.26% 0.128 184.7);
   --chart-3: oklch(98.48% 0.001 285.98);
   --chart-4: oklch(74.11% 0.164 68.11);
   --chart-5: oklch(65.91% 0.204 41.12);
-  --sidebar: hsl(260 15% 7%);
-  --sidebar-foreground: hsl(260 10% 55%);
-  --sidebar-primary: hsl(270 60% 55%);
-  --sidebar-primary-foreground: hsl(0 0% 100%);
-  --sidebar-accent: hsl(260 15% 14%);
-  --sidebar-accent-foreground: hsl(260 10% 90%);
-  --sidebar-border: hsl(260 15% 18%);
-  --sidebar-ring: hsl(270 60% 55%);
+  --sidebar: color-mix(in srgb, var(--background) 96%, var(--color-black));
+  --sidebar-foreground: var(--color-neutral-400);
+  --sidebar-primary: oklch(0.588 0.217 270);
+  --sidebar-primary-foreground: var(--color-white);
+  --sidebar-accent: --alpha(var(--color-white) / 4%);
+  --sidebar-accent-foreground: var(--color-neutral-100);
+  --sidebar-border: --alpha(var(--color-white) / 6%);
+  --sidebar-ring: oklch(0.588 0.217 270);
 }
 
 @layer base {
@@ -124,11 +124,11 @@
   /* Native-feeling scrollbars — thin, transparent, theme-aware */
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+    scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
   }
 
   *:hover {
-    scrollbar-color: rgba(128, 128, 128, 0.5) transparent;
+    scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
   }
 
   /* WebKit scrollbar styling (Electron/Chromium) */
@@ -142,20 +142,41 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(128, 128, 128, 0.25);
+    background: rgba(0, 0, 0, 0.15);
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(128, 128, 128, 0.45);
+    background: rgba(0, 0, 0, 0.25);
   }
 
   ::-webkit-scrollbar-thumb:active {
-    background: rgba(128, 128, 128, 0.6);
+    background: rgba(0, 0, 0, 0.35);
   }
 
   ::-webkit-scrollbar-corner {
     background: transparent;
+  }
+
+  /* Dark mode scrollbar overrides */
+  .dark * {
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  }
+
+  .dark *:hover {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.18);
+  }
+
+  .dark ::-webkit-scrollbar-thumb:active {
+    background: rgba(255, 255, 255, 0.25);
   }
 }
 
