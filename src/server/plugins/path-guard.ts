@@ -1,4 +1,4 @@
-import { resolve, normalize } from 'node:path'
+import { resolve, normalize, sep } from 'node:path'
 
 export class PathGuard {
   private allowedRoots: string[]
@@ -14,7 +14,7 @@ export class PathGuard {
   validatePath(inputPath: string): boolean {
     if (!inputPath || inputPath.trim() === '') return false
     const resolved = normalize(resolve(inputPath))
-    return this.allowedRoots.some((root) => resolved === root || resolved.startsWith(root + '/'))
+    return this.allowedRoots.some((root) => resolved === root || resolved.startsWith(root + sep))
   }
 }
 

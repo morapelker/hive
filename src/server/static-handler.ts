@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { join, normalize, extname } from 'node:path'
+import { join, normalize, extname, sep } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const MIME_TYPES: Record<string, string> = {
@@ -42,7 +42,7 @@ export function createStaticHandler(
     // Path traversal prevention: resolved path must stay within webRoot.
     // Compare against resolvedRoot + '/' to prevent prefix collision
     // (e.g. /tmp/foo matching /tmp/foobar). Allow exact match on root itself.
-    if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + '/')) {
+    if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + sep)) {
       res.writeHead(403)
       res.end()
       return true
