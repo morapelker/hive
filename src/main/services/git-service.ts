@@ -1808,6 +1808,9 @@ export class GitService {
     title: string
     body: string
   }): Promise<{ success: boolean; url?: string; number?: number; error?: string }> {
+    if (!options.baseBranch || options.baseBranch.startsWith('-')) {
+      return { success: false, error: 'Invalid branch name' }
+    }
     const tempFile = join(tmpdir(), `hive-pr-body-${Date.now()}.md`)
     try {
       writeFileSync(tempFile, options.body, 'utf-8')
@@ -1844,25 +1847,40 @@ export class GitService {
     diffPatch: string
     commitCount: number
   }> {
+    if (!baseBranch || baseBranch.startsWith('-')) {
+      return { commitSummary: '', diffSummary: '', diffPatch: '', commitCount: 0 }
+    }
     const MAX_SUMMARY = 20 * 1024
     const MAX_PATCH = 60 * 1024
 
     const [commitLog, diffStat, diffPatch, revCount] = await Promise.all([
       execFileAsync('git', ['log', '--oneline', `${baseBranch}..HEAD`], { cwd: this.repoPath })
         .then((r) => r.stdout)
-        .catch(() => ''),
+        .catch((err) => {
+          log.warn('getRangeDiff: git command failed', { error: err instanceof Error ? err.message : String(err) })
+          return ''
+        }),
       execFileAsync('git', ['diff', '--stat', `${baseBranch}..HEAD`], { cwd: this.repoPath })
         .then((r) => r.stdout)
-        .catch(() => ''),
+        .catch((err) => {
+          log.warn('getRangeDiff: git command failed', { error: err instanceof Error ? err.message : String(err) })
+          return ''
+        }),
       execFileAsync('git', ['diff', '--patch', '--minimal', `${baseBranch}..HEAD`], {
         cwd: this.repoPath,
         maxBuffer: MAX_PATCH * 2
       })
         .then((r) => r.stdout)
-        .catch(() => ''),
+        .catch((err) => {
+          log.warn('getRangeDiff: git command failed', { error: err instanceof Error ? err.message : String(err) })
+          return ''
+        }),
       execFileAsync('git', ['rev-list', '--count', `${baseBranch}..HEAD`], { cwd: this.repoPath })
         .then((r) => parseInt(r.stdout.trim(), 10) || 0)
-        .catch(() => 0)
+        .catch((err) => {
+          log.warn('getRangeDiff: git command failed', { error: err instanceof Error ? err.message : String(err) })
+          return 0
+        })
     ])
 
     return {
@@ -1884,8 +1902,8 @@ export class GitService {
         { cwd: this.repoPath }
       )
       return parseInt(stdout.trim(), 10) > 0
-    } catch {
-      // No tracking branch means we need an initial push
+    } catch (err) {
+      log.warn('needsPush: check failed, assuming push needed', { error: err instanceof Error ? err.message : String(err) })
       return true
     }
   }
