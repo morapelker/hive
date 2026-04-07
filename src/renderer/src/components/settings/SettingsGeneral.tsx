@@ -1,4 +1,5 @@
 import { useThemeStore } from '@/stores/useThemeStore'
+import { DEFAULT_THEME_ID } from '@/lib/themes'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -10,7 +11,7 @@ import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
 
 export function SettingsGeneral(): React.JSX.Element {
-  const { setMode } = useThemeStore()
+  const { setTheme } = useThemeStore()
   const {
     autoStartSession,
     autoPullBeforeWorktree,
@@ -33,7 +34,7 @@ export function SettingsGeneral(): React.JSX.Element {
   const handleResetAll = (): void => {
     resetToDefaults()
     resetShortcuts()
-    setMode('dark')
+    setTheme(DEFAULT_THEME_ID)
     toast.success('All settings reset to defaults')
   }
 
