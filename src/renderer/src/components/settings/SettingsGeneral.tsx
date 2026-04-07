@@ -4,7 +4,6 @@ import { RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useShortcutStore } from '@/stores/useShortcutStore'
-
 import { toast } from '@/lib/toast'
 import type { UsageProvider } from '@shared/types/usage'
 import claudeIcon from '@/assets/model-icons/claude.svg'

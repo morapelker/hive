@@ -579,6 +579,8 @@ export function useCommands() {
         keywords: ['theme', 'dark', 'light', 'mode', 'appearance', 'color', 'toggle'],
         action: () => {
           toggleMode()
+          const newMode = useThemeStore.getState().mode
+          toast.success(`Switched to ${newMode} mode`)
           closeCommandPalette()
         }
       },
