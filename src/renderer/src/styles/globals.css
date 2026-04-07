@@ -58,7 +58,7 @@
   --destructive-foreground: var(--color-white);
   --border: --alpha(var(--color-black) / 8%);
   --input: --alpha(var(--color-black) / 10%);
-  --ring: oklch(0.488 0.217 270);
+  --ring: var(--primary);
   --chart-1: oklch(64.62% 0.171 250.71);
   --chart-2: oklch(60.04% 0.118 184.7);
   --chart-3: oklch(39.87% 0.07 227.39);
@@ -66,12 +66,12 @@
   --chart-5: oklch(64.47% 0.222 41.12);
   --sidebar: --alpha(var(--color-black) / 2%);
   --sidebar-foreground: var(--color-neutral-500);
-  --sidebar-primary: oklch(0.488 0.217 270);
+  --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--color-white);
   --sidebar-accent: --alpha(var(--color-black) / 4%);
   --sidebar-accent-foreground: var(--color-neutral-800);
   --sidebar-border: --alpha(var(--color-black) / 8%);
-  --sidebar-ring: oklch(0.488 0.217 270);
+  --sidebar-ring: var(--primary);
 }
 
 .dark {
@@ -94,7 +94,7 @@
   --destructive-foreground: var(--color-white);
   --border: --alpha(var(--color-white) / 6%);
   --input: --alpha(var(--color-white) / 8%);
-  --ring: oklch(0.588 0.217 270);
+  --ring: var(--primary);
   --chart-1: oklch(70.34% 0.127 227.39);
   --chart-2: oklch(69.26% 0.128 184.7);
   --chart-3: oklch(98.48% 0.001 285.98);
@@ -102,12 +102,12 @@
   --chart-5: oklch(65.91% 0.204 41.12);
   --sidebar: color-mix(in srgb, var(--background) 96%, var(--color-black));
   --sidebar-foreground: var(--color-neutral-400);
-  --sidebar-primary: oklch(0.588 0.217 270);
+  --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--color-white);
   --sidebar-accent: --alpha(var(--color-white) / 4%);
   --sidebar-accent-foreground: var(--color-neutral-100);
   --sidebar-border: --alpha(var(--color-white) / 6%);
-  --sidebar-ring: oklch(0.588 0.217 270);
+  --sidebar-ring: var(--primary);
 }
 
 @layer base {
@@ -225,24 +225,24 @@
 }
 
 .dark .diff-viewer .d2h-file-header {
-  background-color: hsl(var(--muted));
-  border-color: hsl(var(--border));
+  background-color: var(--muted);
+  border-color: var(--border);
 }
 
 .dark .diff-viewer .d2h-file-header,
 .dark .diff-viewer .d2h-file-name {
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 
 .dark .diff-viewer .d2h-code-line,
 .dark .diff-viewer .d2h-code-side-line {
-  background-color: hsl(var(--background));
+  background-color: var(--background);
 }
 
 .dark .diff-viewer .d2h-code-linenumber {
-  background-color: hsl(var(--muted));
-  color: hsl(var(--muted-foreground));
-  border-color: hsl(var(--border));
+  background-color: var(--muted);
+  color: var(--muted-foreground);
+  border-color: var(--border);
 }
 
 /* Dark mode — added lines: green tinted background (text color from syntax highlighting) */
@@ -279,21 +279,21 @@
 }
 
 .dark .diff-viewer .d2h-info {
-  background-color: hsl(var(--muted));
-  color: hsl(var(--muted-foreground));
-  border-color: hsl(var(--border));
+  background-color: var(--muted);
+  color: var(--muted-foreground);
+  border-color: var(--border);
 }
 
 .dark .diff-viewer .d2h-file-diff {
-  border-color: hsl(var(--border));
+  border-color: var(--border);
 }
 
 .dark .diff-viewer .d2h-diff-table {
-  border-color: hsl(var(--border));
+  border-color: var(--border);
 }
 
 .dark .diff-viewer .d2h-diff-tbody tr {
-  border-color: hsl(var(--border));
+  border-color: var(--border);
 }
 
 /* Ensure line numbers and content align properly */

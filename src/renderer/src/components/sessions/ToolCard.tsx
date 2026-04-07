@@ -302,7 +302,7 @@ function formatDuration(ms: number): string {
 function getLeftBorderColor(status: ToolStatus): string {
   switch (status) {
     case 'pending':
-      return 'hsl(var(--muted-foreground))'
+      return 'var(--muted-foreground)'
     case 'running':
       return '#3b82f6' // blue-500
     case 'success':
