@@ -22,10 +22,10 @@
 
 ## 목차
 
+- [설치](#설치)
 - [Hive란?](#hive란)
 - [기능](#기능)
 - [왜 Hive인가?](#왜-hive인가)
-- [설치](#설치)
 - [빠른 시작](#빠른-시작)
 - [커넥션 — 게임 체인저](#-커넥션---게임-체인저)
 - [스크린샷](#스크린샷)
@@ -41,6 +41,23 @@
   - [문서](#문서)
 - [기여하기](#기여하기)
 - [라이선스](#라이선스)
+
+## 설치
+
+> 🍎 **macOS 전용** — Windows와 Linux 지원은 곧 제공 예정입니다.
+
+### Homebrew (권장)
+
+```bash
+brew tap morapelker/hive
+brew install --cask hive
+```
+
+### 직접 다운로드
+
+최신 `.dmg`를 [GitHub Releases](https://github.com/morapelker/hive/releases/latest)에서 다운로드하세요.
+
+끝입니다! 응용 프로그램 폴더에서 Hive를 열고 git 리포지토리를 지정하세요.
 
 ## Hive란?
 
@@ -91,23 +108,6 @@ Hive가 git 워크플로우를 어떻게 변화시키는지 확인하세요:
 | **브랜치 비교** | 여러 터미널 탭, 복사/붙여넣기 반복 | Worktree를 연결하여 컨텍스트 공유 |
 | **Worktree 찾기** | `cd ~/projects/...` → 디렉토리 이름 기억하기 | 모든 Worktree가 하나의 사���드바에 |
 | **Worktree 정리** | `git worktree remove` → `rm -rf directory` | "아카이브" 클릭 → 모든 것을 자동 처리 |
-
-## 설치
-
-> 🍎 **macOS 전용** — Windows와 Linux 지원은 곧 제공 예정입니다.
-
-### Homebrew (권장)
-
-```bash
-brew tap morapelker/hive
-brew install --cask hive
-```
-
-### 직접 다운로드
-
-최신 `.dmg`를 [GitHub Releases](https://github.com/morapelker/hive/releases/latest)에서 다운로드하세요.
-
-끝입니다! 응용 프로그램 폴더에서 Hive를 열고 git 리포지토리를 지정하세요.
 
 ## 빠른 시작
 

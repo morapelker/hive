@@ -20,6 +20,21 @@
 
 ---
 
+## 安装
+
+> 当前以 macOS 为主，Windows 和 Linux 支持仍在演进中。
+
+### Homebrew
+
+```bash
+brew tap morapelker/hive
+brew install --cask hive
+```
+
+### 直接下载
+
+从 [GitHub Releases](https://github.com/morapelker/hive/releases/latest) 下载最新 `.dmg`。
+
 ## Hive 是什么
 
 如果你经常同时开多个 AI 编码代理，很容易遇到这些问题：
@@ -73,21 +88,6 @@ Hive 的目标就是把这些问题收拢到一个桌面应用里：
 - 内置终端和运行面板
 - 可以跑 setup / run 脚本
 - 支持 Ghostty / xterm 等后端能力
-
-## 安装
-
-> 当前以 macOS 为主，Windows 和 Linux 支持仍在演进中。
-
-### Homebrew
-
-```bash
-brew tap morapelker/hive
-brew install --cask hive
-```
-
-### 直接下载
-
-从 [GitHub Releases](https://github.com/morapelker/hive/releases/latest) 下载最新 `.dmg`。
 
 ## 快速开始
 

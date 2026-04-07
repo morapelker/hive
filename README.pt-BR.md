@@ -22,10 +22,10 @@
 
 ## Índice
 
+- [Instalação](#instalação)
 - [O que é o Hive?](#o-que-é-o-hive)
 - [Funcionalidades](#funcionalidades)
 - [Por que Hive?](#por-que-hive)
-- [Instalação](#instalação)
 - [Início rápido](#início-rápido)
 - [Conexões — O diferencial](#-conexões---o-diferencial)
 - [Capturas de tela](#capturas-de-tela)
@@ -34,6 +34,23 @@
 - [Desenvolvimento](#desenvolvimento)
 - [Contribuir](#contribuir)
 - [Licença](#licença)
+
+## Instalação
+
+> 🍎 **Apenas macOS** — Suporte para Windows e Linux em breve.
+
+### Via Homebrew (recomendado)
+
+```bash
+brew tap morapelker/hive
+brew install --cask hive
+```
+
+### Download direto
+
+Baixe o último `.dmg` do [GitHub Releases](https://github.com/morapelker/hive/releases/latest).
+
+É isso! Abra o Hive da pasta Aplicativos e aponte para um repositório git.
 
 ## O que é o Hive?
 
@@ -84,23 +101,6 @@ Veja como o Hive transforma seu workflow git:
 | **Comparar branches** | Múltiplas abas de terminal, copiar/colar | Conecte worktrees para compartilhar contexto |
 | **Encontrar um worktree** | `cd ~/projects/...` → lembrar nomes de diretórios | Todos os worktrees em uma barra lateral |
 | **Limpar worktrees** | `git worktree remove` → `rm -rf directory` | Clique "Arquivar" → Cuida de tudo |
-
-## Instalação
-
-> 🍎 **Apenas macOS** — Suporte para Windows e Linux em breve.
-
-### Via Homebrew (recomendado)
-
-```bash
-brew tap morapelker/hive
-brew install --cask hive
-```
-
-### Download direto
-
-Baixe o último `.dmg` do [GitHub Releases](https://github.com/morapelker/hive/releases/latest).
-
-É isso! Abra o Hive da pasta Aplicativos e aponte para um repositório git.
 
 ## Início rápido
 

@@ -22,10 +22,10 @@
 
 ## Sadržaj
 
+- [Instalacija](#instalacija)
 - [Šta je Hive?](#šta-je-hive)
 - [Funkcionalnosti](#funkcionalnosti)
 - [Zašto Hive?](#zašto-hive)
-- [Instalacija](#instalacija)
 - [Brzi početak](#brzi-početak)
 - [Konekcije - Pravi game changer](#-konekcije---pravi-game-changer)
 - [Snimci ekrana](#snimci-ekrana)
@@ -34,6 +34,23 @@
 - [Razvoj](#razvoj)
 - [Doprinos](#doprinos)
 - [Licenca](#licenca)
+
+## Instalacija
+
+> 🍎 **Samo macOS** — Windows i Linux podrška uskoro.
+
+### Preko Homebrew (Preporučeno)
+
+```bash
+brew tap morapelker/hive
+brew install --cask hive
+```
+
+### Direktno preuzimanje
+
+Preuzmite najnoviji `.dmg` sa [GitHub Releases](https://github.com/morapelker/hive/releases/latest).
+
+To je to! Otvorite Hive iz Applications foldera i usmjerite ga na git repo.
 
 ## Šta je Hive?
 
@@ -84,23 +101,6 @@ Pogledajte kako Hive transformiše vaš git radni tok:
 | **Uporedi brancheve** | Više terminal tabova, copy/paste između | Povežite worktreeje za dijeljenje konteksta |
 | **Nađi worktree** | `cd ~/projects/...` → sjeti se imena direktorija | Svi worktreevi u jednom sidebaru |
 | **Očisti worktreeje** | `git worktree remove` → `rm -rf directory` | Klik "Arhiviraj" → Upravlja svime |
-
-## Instalacija
-
-> 🍎 **Samo macOS** — Windows i Linux podrška uskoro.
-
-### Preko Homebrew (Preporučeno)
-
-```bash
-brew tap morapelker/hive
-brew install --cask hive
-```
-
-### Direktno preuzimanje
-
-Preuzmite najnoviji `.dmg` sa [GitHub Releases](https://github.com/morapelker/hive/releases/latest).
-
-To je to! Otvorite Hive iz Applications foldera i usmjerite ga na git repo.
 
 ## Brzi početak
 

@@ -22,10 +22,10 @@
 
 ## İçindekiler
 
+- [Kurulum](#kurulum)
 - [Hive Nedir?](#hive-nedir)
 - [Özellikler](#özellikler)
 - [Neden Hive?](#neden-hive)
-- [Kurulum](#kurulum)
 - [Hızlı Başlangıç](#hızlı-başlangıç)
 - [Bağlantılar — Oyun Değiştirici](#-bağlantılar---oyun-değiştirici)
 - [Ekran Görüntüleri](#ekran-görüntüleri)
@@ -34,6 +34,23 @@
 - [Geliştirme](#geliştirme)
 - [Katkıda Bulunma](#katkıda-bulunma)
 - [Lisans](#lisans)
+
+## Kurulum
+
+> 🍎 **Yalnızca macOS** — Windows ve Linux desteği yakında.
+
+### Homebrew ile (Önerilen)
+
+```bash
+brew tap morapelker/hive
+brew install --cask hive
+```
+
+### Doğrudan İndirme
+
+En son `.dmg` dosyasını [GitHub Releases](https://github.com/morapelker/hive/releases/latest) sayfasından indirin.
+
+Bu kadar! Uygulamalar klasöründen Hive'ı açın ve bir git deposuna yönlendirin.
 
 ## Hive Nedir?
 
@@ -84,23 +101,6 @@ Hive'ın git iş akışınızı nasıl dönüştürdüğünü görün:
 | **Dalları karşılaştırma** | Birden fazla terminal sekmesi, kopyala/yapıştır | Worktree'leri bağlayarak bağlam paylaş |
 | **Worktree bulma** | `cd ~/projects/...` → dizin adlarını hatırla | Tüm worktree'ler tek kenar çubuğunda |
 | **Worktree temizleme** | `git worktree remove` → `rm -rf directory` | "Arşivle" tıkla → Her şeyi halleder |
-
-## Kurulum
-
-> 🍎 **Yalnızca macOS** — Windows ve Linux desteği yakında.
-
-### Homebrew ile (Önerilen)
-
-```bash
-brew tap morapelker/hive
-brew install --cask hive
-```
-
-### Doğrudan İndirme
-
-En son `.dmg` dosyasını [GitHub Releases](https://github.com/morapelker/hive/releases/latest) sayfasından indirin.
-
-Bu kadar! Uygulamalar klasöründen Hive'ı açın ve bir git deposuna yönlendirin.
 
 ## Hızlı Başlangıç
 

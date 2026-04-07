@@ -22,10 +22,10 @@
 
 ## Mục Lục
 
+- [Cài đặt](#cài-đặt)
 - [Hive là gì?](#hive-là-gì)
 - [Tính năng](#tính-năng)
 - [Tại sao chọn Hive?](#tại-sao-chọn-hive)
-- [Cài đặt](#cài-đặt)
 - [Khởi động nhanh](#khởi-động-nhanh)
 - [Kết nối - Bước ngoặt](#-kết-nối---bước-ngoặt)
 - [Ảnh chụp màn hình](#ảnh-chụp-màn-hình)
@@ -34,6 +34,23 @@
 - [Phát triển](#phát-triển)
 - [Đóng góp](#đóng-góp)
 - [Giấy phép](#giấy-phép)
+
+## Cài đặt
+
+> 🍎 **Chỉ macOS** — Hỗ trợ Windows và Linux sắp ra mắt.
+
+### Qua Homebrew (Khuyến nghị)
+
+```bash
+brew tap morapelker/hive
+brew install --cask hive
+```
+
+### Tải trực tiếp
+
+Tải file `.dmg` mới nhất từ [GitHub Releases](https://github.com/morapelker/hive/releases/latest).
+
+Vậy thôi! Mở Hive từ thư mục Applications và trỏ đến git repo.
 
 ## Hive là gì?
 
@@ -84,23 +101,6 @@ Xem cách Hive biến đổi quy trình git của bạn:
 | **So sánh nhánh** | Nhiều tab terminal, copy/paste qua lại | Kết nối worktree để chia sẻ ngữ cảnh |
 | **Tìm worktree** | `cd ~/projects/...` → nhớ tên thư mục | Tất cả worktree trong một thanh bên |
 | **Dọn d���p worktree** | `git worktree remove` → `rm -rf directory` | Click "Lưu trữ" → Xử lý mọi thứ |
-
-## Cài đặt
-
-> 🍎 **Chỉ macOS** — Hỗ trợ Windows và Linux sắp ra mắt.
-
-### Qua Homebrew (Khuyến nghị)
-
-```bash
-brew tap morapelker/hive
-brew install --cask hive
-```
-
-### Tải trực tiếp
-
-Tải file `.dmg` mới nhất từ [GitHub Releases](https://github.com/morapelker/hive/releases/latest).
-
-Vậy thôi! Mở Hive từ thư mục Applications và trỏ đến git repo.
 
 ## Khởi động nhanh
 

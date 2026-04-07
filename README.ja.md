@@ -22,10 +22,10 @@
 
 ## 目次
 
+- [インストール](#インストール)
 - [Hiveとは？](#hiveとは)
 - [機能](#機能)
 - [なぜHive？](#なぜhive)
-- [インストール](#インストール)
 - [クイックスタート](#クイックスタート)
 - [コネクション — ゲームチェンジャー](#-コネクション---ゲームチェンジャー)
 - [スクリーンショット](#スクリーンショット)
@@ -41,6 +41,23 @@
   - [ドキュメント](#ドキュメント)
 - [コントリビュート](#コントリビュート)
 - [ライセンス](#ライセンス)
+
+## インストール
+
+> 🍎 **macOS専用** — WindowsとLinuxのサポートは近日公開予定。
+
+### Homebrew経由（推奨）
+
+```bash
+brew tap morapelker/hive
+brew install --cask hive
+```
+
+### 直接ダウンロード
+
+最新の`.dmg`を[GitHubリリース](https://github.com/morapelker/hive/releases/latest)からダウンロード。
+
+以上です！アプリケーションフォルダからHiveを開いて、gitリポジトリを指定してください。
 
 ## Hiveとは？
 
@@ -91,23 +108,6 @@ Hiveがgitワークフローをどう変えるかご覧ください：
 | **ブランチ比較** | 複数のターミナルタブ、コピペの往復 | Worktreeを接続してコンテキスト共有 |
 | **Worktreeを探す** | `cd ~/projects/...` → ディレクトリ名を覚える | すべてのWorktreeがひとつのサイドバーに |
 | **Worktreeのクリーンアップ** | `git worktree remove` → `rm -rf directory` | 「アーカイブ」をクリック → すべて自動処理 |
-
-## インストール
-
-> 🍎 **macOS専用** — WindowsとLinuxのサポートは近日公開予定。
-
-### Homebrew経由（推奨）
-
-```bash
-brew tap morapelker/hive
-brew install --cask hive
-```
-
-### 直接ダウンロード
-
-最新の`.dmg`を[GitHubリリース](https://github.com/morapelker/hive/releases/latest)からダウンロード。
-
-以上です！アプリケーションフォルダからHiveを開いて、gitリポジトリを指定してください。
 
 ## クイックスタート
 

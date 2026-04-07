@@ -22,10 +22,10 @@
 
 ## Indholdsfortegnelse
 
+- [Installation](#installation)
 - [Hvad er Hive?](#hvad-er-hive)
 - [Funktioner](#funktioner)
 - [Hvorfor Hive?](#hvorfor-hive)
-- [Installation](#installation)
 - [Hurtig start](#hurtig-start)
 - [Forbindelser - Den store game changer](#-forbindelser---den-store-game-changer)
 - [Skærmbilleder](#skærmbilleder)
@@ -34,6 +34,23 @@
 - [Udvikling](#udvikling)
 - [Bidrag](#bidrag)
 - [Licens](#licens)
+
+## Installation
+
+> 🍎 **Kun macOS** — Windows og Linux support kommer snart.
+
+### Via Homebrew (Anbefalet)
+
+```bash
+brew tap morapelker/hive
+brew install --cask hive
+```
+
+### Direkte download
+
+Download den seneste `.dmg` fra [GitHub Releases](https://github.com/morapelker/hive/releases/latest).
+
+Det er det! Åbn Hive fra din Programmer-mappe og peg den mod et git-repo.
 
 ## Hvad er Hive?
 
@@ -84,23 +101,6 @@ Se hvordan Hive transformerer din git-arbejdsgang:
 | **Sammenlign branches** | Flere terminal-faner, kopiér/indsæt mellem dem | Forbind worktrees for at dele kontekst |
 | **Find en worktree** | `cd ~/projects/...` → husk mappenavne | Alle worktrees i én sidebar |
 | **Ryd op i worktrees** | `git worktree remove` → `rm -rf directory` | Klik "Arkivér" → Klarer alt |
-
-## Installation
-
-> 🍎 **Kun macOS** — Windows og Linux support kommer snart.
-
-### Via Homebrew (Anbefalet)
-
-```bash
-brew tap morapelker/hive
-brew install --cask hive
-```
-
-### Direkte download
-
-Download den seneste `.dmg` fra [GitHub Releases](https://github.com/morapelker/hive/releases/latest).
-
-Det er det! Åbn Hive fra din Programmer-mappe og peg den mod et git-repo.
 
 ## Hurtig start
 
