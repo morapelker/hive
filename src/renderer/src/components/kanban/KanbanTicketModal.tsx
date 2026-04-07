@@ -24,7 +24,9 @@ import {
   GitMerge,
   Archive,
   Loader2,
-  Github
+  Github,
+  FileUp,
+  File as FileIcon
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -37,6 +39,12 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
@@ -744,13 +752,14 @@ function EditModeContent({
   const [attachments, setAttachments] = useState<TicketAttachment[]>(
     () =>
       (ticket.attachments as Array<{ type: string; url: string; label: string }>).map((a) => ({
-        type: a.type as 'jira' | 'figma' | 'generic',
+        type: a.type as 'jira' | 'figma' | 'file' | 'generic',
         url: a.url,
         label: a.label
       })) ?? []
   )
   const [showAttachInput, setShowAttachInput] = useState(false)
   const [attachUrl, setAttachUrl] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [isSaving, setIsSaving] = useState(false)
   const lifecycle = useLifecycleActions(ticket.worktree_id)
   const { pinAndActivate: pinAndActivateSession, lifecycleLoading } = usePinAndActivateSession(onClose)
@@ -772,6 +781,19 @@ function EditModeContent({
 
   const handleRemoveAttachment = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+    for (const file of Array.from(files)) {
+      const filePath = window.fileOps.getPathForFile(file)
+      setAttachments((prev) => [
+        ...prev,
+        { type: 'file' as const, url: filePath, label: file.name }
+      ])
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
   const handleSave = useCallback(async () => {
@@ -915,6 +937,8 @@ function EditModeContent({
                     <Ticket className="h-3 w-3 text-blue-500" />
                   ) : attachment.type === 'figma' ? (
                     <Figma className="h-3 w-3 text-purple-500" />
+                  ) : attachment.type === 'file' ? (
+                    <FileIcon className="h-3 w-3 text-green-500" />
                   ) : (
                     <LinkIcon className="h-3 w-3 text-muted-foreground" />
                   )}
@@ -973,17 +997,34 @@ function EditModeContent({
               </Button>
             </div>
           ) : (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="ticket-edit-add-attachment-btn"
-              className="gap-1 text-xs"
-              onClick={() => setShowAttachInput(true)}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add attachment
-            </Button>
+            <>
+              <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="ticket-edit-add-attachment-btn"
+                    className="gap-1 text-xs"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add attachment
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onSelect={() => setShowAttachInput(true)}>
+                    <LinkIcon className="h-4 w-4 mr-2" />
+                    URL
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                    <FileUp className="h-4 w-4 mr-2" />
+                    File / Image
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+
           )}
         </div>
       </div>

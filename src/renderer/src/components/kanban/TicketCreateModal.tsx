@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { Eye, EyeOff, Plus, X, Ticket, Figma, Link as LinkIcon } from 'lucide-react'
+import { Eye, EyeOff, Plus, X, Ticket, Figma, Link as LinkIcon, FileUp, File as FileIcon } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -11,6 +11,12 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -45,6 +51,7 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
   const [selectedProjectId, setSelectedProjectId] = useState('')
 
   const titleInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const createTicket = useKanbanStore((state) => state.createTicket)
 
   const isConnectionMode = !!connectionId
@@ -127,6 +134,19 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
 
   const handleRemoveAttachment = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+    for (const file of Array.from(files)) {
+      const filePath = window.fileOps.getPathForFile(file)
+      setAttachments((prev) => [
+        ...prev,
+        { type: 'file' as const, url: filePath, label: file.name }
+      ])
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
   // ── Submission ─────────────────────────────────────────────────────
@@ -282,6 +302,8 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
                       <Ticket className="h-3 w-3 text-blue-500" />
                     ) : attachment.type === 'figma' ? (
                       <Figma className="h-3 w-3 text-purple-500" />
+                    ) : attachment.type === 'file' ? (
+                      <FileIcon className="h-3 w-3 text-green-500" />
                     ) : (
                       <LinkIcon className="h-3 w-3 text-muted-foreground" />
                     )}
@@ -299,17 +321,33 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
             )}
 
             {!showAttachInput && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="ticket-add-attachment-btn"
-                className="gap-1 text-xs"
-                onClick={() => setShowAttachInput(true)}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add attachment
-              </Button>
+              <>
+                <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid="ticket-add-attachment-btn"
+                      className="gap-1 text-xs"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Add attachment
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem onSelect={() => setShowAttachInput(true)}>
+                      <LinkIcon className="h-4 w-4 mr-2" />
+                      URL
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                      <FileUp className="h-4 w-4 mr-2" />
+                      File / Image
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
             )}
 
             {/* Inline attachment URL input */}

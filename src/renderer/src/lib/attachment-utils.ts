@@ -1,5 +1,5 @@
 export interface AttachmentInfo {
-  type: 'jira' | 'figma'
+  type: 'jira' | 'figma' | 'file'
   label: string
 }
 
