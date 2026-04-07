@@ -19,7 +19,7 @@ const editorTheme = EditorView.theme({
     flex: '1',
     minHeight: '0',
     overflow: 'hidden',
-    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+    fontFamily: 'var(--font-mono)',
     fontSize: '13px'
   },
   '.cm-scroller': {

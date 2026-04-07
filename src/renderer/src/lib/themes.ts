@@ -46,10 +46,10 @@ export const THEME_PRESETS: ThemePreset[] = [
     cssNative: true,
     colors: {},
     previewColors: {
-      background: '#0e0e10',
-      sidebar: '#0c0c0e',
+      background: '#1a1626',
+      sidebar: '#150f22',
       primary: '#7c5ce0',
-      'muted-foreground': '#7a7a85'
+      'muted-foreground': '#736b8a'
     }
   },
   {
@@ -59,10 +59,10 @@ export const THEME_PRESETS: ThemePreset[] = [
     cssNative: true,
     colors: {},
     previewColors: {
-      background: '#ffffff',
-      sidebar: '#fafafa',
+      background: '#f9f7fd',
+      sidebar: '#f3effa',
       primary: '#6932d4',
-      'muted-foreground': '#6e6e78'
+      'muted-foreground': '#6b6382'
     }
   },
 

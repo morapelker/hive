@@ -124,7 +124,7 @@ export function WriteToolView({ input, error }: ToolViewProps) {
           }}
           codeTagProps={{
             style: {
-              fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace'
+              fontFamily: 'var(--font-mono)'
             }
           }}
         >

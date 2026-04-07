@@ -341,7 +341,7 @@ export default function MonacoDiffView({
             scrollBeyondLastLine: false,
             fontSize: 12,
             lineHeight: 20,
-            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+            fontFamily: 'var(--font-mono)',
             automaticLayout: true,
             scrollbar: {
               verticalScrollbarSize: 10,
