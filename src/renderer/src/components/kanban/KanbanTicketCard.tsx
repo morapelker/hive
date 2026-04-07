@@ -249,6 +249,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  // Reads worktree list snapshot — reactive only to remoteInfo changes, not worktree additions.
   const hasGitRemote = useGitStore(
     useCallback(
       (state) => {
@@ -256,7 +257,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         if (!worktrees) return false
         return worktrees.some((wt) => {
           const info = state.remoteInfo.get(wt.id)
-          return info?.hasRemote === true
+          return info?.hasRemote === true && info.isGitHub === true
         })
       },
       [ticket.project_id]
