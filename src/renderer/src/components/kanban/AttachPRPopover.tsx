@@ -53,6 +53,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isAttachingRef = useRef(false)
 
   // ── Helpers ────────────────────────────────────────────────────────
 
@@ -81,6 +82,8 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
   useEffect(() => {
     if (!open) return
 
+    let stale = false
+
     // Reset state each time the popover opens
     setFilter('')
     setLookedUpPR(null)
@@ -99,6 +102,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     window.gitOps
       .listPRs(projectPath)
       .then((result) => {
+        if (stale) return
         if (result.success) {
           const ticketBranch = getTicketBranchName()
           const sorted = [...result.prs].sort((a, b) => {
@@ -113,11 +117,17 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
         }
       })
       .catch(() => {
+        if (stale) return
         setError('Failed to load PRs')
       })
       .finally(() => {
+        if (stale) return
         setIsLoading(false)
       })
+
+    return () => {
+      stale = true
+    }
   }, [open, ticket.project_id, ticket.worktree_id])
 
   // ── Auto-focus input when open ─────────────────────────────────────
@@ -128,10 +138,12 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     return () => clearTimeout(t)
   }, [open])
 
+  // Derived once, reused in the debounce effect below and in the render body further down
+  const isNumericFilter = /^\d+$/.test(filter)
+
   // ── Debounced getPRState for numeric input ─────────────────────────
   useEffect(() => {
-    const isNumeric = /^\d+$/.test(filter)
-    if (!isNumeric || !filter) {
+    if (!isNumericFilter || !filter) {
       setLookedUpPR(null)
       setIsLookingUp(false)
       if (debounceRef.current) {
@@ -180,13 +192,12 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [filter, prs, ticket.project_id])
+  }, [filter, isNumericFilter, prs, ticket.project_id])
 
   // ── Filtered PR list ───────────────────────────────────────────────
   const filteredPRs: PRItem[] = (() => {
     if (!filter) return prs
-    const isNumeric = /^\d+$/.test(filter)
-    if (isNumeric) {
+    if (isNumericFilter) {
       return prs.filter((p) => String(p.number).startsWith(filter))
     }
     const lower = filter.toLowerCase()
@@ -199,7 +210,6 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
   })()
 
   // Combined items: looked-up PR (if not in open list) first, then filtered open PRs
-  const isNumericFilter = /^\d+$/.test(filter)
   const showLookedUp =
     lookedUpPR !== null &&
     isNumericFilter &&
@@ -259,6 +269,8 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
   // ── Handlers ──────────────────────────────────────────────────────
 
   const handleAttach = async (pr: { number: number; title: string }) => {
+    if (isAttachingRef.current) return
+    isAttachingRef.current = true
     const prUrl = buildPRUrl(pr.number)
     // Optimistic update
     useKanbanStore.getState().attachPRToTicket(ticket.id, ticket.project_id, pr.number, prUrl)
@@ -269,11 +281,15 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
       // Rollback
       useKanbanStore.getState().detachPRFromTicket(ticket.id, ticket.project_id)
       toast.error('Failed to attach PR')
+    } finally {
+      isAttachingRef.current = false
     }
     onOpenChange(false)
   }
 
   const handleDetach = async () => {
+    if (isAttachingRef.current) return
+    isAttachingRef.current = true
     const prev = { number: ticket.github_pr_number!, url: ticket.github_pr_url! }
     // Optimistic
     useKanbanStore.getState().detachPRFromTicket(ticket.id, ticket.project_id)
@@ -286,6 +302,8 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
         .getState()
         .attachPRToTicket(ticket.id, ticket.project_id, prev.number, prev.url)
       toast.error('Failed to detach PR')
+    } finally {
+      isAttachingRef.current = false
     }
     onOpenChange(false)
   }
