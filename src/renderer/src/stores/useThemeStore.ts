@@ -1,115 +1,101 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { THEME_PRESETS, DEFAULT_THEME_ID, getThemeById, type ThemePreset } from '@/lib/themes'
 
 const THEME_SETTING_KEY = 'selected_theme'
 
+const DARK_PRESET_IDS = new Set([
+  'amethyst',
+  'obsidian',
+  'midnight-blue',
+  'emerald-night',
+  'crimson',
+  'sunset'
+])
+const LIGHT_PRESET_IDS = new Set(['daylight', 'cloud', 'mint', 'rose'])
+
+type Mode = 'dark' | 'light'
+
 interface ThemeState {
-  themeId: string
-  isLoading: boolean
-  setTheme: (id: string) => void
-  getCurrentTheme: () => ThemePreset
+  mode: Mode
+  setMode: (mode: Mode) => void
+  toggleMode: () => void
   loadFromDatabase: () => Promise<void>
-  previewTheme: (id: string) => void
-  cancelPreview: () => void
 }
 
-// Save theme ID to SQLite database
-async function saveThemeToDatabase(themeId: string): Promise<void> {
+function mapLegacyIdToMode(id: string): Mode {
+  if (LIGHT_PRESET_IDS.has(id)) return 'light'
+  return 'dark'
+}
+
+function applyMode(mode: Mode): void {
+  const root = window.document.documentElement
+  root.classList.remove('light', 'dark')
+  root.classList.add(mode)
+}
+
+async function saveModeToDatabase(mode: Mode): Promise<void> {
   try {
     if (typeof window !== 'undefined' && window.db?.setting) {
-      await window.db.setting.set(THEME_SETTING_KEY, themeId)
+      await window.db.setting.set(THEME_SETTING_KEY, mode)
     }
   } catch (error) {
-    console.error('Failed to save theme to database:', error)
+    console.error('Failed to save theme mode to database:', error)
   }
 }
 
-// Load theme ID from SQLite database
-async function loadThemeFromDatabase(): Promise<string | null> {
+async function loadModeFromDatabase(): Promise<Mode | null> {
   try {
     if (typeof window !== 'undefined' && window.db?.setting) {
       const value = await window.db.setting.get(THEME_SETTING_KEY)
-      if (value && getThemeById(value)) {
+      if (value === 'dark' || value === 'light') {
         return value
+      }
+      // Migrate old preset ID to mode
+      if (value && (DARK_PRESET_IDS.has(value) || LIGHT_PRESET_IDS.has(value))) {
+        return mapLegacyIdToMode(value)
       }
     }
   } catch (error) {
-    console.error('Failed to load theme from database:', error)
+    console.error('Failed to load theme mode from database:', error)
   }
   return null
-}
-
-function applyThemePreset(preset: ThemePreset): void {
-  const root = window.document.documentElement
-
-  // Set dark/light class
-  root.classList.remove('light', 'dark')
-  root.classList.add(preset.type)
-
-  // Apply all CSS custom properties
-  for (const [key, value] of Object.entries(preset.colors)) {
-    root.style.setProperty(`--${key}`, value)
-  }
-}
-
-function applyThemeById(themeId: string): void {
-  const preset = getThemeById(themeId)
-  if (preset) {
-    applyThemePreset(preset)
-  }
 }
 
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
-      themeId: DEFAULT_THEME_ID,
-      isLoading: true,
+      mode: 'dark' as Mode,
 
-      setTheme: (id: string) => {
-        const preset = getThemeById(id)
-        if (!preset) return
-        set({ themeId: id })
-        applyThemePreset(preset)
-        saveThemeToDatabase(id)
+      setMode: (mode: Mode) => {
+        set({ mode })
+        applyMode(mode)
+        saveModeToDatabase(mode)
       },
 
-      getCurrentTheme: () => {
-        const preset = getThemeById(get().themeId)
-        return preset || THEME_PRESETS[0]
-      },
-
-      previewTheme: (id: string) => {
-        const preset = getThemeById(id)
-        if (preset) {
-          applyThemePreset(preset)
-        }
-      },
-
-      cancelPreview: () => {
-        applyThemeById(get().themeId)
+      toggleMode: () => {
+        const next = get().mode === 'dark' ? 'light' : 'dark'
+        get().setMode(next)
       },
 
       loadFromDatabase: async () => {
-        const dbThemeId = await loadThemeFromDatabase()
-        if (dbThemeId) {
-          set({ themeId: dbThemeId, isLoading: false })
-          applyThemeById(dbThemeId)
+        const dbMode = await loadModeFromDatabase()
+        if (dbMode) {
+          set({ mode: dbMode })
+          applyMode(dbMode)
         } else {
-          const currentId = get().themeId
-          set({ isLoading: false })
-          applyThemeById(currentId)
-          await saveThemeToDatabase(currentId)
+          const currentMode = get().mode
+          applyMode(currentMode)
+          await saveModeToDatabase(currentMode)
         }
       }
     }),
     {
       name: 'hive-theme',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ themeId: state.themeId }),
+      partialize: (state) => ({ mode: state.mode }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          applyThemeById(state.themeId)
+          applyMode(state.mode)
         }
       }
     }
@@ -122,21 +108,23 @@ if (typeof window !== 'undefined') {
   if (storedTheme) {
     try {
       const parsed = JSON.parse(storedTheme)
-      if (parsed.state?.themeId) {
-        applyThemeById(parsed.state.themeId)
+      if (parsed.state?.mode === 'dark' || parsed.state?.mode === 'light') {
+        // New format — apply directly
+        applyMode(parsed.state.mode)
+      } else if (parsed.state?.themeId) {
+        // Migrate from old preset-based format
+        applyMode(mapLegacyIdToMode(parsed.state.themeId))
       } else if (parsed.state?.theme) {
-        // Migration from old format: map dark/light/system to preset IDs
-        const oldTheme = parsed.state.theme
-        const newId = oldTheme === 'light' ? 'daylight' : DEFAULT_THEME_ID
-        applyThemeById(newId)
+        // Migrate from even older dark/light/system format
+        applyMode(parsed.state.theme === 'light' ? 'light' : 'dark')
       } else {
-        applyThemeById(DEFAULT_THEME_ID)
+        applyMode('dark')
       }
     } catch {
-      applyThemeById(DEFAULT_THEME_ID)
+      applyMode('dark')
     }
   } else {
-    applyThemeById(DEFAULT_THEME_ID)
+    applyMode('dark')
   }
 
   // Load from database (source of truth) once IPC is ready
