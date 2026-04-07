@@ -22,6 +22,9 @@ import {
   AlertDialogCancel
 } from '@/components/ui/alert-dialog'
 import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
+import { Popover, PopoverAnchor } from '@/components/ui/popover'
+import { AttachPRPopover } from '@/components/kanban/AttachPRPopover'
+import { useGitStore } from '@/stores/useGitStore'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
 import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -84,6 +87,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const [showWorktreePicker, setShowWorktreePicker] = useState(false)
   const [showPreAssignPicker, setShowPreAssignPicker] = useState(false)
   const [showStatusUpdate, setShowStatusUpdate] = useState(false)
+  const [showPRPicker, setShowPRPicker] = useState(false)
   const isExternalTicket = !!ticket.external_provider
   const dragCloneRef = useRef<HTMLElement | null>(null)
 
@@ -242,6 +246,20 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     useCallback(
       (s) => (ticket.worktree_id ? s.pinnedWorktreeIds.has(ticket.worktree_id) : false),
       [ticket.worktree_id]
+    )
+  )
+
+  const hasGitRemote = useGitStore(
+    useCallback(
+      (state) => {
+        const worktrees = useWorktreeStore.getState().worktreesByProject.get(ticket.project_id)
+        if (!worktrees) return false
+        return worktrees.some((wt) => {
+          const info = state.remoteInfo.get(wt.id)
+          return info?.hasRemote === true
+        })
+      },
+      [ticket.project_id]
     )
   )
 
@@ -422,25 +440,27 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   return (
     <>
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <div
-            data-testid={`kanban-ticket-${ticket.id}`}
-            draggable={!isArchived}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onClick={handleClick}
-            onMouseDown={handleMouseDown}
-            className={cn(
-              'group cursor-pointer rounded-md border bg-card shadow-sm p-2 transition-all duration-200',
-              'hover:bg-muted/40',
-              isDragging && 'invisible',
-              isArchived && 'opacity-50 cursor-default',
-              borderState === 'default' && 'border-border/60',
-              borderState === 'blue' && 'border-blue-500/60',
-              borderState === 'violet' && 'border-violet-500/60'
-            )}
-          >
+      <Popover open={showPRPicker} onOpenChange={setShowPRPicker}>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <PopoverAnchor asChild>
+              <div
+                data-testid={`kanban-ticket-${ticket.id}`}
+                draggable={!isArchived}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onClick={handleClick}
+                onMouseDown={handleMouseDown}
+                className={cn(
+                  'group cursor-pointer rounded-md border bg-card shadow-sm p-2 transition-all duration-200',
+                  'hover:bg-muted/40',
+                  isDragging && 'invisible',
+                  isArchived && 'opacity-50 cursor-default',
+                  borderState === 'default' && 'border-border/60',
+                  borderState === 'blue' && 'border-blue-500/60',
+                  borderState === 'violet' && 'border-violet-500/60'
+                )}
+              >
             {/* Title + top-right indicators */}
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-medium leading-snug text-foreground min-w-0">{ticket.title}</p>
@@ -567,10 +587,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 )}
               </div>
             )}
-          </div>
-        </ContextMenuTrigger>
+              </div>
+            </PopoverAnchor>
+          </ContextMenuTrigger>
 
-        <ContextMenuContent>
+          <ContextMenuContent>
           {/* Todo tickets without worktree: pre-assign */}
           {isSimpleTicket && isTodo && !ticket.worktree_id && (
             <ContextMenuItem
@@ -663,6 +684,18 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </ContextMenuItem>
           )}
 
+          {/* Attach PR */}
+          {hasGitRemote && (
+            <ContextMenuItem
+              data-testid="ctx-attach-pr"
+              onClick={() => setShowPRPicker(true)}
+              className="gap-2"
+            >
+              <GitPullRequest className="h-3.5 w-3.5" />
+              Attach PR
+            </ContextMenuItem>
+          )}
+
           <ContextMenuSeparator />
 
           {/* Archive/Unarchive (done tickets) or Delete (all others) */}
@@ -696,8 +729,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               Delete
             </ContextMenuItem>
           )}
-        </ContextMenuContent>
-      </ContextMenu>
+          </ContextMenuContent>
+        </ContextMenu>
+        <AttachPRPopover ticket={ticket} open={showPRPicker} onOpenChange={setShowPRPicker} />
+      </Popover>
 
       {/* Delete confirmation dialog (not used for done/archive tickets) */}
       {!isDone && (
