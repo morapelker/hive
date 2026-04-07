@@ -31,6 +31,7 @@ function ThemeCard({
           ? 'border-primary ring-2 ring-primary/30 bg-primary/5'
           : 'border-border hover:border-muted-foreground/40'
       )}
+      aria-label={`Select ${preset.name} theme`}
       aria-pressed={isActive}
       data-testid={`theme-card-${preset.id}`}
     >
@@ -96,7 +97,7 @@ export function SettingsAppearance(): React.JSX.Element {
   return (
     <div className="space-y-6" data-testid="settings-appearance">
       <div>
-        <h2 className="text-lg font-semibold mb-1">Appearance</h2>
+        <h3 className="text-base font-medium mb-1">Appearance</h3>
         <p className="text-sm text-muted-foreground">
           Choose a theme preset. Hover to preview before selecting.
         </p>
