@@ -17,6 +17,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
 import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
+import { THEME_PRESETS, getThemeById } from '@/lib/themes'
 import { toast } from '@/lib/toast'
 import { revealLabel, isWindows, fileManagerName } from '@/lib/platform'
 
@@ -38,7 +39,7 @@ export function useCommands() {
     setActiveSession,
     getSessionsForWorktree
   } = useSessionStore()
-  const { mode, toggleMode } = useThemeStore()
+  const { themeId, setTheme, previewTheme, cancelPreview } = useThemeStore()
   const { togglePanel: toggleSessionHistory } = useSessionHistoryStore()
   const { stageAll, unstageAll, refreshStatuses, push, pull, isPushing, isPulling } = useGitStore()
   const { toggleLeftSidebar, toggleRightSidebar } = useLayoutStore()
@@ -572,16 +573,32 @@ export function useCommands() {
       },
       {
         id: 'settings:theme',
-        label: 'Toggle Dark/Light Mode',
-        description: `Current: ${mode}`,
+        label: 'Switch Theme',
+        description: `Current: ${getThemeById(themeId)?.name ?? themeId}`,
         category: 'settings',
-        icon: mode === 'dark' ? 'Moon' : 'Sun',
+        icon: 'Palette',
         keywords: ['theme', 'dark', 'light', 'mode', 'appearance', 'color', 'toggle'],
+        hasChildren: true,
         action: () => {
-          toggleMode()
-          const newMode = useThemeStore.getState().mode
-          toast.success(`Switched to ${newMode} mode`)
-          closeCommandPalette()
+          const children = THEME_PRESETS.map((p) => ({
+            id: `settings:theme:${p.id}`,
+            label: p.name,
+            description: `${p.type} theme`,
+            category: 'settings' as const,
+            icon: p.type === 'dark' ? 'Moon' : 'Sun',
+            onHighlight: () => previewTheme(p.id),
+            action: () => {
+              setTheme(p.id)
+              toast.success(`Switched to ${p.name}`)
+              closeCommandPalette()
+            }
+          }))
+          pushCommandLevel(children, {
+            id: 'settings:theme',
+            label: 'Switch Theme',
+            category: 'settings',
+            action: () => {}
+          }, () => cancelPreview())
         }
       },
 
@@ -658,8 +675,10 @@ export function useCommands() {
     closeSession,
     setActiveSession,
     getSessionsForWorktree,
-    mode,
-    toggleMode,
+    themeId,
+    setTheme,
+    previewTheme,
+    cancelPreview,
     toggleSessionHistory,
     stageAll,
     unstageAll,
