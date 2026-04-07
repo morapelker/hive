@@ -13,7 +13,7 @@ const DARK_PRESET_IDS = new Set([
 ])
 const LIGHT_PRESET_IDS = new Set(['daylight', 'cloud', 'mint', 'rose'])
 
-type Mode = 'dark' | 'light'
+export type Mode = 'dark' | 'light'
 
 interface ThemeState {
   mode: Mode
@@ -82,6 +82,7 @@ export const useThemeStore = create<ThemeState>()(
         if (dbMode) {
           set({ mode: dbMode })
           applyMode(dbMode)
+          await saveModeToDatabase(dbMode)
         } else {
           const currentMode = get().mode
           applyMode(currentMode)
@@ -92,6 +93,14 @@ export const useThemeStore = create<ThemeState>()(
     {
       name: 'hive-theme',
       storage: createJSONStorage(() => localStorage),
+      version: 1,
+      migrate: (persisted: unknown, version: number) => {
+        if (version === 0) {
+          const old = persisted as { themeId?: string }
+          return { mode: old?.themeId ? mapLegacyIdToMode(old.themeId) : 'dark' }
+        }
+        return persisted as { mode: Mode }
+      },
       partialize: (state) => ({ mode: state.mode }),
       onRehydrateStorage: () => (state) => {
         if (state) {
