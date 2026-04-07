@@ -7,7 +7,7 @@ export interface ThemePreset {
   previewColors: Record<string, string> // 4 keys for ThemeCard swatch rendering
 }
 
-export const THEME_CSS_PROPERTIES: string[] = [
+export const THEME_CSS_PROPERTIES = [
   'background',
   'foreground',
   'card',
@@ -35,7 +35,7 @@ export const THEME_CSS_PROPERTIES: string[] = [
   'sidebar-accent-foreground',
   'sidebar-border',
   'sidebar-ring'
-]
+] as const
 
 export const THEME_PRESETS: ThemePreset[] = [
   // Glass themes (CSS-native)
@@ -251,7 +251,7 @@ export const THEME_PRESETS: ThemePreset[] = [
       'muted-foreground': 'hsl(0 5% 55%)',
       accent: 'hsl(0 10% 16%)',
       'accent-foreground': 'hsl(0 5% 90%)',
-      destructive: 'hsl(30 80% 50%)',
+      destructive: 'hsl(30 80% 50%)', // orange instead of red — avoids blending with the crimson primary
       'destructive-foreground': 'hsl(0 0% 100%)',
       border: 'hsl(0 10% 18%)',
       input: 'hsl(0 10% 18%)',
