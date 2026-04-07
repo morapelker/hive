@@ -5,6 +5,7 @@ import { useScriptStore, killRunScript } from './useScriptStore'
 import { useSessionStore } from './useSessionStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import { useGitStore } from './useGitStore'
+import { useFileViewerStore } from './useFileViewerStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
@@ -240,6 +241,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         }
       })
 
+      // Clear file tabs from the previous worktree
+      useFileViewerStore.getState().closeAllFiles()
+
       // Fire-and-forget: run setup script if configured
       fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
 
@@ -292,6 +296,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           creatingForProjectId: null
         }
       })
+
+      // Clear file tabs from the previous worktree
+      useFileViewerStore.getState().closeAllFiles()
 
       // Fire-and-forget: run setup script if configured
       fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
@@ -386,6 +393,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       usePinnedStore.getState().removeWorktree(worktreeId)
 
       // Remove from state
+      const wasSelected = get().selectedWorktreeId === worktreeId
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
         for (const [projectId, worktrees] of newMap.entries()) {
@@ -400,6 +408,11 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
             state.selectedWorktreeId === worktreeId ? null : state.selectedWorktreeId
         }
       })
+
+      // Close file tabs if the archived worktree was the active one
+      if (wasSelected) {
+        useFileViewerStore.getState().closeAllFiles()
+      }
 
       return { success: true }
     } catch (error) {
@@ -466,6 +479,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       usePinnedStore.getState().removeWorktree(worktreeId)
 
       // Remove from state
+      const wasSelected = get().selectedWorktreeId === worktreeId
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
         for (const [projectId, worktrees] of newMap.entries()) {
@@ -480,6 +494,11 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
             state.selectedWorktreeId === worktreeId ? null : state.selectedWorktreeId
         }
       })
+
+      // Close file tabs if the unbranched worktree was the active one
+      if (wasSelected) {
+        useFileViewerStore.getState().closeAllFiles()
+      }
 
       return { success: true }
     } catch (error) {
@@ -499,6 +518,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
   // Select a worktree (with connection deconfliction)
   selectWorktree: (id: string | null) => {
+    if (id !== get().selectedWorktreeId) {
+      useFileViewerStore.getState().closeAllFiles()
+    }
     set({ selectedWorktreeId: id })
     if (id) {
       // Touch worktree to update last_accessed_at
@@ -527,6 +549,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Select a worktree without triggering connection deconfliction
   // Used by connection store to avoid circular deconfliction
   selectWorktreeOnly: (id: string | null) => {
+    if (id !== get().selectedWorktreeId) {
+      useFileViewerStore.getState().closeAllFiles()
+    }
     set({ selectedWorktreeId: id })
     if (id) {
       get().touchWorktree(id)
