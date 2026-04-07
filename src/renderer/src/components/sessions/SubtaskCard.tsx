@@ -1,4 +1,4 @@
-import { useState, memo } from 'react'
+import { useState } from 'react'
 import { ChevronRight, Loader2, Check, AlertCircle, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -22,11 +22,12 @@ function StatusIcon({ status }: { status: 'running' | 'completed' | 'error' }) {
   }
 }
 
-export const SubtaskCard = memo(function SubtaskCard({ subtask }: SubtaskCardProps) {
+export function SubtaskCard({ subtask }: SubtaskCardProps) {
   const [isExpanded, setIsExpanded] = useState(false)
 
   const preview = subtask.description || subtask.prompt
   const truncatedPreview = preview.length > 80 ? preview.slice(0, 80) + '...' : preview
+  const opsCount = subtask.parts.filter((p) => p.type === 'tool_use').length
 
   return (
     <div
@@ -52,6 +53,11 @@ export const SubtaskCard = memo(function SubtaskCard({ subtask }: SubtaskCardPro
         <span className="text-xs font-medium text-foreground shrink-0">{subtask.agent}</span>
         <span className="text-xs text-muted-foreground truncate min-w-0">{truncatedPreview}</span>
         <span className="flex-1" />
+        {opsCount > 0 && (
+          <span className="text-[10px] bg-blue-500/15 text-blue-500 dark:text-blue-400 rounded px-1.5 py-0.5 font-medium shrink-0 tabular-nums">
+            {opsCount} {opsCount === 1 ? 'op' : 'ops'}
+          </span>
+        )}
         <StatusIcon status={subtask.status} />
       </button>
 
@@ -93,4 +99,4 @@ export const SubtaskCard = memo(function SubtaskCard({ subtask }: SubtaskCardPro
       )}
     </div>
   )
-})
+}
