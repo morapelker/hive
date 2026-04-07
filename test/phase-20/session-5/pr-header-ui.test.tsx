@@ -13,7 +13,6 @@ vi.mock('../../../src/renderer/src/stores/useWorktreeStore', () => ({
 describe('Session 5: PR header UI state', () => {
   beforeEach(() => {
     useGitStore.setState({
-      prCreation: new Map(),
       attachedPR: new Map(),
       fileStatusesByWorktree: new Map(),
       remoteInfo: new Map(),
@@ -27,11 +26,9 @@ describe('Session 5: PR header UI state', () => {
   function deriveHeaderState(worktreeId: string) {
     const state = useGitStore.getState()
     const attachedPR = state.attachedPR.get(worktreeId) ?? null
-    const prCreation = state.prCreation.get(worktreeId) ?? null
 
     return {
       attachedPR,
-      isCreatingPR: prCreation?.creating ?? false,
       hasAttachedPR: !!attachedPR
     }
   }
@@ -41,23 +38,9 @@ describe('Session 5: PR header UI state', () => {
     return !fileStatuses || fileStatuses.length === 0
   }
 
-  test('defaults to no attached PR and not creating', () => {
+  test('defaults to no attached PR', () => {
     expect(deriveHeaderState('wt-1')).toEqual({
       attachedPR: null,
-      isCreatingPR: false,
-      hasAttachedPR: false
-    })
-  })
-
-  test('shows creating state after PR creation starts', () => {
-    useGitStore.getState().setPrCreation('wt-1', {
-      creating: true,
-      sessionId: 'session-1'
-    })
-
-    expect(deriveHeaderState('wt-1')).toEqual({
-      attachedPR: null,
-      isCreatingPR: true,
       hasAttachedPR: false
     })
   })
@@ -73,40 +56,8 @@ describe('Session 5: PR header UI state', () => {
         number: 42,
         url: 'https://github.com/org/repo/pull/42'
       },
-      isCreatingPR: false,
       hasAttachedPR: true
     })
-  })
-
-  test('attached PR takes over once creation state is cleared', () => {
-    useGitStore.getState().setPrCreation('wt-1', {
-      creating: true,
-      sessionId: 'session-1'
-    })
-    useGitStore.getState().setAttachedPR('wt-1', {
-      number: 280,
-      url: 'https://github.com/org/repo/pull/280'
-    })
-    useGitStore.getState().setPrCreation('wt-1', null)
-
-    expect(deriveHeaderState('wt-1')).toEqual({
-      attachedPR: {
-        number: 280,
-        url: 'https://github.com/org/repo/pull/280'
-      },
-      isCreatingPR: false,
-      hasAttachedPR: true
-    })
-  })
-
-  test('PR create button should be disabled while creating', () => {
-    useGitStore.getState().setPrCreation('wt-1', {
-      creating: true,
-      sessionId: 'session-1'
-    })
-
-    const disabled = deriveHeaderState('wt-1').isCreatingPR
-    expect(disabled).toBe(true)
   })
 
   test('clean tree is true when no file statuses exist for worktree path', () => {

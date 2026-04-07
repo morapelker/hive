@@ -153,10 +153,6 @@ vi.mock('@/stores/useWorktreeStatusStore', () => {
 // Mock non-store dependencies
 // ---------------------------------------------------------------------------
 
-vi.mock('@/hooks/usePRDetection', () => ({
-  usePRDetection: vi.fn()
-}))
-
 vi.mock('@/assets/icon.png', () => ({
   default: 'test-icon.png'
 }))

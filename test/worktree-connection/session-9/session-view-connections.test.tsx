@@ -24,11 +24,6 @@ vi.mock('@/lib/toast', () => ({
   }
 }))
 
-// ---------- Mock hooks ----------
-vi.mock('@/hooks/usePRDetection', () => ({
-  usePRDetection: vi.fn()
-}))
-
 // ---------- Mock assets ----------
 vi.mock('@/assets/icon.png', () => ({ default: 'mock-icon.png' }))
 vi.mock('@/assets/bee.png', () => ({ default: 'mock-bee.png' }))
