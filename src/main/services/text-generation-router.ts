@@ -243,8 +243,11 @@ function spawnWithStdin(command: string, args: string[], input: string): Promise
     let killed = false
 
     const timeout = setTimeout(() => {
-      proc.kill('SIGKILL')
-      reject(new Error(`${command} timed out after ${TIMEOUT_MS}ms`))
+      if (!killed) {
+        killed = true
+        proc.kill('SIGKILL')
+        reject(new Error(`${command} timed out after ${TIMEOUT_MS}ms`))
+      }
     }, TIMEOUT_MS)
 
     proc.stdout?.on('data', (chunk: Buffer) => {

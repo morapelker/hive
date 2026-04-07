@@ -256,6 +256,11 @@ export const gitMutationResolvers: Resolvers = {
 
     gitGeneratePRContent: async (_parent, { worktreePath, baseBranch, provider }) => {
       try {
+        const validProviders = ['claude-code', 'codex', 'opencode', 'terminal']
+        if (!validProviders.includes(provider)) {
+          return { success: false, error: `Invalid provider: ${provider}` }
+        }
+
         const gitService = createGitService(worktreePath)
         const rangeDiff = await gitService.getRangeDiff(baseBranch)
         const branchInfo = await gitService.getBranchInfo()
