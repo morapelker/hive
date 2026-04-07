@@ -94,6 +94,13 @@ export async function fetchClaudeUsage(): Promise<UsageResult> {
     }
 
     const data = (await response.json()) as UsageData
+
+    // API returns extra_usage credits in cents — convert to dollars
+    if (data.extra_usage) {
+      data.extra_usage.used_credits = (data.extra_usage.used_credits ?? 0) / 100
+      data.extra_usage.monthly_limit = (data.extra_usage.monthly_limit ?? 0) / 100
+    }
+
     return { success: true, data }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
