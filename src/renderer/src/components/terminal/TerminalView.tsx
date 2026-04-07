@@ -52,7 +52,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
 
   const restartTerminal = useTerminalStore((s) => s.restartTerminal)
   const destroyTerminal = useTerminalStore((s) => s.destroyTerminal)
-  const themeId = useThemeStore((s) => s.themeId)
+  const mode = useThemeStore((s) => s.mode)
   const embeddedTerminalBackend = useSettingsStore(
     (s) => s.embeddedTerminalBackend
   ) as EmbeddedTerminalBackend
@@ -89,7 +89,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       backendRef.current?.updateTheme?.()
     }, 50)
     return () => clearTimeout(timer)
-  }, [themeId])
+  }, [mode])
 
   // Re-fit and focus when becoming visible
   useEffect(() => {

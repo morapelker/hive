@@ -4,14 +4,14 @@ import { RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useShortcutStore } from '@/stores/useShortcutStore'
-import { DEFAULT_THEME_ID } from '@/lib/themes'
+
 import { toast } from '@/lib/toast'
 import type { UsageProvider } from '@shared/types/usage'
 import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
 
 export function SettingsGeneral(): React.JSX.Element {
-  const { setTheme } = useThemeStore()
+  const { setMode } = useThemeStore()
   const {
     autoStartSession,
     autoPullBeforeWorktree,
@@ -34,7 +34,7 @@ export function SettingsGeneral(): React.JSX.Element {
   const handleResetAll = (): void => {
     resetToDefaults()
     resetShortcuts()
-    setTheme(DEFAULT_THEME_ID)
+    setMode('dark')
     toast.success('All settings reset to defaults')
   }
 

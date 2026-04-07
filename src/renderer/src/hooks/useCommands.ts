@@ -10,7 +10,7 @@ import {
   useSettingsStore,
   useKanbanStore
 } from '@/stores'
-import { THEME_PRESETS } from '@/lib/themes'
+
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
@@ -38,7 +38,7 @@ export function useCommands() {
     setActiveSession,
     getSessionsForWorktree
   } = useSessionStore()
-  const { themeId, setTheme, previewTheme, cancelPreview } = useThemeStore()
+  const { mode, toggleMode } = useThemeStore()
   const { togglePanel: toggleSessionHistory } = useSessionHistoryStore()
   const { stageAll, unstageAll, refreshStatuses, push, pull, isPushing, isPulling } = useGitStore()
   const { toggleLeftSidebar, toggleRightSidebar } = useLayoutStore()
@@ -572,36 +572,14 @@ export function useCommands() {
       },
       {
         id: 'settings:theme',
-        label: 'Switch Theme',
-        description: `Current: ${themeId}. Choose a theme preset`,
+        label: 'Toggle Dark/Light Mode',
+        description: `Current: ${mode}`,
         category: 'settings',
-        icon: 'Palette',
-        keywords: ['theme', 'dark', 'light', 'mode', 'appearance', 'color'],
-        hasChildren: true,
+        icon: mode === 'dark' ? 'Moon' : 'Sun',
+        keywords: ['theme', 'dark', 'light', 'mode', 'appearance', 'color', 'toggle'],
         action: () => {
-          const children = THEME_PRESETS.map((preset) => ({
-            id: `settings:theme:${preset.id}`,
-            label: preset.name,
-            description: `${preset.type} theme`,
-            category: 'settings' as const,
-            icon: preset.type === 'dark' ? 'Moon' : 'Sun',
-            onHighlight: () => previewTheme(preset.id),
-            action: () => {
-              setTheme(preset.id)
-              toast.success(`Theme set to ${preset.name}`)
-              closeCommandPalette()
-            }
-          }))
-          pushCommandLevel(
-            children,
-            {
-              id: 'settings:theme',
-              label: 'Switch Theme',
-              category: 'settings',
-              action: () => {}
-            },
-            () => cancelPreview()
-          )
+          toggleMode()
+          closeCommandPalette()
         }
       },
 
@@ -678,10 +656,8 @@ export function useCommands() {
     closeSession,
     setActiveSession,
     getSessionsForWorktree,
-    themeId,
-    setTheme,
-    previewTheme,
-    cancelPreview,
+    mode,
+    toggleMode,
     toggleSessionHistory,
     stageAll,
     unstageAll,
