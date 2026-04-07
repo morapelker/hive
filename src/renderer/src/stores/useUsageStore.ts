@@ -99,6 +99,13 @@ export function resolveUsageProvider(session: SessionLike): UsageProvider {
   return 'anthropic'
 }
 
+export function resolveDefaultUsageProvider(
+  agentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+): UsageProvider {
+  if (agentSdk === 'codex') return 'openai'
+  return 'anthropic'
+}
+
 export function normalizeUsage(
   provider: UsageProvider,
   anthropicUsage: UsageData | null | undefined,

@@ -43,6 +43,7 @@ export {
   type UsageData,
   type UsageProvider,
   resolveUsageProvider,
+  resolveDefaultUsageProvider,
   normalizeUsage
 } from './useUsageStore'
 export { useHintStore } from './useHintStore'

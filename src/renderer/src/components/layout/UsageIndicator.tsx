@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react'
-import { useUsageStore, useSessionStore, resolveUsageProvider, normalizeUsage } from '@/stores'
+import { useUsageStore, useSessionStore, resolveUsageProvider, resolveDefaultUsageProvider, normalizeUsage } from '@/stores'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -199,12 +199,22 @@ export function UsageIndicator(): React.JSX.Element | null {
   // We additionally fetch every visible provider so pinned bars stay fresh.
   // fetchUsageForProvider is debounce-safe, so overlapping calls are no-ops.
   useEffect(() => {
-    if (!activeSessionId) return
-    const session = findSessionById(activeSessionId)
-    if (session) {
-      const provider = resolveUsageProvider(session)
-      setActiveProvider(provider)
+    if (activeSessionId) {
+      const session = findSessionById(activeSessionId)
+      if (session) {
+        const provider = resolveUsageProvider(session)
+        setActiveProvider(provider)
+      } else {
+        // BOARD_TAB_ID or stale session — fall back to default SDK
+        const { defaultAgentSdk } = useSettingsStore.getState()
+        setActiveProvider(resolveDefaultUsageProvider(defaultAgentSdk))
+      }
+    } else {
+      // No session at all — resolve from defaultAgentSdk setting
+      const { defaultAgentSdk } = useSettingsStore.getState()
+      setActiveProvider(resolveDefaultUsageProvider(defaultAgentSdk))
     }
+
     // Read settings via getState() to avoid array-ref dep churn
     const { usageIndicatorMode: mode, usageIndicatorProviders: selected } =
       useSettingsStore.getState()
