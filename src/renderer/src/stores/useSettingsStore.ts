@@ -113,6 +113,9 @@ export interface AppSettings {
 
   // Tips
   tipsEnabled: boolean
+
+  // Advanced
+  environmentVariables: Array<{ key: string; value: string }>
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -165,7 +168,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     enterToApprove: false
   },
   telemetryEnabled: true,
-  tipsEnabled: true
+  tipsEnabled: true,
+  environmentVariables: []
 }
 
 interface SettingsState extends AppSettings {
@@ -286,7 +290,8 @@ function extractSettings(state: SettingsState): AppSettings {
     initialSetupComplete: state.initialSetupComplete,
     commandFilter: state.commandFilter,
     telemetryEnabled: state.telemetryEnabled,
-    tipsEnabled: state.tipsEnabled
+    tipsEnabled: state.tipsEnabled,
+    environmentVariables: state.environmentVariables
   }
 }
 
@@ -536,7 +541,9 @@ export const useSettingsStore = create<SettingsState>()(
         skippedUpdateVersion: state.skippedUpdateVersion,
         initialSetupComplete: state.initialSetupComplete,
         commandFilter: state.commandFilter,
-        telemetryEnabled: state.telemetryEnabled
+        telemetryEnabled: state.telemetryEnabled,
+        tipsEnabled: state.tipsEnabled,
+        environmentVariables: state.environmentVariables
       })
     }
   )

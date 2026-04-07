@@ -6,6 +6,8 @@ import readline from 'node:readline'
 import { createLogger } from './logger'
 import { asObject, asString, toJsonSnapshot } from './codex-utils'
 import { CODEX_DEFAULT_MODEL } from './codex-models'
+import { getDatabase } from '../db'
+import { getUserEnvironmentVariables } from './env-vars'
 
 const log = createLogger({ component: 'CodexAppServerManager' })
 
@@ -351,6 +353,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         env: {
           ...process.env,
+          ...getUserEnvironmentVariables(getDatabase()),
           ...(options.codexHomePath ? { CODEX_HOME: options.codexHomePath } : {})
         },
         stdio: ['pipe', 'pipe', 'pipe'],

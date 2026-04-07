@@ -9,6 +9,7 @@ import {
   Download,
   Shield,
   Eye,
+  Wrench,
   Sparkles,
   LogOut,
   Plug
@@ -29,6 +30,7 @@ import { SettingsUpdates } from './SettingsUpdates'
 import { SettingsSecurity } from './SettingsSecurity'
 import { SettingsPrivacy } from './SettingsPrivacy'
 import { SettingsIntegrations } from './SettingsIntegrations'
+import { SettingsAdvanced } from './SettingsAdvanced'
 import { cn } from '@/lib/utils'
 
 const SECTIONS = [
@@ -41,6 +43,7 @@ const SECTIONS = [
   { id: 'security', label: 'Security', icon: Shield, electronOnly: false },
   { id: 'privacy', label: 'Privacy', icon: Eye, electronOnly: false },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, electronOnly: false },
+  { id: 'advanced', label: 'Advanced', icon: Wrench, electronOnly: false },
   { id: 'updates', label: 'Updates', icon: Download, electronOnly: true }
 ] as const
 
@@ -127,6 +130,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'privacy' && <SettingsPrivacy />}
             {activeSection === 'shortcuts' && <SettingsShortcuts />}
             {activeSection === 'updates' && <SettingsUpdates />}
+            {activeSection === 'advanced' && <SettingsAdvanced />}
           </div>
         </div>
       </DialogContent>

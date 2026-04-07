@@ -10,6 +10,7 @@ import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-type
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
 import type { DatabaseService } from '../db/database'
 import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
+import { getUserEnvironmentVariables } from './env-vars'
 import { generateSessionTitle } from './claude-session-title'
 import { autoRenameWorktreeBranch } from './git-service'
 import { getEventBus } from '../../server/event-bus'
@@ -526,6 +527,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         debugFile: join(app.getPath('home'), '.hive', 'logs', 'claude-debug.log'),
         env: {
           ...process.env,
+          ...getUserEnvironmentVariables(this.dbService),
           CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
         },
         stderr: (data: string) => {
@@ -2897,6 +2899,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         maxTurns: 1,
         env: {
           ...process.env,
+          ...getUserEnvironmentVariables(this.dbService),
           CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
         },
         ...(this.claudeBinaryPath ? { pathToClaudeCodeExecutable: this.claudeBinaryPath } : {})

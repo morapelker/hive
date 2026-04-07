@@ -5,6 +5,7 @@ import { notificationService } from './notification-service'
 import { getDatabase } from '../db'
 import { autoRenameWorktreeBranch } from './git-service'
 import { getEventBus } from '../../server/event-bus'
+import { getUserEnvironmentVariables } from './env-vars'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -125,7 +126,7 @@ function spawnOpenCodeServer(
   const args = ['serve', `--hostname=${hostname}`]
   const proc: ChildProcess = spawn('opencode', args, {
     signal: options.signal,
-    env: { ...process.env }
+    env: { ...process.env, ...getUserEnvironmentVariables(getDatabase()) }
   })
 
   const url = new Promise<string>((resolve, reject) => {
