@@ -56,6 +56,7 @@ export function CreatePRModal({
     worktreeId ? s.prTargetBranch.get(worktreeId) : undefined
   )
   const attachPR = useGitStore((s) => s.attachPR)
+  const setCreatingPR = useGitStore((s) => s.setCreatingPR)
   const fileStatusesByWorktree = useGitStore((s) => s.fileStatusesByWorktree)
   const isCommitting = useGitStore((s) => s.isCommitting)
   const loadFileStatuses = useGitStore((s) => s.loadFileStatuses)
@@ -263,6 +264,7 @@ export function CreatePRModal({
 
     // Close modal — PR creation continues in background via notification
     setOpen(false)
+    setCreatingPR(worktreeId, true)
 
     const { show, update } = usePRNotificationStore.getState()
     const notifId = show({
@@ -379,6 +381,8 @@ export function CreatePRModal({
         message: 'Failed to create pull request',
         description: msg
       })
+    } finally {
+      setCreatingPR(worktreeId, false)
     }
   }, [
     worktreePath,
@@ -389,7 +393,8 @@ export function CreatePRModal({
     defaultAgentSdk,
     branchInfo,
     attachPR,
-    setOpen
+    setOpen,
+    setCreatingPR
   ])
 
   // ── Cancel handler ──────────────────────────────────────────────

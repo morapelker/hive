@@ -185,6 +185,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useGitStore } from '@/stores/useGitStore'
 
 // ── Import components under test ────────────────────────────────────
 import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
@@ -313,6 +314,15 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
       })
       useProjectStore.setState({
         projects: [makeProject()]
+      })
+      useGitStore.setState({
+        remoteInfo: new Map(),
+        attachedPR: new Map(),
+        creatingPRByWorktreeId: new Map(),
+        prTargetBranch: new Map(),
+        reviewTargetBranch: new Map(),
+        branchInfoByWorktree: new Map(),
+        fileStatusesByWorktree: new Map(),
       })
     })
     vi.clearAllMocks()
@@ -732,6 +742,22 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
 
       expect(await screen.findByTestId('review-diff-summary-error')).toHaveTextContent('Branch diff failed')
       expect(screen.getByTestId('review-followup-input')).toBeInTheDocument()
+    })
+
+    test('shows loading state instead of Create PR while PR creation is in progress', async () => {
+      act(() => {
+        useGitStore.setState({
+          remoteInfo: new Map([
+            ['wt-1', { hasRemote: true, isGitHub: true, url: 'git@github.com:test/repo.git' }]
+          ]),
+          creatingPRByWorktreeId: new Map([['wt-1', true]])
+        })
+      })
+
+      render(<KanbanTicketModal />)
+
+      expect(screen.getByRole('button', { name: 'Creating PR...' })).toBeDisabled()
+      expect(screen.queryByRole('button', { name: 'Create PR' })).not.toBeInTheDocument()
     })
 
     test('followup input has Build/Plan chip toggle', () => {
