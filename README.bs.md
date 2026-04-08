@@ -81,9 +81,6 @@ Navigirajte i djelujte brzo sa prečicama na tastaturi. Pritisnite `Cmd+K` za pr
 ### 🎨 **Lijepe Teme**
 Birajte između 10 pažljivo dizajniranih tema — 6 tamnih i 4 svijetle. Prebacujte se trenutno da odgovaraju vašim preferencijama ili dobu dana. Automatski prati sistemsku temu ako želite.
 
-### 🖥️ **Language Server Protocol**
-Puna LSP integracija sa language serverima po worktreeu. Dobijte inteligentnu dopunu koda, idi-na-definiciju, hover tooltipove i dijagnostiku u realnom vremenu za TypeScript, Python, Go, Rust i još mnogo toga.
-
 ### 🔌 **Worktree Konekcije**
 Povežite dva worktreea zajedno za dijeljenje konteksta, poređenje implementacija ili saradnju u realnom vremenu. Savršeno za pregled promjena između brancheva, dijeljenje AI sesija kroz worktreeje ili održavanje konzistentnosti pri radu na povezanim funkcionalnostima. Pratite live ažuriranja kada se povezani worktreevi mijenjaju.
 

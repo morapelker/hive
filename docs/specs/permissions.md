@@ -50,7 +50,7 @@ type PermissionRequest = {
   sessionID: string // Session that triggered the request
   permission: string // Permission type: "edit", "bash", "read", "glob",
   //   "grep", "list", "task", "external_directory",
-  //   "webfetch", "websearch", "codesearch", "lsp",
+  //   "webfetch", "websearch", "codesearch",
   //   "todowrite", "todoread", "skill", "doom_loop",
   //   or any MCP tool name
   patterns: string[] // What is being requested (file paths, commands, URLs)
@@ -297,7 +297,6 @@ These are the `permission` strings your client will encounter in `PermissionRequ
 | `"webfetch"`           | webfetch tool                                  | URLs                    |
 | `"websearch"`          | websearch tool                                 | Search queries          |
 | `"codesearch"`         | codesearch tool                                | Search queries          |
-| `"lsp"`                | LSP tool                                       | LSP operation patterns  |
 | `"todowrite"`          | todo write tool                                | `["*"]`                 |
 | `"todoread"`           | todo read tool                                 | `["*"]`                 |
 | `"skill"`              | skill tool                                     | Skill names             |

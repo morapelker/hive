@@ -81,9 +81,6 @@ Navigér og handl hurtigt med tastaturgenveje. Tryk `Cmd+K` for at tilgå enhver
 ### 🎨 **Smukke temaer**
 Vælg mellem 10 omhyggeligt designede temaer — 6 mørke og 4 lyse. Skift øjeblikkeligt for at matche din præference eller tidspunkt på dagen. Følger systemtema automatisk, hvis ønsket.
 
-### 🖥️ **Language Server Protocol**
-Fuld LSP-integration med per-worktree sprogservere. Få intelligent kodefuldførelse, go-to-definition, hover tooltips og realtidsdiagnostik for TypeScript, Python, Go, Rust og mere.
-
 ### 🔌 **Worktree-forbindelser**
 Forbind to worktrees sammen for at dele kontekst, sammenligne implementeringer eller samarbejde i realtid. Perfekt til at gennemgå ændringer mellem branches, dele AI-sessioner på tværs af worktrees eller opretholde konsistens, når du arbejder på relaterede funktioner. Se live-opdateringer, når forbundne worktrees ændres.
 

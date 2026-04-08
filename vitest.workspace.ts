@@ -14,7 +14,6 @@ export default defineWorkspace([
         'test/phase-9/session-5/**/*.test.ts',
         'test/phase-9/session-13/**/*.test.ts',
         'test/server/**/*.test.ts',
-        'test/lsp/**/*.test.ts',
         'test/kanban/session-1/**/*.test.ts',
         'test/kanban/session-2/**/*.test.ts',
         'test/kanban/session-3/**/*.test.ts'
@@ -31,7 +30,6 @@ export default defineWorkspace([
         'test/phase-9/session-5/**/*.test.ts',
         'test/phase-9/session-13/**/*.test.ts',
         'test/server/**/*.test.ts',
-        'test/lsp/**/*.test.ts',
         'test/phase-21/**/*.test.ts',
         'test/kanban/session-1/**/*.test.ts',
         'test/kanban/session-2/**/*.test.ts',

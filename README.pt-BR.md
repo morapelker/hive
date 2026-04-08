@@ -81,9 +81,6 @@ Navegue e aja rápido com atalhos de teclado. Pressione `Cmd+K` para acessar qua
 ### 🎨 **Temas bonitos**
 Escolha entre 10 temas cuidadosamente criados — 6 escuros e 4 claros. Troque instantaneamente de acordo com sua preferência ou hora do dia. Segue o tema do sistema automaticamente se desejado.
 
-### 🖥️ **Language Server Protocol**
-Integração LSP completa com servidores de linguagem por worktree. Obtenha autocompletar inteligente, ir para definição, tooltips ao passar o mouse e diagnósticos em tempo real para TypeScript, Python, Go, Rust e mais.
-
 ### 🔌 **Conexões de Worktree**
 Conecte dois worktrees para compartilhar contexto, comparar implementações ou colaborar em tempo real. Perfeito para revisar mudanças entre branches, compartilhar sessões IA entre worktrees ou manter consistência ao trabalhar em funcionalidades relacionadas. Veja atualizações ao vivo quando worktrees conectados mudam.
 

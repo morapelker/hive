@@ -81,9 +81,6 @@ Klavye kısayollarıyla hızlıca gezinin ve hareket edin. `Cmd+K` tuşuna basar
 ### 🎨 **Güzel Temalar**
 Özenle hazırlanmış 10 tema arasından seçin — 6 koyu ve 4 açık. Tercihinize veya günün saatine göre anında değiştirin. İstenirse sistem temasını otomatik takip eder.
 
-### 🖥️ **Language Server Protocol**
-Worktree başına dil sunucuları ile tam LSP entegrasyonu. TypeScript, Python, Go, Rust ve daha fazlası için akıllı kod tamamlama, tanıma git, fare üzerinde araç ipuçları ve gerçek zamanlı tanılama alın.
-
 ### 🔌 **Worktree Bağlantıları**
 İki worktree'yi bağlayarak bağlam paylaşın, uygulamaları karşılaştırın veya gerçek zamanlı işbirliği yapın. Dallar arası değişiklikleri inceleme, worktree'ler arası AI oturumları paylaşma veya ilgili özellikler üzerinde çalışırken tutarlılık sağlama için mükemmeldir. Bağlı worktree'ler değiştiğinde canlı güncellemeleri görün.
 

@@ -81,9 +81,6 @@ Nhóm các dự án và worktree liên quan vào workspace logic. Ghim mục yê
 ### 🎨 **Giao diện đẹp**
 Chọn từ 10 theme được thiết kế cẩn thận — 6 tối và 4 sáng. Chuyển đổi ngay lập tức phù hợp với sở thích hoặc thời điểm trong ngày. Tự động theo theme hệ thống nếu muốn.
 
-### 🖥️ **Language Server Protocol**
-Tích hợp LSP đầy đủ với language server cho từng worktree. Nhận code completion thông minh, go-to-definition, hover tooltip và diagnostics thời gian thực cho TypeScript, Python, Go, Rust và nhiều hơn nữa.
-
 ### 🔌 **Kết nối Worktree**
 Kết nối hai worktree lại để chia sẻ ngữ cảnh, so sánh implementation, hoặc cộng tác thời gian thực. Hoàn hảo cho việc review thay đổi giữa các nhánh, chia sẻ phiên AI giữa worktree, hoặc duy trì tính nhất quán khi làm việc trên các tính năng liên quan. Xem cập nhật trực tiếp khi worktree được kết nối thay đổi.
 

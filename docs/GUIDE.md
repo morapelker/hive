@@ -433,12 +433,6 @@ Create setup scripts that run when creating new worktrees:
 - Terminals persist across Hive restarts
 - Use `Cmd+T` to toggle terminal
 
-#### LSP Support
-Hive includes Language Server Protocol support:
-- TypeScript, Python, Go, Rust, and more
-- Automatic language server detection
-- Per-worktree isolation
-
 ### Troubleshooting
 
 #### Worktree Won't Create
@@ -454,7 +448,7 @@ Hive includes Language Server Protocol support:
 #### Performance Issues
 - Limit open worktrees to 10-15
 - Close unused file tabs
-- Disable unused language servers
+- Restart Hive if performance degrades
 
 ## Next Steps
 

@@ -19,7 +19,6 @@ import {
   Zap,
   ClipboardCheck,
   Globe,
-  Code2,
   Figma
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -36,12 +35,6 @@ import { QuestionToolView } from './tools/QuestionToolView'
 import { SkillToolView } from './tools/SkillToolView'
 import { ExitPlanModeToolView } from './tools/ExitPlanModeToolView'
 import { WebFetchToolView } from './tools/WebFetchToolView'
-import {
-  LspToolView,
-  getLspOperationLabel,
-  getLspOperationColor,
-  getLspResultCount
-} from './tools/LspToolView'
 import { FileChangeToolView } from './tools/FileChangeToolView'
 import { ToolCallContextMenu } from './ToolCallContextMenu'
 import { extractCommandText } from '@/lib/tool-input-utils'
@@ -64,12 +57,6 @@ export interface ToolUseInfo {
 function isTodoWriteTool(name: string): boolean {
   const lower = name.toLowerCase()
   return lower.includes('todowrite') || lower.includes('todo_write')
-}
-
-/** Check if a tool name refers to the LSP tool */
-function isLspTool(name: string): boolean {
-  const lower = name.toLowerCase()
-  return lower === 'mcp__hive-lsp__lsp' || lower.includes('hive-lsp')
 }
 
 /** Figma brand color for consistent icon styling */
@@ -177,9 +164,6 @@ function getToolIcon(name: string): React.JSX.Element {
   if (lowerName === 'webfetch' || lowerName === 'web_fetch') {
     return <Globe className={iconClass} />
   }
-  if (isLspTool(name)) {
-    return <Code2 className={cn(iconClass, 'text-purple-400')} />
-  }
   if (isFigmaTool(name)) {
     return <Figma className={cn(iconClass, FIGMA_ICON_COLOR)} />
   }
@@ -265,12 +249,6 @@ function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string
     }
   }
 
-  // Show operation for LSP tool
-  if (isLspTool(name)) {
-    const operation = (input.operation || '') as string
-    return getLspOperationLabel(operation)
-  }
-
   // Show operation for Figma tools
   if (isFigmaTool(name)) {
     return getFigmaOperationLabel(getFigmaOperation(name))
@@ -340,7 +318,6 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   WebFetch: WebFetchToolView,
   webfetch: WebFetchToolView,
   web_fetch: WebFetchToolView,
-  'mcp__hive-lsp__lsp': LspToolView,
   fileChange: FileChangeToolView,
   file_change: FileChangeToolView,
   apply_patch: FileChangeToolView
@@ -369,7 +346,6 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (lower.includes('skill')) return SkillToolView
   if (lower === 'exitplanmode') return ExitPlanModeToolView
   if (lower === 'webfetch' || lower === 'web_fetch') return WebFetchToolView
-  if (isLspTool(name)) return LspToolView
   // Figma: explicit fallback for now, will get a dedicated FigmaToolView later
   if (isFigmaTool(name)) return FallbackToolView
   // Fallback
@@ -657,43 +633,6 @@ function CollapsedContent({
     )
   }
 
-  // LSP tool
-  if (isLspTool(name)) {
-    const operation = (input.operation || '') as string
-    const filePath = (input.filePath || '') as string
-    const line = input.line as number | undefined
-    const character = input.character as number | undefined
-    const resultCount = getLspResultCount(output)
-    return (
-      <>
-        <Code2 className="h-3.5 w-3.5 text-purple-400 shrink-0" />
-        <span className="font-medium text-foreground shrink-0">LSP</span>
-        <span
-          className={cn(
-            'text-[10px] rounded px-1 py-0.5 font-medium shrink-0',
-            getLspOperationColor(operation)
-          )}
-        >
-          {getLspOperationLabel(operation)}
-        </span>
-        {filePath && (
-          <span className="font-mono text-muted-foreground truncate min-w-0">
-            {shortenPath(filePath, cwd)}
-          </span>
-        )}
-        {line !== undefined && (
-          <span className="text-[10px] text-muted-foreground shrink-0">
-            L:{line}
-            {character !== undefined && ` C:${character}`}
-          </span>
-        )}
-        {resultCount !== null && resultCount > 0 && (
-          <span className="text-muted-foreground shrink-0">({resultCount})</span>
-        )}
-      </>
-    )
-  }
-
   // Figma MCP tools
   if (isFigmaTool(name)) {
     const operation = getFigmaOperation(name)
@@ -769,7 +708,7 @@ function getFileToolLabel(name: string): string {
   return name
 }
 
-/** Compact single-line renderer for Read/Write/Edit file operations, Search/Find tools, Skill tools, and LSP tools */
+/** Compact single-line renderer for Read/Write/Edit file operations, Search/Find tools, and Skill tools */
 const CompactFileToolCard = memo(function CompactFileToolCard({
   toolUse,
   cwd
@@ -781,7 +720,6 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
 
   const isSearch = isSearchOperation(toolUse.name)
   const isSkill = isSkillTool(toolUse.name)
-  const isLsp = isLspTool(toolUse.name)
   const isFigma = isFigmaTool(toolUse.name)
   const isFileChange = isFileChangeTool(toolUse.name)
   const filePath = (toolUse.input.filePath ||
@@ -805,8 +743,8 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
-  // Use CollapsedContent for search, LSP, Figma, and fileChange tools (they have rich collapsed headers)
-  const useCollapsedContent = isSearch || isLsp || isFigma || isFileChange
+  // Use CollapsedContent for search, Figma, and fileChange tools (they have rich collapsed headers)
+  const useCollapsedContent = isSearch || isFigma || isFileChange
 
   const icon = useMemo(() => {
     if (isExpanded) {
@@ -823,14 +761,11 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
     if (isSkill) {
       return <Zap className="h-3.5 w-3.5 text-amber-400" data-testid="tool-success" />
     }
-    if (isLsp) {
-      return <Code2 className="h-3.5 w-3.5 text-purple-400" data-testid="tool-success" />
-    }
     if (isFigma) {
       return <Figma className={cn('h-3.5 w-3.5', FIGMA_ICON_COLOR)} data-testid="tool-success" />
     }
     return <Plus className="h-3.5 w-3.5 text-muted-foreground" data-testid="tool-success" />
-  }, [isExpanded, isRunning, isError, isSkill, isLsp, isFigma])
+  }, [isExpanded, isRunning, isError, isSkill, isFigma])
 
   return (
     <div
@@ -934,12 +869,11 @@ export const ToolCard = memo(function ToolCard({
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
-  // Route file operations, search tools, skill tools, LSP tools, and Figma tools to compact layout
+  // Route file operations, search tools, skill tools, and Figma tools to compact layout
   if (
     isFileOperation(toolUse.name) ||
     isSearchOperation(toolUse.name) ||
     isSkillTool(toolUse.name) ||
-    isLspTool(toolUse.name) ||
     isFigmaTool(toolUse.name)
   ) {
     return (

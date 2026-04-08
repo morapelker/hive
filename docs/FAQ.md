@@ -189,20 +189,13 @@ Common reasons:
 ### Hive is running slowly. What can I do?
 1. Limit open worktrees to 10-15
 2. Close unused file tabs
-3. Disable unused language servers in settings
-4. Check Activity Monitor for memory usage
-5. Restart Hive if it's been running for days
+3. Check Activity Monitor for memory usage
+4. Restart Hive if it's been running for days
 
 ### The file tree isn't showing all files
 Hive respects `.gitignore` by default. To show ignored files:
 1. Open Settings
 2. Toggle "Show ignored files"
-
-### Language features (autocomplete, etc.) aren't working
-1. Ensure the language server is installed
-2. Check Settings → Language Servers
-3. Restart the language server from the command palette
-4. Some languages require additional setup (see documentation)
 
 ### How do I reset Hive to defaults?
 To completely reset Hive:
