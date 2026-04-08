@@ -164,6 +164,21 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
     }
   }, [selectedWorktreeId, selectedWorktreePath])
 
+  const createPRWorktreeId = useGitStore((s) => s.createPRWorktreeId)
+  const createPRWorktreePath = useGitStore((s) => s.createPRWorktreePath)
+
+  // Ensure remote info + branch info are loaded for PR modal worktree (may differ from sidebar)
+  useEffect(() => {
+    if (!createPRWorktreeId || !createPRWorktreePath) return
+    const gitState = useGitStore.getState()
+    if (!gitState.remoteInfo.get(createPRWorktreeId)) {
+      gitState.checkRemoteInfo(createPRWorktreeId, createPRWorktreePath)
+    }
+    if (!gitState.branchInfoByWorktree.get(createPRWorktreePath)) {
+      gitState.loadBranchInfo(createPRWorktreePath)
+    }
+  }, [createPRWorktreeId, createPRWorktreePath])
+
   return (
     <div className="h-screen flex flex-col bg-background text-foreground" data-testid="app-layout">
       <ErrorBoundary componentName="Header" fallback={<div className="h-12 bg-muted" />}>
@@ -205,11 +220,11 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
         <FileSearchDialog />
       </ErrorBoundary>
       <GlobalProjectSettings />
-      {selectedWorktreeId && selectedWorktreePath && (
+      {createPRWorktreeId && createPRWorktreePath && (
         <ErrorBoundary componentName="CreatePRModal" fallback={null}>
           <CreatePRModal
-            worktreeId={selectedWorktreeId}
-            worktreePath={selectedWorktreePath}
+            worktreeId={createPRWorktreeId}
+            worktreePath={createPRWorktreePath}
           />
         </ErrorBoundary>
       )}
