@@ -275,7 +275,6 @@ export const gitMutationResolvers: Resolvers = {
           provider: provider as AgentSdkId
         })
 
-        if (!result) return { success: false, error: 'Content generation failed' }
         return { success: true, title: result.title, body: result.body }
       } catch (error) {
         return { success: false, error: error instanceof Error ? error.message : String(error) }

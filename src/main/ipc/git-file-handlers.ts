@@ -1167,7 +1167,6 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
           provider: provider as import('../services/agent-sdk-types').AgentSdkId
         })
 
-        if (!result) return { success: false, error: 'Content generation failed' }
         return { success: true, title: result.title, body: result.body }
       } catch (error) {
         return {

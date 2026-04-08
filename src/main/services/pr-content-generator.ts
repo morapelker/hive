@@ -40,7 +40,7 @@ export interface PRContent {
  *
  * Returns null if generation fails or the response cannot be parsed.
  */
-export async function generatePRContent(options: GeneratePRContentOptions): Promise<PRContent | null> {
+export async function generatePRContent(options: GeneratePRContentOptions): Promise<PRContent> {
   const { baseBranch, headBranch, commitSummary, diffSummary, diffPatch, provider } = options
 
   const truncatedCommitSummary = truncate(commitSummary, MAX_COMMIT_SUMMARY_LENGTH)
@@ -63,8 +63,7 @@ ${truncatedDiffPatch}`
 
   const response = await generateText(prompt, SYSTEM_PROMPT, provider)
   if (!response) {
-    log.warn('PR content generation returned no response')
-    return null
+    throw new Error('AI provider returned an empty response')
   }
 
   return parsePRContent(response)
@@ -74,30 +73,24 @@ ${truncatedDiffPatch}`
  * Parse the LLM response as JSON and extract { title, body }.
  * Handles responses where the JSON may be wrapped in markdown code fences.
  */
-function parsePRContent(response: string): PRContent | null {
-  try {
-    const json = extractJSON(response)
-    if (!json) {
-      log.warn('Could not extract JSON from response', { responsePrefix: response.slice(0, 200) })
-      return null
-    }
-
-    const parsed = JSON.parse(json) as Record<string, unknown>
-
-    if (typeof parsed.title !== 'string' || typeof parsed.body !== 'string') {
-      log.warn('Parsed JSON missing title or body fields')
-      return null
-    }
-
-    const title = sanitizeTitle(parsed.title)
-    const body = parsed.body
-
-    return { title, body }
-  } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err)
-    log.warn('Failed to parse PR content response', { error: errMsg, responsePrefix: response.slice(0, 200) })
-    return null
+function parsePRContent(response: string): PRContent {
+  const json = extractJSON(response)
+  if (!json) {
+    log.warn('Could not extract JSON from response', { responsePrefix: response.slice(0, 200) })
+    throw new Error('Could not extract JSON from AI response')
   }
+
+  const parsed = JSON.parse(json) as Record<string, unknown>
+
+  if (typeof parsed.title !== 'string' || typeof parsed.body !== 'string') {
+    log.warn('Parsed JSON missing title or body fields')
+    throw new Error('AI response missing required title or body fields')
+  }
+
+  const title = sanitizeTitle(parsed.title)
+  const body = parsed.body
+
+  return { title, body }
 }
 
 /**
