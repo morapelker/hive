@@ -1747,24 +1747,71 @@ export class GitService {
    */
   async getBranchDiffFiles(branch: string): Promise<{
     success: boolean
-    files?: { relativePath: string; status: string }[]
+    files?: Array<{
+      relativePath: string
+      status: string
+      additions: number
+      deletions: number
+      binary: boolean
+    }>
     error?: string
   }> {
     if (!branch || branch.startsWith('-')) {
       return { success: false, error: 'Invalid branch name' }
     }
     try {
-      const result = await this.git.raw(['diff', '--name-status', '--no-renames', branch])
-      const files: { relativePath: string; status: string }[] = []
-      for (const line of result.trim().split('\n')) {
+      const [nameStatusResult, numstatResult] = await Promise.all([
+        this.git.raw(['diff', '--name-status', '--no-renames', branch]),
+        this.git.raw(['diff', '--numstat', '--no-renames', branch])
+      ])
+      const files = new Map<string, {
+        relativePath: string
+        status: string
+        additions: number
+        deletions: number
+        binary: boolean
+      }>()
+
+      for (const line of nameStatusResult.trim().split('\n')) {
         if (!line) continue
         const [status, ...pathParts] = line.split('\t')
         const relativePath = pathParts.join('\t')
         if (status && relativePath) {
-          files.push({ relativePath, status })
+          files.set(relativePath, {
+            relativePath,
+            status,
+            additions: 0,
+            deletions: 0,
+            binary: false
+          })
         }
       }
-      return { success: true, files }
+
+      for (const line of numstatResult.trim().split('\n')) {
+        if (!line) continue
+        const [add, del, ...pathParts] = line.split('\t')
+        const relativePath = pathParts.join('\t')
+        if (!relativePath) continue
+
+        const binary = add === '-' || del === '-'
+        files.set(relativePath, {
+          relativePath,
+          status: files.get(relativePath)?.status ?? '',
+          additions: binary ? 0 : parseInt(add, 10) || 0,
+          deletions: binary ? 0 : parseInt(del, 10) || 0,
+          binary
+        })
+      }
+
+      return {
+        success: true,
+        files: Array.from(files.values()).sort((a, b) => {
+          const aMissingStatus = a.status === ''
+          const bMissingStatus = b.status === ''
+          if (aMissingStatus === bMissingStatus) return 0
+          return aMissingStatus ? 1 : -1
+        })
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log.error(

@@ -70,6 +70,9 @@ input GitPullInput {
 type GitBranchDiffFile {
   path: String!
   status: String!
+  additions: Int!
+  deletions: Int!
+  binary: Boolean!
 }
 
 type GitBranchDiffFilesResult {

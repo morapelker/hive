@@ -30,6 +30,7 @@ const mockGitService = {
   getDiff: vi.fn(),
   getUntrackedFileDiff: vi.fn(),
   getDiffStat: vi.fn(),
+  getBranchDiffFiles: vi.fn(),
   getBranchInfo: vi.fn(),
   listBranchesWithStatus: vi.fn(),
   isBranchMerged: vi.fn(),
@@ -316,6 +317,55 @@ describe('Git Resolvers — Integration Tests', () => {
         isCheckedOut: true
       })
       expect(data?.gitBranchesWithStatus.branches[2].isRemote).toBe(true)
+    })
+
+    it('gitBranchDiffFiles returns file stats for each changed file', async () => {
+      mockGitService.getBranchDiffFiles.mockResolvedValue({
+        success: true,
+        files: [
+          {
+            relativePath: 'src/index.ts',
+            status: 'M',
+            additions: 10,
+            deletions: 3,
+            binary: false
+          },
+          {
+            relativePath: 'logo.png',
+            status: 'A',
+            additions: 0,
+            deletions: 0,
+            binary: true
+          }
+        ]
+      })
+
+      const { data, errors } = await execute(`
+        query {
+          gitBranchDiffFiles(worktreePath: "/repo", baseBranch: "main") {
+            success
+            files { path status additions deletions binary }
+          }
+        }
+      `)
+
+      expect(errors).toBeUndefined()
+      expect(data?.gitBranchDiffFiles.success).toBe(true)
+      expect(data?.gitBranchDiffFiles.files).toHaveLength(2)
+      expect(data?.gitBranchDiffFiles.files[0]).toMatchObject({
+        path: 'src/index.ts',
+        status: 'M',
+        additions: 10,
+        deletions: 3,
+        binary: false
+      })
+      expect(data?.gitBranchDiffFiles.files[1]).toMatchObject({
+        path: 'logo.png',
+        status: 'A',
+        additions: 0,
+        deletions: 0,
+        binary: true
+      })
     })
   })
 

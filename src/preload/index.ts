@@ -1105,7 +1105,13 @@ const gitOps = {
     branch: string
   ): Promise<{
     success: boolean
-    files?: { relativePath: string; status: string }[]
+    files?: Array<{
+      relativePath: string
+      status: string
+      additions: number
+      deletions: number
+      binary: boolean
+    }>
     error?: string
   }> => ipcRenderer.invoke('git:branchDiffFiles', worktreePath, branch),
 

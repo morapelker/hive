@@ -866,7 +866,13 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       branch: string
     ): Promise<{
       success: boolean
-      files?: { relativePath: string; status: string }[]
+      files?: Array<{
+        relativePath: string
+        status: string
+        additions: number
+        deletions: number
+        binary: boolean
+      }>
       error?: string
     }> => {
       try {

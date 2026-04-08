@@ -70,10 +70,14 @@ import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScript
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
 import { SessionStreamPanel } from './SessionStreamPanel'
+import {
+  ReviewTicketDiffSummary,
+  type ReviewTicketDiffFile
+} from './ReviewTicketDiffSummary'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
-import type { KanbanTicket, KanbanTicketUpdate } from '../../../../main/db/types'
+import type { KanbanTicket, KanbanTicketUpdate, Worktree } from '../../../../main/db/types'
 
 // ── Types ───────────────────────────────────────────────────────────
 type ModalMode = 'edit' | 'plan_review' | 'review' | 'error' | 'question'
@@ -1717,9 +1721,18 @@ function ReviewModeContent({
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   dualPane?: boolean
 }) {
+  const worktree = useMemo(
+    () => (ticket.worktree_id ? findWorktreeById(ticket.worktree_id) : null),
+    [ticket.worktree_id]
+  )
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)
+  const [resolvedWorktree, setResolvedWorktree] = useState<Worktree | null>(worktree)
+  const [resolvedBaseBranch, setResolvedBaseBranch] = useState<string | null>(null)
+  const [diffSummary, setDiffSummary] = useState<ReviewTicketDiffFile[]>([])
+  const [diffSummaryLoading, setDiffSummaryLoading] = useState(false)
+  const [diffSummaryError, setDiffSummaryError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const lifecycle = useLifecycleActions(ticket.worktree_id)
   const { pinAndActivate: pinAndActivateSession, lifecycleLoading } = usePinAndActivateSession(onClose)
@@ -1738,12 +1751,111 @@ function ReviewModeContent({
     [ticket.project_id]
   )
 
-  const worktree = useMemo(
-    () => (ticket.worktree_id ? findWorktreeById(ticket.worktree_id) : null),
-    [ticket.worktree_id]
-  )
+  useEffect(() => {
+    let cancelled = false
 
-  const hasRunScript = !!project?.run_script && !!worktree
+    if (!ticket.worktree_id) {
+      setResolvedWorktree(null)
+      return
+    }
+
+    if (worktree) {
+      setResolvedWorktree(worktree)
+      return
+    }
+
+    window.db.worktree.get(ticket.worktree_id).then((dbWorktree) => {
+      if (!cancelled) {
+        setResolvedWorktree(dbWorktree ?? null)
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setResolvedWorktree(null)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [ticket.worktree_id, worktree])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!ticket.worktree_id || !resolvedWorktree) {
+      setResolvedBaseBranch(null)
+      return
+    }
+
+    ;(async () => {
+      try {
+        const defaultWorktrees = await window.db.worktree.getActiveByProject(ticket.project_id)
+        const defaultWt = defaultWorktrees.find((w) => w.is_default)
+        if (!cancelled) {
+          setResolvedBaseBranch(resolvedWorktree.base_branch ?? defaultWt?.branch_name ?? null)
+        }
+      } catch {
+        if (!cancelled) {
+          setResolvedBaseBranch(resolvedWorktree.base_branch ?? null)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [ticket.project_id, ticket.worktree_id, resolvedWorktree])
+
+  const hasRunScript = !!project?.run_script && !!resolvedWorktree
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!dualPane || !resolvedWorktree?.path || !resolvedBaseBranch) {
+      setDiffSummary([])
+      setDiffSummaryError(null)
+      setDiffSummaryLoading(false)
+      return
+    }
+
+    const loadDiffSummary = async (): Promise<void> => {
+      setDiffSummaryLoading(true)
+      try {
+        const result = await window.gitOps.getBranchDiffFiles(resolvedWorktree.path, resolvedBaseBranch)
+        if (cancelled) return
+
+        if (result.success) {
+          setDiffSummary(result.files ?? [])
+          setDiffSummaryError(null)
+        } else {
+          setDiffSummary([])
+          setDiffSummaryError(result.error ?? 'Failed to load changed files')
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDiffSummary([])
+          setDiffSummaryError(error instanceof Error ? error.message : 'Failed to load changed files')
+        }
+      } finally {
+        if (!cancelled) {
+          setDiffSummaryLoading(false)
+        }
+      }
+    }
+
+    loadDiffSummary()
+
+    const cleanup = window.gitOps.onStatusChanged((event) => {
+      if (event.worktreePath === resolvedWorktree.path) {
+        void loadDiffSummary()
+      }
+    })
+
+    return () => {
+      cancelled = true
+      cleanup()
+    }
+  }, [dualPane, resolvedWorktree?.path, resolvedBaseBranch])
 
   const runRunning = useScriptStore((s) =>
     ticket.worktree_id ? (s.scriptStates[ticket.worktree_id]?.runRunning ?? false) : false
@@ -1876,14 +1988,14 @@ function ReviewModeContent({
 
   // ── Run / Stop handlers ────────────────────────────────────────────
   const handleRunScript = useCallback(() => {
-    if (!ticket.worktree_id || !worktree || !project?.run_script || runRunning) return
+    if (!ticket.worktree_id || !resolvedWorktree || !project?.run_script || runRunning) return
     const commands = project.run_script
       .split('\n')
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith('#'))
-    fireRunScript(ticket.worktree_id, commands, worktree.path)
+    fireRunScript(ticket.worktree_id, commands, resolvedWorktree.path)
     toast.success('Run script started')
-  }, [ticket.worktree_id, worktree, project, runRunning])
+  }, [ticket.worktree_id, resolvedWorktree, project, runRunning])
 
   const handleStopScript = useCallback(async () => {
     if (!ticket.worktree_id) return
@@ -1952,6 +2064,15 @@ function ReviewModeContent({
             View the full session conversation by clicking &quot;Jump to session&quot; above.
           </p>
         </div>
+      )}
+
+      {dualPane && (
+        <ReviewTicketDiffSummary
+          baseBranch={resolvedBaseBranch}
+          files={diffSummary}
+          loading={diffSummaryLoading}
+          error={diffSummaryError}
+        />
       )}
 
       {/* Followup input area */}

@@ -294,6 +294,9 @@ export type GitBranchChangedEvent = {
 
 export type GitBranchDiffFile = {
   __typename?: 'GitBranchDiffFile';
+  additions: Scalars['Int']['output'];
+  binary: Scalars['Boolean']['output'];
+  deletions: Scalars['Int']['output'];
   path: Scalars['String']['output'];
   status: Scalars['String']['output'];
 };
@@ -2885,6 +2888,9 @@ export type GitBranchChangedEventResolvers<ContextType = GraphQLContext, ParentT
 }>;
 
 export type GitBranchDiffFileResolvers<ContextType = GraphQLContext, ParentType extends ResolversParentTypes['GitBranchDiffFile'] = ResolversParentTypes['GitBranchDiffFile']> = ResolversObject<{
+  additions?: Resolver<ResolversTypes['Int'], ParentType, ContextType>;
+  binary?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
+  deletions?: Resolver<ResolversTypes['Int'], ParentType, ContextType>;
   path?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   status?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
 }>;
@@ -3734,4 +3740,3 @@ export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
   WorktreeBranchRenamedEvent?: WorktreeBranchRenamedEventResolvers<ContextType>;
   WorktreeCreateResult?: WorktreeCreateResultResolvers<ContextType>;
 }>;
-

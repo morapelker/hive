@@ -181,7 +181,10 @@ export const gitQueryResolvers: Resolvers = {
         }
         const files = (result.files ?? []).map((f) => ({
           path: f.relativePath,
-          status: f.status
+          status: f.status,
+          additions: f.additions,
+          deletions: f.deletions,
+          binary: f.binary
         }))
         return { success: true, files }
       } catch (error) {

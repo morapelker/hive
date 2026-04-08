@@ -589,20 +589,32 @@ export function createGitOpsAdapter(): GitOpsApi {
       branch: string
     ): Promise<{
       success: boolean
-      files?: { relativePath: string; status: string }[]
+      files?: Array<{
+        relativePath: string
+        status: string
+        additions: number
+        deletions: number
+        binary: boolean
+      }>
       error?: string
     }> {
       const data = await graphqlQuery<{
         gitBranchDiffFiles: {
           success: boolean
-          files?: Array<{ path: string; status: string }>
+          files?: Array<{
+            path: string
+            status: string
+            additions: number
+            deletions: number
+            binary: boolean
+          }>
           error?: string
         }
       }>(
         `query ($worktreePath: String!, $baseBranch: String!) {
           gitBranchDiffFiles(worktreePath: $worktreePath, baseBranch: $baseBranch) {
             success error
-            files { path status }
+            files { path status additions deletions binary }
           }
         }`,
         { worktreePath, baseBranch: branch }
@@ -610,7 +622,13 @@ export function createGitOpsAdapter(): GitOpsApi {
       const r = data.gitBranchDiffFiles
       return {
         success: r.success,
-        files: r.files?.map((f) => ({ relativePath: f.path, status: f.status })),
+        files: r.files?.map((f) => ({
+          relativePath: f.path,
+          status: f.status,
+          additions: f.additions,
+          deletions: f.deletions,
+          binary: f.binary
+        })),
         error: r.error ?? undefined
       }
     },

@@ -1262,7 +1262,13 @@ declare global {
         branch: string
       ) => Promise<{
         success: boolean
-        files?: { relativePath: string; status: string }[]
+        files?: Array<{
+          relativePath: string
+          status: string
+          additions: number
+          deletions: number
+          binary: boolean
+        }>
         error?: string
       }>
       // Get unified diff between current worktree and a branch for a specific file

@@ -103,6 +103,8 @@ const mockWorktreeOps = {
 
 const mockGitOps = {
   listBranchesWithStatus: vi.fn().mockResolvedValue({ success: true, branches: [] }),
+  getBranchDiffFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
+  onStatusChanged: vi.fn().mockReturnValue(() => {}),
   prMerge: vi.fn().mockResolvedValue({ success: true }),
   listPRs: vi.fn().mockResolvedValue({ success: true, pullRequests: [] }),
   getPRState: vi.fn().mockResolvedValue({ success: true, state: 'OPEN', title: 'Test PR' })
@@ -252,6 +254,7 @@ function makeWorktree(overrides: Record<string, unknown> = {}) {
     last_accessed_at: '2026-01-01T00:00:00Z',
     github_pr_number: null,
     github_pr_url: null,
+    base_branch: 'main',
     ...overrides
   }
 }
@@ -685,6 +688,49 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
       render(<KanbanTicketModal />)
 
       expect(screen.getByTestId('kanban-ticket-modal')).toBeInTheDocument()
+      expect(screen.getByTestId('review-followup-input')).toBeInTheDocument()
+    })
+
+    test('renders changed files summary in dual-pane review mode', async () => {
+      mockGitOps.getBranchDiffFiles.mockResolvedValueOnce({
+        success: true,
+        files: [
+          {
+            relativePath: 'src/auth/login.tsx',
+            status: 'M',
+            additions: 12,
+            deletions: 4,
+            binary: false
+          },
+          {
+            relativePath: 'assets/logo.png',
+            status: 'A',
+            additions: 0,
+            deletions: 0,
+            binary: true
+          }
+        ]
+      })
+
+      render(<KanbanTicketModal />)
+
+      expect(await screen.findByTestId('review-diff-summary')).toBeInTheDocument()
+      expect(screen.getByText('src/auth/login.tsx')).toBeInTheDocument()
+      expect(screen.getByText('+12')).toBeInTheDocument()
+      expect(screen.getByText('-4')).toBeInTheDocument()
+      expect(screen.getByText('assets/logo.png')).toBeInTheDocument()
+      expect(screen.getByText('binary')).toBeInTheDocument()
+    })
+
+    test('renders changed files error without blocking review mode', async () => {
+      mockGitOps.getBranchDiffFiles.mockResolvedValueOnce({
+        success: false,
+        error: 'Branch diff failed'
+      })
+
+      render(<KanbanTicketModal />)
+
+      expect(await screen.findByTestId('review-diff-summary-error')).toHaveTextContent('Branch diff failed')
       expect(screen.getByTestId('review-followup-input')).toBeInTheDocument()
     })
 
@@ -1329,11 +1375,9 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
         useWorktreeStore.setState({ worktreesByProject: new Map() })
       })
 
-      // DB fallback returns the worktree path — chain two mockResolvedValueOnce
-      // because the component's dbWorktreePath effect also calls get() on mount
-      mockDbWorktree.get
-        .mockResolvedValueOnce({ path: '/test/orphan-worktree' })  // consumed by Bug 4 useEffect on mount
-        .mockResolvedValueOnce({ path: '/test/orphan-worktree' })  // consumed by sendFollowupToSession → findSessionById
+      // Multiple code paths may consult the DB worktree record while the
+      // modal resolves review state and then sends the followup.
+      mockDbWorktree.get.mockResolvedValue({ path: '/test/orphan-worktree', base_branch: 'main' })
 
       render(<KanbanTicketModal />)
 
@@ -1376,7 +1420,7 @@ describe('Session 11: Kanban Ticket Modal Modes', () => {
       })
 
       // DB also returns null — worktree truly gone
-      mockDbWorktree.get.mockResolvedValueOnce(null)
+      mockDbWorktree.get.mockResolvedValue(null)
 
       render(<KanbanTicketModal />)
 
