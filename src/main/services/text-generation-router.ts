@@ -138,7 +138,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string, modelOve
       options: {
         cwd: homedir(),
         model: modelOverride ?? 'haiku',
-        maxTurns: 1,
+        maxTurns: 2,
         abortController,
         systemPrompt,
         effort: 'low',
@@ -149,10 +149,31 @@ async function generateWithClaude(prompt: string, systemPrompt: string, modelOve
     })
 
     let resultText = ''
+    let streamedText = ''
     for await (const msg of query) {
+      // Collect assistant text as it streams — fallback if the session ends early
+      if (msg.type === 'assistant') {
+        const content = (msg as Record<string, unknown>).message
+        if (content && typeof content === 'object') {
+          const blocks = (content as Record<string, unknown>).content
+          if (Array.isArray(blocks)) {
+            for (const block of blocks) {
+              if (block && typeof block === 'object' && (block as Record<string, unknown>).type === 'text') {
+                streamedText += (block as Record<string, unknown>).text ?? ''
+              }
+            }
+          }
+        }
+      }
       if (msg.type === 'result') {
         const resultMsg = msg as Record<string, unknown>
         if (typeof resultMsg.subtype === 'string' && resultMsg.subtype.startsWith('error')) {
+          // For max_turns errors, use whatever text was already streamed
+          if (resultMsg.subtype === 'error_max_turns' && streamedText) {
+            log.info('Using streamed text after max_turns reached')
+            resultText = streamedText
+            break
+          }
           const errors = Array.isArray(resultMsg.errors) ? resultMsg.errors : []
           throw new Error(
             `Claude generation error (${resultMsg.subtype}): ${errors.join('; ') || 'unknown'}`
