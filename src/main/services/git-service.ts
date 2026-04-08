@@ -1811,12 +1811,14 @@ export class GitService {
     if (!options.baseBranch || options.baseBranch.startsWith('-')) {
       return { success: false, error: 'Invalid branch name' }
     }
+    // Strip remote prefix (e.g. "origin/main" → "main") — gh expects a bare branch name
+    const baseBranch = options.baseBranch.replace(/^[^/]+\//, '')
     const tempFile = join(tmpdir(), `hive-pr-body-${Date.now()}.md`)
     try {
       writeFileSync(tempFile, options.body, 'utf-8')
       const { stdout } = await execFileAsync(
         'gh',
-        ['pr', 'create', '--base', options.baseBranch, '--title', options.title, '--body-file', tempFile],
+        ['pr', 'create', '--base', baseBranch, '--title', options.title, '--body-file', tempFile],
         { cwd: this.repoPath }
       )
       const url = stdout.trim()
