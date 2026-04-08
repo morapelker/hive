@@ -56,6 +56,7 @@ interface GitStoreState {
 
   // PR lifecycle - keyed by worktree ID
   attachedPR: Map<string, AttachedPR>
+  creatingPRByWorktreeId: Map<string, boolean>
 
   // Cross-worktree merge default - keyed by project ID
   defaultMergeBranch: Map<string, string>
@@ -97,6 +98,7 @@ interface GitStoreState {
 
   // PR lifecycle actions
   setAttachedPR: (worktreeId: string, pr: AttachedPR | null) => void
+  setCreatingPR: (worktreeId: string, creating: boolean) => void
   attachPR: (worktreeId: string, prNumber: number, prUrl: string) => Promise<void>
   detachPR: (worktreeId: string) => Promise<void>
 
@@ -151,6 +153,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
 
   // PR lifecycle
   attachedPR: new Map(),
+  creatingPRByWorktreeId: new Map(),
 
   // Cross-worktree merge default
   defaultMergeBranch: new Map(),
@@ -545,6 +548,18 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       })
     }
     // Opening without context is a no-op (all callers must provide context)
+  },
+
+  setCreatingPR: (worktreeId: string, creating: boolean) => {
+    set((state) => {
+      const next = new Map(state.creatingPRByWorktreeId)
+      if (creating) {
+        next.set(worktreeId, true)
+      } else {
+        next.delete(worktreeId)
+      }
+      return { creatingPRByWorktreeId: next }
+    })
   },
 
   // Commit staged changes

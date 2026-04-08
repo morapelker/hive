@@ -6,6 +6,7 @@ beforeEach(() => {
     createPRModalOpen: false,
     createPRWorktreeId: null,
     createPRWorktreePath: null,
+    creatingPRByWorktreeId: new Map(),
   })
 })
 
@@ -43,5 +44,23 @@ describe('Create PR worktree context', () => {
     expect(state.createPRModalOpen).toBe(false)
     expect(state.createPRWorktreeId).toBeNull()
     expect(state.createPRWorktreePath).toBeNull()
+  })
+
+  test('setCreatingPR tracks creation state per worktree', () => {
+    useGitStore.getState().setCreatingPR('wt-ticket-1', true)
+
+    const state = useGitStore.getState()
+    expect(state.creatingPRByWorktreeId.get('wt-ticket-1')).toBe(true)
+  })
+
+  test('setCreatingPR clears only the targeted worktree entry', () => {
+    useGitStore.getState().setCreatingPR('wt-ticket-1', true)
+    useGitStore.getState().setCreatingPR('wt-ticket-2', true)
+
+    useGitStore.getState().setCreatingPR('wt-ticket-1', false)
+
+    const state = useGitStore.getState()
+    expect(state.creatingPRByWorktreeId.has('wt-ticket-1')).toBe(false)
+    expect(state.creatingPRByWorktreeId.get('wt-ticket-2')).toBe(true)
   })
 })

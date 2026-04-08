@@ -1722,6 +1722,9 @@ function ReviewModeContent({
   const [isSending, setIsSending] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const lifecycle = useLifecycleActions(ticket.worktree_id)
+  const isCreatingPR = useGitStore((s) =>
+    ticket.worktree_id ? s.creatingPRByWorktreeId.get(ticket.worktree_id) === true : false
+  )
   const { pinAndActivate: pinAndActivateSession, lifecycleLoading } = usePinAndActivateSession(onClose)
 
   // Load live PR state so merge-button guard works (hide if already merged/closed)
@@ -2030,26 +2033,38 @@ function ReviewModeContent({
           </Button>
         )}
         {ticket.worktree_id && lifecycle.isGitHub && !lifecycle.hasAttachedPR && (
-          <Button
-            type="button"
-            variant="outline"
-            className="gap-1.5"
-            disabled={lifecycleLoading}
-            onClick={() => {
-              const worktreePath = findWorktreePathById(ticket.worktree_id!)
-              if (worktreePath) {
-                useGitStore.getState().setCreatePRModalOpen(true, {
-                  worktreeId: ticket.worktree_id!,
-                  worktreePath,
-                })
-              } else {
-                toast.error('Could not find worktree path')
-              }
-            }}
-          >
-            <GitPullRequest className="h-3.5 w-3.5" />
-            Create PR
-          </Button>
+          isCreatingPR ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-1.5"
+              disabled
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Creating PR...
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-1.5"
+              disabled={lifecycleLoading}
+              onClick={() => {
+                const worktreePath = findWorktreePathById(ticket.worktree_id!)
+                if (worktreePath) {
+                  useGitStore.getState().setCreatePRModalOpen(true, {
+                    worktreeId: ticket.worktree_id!,
+                    worktreePath,
+                  })
+                } else {
+                  toast.error('Could not find worktree path')
+                }
+              }}
+            >
+              <GitPullRequest className="h-3.5 w-3.5" />
+              Create PR
+            </Button>
+          )
         )}
         {ticket.worktree_id && lifecycle.isGitHub && lifecycle.hasAttachedPR &&
           lifecycle.prLiveState?.state !== 'MERGED' && lifecycle.prLiveState?.state !== 'CLOSED' && (
