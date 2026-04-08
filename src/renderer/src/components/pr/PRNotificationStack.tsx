@@ -123,7 +123,10 @@ export function PRNotificationStack(): React.JSX.Element | null {
   if (notifications.length === 0) return null
 
   return (
-    <div className="absolute top-4 right-4 z-50 flex flex-col gap-2 pointer-events-auto">
+    <div
+      className="absolute top-4 right-4 z-[60] flex flex-col gap-2 pointer-events-auto"
+      data-testid="pr-notification-stack"
+    >
       {notifications.map((n) => (
         <PRNotificationCard
           key={n.id}
