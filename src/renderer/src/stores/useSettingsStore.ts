@@ -116,6 +116,9 @@ export interface AppSettings {
 
   // Advanced
   environmentVariables: Array<{ key: string; value: string }>
+
+  // Migration flags
+  _boardModeMigratedToStickyTab?: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -124,7 +127,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   breedType: 'dogs',
   vimModeEnabled: false,
   mergeConflictMode: 'always-ask',
-  boardMode: 'toggle',
+  boardMode: 'sticky-tab',
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
@@ -169,7 +172,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   telemetryEnabled: true,
   tipsEnabled: true,
-  environmentVariables: []
+  environmentVariables: [],
+  _boardModeMigratedToStickyTab: false
 }
 
 interface SettingsState extends AppSettings {
@@ -246,6 +250,14 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
           delete (result as Record<string, unknown>).showUsageIndicator
         }
 
+        // Migrate boardMode default from 'toggle' to 'sticky-tab' (one-time)
+        if (!parsed._boardModeMigratedToStickyTab) {
+          if (result.boardMode === 'toggle') {
+            result.boardMode = 'sticky-tab'
+          }
+          result._boardModeMigratedToStickyTab = true
+        }
+
         return result
       }
     }
@@ -291,7 +303,8 @@ function extractSettings(state: SettingsState): AppSettings {
     commandFilter: state.commandFilter,
     telemetryEnabled: state.telemetryEnabled,
     tipsEnabled: state.tipsEnabled,
-    environmentVariables: state.environmentVariables
+    environmentVariables: state.environmentVariables,
+    _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
   }
 }
 
@@ -543,7 +556,8 @@ export const useSettingsStore = create<SettingsState>()(
         commandFilter: state.commandFilter,
         telemetryEnabled: state.telemetryEnabled,
         tipsEnabled: state.tipsEnabled,
-        environmentVariables: state.environmentVariables
+        environmentVariables: state.environmentVariables,
+        _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
       })
     }
   )
