@@ -17,11 +17,29 @@ function createScrollTracker() {
   let showScrollFab = false
   let lastScrollTop = 0
   let userHasScrolledUp = false
-  let isCooldownActive = false
+  let manualScrollIntent = false
+  let pointerDownInScroller = false
+  let isProgrammaticScroll = false
 
   return {
     get state() {
       return { isAutoScrollEnabled, showScrollFab, userHasScrolledUp }
+    },
+    wheel() {
+      manualScrollIntent = true
+    },
+    pointerDown() {
+      pointerDownInScroller = true
+    },
+    pointerUp() {
+      pointerDownInScroller = false
+      manualScrollIntent = false
+    },
+    beginProgrammaticScroll() {
+      isProgrammaticScroll = true
+    },
+    endProgrammaticScroll() {
+      isProgrammaticScroll = false
     },
     handleScroll(
       scrollTop: number,
@@ -29,38 +47,54 @@ function createScrollTracker() {
       clientHeight: number,
       isStreaming: boolean
     ) {
-      const scrollingUp = scrollTop < lastScrollTop
+      const previousScrollTop = lastScrollTop
       lastScrollTop = scrollTop
       const distanceFromBottom = scrollHeight - scrollTop - clientHeight
       const isNearBottom = distanceFromBottom < 80
+      const hasManualIntent = manualScrollIntent || pointerDownInScroller
+      const isManualScrollUp = hasManualIntent && scrollTop < previousScrollTop
 
-      if (scrollingUp && isStreaming) {
+      if (isProgrammaticScroll) {
+        manualScrollIntent = false
+        return
+      }
+
+      if (isManualScrollUp && isStreaming) {
         userHasScrolledUp = true
         isAutoScrollEnabled = false
         showScrollFab = true
+        manualScrollIntent = false
         return
       }
-      if (isNearBottom && !isCooldownActive) {
+
+      if (isNearBottom && hasManualIntent) {
         isAutoScrollEnabled = true
         showScrollFab = false
         userHasScrolledUp = false
+        manualScrollIntent = false
+      } else if (!hasManualIntent) {
+        return
       } else if (!isNearBottom && isStreaming && userHasScrolledUp) {
         isAutoScrollEnabled = false
         showScrollFab = true
+        manualScrollIntent = false
       }
     },
     clickFab() {
       isAutoScrollEnabled = true
       showScrollFab = false
       userHasScrolledUp = false
-      isCooldownActive = false
+      manualScrollIntent = false
+      pointerDownInScroller = false
       lastScrollTop = 0
     },
     reset() {
       userHasScrolledUp = false
       isAutoScrollEnabled = true
       showScrollFab = false
-      isCooldownActive = false
+      manualScrollIntent = false
+      pointerDownInScroller = false
+      isProgrammaticScroll = false
       lastScrollTop = 0
     }
   }
@@ -199,6 +233,7 @@ describe('Session 8: Integration & Verification', () => {
       tracker.handleScroll(100, 500, 400, true)
 
       // User scrolls up
+      tracker.wheel()
       tracker.handleScroll(50, 500, 400, true)
       expect(tracker.state.showScrollFab).toBe(true)
       expect(tracker.state.userHasScrolledUp).toBe(true)
@@ -206,6 +241,24 @@ describe('Session 8: Integration & Verification', () => {
       // Question renders, adding content (scrollHeight grows)
       tracker.handleScroll(50, 700, 400, true) // still far from bottom, flag still set
       expect(tracker.state.showScrollFab).toBe(true)
+    })
+
+    test('small upward scroll near bottom locks auto-scroll before later content growth', () => {
+      const tracker = createScrollTracker()
+
+      tracker.handleScroll(100, 500, 400, true) // at bottom
+
+      tracker.wheel()
+      tracker.handleScroll(70, 520, 400, true) // still near bottom, but user moved upward
+
+      expect(tracker.state.showScrollFab).toBe(true)
+      expect(tracker.state.userHasScrolledUp).toBe(true)
+      expect(tracker.state.isAutoScrollEnabled).toBe(false)
+
+      // Subsequent streaming growth should keep the lock engaged
+      tracker.handleScroll(70, 760, 400, true)
+      expect(tracker.state.showScrollFab).toBe(true)
+      expect(tracker.state.isAutoScrollEnabled).toBe(false)
     })
   })
 
@@ -373,6 +426,7 @@ describe('Session 8: Integration & Verification', () => {
       tracker.handleScroll(100, 500, 400, true)
 
       // User scrolls up
+      tracker.wheel()
       tracker.handleScroll(50, 500, 400, true)
       expect(tracker.state.showScrollFab).toBe(true)
 
@@ -393,6 +447,7 @@ describe('Session 8: Integration & Verification', () => {
 
       // User scrolled up, FAB visible
       tracker.handleScroll(100, 500, 400, true)
+      tracker.wheel()
       tracker.handleScroll(50, 500, 400, true)
       expect(tracker.state.showScrollFab).toBe(true)
 
@@ -418,6 +473,7 @@ describe('Session 8: Integration & Verification', () => {
 
       // User scrolled up during streaming
       tracker.handleScroll(100, 500, 400, true)
+      tracker.wheel()
       tracker.handleScroll(50, 500, 400, true)
       expect(tracker.state.showScrollFab).toBe(true)
 
@@ -595,6 +651,7 @@ describe('Session 8: Integration & Verification', () => {
       expect(useQuestionStore.getState().getActiveQuestion('hive-1')).not.toBeNull()
 
       // 6. User scrolls up to review previous content — FAB appears
+      tracker.wheel()
       tracker.handleScroll(50, 800, 400, true)
       expect(tracker.state.showScrollFab).toBe(true)
 

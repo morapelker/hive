@@ -15,12 +15,22 @@ function createScrollTracker() {
     clientHeight: number,
     opts: { isSending: boolean; isStreaming: boolean }
   ) {
+    const previousScrollTop = lastScrollTop
     lastScrollTop = scrollTop
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight
     const isNearBottom = distanceFromBottom < 80
     const hasManualIntent = manualScrollIntent || pointerDownInScroller
+    const isManualScrollUp = hasManualIntent && scrollTop < previousScrollTop
 
     if (isProgrammaticScroll) {
+      manualScrollIntent = false
+      return
+    }
+
+    if (isManualScrollUp && (opts.isSending || opts.isStreaming)) {
+      isAutoScrollEnabled = false
+      showScrollFab = true
+      userHasScrolledUp = true
       manualScrollIntent = false
       return
     }
@@ -135,6 +145,18 @@ describe('Session 4: Smart Auto-Scroll', () => {
     tracker.handleScroll(100, 500, 400, { isSending: false, isStreaming: true })
     tracker.wheel()
     tracker.handleScroll(0, 500, 400, { isSending: false, isStreaming: true })
+
+    expect(tracker.state.isAutoScrollEnabled).toBe(false)
+    expect(tracker.state.showScrollFab).toBe(true)
+    expect(tracker.state.userHasScrolledUp).toBe(true)
+  })
+
+  test('small manual upward scroll near bottom still disables auto-scroll', () => {
+    const tracker = createScrollTracker()
+
+    tracker.handleScroll(100, 500, 400, { isSending: false, isStreaming: true })
+    tracker.wheel()
+    tracker.handleScroll(70, 520, 400, { isSending: false, isStreaming: true })
 
     expect(tracker.state.isAutoScrollEnabled).toBe(false)
     expect(tracker.state.showScrollFab).toBe(true)
