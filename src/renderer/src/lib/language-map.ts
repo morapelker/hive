@@ -20,6 +20,24 @@ import { xml } from '@codemirror/lang-xml'
 import { yaml } from '@codemirror/lang-yaml'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
+import { go } from '@codemirror/legacy-modes/mode/go'
+import { ruby } from '@codemirror/legacy-modes/mode/ruby'
+import { lua } from '@codemirror/legacy-modes/mode/lua'
+import { swift } from '@codemirror/legacy-modes/mode/swift'
+import { clojure } from '@codemirror/legacy-modes/mode/clojure'
+import { erlang } from '@codemirror/legacy-modes/mode/erlang'
+import { haskell } from '@codemirror/legacy-modes/mode/haskell'
+import { elm } from '@codemirror/legacy-modes/mode/elm'
+import { r } from '@codemirror/legacy-modes/mode/r'
+import { powerShell } from '@codemirror/legacy-modes/mode/powershell'
+import { protobuf } from '@codemirror/legacy-modes/mode/protobuf'
+import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile'
+import {
+  csharp,
+  scala,
+  dart,
+  kotlin as kotlinLang
+} from '@codemirror/legacy-modes/mode/clike'
 
 // ---------------------------------------------------------------------------
 // 2a. Canonical extension → language ID map
@@ -190,13 +208,28 @@ const codeMirrorFactories: Record<string, () => Extension> = {
   python: () => python(),
   rust: () => rust(),
   java: () => java(),
-  kotlin: () => java(),
   c: () => cpp(),
   cpp: () => cpp(),
   sql: () => sql(),
   yaml: () => yaml(),
   toml: () => StreamLanguage.define(toml),
-  shell: () => StreamLanguage.define(shell)
+  shell: () => StreamLanguage.define(shell),
+  go: () => StreamLanguage.define(go),
+  ruby: () => StreamLanguage.define(ruby),
+  lua: () => StreamLanguage.define(lua),
+  swift: () => StreamLanguage.define(swift),
+  clojure: () => StreamLanguage.define(clojure),
+  erlang: () => StreamLanguage.define(erlang),
+  haskell: () => StreamLanguage.define(haskell),
+  elm: () => StreamLanguage.define(elm),
+  r: () => StreamLanguage.define(r),
+  powershell: () => StreamLanguage.define(powerShell),
+  protobuf: () => StreamLanguage.define(protobuf),
+  dockerfile: () => StreamLanguage.define(dockerFile),
+  csharp: () => StreamLanguage.define(csharp),
+  scala: () => StreamLanguage.define(scala),
+  kotlin: () => StreamLanguage.define(kotlinLang),
+  dart: () => StreamLanguage.define(dart)
 }
 
 /** Get a CodeMirror Extension for syntax highlighting the given file path. */

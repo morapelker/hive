@@ -225,25 +225,15 @@ export function GitStatusPanel({
   const handleViewDiff = useCallback(
     (file: GitFileStatus) => {
       if (!worktreePath) return
-      const isNewFile = file.status === '?' || file.status === 'A'
 
-      if (isNewFile) {
-        const fullPath = `${worktreePath}/${file.relativePath}`
-        const fileName = file.relativePath.split('/').pop() || file.relativePath
-        const worktreeId = useWorktreeStore.getState().selectedWorktreeId
-        if (worktreeId) {
-          useFileViewerStore.getState().openFile(fullPath, fileName, worktreeId)
-        }
-      } else {
-        useFileViewerStore.getState().setActiveDiff({
-          worktreePath,
-          filePath: file.relativePath,
-          fileName: file.relativePath.split('/').pop() || file.relativePath,
-          staged: file.staged,
-          isUntracked: file.status === '?',
-          isNewFile: false
-        })
-      }
+      useFileViewerStore.getState().setActiveDiff({
+        worktreePath,
+        filePath: file.relativePath,
+        fileName: file.relativePath.split('/').pop() || file.relativePath,
+        staged: file.staged,
+        isUntracked: file.status === '?',
+        isNewFile: file.status === '?' || file.status === 'A'
+      })
     },
     [worktreePath]
   )

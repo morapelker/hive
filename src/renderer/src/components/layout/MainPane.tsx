@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
 import { SessionTerminalView } from '@/components/sessions/SessionTerminalView'
 import { FileViewer } from '@/components/file-viewer'
-import { InlineDiffViewer, ImageDiffView } from '@/components/diff'
+import { ImageDiffView } from '@/components/diff'
 import { isImageFile } from '@shared/types/file-utils'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
@@ -272,22 +272,9 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
           />
         )
       }
-      // New/untracked files use the syntax highlighter view (but not in branch mode —
-      // branch diffs always use Monaco since we have an empty original to compare against)
-      if ((activeDiff.isNewFile || activeDiff.isUntracked) && !activeDiff.compareBranch) {
-        return (
-          <InlineDiffViewer
-            worktreePath={activeDiff.worktreePath}
-            filePath={activeDiff.filePath}
-            fileName={activeDiff.fileName}
-            staged={activeDiff.staged}
-            isUntracked={activeDiff.isUntracked}
-            isNewFile={activeDiff.isNewFile}
-            onClose={handleCloseDiff}
-          />
-        )
-      }
-      // Tracked files (and branch diffs) use Monaco DiffEditor with per-hunk actions
+      // All text diffs (including new/untracked files) use Monaco DiffEditor.
+      // For new files the original side is empty, so Monaco shows the full file
+      // as additions with proper syntax highlighting for all languages.
       return (
         <Suspense
           fallback={

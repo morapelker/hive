@@ -27,7 +27,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
-import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { FileIcon } from './FileIcon'
@@ -238,25 +237,15 @@ export function ChangesView({
   const handleViewDiff = useCallback(
     (file: GitFileStatus) => {
       if (!worktreePath) return
-      const isNewFile = file.status === '?' || file.status === 'A'
 
-      if (isNewFile) {
-        const fullPath = `${worktreePath}/${file.relativePath}`
-        const fileName = file.relativePath.split('/').pop() || file.relativePath
-        const worktreeId = useWorktreeStore.getState().selectedWorktreeId
-        if (worktreeId) {
-          useFileViewerStore.getState().openFile(fullPath, fileName, worktreeId)
-        }
-      } else {
-        useFileViewerStore.getState().setActiveDiff({
-          worktreePath,
-          filePath: file.relativePath,
-          fileName: file.relativePath.split('/').pop() || file.relativePath,
-          staged: file.staged,
-          isUntracked: file.status === '?',
-          isNewFile: false
-        })
-      }
+      useFileViewerStore.getState().setActiveDiff({
+        worktreePath,
+        filePath: file.relativePath,
+        fileName: file.relativePath.split('/').pop() || file.relativePath,
+        staged: file.staged,
+        isUntracked: file.status === '?',
+        isNewFile: file.status === '?' || file.status === 'A'
+      })
 
       onFileClick?.(file.relativePath)
     },
