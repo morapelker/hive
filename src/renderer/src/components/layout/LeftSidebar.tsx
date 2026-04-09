@@ -66,6 +66,16 @@ export function LeftSidebar(): React.JSX.Element {
 
     const handleEscape = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
+        // If the project filter input is focused, let it handle Escape first
+        // (clear the query / close the colon-command popover).
+        // The user can press Escape again to exit connection mode.
+        const filterInput = document.querySelector(
+          '[data-testid="project-filter-input"]'
+        ) as HTMLInputElement | null
+        if (filterInput && document.activeElement === filterInput) {
+          return
+        }
+
         e.preventDefault()
         exitConnectionMode()
       }
@@ -159,7 +169,7 @@ export function LeftSidebar(): React.JSX.Element {
             </div>
           </div>
         )}
-        {!connectionModeActive && projectCount > 1 && (
+        {projectCount > 1 && (
           <div className="px-3 py-2 border-b">
             <ProjectFilter value={filterQuery} onChange={setFilterQuery} />
           </div>

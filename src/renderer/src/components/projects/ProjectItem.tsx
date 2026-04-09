@@ -431,8 +431,8 @@ export function ProjectItem({
                 />
               )}
 
-            {/* Create Worktree Button (hidden in connection mode) */}
-            {!isEditing && !connectionModeActive && (
+            {/* Create Worktree Button */}
+            {!isEditing && (
               <Button
                 variant="ghost"
                 size="icon"
