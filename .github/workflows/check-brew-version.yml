@@ -1,0 +1,11 @@
+name: Check Brew Version
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - name: Brew version
+        run: brew --version

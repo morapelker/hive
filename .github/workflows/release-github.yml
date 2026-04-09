@@ -250,8 +250,6 @@ jobs:
     needs: [start, finalize]
     continue-on-error: true
     steps:
-      - name: Tap homebrew-cask repo
-        run: brew tap --force homebrew/cask
       - name: Update official Homebrew cask
         env:
           HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_PAT }}
