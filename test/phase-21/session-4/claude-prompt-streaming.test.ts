@@ -247,6 +247,43 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       })
     })
 
+    it('emits session.error with stderr when SDK exits silently with no messages', async () => {
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+
+      // Simulate SDK returning an iterator that ends immediately (no messages)
+      // but stderr callback fires before iteration completes
+      const iter = createMockQueryIterator([])
+      mockQuery.mockImplementation((args: any) => {
+        // Trigger the stderr callback before returning the iterator
+        if (args.options?.stderr) {
+          args.options.stderr('Error: Claude exited with code 1\nSome details here')
+        }
+        return iter
+      })
+
+      await impl.prompt('/proj', sessionId, 'test')
+
+      const events = getStreamEvents(mockWindow)
+
+      // First event should be busy status
+      expect(events[0]).toMatchObject({
+        type: 'session.status',
+        statusPayload: { type: 'busy' }
+      })
+
+      // Should have busy, then error (from stderr), then idle
+      const errorEvent = events.find((e: any) => e.type === 'session.error')
+      expect(errorEvent).toBeDefined()
+      expect(errorEvent.data.stderr).toContain('Claude exited with code 1')
+      expect(errorEvent.data.error).toBe('Claude exited unexpectedly')
+
+      // Last event should be idle
+      expect(events[events.length - 1]).toMatchObject({
+        type: 'session.status',
+        statusPayload: { type: 'idle' }
+      })
+    })
+
     it('passes resume ID to SDK when session is materialized', async () => {
       await impl.reconnect('/proj', 'real-sdk-id-1', 'hive-1')
 

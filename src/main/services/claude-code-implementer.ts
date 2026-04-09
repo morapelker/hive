@@ -897,6 +897,25 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         totalMessages: messageIndex,
         aborted: session.abortController?.signal.aborted ?? false
       })
+
+      // Safety net: if the SDK exited without throwing but stderr was captured
+      // and no meaningful messages were produced, forward the stderr as an error.
+      // This handles cases where Claude exits with a bad code but the SDK
+      // ends iteration normally instead of throwing.
+      const stderrAfterLoop = session.stderrBuffer.join('').trim()
+      if (stderrAfterLoop && messageIndex === 0 && !session.abortController?.signal.aborted) {
+        log.warn('Prompt: SDK exited silently with stderr and no messages', {
+          worktreePath,
+          agentSessionId,
+          stderr: stderrAfterLoop
+        })
+        this.sendToRenderer('opencode:stream', {
+          type: 'session.error',
+          sessionId: session.hiveSessionId,
+          data: { error: 'Claude exited unexpectedly', stderr: stderrAfterLoop }
+        })
+      }
+
       this.emitStatus(session.hiveSessionId, 'idle')
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
