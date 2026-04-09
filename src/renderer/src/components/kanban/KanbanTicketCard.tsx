@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest } from 'lucide-react'
+import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2 } from 'lucide-react'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { cn } from '@/lib/utils'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
@@ -264,6 +264,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  const isCreatingPR = useGitStore(
+    useCallback(
+      (s) => ticket.worktree_id ? s.creatingPRByWorktreeId.get(ticket.worktree_id) === true : false,
+      [ticket.worktree_id]
+    )
+  )
+
   const isActive = sessionStatus === 'active'
   const isError = sessionStatus === 'error'
   const hasAttachments = ticket.attachments.length > 0
@@ -489,7 +496,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive || ticket.github_pr_number) && (
+            {(hasAttachments || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive || ticket.github_pr_number || isCreatingPR) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -542,6 +549,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     <GitPullRequest className="h-3 w-3" />
                     #{ticket.github_pr_number}
                   </button>
+                )}
+
+                {/* Creating PR indicator */}
+                {isCreatingPR && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Creating PR...
+                  </span>
                 )}
 
                 {/* Run process alive indicator */}
