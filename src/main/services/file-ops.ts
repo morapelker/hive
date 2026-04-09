@@ -4,6 +4,7 @@ import { app } from 'electron'
 import { getImageMimeType } from '@shared/types/file-utils'
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB
+const MAX_IMAGE_FILE_SIZE = 20 * 1024 * 1024 // 20MB
 
 export function readFile(filePath: string): {
   success: boolean
@@ -48,8 +49,8 @@ export function readFileAsBase64(filePath: string): {
     if (stat.isDirectory()) {
       return { success: false, error: 'Path is a directory' }
     }
-    if (stat.size > MAX_FILE_SIZE) {
-      return { success: false, error: 'File too large (max 1MB)' }
+    if (stat.size > MAX_IMAGE_FILE_SIZE) {
+      return { success: false, error: 'File too large (max 20MB)' }
     }
     const buffer = readFileSync(filePath)
     const data = buffer.toString('base64')
