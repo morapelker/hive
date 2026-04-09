@@ -847,13 +847,23 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     if (!el) return
 
     const currentScrollTop = el.scrollTop
+    const previousScrollTop = lastScrollTopRef.current
     lastScrollTopRef.current = currentScrollTop
 
     const distanceFromBottom = el.scrollHeight - currentScrollTop - el.clientHeight
     const isNearBottom = distanceFromBottom < 80
     const hasManualIntent = manualScrollIntentRef.current || pointerDownInScrollerRef.current
+    const isManualScrollUp = hasManualIntent && currentScrollTop < previousScrollTop
 
     if (isProgrammaticScrollRef.current) {
+      manualScrollIntentRef.current = false
+      return
+    }
+
+    if (isManualScrollUp && (isSending || isStreaming)) {
+      userHasScrolledUpRef.current = true
+      isAutoScrollEnabledRef.current = false
+      setShowScrollFab(true)
       manualScrollIntentRef.current = false
       return
     }

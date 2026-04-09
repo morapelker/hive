@@ -333,15 +333,15 @@ describe('CodexImplementer.prompt()', () => {
     expect(userMsg.parts[0].text).toBe('User says hello')
   })
 
-  it('keeps placeholder title immediately and replaces it with generated title later', async () => {
+  it('applies only the generated title for a new session', async () => {
     seedSession()
 
     const mockDb = {
       updateSession: vi.fn(),
       getSession: vi
         .fn()
-        .mockReturnValueOnce({ id: 'hive-session-1', name: 'Fix auth token refresh bug' })
-        .mockReturnValueOnce({ id: 'hive-session-1', name: 'Auth refresh fix' }),
+        .mockReturnValueOnce({ id: 'hive-session-1', name: 'Session 1' })
+        .mockReturnValueOnce({ id: 'hive-session-1', name: 'Fix auth token refresh bug' }),
       getWorktreeBySessionId: vi.fn().mockReturnValue(null)
     }
     impl.setDatabaseService(mockDb as any)
@@ -363,10 +363,8 @@ describe('CodexImplementer.prompt()', () => {
     await impl.prompt('/test/project', 'thread-1', 'Fix auth token refresh bug')
     await new Promise((resolve) => setTimeout(resolve, 0))
 
+    expect(mockDb.updateSession).toHaveBeenCalledTimes(1)
     expect(mockDb.updateSession).toHaveBeenNthCalledWith(1, 'hive-session-1', {
-      name: 'Fix auth token refresh bug'
-    })
-    expect(mockDb.updateSession).toHaveBeenNthCalledWith(2, 'hive-session-1', {
       name: 'Auth refresh fix'
     })
 
@@ -376,14 +374,6 @@ describe('CodexImplementer.prompt()', () => {
       .filter((e: any) => e.type === 'session.updated')
 
     expect(streamCalls).toEqual([
-      {
-        type: 'session.updated',
-        sessionId: 'hive-session-1',
-        data: {
-          title: 'Fix auth token refresh bug',
-          info: { title: 'Fix auth token refresh bug' }
-        }
-      },
       {
         type: 'session.updated',
         sessionId: 'hive-session-1',
@@ -415,6 +405,34 @@ describe('CodexImplementer.prompt()', () => {
     await impl.prompt('/test/project', 'thread-1', 'Second message')
 
     expect(mockGenerateCodexSessionTitle).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips title generation when the session already has a meaningful title', async () => {
+    seedSession()
+
+    const mockDb = {
+      getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', name: 'Existing manual title' }),
+      updateSession: vi.fn(),
+      getWorktreeBySessionId: vi.fn().mockReturnValue(null)
+    }
+    impl.setDatabaseService(mockDb as any)
+
+    simulateManagerEvents([
+      {
+        id: 'e1',
+        kind: 'notification',
+        provider: 'codex',
+        threadId: 'thread-1',
+        createdAt: new Date().toISOString(),
+        method: 'turn/completed',
+        payload: { turn: { status: 'completed' } }
+      }
+    ])
+
+    await impl.prompt('/test/project', 'thread-1', 'First message')
+
+    expect(mockGenerateCodexSessionTitle).not.toHaveBeenCalled()
+    expect(mockDb.updateSession).not.toHaveBeenCalled()
   })
 
   // ── Error handling ──────────────────────────────────────────

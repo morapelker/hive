@@ -143,4 +143,48 @@ describe('Codex title integration', () => {
       expect.objectContaining({ type: 'session.updated' })
     )
   })
+
+  it('dedupes a provider title update when the same title was already applied', async () => {
+    mockDb.getSession.mockReturnValue({ id: 'hive-session-1', name: 'Fix auth refresh' })
+    mockDb.getWorktreeBySessionId.mockReturnValue(null)
+
+    await (impl as any).handleProviderTitleUpdate({
+      kind: 'notification',
+      provider: 'codex',
+      threadId: 'thread-1',
+      method: 'thread/name/updated',
+      payload: { threadName: 'Fix auth refresh' }
+    })
+
+    expect(mockDb.updateSession).not.toHaveBeenCalled()
+    expect(mockWindow.webContents.send).not.toHaveBeenCalledWith(
+      'opencode:stream',
+      expect.objectContaining({ type: 'session.updated' })
+    )
+  })
+
+  it('applies a provider title update when local generation did not run', async () => {
+    mockDb.getSession.mockReturnValue({ id: 'hive-session-1', name: 'Session 1' })
+    mockDb.getWorktreeBySessionId.mockReturnValue(null)
+
+    await (impl as any).handleProviderTitleUpdate({
+      kind: 'notification',
+      provider: 'codex',
+      threadId: 'thread-1',
+      method: 'thread/name/updated',
+      payload: { threadName: 'Dark mode settings' }
+    })
+
+    expect(mockDb.updateSession).toHaveBeenCalledWith('hive-session-1', {
+      name: 'Dark mode settings'
+    })
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('opencode:stream', {
+      type: 'session.updated',
+      sessionId: 'hive-session-1',
+      data: {
+        title: 'Dark mode settings',
+        info: { title: 'Dark mode settings' }
+      }
+    })
+  })
 })

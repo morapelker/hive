@@ -17,6 +17,16 @@ Rules:
 - under Summary, provide short bullet points
 - under Testing, include bullet points with concrete checks or 'Not run'`
 
+export const PR_CONTENT_JSON_SCHEMA = JSON.stringify({
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    body: { type: 'string' }
+  },
+  required: ['title', 'body'],
+  additionalProperties: false
+})
+
 export interface GeneratePRContentOptions {
   baseBranch: string
   headBranch: string
@@ -61,7 +71,13 @@ ${truncatedDiffPatch}`
 
   log.info('Generating PR content', { baseBranch, headBranch, provider })
 
-  const response = await generateText(prompt, SYSTEM_PROMPT, provider)
+  const response = await generateText(
+    prompt,
+    SYSTEM_PROMPT,
+    provider,
+    undefined,
+    PR_CONTENT_JSON_SCHEMA
+  )
   if (!response) {
     throw new Error('AI provider returned an empty response')
   }
@@ -76,7 +92,10 @@ ${truncatedDiffPatch}`
 function parsePRContent(response: string): PRContent {
   const json = extractJSON(response)
   if (!json) {
-    log.warn('Could not extract JSON from response', { responsePrefix: response.slice(0, 200) })
+    log.warn('Could not extract JSON from response', {
+      responsePrefix: response.slice(0, 200),
+      responseLength: response.length
+    })
     throw new Error('Could not extract JSON from AI response')
   }
 

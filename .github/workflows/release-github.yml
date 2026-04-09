@@ -15,8 +15,6 @@ permissions:
 jobs:
   build-mac:
     runs-on: macos-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -47,9 +45,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      - name: Read version
-        id: version
-        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
 
   build-win:
     runs-on: windows-latest
@@ -93,20 +88,19 @@ jobs:
     needs: [build-mac, build-win, build-linux]
     steps:
       - uses: actions/checkout@v4
-      - name: Validate version
+      - name: Read version
+        id: version
         run: |
-          VERSION="${{ needs.build-mac.outputs.version }}"
-          if [ -z "$VERSION" ]; then
-            echo "::error::Version output from build-mac is empty"
-            exit 1
-          fi
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Releasing version: v$VERSION"
       - name: Publish release
         run: |
           NOTES=$(gh api repos/${{ github.repository }}/releases/generate-notes \
-            -f tag_name="v${{ needs.build-mac.outputs.version }}" \
+            -f tag_name="v$VERSION" \
             --jq '.body')
-          gh release edit "v${{ needs.build-mac.outputs.version }}" --draft=false --notes "$NOTES"
+          gh release edit "v$VERSION" --draft=false --notes "$NOTES"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Update Homebrew cask
@@ -114,8 +108,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_PAT: ${{ secrets.HOMEBREW_PAT }}
         run: |
-          VERSION="${{ needs.build-mac.outputs.version }}"
-
           # Download macOS DMGs
           gh release download "v${VERSION}" -p "Hive-${VERSION}-arm64.dmg" -p "Hive-${VERSION}.dmg"
 

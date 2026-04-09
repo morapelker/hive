@@ -86,15 +86,16 @@ function extractProposedPlanMarkdown(text: string): string | null {
   return match ? (match[1]?.trim() ?? null) : null
 }
 
-// ── Immediate title helpers ────────────────────────────────────────────────
+// ── Title helpers ───────────────────────────────────────────────────────────
 
-const IMMEDIATE_TITLE_LENGTH = 50
+function isDefaultSessionTitle(title: string | null | undefined): boolean {
+  const normalized = title?.trim() ?? ''
+  if (!normalized) return true
 
-function truncateForImmediateTitle(text: string): string {
-  const trimmed = text.trim().split(/\r?\n/, 1)[0]?.trim() ?? ''
-  if (!trimmed) return ''
-  if (trimmed.length <= IMMEDIATE_TITLE_LENGTH) return trimmed
-  return trimmed.slice(0, IMMEDIATE_TITLE_LENGTH - 3) + '...'
+  return (
+    /^Session \d+$/.test(normalized) ||
+    /^New session\s*-?\s*\d{4}-\d{2}-\d{2}/i.test(normalized)
+  )
 }
 
 export function normalizeCodexMessageTimestamps<T extends { created_at: string }>(rows: T[]): T[] {
@@ -554,28 +555,19 @@ export class CodexImplementer implements AgentSdkImplementer {
       return
     }
 
-    // Immediate title: set truncated first message as title for instant UX feedback
-    const isFirstMessage = session.messages.length === 0 && !session.titleGenerated
-    if (isFirstMessage) {
-      session.titleGenerated = true
-      const immediateTitle = truncateForImmediateTitle(text)
-      if (immediateTitle && this.dbService) {
-        this.dbService.updateSession(session.hiveSessionId, { name: immediateTitle })
-        this.sendToRenderer('opencode:stream', {
-          type: 'session.updated',
-          sessionId: session.hiveSessionId,
-          data: { title: immediateTitle, info: { title: immediateTitle } }
-        })
-        log.info('Prompt: set immediate title', {
+    if (!session.titleGenerationStarted) {
+      const currentTitle = this.dbService?.getSession(session.hiveSessionId)?.name ?? null
+      if (isDefaultSessionTitle(currentTitle)) {
+        session.titleGenerationStarted = true
+        this.handleTitleGeneration(session, text).catch(() => {})
+      } else {
+        session.titleGenerated = true
+        session.titleGenerationStarted = true
+        log.info('Prompt: skipped title generation for pre-titled session', {
           hiveSessionId: session.hiveSessionId,
-          immediateTitle
+          currentTitle
         })
       }
-    }
-
-    if (!session.titleGenerationStarted) {
-      session.titleGenerationStarted = true
-      this.handleTitleGeneration(session, text).catch(() => {})
     }
 
     // Inject synthetic user message so getMessages() returns it
@@ -1934,6 +1926,7 @@ export class CodexImplementer implements AgentSdkImplementer {
   private async applyGeneratedTitle(session: CodexSessionState, title: string): Promise<void> {
     const trimmedTitle = title.trim()
     if (!trimmedTitle) return
+    session.titleGenerated = true
 
     let currentTitle: string | null = null
     if (this.dbService) {

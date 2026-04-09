@@ -1,6 +1,6 @@
 {
   "name": "hive",
-  "version": "1.0.96",
+  "version": "1.0.97",
   "description": "Native macOS app for managing git worktrees and AI-powered coding sessions",
   "main": "./out/main/index.js",
   "author": "morapelker <morapelker@users.noreply.github.com>",
