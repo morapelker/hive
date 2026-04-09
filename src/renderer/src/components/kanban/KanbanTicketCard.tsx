@@ -471,7 +471,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               >
             {/* Title + top-right indicators */}
             <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium leading-snug text-foreground min-w-0">{ticket.title}</p>
+              <p className="text-sm font-medium leading-snug text-foreground min-w-0 flex-1 break-words">{ticket.title}</p>
               <div className="flex items-center gap-1.5 shrink-0">
                 {tokenText && (
                   <span className="text-[11px] tabular-nums text-muted-foreground">
