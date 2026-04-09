@@ -271,7 +271,8 @@ export function CreatePRModal({
     const { show, update } = usePRNotificationStore.getState()
     const notifId = show({
       status: 'loading',
-      message: 'Creating pull request...'
+      message: 'Creating pull request...',
+      worktreeId
     })
 
     let finalTitle = prTitle
@@ -372,7 +373,8 @@ export function CreatePRModal({
             message: `PR #${existingNumber} already exists`,
             description: 'Attached to workspace',
             prUrl: existingUrl,
-            prNumber: existingNumber
+            prNumber: existingNumber,
+            worktreeId
           })
           return
         }
@@ -395,7 +397,8 @@ export function CreatePRModal({
             'AI content generation failed — you may want to edit the title and description'
           : undefined,
         prUrl,
-        prNumber
+        prNumber,
+        worktreeId
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
