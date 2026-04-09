@@ -229,7 +229,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_PAT }}
         run: |
-          VERSION="${{ needs.build-mac.outputs.version }}"
+          VERSION="${{ needs.start.outputs.version }}"
 
           # Reuse DMGs from prior step if present, download any missing ones
           [[ -f "Hive-${VERSION}-arm64.dmg" ]] || gh release download "v${VERSION}" -p "Hive-${VERSION}-arm64.dmg"
