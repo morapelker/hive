@@ -13,6 +13,7 @@ interface PRNotification {
   description?: string
   prUrl?: string
   prNumber?: number
+  worktreeId?: string
 }
 
 interface PRNotificationState {
