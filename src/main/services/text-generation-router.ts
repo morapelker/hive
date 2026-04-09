@@ -2,7 +2,7 @@ import { homedir, tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { readFile, unlink } from 'node:fs/promises'
+import { readFile, unlink, writeFile } from 'node:fs/promises'
 
 import { loadClaudeSDK } from './claude-sdk-loader'
 import { detectAgentSdks } from './system-info'
@@ -45,7 +45,8 @@ export async function generateText(
   prompt: string,
   systemPrompt: string,
   provider: AgentSdkId,
-  modelOverride?: string
+  modelOverride?: string,
+  outputSchema?: string
 ): Promise<string | null> {
   const resolvedProvider = resolveProvider(provider)
   if (!resolvedProvider) {
@@ -61,20 +62,43 @@ export async function generateText(
   let lastError: Error | null = null
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const result = await generateWithProvider(resolvedProvider, prompt, systemPrompt, modelOverride)
+      const result = await generateWithProvider(
+        resolvedProvider,
+        prompt,
+        systemPrompt,
+        modelOverride,
+        outputSchema
+      )
       if (result !== null) {
-        log.info('Text generation succeeded', { provider: resolvedProvider, attempt })
+        log.info('Text generation succeeded', {
+          requestedProvider: provider,
+          resolvedProvider,
+          attempt,
+          usedStructuredOutput: Boolean(outputSchema)
+        })
         return result
       }
       lastError = new Error('Text generation returned empty result')
-      log.warn('Text generation returned empty result', { provider: resolvedProvider, attempt })
+      log.warn('Text generation returned empty result', {
+        requestedProvider: provider,
+        resolvedProvider,
+        attempt
+      })
     } catch (err: unknown) {
       lastError = err instanceof Error ? err : new Error(String(err))
-      log.warn('Text generation attempt failed', { provider: resolvedProvider, attempt, error: lastError.message })
+      log.warn('Text generation attempt failed', {
+        requestedProvider: provider,
+        resolvedProvider,
+        attempt,
+        error: lastError.message
+      })
     }
   }
 
-  log.warn('Text generation: all attempts exhausted', { provider: resolvedProvider })
+  log.warn('Text generation: all attempts exhausted', {
+    requestedProvider: provider,
+    resolvedProvider
+  })
   throw lastError ?? new Error('Text generation failed: all attempts returned empty results')
 }
 
@@ -109,13 +133,14 @@ function generateWithProvider(
   provider: AgentSdkId,
   prompt: string,
   systemPrompt: string,
-  modelOverride?: string
+  modelOverride?: string,
+  outputSchema?: string
 ): Promise<string | null> {
   switch (provider) {
     case 'claude-code':
       return generateWithClaude(prompt, systemPrompt, modelOverride)
     case 'codex':
-      return generateWithCodex(prompt, systemPrompt, modelOverride)
+      return generateWithCodex(prompt, systemPrompt, modelOverride, outputSchema)
     case 'opencode':
       return generateWithOpenCode(prompt, systemPrompt, modelOverride)
     case 'terminal':
@@ -210,16 +235,37 @@ async function generateWithClaude(prompt: string, systemPrompt: string, modelOve
 async function generateWithCodex(
   prompt: string,
   systemPrompt: string,
-  modelOverride?: string
+  modelOverride?: string,
+  outputSchema?: string
 ): Promise<string | null> {
   const outputFile = join(tmpdir(), `hive-codex-${randomUUID()}.txt`)
+  const schemaFile = outputSchema
+    ? join(tmpdir(), `hive-codex-schema-${randomUUID()}.json`)
+    : null
   const model = modelOverride ?? 'gpt-5.4-mini'
   const fullPrompt = `${systemPrompt}\n\n${prompt}`
 
   try {
+    await writeFile(outputFile, '')
+    const args = [
+      'exec',
+      '--ephemeral',
+      '-s',
+      'read-only',
+      '--model',
+      model,
+      '--config',
+      'model_reasoning_effort="low"'
+    ]
+    if (schemaFile && outputSchema) {
+      await writeFile(schemaFile, outputSchema)
+      args.push('--output-schema', schemaFile)
+    }
+    args.push('--output-last-message', outputFile, '-')
+
     await spawnWithStdin(
       'codex',
-      ['exec', '--ephemeral', '-s', 'read-only', '--model', model, '--output-last-message', outputFile, '-'],
+      args,
       fullPrompt
     )
     const output = await readFile(outputFile, 'utf-8')
@@ -230,6 +276,13 @@ async function generateWithCodex(
       await unlink(outputFile)
     } catch {
       // File may not exist if codex failed before writing
+    }
+    if (schemaFile) {
+      try {
+        await unlink(schemaFile)
+      } catch {
+        // File may not exist if codex failed before writing
+      }
     }
   }
 }

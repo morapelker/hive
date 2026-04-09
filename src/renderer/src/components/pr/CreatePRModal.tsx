@@ -23,6 +23,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
+import { resolvePRContentProvider } from '@/lib/pr-content-provider'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
 import { usePRNotificationStore } from '@/stores/usePRNotificationStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -63,6 +64,7 @@ export function CreatePRModal({
   const stageAll = useGitStore((s) => s.stageAll)
   const gitCommit = useGitStore((s) => s.commit)
   const defaultAgentSdk = useSettingsStore((s) => s.defaultAgentSdk) ?? 'claude-code'
+  const availableAgentSdks = useSettingsStore((s) => s.availableAgentSdks)
 
   // ── Session titles for commit message pre-fill ──────────────────
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
@@ -260,7 +262,7 @@ export function CreatePRModal({
     const prTitle = title.trim()
     const prBody = body.trim()
     const branchName = branchInfo?.name ?? 'Pull Request'
-    const provider = defaultAgentSdk
+    const provider = resolvePRContentProvider(defaultAgentSdk, availableAgentSdks)
 
     // Close modal — PR creation continues in background via notification
     setOpen(false)
@@ -295,24 +297,34 @@ export function CreatePRModal({
       // Step 2: Generate content if needed (best-effort — failure should not block PR creation)
       const needsGenerate = !finalTitle || !finalBody
       let usedFallbackContent = false
+      let generationFailureReason: string | null = null
       if (needsGenerate) {
         update(notifId, { message: 'Generating PR content...' })
-        try {
-          const genResult = await window.gitOps.generatePRContent(
-            worktreePath,
-            targetBase,
-            provider
-          )
-          if (genResult.success) {
-            if (!finalTitle && genResult.title) finalTitle = genResult.title
-            if (!finalBody && genResult.body) finalBody = genResult.body
-          } else {
-            console.warn('PR content generation failed, using fallback:', genResult.error)
+        if (!provider) {
+          usedFallbackContent = true
+          generationFailureReason =
+            'No AI provider available for PR content generation. Using default title and description.'
+        } else {
+          try {
+            const genResult = await window.gitOps.generatePRContent(
+              worktreePath,
+              targetBase,
+              provider
+            )
+            if (genResult.success) {
+              if (!finalTitle && genResult.title) finalTitle = genResult.title
+              if (!finalBody && genResult.body) finalBody = genResult.body
+            } else {
+              console.warn('PR content generation failed, using fallback:', genResult.error)
+              generationFailureReason =
+                genResult.error ?? 'AI content generation failed — you may want to edit the title and description'
+              usedFallbackContent = true
+            }
+          } catch (err) {
+            console.warn('PR content generation threw, using fallback:', err)
+            generationFailureReason = err instanceof Error ? err.message : String(err)
             usedFallbackContent = true
           }
-        } catch (err) {
-          console.warn('PR content generation threw, using fallback:', err)
-          usedFallbackContent = true
         }
         // Fallback if generation failed or returned empty
         if (!finalTitle) finalTitle = branchName
@@ -369,7 +381,8 @@ export function CreatePRModal({
           ? `PR #${prNumber} created with default content`
           : `Pull request #${prNumber} created`,
         description: usedFallbackContent
-          ? 'AI content generation failed — you may want to edit the title and description'
+          ? generationFailureReason ??
+            'AI content generation failed — you may want to edit the title and description'
           : undefined,
         prUrl,
         prNumber
@@ -391,6 +404,7 @@ export function CreatePRModal({
     title,
     body,
     defaultAgentSdk,
+    availableAgentSdks,
     branchInfo,
     attachPR,
     setOpen,
