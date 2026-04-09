@@ -253,6 +253,7 @@ export class DatabaseService {
     this.safeAddColumn('sessions', 'pinned_to_board', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'github_pr_number', 'INTEGER DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'github_pr_url', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'mark', 'TEXT DEFAULT NULL')
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
