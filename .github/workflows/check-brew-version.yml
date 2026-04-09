@@ -13,6 +13,5 @@ jobs:
         env:
           HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_PAT }}
         run: |
-          brew untap homebrew/cask
-          brew tap --force homebrew/cask
+          brew update
           brew bump-cask-pr --version=1.0.102 --no-browse hive-app
