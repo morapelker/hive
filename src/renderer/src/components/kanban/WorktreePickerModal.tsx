@@ -20,6 +20,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { CodexFastToggle } from '@/components/sessions/CodexFastToggle'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
@@ -375,6 +376,9 @@ export function WorktreePickerModal({
           plan_ready: false
         })
 
+        // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
+        useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(agentSdk))
+
         // Close modal
         onSendComplete?.()
         onOpenChange(false)
@@ -526,6 +530,9 @@ export function WorktreePickerModal({
         sort_order: sortOrder,
         plan_ready: false
       })
+
+      // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
+      useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(agentSdk))
 
       // In sticky-tab mode, stay on the board instead of switching to the new session
       if (useSettingsStore.getState().boardMode === 'sticky-tab') {
