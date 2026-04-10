@@ -27,6 +27,8 @@ interface WorktreeStatusState {
   sessionStatuses: Record<string, SessionStatusEntry | null>
   // worktreeId → epoch ms of last message activity
   lastMessageTimeByWorktree: Record<string, number>
+  // worktreeId → sessionId for active review sessions
+  reviewSessionByWorktree: Record<string, string>
 
   // Actions
   setSessionStatus: (
@@ -41,6 +43,9 @@ interface WorktreeStatusState {
   getWorktreeCompletedEntry: (worktreeId: string) => SessionStatusEntry | null
   setLastMessageTime: (worktreeId: string, timestamp: number) => void
   getLastMessageTime: (worktreeId: string) => number | null
+  setReviewSession: (worktreeId: string, sessionId: string) => void
+  clearReviewSession: (worktreeId: string) => void
+  isWorktreeBeingReviewed: (worktreeId: string) => boolean
 }
 
 // Priority ranking for status aggregation (higher number = higher priority)
@@ -67,18 +72,34 @@ function higherPriority(
 export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => ({
   sessionStatuses: {},
   lastMessageTimeByWorktree: {},
+  reviewSessionByWorktree: {},
 
   setSessionStatus: (
     sessionId: string,
     status: SessionStatusType | null,
     metadata?: { word?: string; durationMs?: number; tokenDelta?: number }
   ) => {
-    set((state) => ({
-      sessionStatuses: {
-        ...state.sessionStatuses,
-        [sessionId]: status ? { status, timestamp: Date.now(), ...metadata } : null
+    set((state) => {
+      const next: Partial<WorktreeStatusState> = {
+        sessionStatuses: {
+          ...state.sessionStatuses,
+          [sessionId]: status ? { status, timestamp: Date.now(), ...metadata } : null
+        }
       }
-    }))
+
+      // Auto-clear review session when its session completes or is cleared
+      if (status === 'completed' || status === null) {
+        for (const [wtId, sId] of Object.entries(state.reviewSessionByWorktree)) {
+          if (sId === sessionId) {
+            const { [wtId]: _, ...rest } = state.reviewSessionByWorktree
+            next.reviewSessionByWorktree = rest
+            break
+          }
+        }
+      }
+
+      return next
+    })
 
     // ── Kanban coordination: notify kanban store of relevant status changes ──
     if (status === 'completed') {
@@ -265,5 +286,25 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
   getLastMessageTime: (worktreeId: string) => {
     return get().lastMessageTimeByWorktree[worktreeId] ?? null
+  },
+
+  setReviewSession: (worktreeId: string, sessionId: string) => {
+    set((state) => ({
+      reviewSessionByWorktree: {
+        ...state.reviewSessionByWorktree,
+        [worktreeId]: sessionId
+      }
+    }))
+  },
+
+  clearReviewSession: (worktreeId: string) => {
+    set((state) => {
+      const { [worktreeId]: _, ...rest } = state.reviewSessionByWorktree
+      return { reviewSessionByWorktree: rest }
+    })
+  },
+
+  isWorktreeBeingReviewed: (worktreeId: string): boolean => {
+    return worktreeId in get().reviewSessionByWorktree
   }
 }))

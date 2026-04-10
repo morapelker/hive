@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Loader2 } from 'lucide-react'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
-import { ImagePreview } from './ImagePreview'
+import { ImagePreview, SvgPreview } from './ImagePreview'
 import { UnsavedChangesDialog } from './UnsavedChangesDialog'
 import { ExternalChangesBanner } from './ExternalChangesBanner'
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
@@ -11,6 +11,7 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { isBinaryImageFile, isSvgFile, getImageMimeType } from '@shared/types/file-utils'
+import { svgToDataUri } from '@/lib/svg-utils'
 
 // Time window after a save during which file watcher events are suppressed
 // to avoid treating our own writes as external changes.
@@ -49,31 +50,48 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
 
     if (isBinaryImage) {
       const mimeType = getImageMimeType(filePath) || 'image/png'
-      window.fileOps.readImageAsBase64(filePath).then((result) => {
-        if (cancelled) return
-        if (result.success && result.data) {
-          setImageDataUri(`data:${mimeType};base64,${result.data}`)
-        } else {
-          setError(result.error || 'Failed to read image')
-        }
-        setIsLoading(false)
-      })
-    } else {
-      window.fileOps.readFile(filePath).then((result) => {
-        if (cancelled) return
-        if (result.success && result.content !== undefined) {
-          setContent(result.content)
-          useFileViewerStore.getState().setOriginalContent(filePath, result.content)
-          if (isSvg) {
-            setImageDataUri(
-              `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(result.content)))}`
-            )
+      window.fileOps
+        .readImageAsBase64(filePath)
+        .then((result) => {
+          if (cancelled) return
+          if (result.success && result.data) {
+            setImageDataUri(`data:${mimeType};base64,${result.data}`)
+          } else {
+            setError(result.error || 'Failed to read image')
           }
-        } else {
-          setError(result.error || 'Failed to read file')
-        }
-        setIsLoading(false)
-      })
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to read image')
+        })
+        .finally(() => {
+          if (!cancelled) setIsLoading(false)
+        })
+    } else {
+      window.fileOps
+        .readFile(filePath)
+        .then((result) => {
+          if (cancelled) return
+          if (result.success && result.content !== undefined) {
+            setContent(result.content)
+            useFileViewerStore.getState().setOriginalContent(filePath, result.content)
+            if (isSvg) {
+              const uri = svgToDataUri(result.content)
+              if (uri) {
+                setImageDataUri(uri)
+              } else {
+                setError('Failed to encode SVG for preview')
+              }
+            }
+          } else {
+            setError(result.error || 'Failed to read file')
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to read file')
+        })
+        .finally(() => {
+          if (!cancelled) setIsLoading(false)
+        })
     }
 
     return () => {
@@ -204,13 +222,20 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     const result = await window.fileOps.readFile(filePath)
     if (result.success && result.content !== undefined) {
       setContent(result.content)
+      if (isSvg) {
+        const uri = svgToDataUri(result.content)
+        setImageDataUri(uri)
+        if (!uri) {
+          setError('Failed to encode SVG for preview')
+        }
+      }
       const store = useFileViewerStore.getState()
       store.setOriginalContent(filePath, result.content)
       store.markClean(filePath)
       clearExternallyChanged(filePath)
       setReloadKey((k) => k + 1)
     }
-  }, [filePath, clearExternallyChanged])
+  }, [filePath, isSvg, clearExternallyChanged])
 
   const handleKeepMine = useCallback(async () => {
     clearExternallyChanged(filePath)
@@ -237,9 +262,12 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     if (isSvg && viewMode === 'preview') {
       const svgContent = latestContentRef.current ?? content
       if (svgContent) {
-        setImageDataUri(
-          `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgContent)))}`
-        )
+        const uri = svgToDataUri(svgContent)
+        if (uri) {
+          setImageDataUri(uri)
+        } else {
+          setError('Failed to encode SVG for preview')
+        }
       }
     }
   }, [viewMode, isSvg, content])
@@ -317,9 +345,9 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
         <div className="flex-1 overflow-auto" data-testid="file-viewer-image">
           <ImagePreview src={imageDataUri} fileName={fileName} />
         </div>
-      ) : isSvg && viewMode === 'preview' && imageDataUri ? (
+      ) : isSvg && viewMode === 'preview' && content ? (
         <div className="flex-1 overflow-auto" data-testid="file-viewer-image">
-          <ImagePreview src={imageDataUri} fileName={fileName} />
+          <SvgPreview svgContent={latestContentRef.current ?? content} fileName={fileName} />
         </div>
       ) : viewMode === 'preview' && isMarkdown ? (
         <div

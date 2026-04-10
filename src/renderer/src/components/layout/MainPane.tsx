@@ -318,7 +318,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
 
     // File viewer tab is active - render FileViewer (skip diff tab keys)
     if (activeFilePath && !activeFilePath.startsWith('diff:')) {
-      return <FileViewer filePath={activeFilePath} />
+      return <FileViewer key={activeFilePath} filePath={activeFilePath} />
     }
 
     // Inline connection session view (sticky tab clicked in worktree mode)

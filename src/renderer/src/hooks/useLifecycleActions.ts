@@ -3,6 +3,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast } from '@/lib/toast'
 
 interface AttachedPR {
@@ -224,6 +225,9 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
       `Code Review — ${branchName} vs ${target}`
     )
     sessionStore.setPendingMessage(result.session.id, prompt)
+
+    // Register the review session so ticket cards can show "Reviewing" indicator
+    useWorktreeStatusStore.getState().setReviewSession(worktreeId, result.session.id)
 
     return result.session.id
   }, [worktreeId, worktree?.path])

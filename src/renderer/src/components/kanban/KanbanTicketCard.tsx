@@ -199,6 +199,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  // ── Review session active on this ticket's worktree ────────────
+  const isBeingReviewed = useWorktreeStatusStore(
+    useCallback(
+      (state) => {
+        if (!ticket.worktree_id || ticket.column !== 'review') return false
+        return ticket.worktree_id in state.reviewSessionByWorktree
+      },
+      [ticket.worktree_id, ticket.column]
+    )
+  )
+
   // ── Detect pending questions for this ticket's session ─────────
   const isAsking = useQuestionStore(
     useCallback(
@@ -496,7 +507,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isArchived || isRunProcessAlive || ticket.github_pr_number || isCreatingPR) && (
+            {(hasAttachments || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || isArchived || isRunProcessAlive || ticket.github_pr_number || isCreatingPR) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -599,6 +610,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                         Question
                       </span>
                     )}
+                  </span>
+                )}
+
+                {/* Review active but ticket's own session is NOT busy — show green bar */}
+                {isBeingReviewed && !(isBusy || isAsking) && (
+                  <span data-testid="kanban-ticket-reviewing" className="ml-auto flex items-center gap-1.5">
+                    <IndeterminateProgressBar mode={ticket.mode || 'build'} isReviewing className="w-20" />
                   </span>
                 )}
               </div>

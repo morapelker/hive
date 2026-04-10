@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { ImagePreview } from '@/components/file-viewer/ImagePreview'
+import { ImagePreview, SvgPreview } from '@/components/file-viewer/ImagePreview'
 import { isSvgFile, getImageMimeType } from '@shared/types/file-utils'
 
 interface ImageDiffViewProps {
@@ -25,8 +25,12 @@ export function ImageDiffView({
   compareBranch,
   onClose
 }: ImageDiffViewProps): React.JSX.Element {
+  // Data URIs for binary images (PNG, JPG, etc.)
   const [originalUri, setOriginalUri] = useState<string | null>(null)
   const [modifiedUri, setModifiedUri] = useState<string | null>(null)
+  // Raw SVG text content (rendered via SvgPreview instead of <img>)
+  const [originalSvg, setOriginalSvg] = useState<string | null>(null)
+  const [modifiedSvg, setModifiedSvg] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -46,13 +50,11 @@ export function ImageDiffView({
     [filePath]
   )
 
-  const buildSvgDataUri = useCallback((textContent: string): string => {
-    return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(textContent)))}`
-  }, [])
-
   const fetchContent = useCallback(async () => {
     setIsLoading(true)
     setError(null)
+    setOriginalSvg(null)
+    setModifiedSvg(null)
 
     try {
       const isSvg = isSvgFile(filePath)
@@ -62,7 +64,7 @@ export function ImageDiffView({
         if (isSvg) {
           const modResult = await window.gitOps.getFileContent(worktreePath, filePath)
           if (modResult.success && modResult.content) {
-            setModifiedUri(buildSvgDataUri(modResult.content))
+            setModifiedSvg(modResult.content)
           }
         } else {
           const modResult = await window.gitOps.getFileContentBase64(worktreePath, filePath)
@@ -76,19 +78,13 @@ export function ImageDiffView({
 
       if (compareBranch) {
         // Branch diff: original = merge-base content, modified = working tree.
-        // Uses merge-base so only changes from commits ahead of the target branch
-        // are shown (not changes introduced on the target after divergence).
         if (isSvg) {
           const [origResult, modResult] = await Promise.all([
             window.gitOps.getBranchBaseContent(worktreePath, compareBranch, filePath),
             window.gitOps.getFileContent(worktreePath, filePath)
           ])
-          setOriginalUri(
-            origResult.success && origResult.content ? buildSvgDataUri(origResult.content) : null
-          )
-          setModifiedUri(
-            modResult.success && modResult.content ? buildSvgDataUri(modResult.content) : null
-          )
+          setOriginalSvg(origResult.success && origResult.content ? origResult.content : null)
+          setModifiedSvg(modResult.success && modResult.content ? modResult.content : null)
         } else {
           const [origResult, modResult] = await Promise.all([
             window.gitOps.getBranchBaseContentBase64(worktreePath, compareBranch, filePath),
@@ -112,12 +108,8 @@ export function ImageDiffView({
             window.gitOps.getRefContent(worktreePath, 'HEAD', filePath),
             window.gitOps.getRefContent(worktreePath, '', filePath)
           ])
-          setOriginalUri(
-            origResult.success && origResult.content ? buildSvgDataUri(origResult.content) : null
-          )
-          setModifiedUri(
-            modResult.success && modResult.content ? buildSvgDataUri(modResult.content) : null
-          )
+          setOriginalSvg(origResult.success && origResult.content ? origResult.content : null)
+          setModifiedSvg(modResult.success && modResult.content ? modResult.content : null)
         } else {
           const [origResult, modResult] = await Promise.all([
             window.gitOps.getRefContentBase64(worktreePath, 'HEAD', filePath),
@@ -141,12 +133,8 @@ export function ImageDiffView({
             window.gitOps.getRefContent(worktreePath, '', filePath),
             window.gitOps.getFileContent(worktreePath, filePath)
           ])
-          setOriginalUri(
-            origResult.success && origResult.content ? buildSvgDataUri(origResult.content) : null
-          )
-          setModifiedUri(
-            modResult.success && modResult.content ? buildSvgDataUri(modResult.content) : null
-          )
+          setOriginalSvg(origResult.success && origResult.content ? origResult.content : null)
+          setModifiedSvg(modResult.success && modResult.content ? modResult.content : null)
         } else {
           const [origResult, modResult] = await Promise.all([
             window.gitOps.getRefContentBase64(worktreePath, '', filePath),
@@ -176,8 +164,7 @@ export function ImageDiffView({
     isUntracked,
     isNewFile,
     compareBranch,
-    buildDataUri,
-    buildSvgDataUri
+    buildDataUri
   ])
 
   useEffect(() => {
@@ -236,27 +223,39 @@ export function ImageDiffView({
     )
   }
 
+  const isSvg = isSvgFile(filePath)
+  const hasOriginal = isSvg ? !!originalSvg : !!originalUri
+  const hasModified = isSvg ? !!modifiedSvg : !!modifiedUri
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {toolbar}
       <div className="flex-1 flex min-h-0 overflow-auto">
-        {originalUri && (
+        {hasOriginal && (
           <div className="flex-1 flex flex-col min-w-0 border-r border-border">
             <div className="px-3 py-1 text-xs text-muted-foreground bg-muted/20 border-b border-border">
               Before
             </div>
             <div className="flex-1 overflow-auto">
-              <ImagePreview src={originalUri} fileName={fileName} />
+              {isSvg ? (
+                <SvgPreview svgContent={originalSvg!} fileName={fileName} />
+              ) : (
+                <ImagePreview src={originalUri!} fileName={fileName} />
+              )}
             </div>
           </div>
         )}
-        {modifiedUri && (
+        {hasModified && (
           <div className="flex-1 flex flex-col min-w-0">
             <div className="px-3 py-1 text-xs text-muted-foreground bg-muted/20 border-b border-border">
               After
             </div>
             <div className="flex-1 overflow-auto">
-              <ImagePreview src={modifiedUri} fileName={fileName} />
+              {isSvg ? (
+                <SvgPreview svgContent={modifiedSvg!} fileName={fileName} />
+              ) : (
+                <ImagePreview src={modifiedUri!} fileName={fileName} />
+              )}
             </div>
           </div>
         )}
