@@ -489,20 +489,26 @@ export const useSessionStore = create<SessionState>()(
       // Scope-agnostic: works for both worktree and connection sessions
       closeSession: async (sessionId: string) => {
         try {
-          // Check if this is a terminal session before removing from state
+          // Find the session to determine type and gather disconnect info
           let isTerminalSession = false
-          for (const sessions of get().sessionsByWorktree.values()) {
+          let opencodeSessionId: string | null = null
+          let sessionWorktreeId: string | null = null
+
+          for (const [worktreeId, sessions] of get().sessionsByWorktree.entries()) {
             const found = sessions.find((s) => s.id === sessionId)
             if (found) {
               isTerminalSession = found.agent_sdk === 'terminal'
+              opencodeSessionId = found.opencode_session_id
+              sessionWorktreeId = worktreeId
               break
             }
           }
-          if (!isTerminalSession) {
+          if (!sessionWorktreeId) {
             for (const sessions of get().sessionsByConnection.values()) {
               const found = sessions.find((s) => s.id === sessionId)
               if (found) {
                 isTerminalSession = found.agent_sdk === 'terminal'
+                opencodeSessionId = found.opencode_session_id
                 break
               }
             }
@@ -521,6 +527,28 @@ export const useSessionStore = create<SessionState>()(
               await window.terminalOps.destroy(sessionId)
             } catch {
               // Best-effort cleanup — PTY may already be gone
+            }
+          }
+
+          // Disconnect agent SDK session to free main-process resources
+          // (session state, abort controllers, cached data).
+          // Best-effort — session may already be disconnected.
+          if (!isTerminalSession && opencodeSessionId && sessionWorktreeId) {
+            try {
+              // Resolve worktree filesystem path from worktree ID
+              let worktreePath: string | null = null
+              for (const worktrees of useWorktreeStore.getState().worktreesByProject.values()) {
+                const wt = worktrees.find((w) => w.id === sessionWorktreeId)
+                if (wt) {
+                  worktreePath = wt.path
+                  break
+                }
+              }
+              if (worktreePath) {
+                await window.opencodeOps.disconnect(worktreePath, opencodeSessionId)
+              }
+            } catch {
+              // Best-effort cleanup — session may already be disconnected
             }
           }
 

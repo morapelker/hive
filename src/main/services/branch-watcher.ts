@@ -10,21 +10,35 @@ const log = createLogger({ component: 'BranchWatcher' })
 /**
  * BranchWatcher — lightweight HEAD-only watcher for sidebar branch display.
  *
- * Unlike the full WorktreeWatcher (which watches the entire working tree + all
- * .git metadata), this only watches .git/HEAD per worktree. This is sufficient
- * to detect branch switches and uses negligible resources.
+ * Uses a SINGLE shared chokidar FSWatcher instance to watch all .git/HEAD files,
+ * rather than creating a separate watcher per worktree. On macOS, each chokidar
+ * instance creates its own FSEvents stream — the kernel sends ALL filesystem events
+ * to every stream. Consolidating into one watcher eliminates O(N) amplification
+ * for N worktrees.
+ *
+ * Includes refcounting so multiple renderer components can watch/unwatch the same
+ * path without premature teardown.
  *
  * Emits 'git:branchChanged' events to the renderer.
  */
 
 const DEBOUNCE_MS = 300
 
-interface BranchWatcherEntry {
-  watcher: chokidar.FSWatcher
+interface PathEntry {
+  worktreePath: string
   debounceTimer: ReturnType<typeof setTimeout> | null
+  refCount: number
 }
 
-const watchers = new Map<string, BranchWatcherEntry>()
+// Single shared watcher — created lazily on first watchBranch, destroyed when last path is unwatched
+let sharedWatcher: chokidar.FSWatcher | null = null
+
+// Per-path metadata, keyed by the resolved HEAD file path
+const watchedPaths = new Map<string, PathEntry>()
+
+// Reverse lookup: worktreePath → headPath (for unwatchBranch which receives worktreePath)
+const worktreeToHead = new Map<string, string>()
+
 let mainWindow: BrowserWindow | null = null
 
 /**
@@ -68,7 +82,16 @@ export function initBranchWatcher(window: BrowserWindow): void {
 }
 
 export async function watchBranch(worktreePath: string): Promise<void> {
-  if (watchers.has(worktreePath)) return
+  // Check if already watching this worktree — bump refCount
+  const existingHead = worktreeToHead.get(worktreePath)
+  if (existingHead) {
+    const entry = watchedPaths.get(existingHead)
+    if (entry) {
+      entry.refCount++
+      log.info('Incremented branch watcher refCount', { worktreePath, refCount: entry.refCount })
+      return
+    }
+  }
 
   const gitDir = resolveGitDir(worktreePath)
   if (!gitDir) {
@@ -82,56 +105,104 @@ export async function watchBranch(worktreePath: string): Promise<void> {
     return
   }
 
-  const watcher = chokidar.watch(headPath, {
-    persistent: true,
-    ignoreInitial: true
-  })
+  // Create shared watcher lazily on first path
+  if (!sharedWatcher) {
+    sharedWatcher = chokidar.watch([], {
+      persistent: true,
+      ignoreInitial: true
+    })
 
-  const entry: BranchWatcherEntry = { watcher, debounceTimer: null }
+    sharedWatcher.on('change', (changedPath) => {
+      const entry = watchedPaths.get(changedPath)
+      if (!entry) return
 
-  watcher.on('change', () => {
-    if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
-    entry.debounceTimer = setTimeout(() => {
-      entry.debounceTimer = null
-      emitBranchChanged(worktreePath)
-    }, DEBOUNCE_MS)
-  })
+      if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
+      entry.debounceTimer = setTimeout(() => {
+        entry.debounceTimer = null
+        emitBranchChanged(entry.worktreePath)
+      }, DEBOUNCE_MS)
+    })
 
-  watcher.on('error', (error) => {
-    log.error('Branch watcher error', error, { worktreePath })
-  })
+    sharedWatcher.on('error', (error) => {
+      log.error('Branch watcher error', error)
+    })
 
-  watchers.set(worktreePath, entry)
-  log.info('Branch watcher started', { worktreePath, headPath })
+    log.info('Shared branch watcher created')
+  }
+
+  // Add this HEAD path to the shared watcher
+  sharedWatcher.add(headPath)
+  watchedPaths.set(headPath, { worktreePath, debounceTimer: null, refCount: 1 })
+  worktreeToHead.set(worktreePath, headPath)
+
+  log.info('Branch watcher started', { worktreePath, headPath, totalPaths: watchedPaths.size })
 }
 
 export async function unwatchBranch(worktreePath: string): Promise<void> {
-  const entry = watchers.get(worktreePath)
+  const headPath = worktreeToHead.get(worktreePath)
+  if (!headPath) return
+
+  const entry = watchedPaths.get(headPath)
   if (!entry) return
+
+  // Decrement refCount — keep watching if other consumers still need it
+  entry.refCount = Math.max(0, entry.refCount - 1)
+  if (entry.refCount > 0) {
+    log.info('Decremented branch watcher refCount', { worktreePath, refCount: entry.refCount })
+    return
+  }
+
+  log.info('Stopping branch watcher (refCount reached 0)', { worktreePath })
 
   if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
 
-  try {
-    await entry.watcher.close()
-  } catch (error) {
-    log.error(
-      'Failed to close branch watcher',
-      error instanceof Error ? error : new Error(String(error)),
-      { worktreePath }
-    )
+  // Remove path from shared watcher
+  if (sharedWatcher) {
+    sharedWatcher.unwatch(headPath)
   }
 
-  watchers.delete(worktreePath)
+  watchedPaths.delete(headPath)
+  worktreeToHead.delete(worktreePath)
+
+  // If no more paths, close the shared watcher entirely
+  if (watchedPaths.size === 0 && sharedWatcher) {
+    log.info('Closing shared branch watcher (no more paths)')
+    try {
+      await sharedWatcher.close()
+    } catch (error) {
+      log.error(
+        'Failed to close shared branch watcher',
+        error instanceof Error ? error : new Error(String(error))
+      )
+    }
+    sharedWatcher = null
+  }
 }
 
 export function getBranchWatcherCount(): number {
-  return watchers.size
+  return watchedPaths.size
 }
 
 export async function cleanupBranchWatchers(): Promise<void> {
-  log.info('Cleaning up all branch watchers', { count: watchers.size })
-  const paths = Array.from(watchers.keys())
-  for (const path of paths) {
-    await unwatchBranch(path)
+  log.info('Cleaning up all branch watchers', { count: watchedPaths.size })
+
+  // Clear all debounce timers
+  for (const entry of watchedPaths.values()) {
+    if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
+  }
+
+  watchedPaths.clear()
+  worktreeToHead.clear()
+
+  if (sharedWatcher) {
+    try {
+      await sharedWatcher.close()
+    } catch (error) {
+      log.error(
+        'Failed to close shared branch watcher during cleanup',
+        error instanceof Error ? error : new Error(String(error))
+      )
+    }
+    sharedWatcher = null
   }
 }

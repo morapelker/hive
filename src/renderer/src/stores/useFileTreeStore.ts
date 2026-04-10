@@ -64,8 +64,10 @@ const deserializeExpandedPaths = (data: [string, string[]][]): Map<string, Set<s
   return map
 }
 
-// Module-level map for onChange unsubscribe functions (not serializable, so outside persist store)
-const watchUnsubscribers = new Map<string, () => void>()
+// Module-level map for onChange subscriptions with refcounting.
+// Multiple components (FileTree, SessionView) can startWatching the same path;
+// refCount ensures the watcher is only torn down when all consumers have stopped.
+const watchSubscriptions = new Map<string, { unsubscribe: () => void; refCount: number }>()
 
 // When a batch of file-change events exceeds this threshold (e.g. branch switch,
 // npm install), skip incremental index updates and do a full re-scan instead.
@@ -269,11 +271,16 @@ export const useFileTreeStore = create<FileTreeState>()(
         await get().loadFileTree(worktreePath)
       },
 
-      // Start watching for file changes + subscribe to onChange events
+      // Start watching for file changes + subscribe to onChange events.
+      // Uses refcounting so multiple consumers (FileTree, SessionView) can
+      // watch the same path without creating duplicate chokidar instances.
       startWatching: async (worktreePath: string) => {
         try {
-          // Guard against duplicate subscriptions
-          if (watchUnsubscribers.has(worktreePath)) return
+          const existing = watchSubscriptions.get(worktreePath)
+          if (existing) {
+            existing.refCount++
+            return
+          }
 
           await window.fileTreeOps.watch(worktreePath)
 
@@ -283,20 +290,24 @@ export const useFileTreeStore = create<FileTreeState>()(
               get().handleFileChange(worktreePath, event.events)
             }
           })
-          watchUnsubscribers.set(worktreePath, unsubscribe)
+          watchSubscriptions.set(worktreePath, { unsubscribe, refCount: 1 })
         } catch (error) {
           console.error('Failed to start file watching:', error)
         }
       },
 
-      // Stop watching for file changes + unsubscribe onChange events
+      // Stop watching for file changes + unsubscribe onChange events.
+      // Only tears down the watcher when refCount reaches 0.
       stopWatching: async (worktreePath: string) => {
         try {
-          const unsubscribe = watchUnsubscribers.get(worktreePath)
-          if (unsubscribe) {
-            unsubscribe()
-            watchUnsubscribers.delete(worktreePath)
-          }
+          const entry = watchSubscriptions.get(worktreePath)
+          if (!entry) return
+
+          entry.refCount--
+          if (entry.refCount > 0) return
+
+          entry.unsubscribe()
+          watchSubscriptions.delete(worktreePath)
 
           await window.fileTreeOps.unwatch(worktreePath)
         } catch (error) {

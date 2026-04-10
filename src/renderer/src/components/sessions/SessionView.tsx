@@ -653,6 +653,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Refs
   const virtualizedListRef = useRef<VirtualizedMessageListHandle>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const prevFileIndexWorktreeRef = useRef<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const scrollContainerCallbackRef = useCallback((el: HTMLDivElement | null) => {
@@ -702,10 +703,29 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       : EMPTY_FILE_INDEX
   )
   useEffect(() => {
-    if (worktreePath && fileIndex === EMPTY_FILE_INDEX) {
+    if (!worktreePath) return
+
+    // If switching worktrees, stop watching the previous one.
+    // refCount in the store ensures this won't tear down a watcher
+    // that FileTree or another SessionView still needs.
+    if (prevFileIndexWorktreeRef.current && prevFileIndexWorktreeRef.current !== worktreePath) {
+      useFileTreeStore.getState().stopWatching(prevFileIndexWorktreeRef.current)
+    }
+    prevFileIndexWorktreeRef.current = worktreePath
+
+    if (fileIndex === EMPTY_FILE_INDEX) {
       useFileTreeStore.getState().loadFileIndex(worktreePath)
     }
   }, [worktreePath, fileIndex])
+
+  // Cleanup file tree watcher on unmount
+  useEffect(() => {
+    return () => {
+      if (prevFileIndexWorktreeRef.current) {
+        useFileTreeStore.getState().stopWatching(prevFileIndexWorktreeRef.current)
+      }
+    }
+  }, [])
 
   // File mentions hook
   const fileMentions = useFileMentions(inputValue, cursorPosition, fileIndex)
