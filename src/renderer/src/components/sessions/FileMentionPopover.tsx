@@ -82,7 +82,7 @@ export function FileMentionPopover({
         ) : (
           suggestions.map((file, index) => (
             <div
-              key={file.relativePath}
+              key={file.path}
               data-mention-item
               data-testid="file-mention-item"
               role="option"
