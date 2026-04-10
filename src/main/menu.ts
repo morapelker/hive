@@ -101,16 +101,25 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
           accelerator: 'CmdOrCtrl+V',
           click: (): void => {
             if (!_mainWindow || _mainWindow.isDestroyed()) return
-            // On macOS the Ghostty terminal is a native NSView overlay that
-            // can become the macOS first responder independently of Chromium.
-            // The menu accelerator intercepts Cmd+V before any NSView sees it.
-            // Query the native addon for the actual macOS first responder: if
-            // a Ghostty surface owns it, paste directly into that surface;
-            // otherwise fall through to the normal web content paste path.
+            // Three-tier paste routing for Ghostty + xterm coexistence.
+            //
+            // Tier 1: The native addon reports a Ghostty surface as macOS first
+            //         responder — paste directly into that surface (fast path).
+            // Tier 2: No Ghostty first responder AND web content is not focused
+            //         either — the native focus state is likely stale (e.g. after
+            //         overlay suppression race). Send 'edit:paste' IPC so the
+            //         renderer can route to whichever backend is actually active.
+            // Tier 3: Web content has focus — standard browser paste for xterm,
+            //         text inputs, and other Chromium-rendered elements.
             if (ghosttyService.focusedSurfaceId() > 0) {
               const text = clipboard.readText()
               if (text) {
                 ghosttyService.pasteToFocusedSurface(text)
+              }
+            } else if (!_mainWindow.webContents.isFocused() && ghosttyService.hasSurfaces()) {
+              const text = clipboard.readText()
+              if (text) {
+                _mainWindow.webContents.send('edit:paste', text)
               }
             } else {
               _mainWindow.webContents.paste()

@@ -253,6 +253,11 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
     ghosttyService.pasteText(worktreeId, text)
   })
 
+  // Diagnostic: inspect Ghostty view hierarchy and first responder state
+  ipcMain.handle('terminal:ghostty:focusDiagnostics', () => {
+    return ghosttyService.focusDiagnostics()
+  })
+
   // Destroy a Ghostty surface for a worktree
   ipcMain.handle('terminal:ghostty:destroySurface', (_event, worktreeId: string) => {
     log.info('IPC: terminal:ghostty:destroySurface', { worktreeId })

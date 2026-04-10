@@ -344,10 +344,21 @@ void GhosttyBridge::setFocus(uint32_t surfaceId, bool focused) {
   // Do this outside the bridge mutex to avoid re-entrant deadlocks.
   if (view && [view window]) {
     NSWindow* window = [view window];
-    if (focused && [window firstResponder] != view) {
+    NSResponder* firstResponder = [window firstResponder];
+
+    // When focusing, always make the host view first responder.
+    if (focused && firstResponder != view) {
       [window makeFirstResponder:view];
-    } else if (!focused && [window firstResponder] == view) {
-      [window makeFirstResponder:nil];
+    }
+    // When unfocusing, resign if the host view OR any of its subviews is the
+    // first responder (Ghostty may have installed a child view for text input).
+    else if (!focused) {
+      bool ownsFocus = (firstResponder == view) ||
+        ([firstResponder isKindOfClass:[NSView class]] &&
+         [(NSView*)firstResponder isDescendantOf:view]);
+      if (ownsFocus) {
+        [window makeFirstResponder:nil];
+      }
     }
   }
 
@@ -386,11 +397,67 @@ uint32_t GhosttyBridge::focusedSurfaceId() {
   std::lock_guard<std::mutex> lock(mutex_);
   for (auto& [id, surface] : surfaces_) {
     NSView* view = surface.view;
-    if (view && view.window && [view.window firstResponder] == view) {
+    if (!view || !view.window) continue;
+
+    NSResponder* firstResponder = [view.window firstResponder];
+    // Check if the first responder is the host view itself.
+    if (firstResponder == view) return id;
+    // Also check if the first responder is a subview of the host view.
+    // Ghostty may install child views (e.g. for Metal rendering or IME text
+    // input) that become the first responder. Typing still works through the
+    // responder chain, but a strict identity check would miss them, causing
+    // focusedSurfaceId() to return 0 and breaking Cmd+V paste routing.
+    if ([firstResponder isKindOfClass:[NSView class]] &&
+        [(NSView*)firstResponder isDescendantOf:view]) {
       return id;
     }
   }
   return 0;
+}
+
+std::vector<GhosttyBridge::FocusDiagInfo> GhosttyBridge::focusDiagnostics() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<FocusDiagInfo> result;
+
+  for (auto& [id, surface] : surfaces_) {
+    FocusDiagInfo info;
+    info.surfaceId = id;
+    info.subviewCount = 0;
+    info.isHostView = false;
+    info.isDescendant = false;
+    info.hasWindow = false;
+
+    NSView* view = surface.view;
+    if (!view) {
+      info.firstResponderClass = "(no view)";
+      result.push_back(info);
+      continue;
+    }
+
+    info.subviewCount = static_cast<int>([view.subviews count]);
+    info.hasWindow = (view.window != nil);
+
+    if (!view.window) {
+      info.firstResponderClass = "(no window)";
+      result.push_back(info);
+      continue;
+    }
+
+    NSResponder* firstResponder = [view.window firstResponder];
+    if (!firstResponder) {
+      info.firstResponderClass = "(nil)";
+    } else {
+      info.firstResponderClass = [NSStringFromClass([firstResponder class]) UTF8String];
+      info.isHostView = (firstResponder == view);
+      info.isDescendant = !info.isHostView &&
+        [firstResponder isKindOfClass:[NSView class]] &&
+        [(NSView*)firstResponder isDescendantOf:view];
+    }
+
+    result.push_back(info);
+  }
+
+  return result;
 }
 
 void GhosttyBridge::requestClose(uint32_t surfaceId) {

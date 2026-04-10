@@ -206,6 +206,13 @@ export class GhosttyBackend implements TerminalBackend {
     }
 
     this.syncFrame()
+    // Restore macOS first responder so focusedSurfaceId() returns this surface
+    // and the menu paste handler routes Cmd+V correctly. Without this, focus
+    // restoration depends on a fragile setTimeout in TerminalView that can be
+    // cancelled by rapid effectiveVisible changes (e.g. overlay suppression race).
+    window.terminalOps.ghosttySetFocus(this.worktreeId, true).catch(() => {
+      // Ignore focus errors
+    })
   }
 
   clear(): void {

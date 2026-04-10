@@ -321,6 +321,28 @@ Napi::Value GhosttyFocusedSurfaceId(const Napi::CallbackInfo& info) {
 }
 
 // ---------------------------------------------------------------------------
+// ghosttyFocusDiagnostics() → Array<{surfaceId, subviewCount, firstResponderClass, isHostView, isDescendant, hasWindow}>
+// ---------------------------------------------------------------------------
+Napi::Value GhosttyFocusDiagnostics(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  auto diags = GhosttyBridge::instance().focusDiagnostics();
+
+  Napi::Array arr = Napi::Array::New(env, diags.size());
+  for (size_t i = 0; i < diags.size(); i++) {
+    Napi::Object obj = Napi::Object::New(env);
+    obj.Set("surfaceId", Napi::Number::New(env, diags[i].surfaceId));
+    obj.Set("subviewCount", Napi::Number::New(env, diags[i].subviewCount));
+    obj.Set("firstResponderClass", Napi::String::New(env, diags[i].firstResponderClass));
+    obj.Set("isHostView", Napi::Boolean::New(env, diags[i].isHostView));
+    obj.Set("isDescendant", Napi::Boolean::New(env, diags[i].isDescendant));
+    obj.Set("hasWindow", Napi::Boolean::New(env, diags[i].hasWindow));
+    arr[i] = obj;
+  }
+
+  return arr;
+}
+
+// ---------------------------------------------------------------------------
 // ghosttyDestroySurface(surfaceId: number) → void
 // ---------------------------------------------------------------------------
 void GhosttyDestroySurface(const Napi::CallbackInfo& info) {
@@ -366,6 +388,8 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     Napi::Function::New(env, GhosttyPasteText));
   exports.Set("ghosttyFocusedSurfaceId",
     Napi::Function::New(env, GhosttyFocusedSurfaceId));
+  exports.Set("ghosttyFocusDiagnostics",
+    Napi::Function::New(env, GhosttyFocusDiagnostics));
   exports.Set("ghosttyDestroySurface",
     Napi::Function::New(env, GhosttyDestroySurface));
   exports.Set("ghosttyShutdown",

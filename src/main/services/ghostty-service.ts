@@ -33,6 +33,14 @@ interface GhosttyAddon {
   ghosttySetFocus(surfaceId: number, focused: boolean): void
   ghosttyPasteText(surfaceId: number, text: string): void
   ghosttyFocusedSurfaceId(): number
+  ghosttyFocusDiagnostics(): Array<{
+    surfaceId: number
+    subviewCount: number
+    firstResponderClass: string
+    isHostView: boolean
+    isDescendant: boolean
+    hasWindow: boolean
+  }>
   ghosttyDestroySurface(surfaceId: number): void
   ghosttyShutdown(): void
 }
@@ -409,6 +417,35 @@ class GhosttyService {
         err instanceof Error ? err : new Error(String(err)),
         { worktreeId }
       )
+    }
+  }
+
+  /**
+   * Returns true if any Ghostty surfaces exist (regardless of focus state).
+   * Used by the menu paste handler to decide whether the IPC fallback should fire.
+   */
+  hasSurfaces(): boolean {
+    return this.surfaces.size > 0
+  }
+
+  /**
+   * Diagnostic: return info about the view hierarchy and first responder for
+   * each surface. Call from DevTools via terminalOps.ghosttyFocusDiagnostics()
+   * to debug paste routing issues.
+   */
+  focusDiagnostics(): Array<{
+    surfaceId: number
+    subviewCount: number
+    firstResponderClass: string
+    isHostView: boolean
+    isDescendant: boolean
+    hasWindow: boolean
+  }> {
+    if (!this.addon) return []
+    try {
+      return this.addon.ghosttyFocusDiagnostics()
+    } catch {
+      return []
     }
   }
 

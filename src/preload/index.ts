@@ -1679,6 +1679,17 @@ const terminalOps = {
   ghosttyPasteText: (worktreeId: string, text: string): Promise<void> =>
     ipcRenderer.invoke('terminal:ghostty:pasteText', worktreeId, text),
 
+  ghosttyFocusDiagnostics: (): Promise<
+    Array<{
+      surfaceId: number
+      subviewCount: number
+      firstResponderClass: string
+      isHostView: boolean
+      isDescendant: boolean
+      hasWindow: boolean
+    }>
+  > => ipcRenderer.invoke('terminal:ghostty:focusDiagnostics'),
+
   ghosttyDestroySurface: (worktreeId: string): Promise<void> =>
     ipcRenderer.invoke('terminal:ghostty:destroySurface', worktreeId),
 

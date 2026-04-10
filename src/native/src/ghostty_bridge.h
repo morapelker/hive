@@ -12,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include "ghostty.h"
 
 // Forward declaration for NSView*
@@ -116,6 +117,18 @@ public:
 
   // Update libghostty focus state only (no NSResponder changes).
   void setSurfaceFocus(uint32_t surfaceId, bool focused);
+
+  // Diagnostic: return info about the view hierarchy and first responder
+  // for each surface. Used to debug paste routing issues.
+  struct FocusDiagInfo {
+    uint32_t surfaceId;
+    int subviewCount;
+    std::string firstResponderClass;
+    bool isHostView;       // first responder == host view
+    bool isDescendant;     // first responder is a subview of host view
+    bool hasWindow;
+  };
+  std::vector<FocusDiagInfo> focusDiagnostics();
 
   // Request surface close (graceful)
   void requestClose(uint32_t surfaceId);

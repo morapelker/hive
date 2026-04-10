@@ -91,7 +91,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     return () => clearTimeout(timer)
   }, [themeId])
 
-  // Re-fit and focus when becoming visible
+  // Re-fit and focus when becoming visible.
+  // Note: GhosttyBackend.setVisible(true) already restores macOS first responder
+  // directly; the focus() call below is a belt-and-suspenders backup for Ghostty
+  // and the primary focus path for xterm. The xterm fit() requires the delayed
+  // call because layout dimensions need a frame to settle.
   useEffect(() => {
     if (!backendRef.current) return
 
@@ -109,20 +113,28 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     return () => clearTimeout(timer)
   }, [effectiveVisible])
 
-  // Ghostty paste: the Cmd+V menu accelerator intercepts the keystroke at the
-  // macOS application-menu level, before it can reach the native Ghostty NSView.
-  // The menu handler checks webContents.isFocused() — when the Ghostty NSView
-  // is the macOS first responder the web content is NOT focused, so the handler
-  // reads the clipboard and sends 'edit:paste' via IPC for us to forward here.
+  // Paste fallback: the Cmd+V menu accelerator intercepts the keystroke at the
+  // macOS application-menu level before it reaches any view. The menu handler
+  // uses a three-tier routing strategy:
+  //   Tier 1: Ghostty surface has macOS first responder → direct native paste
+  //   Tier 2: Neither Ghostty nor web content has focus (stale focus state) →
+  //           sends 'edit:paste' IPC here so we can route to the active backend
+  //   Tier 3: Web content has focus → webContents.paste() (xterm, inputs, etc.)
+  // This listener handles Tier 2 — it fires when the native focus detection
+  // failed but the terminal is still the intended paste target.
+  // Note: 'edit:paste' is an IPC broadcast — all registered listeners receive it.
+  // Only one TerminalView should have effectiveVisible=true at a time (enforced
+  // by TerminalManager's single-active invariant), so only one listener fires.
   useEffect(() => {
-    if (activeBackendTypeRef.current !== 'ghostty' || !effectiveVisible) return
+    if (!effectiveVisible) return
     if (!window.systemOps?.onEditPaste) return
 
     const cleanup = window.systemOps.onEditPaste((text) => {
-      // The main process already verified that webContents is NOT focused
-      // (i.e. a native NSView like Ghostty has macOS first responder), so
-      // we can unconditionally forward the text to the Ghostty surface.
-      window.terminalOps.ghosttyPasteText(worktreeId, text)
+      if (activeBackendTypeRef.current === 'ghostty') {
+        window.terminalOps.ghosttyPasteText(worktreeId, text)
+      } else if (activeBackendTypeRef.current === 'xterm') {
+        window.terminalOps.write(worktreeId, text)
+      }
     })
 
     return cleanup

@@ -74,11 +74,17 @@ describe('GhosttyBackend visibility', () => {
     expect(hiddenFrame.h).toBe(360)
     expect(mockTerminalOps.ghosttyDestroySurface).not.toHaveBeenCalled()
 
+    mockTerminalOps.ghosttySetFocus.mockClear()
+
     visibilityBackend.setVisible(true)
 
     const visibleFrame = mockTerminalOps.ghosttySetFrame.mock.calls.at(-1)?.[1]
     expect(visibleFrame).toEqual({ x: 100, y: 80, w: 640, h: 360 })
     expect(mockTerminalOps.ghosttyDestroySurface).not.toHaveBeenCalled()
+
+    // Focus must be restored when becoming visible again so that
+    // focusedSurfaceId() returns this surface for the menu paste handler.
+    expect(mockTerminalOps.ghosttySetFocus).toHaveBeenCalledWith('wt-1', true)
 
     backend.dispose()
   })
