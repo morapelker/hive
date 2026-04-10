@@ -26,6 +26,8 @@ import {
 } from '@/components/ui/context-menu'
 import { useKanbanStore, getKanbanDragData, setKanbanDragData, suppressLayoutAnimation, isLayoutAnimationSuppressed } from '@/stores/useKanbanStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { KanbanTicket, KanbanTicketColumn as ColumnType } from '../../../../main/db/types'
 
 // ── Layout animation spring ─────────────────────────────────────────
@@ -305,6 +307,12 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
         // Default: move directly
         const sortOrder = store.computeSortOrder(tickets, targetIndex)
         store.moveTicket(ticketId, ticketProjectId, column, sortOrder)
+
+        // Trigger usage refresh when simple-mode drops a ticket into In Progress
+        if (column === 'in_progress') {
+          const sdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+          useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(sdk))
+        }
       } else {
         // ── Same-column reorder ───────────────────────────────
         const ticketProjectId = findTicketProjectId(ticketId)
