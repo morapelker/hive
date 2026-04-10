@@ -350,9 +350,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   }, [])
 
   // ── Click handler — open ticket detail modal ───────────────────
-  const handleClick = useCallback(() => {
-    useKanbanStore.getState().setSelectedTicketId(ticket.id)
-  }, [ticket.id])
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select attached worktree
+      if ((e.metaKey || e.ctrlKey) && ticket.worktree_id && !isArchived) {
+        e.preventDefault()
+        useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+        useProjectStore.getState().selectProject(ticket.project_id)
+        useWorktreeStatusStore.getState().clearWorktreeUnread(ticket.worktree_id)
+        return
+      }
+
+      useKanbanStore.getState().setSelectedTicketId(ticket.id)
+    },
+    [ticket.id, ticket.worktree_id, ticket.project_id, isArchived]
+  )
 
   // ── Middle-click — select attached worktree (same as sidebar) ─
   const handleMouseDown = useCallback(
