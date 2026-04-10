@@ -36,6 +36,7 @@ import type {
   KanbanTicketCreate,
   KanbanTicketUpdate,
   KanbanTicketColumn,
+  TicketMark,
   TicketFollowupMessage,
   TicketFollowupMessageCreate
 } from './types'
@@ -146,6 +147,7 @@ export class DatabaseService {
       external_url: (row.external_url as string) ?? null,
       github_pr_number: (row.github_pr_number as number) ?? null,
       github_pr_url: (row.github_pr_url as string) ?? null,
+      mark: (row.mark as TicketMark) ?? null,
       total_tokens: (row.total_tokens as number) ?? 0
     }
   }
@@ -251,6 +253,7 @@ export class DatabaseService {
     this.safeAddColumn('sessions', 'pinned_to_board', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'github_pr_number', 'INTEGER DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'github_pr_url', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'mark', 'TEXT DEFAULT NULL')
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
@@ -1686,10 +1689,11 @@ export class DatabaseService {
     const externalUrl = data.external_url ?? null
     const githubPrNumber = data.github_pr_number ?? null
     const githubPrUrl = data.github_pr_url ?? null
+    const mark = data.mark ?? null
 
     db.prepare(
-      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       data.project_id,
@@ -1707,6 +1711,7 @@ export class DatabaseService {
       externalUrl,
       githubPrNumber,
       githubPrUrl,
+      mark,
       now,
       now
     )
@@ -1728,6 +1733,7 @@ export class DatabaseService {
       external_url: externalUrl,
       github_pr_number: githubPrNumber,
       github_pr_url: githubPrUrl,
+      mark,
       total_tokens: 0,
       created_at: now,
       updated_at: now
@@ -1816,6 +1822,10 @@ export class DatabaseService {
     if (data.github_pr_url !== undefined) {
       updates.push('github_pr_url = ?')
       values.push(data.github_pr_url)
+    }
+    if (data.mark !== undefined) {
+      updates.push('mark = ?')
+      values.push(data.mark)
     }
 
     if (updates.length === 1) return existing // Only updated_at, nothing meaningful changed

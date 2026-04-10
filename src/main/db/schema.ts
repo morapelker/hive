@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 20
+export const CURRENT_SCHEMA_VERSION = 21
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -422,6 +422,12 @@ export const MIGRATIONS: Migration[] = [
     up: `ALTER TABLE sessions ADD COLUMN pinned_to_board INTEGER NOT NULL DEFAULT 0;
          ALTER TABLE kanban_tickets ADD COLUMN github_pr_number INTEGER DEFAULT NULL;
          ALTER TABLE kanban_tickets ADD COLUMN github_pr_url TEXT DEFAULT NULL;`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 21,
+    name: 'add_ticket_mark',
+    up: `ALTER TABLE kanban_tickets ADD COLUMN mark TEXT DEFAULT NULL`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

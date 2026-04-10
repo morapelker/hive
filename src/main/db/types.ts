@@ -338,6 +338,7 @@ export interface SessionSearchOptions {
 
 // Kanban ticket types
 export type KanbanTicketColumn = 'todo' | 'in_progress' | 'review' | 'done'
+export type TicketMark = 'common' | 'rare' | 'epic' | 'legendary'
 
 export interface KanbanTicket {
   id: string
@@ -359,6 +360,7 @@ export interface KanbanTicket {
   external_url: string | null
   github_pr_number: number | null
   github_pr_url: string | null
+  mark: TicketMark | null
   total_tokens: number
 }
 
@@ -379,6 +381,7 @@ export interface KanbanTicketCreate {
   external_url?: string | null
   github_pr_number?: number | null
   github_pr_url?: string | null
+  mark?: TicketMark | null
 }
 
 export interface KanbanTicketUpdate {
@@ -393,6 +396,7 @@ export interface KanbanTicketUpdate {
   plan_ready?: boolean
   github_pr_number?: number | null
   github_pr_url?: string | null
+  mark?: TicketMark | null
 }
 
 // Ticket followup message types

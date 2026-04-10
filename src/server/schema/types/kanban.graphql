@@ -21,6 +21,7 @@ type KanbanTicket {
   externalId: String
   externalUrl: String
   totalTokens: Int!
+  mark: String
 }
 
 input KanbanCreateTicketInput {
@@ -43,5 +44,6 @@ input KanbanUpdateTicketInput {
   sortOrder: Float
   sessionId: String
   worktreeId: String
+  mark: String
 }
 

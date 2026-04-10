@@ -542,6 +542,7 @@ export type KanbanTicket = {
   externalProvider?: Maybe<Scalars['String']['output']>;
   externalUrl?: Maybe<Scalars['String']['output']>;
   id: Scalars['String']['output'];
+  mark?: Maybe<Scalars['String']['output']>;
   projectId: Scalars['String']['output'];
   sessionId?: Maybe<Scalars['String']['output']>;
   sortOrder: Scalars['Float']['output'];
@@ -560,6 +561,7 @@ export type KanbanTicketColumn =
 export type KanbanUpdateTicketInput = {
   column?: InputMaybe<KanbanTicketColumn>;
   description?: InputMaybe<Scalars['String']['input']>;
+  mark?: InputMaybe<Scalars['String']['input']>;
   sessionId?: InputMaybe<Scalars['String']['input']>;
   sortOrder?: InputMaybe<Scalars['Float']['input']>;
   title?: InputMaybe<Scalars['String']['input']>;
@@ -3080,6 +3082,7 @@ export type KanbanTicketResolvers<ContextType = GraphQLContext, ParentType exten
   externalProvider?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   externalUrl?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   id?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  mark?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   projectId?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
   sessionId?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   sortOrder?: Resolver<ResolversTypes['Float'], ParentType, ContextType>;

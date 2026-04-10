@@ -19,7 +19,8 @@ function mapKanbanTicket(row: any) {
     archived: !!row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    totalTokens: row.total_tokens ?? 0
+    totalTokens: row.total_tokens ?? 0,
+    mark: row.mark ?? null
   }
 }
 
@@ -53,6 +54,7 @@ export const kanbanMutationResolvers: Resolvers = {
       if (input.sortOrder !== undefined) data.sort_order = input.sortOrder
       if (input.sessionId !== undefined) data.current_session_id = input.sessionId
       if (input.worktreeId !== undefined) data.worktree_id = input.worktreeId
+      if (input.mark !== undefined) data.mark = input.mark
       return mapKanbanTicket(ctx.db.updateKanbanTicket(id, data))
     },
 

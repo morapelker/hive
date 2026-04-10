@@ -176,6 +176,7 @@ interface KanbanTicket {
   archived_at: string | null
   github_pr_number: number | null
   github_pr_url: string | null
+  mark: string | null
 }
 
 interface KanbanTicketCreate {
@@ -205,6 +206,7 @@ interface KanbanTicketUpdate {
   plan_ready?: boolean
   github_pr_number?: number | null
   github_pr_url?: string | null
+  mark?: string | null
 }
 
 declare global {

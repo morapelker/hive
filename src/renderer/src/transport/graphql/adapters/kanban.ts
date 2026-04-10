@@ -27,6 +27,7 @@ interface GqlKanbanTicket {
   externalId: string | null
   externalUrl: string | null
   totalTokens: number
+  mark: string | null
 }
 
 interface GqlTicketFollowupMessage {
@@ -55,7 +56,8 @@ function mapTicket(t: GqlKanbanTicket) {
     external_provider: t.externalProvider ?? null,
     external_id: t.externalId ?? null,
     external_url: t.externalUrl ?? null,
-    total_tokens: t.totalTokens ?? 0
+    total_tokens: t.totalTokens ?? 0,
+    mark: t.mark ?? null
   }
 }
 
@@ -76,7 +78,7 @@ function mapFollowup(f: GqlTicketFollowupMessage) {
   }
 }
 
-const TICKET_FIELDS = `id projectId sessionId worktreeId title description column sortOrder archived createdAt updatedAt externalProvider externalId externalUrl totalTokens`
+const TICKET_FIELDS = `id projectId sessionId worktreeId title description column sortOrder archived createdAt updatedAt externalProvider externalId externalUrl totalTokens mark`
 const FOLLOWUP_FIELDS = `id ticketId message createdAt`
 
 export function createKanbanAdapter(): KanbanApi {
@@ -130,6 +132,7 @@ export function createKanbanAdapter(): KanbanApi {
         if (data.sort_order !== undefined) input.sortOrder = data.sort_order
         if (data.current_session_id !== undefined) input.sessionId = data.current_session_id
         if (data.worktree_id !== undefined) input.worktreeId = data.worktree_id
+        if (data.mark !== undefined) input.mark = data.mark
 
         const result = await graphqlQuery<{ kanbanUpdateTicket: GqlKanbanTicket | null }>(
           `mutation ($id: ID!, $input: KanbanUpdateTicketInput!) {

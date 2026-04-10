@@ -28,5 +28,6 @@ export type {
   KanbanTicket,
   KanbanTicketCreate,
   KanbanTicketUpdate,
-  KanbanTicketColumn
+  KanbanTicketColumn,
+  TicketMark
 } from './types'

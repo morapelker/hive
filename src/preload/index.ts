@@ -1881,6 +1881,7 @@ const kanban = {
         worktree_id?: string | null
         mode?: 'build' | 'plan' | null
         plan_ready?: boolean
+        mark?: string | null
       }
     ) => ipcRenderer.invoke('kanban:ticket:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('kanban:ticket:delete', id),
