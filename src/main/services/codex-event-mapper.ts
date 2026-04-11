@@ -268,6 +268,43 @@ export function mapCodexEventToStreamEvents(
 
   const { method } = event
 
+  // ── Approval requests — create/update tool card with command ──
+  if (event.kind === 'request') {
+    if (
+      method === 'item/commandExecution/requestApproval' ||
+      method === 'item/fileChange/requestApproval' ||
+      method === 'item/fileRead/requestApproval'
+    ) {
+      const payload = asObject(event.payload)
+      const item = asObject(payload?.item)
+      const callId = event.itemId ?? asString(item?.id) ?? asString(payload?.itemId) ?? ''
+      if (!callId) return []
+
+      const toolName =
+        method === 'item/commandExecution/requestApproval' ? 'Bash'
+        : method === 'item/fileChange/requestApproval' ? 'fileChange'
+        : 'Read'
+      const input = normalizeToolInput(item, payload)
+
+      return [{
+        type: 'message.part.updated',
+        sessionId: hiveSessionId,
+        data: annotateData({
+          part: {
+            type: 'tool',
+            callID: callId,
+            tool: toolName,
+            state: {
+              status: 'running',
+              ...(input !== undefined ? { input } : {})
+            }
+          }
+        })
+      }]
+    }
+    return []
+  }
+
   // ── Content deltas — actual Codex notification methods ───────
   const streamKind = contentStreamKindFromMethod(method)
   if (streamKind) {
@@ -399,6 +436,7 @@ export function mapCodexEventToStreamEvents(
             tool: item.toolName,
             state: {
               status: item.status === 'failed' ? 'error' : 'completed',
+              ...(item.input !== undefined ? { input: item.input } : {}),
               ...(item.output !== undefined && item.status !== 'failed'
                 ? { output: item.output }
                 : {}),

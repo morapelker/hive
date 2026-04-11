@@ -439,6 +439,153 @@ describe('mapCodexEventToStreamEvents', () => {
 
       expect((result[0].data as any).part.state.status).toBe('completed')
     })
+
+    it('includes input in state when item has input', () => {
+      const event = makeEvent({
+        method: 'item.completed',
+        payload: {
+          item: {
+            id: 'item-6',
+            toolName: 'shell',
+            type: 'commandExecution',
+            status: 'completed',
+            command: 'ls -la',
+            output: 'total 8'
+          }
+        }
+      })
+
+      const result = mapCodexEventToStreamEvents(event, HIVE_SESSION)
+
+      expect(result).toHaveLength(1)
+      const state = (result[0].data as any).part.state
+      expect(state.status).toBe('completed')
+      expect(state.input).toEqual({ command: 'ls -la' })
+      expect(state.output).toBe('total 8')
+    })
+  })
+
+  // ── Approval requests ───────────────────────────────────────
+
+  describe('approval requests (event.kind === "request")', () => {
+    it('maps item/commandExecution/requestApproval to Bash tool card', () => {
+      const event = makeEvent({
+        kind: 'request',
+        method: 'item/commandExecution/requestApproval',
+        itemId: 'call-bash-1',
+        payload: {
+          item: {
+            id: 'call-bash-1',
+            type: 'commandExecution',
+            command: 'npm run build'
+          }
+        }
+      })
+
+      const result = mapCodexEventToStreamEvents(event, HIVE_SESSION)
+
+      expect(result).toHaveLength(1)
+      expect(result[0].type).toBe('message.part.updated')
+      expect(result[0].sessionId).toBe(HIVE_SESSION)
+      const part = (result[0].data as any).part
+      expect(part.type).toBe('tool')
+      expect(part.tool).toBe('Bash')
+      expect(part.callID).toBe('call-bash-1')
+      expect(part.state.status).toBe('running')
+      expect(part.state.input).toEqual({ command: 'npm run build' })
+    })
+
+    it('maps item/fileChange/requestApproval to fileChange tool card', () => {
+      const event = makeEvent({
+        kind: 'request',
+        method: 'item/fileChange/requestApproval',
+        itemId: 'call-fc-1',
+        payload: {
+          item: {
+            id: 'call-fc-1',
+            type: 'fileChange',
+            changes: [{ path: 'foo.ts', content: '...' }]
+          }
+        }
+      })
+
+      const result = mapCodexEventToStreamEvents(event, HIVE_SESSION)
+
+      expect(result).toHaveLength(1)
+      const part = (result[0].data as any).part
+      expect(part.tool).toBe('fileChange')
+      expect(part.callID).toBe('call-fc-1')
+      expect(part.state.status).toBe('running')
+    })
+
+    it('maps item/fileRead/requestApproval to Read tool card', () => {
+      const event = makeEvent({
+        kind: 'request',
+        method: 'item/fileRead/requestApproval',
+        itemId: 'call-read-1',
+        payload: {
+          item: {
+            id: 'call-read-1',
+            type: 'fileRead'
+          }
+        }
+      })
+
+      const result = mapCodexEventToStreamEvents(event, HIVE_SESSION)
+
+      expect(result).toHaveLength(1)
+      const part = (result[0].data as any).part
+      expect(part.tool).toBe('Read')
+      expect(part.callID).toBe('call-read-1')
+    })
+
+    it('returns empty array when callId cannot be determined', () => {
+      const event = makeEvent({
+        kind: 'request',
+        method: 'item/commandExecution/requestApproval',
+        // no itemId, no item.id, no payload.itemId
+        payload: {
+          item: { type: 'commandExecution', command: 'rm -rf /' }
+        }
+      })
+
+      const result = mapCodexEventToStreamEvents(event, HIVE_SESSION)
+
+      expect(result).toHaveLength(0)
+    })
+
+    it('returns empty array for non-approval request events', () => {
+      const event = makeEvent({
+        kind: 'request',
+        method: 'item/commandExecution/someOtherMethod',
+        itemId: 'call-x-1'
+      })
+
+      const result = mapCodexEventToStreamEvents(event, HIVE_SESSION)
+
+      expect(result).toHaveLength(0)
+    })
+
+    it('strips shell prefix from command in approval request', () => {
+      const event = makeEvent({
+        kind: 'request',
+        method: 'item/commandExecution/requestApproval',
+        itemId: 'call-bash-2',
+        payload: {
+          item: {
+            id: 'call-bash-2',
+            type: 'commandExecution',
+            command: '/bin/zsh -lc git status'
+          }
+        }
+      })
+
+      const result = mapCodexEventToStreamEvents(event, HIVE_SESSION)
+
+      expect(result).toHaveLength(1)
+      const part = (result[0].data as any).part
+      expect(part.state.input.command).toBe('git status')
+    })
   })
 
   // ── Task lifecycle ──────────────────────────────────────────
