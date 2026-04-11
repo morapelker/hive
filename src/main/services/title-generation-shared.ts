@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createLogger } from './logger'
+import { maybeExtractJsonTitle } from '@shared/title-utils'
 
 const log = createLogger({ component: 'TitleGenerationShared' })
 
@@ -40,8 +41,12 @@ const MAX_SANITIZED_LENGTH = 50
  * Returns null if the result is empty.
  */
 export function sanitizeTitle(raw: string): string | null {
+  // If the title value is itself a JSON string with a "title" field, extract it.
+  // This handles cases where the model double-wraps: structured_output.title = '{"title": "..."}'
+  let title = maybeExtractJsonTitle(raw)
+
   // First line only
-  let title = raw.split('\n')[0] ?? ''
+  title = title.split('\n')[0] ?? ''
 
   // Strip surrounding quotes and backticks
   title = title.replace(/^[`"']+|[`"']+$/g, '')

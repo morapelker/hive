@@ -350,20 +350,20 @@ export async function syncWorktreesOp(
         continue
       }
 
-      // Sync branch name if it was renamed outside of Hive
+      // Sync branch name if git reports a different one.
+      // branch_name is always updated to match git (source of truth).
+      // Display name is only updated when it's a breed/city placeholder or
+      // still matches the old branch name (never meaningfully customised).
       const gitBranch = gitBranchByPath.get(normalizedDbWorktreePath)
       if (
         gitBranch !== undefined &&
-        gitBranch !== dbWorktree.branch_name &&
-        !dbWorktree.branch_renamed
+        gitBranch !== dbWorktree.branch_name
       ) {
         log.info('Branch renamed externally, updating DB', {
           worktreeId: dbWorktree.id,
           oldBranch: dbWorktree.branch_name,
           newBranch: gitBranch
         })
-        // Update branch_name always. Also update display name if it still matches
-        // the old branch name OR is a city placeholder name (never meaningfully customized).
         const nameMatchesBranch = dbWorktree.name === dbWorktree.branch_name
         const worktreeName = dbWorktree.name.toLowerCase()
         const isAutoName = isAutoNamedBranch(worktreeName)
@@ -373,6 +373,14 @@ export async function syncWorktreesOp(
           branch_name: gitBranch,
           ...(shouldUpdateName ? { name: syncedName } : {})
         })
+      } else if (gitBranch !== undefined && dbWorktree.name !== dbWorktree.branch_name) {
+        // branch_name already matches git, but display name is stale (e.g. a
+        // breed/city placeholder left behind by a rename that didn't update it).
+        const isAutoName = isAutoNamedBranch(dbWorktree.name.toLowerCase())
+        if (isAutoName) {
+          const healedName = getImportedWorktreeName(dbWorktree.branch_name, dbWorktree.path)
+          db.updateWorktree(dbWorktree.id, { name: healedName })
+        }
       }
     }
 
@@ -489,9 +497,19 @@ export async function renameWorktreeBranchOp(
       params.newBranch
     )
     if (result.success) {
+      // Also update display name if it still matches the old branch or is a
+      // breed/city placeholder (never meaningfully customised by the user).
+      const worktree = db.getWorktree(params.worktreeId)
+      const nameMatchesBranch = worktree?.name === params.oldBranch
+      const isAutoName = worktree ? isAutoNamedBranch(worktree.name.toLowerCase()) : false
+      const shouldUpdateName = nameMatchesBranch || isAutoName
+
       db.updateWorktree(params.worktreeId, {
         branch_name: params.newBranch,
-        branch_renamed: 1
+        branch_renamed: 1,
+        ...(shouldUpdateName
+          ? { name: getImportedWorktreeName(params.newBranch, params.worktreePath) }
+          : {})
       })
     }
     return result

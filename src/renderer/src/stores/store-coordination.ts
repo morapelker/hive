@@ -60,3 +60,21 @@ export function notifyKanbanSessionSync(
 ): void {
   _kanbanSessionSync?.(sessionId, event)
 }
+
+// ── Kanban ↔ Session: new session created in a worktree ──────────────
+type KanbanNewSessionFn = (sessionId: string, worktreeId: string, projectId: string, sessionMode: string) => void
+
+let _kanbanNewSession: KanbanNewSessionFn | null = null
+
+export function registerKanbanNewSession(fn: KanbanNewSessionFn): void {
+  _kanbanNewSession = fn
+}
+
+export function notifyKanbanNewSession(
+  sessionId: string,
+  worktreeId: string,
+  projectId: string,
+  sessionMode: string
+): void {
+  _kanbanNewSession?.(sessionId, worktreeId, projectId, sessionMode)
+}

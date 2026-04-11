@@ -14,6 +14,7 @@ function mapKanbanTicket(row: any) {
     worktreeId: row.worktree_id ?? null,
     title: row.title,
     description: row.description ?? null,
+    attachments: typeof row.attachments === 'string' ? row.attachments : JSON.stringify(row.attachments ?? []),
     column: row.column,
     sortOrder: row.sort_order,
     archived: !!row.archived_at,

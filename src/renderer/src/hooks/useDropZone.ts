@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 interface UseDropZoneProps {
   onDrop: (files: FileList) => void
+  /** When provided, listen on this element instead of `window` (scoped drop zone). */
+  containerRef?: React.RefObject<HTMLElement>
 }
 
-export function useDropZone({ onDrop }: UseDropZoneProps) {
+export function useDropZone({ onDrop, containerRef }: UseDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const dragCounterRef = useRef(0)
 
@@ -47,18 +49,19 @@ export function useDropZone({ onDrop }: UseDropZoneProps) {
   )
 
   useEffect(() => {
-    window.addEventListener('dragenter', handleDragEnter)
-    window.addEventListener('dragleave', handleDragLeave)
-    window.addEventListener('dragover', handleDragOver)
-    window.addEventListener('drop', handleDrop)
+    const target: Window | HTMLElement = containerRef?.current ?? window
+    target.addEventListener('dragenter', handleDragEnter as EventListener)
+    target.addEventListener('dragleave', handleDragLeave as EventListener)
+    target.addEventListener('dragover', handleDragOver as EventListener)
+    target.addEventListener('drop', handleDrop as EventListener)
 
     return () => {
-      window.removeEventListener('dragenter', handleDragEnter)
-      window.removeEventListener('dragleave', handleDragLeave)
-      window.removeEventListener('dragover', handleDragOver)
-      window.removeEventListener('drop', handleDrop)
+      target.removeEventListener('dragenter', handleDragEnter as EventListener)
+      target.removeEventListener('dragleave', handleDragLeave as EventListener)
+      target.removeEventListener('dragover', handleDragOver as EventListener)
+      target.removeEventListener('drop', handleDrop as EventListener)
     }
-  }, [handleDragEnter, handleDragLeave, handleDragOver, handleDrop])
+  }, [handleDragEnter, handleDragLeave, handleDragOver, handleDrop, containerRef])
 
   return { isDragging }
 }

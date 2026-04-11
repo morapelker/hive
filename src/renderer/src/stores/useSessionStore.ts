@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { SelectedModel } from './useSettingsStore'
 import { useWorktreeStore } from './useWorktreeStore'
-import { notifyKanbanSessionSync } from './store-coordination'
+import { notifyKanbanSessionSync, notifyKanbanNewSession } from './store-coordination'
 import { useSettingsStore } from './useSettingsStore'
 
 export const BOARD_TAB_ID = '__board__'
@@ -475,6 +475,14 @@ export const useSessionStore = create<SessionState>()(
 
             return base
           })
+
+          // Notify kanban store — auto-attaches pre-assigned tickets to this session.
+          // Wrapped in its own try-catch so a handler error can never break session creation.
+          try {
+            notifyKanbanNewSession(session.id, worktreeId, projectId, session.mode || 'build')
+          } catch {
+            // Non-critical — session was created successfully regardless
+          }
 
           return { success: true, session }
         } catch (error) {

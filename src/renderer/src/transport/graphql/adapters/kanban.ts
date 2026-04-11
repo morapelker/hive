@@ -18,6 +18,7 @@ interface GqlKanbanTicket {
   worktreeId: string | null
   title: string
   description: string | null
+  attachments: string | null
   column: string
   sortOrder: number
   archived: boolean
@@ -43,7 +44,7 @@ function mapTicket(t: GqlKanbanTicket) {
     project_id: t.projectId,
     title: t.title,
     description: t.description,
-    attachments: [],
+    attachments: t.attachments ? JSON.parse(t.attachments) : [],
     column: t.column as 'todo' | 'in_progress' | 'review' | 'done',
     sort_order: t.sortOrder,
     current_session_id: t.sessionId,
@@ -78,7 +79,7 @@ function mapFollowup(f: GqlTicketFollowupMessage) {
   }
 }
 
-const TICKET_FIELDS = `id projectId sessionId worktreeId title description column sortOrder archived createdAt updatedAt externalProvider externalId externalUrl totalTokens mark`
+const TICKET_FIELDS = `id projectId sessionId worktreeId title description attachments column sortOrder archived createdAt updatedAt externalProvider externalId externalUrl totalTokens mark`
 const FOLLOWUP_FIELDS = `id ticketId message createdAt`
 
 export function createKanbanAdapter(): KanbanApi {
@@ -94,6 +95,7 @@ export function createKanbanAdapter(): KanbanApi {
         }
         if (data.current_session_id !== undefined) input.sessionId = data.current_session_id
         if (data.worktree_id !== undefined) input.worktreeId = data.worktree_id
+        if (data.attachments !== undefined) input.attachments = JSON.stringify(data.attachments)
 
         const result = await graphqlQuery<{ kanbanCreateTicket: GqlKanbanTicket }>(
           `mutation ($input: KanbanCreateTicketInput!) {
@@ -133,6 +135,7 @@ export function createKanbanAdapter(): KanbanApi {
         if (data.current_session_id !== undefined) input.sessionId = data.current_session_id
         if (data.worktree_id !== undefined) input.worktreeId = data.worktree_id
         if (data.mark !== undefined) input.mark = data.mark
+        if (data.attachments !== undefined) input.attachments = JSON.stringify(data.attachments)
 
         const result = await graphqlQuery<{ kanbanUpdateTicket: GqlKanbanTicket | null }>(
           `mutation ($id: ID!, $input: KanbanUpdateTicketInput!) {

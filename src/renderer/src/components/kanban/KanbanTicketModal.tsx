@@ -2,16 +2,10 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import {
   Eye,
   EyeOff,
-  Plus,
   X,
-  Ticket,
-  Figma,
-  Link as LinkIcon,
   Trash2,
   ExternalLink,
   Hammer,
-  Map,
-  Sparkles,
   Send,
   Zap,
   ArrowRight,
@@ -26,7 +20,8 @@ import {
   Loader2,
   Github,
   FileUp,
-  File as FileIcon
+  File as FileIcon,
+  Upload
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -39,12 +34,6 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
@@ -62,13 +51,15 @@ import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX, isPlanLike } from '@/lib/constants'
-import { parseAttachmentUrl } from '@/lib/attachment-utils'
-import type { AttachmentInfo } from '@/lib/attachment-utils'
 import { buildSdkPlanImplementationPrompt } from '@/lib/proposedPlan'
 import { toast } from '@/lib/toast'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
+import { FollowupInput } from './FollowupInput'
+import type { Attachment } from '@/components/sessions/AttachmentPreview'
+import { buildMessageParts, isImageMime, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
+import { useDropZone } from '@/hooks/useDropZone'
 import { SessionStreamPanel } from './SessionStreamPanel'
 import {
   ReviewTicketDiffSummary,
@@ -77,6 +68,8 @@ import {
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
+import { TicketAttachmentEditor, MAX_ATTACHMENTS } from './TicketAttachmentEditor'
+import { useImagePaste } from '@/hooks/useImagePaste'
 import type { KanbanTicket, KanbanTicketUpdate, Worktree } from '../../../../main/db/types'
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -92,9 +85,8 @@ const MODE_DIALOG_CLASS: Record<ModalMode, string> = {
   question: 'sm:max-w-lg'
 }
 
-interface TicketAttachment extends AttachmentInfo {
-  url: string
-}
+// TicketAttachment is now imported from TicketAttachmentEditor
+type TicketAttachment = import('./TicketAttachmentEditor').TicketAttachment
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -207,6 +199,7 @@ async function sendFollowupToSession(opts: {
   prompt: string
   followUpMode: FollowUpMode
   ticketId: string
+  attachments?: Attachment[]
 }): Promise<void> {
   const result = await findSessionById(opts.sessionId)
   if (!result) {
@@ -255,19 +248,6 @@ async function sendFollowupToSession(opts: {
   // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
   const model = resolveSessionModel(opts.sessionId, result.session)
 
-  // Persist the followup message (non-critical — API may not be wired up yet)
-  try {
-    window.kanban?.followup?.create({
-      ticket_id: opts.ticketId,
-      content: opts.prompt,
-      mode: opts.followUpMode,
-      session_id: opts.sessionId,
-      source: 'direct'
-    })?.catch(() => {})
-  } catch {
-    // followup persistence is best-effort
-  }
-
   // Ensure the session is loaded in the agent SDK implementer's in-memory map.
   // SessionView does this on mount via initializeSession(), but the kanban
   // followup path bypasses SessionView entirely.  Without this, the Claude Code
@@ -277,9 +257,12 @@ async function sendFollowupToSession(opts: {
     throw new Error(`Failed to reconnect to session: ${opts.sessionId}`)
   }
 
-  const promptResult = await window.opencodeOps.prompt(workingPath, session.opencode_session_id, [
-    { type: 'text', text: fullPrompt }
-  ], model)
+  const messageParts = opts.attachments?.length
+    ? buildMessageParts(opts.attachments, fullPrompt)
+    : [{ type: 'text' as const, text: fullPrompt }]
+
+  const promptResult = await window.opencodeOps.prompt(workingPath, session.opencode_session_id,
+    messageParts, model)
 
   if (promptResult && !promptResult.success) {
     console.error(`[KanbanTicketModal] sendFollowupToSession: prompt returned failure — error=${promptResult.error}`)
@@ -768,14 +751,11 @@ function EditModeContent({
   const [attachments, setAttachments] = useState<TicketAttachment[]>(
     () =>
       (ticket.attachments as Array<{ type: string; url: string; label: string }>).map((a) => ({
-        type: a.type as 'jira' | 'figma' | 'file' | 'generic',
+        type: a.type as 'jira' | 'figma' | 'file' | 'image',
         url: a.url,
         label: a.label
       })) ?? []
   )
-  const [showAttachInput, setShowAttachInput] = useState(false)
-  const [attachUrl, setAttachUrl] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [isSaving, setIsSaving] = useState(false)
   const lifecycle = useLifecycleActions(ticket.worktree_id)
   const { pinAndActivate: pinAndActivateSession, lifecycleLoading } = usePinAndActivateSession(onClose)
@@ -786,31 +766,12 @@ function EditModeContent({
     if (lifecycle.hasAttachedPR) lifecycle.loadPRState()
   }, [lifecycle.hasAttachedPR])
 
-  const detectedAttachment = attachUrl.trim() ? parseAttachmentUrl(attachUrl.trim()) : null
-
-  const handleAddAttachment = useCallback(() => {
-    if (!detectedAttachment || !attachUrl.trim()) return
-    setAttachments((prev) => [...prev, { ...detectedAttachment, url: attachUrl.trim() }])
-    setAttachUrl('')
-    setShowAttachInput(false)
-  }, [detectedAttachment, attachUrl])
-
-  const handleRemoveAttachment = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index))
-  }, [])
-
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files) return
-    for (const file of Array.from(files)) {
-      const filePath = window.fileOps.getPathForFile(file)
-      setAttachments((prev) => [
-        ...prev,
-        { type: 'file' as const, url: filePath, label: file.name }
-      ])
-    }
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [])
+  // ── Image paste/drop ───────────────────────────────────────────────
+  const { isDragOver, handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop } = useImagePaste({
+    maxAttachments: MAX_ATTACHMENTS,
+    currentCount: attachments.length,
+    onAttach: (attachment) => setAttachments((prev) => [...prev, attachment])
+  })
 
   const handleSave = useCallback(async () => {
     if (!title.trim() || isSaving) return
@@ -851,7 +812,15 @@ function EditModeContent({
   )
 
   return (
-    <div onKeyDown={handleKeyDown}>
+    <div
+      onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={cn(isDragOver && "ring-2 ring-primary ring-offset-2 rounded-lg")}
+    >
       <DialogHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -940,109 +909,11 @@ function EditModeContent({
         </div>
 
         {/* Attachments */}
-        <div className="space-y-2">
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {attachments.map((attachment, index) => (
-                <span
-                  key={index}
-                  data-testid={`ticket-edit-attachment-chip-${index}`}
-                  className="inline-flex items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs"
-                >
-                  {attachment.type === 'jira' ? (
-                    <Ticket className="h-3 w-3 text-blue-500" />
-                  ) : attachment.type === 'figma' ? (
-                    <Figma className="h-3 w-3 text-purple-500" />
-                  ) : attachment.type === 'file' ? (
-                    <FileIcon className="h-3 w-3 text-green-500" />
-                  ) : (
-                    <LinkIcon className="h-3 w-3 text-muted-foreground" />
-                  )}
-                  <span className="max-w-[180px] truncate">{attachment.label}</span>
-                  <button
-                    data-testid={`ticket-edit-attachment-remove-${index}`}
-                    onClick={() => handleRemoveAttachment(index)}
-                    className="ml-0.5 rounded-sm hover:bg-muted transition-colors"
-                  >
-                    <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          {showAttachInput ? (
-            <div className="flex items-center gap-2">
-              <Input
-                data-testid="ticket-edit-attachment-url-input"
-                placeholder="Paste a Jira or Figma URL"
-                value={attachUrl}
-                onChange={(e) => setAttachUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && detectedAttachment) {
-                    e.preventDefault()
-                    handleAddAttachment()
-                  }
-                  if (e.key === 'Escape') {
-                    setShowAttachInput(false)
-                    setAttachUrl('')
-                  }
-                }}
-                autoFocus
-                className="flex-1"
-              />
-              <Button
-                type="button"
-                size="sm"
-                data-testid="ticket-edit-attachment-confirm-btn"
-                disabled={!detectedAttachment}
-                onClick={handleAddAttachment}
-              >
-                Add
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setShowAttachInput(false)
-                  setAttachUrl('')
-                }}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          ) : (
-            <>
-              <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    data-testid="ticket-edit-add-attachment-btn"
-                    className="gap-1 text-xs"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Add attachment
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem onSelect={() => setShowAttachInput(true)}>
-                    <LinkIcon className="h-4 w-4 mr-2" />
-                    URL
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
-                    <FileUp className="h-4 w-4 mr-2" />
-                    File / Image
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </>
-
-          )}
-        </div>
+        <TicketAttachmentEditor
+          attachments={attachments}
+          onChange={setAttachments}
+          testIdPrefix="ticket-edit"
+        />
       </div>
 
       <DialogFooter className="flex items-center justify-between sm:justify-between flex-wrap gap-y-2">
@@ -1179,9 +1050,55 @@ function PlanReviewModeContent({
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('plan')
   const [isSending, setIsSending] = useState(false)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const dropZoneRef = useRef<HTMLDivElement>(null)
 
   const planContent = pendingPlan?.planContent ?? ticket.description ?? ''
+
+  const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
+    setAttachments((prev) => {
+      if (prev.length >= MAX_ATTACHMENTS) {
+        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+        return prev
+      }
+      return [...prev, { id: crypto.randomUUID(), ...file }]
+    })
+  }, [])
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
+  const handleDropFiles = useCallback((files: FileList) => {
+    for (const file of Array.from(files)) {
+      if (attachments.length >= MAX_ATTACHMENTS) {
+        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+        break
+      }
+      if (isImageMime(file.type)) {
+        const reader = new FileReader()
+        reader.onload = () => {
+          handleAttach({
+            kind: 'data',
+            name: file.name,
+            mime: file.type,
+            dataUrl: reader.result as string
+          })
+        }
+        reader.readAsDataURL(file)
+      } else {
+        handleAttach({
+          kind: 'path',
+          name: file.name,
+          mime: file.type || 'application/octet-stream',
+          filePath: window.fileOps.getPathForFile(file)
+        })
+      }
+    }
+  }, [handleAttach, attachments.length])
+
+  const { isDragging } = useDropZone({ onDrop: handleDropFiles, containerRef: dropZoneRef })
 
   const toggleMode = useCallback(() => {
     setFollowUpMode((prev) => prev === 'build' ? 'plan' : 'build')
@@ -1205,7 +1122,7 @@ function PlanReviewModeContent({
 
   // ── Send followup (reject pending plan + iterate) ────────────────
   const handleSendFollowup = useCallback(async () => {
-    if (!followUpText.trim() || !ticket.current_session_id || isSending) return
+    if ((!followUpText.trim() && attachments.length === 0) || !ticket.current_session_id || isSending) return
     setIsSending(true)
 
     try {
@@ -1251,6 +1168,7 @@ function PlanReviewModeContent({
             prompt: feedback,
             followUpMode,
             ticketId: ticket.id,
+            attachments,
           }).catch((err) => {
             console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
             const reason = err instanceof Error ? err.message : String(err)
@@ -1283,6 +1201,7 @@ function PlanReviewModeContent({
         prompt: feedback,
         followUpMode,
         ticketId: ticket.id,
+        attachments,
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
         const reason = err instanceof Error ? err.message : String(err)
@@ -1295,19 +1214,9 @@ function PlanReviewModeContent({
       toast.error(`Failed to send followup: ${reason}`)
     } finally {
       setIsSending(false)
+      setAttachments([])
     }
-  }, [followUpText, followUpMode, ticket, isSending, pendingPlan, sessionRecord, updateTicket, onClose])
-
-  // Enter sends, Shift+Enter for newline
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault()
-        handleSendFollowup()
-      }
-    },
-    [handleSendFollowup]
-  )
+  }, [followUpText, followUpMode, ticket, isSending, pendingPlan, sessionRecord, updateTicket, onClose, attachments])
 
   // ── Implement handler ─────────────────────────────────────────────
   const handleImplement = useCallback(async () => {
@@ -1389,6 +1298,7 @@ function PlanReviewModeContent({
       const sessionId = ticket.current_session_id
       useSessionStore.getState().clearPendingPlan(sessionId)
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+      lastSendMode.delete(sessionId)
 
       const sessionStore = useSessionStore.getState()
       const result = await sessionStore.createSession(ticket.worktree_id, ticket.project_id)
@@ -1468,6 +1378,7 @@ function PlanReviewModeContent({
       const sessionId = ticket.current_session_id
       useSessionStore.getState().clearPendingPlan(sessionId)
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+      lastSendMode.delete(sessionId)
 
       // Abort the original backend session so it stops spinning
       if (worktreePath && opcSessionId) {
@@ -1539,6 +1450,7 @@ function PlanReviewModeContent({
       const sessionId = ticket.current_session_id
       useSessionStore.getState().clearPendingPlan(sessionId)
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+      lastSendMode.delete(sessionId)
 
       // Abort the original backend session so it stops spinning
       if (worktreePath && opcSessionId) {
@@ -1582,7 +1494,7 @@ function PlanReviewModeContent({
   }, [ticket, isActioning, planContent, onClose, eagerSuperchargeStart, worktreePath, opcSessionId])
 
   return (
-    <>
+    <div ref={dropZoneRef} className="relative contents">
       <DialogHeader>
         <div className="flex items-center justify-between">
           <DialogTitle className="flex items-center gap-2">
@@ -1604,53 +1516,31 @@ function PlanReviewModeContent({
       </div>
 
       {/* Followup input — iterate on the plan */}
-      <div className="space-y-1.5 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Followup
-          </label>
-          <button
-            data-testid="plan-review-mode-toggle"
-            data-mode={followUpMode}
-            type="button"
-            onClick={toggleMode}
-            className={cn(
-              'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
-              'border select-none',
-              followUpMode === 'build'
-                ? 'bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20'
-                : followUpMode === 'plan'
-                  ? 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
-                  : 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20'
-            )}
-          >
-            {followUpMode === 'build' ? <Hammer className="h-3 w-3" /> : followUpMode === 'plan' ? <Map className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
-            <span>{followUpMode === 'build' ? 'Build' : followUpMode === 'plan' ? 'Plan' : 'Super Plan'}</span>
-          </button>
+      <FollowupInput
+        text={followUpText}
+        onTextChange={setFollowUpText}
+        attachments={attachments}
+        onAttach={handleAttach}
+        onRemoveAttachment={handleRemoveAttachment}
+        followUpMode={followUpMode}
+        onToggleMode={toggleMode}
+        onSend={handleSendFollowup}
+        isSending={isSending}
+        placeholder="Iterate on the plan... (Enter to send)"
+        testIdPrefix="plan-review"
+        showInlineSendButton
+        textareaRef={textareaRef}
+      />
+
+      {/* Drag-and-drop overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-lg border-2 border-dashed border-primary/50">
+          <div className="flex flex-col items-center gap-2 text-primary">
+            <Upload className="h-8 w-8" />
+            <span className="text-sm font-medium">Drop files here</span>
+          </div>
         </div>
-        <div className="flex gap-2 items-end">
-          <Textarea
-            ref={textareaRef}
-            data-testid="plan-review-followup-input"
-            value={followUpText}
-            onChange={(e) => setFollowUpText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={2}
-            placeholder="Iterate on the plan… (Enter to send)"
-            className="resize-y font-mono text-xs leading-relaxed flex-1"
-          />
-          <Button
-            type="button"
-            data-testid="plan-review-send-followup-btn"
-            disabled={isSending || !followUpText.trim()}
-            onClick={handleSendFollowup}
-            size="icon"
-            className="shrink-0 h-8 w-8"
-          >
-            <Send className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
+      )}
 
       {/* Action buttons only visible when ExitPlanMode is awaiting approval
           (matches SessionView's showPlanReadyImplementFab gating on !!pendingPlan) */}
@@ -1700,7 +1590,7 @@ function PlanReviewModeContent({
           </Button>
         </DialogFooter>
       )}
-    </>
+    </div>
   )
 }
 
@@ -1728,12 +1618,58 @@ function ReviewModeContent({
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const [resolvedWorktree, setResolvedWorktree] = useState<Worktree | null>(worktree)
   const [resolvedBaseBranch, setResolvedBaseBranch] = useState<string | null>(null)
   const [diffSummary, setDiffSummary] = useState<ReviewTicketDiffFile[]>([])
   const [diffSummaryLoading, setDiffSummaryLoading] = useState(false)
   const [diffSummaryError, setDiffSummaryError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const dropZoneRef = useRef<HTMLDivElement>(null)
+
+  const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
+    setAttachments((prev) => {
+      if (prev.length >= MAX_ATTACHMENTS) {
+        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+        return prev
+      }
+      return [...prev, { id: crypto.randomUUID(), ...file }]
+    })
+  }, [])
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
+  const handleDropFiles = useCallback((files: FileList) => {
+    for (const file of Array.from(files)) {
+      if (attachments.length >= MAX_ATTACHMENTS) {
+        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+        break
+      }
+      if (isImageMime(file.type)) {
+        const reader = new FileReader()
+        reader.onload = () => {
+          handleAttach({
+            kind: 'data',
+            name: file.name,
+            mime: file.type,
+            dataUrl: reader.result as string
+          })
+        }
+        reader.readAsDataURL(file)
+      } else {
+        handleAttach({
+          kind: 'path',
+          name: file.name,
+          mime: file.type || 'application/octet-stream',
+          filePath: window.fileOps.getPathForFile(file)
+        })
+      }
+    }
+  }, [handleAttach, attachments.length])
+
+  const { isDragging } = useDropZone({ onDrop: handleDropFiles, containerRef: dropZoneRef })
   const lifecycle = useLifecycleActions(ticket.worktree_id)
   const isCreatingPR = useGitStore((s) =>
     ticket.worktree_id ? s.creatingPRByWorktreeId.get(ticket.worktree_id) === true : false
@@ -1887,7 +1823,7 @@ function ReviewModeContent({
 
   // ── Send followup ─────────────────────────────────────────────────
   const handleSendFollowup = useCallback(async () => {
-    if (!followUpText.trim() || !ticket.current_session_id || isSending) return
+    if ((!followUpText.trim() && attachments.length === 0) || !ticket.current_session_id || isSending) return
     setIsSending(true)
 
     try {
@@ -1903,6 +1839,7 @@ function ReviewModeContent({
       const mode = followUpMode
       const ticketId = ticket.id
       const projectId = ticket.project_id
+      const currentAttachments = [...attachments]
 
       // Mark the session as busy NOW so the kanban card shows the progress bar
       // the moment the modal closes (sendFollowupToSession would set this too,
@@ -1927,6 +1864,7 @@ function ReviewModeContent({
         prompt,
         followUpMode: mode,
         ticketId,
+        attachments: currentAttachments,
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
         const reason = err instanceof Error ? err.message : String(err)
@@ -1939,19 +1877,9 @@ function ReviewModeContent({
       toast.error(`Failed to move ticket: ${reason}`)
     } finally {
       setIsSending(false)
+      setAttachments([])
     }
-  }, [followUpText, followUpMode, ticket, isSending, moveTicket, updateTicket, onClose])
-
-  // Enter sends, Shift+Enter for newline
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault()
-        handleSendFollowup()
-      }
-    },
-    [handleSendFollowup]
-  )
+  }, [followUpText, followUpMode, ticket, isSending, moveTicket, updateTicket, onClose, attachments])
 
   // ── Move to Done ──────────────────────────────────────────────────
   const handleMoveToDone = useCallback(async () => {
@@ -2027,11 +1955,8 @@ function ReviewModeContent({
     return () => window.removeEventListener('keydown', handler, true)
   }, [hasRunScript, runRunning, handleRunScript, handleStopScript])
 
-  const ModeIcon = followUpMode === 'build' ? Hammer : followUpMode === 'plan' ? Map : Sparkles
-  const modeLabel = followUpMode === 'build' ? 'Build' : followUpMode === 'plan' ? 'Plan' : 'Super Plan'
-
   return (
-    <>
+    <div ref={dropZoneRef} className="relative contents">
       <DialogHeader>
         <div className="flex items-center justify-between">
           <DialogTitle>{dualPane ? 'Review' : ticket.title}</DialogTitle>
@@ -2079,41 +2004,30 @@ function ReviewModeContent({
       )}
 
       {/* Followup input area */}
-      <div className="space-y-2 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Followup
-          </label>
-          <button
-            data-testid="review-mode-toggle"
-            data-mode={followUpMode}
-            type="button"
-            onClick={toggleMode}
-            className={cn(
-              'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
-              'border select-none',
-              followUpMode === 'build'
-                ? 'bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20'
-                : followUpMode === 'plan'
-                  ? 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
-                  : 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20'
-            )}
-          >
-            <ModeIcon className="h-3 w-3" />
-            <span>{modeLabel}</span>
-          </button>
+      <FollowupInput
+        text={followUpText}
+        onTextChange={setFollowUpText}
+        attachments={attachments}
+        onAttach={handleAttach}
+        onRemoveAttachment={handleRemoveAttachment}
+        followUpMode={followUpMode}
+        onToggleMode={toggleMode}
+        onSend={handleSendFollowup}
+        isSending={isSending}
+        placeholder="Provide followup instructions... (Enter to send)"
+        testIdPrefix="review"
+        textareaRef={textareaRef}
+      />
+
+      {/* Drag-and-drop overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-lg border-2 border-dashed border-primary/50">
+          <div className="flex flex-col items-center gap-2 text-primary">
+            <Upload className="h-8 w-8" />
+            <span className="text-sm font-medium">Drop files here</span>
+          </div>
         </div>
-        <Textarea
-          ref={textareaRef}
-          data-testid="review-followup-input"
-          value={followUpText}
-          onChange={(e) => setFollowUpText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={2}
-          placeholder="Provide followup instructions… (Enter to send)"
-          className="resize-y font-mono text-xs leading-relaxed"
-        />
-      </div>
+      )}
 
       <DialogFooter className="flex-shrink-0 flex-wrap gap-y-2">
         <Button
@@ -2215,7 +2129,7 @@ function ReviewModeContent({
         <Button
           type="button"
           data-testid="review-send-followup-btn"
-          disabled={!followUpText.trim() || isSending}
+          disabled={(!followUpText.trim() && attachments.length === 0) || isSending}
           onClick={handleSendFollowup}
           className={cn(
             'gap-1.5',
@@ -2228,7 +2142,7 @@ function ReviewModeContent({
           {isSending ? 'Sending...' : 'Send'}
         </Button>
       </DialogFooter>
-    </>
+    </div>
   )
 }
 
@@ -2248,7 +2162,9 @@ function ErrorModeContent({
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const updateTicket = useKanbanStore((s) => s.updateTicket)
+  const dropZoneRef = useRef<HTMLDivElement>(null)
 
   // Look up session status entry for error details
   const sessionStatusEntry = useWorktreeStatusStore(
@@ -2261,13 +2177,57 @@ function ErrorModeContent({
     )
   )
 
+  const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
+    setAttachments((prev) => {
+      if (prev.length >= MAX_ATTACHMENTS) {
+        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+        return prev
+      }
+      return [...prev, { id: crypto.randomUUID(), ...file }]
+    })
+  }, [])
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
+  const handleDropFiles = useCallback((files: FileList) => {
+    for (const file of Array.from(files)) {
+      if (attachments.length >= MAX_ATTACHMENTS) {
+        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+        break
+      }
+      if (isImageMime(file.type)) {
+        const reader = new FileReader()
+        reader.onload = () => {
+          handleAttach({
+            kind: 'data',
+            name: file.name,
+            mime: file.type,
+            dataUrl: reader.result as string
+          })
+        }
+        reader.readAsDataURL(file)
+      } else {
+        handleAttach({
+          kind: 'path',
+          name: file.name,
+          mime: file.type || 'application/octet-stream',
+          filePath: window.fileOps.getPathForFile(file)
+        })
+      }
+    }
+  }, [handleAttach, attachments.length])
+
+  const { isDragging } = useDropZone({ onDrop: handleDropFiles, containerRef: dropZoneRef })
+
   const toggleMode = useCallback(() => {
     setFollowUpMode((prev) => prev === 'build' ? 'plan' : 'build')
   }, [])
 
   // ── Send followup for error retry ─────────────────────────────────
   const handleSendFollowup = useCallback(async () => {
-    if (!followUpText.trim() || !ticket.current_session_id || isSending) return
+    if ((!followUpText.trim() && attachments.length === 0) || !ticket.current_session_id || isSending) return
     setIsSending(true)
 
     try {
@@ -2276,6 +2236,7 @@ function ErrorModeContent({
         prompt: followUpText.trim(),
         followUpMode,
         ticketId: ticket.id,
+        attachments,
       })
 
       await updateTicket(ticket.id, ticket.project_id, { mode: followUpMode, plan_ready: false })
@@ -2289,25 +2250,12 @@ function ErrorModeContent({
       }
     } finally {
       setIsSending(false)
+      setAttachments([])
     }
-  }, [followUpText, followUpMode, ticket, isSending, updateTicket, onClose])
-
-  // Enter sends, Shift+Enter for newline
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault()
-        handleSendFollowup()
-      }
-    },
-    [handleSendFollowup]
-  )
-
-  const ModeIcon = followUpMode === 'build' ? Hammer : followUpMode === 'plan' ? Map : Sparkles
-  const modeLabel = followUpMode === 'build' ? 'Build' : followUpMode === 'plan' ? 'Plan' : 'Super Plan'
+  }, [followUpText, followUpMode, ticket, isSending, updateTicket, onClose, attachments])
 
   return (
-    <>
+    <div ref={dropZoneRef} className="relative contents">
       <DialogHeader>
         <div className="flex items-center justify-between">
           <DialogTitle className="flex items-center gap-2">
@@ -2341,40 +2289,29 @@ function ErrorModeContent({
       </div>
 
       {/* Followup input */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Followup
-          </label>
-          <button
-            data-testid="error-mode-toggle"
-            data-mode={followUpMode}
-            type="button"
-            onClick={toggleMode}
-            className={cn(
-              'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
-              'border select-none',
-              followUpMode === 'build'
-                ? 'bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20'
-                : followUpMode === 'plan'
-                  ? 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
-                  : 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20'
-            )}
-          >
-            <ModeIcon className="h-3 w-3" />
-            <span>{modeLabel}</span>
-          </button>
+      <FollowupInput
+        text={followUpText}
+        onTextChange={setFollowUpText}
+        attachments={attachments}
+        onAttach={handleAttach}
+        onRemoveAttachment={handleRemoveAttachment}
+        followUpMode={followUpMode}
+        onToggleMode={toggleMode}
+        onSend={handleSendFollowup}
+        isSending={isSending}
+        placeholder="Describe the fix or retry instructions... (Enter to send)"
+        testIdPrefix="error"
+      />
+
+      {/* Drag-and-drop overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-lg border-2 border-dashed border-primary/50">
+          <div className="flex flex-col items-center gap-2 text-primary">
+            <Upload className="h-8 w-8" />
+            <span className="text-sm font-medium">Drop files here</span>
+          </div>
         </div>
-        <Textarea
-          data-testid="error-followup-input"
-          value={followUpText}
-          onChange={(e) => setFollowUpText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={2}
-          placeholder="Describe the fix or retry instructions… (Enter to send)"
-          className="resize-y font-mono text-xs leading-relaxed"
-        />
-      </div>
+      )}
 
       <DialogFooter>
         <Button
@@ -2388,7 +2325,7 @@ function ErrorModeContent({
         <Button
           type="button"
           data-testid="error-send-followup-btn"
-          disabled={!followUpText.trim() || isSending}
+          disabled={(!followUpText.trim() && attachments.length === 0) || isSending}
           onClick={handleSendFollowup}
           className={cn(
             'gap-1.5',
@@ -2401,7 +2338,7 @@ function ErrorModeContent({
           {isSending ? 'Sending...' : 'Send'}
         </Button>
       </DialogFooter>
-    </>
+    </div>
   )
 }
 

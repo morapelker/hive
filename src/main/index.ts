@@ -29,7 +29,8 @@ import {
   registerUpdaterHandlers,
   registerConnectionHandlers,
   registerUsageHandlers,
-  registerKanbanHandlers
+  registerKanbanHandlers,
+  registerAttachmentHandlers
 } from './ipc'
 import { buildMenu, updateMenuState, shutdownMenu } from './menu'
 import type { MenuState } from './menu'
@@ -583,6 +584,7 @@ app.whenReady().then(async () => {
   registerSystemHandlers()
   registerSettingsHandlers()
   registerFileHandlers()
+  registerAttachmentHandlers()
   registerConnectionHandlers()
   registerUsageHandlers()
   registerKanbanHandlers()

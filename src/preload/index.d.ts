@@ -795,6 +795,15 @@ declare global {
       }>
       getPathForFile: (file: File) => string
     }
+    attachmentOps: {
+      saveImage: (
+        buffer: ArrayBuffer,
+        originalName: string
+      ) => Promise<{ success: boolean; filePath?: string; error?: string }>
+      deleteImage: (
+        filePath: string
+      ) => Promise<{ success: boolean; error?: string }>
+    }
     settingsOps: {
       detectEditors: () => Promise<DetectedApp[]>
       detectTerminals: () => Promise<DetectedApp[]>

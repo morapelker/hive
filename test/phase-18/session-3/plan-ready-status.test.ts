@@ -121,6 +121,20 @@ describe('Session 3: Plan Ready Status', () => {
       getState().setSessionStatus('session-2', 'completed', { word: 'Built', durationMs: 3000 })
       expect(getState().getWorktreeStatus('wt-1')).toBe('plan_ready')
     })
+
+    test('clearing lastSendMode for old session prevents plan_ready after supercharge', () => {
+      // Simulate: old session planned, new session built (supercharge scenario)
+      lastSendMode.set('session-1', 'plan')
+      lastSendMode.set('session-2', 'build')
+      getState().setSessionStatus('session-1', 'completed', { word: 'Crafted', durationMs: 5000 })
+      getState().setSessionStatus('session-2', 'completed', { word: 'Built', durationMs: 3000 })
+      // Before fix: would return 'plan_ready'
+      expect(getState().getWorktreeStatus('wt-1')).toBe('plan_ready')
+
+      // Supercharge clears lastSendMode for old session
+      lastSendMode.delete('session-1')
+      expect(getState().getWorktreeStatus('wt-1')).toBe('completed')
+    })
   })
 
   describe('priority ordering', () => {

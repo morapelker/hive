@@ -6,6 +6,7 @@ import { getDatabase } from '../db'
 import { autoRenameWorktreeBranch } from './git-service'
 import { getEventBus } from '../../server/event-bus'
 import { getUserEnvironmentVariables } from './env-vars'
+import { maybeExtractJsonTitle } from '@shared/title-utils'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -1155,7 +1156,8 @@ class OpenCodeService {
     // The SDK event structure is: { properties: { info: Session } } where Session has { id, title, ... }
     if (eventType === 'session.updated') {
       const sessionInfo = event.properties?.info
-      const sessionTitle = sessionInfo?.title || event.properties?.title
+      const rawSessionTitle = sessionInfo?.title || event.properties?.title
+      const sessionTitle = rawSessionTitle ? maybeExtractJsonTitle(rawSessionTitle) : rawSessionTitle
       if (hiveSessionId && sessionTitle) {
         try {
           const db = getDatabase()

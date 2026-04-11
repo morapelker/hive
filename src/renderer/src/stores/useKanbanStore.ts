@@ -8,11 +8,13 @@ import type {
 } from '../../../main/db/types'
 import {
   registerKanbanSessionSync,
+  registerKanbanNewSession,
   type KanbanSessionEvent
 } from './store-coordination'
 import { isPlanLike } from '../lib/constants'
 import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
+import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 
 // ── Shared drag state (module-level, avoids DataTransfer issues in Electron) ──
 export interface KanbanDragData {
@@ -426,6 +428,12 @@ export const useKanbanStore = create<KanbanState>()(
           return { tickets: next }
         })
 
+        // Clear "Go to review" indicator when ticket moves columns (optimistic)
+        const movedTicket = prev.find((t) => t.id === ticketId)
+        if (movedTicket?.worktree_id) {
+          useWorktreeStatusStore.getState().clearCompletedReviewSession(movedTicket.worktree_id)
+        }
+
         try {
           await window.kanban.ticket.move(ticketId, column, sortOrder)
         } catch (err) {
@@ -592,8 +600,9 @@ export const useKanbanStore = create<KanbanState>()(
               }
 
               case 'session_working': {
-                // Session became active — if ticket is in review, move it to in_progress
-                if (ticket.column === 'review') {
+                // Session became active — move ticket to in_progress if it's in
+                // todo (pre-assigned, first activity) or review (returning to work).
+                if (ticket.column === 'todo' || ticket.column === 'review') {
                   get()
                     .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
                     .catch(() => {})
@@ -843,4 +852,32 @@ export const useKanbanStore = create<KanbanState>()(
 // ── Register coordination callback after store creation ──────────────
 registerKanbanSessionSync((sessionId, event) => {
   useKanbanStore.getState().syncTicketWithSession(sessionId, event)
+})
+
+// ── Register new-session callback: auto-attach pre-assigned tickets ──
+registerKanbanNewSession((sessionId, worktreeId, projectId, sessionMode) => {
+  const store = useKanbanStore.getState()
+  const tickets = store.tickets.get(projectId) ?? []
+
+  // Find the first ticket pre-assigned to this worktree with no active session
+  const orphan = tickets.find(
+    (t) => t.worktree_id === worktreeId && !t.current_session_id && !t.archived_at
+  )
+  if (!orphan) return
+
+  // Auto-attach: link session and move to in_progress.
+  // Setting `mode` is critical — the progress bar only renders when
+  // ticket.mode is truthy, and session_completed only advances tickets
+  // whose mode matches 'build' or a plan-like mode.
+  const sortOrder = store.computeSortOrder(
+    store.getTicketsByColumn(projectId, 'in_progress'),
+    0
+  )
+  store.updateTicket(orphan.id, projectId, {
+    current_session_id: sessionId,
+    column: 'in_progress',
+    sort_order: sortOrder,
+    mode: sessionMode as 'build' | 'plan',
+    plan_ready: false
+  })
 })

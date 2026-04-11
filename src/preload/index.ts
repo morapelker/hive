@@ -1548,6 +1548,19 @@ const fileOps = {
   getPathForFile: (file: File): string => webUtils.getPathForFile(file)
 }
 
+// Attachment operations API
+const attachmentOps = {
+  saveImage: (
+    buffer: ArrayBuffer,
+    originalName: string
+  ): Promise<{ success: boolean; filePath?: string; error?: string }> =>
+    ipcRenderer.invoke('attachment:save', Buffer.from(buffer), originalName),
+  deleteImage: (
+    filePath: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('attachment:delete', filePath)
+}
+
 // Settings operations API
 export interface DetectedApp {
   id: string
@@ -2028,6 +2041,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('gitOps', gitOps)
     contextBridge.exposeInMainWorld('settingsOps', settingsOps)
     contextBridge.exposeInMainWorld('fileOps', fileOps)
+    contextBridge.exposeInMainWorld('attachmentOps', attachmentOps)
     contextBridge.exposeInMainWorld('loggingOps', loggingOps)
     contextBridge.exposeInMainWorld('scriptOps', scriptOps)
     contextBridge.exposeInMainWorld('terminalOps', terminalOps)

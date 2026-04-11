@@ -3,6 +3,7 @@ import { motion } from 'motion/react'
 import { ChevronRight, ChevronDown, Plus, Zap, Archive } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
+import { lastSendMode } from '@/lib/message-send-times'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
@@ -358,6 +359,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
           completed_at: new Date().toISOString()
         })
         useWorktreeStatusStore.getState().clearSessionStatus(draggedTicket.current_session_id)
+        lastSendMode.delete(draggedTicket.current_session_id)
       }
 
       // Clear session link on the ticket

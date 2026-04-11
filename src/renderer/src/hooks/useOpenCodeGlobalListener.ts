@@ -18,6 +18,7 @@ import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { maybeExtractJsonTitle } from '@shared/title-utils'
 
 interface PromptDispatchContext {
   worktreePath: string
@@ -301,7 +302,8 @@ export function useOpenCodeGlobalListener(): void {
             })
           }
           if (event.type === 'session.updated' && sessionId !== activeId) {
-            const sessionTitle = event.data?.info?.title || event.data?.title
+            const rawTitle = event.data?.info?.title || event.data?.title
+            const sessionTitle = rawTitle ? maybeExtractJsonTitle(rawTitle) : rawTitle
             // Skip OpenCode default placeholder titles like "New session - 2026-02-12T21:33:03.013Z"
             const isOpenCodeDefault = /^New session\s*-?\s*\d{4}-\d{2}-\d{2}/i.test(
               sessionTitle || ''

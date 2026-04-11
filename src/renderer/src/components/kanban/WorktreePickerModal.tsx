@@ -90,12 +90,14 @@ function buildPrompt(mode: PickerMode, ticket: KanbanTicket): string {
 
   let attachmentsXml = ''
   if (attachments.length > 0) {
-    const items = attachments.map((a) => {
-      if (a.type === 'file') {
-        return `<file path="${a.url}">${a.label}</file>`
+    const items: string[] = []
+    for (const a of attachments) {
+      if (a.type === 'image' || a.type === 'file') {
+        items.push(`<file path="${a.url}">${a.label}</file>`)
+      } else {
+        items.push(`<link type="${a.type}" url="${a.url}">${a.label}</link>`)
       }
-      return `<link type="${a.type}" url="${a.url}">${a.label}</link>`
-    })
+    }
     attachmentsXml = `\n<attachments>\n${items.join('\n')}\n</attachments>`
   }
 
@@ -148,6 +150,7 @@ export function WorktreePickerModal({
   const updateTicket = useKanbanStore((state) => state.updateTicket)
   const createSession = useSessionStore((state) => state.createSession)
   const createWorktreeFromBranch = useWorktreeStore((state) => state.createWorktreeFromBranch)
+  const syncWorktrees = useWorktreeStore((state) => state.syncWorktrees)
 
   const project = useProjectStore(
     useCallback(
@@ -231,8 +234,12 @@ export function WorktreePickerModal({
       setBranches([])
       setBranchFilter('')
       setBranchPopoverOpen(false)
+      // Refresh worktree list from git so the picker shows current state
+      if (project?.path) {
+        syncWorktrees(projectId, project.path)
+      }
     }
-  }, [open, ticket, projectId])
+  }, [open, ticket, projectId, project?.path, syncWorktrees])
 
   // ── Branch filtering ───────────────────────────────────────────
   const filteredBranches = useMemo(() => {
@@ -452,7 +459,20 @@ export function WorktreePickerModal({
           return
         }
 
-        await updateTicket(ticket.id, projectId, { worktree_id: worktreeId })
+        // If the worktree already has sessions, auto-attach the most recent one
+        // so the ticket tracks session lifecycle (progress bar, auto-advance).
+        const existingSessions = useSessionStore.getState().sessionsByWorktree.get(worktreeId) || []
+        const activeSession = existingSessions[0]
+        if (activeSession) {
+          await updateTicket(ticket.id, projectId, {
+            worktree_id: worktreeId,
+            current_session_id: activeSession.id,
+            mode: (activeSession.mode as 'build' | 'plan') || 'build',
+            plan_ready: false
+          })
+        } else {
+          await updateTicket(ticket.id, projectId, { worktree_id: worktreeId })
+        }
         onOpenChange(false)
         toast.success('Worktree assigned')
         return

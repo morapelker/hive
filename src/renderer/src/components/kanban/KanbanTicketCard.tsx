@@ -215,6 +215,16 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  const completedReviewSessionId = useWorktreeStatusStore(
+    useCallback(
+      (state) => {
+        if (!ticket.worktree_id) return null
+        return state.completedReviewSessionByWorktree[ticket.worktree_id] ?? null
+      },
+      [ticket.worktree_id]
+    )
+  )
+
   // ── Detect pending questions for this ticket's session ─────────
   const isAsking = useQuestionStore(
     useCallback(
@@ -445,6 +455,18 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.current_session_id, ticket.worktree_id, ticket.project_id, connectionId, connectionSession, isPinnedMode])
 
+  const handleGoToReview = useCallback(() => {
+    if (!completedReviewSessionId) return
+    const kanbanStore = useKanbanStore.getState()
+    if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
+    if (kanbanStore.isPinnedBoardActive) kanbanStore.togglePinnedBoard()
+    if (ticket.worktree_id) {
+      useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
+      useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
+    }
+    useSessionStore.getState().setActiveSession(completedReviewSessionId)
+  }, [completedReviewSessionId, ticket.worktree_id])
+
   const isSimpleTicket = ticket.current_session_id === null
   const isFlowTicket = ticket.current_session_id !== null
   const isTodo = ticket.column === 'todo'
@@ -539,7 +561,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || isArchived || isRunProcessAlive || ticket.github_pr_number || isCreatingPR) && (
+            {(hasAttachments || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || completedReviewSessionId || isArchived || isRunProcessAlive || ticket.github_pr_number || isCreatingPR) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -650,6 +672,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   <span data-testid="kanban-ticket-reviewing" className="ml-auto flex items-center gap-1.5">
                     <IndeterminateProgressBar mode={ticket.mode || 'build'} isReviewing className="w-20" />
                   </span>
+                )}
+
+                {/* Completed review — show "Go to review" link */}
+                {!isBeingReviewed && !(isBusy || isAsking) && completedReviewSessionId && (
+                  <button
+                    data-testid="kanban-ticket-go-to-review"
+                    onClick={(e) => { e.stopPropagation(); handleGoToReview() }}
+                    className="ml-auto text-green-500 hover:text-green-400 text-xs cursor-pointer"
+                  >
+                    Go to review
+                  </button>
                 )}
               </div>
             )}

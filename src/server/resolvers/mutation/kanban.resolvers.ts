@@ -14,6 +14,7 @@ function mapKanbanTicket(row: any) {
     worktreeId: row.worktree_id ?? null,
     title: row.title,
     description: row.description ?? null,
+    attachments: typeof row.attachments === 'string' ? row.attachments : JSON.stringify(row.attachments ?? []),
     column: row.column,
     sortOrder: row.sort_order,
     archived: !!row.archived_at,
@@ -37,6 +38,7 @@ export const kanbanMutationResolvers: Resolvers = {
         worktree_id: input.worktreeId ?? null,
         title: input.title,
         description: input.description ?? null,
+        attachments: input.attachments ? JSON.parse(input.attachments) : undefined,
         column: input.column as 'todo' | 'in_progress' | 'review' | 'done',
         sort_order: input.sortOrder ?? 0,
         external_provider: input.externalProvider ?? null,
@@ -50,6 +52,7 @@ export const kanbanMutationResolvers: Resolvers = {
       const data: Record<string, unknown> = {}
       if (input.title !== undefined) data.title = input.title
       if (input.description !== undefined) data.description = input.description
+      if (input.attachments !== undefined) data.attachments = JSON.parse(input.attachments)
       if (input.column !== undefined) data.column = input.column
       if (input.sortOrder !== undefined) data.sort_order = input.sortOrder
       if (input.sessionId !== undefined) data.current_session_id = input.sessionId

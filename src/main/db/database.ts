@@ -1,3 +1,4 @@
+import { deleteAttachment } from '../services/attachment-storage'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
@@ -1844,6 +1845,18 @@ export class DatabaseService {
 
   deleteKanbanTicket(id: string): boolean {
     const db = this.getDb()
+
+    // Clean up image attachment files from disk
+    const ticket = this.getKanbanTicket(id)
+    if (ticket) {
+      for (const attachment of ticket.attachments) {
+        const a = attachment as { type?: string; url?: string }
+        if (a.type === 'image' && a.url) {
+          deleteAttachment(a.url) // Best-effort, don't fail the delete
+        }
+      }
+    }
+
     const result = db.prepare('DELETE FROM kanban_tickets WHERE id = ?').run(id)
     return result.changes > 0
   }

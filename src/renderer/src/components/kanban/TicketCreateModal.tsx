@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { Eye, EyeOff, Plus, X, Ticket, Figma, Link as LinkIcon, FileUp, File as FileIcon } from 'lucide-react'
+import { Eye, EyeOff } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -11,25 +11,16 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useConnectionStore, useProjectStore } from '@/stores'
 import { usePinnedStore } from '@/stores/usePinnedStore'
-import { parseAttachmentUrl } from '@/lib/attachment-utils'
-import type { AttachmentInfo } from '@/lib/attachment-utils'
 import { toast } from '@/lib/toast'
-
-// ── Types ───────────────────────────────────────────────────────────
-interface TicketAttachment extends AttachmentInfo {
-  url: string
-}
+import { cn } from '@/lib/utils'
+import { TicketAttachmentEditor, MAX_ATTACHMENTS } from './TicketAttachmentEditor'
+import type { TicketAttachment } from './TicketAttachmentEditor'
+import { useImagePaste } from '@/hooks/useImagePaste'
 
 interface TicketCreateModalProps {
   open: boolean
@@ -45,13 +36,11 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
   const [description, setDescription] = useState('')
   const [showPreview, setShowPreview] = useState(false)
   const [attachments, setAttachments] = useState<TicketAttachment[]>([])
-  const [showAttachInput, setShowAttachInput] = useState(false)
-  const [attachUrl, setAttachUrl] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState('')
 
   const titleInputRef = useRef<HTMLInputElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const createdSuccessfully = useRef(false)
   const createTicket = useKanbanStore((state) => state.createTicket)
 
   const isConnectionMode = !!connectionId
@@ -103,15 +92,30 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
     return () => window.removeEventListener('keydown', handler, true)
   }, [open])
 
-  // Reset form when modal opens/closes
+  // Clean up orphaned image files when modal closes without successful creation
+  useEffect(() => {
+    if (open) {
+      createdSuccessfully.current = false
+    } else {
+      // Modal just closed — if creation didn't succeed, delete any saved images
+      if (!createdSuccessfully.current) {
+        for (const att of attachments) {
+          if (att.type === 'image' && att.url) {
+            window.attachmentOps.deleteImage(att.url).catch(() => {})
+          }
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only react to open/close transitions
+  }, [open])
+
+  // Reset form when modal opens
   useEffect(() => {
     if (open) {
       setTitle('')
       setDescription('')
       setShowPreview(false)
       setAttachments([])
-      setShowAttachInput(false)
-      setAttachUrl('')
       setIsCreating(false)
       setSelectedProjectId(availableProjects[0]?.id ?? '')
       // Auto-focus the title input after dialog animation
@@ -119,35 +123,12 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
     }
   }, [open, availableProjects])
 
-  // ── Attachment handling ────────────────────────────────────────────
-  const detectedAttachment = attachUrl.trim() ? parseAttachmentUrl(attachUrl.trim()) : null
-
-  const handleAddAttachment = useCallback(() => {
-    if (!detectedAttachment || !attachUrl.trim()) return
-    setAttachments((prev) => [
-      ...prev,
-      { ...detectedAttachment, url: attachUrl.trim() }
-    ])
-    setAttachUrl('')
-    setShowAttachInput(false)
-  }, [detectedAttachment, attachUrl])
-
-  const handleRemoveAttachment = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index))
-  }, [])
-
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files) return
-    for (const file of Array.from(files)) {
-      const filePath = window.fileOps.getPathForFile(file)
-      setAttachments((prev) => [
-        ...prev,
-        { type: 'file' as const, url: filePath, label: file.name }
-      ])
-    }
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [])
+  // ── Image paste/drop ───────────────────────────────────────────────
+  const { isDragOver, handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop } = useImagePaste({
+    maxAttachments: MAX_ATTACHMENTS,
+    currentCount: attachments.length,
+    onAttach: (attachment) => setAttachments((prev) => [...prev, attachment])
+  })
 
   // ── Submission ─────────────────────────────────────────────────────
   const handleCreate = useCallback(async () => {
@@ -165,6 +146,7 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
         attachments: attachments.map((a) => ({ type: a.type, url: a.url, label: a.label })),
         column: 'todo'
       })
+      createdSuccessfully.current = true
       toast.success('Ticket created')
       onOpenChange(false)
     } catch {
@@ -193,8 +175,13 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="ticket-create-modal"
-        className="sm:max-w-lg"
+        className={cn("sm:max-w-lg", isDragOver && "ring-2 ring-primary ring-offset-2")}
         onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
+        onDragOver={handleDragOver}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
         <DialogHeader>
           <DialogTitle>Create Ticket</DialogTitle>
@@ -288,112 +275,11 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
           </div>
 
           {/* Attachments */}
-          <div className="space-y-2">
-            {/* Existing attachment chips */}
-            {attachments.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {attachments.map((attachment, index) => (
-                  <span
-                    key={index}
-                    data-testid={`ticket-attachment-chip-${index}`}
-                    className="inline-flex items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs"
-                  >
-                    {attachment.type === 'jira' ? (
-                      <Ticket className="h-3 w-3 text-blue-500" />
-                    ) : attachment.type === 'figma' ? (
-                      <Figma className="h-3 w-3 text-purple-500" />
-                    ) : attachment.type === 'file' ? (
-                      <FileIcon className="h-3 w-3 text-green-500" />
-                    ) : (
-                      <LinkIcon className="h-3 w-3 text-muted-foreground" />
-                    )}
-                    <span className="max-w-[180px] truncate">{attachment.label}</span>
-                    <button
-                      data-testid={`ticket-attachment-remove-${index}`}
-                      onClick={() => handleRemoveAttachment(index)}
-                      className="ml-0.5 rounded-sm hover:bg-muted transition-colors"
-                    >
-                      <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {!showAttachInput && (
-              <>
-                <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      data-testid="ticket-add-attachment-btn"
-                      className="gap-1 text-xs"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Add attachment
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuItem onSelect={() => setShowAttachInput(true)}>
-                      <LinkIcon className="h-4 w-4 mr-2" />
-                      URL
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
-                      <FileUp className="h-4 w-4 mr-2" />
-                      File / Image
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </>
-            )}
-
-            {/* Inline attachment URL input */}
-            {showAttachInput && (
-              <div className="flex items-center gap-2">
-                <Input
-                  data-testid="ticket-attachment-url-input"
-                  placeholder="Paste a Jira or Figma URL"
-                  value={attachUrl}
-                  onChange={(e) => setAttachUrl(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && detectedAttachment) {
-                      e.preventDefault()
-                      handleAddAttachment()
-                    }
-                    if (e.key === 'Escape') {
-                      setShowAttachInput(false)
-                      setAttachUrl('')
-                    }
-                  }}
-                  autoFocus
-                  className="flex-1"
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  data-testid="ticket-attachment-confirm-btn"
-                  disabled={!detectedAttachment}
-                  onClick={handleAddAttachment}
-                >
-                  Add
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setShowAttachInput(false)
-                    setAttachUrl('')
-                  }}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
-          </div>
+          <TicketAttachmentEditor
+            attachments={attachments}
+            onChange={setAttachments}
+            testIdPrefix="ticket"
+          />
         </div>
 
         <DialogFooter>

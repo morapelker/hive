@@ -164,6 +164,17 @@ describe('generateSessionTitle — real parsing, mocked spawn', () => {
     expect(title).toBeNull()
   })
 
+  it('extracts title when structured_output.title is double-wrapped JSON (the bug)', async () => {
+    mockSpawnCLI.mockResolvedValue(JSON.stringify({
+      type: 'result',
+      result: '',
+      structured_output: { title: '{"title": "Codex vs t3"}' }
+    }))
+
+    const title = await generateSessionTitle('compare codex and t3')
+    expect(title).toBe('Codex vs t3')
+  })
+
   it('sanitizes quotes from title', async () => {
     mockSpawnCLI.mockResolvedValue(JSON.stringify({
       structured_output: { title: '"Fix auth bug"' }

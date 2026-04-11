@@ -62,6 +62,18 @@ describe('sanitizeTitle', () => {
     const short = 'A'.repeat(30)
     expect(sanitizeTitle(short)).toBe(short)
   })
+
+  it('extracts title from double-wrapped JSON (the bug case)', () => {
+    expect(sanitizeTitle('{"title": "Codex vs t3"}')).toBe('Codex vs t3')
+  })
+
+  it('extracts title from double-wrapped JSON with extra fields', () => {
+    expect(sanitizeTitle('{"title": "Fix auth bug", "confidence": 0.9}')).toBe('Fix auth bug')
+  })
+
+  it('passes through JSON without title field unchanged', () => {
+    expect(sanitizeTitle('{"other": "value"}')).toBe('{"other": "value"}')
+  })
 })
 
 // ── extractTitleFromJSON ─────────────────────────────────────────────

@@ -29,6 +29,8 @@ interface WorktreeStatusState {
   lastMessageTimeByWorktree: Record<string, number>
   // worktreeId → sessionId for active review sessions
   reviewSessionByWorktree: Record<string, string>
+  // worktreeId → sessionId for completed review sessions (in-memory only)
+  completedReviewSessionByWorktree: Record<string, string>
 
   // Actions
   setSessionStatus: (
@@ -45,6 +47,7 @@ interface WorktreeStatusState {
   getLastMessageTime: (worktreeId: string) => number | null
   setReviewSession: (worktreeId: string, sessionId: string) => void
   clearReviewSession: (worktreeId: string) => void
+  clearCompletedReviewSession: (worktreeId: string) => void
   isWorktreeBeingReviewed: (worktreeId: string) => boolean
 }
 
@@ -73,6 +76,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
   sessionStatuses: {},
   lastMessageTimeByWorktree: {},
   reviewSessionByWorktree: {},
+  completedReviewSessionByWorktree: {},
 
   setSessionStatus: (
     sessionId: string,
@@ -93,6 +97,13 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
           if (sId === sessionId) {
             const { [wtId]: _, ...rest } = state.reviewSessionByWorktree
             next.reviewSessionByWorktree = rest
+            // When a review completes, save its session ID so the card can show "Go to review"
+            if (status === 'completed') {
+              next.completedReviewSessionByWorktree = {
+                ...state.completedReviewSessionByWorktree,
+                [wtId]: sessionId
+              }
+            }
             break
           }
         }
@@ -289,18 +300,30 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
   },
 
   setReviewSession: (worktreeId: string, sessionId: string) => {
-    set((state) => ({
-      reviewSessionByWorktree: {
-        ...state.reviewSessionByWorktree,
-        [worktreeId]: sessionId
+    set((state) => {
+      // Clear any completed review for this worktree when a new review starts
+      const { [worktreeId]: _, ...restCompleted } = state.completedReviewSessionByWorktree
+      return {
+        reviewSessionByWorktree: {
+          ...state.reviewSessionByWorktree,
+          [worktreeId]: sessionId
+        },
+        completedReviewSessionByWorktree: restCompleted
       }
-    }))
+    })
   },
 
   clearReviewSession: (worktreeId: string) => {
     set((state) => {
       const { [worktreeId]: _, ...rest } = state.reviewSessionByWorktree
       return { reviewSessionByWorktree: rest }
+    })
+  },
+
+  clearCompletedReviewSession: (worktreeId: string) => {
+    set((state) => {
+      const { [worktreeId]: _, ...rest } = state.completedReviewSessionByWorktree
+      return { completedReviewSessionByWorktree: rest }
     })
   },
 
