@@ -593,8 +593,9 @@ export const useKanbanStore = create<KanbanState>()(
               }
 
               case 'session_working': {
-                // Session became active — if ticket is in review, move it to in_progress
-                if (ticket.column === 'review') {
+                // Session became active — move ticket to in_progress if it's in
+                // todo (pre-assigned, first activity) or review (returning to work).
+                if (ticket.column === 'todo' || ticket.column === 'review') {
                   get()
                     .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
                     .catch(() => {})

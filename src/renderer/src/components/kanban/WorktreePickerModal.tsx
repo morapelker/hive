@@ -457,7 +457,20 @@ export function WorktreePickerModal({
           return
         }
 
-        await updateTicket(ticket.id, projectId, { worktree_id: worktreeId })
+        // If the worktree already has sessions, auto-attach the most recent one
+        // so the ticket tracks session lifecycle (progress bar, auto-advance).
+        const existingSessions = useSessionStore.getState().sessionsByWorktree.get(worktreeId) || []
+        const activeSession = existingSessions[0]
+        if (activeSession) {
+          await updateTicket(ticket.id, projectId, {
+            worktree_id: worktreeId,
+            current_session_id: activeSession.id,
+            mode: (activeSession.mode as 'build' | 'plan') || 'build',
+            plan_ready: false
+          })
+        } else {
+          await updateTicket(ticket.id, projectId, { worktree_id: worktreeId })
+        }
         onOpenChange(false)
         toast.success('Worktree assigned')
         return
