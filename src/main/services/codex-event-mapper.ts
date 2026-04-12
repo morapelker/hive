@@ -5,6 +5,7 @@ import { asObject, asString, asNumber } from './codex-utils'
 import type {
   ThreadNameUpdatedNotification,
   TurnCompletedNotification,
+  TurnPlanUpdatedNotification,
   ThreadItem,
   CommandExecutionRequestApprovalParams,
   FileChangeRequestApprovalParams,
@@ -234,6 +235,61 @@ interface ItemInfo {
   input?: unknown
 }
 
+interface ChecklistTodoItem {
+  id: string
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+  priority: 'medium'
+}
+
+function buildUpdatePlanCallId(event: CodexManagerEvent): string {
+  if (event.turnId) return `update-plan:${event.threadId}:${event.turnId}`
+  return `update-plan:${event.threadId}:${event.id}`
+}
+
+function toChecklistTodoStatus(status: unknown): ChecklistTodoItem['status'] {
+  switch (status) {
+    case 'completed':
+      return 'completed'
+    case 'inProgress':
+    case 'in_progress':
+      return 'in_progress'
+    default:
+      return 'pending'
+  }
+}
+
+function buildChecklistToolInput(
+  event: CodexManagerEvent,
+  payload: TurnPlanUpdatedNotification | Record<string, unknown> | undefined
+): { explanation?: string; todos: ChecklistTodoItem[] } | null {
+  const explanation = asString(payload && 'explanation' in payload ? payload.explanation : undefined)
+  const rawPlan = payload && 'plan' in payload ? payload.plan : undefined
+  if (!Array.isArray(rawPlan)) return null
+
+  const todos = rawPlan.flatMap((entry, index) => {
+    const planEntry = asObject(entry)
+    const step = asString(planEntry?.step)?.trim()
+    if (!step) return []
+
+    return [
+      {
+        id: `${buildUpdatePlanCallId(event)}:${index}`,
+        content: step,
+        status: toChecklistTodoStatus(planEntry?.status),
+        priority: 'medium' as const
+      }
+    ]
+  })
+
+  if (todos.length === 0) return null
+
+  return {
+    ...(explanation ? { explanation } : {}),
+    todos
+  }
+}
+
 function isWellFormedThreadItem(item: { type: string; id: string; [k: string]: unknown }): boolean {
   switch (item.type) {
     case 'commandExecution':
@@ -286,11 +342,12 @@ function extractItemInfo(event: CodexManagerEvent): ItemInfo {
     isWellFormedThreadItem(candidate as { type: string; id: string; [k: string]: unknown })
   ) {
     const item = candidate
+    const itemRecord = item as Record<string, unknown>
     const itemType = item.type
     const toolName = normalizeCodexToolName(item.type)
     const callId = item.id || event.itemId || ''
-    const status = 'status' in item ? String((item as any).status) : undefined
-    const output = 'aggregatedOutput' in item ? (item as any).aggregatedOutput : undefined
+    const status = 'status' in itemRecord ? asString(itemRecord.status) : undefined
+    const output = 'aggregatedOutput' in itemRecord ? itemRecord.aggregatedOutput : undefined
     const input = deriveInputFromThreadItem(item)
     return {
       ...(itemType ? { itemType } : {}),
@@ -559,6 +616,32 @@ function mapCodexEventToStreamEventsInner(
         sessionId: hiveSessionId,
         data: annotateData({ status: { type: 'busy' } }),
         statusPayload: { type: 'busy' }
+      }
+    ]
+  }
+
+  // ── Turn plan updated (Codex update_plan) ────────────────────
+  if (method === 'turn/plan/updated') {
+    const typed = event.payload as TurnPlanUpdatedNotification | undefined
+    const payload = asObject(event.payload)
+    const input = buildChecklistToolInput(event, typed ?? payload ?? undefined)
+    if (!input) return []
+
+    return [
+      {
+        type: 'message.part.updated',
+        sessionId: hiveSessionId,
+        data: annotateData({
+          part: {
+            type: 'tool',
+            callID: buildUpdatePlanCallId(event),
+            tool: 'update_plan',
+            state: {
+              status: 'completed',
+              input
+            }
+          }
+        })
       }
     ]
   }

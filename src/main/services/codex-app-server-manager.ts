@@ -197,6 +197,8 @@ You are operating in **default** (autonomous execution) mode. This mode is set b
 
 **IMPORTANT:** The \`request_user_input\` tool is **UNAVAILABLE** in this session mode.
 
+The \`update_plan\` tool is available in this mode for checklist/progress tracking. Use it for non-trivial multi-step work to keep an up-to-date list of steps and statuses. Do not use it for simple one-step tasks, and do not repeat the full plan contents after calling it.
+
 - Do NOT attempt to call \`request_user_input\`
 - Make reasonable assumptions and proceed autonomously
 - If something is ambiguous, pick the most sensible interpretation and execute
@@ -244,6 +246,11 @@ When you have sufficient clarity, produce your implementation plan:
 - Use it to ask ONE focused question at a time
 - Do NOT ask multiple questions in a single call
 - Only ask what you genuinely need to know to finalize the plan
+
+## \`update_plan\`
+
+- \`update_plan\` is a checklist/progress tool and is NOT available in Plan mode
+- Do not attempt to call \`update_plan\` while you are in Plan mode
 
 ## Finalization Rules
 

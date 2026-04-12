@@ -53,10 +53,10 @@ export interface ToolUseInfo {
   endTime?: number
 }
 
-/** Check if a tool name refers to the TodoWrite tool */
+/** Check if a tool name refers to a checklist-style tool */
 function isTodoWriteTool(name: string): boolean {
   const lower = name.toLowerCase()
-  return lower.includes('todowrite') || lower.includes('todo_write')
+  return lower.includes('todowrite') || lower.includes('todo_write') || lower === 'update_plan'
 }
 
 /** Figma brand color for consistent icon styling */
@@ -311,6 +311,7 @@ const TOOL_RENDERERS: Record<string, React.FC<ToolViewProps>> = {
   mcp_todowrite: TodoWriteToolView,
   TodoWrite: TodoWriteToolView,
   todowrite: TodoWriteToolView,
+  update_plan: TodoWriteToolView,
   Skill: SkillToolView,
   mcp_skill: SkillToolView,
   ExitPlanMode: ExitPlanModeToolView,
@@ -329,7 +330,7 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (TOOL_RENDERERS[name]) return TOOL_RENDERERS[name]
   // Try case-insensitive match via known patterns
   const lower = name.toLowerCase()
-  if (lower.includes('todowrite') || lower.includes('todo_write')) return TodoWriteToolView
+  if (isTodoWriteTool(lower)) return TodoWriteToolView
   if (lower.includes('read') || lower === 'cat' || lower === 'view') return ReadToolView
   if (lower.includes('write') || lower === 'create') return WriteToolView
   if (isFileChangeTool(lower)) return FileChangeToolView

@@ -5,6 +5,7 @@ import { asObject, asString } from './codex-utils'
 import type { ItemStartedNotification } from '@shared/codex-schemas/v2/ItemStartedNotification'
 import type { ItemCompletedNotification } from '@shared/codex-schemas/v2/ItemCompletedNotification'
 import type { ThreadNameUpdatedNotification } from '@shared/codex-schemas/v2/ThreadNameUpdatedNotification'
+import type { TurnPlanUpdatedNotification } from '@shared/codex-schemas/v2/TurnPlanUpdatedNotification'
 
 
 function stringifyPayload(payload: unknown): string | null {
@@ -197,6 +198,20 @@ export function mapCodexManagerEventToActivity(
         'info',
         params?.threadName ?? asString(payload?.threadName) ?? 'Thread title updated'
       )
+    }
+
+    case 'turn/plan/updated': {
+      const params = event.payload as TurnPlanUpdatedNotification | undefined
+      const plan = params?.plan ?? payload?.plan
+      const steps = Array.isArray(plan) ? plan : []
+      const completedCount = steps.filter((step) => {
+        const stepObj = asObject(step)
+        return asString(stepObj?.status) === 'completed'
+      }).length
+      const summary =
+        steps.length > 0 ? `Plan updated (${completedCount}/${steps.length} completed)` : 'Plan updated'
+
+      return buildActivity(sessionId, agentSessionId, event, 'session.info', 'info', summary)
     }
 
     default:

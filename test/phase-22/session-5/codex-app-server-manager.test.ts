@@ -143,6 +143,9 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
     expect(params.collaborationMode.settings.developer_instructions).toContain(
       'Stop after producing the plan block'
     )
+    expect(params.collaborationMode.settings.developer_instructions).toContain(
+      '`update_plan` is a checklist/progress tool and is NOT available in Plan mode'
+    )
   })
 
   it('includes collaborationMode with mode: default and default developer instructions when interactionMode is default', async () => {
@@ -172,6 +175,10 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
     expect(params.collaborationMode.mode).toBe('default')
     expect(params.collaborationMode.settings).toBeDefined()
     expect(params.collaborationMode.settings.developer_instructions).toContain('default')
+    expect(params.collaborationMode.settings.developer_instructions).toContain('update_plan')
+    expect(params.collaborationMode.settings.developer_instructions).toContain(
+      'The `update_plan` tool is available in this mode'
+    )
   })
 
   it('does not include collaborationMode when interactionMode is not provided', async () => {
