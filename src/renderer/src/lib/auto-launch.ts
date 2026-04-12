@@ -55,7 +55,8 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
       worktreeId,
       ticket.project_id,
       config.sdk,
-      config.mode
+      config.mode,
+      { autoFocus: false }
     )
     if (!sessionResult.success || !sessionResult.session) {
       toast.error(`Auto-launch failed: ${sessionResult.error || 'Could not create session'}`)
