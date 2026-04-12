@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react'
-import { useIsWebMode } from '@/hooks/useIsWebMode'
 import { revealLabel } from '@/lib/platform'
 import {
   ContextMenu,
@@ -49,7 +48,6 @@ export function FileContextMenu({
   onClose,
   hideGitContextActions
 }: FileContextMenuProps): React.JSX.Element {
-  const isWebMode = useIsWebMode()
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false)
   const [showDiffModal, setShowDiffModal] = useState(false)
   const { stageFile, unstageFile, discardChanges, addToGitignore } = useGitStore()
@@ -172,12 +170,10 @@ export function FileContextMenu({
             <FileCode className="mr-2 h-4 w-4" />
             Open in Editor
           </ContextMenuItem>
-          {!isWebMode && (
-            <ContextMenuItem onClick={handleOpenInFinder}>
-              <FolderOpen className="mr-2 h-4 w-4" />
-              {revealLabel(node.isDirectory)}
-            </ContextMenuItem>
-          )}
+          <ContextMenuItem onClick={handleOpenInFinder}>
+            <FolderOpen className="mr-2 h-4 w-4" />
+            {revealLabel(node.isDirectory)}
+          </ContextMenuItem>
 
           <ContextMenuSeparator />
 

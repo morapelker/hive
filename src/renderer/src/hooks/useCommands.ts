@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useCallback, useState } from 'react'
-import { useIsWebMode } from '@/hooks/useIsWebMode'
 import {
   useProjectStore,
   useWorktreeStore,
@@ -19,15 +18,13 @@ import { useCommandPaletteStore, type Command } from '@/stores/useCommandPalette
 import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { THEME_PRESETS, getThemeById } from '@/lib/themes'
 import { toast } from '@/lib/toast'
-import { revealLabel, isWindows, fileManagerName } from '@/lib/platform'
+import { revealLabel, fileManagerName } from '@/lib/platform'
 
 /**
  * Hook that registers all available commands and returns filtered commands
  * based on the current search query and context.
  */
 export function useCommands() {
-  const isWebMode = useIsWebMode()
-
   // Get store state and actions
   const { projects, selectedProjectId, selectProject, toggleProjectExpanded } = useProjectStore()
   const { worktreesByProject, selectWorktree, getWorktreesForProject } = useWorktreeStore()
@@ -602,57 +599,6 @@ export function useCommands() {
         }
       },
 
-      // =====================
-      // SERVER COMMANDS
-      // =====================
-      {
-        id: 'action:install-server',
-        label: "Install 'hive-server' Command in PATH",
-        description: isWindows()
-          ? 'Install the hive-server CLI to %LOCALAPPDATA%\\Hive'
-          : 'Install the hive-server CLI to /usr/local/bin',
-        category: 'action',
-        icon: 'Terminal',
-        keywords: ['install', 'server', 'path', 'headless', 'cli', 'terminal'],
-        isVisible: () => isPackaged && !isWebMode,
-        action: async () => {
-          try {
-            const result = await window.systemOps.installServerToPath()
-            if (result.success) {
-              toast.success(`Installed hive-server to ${result.path}`)
-            } else {
-              toast.error(result.error || 'Failed to install')
-            }
-          } catch {
-            toast.error('Installation cancelled or failed')
-          }
-          closeCommandPalette()
-        }
-      },
-      {
-        id: 'action:uninstall-server',
-        label: "Uninstall 'hive-server' Command from PATH",
-        description: isWindows()
-          ? 'Remove the hive-server CLI from %LOCALAPPDATA%\\Hive'
-          : 'Remove the hive-server CLI from /usr/local/bin',
-        category: 'action',
-        icon: 'Trash2',
-        keywords: ['uninstall', 'remove', 'server', 'path', 'cli'],
-        isVisible: () => isPackaged && !isWebMode,
-        action: async () => {
-          try {
-            const result = await window.systemOps.uninstallServerFromPath()
-            if (result.success) {
-              toast.success('Removed hive-server from PATH')
-            } else {
-              toast.error(result.error || 'Failed to uninstall')
-            }
-          } catch {
-            toast.error('Uninstall cancelled or failed')
-          }
-          closeCommandPalette()
-        }
-      }
     ]
 
     // Register all commands
@@ -694,7 +640,6 @@ export function useCommands() {
     closeCommandPalette,
     pushCommandLevel,
     isPackaged,
-    isWebMode,
     toggleBoardView
   ])
 

@@ -4,7 +4,6 @@ import { toast } from '@/lib/toast'
 import { UpdateProgressToast } from '@/components/toasts/UpdateProgressToast'
 import { UpdateAvailableToast } from '@/components/toasts/UpdateAvailableToast'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { detectTransportMode } from '@/transport/detect'
 
 export function useAutoUpdate(): void {
   const progressToastId = useRef<string | number | null>(null)
@@ -13,9 +12,6 @@ export function useAutoUpdate(): void {
   const dismissedForSessionRef = useRef<string | null>(null)
 
   useEffect(() => {
-    // Don't register update listeners in web mode
-    if (detectTransportMode() === 'web') return
-
     // Guard: updaterOps may not exist in test environments
     if (!window.updaterOps) return
 

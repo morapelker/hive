@@ -1,7 +1,6 @@
 import { Copy, Check, FolderOpen, GitBranch, Terminal, Code } from 'lucide-react'
 import { fileManagerName } from '@/lib/platform'
 import { useState, useCallback, useEffect } from 'react'
-import { useIsWebMode } from '@/hooks/useIsWebMode'
 import { Button } from '@/components/ui/button'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -309,7 +308,6 @@ function TerminalIcon({
 }
 
 export function QuickActions(): React.JSX.Element | null {
-  const isWebMode = useIsWebMode()
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectedConnection = useConnectionStore((s) =>
@@ -434,7 +432,7 @@ export function QuickActions(): React.JSX.Element | null {
 
   return (
     <div className="flex items-center gap-3" data-testid="quick-actions">
-      {!isWebMode && isSwiftProject && xcworkspacePath && !isConnectionMode && (
+      {isSwiftProject && xcworkspacePath && !isConnectionMode && (
         <Button
           variant="ghost"
           size="sm"
@@ -448,7 +446,7 @@ export function QuickActions(): React.JSX.Element | null {
           <span>Xcode</span>
         </Button>
       )}
-      {!isWebMode && isAndroidProject && !isConnectionMode && (
+      {isAndroidProject && !isConnectionMode && (
         <Button
           variant="ghost"
           size="sm"
@@ -465,38 +463,34 @@ export function QuickActions(): React.JSX.Element | null {
           <span>Android Studio</span>
         </Button>
       )}
-      {!isWebMode && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
-          disabled={disabled}
-          onClick={() => handleAction('editor')}
-          title={`Open in ${editorLabel}`}
-          data-testid="quick-action-editor"
-        >
-          {defaultEditor === 'cursor' ? (
-            <CursorIcon className="h-3.5 w-3.5" />
-          ) : (
-            <Code className="h-3.5 w-3.5" />
-          )}
-          <span>{editorLabel}</span>
-        </Button>
-      )}
-      {!isWebMode && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
-          disabled={disabled}
-          onClick={() => handleAction('terminal')}
-          title={`Open in ${terminalLabel}`}
-          data-testid="quick-action-terminal"
-        >
-          <TerminalIcon terminal={defaultTerminal} className="h-3.5 w-3.5" />
-          <span>{terminalLabel}</span>
-        </Button>
-      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
+        disabled={disabled}
+        onClick={() => handleAction('editor')}
+        title={`Open in ${editorLabel}`}
+        data-testid="quick-action-editor"
+      >
+        {defaultEditor === 'cursor' ? (
+          <CursorIcon className="h-3.5 w-3.5" />
+        ) : (
+          <Code className="h-3.5 w-3.5" />
+        )}
+        <span>{editorLabel}</span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
+        disabled={disabled}
+        onClick={() => handleAction('terminal')}
+        title={`Open in ${terminalLabel}`}
+        data-testid="quick-action-terminal"
+      >
+        <TerminalIcon terminal={defaultTerminal} className="h-3.5 w-3.5" />
+        <span>{terminalLabel}</span>
+      </Button>
       <Button
         variant="ghost"
         size="sm"
@@ -513,20 +507,18 @@ export function QuickActions(): React.JSX.Element | null {
         )}
         <span>{copied ? 'Copied' : 'Copy Path'}</span>
       </Button>
-      {!isWebMode && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
-          disabled={disabled}
-          onClick={() => handleAction('finder')}
-          title={`Reveal in ${fileManagerName()}`}
-          data-testid="quick-action-finder"
-        >
-          <FolderOpen className="h-3.5 w-3.5" />
-          <span>{fileManagerName()}</span>
-        </Button>
-      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
+        disabled={disabled}
+        onClick={() => handleAction('finder')}
+        title={`Reveal in ${fileManagerName()}`}
+        data-testid="quick-action-finder"
+      >
+        <FolderOpen className="h-3.5 w-3.5" />
+        <span>{fileManagerName()}</span>
+      </Button>
       {branchName && (
         <Button
           variant="ghost"

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { useIsWebMode } from '@/hooks/useIsWebMode'
 import { isMac as isMacPlatform, isWindows as isWindowsPlatform } from '@/lib/platform'
 import {
   useSettingsStore,
@@ -67,7 +66,6 @@ const BACKEND_OPTIONS: {
 ]
 
 export function SettingsTerminal(): React.JSX.Element {
-  const isWebMode = useIsWebMode()
   const {
     defaultTerminal,
     customTerminalCommand,
@@ -140,7 +138,6 @@ export function SettingsTerminal(): React.JSX.Element {
   return (
     <div className="space-y-8">
       {/* Embedded Terminal Backend */}
-      {!isWebMode && (
       <div>
         <h3 className="text-base font-medium mb-1">Embedded Terminal</h3>
         <p className="text-sm text-muted-foreground mb-3">
@@ -225,7 +222,6 @@ export function SettingsTerminal(): React.JSX.Element {
           </>
         )}
       </div>
-      )}
 
       {/* External Terminal (Open in Terminal) */}
       <div>
