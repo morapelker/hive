@@ -331,7 +331,6 @@ function deduplicateEvents(
  *
  * Events are accumulated during the debounce window and sent as a batch.
  * The IPC payload carries `events: Array<{ eventType, changedPath, relativePath }>`.
- * The EventBus still emits one event per accumulated item for backward compat.
  */
 function emitFileTreeChange(
   worktreePath: string,

@@ -1,9 +1,0 @@
-type TerminalDataEvent {
-  worktreeId: ID!
-  data: String!
-}
-
-type TerminalExitEvent {
-  worktreeId: ID!
-  code: Int!
-}
