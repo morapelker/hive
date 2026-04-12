@@ -28,7 +28,7 @@ export interface FileTreeChangeEvent {
   events: FileTreeChangeEventItem[]
 }
 
-/** Individual file change event (used by EventBus and GraphQL subscriptions) */
+/** Individual file change event */
 export interface FileTreeIndividualChangeEvent {
   worktreePath: string
   eventType: FileEventType
