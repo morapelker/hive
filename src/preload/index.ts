@@ -544,14 +544,6 @@ const systemOps = {
   // Check if the app is running in packaged mode (not dev)
   isPackaged: (): Promise<boolean> => ipcRenderer.invoke('system:isPackaged'),
 
-  // Install hive-server CLI wrapper to /usr/local/bin (requires admin elevation)
-  installServerToPath: (): Promise<{ success: boolean; path?: string; error?: string }> =>
-    ipcRenderer.invoke('system:installServerToPath'),
-
-  // Uninstall hive-server CLI from /usr/local/bin (requires admin elevation)
-  uninstallServerFromPath: (): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('system:uninstallServerFromPath'),
-
   // Get the current platform (darwin, win32, linux)
   getPlatform: (): Promise<string> => ipcRenderer.invoke('system:getPlatform')
 }
