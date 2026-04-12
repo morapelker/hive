@@ -225,16 +225,6 @@ export class CodexImplementer implements AgentSdkImplementer {
   }
 
   private handleManagerEvent(event: CodexManagerEvent): void {
-    // DEBUG: Log ALL notification events to discover title-related methods
-    if (event.kind === 'notification') {
-      log.info('DEBUG handleManagerEvent: notification received', {
-        method: event.method,
-        threadId: event.threadId,
-        payloadKeys: event.payload ? Object.keys(event.payload as Record<string, unknown>) : [],
-        payloadSnapshot: toJsonSnapshot(event.payload, 500)
-      })
-    }
-
     const targetSession = this.findSessionByThreadId(event.threadId)
     if (targetSession) {
       this.persistActivity(targetSession, event)
@@ -373,16 +363,9 @@ export class CodexImplementer implements AgentSdkImplementer {
 
   private async handleProviderTitleUpdate(event: CodexManagerEvent): Promise<void> {
     const payload = asObject(event.payload)
-    log.info('DEBUG handleProviderTitleUpdate: raw payload', {
-      payloadKeys: payload ? Object.keys(payload) : [],
-      fullPayload: toJsonSnapshot(event.payload, 1000)
-    })
     const typed = event.payload as ThreadNameUpdatedNotification | undefined
     const title = typed?.threadName ?? asString(payload?.threadName)
     if (!title) {
-      log.warn(
-        'DEBUG handleProviderTitleUpdate: threadName field empty/missing, tried payload?.threadName'
-      )
       return
     }
 
@@ -2058,13 +2041,24 @@ export class CodexImplementer implements AgentSdkImplementer {
     if (isComplete()) return Promise.resolve()
 
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let timer = setTimeout(() => {
         cleanup()
         reject(new Error('Turn timed out'))
       }, timeoutMs)
 
+      const resetTimer = () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+          cleanup()
+          reject(new Error('Turn timed out'))
+        }, timeoutMs)
+      }
+
       const checkEvent = (event: CodexManagerEvent) => {
         if (event.threadId !== session.threadId) return
+
+        // Reset timeout on any activity from this thread
+        resetTimer()
 
         if (event.method === 'turn/completed') {
           cleanup()

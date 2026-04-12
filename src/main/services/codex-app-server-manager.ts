@@ -107,6 +107,7 @@ export interface CodexSessionContext {
   pending: Map<string, PendingRequest>
   pendingApprovals: Map<string, PendingApprovalRequest>
   pendingUserInputs: Map<string, PendingUserInputRequest>
+  collabReceiverTurns: Map<string, string> // childThreadId → parentTurnId
   nextRequestId: number
   stopping: boolean
 }
@@ -155,6 +156,7 @@ export interface CodexManagerEvent {
   requestId?: string
   textDelta?: string
   payload?: unknown
+  childThreadId?: string
 }
 
 export interface CodexAppServerManagerEvents {
@@ -416,6 +418,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         pending: new Map(),
         pendingApprovals: new Map(),
         pendingUserInputs: new Map(),
+        collabReceiverTurns: new Map(),
         nextRequestId: 1,
         stopping: false
       }
@@ -603,6 +606,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       throw new Error('sendTurn: session has no threadId')
     }
 
+    // Reset child tracking for new turn
+    context.collabReceiverTurns.clear()
+
     // Build the turn input array
     const turnInput =
       input.input && input.input.length > 0
@@ -623,6 +629,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (input.reasoningEffort) {
       params.effort = input.reasoningEffort
     }
+
+    // Enable reasoning summary streaming so reasoning deltas appear in the UI.
+    // Without this parameter the server sends no reasoning deltas at all.
+    params.summary = 'auto'
 
     if (input.serviceTier !== undefined) {
       params.serviceTier = input.serviceTier
@@ -970,21 +980,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     context: CodexSessionContext,
     notification: ServerNotification
   ): void {
-    // DEBUG: Log all server notifications to discover title events
-    if (
-      notification.method !== 'item/agentMessage/delta' &&
-      notification.method !== 'item/reasoning/textDelta'
-    ) {
-      log.info('DEBUG handleServerNotification: received', {
-        method: notification.method,
-        paramsKeys: notification.params
-          ? Object.keys(notification.params as Record<string, unknown>)
-          : [],
-        paramsSnapshot: toJsonSnapshot(notification.params, 500)
-      })
-    }
-
     const route = this.readRouteFields(notification.params)
+
+    // Track collab subagent spawns (must run before child detection)
+    this.rememberCollabReceiverTurns(context, notification.params, route.turnId)
+
+    // Detect if this notification is from a child thread
+    const childParentTurnId = this.readChildParentTurnId(context, notification.params)
+    const isChildConversation = childParentTurnId !== undefined
+
+    // Suppress lifecycle notifications from child threads
+    if (isChildConversation && this.shouldSuppressChildConversationNotification(notification.method)) {
+      return
+    }
 
     // Extract textDelta for streaming text notifications (matches t3code pattern)
     const textDelta =
@@ -992,6 +1000,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         ? asString(asObject(notification.params)?.delta)
         : undefined
 
+    const providerConversationId = this.readProviderConversationId(notification.params)
+
+    // Emit event — child events get parent's turnId for proper attribution
     this.emitEvent({
       id: randomUUID(),
       kind: 'notification',
@@ -999,14 +1010,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       threadId: context.session.threadId ?? '',
       createdAt: new Date().toISOString(),
       method: notification.method,
-      turnId: route.turnId,
-      itemId: route.itemId,
+      ...((childParentTurnId ?? route.turnId) ? { turnId: childParentTurnId ?? route.turnId } : {}),
+      ...(route.itemId ? { itemId: route.itemId } : {}),
       textDelta,
+      ...(isChildConversation && providerConversationId
+        ? { childThreadId: providerConversationId }
+        : {}),
       payload: notification.params
     })
 
-    // Handle session lifecycle notifications
+    // Handle session lifecycle notifications — only for parent thread
     if (notification.method === 'turn/started') {
+      if (isChildConversation) return
       const turnId = notification.params.turn.id
       this.updateSession(context, {
         status: 'running',
@@ -1016,6 +1031,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     if (notification.method === 'turn/completed') {
+      if (isChildConversation) return
+      context.collabReceiverTurns.clear()
       const status = notification.params.turn.status
       this.updateSession(context, {
         status: status === 'failed' ? 'error' : 'ready',
@@ -1027,6 +1044,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   private handleServerRequest(context: CodexSessionContext, request: ServerRequest): void {
     const requestId = randomUUID()
+    const route = this.readRouteFields(request.params)
+
+    // Detect if this request is from a child thread — use parent's turnId for attribution
+    const childParentTurnId = this.readChildParentTurnId(context, request.params)
+    const effectiveTurnId = childParentTurnId ?? route.turnId
+    const providerConversationId = this.readProviderConversationId(request.params)
+    const isChildConversation = childParentTurnId !== undefined
 
     // Track approval requests
     if (
@@ -1044,7 +1068,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         method: request.method,
         threadId: context.session.threadId ?? '',
         payload: request.params,
-        ...('turnId' in params ? { turnId: params.turnId } : {}),
+        ...(effectiveTurnId ? { turnId: effectiveTurnId } : {}),
         ...('itemId' in params ? { itemId: params.itemId } : {})
       })
     }
@@ -1062,8 +1086,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       })
     }
 
-    const route = this.readRouteFields(request.params)
-
     this.emitEvent({
       id: randomUUID(),
       kind: 'request',
@@ -1071,9 +1093,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       threadId: context.session.threadId ?? '',
       createdAt: new Date().toISOString(),
       method: request.method,
-      turnId: route.turnId,
-      itemId: route.itemId,
+      ...(effectiveTurnId ? { turnId: effectiveTurnId } : {}),
+      ...(route.itemId ? { itemId: route.itemId } : {}),
       requestId,
+      ...(isChildConversation && providerConversationId
+        ? { childThreadId: providerConversationId }
+        : {}),
       payload: request.params
     })
   }
@@ -1185,6 +1210,66 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   // ── Protocol helpers ──────────────────────────────────────────
+
+  // ── Collab subagent tracking helpers ────────────────────────
+
+  private readProviderConversationId(params: unknown): string | undefined {
+    const p = asObject(params)
+    return (
+      asString(p?.threadId) ??
+      asString(asObject(p?.thread)?.id) ??
+      asString(p?.conversationId)
+    )
+  }
+
+  private readChildParentTurnId(
+    context: CodexSessionContext,
+    params: unknown
+  ): string | undefined {
+    const providerConversationId = this.readProviderConversationId(params)
+    if (!providerConversationId) return undefined
+    return context.collabReceiverTurns.get(providerConversationId)
+  }
+
+  private rememberCollabReceiverTurns(
+    context: CodexSessionContext,
+    params: unknown,
+    parentTurnId: string | undefined
+  ): void {
+    if (!parentTurnId) return
+    const payload = asObject(params)
+    const item = asObject(payload?.item) ?? payload
+    const itemType = asString(item?.type) ?? asString(item?.kind)
+    if (itemType !== 'collabAgentToolCall') return
+
+    const receiverThreadIds =
+      (item?.receiverThreadIds as string[] | undefined) ?? []
+    for (const id of receiverThreadIds) {
+      if (typeof id === 'string') {
+        context.collabReceiverTurns.set(id, parentTurnId)
+      }
+    }
+  }
+
+  private shouldSuppressChildConversationNotification(method: string): boolean {
+    return (
+      method === 'thread/started' ||
+      method === 'thread/status/changed' ||
+      method === 'thread/archived' ||
+      method === 'thread/unarchived' ||
+      method === 'thread/closed' ||
+      method === 'thread/compacted' ||
+      method === 'thread/name/updated' ||
+      method === 'thread/tokenUsage/updated' ||
+      method === 'turn/started' ||
+      method === 'turn/completed' ||
+      method === 'turn/aborted' ||
+      method === 'turn/plan/updated' ||
+      method === 'item/plan/delta'
+    )
+  }
+
+  // ── Route field extraction ─────────────────────────────────
 
   private readRouteFields(params: unknown): {
     turnId?: string

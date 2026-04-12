@@ -89,6 +89,7 @@ function createTestContext(overrides?: Partial<CodexProviderSession>): {
     pending: new Map(),
     pendingApprovals: new Map(),
     pendingUserInputs: new Map(),
+    collabReceiverTurns: new Map(),
     nextRequestId: 1,
     stopping: false
   }
