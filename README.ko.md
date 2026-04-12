@@ -13,7 +13,7 @@
     <a href="#"><img src="https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Windows" /></a>
     <a href="#"><img src="https://img.shields.io/badge/Linux-supported-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux" /></a>
     <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" /></a>
-    <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/electron-33-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron" /></a>
+    <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/electron-41-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron" /></a>
     <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/typescript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="라이선스" /></a>
     <a href="https://github.com/morapelker/hive/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PR 환영" /></a>
@@ -371,7 +371,7 @@ src/
 
 | 레이어     | 기술                                                                       |
 | --------- | -------------------------------------------------------------------------------- |
-| 프레임워크 | [Electron 33](https://www.electronjs.org/)                                       |
+| 프레임워크 | [Electron 41](https://www.electronjs.org/)                                       |
 | 프론트엔드  | [React 19](https://react.dev/)                                                   |
 | 언어  | [TypeScript 5.7](https://www.typescriptlang.org/)                                |
 | 스타일링   | [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) |
