@@ -8,14 +8,30 @@ const { mockSpawnCLI, mockExtractTitle, mockSanitize } = vi.hoisted(() => ({
   mockSanitize: vi.fn()
 }))
 
+const { mockResolveCodexBinaryPath, mockGetCodexCliEnv } = vi.hoisted(() => ({
+  mockResolveCodexBinaryPath: vi.fn(),
+  mockGetCodexCliEnv: vi.fn(() => ({ PATH: '/mock/bin' }))
+}))
+
 const { mockWriteFile, mockReadFile, mockUnlink } = vi.hoisted(() => ({
   mockWriteFile: vi.fn(),
   mockReadFile: vi.fn(),
   mockUnlink: vi.fn()
 }))
 
+const { mockLogInfo, mockLogWarn, mockLogCodexLifecycleEvent } = vi.hoisted(() => ({
+  mockLogInfo: vi.fn(),
+  mockLogWarn: vi.fn(),
+  mockLogCodexLifecycleEvent: vi.fn()
+}))
+
 vi.mock('../../../src/main/services/logger', () => ({
-  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() })
+  createLogger: () => ({
+    info: mockLogInfo,
+    warn: mockLogWarn,
+    error: vi.fn(),
+    debug: vi.fn()
+  })
 }))
 
 vi.mock('../../../src/main/services/title-generation-shared', async (importOriginal) => {
@@ -38,6 +54,18 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   }
 })
 
+vi.mock('../../../src/main/services/codex-debug-logger', () => ({
+  logCodexLifecycleEvent: mockLogCodexLifecycleEvent
+}))
+
+vi.mock('../../../src/main/services/codex-binary-resolver', () => ({
+  resolveCodexBinaryPath: mockResolveCodexBinaryPath
+}))
+
+vi.mock('../../../src/main/services/codex-cli-env', () => ({
+  getCodexCliEnv: mockGetCodexCliEnv
+}))
+
 describe('generateCodexSessionTitle', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -48,6 +76,7 @@ describe('generateCodexSessionTitle', () => {
     mockSpawnCLI.mockResolvedValue('')
     mockExtractTitle.mockReturnValue('Test title')
     mockSanitize.mockReturnValue('Test title')
+    mockResolveCodexBinaryPath.mockReturnValue(null)
   })
 
   it('returns sanitized title on success', async () => {
@@ -61,6 +90,18 @@ describe('generateCodexSessionTitle', () => {
 
     const result = await generateCodexSessionTitle('Fix auth refresh token bug')
     expect(result).toBe('Auth fix')
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      'generateCodexSessionTitle: starting',
+      expect.objectContaining({ messageLength: 'Fix auth refresh token bug'.length })
+    )
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      'generateCodexSessionTitle: sanitized title',
+      { rawTitle: 'Auth fix', title: 'Auth fix' }
+    )
+    expect(mockLogCodexLifecycleEvent).toHaveBeenCalledWith(
+      'title/output_read',
+      expect.objectContaining({ outputLength: '{"title":"Auth fix"}'.length })
+    )
   })
 
   it('calls spawnCLI with correct codex args', async () => {
@@ -71,7 +112,7 @@ describe('generateCodexSessionTitle', () => {
     await generateCodexSessionTitle('Some message', '/tmp/worktree')
 
     expect(mockSpawnCLI).toHaveBeenCalledOnce()
-    const [command, args, , timeoutMs, cwd] = mockSpawnCLI.mock.calls[0]
+    const [command, args, , timeoutMs, cwd, env] = mockSpawnCLI.mock.calls[0]
     expect(command).toBe('codex')
     expect(args).toContain('exec')
     expect(args).toContain('--ephemeral')
@@ -85,6 +126,42 @@ describe('generateCodexSessionTitle', () => {
     expect(args).toContain('--output-last-message')
     expect(timeoutMs).toBeDefined()
     expect(cwd).toBe('/tmp/worktree')
+    expect(env).toEqual({ PATH: '/mock/bin' })
+  })
+
+  it('uses provided codexBinaryPath when given', async () => {
+    const { generateCodexSessionTitle } = await import(
+      '../../../src/main/services/codex-session-title'
+    )
+
+    await generateCodexSessionTitle('Some message', '/tmp/worktree', '/usr/local/bin/codex')
+
+    expect(mockSpawnCLI).toHaveBeenCalledWith(
+      '/usr/local/bin/codex',
+      expect.any(Array),
+      expect.any(String),
+      expect.any(Number),
+      '/tmp/worktree',
+      { PATH: '/mock/bin' }
+    )
+  })
+
+  it('falls back to resolveCodexBinaryPath() when no path is provided', async () => {
+    mockResolveCodexBinaryPath.mockReturnValue('/resolved/codex')
+    const { generateCodexSessionTitle } = await import(
+      '../../../src/main/services/codex-session-title'
+    )
+
+    await generateCodexSessionTitle('Some message', '/tmp/worktree')
+
+    expect(mockSpawnCLI).toHaveBeenCalledWith(
+      '/resolved/codex',
+      expect.any(Array),
+      expect.any(String),
+      expect.any(Number),
+      '/tmp/worktree',
+      { PATH: '/mock/bin' }
+    )
   })
 
   it('writes schema JSON to temp file', async () => {
@@ -170,6 +247,14 @@ describe('generateCodexSessionTitle', () => {
 
     const result = await generateCodexSessionTitle('Test message')
     expect(result).toBeNull()
+    expect(mockLogWarn).toHaveBeenCalledWith(
+      'generateCodexSessionTitle: no title extracted from output',
+      expect.objectContaining({ outputPreview: '{"title":"Test title"}' })
+    )
+    expect(mockLogCodexLifecycleEvent).toHaveBeenCalledWith(
+      'title/extract_failed',
+      expect.objectContaining({ outputPreview: '{"title":"Test title"}' })
+    )
   })
 
   it('never throws, always returns null on error', async () => {
@@ -181,5 +266,45 @@ describe('generateCodexSessionTitle', () => {
 
     const result = await generateCodexSessionTitle('Test message')
     expect(result).toBeNull()
+  })
+
+  it('logs structured spawn failure details', async () => {
+    const { SpawnCliError } = await import('../../../src/main/services/title-generation-shared')
+    mockSpawnCLI.mockRejectedValue(
+      new SpawnCliError('codex exited with code 1: boom', {
+        kind: 'non_zero_exit',
+        command: 'codex',
+        code: 1,
+        stdoutPreview: 'stdout preview',
+        stderrPreview: 'stderr preview',
+        cwd: '/tmp/worktree'
+      })
+    )
+
+    const { generateCodexSessionTitle } = await import(
+      '../../../src/main/services/codex-session-title'
+    )
+
+    const result = await generateCodexSessionTitle('Test message', '/tmp/worktree')
+    expect(result).toBeNull()
+    expect(mockLogWarn).toHaveBeenCalledWith(
+      'generateCodexSessionTitle: failed',
+      expect.objectContaining({
+        cwd: '/tmp/worktree',
+        error: 'codex exited with code 1: boom',
+        kind: 'non_zero_exit',
+        code: 1,
+        stdoutPreview: 'stdout preview',
+        stderrPreview: 'stderr preview'
+      })
+    )
+    expect(mockLogCodexLifecycleEvent).toHaveBeenCalledWith(
+      'title/spawn_failure',
+      expect.objectContaining({
+        cwd: '/tmp/worktree',
+        kind: 'non_zero_exit',
+        code: 1
+      })
+    )
   })
 })

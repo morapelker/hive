@@ -32,6 +32,55 @@ export const MAX_MESSAGE_LENGTH = 2000
 const MAX_OUTPUT_SIZE = 1024 * 1024 // 1 MB
 
 const MAX_SANITIZED_LENGTH = 50
+const MAX_LOG_PREVIEW = 500
+
+export type SpawnCliFailureKind =
+  | 'timeout'
+  | 'stdout_too_large'
+  | 'stderr_too_large'
+  | 'spawn_error'
+  | 'non_zero_exit'
+
+export class SpawnCliError extends Error {
+  readonly kind: SpawnCliFailureKind
+  readonly command: string
+  readonly code?: number | null
+  readonly stdoutPreview?: string
+  readonly stderrPreview?: string
+  readonly timeoutMs?: number
+  readonly maxOutputBytes?: number
+  readonly cwd?: string
+
+  constructor(
+    message: string,
+    detail: {
+      kind: SpawnCliFailureKind
+      command: string
+      code?: number | null
+      stdoutPreview?: string
+      stderrPreview?: string
+      timeoutMs?: number
+      maxOutputBytes?: number
+      cwd?: string
+    }
+  ) {
+    super(message)
+    this.name = 'SpawnCliError'
+    this.kind = detail.kind
+    this.command = detail.command
+    this.code = detail.code
+    this.stdoutPreview = detail.stdoutPreview
+    this.stderrPreview = detail.stderrPreview
+    this.timeoutMs = detail.timeoutMs
+    this.maxOutputBytes = detail.maxOutputBytes
+    this.cwd = detail.cwd
+  }
+}
+
+function previewText(value: string, maxLength: number = MAX_LOG_PREVIEW): string {
+  if (value.length <= maxLength) return value
+  return value.slice(0, maxLength) + '...'
+}
 
 // ── sanitizeTitle ─────────────────────────────────────────────────────
 
@@ -129,13 +178,20 @@ export function spawnCLI(
   args: string[],
   input: string,
   timeoutMs: number = TITLE_TIMEOUT_MS,
-  cwd?: string
+  cwd?: string,
+  env?: NodeJS.ProcessEnv
 ): Promise<string> {
-  log.info('spawnCLI: starting', { command, argCount: args.length, inputLength: input.length, timeoutMs, cwd })
+  log.info('spawnCLI: starting', {
+    command,
+    argCount: args.length,
+    inputLength: input.length,
+    timeoutMs,
+    cwd
+  })
   return new Promise((resolve, reject) => {
     const proc = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
+      env: env ?? process.env,
       cwd
     })
 
@@ -147,7 +203,16 @@ export function spawnCLI(
       if (!killed) {
         killed = true
         proc.kill('SIGKILL')
-        reject(new Error(`${command} timed out after ${timeoutMs}ms`))
+        reject(
+          new SpawnCliError(`${command} timed out after ${timeoutMs}ms`, {
+            kind: 'timeout',
+            command,
+            stdoutPreview: previewText(stdout),
+            stderrPreview: previewText(stderr),
+            timeoutMs,
+            cwd
+          })
+        )
       }
     }, timeoutMs)
 
@@ -157,7 +222,16 @@ export function spawnCLI(
         killed = true
         proc.kill('SIGKILL')
         clearTimeout(timeout)
-        reject(new Error(`${command} stdout exceeded ${MAX_OUTPUT_SIZE} bytes`))
+        reject(
+          new SpawnCliError(`${command} stdout exceeded ${MAX_OUTPUT_SIZE} bytes`, {
+            kind: 'stdout_too_large',
+            command,
+            stdoutPreview: previewText(stdout),
+            stderrPreview: previewText(stderr),
+            maxOutputBytes: MAX_OUTPUT_SIZE,
+            cwd
+          })
+        )
       }
     })
 
@@ -167,14 +241,31 @@ export function spawnCLI(
         killed = true
         proc.kill('SIGKILL')
         clearTimeout(timeout)
-        reject(new Error(`${command} stderr exceeded ${MAX_OUTPUT_SIZE} bytes`))
+        reject(
+          new SpawnCliError(`${command} stderr exceeded ${MAX_OUTPUT_SIZE} bytes`, {
+            kind: 'stderr_too_large',
+            command,
+            stdoutPreview: previewText(stdout),
+            stderrPreview: previewText(stderr),
+            maxOutputBytes: MAX_OUTPUT_SIZE,
+            cwd
+          })
+        )
       }
     })
 
     proc.on('error', (err) => {
       clearTimeout(timeout)
       log.warn('spawnCLI: spawn error', { command, error: err.message })
-      reject(new Error(`Failed to spawn ${command}: ${err.message}`))
+      reject(
+        new SpawnCliError(`Failed to spawn ${command}: ${err.message}`, {
+          kind: 'spawn_error',
+          command,
+          stdoutPreview: previewText(stdout),
+          stderrPreview: previewText(stderr),
+          cwd
+        })
+      )
     })
 
     proc.on('close', (code) => {
@@ -184,8 +275,19 @@ export function spawnCLI(
         log.info('spawnCLI: success', { command, stdoutLength: stdout.length })
         resolve(stdout)
       } else {
-        log.warn('spawnCLI: non-zero exit', { command, code, stderr: stderr.slice(0, 500) })
-        reject(new Error(`${command} exited with code ${code}: ${stderr.slice(0, 500)}`))
+        const stdoutPreview = previewText(stdout)
+        const stderrPreview = previewText(stderr)
+        log.warn('spawnCLI: non-zero exit', { command, code, stdoutPreview, stderrPreview })
+        reject(
+          new SpawnCliError(`${command} exited with code ${code}: ${stderrPreview}`, {
+            kind: 'non_zero_exit',
+            command,
+            code,
+            stdoutPreview,
+            stderrPreview,
+            cwd
+          })
+        )
       }
     })
 

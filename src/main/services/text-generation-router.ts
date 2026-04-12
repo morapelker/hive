@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto'
 import { readFile, unlink, writeFile } from 'node:fs/promises'
 
 import { loadClaudeSDK } from './claude-sdk-loader'
+import { resolveCodexBinaryPath } from './codex-binary-resolver'
+import { getCodexCliEnv } from './codex-cli-env'
 import { detectAgentSdks } from './system-info'
 import type { AgentSdkDetection } from './system-info'
 import { createLogger } from './logger'
@@ -27,9 +29,14 @@ let cacheTimestamp = 0
 const SDK_CACHE_TTL_MS = 60_000
 
 let claudeBinaryPath: string | null = null
+let codexBinaryPath: string | null = null
 
 export function setClaudeBinaryPath(path: string | null): void {
   claudeBinaryPath = path
+}
+
+export function setCodexBinaryPath(path: string | null): void {
+  codexBinaryPath = path
 }
 
 function getCachedSdkDetection(): AgentSdkDetection {
@@ -265,6 +272,9 @@ async function generateWithCodex(
   outputSchema?: string,
   cwd?: string
 ): Promise<string | null> {
+  const resolvedBinary = resolveCodexBinaryPath()
+  const binary = codexBinaryPath || resolvedBinary || 'codex'
+  const spawnEnv = getCodexCliEnv()
   const outputFile = join(tmpdir(), `hive-codex-${randomUUID()}.txt`)
   const schemaFile = outputSchema
     ? join(tmpdir(), `hive-codex-schema-${randomUUID()}.json`)
@@ -291,10 +301,11 @@ async function generateWithCodex(
     args.push('--output-last-message', outputFile, '-')
 
     await spawnWithStdin(
-      'codex',
+      binary,
       args,
       fullPrompt,
-      cwd
+      cwd,
+      spawnEnv
     )
     const output = await readFile(outputFile, 'utf-8')
     return output.trim() || null
@@ -358,11 +369,17 @@ async function generateWithOpenCode(
  * Spawn a CLI process, pipe input to stdin, and collect stdout.
  * Rejects on non-zero exit, timeout, or spawn error.
  */
-function spawnWithStdin(command: string, args: string[], input: string, cwd?: string): Promise<string> {
+function spawnWithStdin(
+  command: string,
+  args: string[],
+  input: string,
+  cwd?: string,
+  env?: NodeJS.ProcessEnv
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
+      env: env ?? process.env,
       cwd
     })
 

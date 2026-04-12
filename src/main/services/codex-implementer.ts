@@ -14,6 +14,7 @@ import { CodexAppServerManager, type CodexManagerEvent } from './codex-app-serve
 import { mapCodexManagerEventToActivity } from './codex-activity-mapper'
 import { mapCodexEventToStreamEvents, contentStreamKindFromMethod } from './codex-event-mapper'
 import { asNumber, asObject, asString, toJsonSnapshot } from './codex-utils'
+import { logCodexLifecycleEvent } from './codex-debug-logger'
 import { generateCodexSessionTitle } from './codex-session-title'
 import type { DatabaseService } from '../db/database'
 import { autoRenameWorktreeBranch } from './git-service'
@@ -102,6 +103,11 @@ interface CodexPermissionRequest {
   patterns: string[]
   metadata: Record<string, unknown>
   always: string[]
+}
+
+function previewText(value: string, maxLength: number = 120): string {
+  if (value.length <= maxLength) return value
+  return value.slice(0, maxLength) + '...'
 }
 
 /**
@@ -204,6 +210,7 @@ export class CodexImplementer implements AgentSdkImplementer {
 
   private mainWindow: BrowserWindow | null = null
   private dbService: DatabaseService | null = null
+  private codexBinaryPath: string | null = null
   private selectedModel: string = CODEX_DEFAULT_MODEL
   private selectedVariant: string | undefined
   private manager: CodexAppServerManager = new CodexAppServerManager()
@@ -219,6 +226,10 @@ export class CodexImplementer implements AgentSdkImplementer {
 
   setDatabaseService(db: DatabaseService): void {
     this.dbService = db
+  }
+
+  setCodexBinaryPath(path: string | null): void {
+    this.codexBinaryPath = path
   }
 
   // ── Manager event listener (handles approval/question routing) ──
@@ -377,7 +388,16 @@ export class CodexImplementer implements AgentSdkImplementer {
     const payload = asObject(event.payload)
     const typed = event.payload as ThreadNameUpdatedNotification | undefined
     const title = typed?.threadName ?? asString(payload?.threadName)
+    log.info('handleProviderTitleUpdate: received provider title update', {
+      threadId: event.threadId,
+      hiveSessionId: this.findSessionByThreadId(event.threadId)?.hiveSessionId ?? null,
+      title: title ?? null
+    })
     if (!title) {
+      log.warn('handleProviderTitleUpdate: missing threadName in provider update', {
+        threadId: event.threadId,
+        payload: toJsonSnapshot(event.payload)
+      })
       return
     }
 
@@ -389,8 +409,19 @@ export class CodexImplementer implements AgentSdkImplementer {
         break
       }
     }
-    if (!targetSession) return
+    if (!targetSession) {
+      log.warn('handleProviderTitleUpdate: no session found for provider title update', {
+        threadId: event.threadId,
+        title
+      })
+      return
+    }
 
+    log.info('handleProviderTitleUpdate: applying provider title update', {
+      threadId: event.threadId,
+      hiveSessionId: targetSession.hiveSessionId,
+      title
+    })
     await this.applyGeneratedTitle(targetSession, title)
   }
 
@@ -405,7 +436,8 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     const providerSession = await this.manager.startSession({
       cwd: worktreePath,
-      model: resolvedModel
+      model: resolvedModel,
+      ...(this.codexBinaryPath ? { codexBinaryPath: this.codexBinaryPath } : {})
     })
 
     const threadId = providerSession.threadId
@@ -477,7 +509,8 @@ export class CodexImplementer implements AgentSdkImplementer {
       const providerSession = await this.manager.startSession({
         cwd: worktreePath,
         model: resolvedModel,
-        resumeThreadId: agentSessionId
+        resumeThreadId: agentSessionId,
+        ...(this.codexBinaryPath ? { codexBinaryPath: this.codexBinaryPath } : {})
       })
 
       const threadId = providerSession.threadId
@@ -565,6 +598,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     this.pendingApprovalSessions.clear()
     this.managerListenerAttached = false
     this.mainWindow = null
+    this.codexBinaryPath = null
     this.selectedModel = CODEX_DEFAULT_MODEL
     this.selectedVariant = undefined
   }
@@ -607,9 +641,26 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     if (!session.titleGenerationStarted) {
       const currentTitle = this.dbService?.getSession(session.hiveSessionId)?.name ?? null
-      if (isDefaultSessionTitle(currentTitle)) {
+      const shouldGenerateTitle = isDefaultSessionTitle(currentTitle)
+      log.info('Prompt: evaluating title generation', {
+        hiveSessionId: session.hiveSessionId,
+        threadId: session.threadId,
+        currentTitle,
+        shouldGenerateTitle,
+        messagePreview: previewText(text)
+      })
+      if (shouldGenerateTitle) {
         session.titleGenerationStarted = true
-        this.handleTitleGeneration(session, text).catch(() => {})
+        log.info('Prompt: starting title generation', {
+          hiveSessionId: session.hiveSessionId,
+          threadId: session.threadId
+        })
+        this.handleTitleGeneration(session, text).catch((error) => {
+          log.warn('Prompt: title generation promise rejected unexpectedly', {
+            hiveSessionId: session.hiveSessionId,
+            error: error instanceof Error ? error.message : String(error)
+          })
+        })
       } else {
         session.titleGenerated = true
         session.titleGenerationStarted = true
@@ -2626,7 +2677,8 @@ export class CodexImplementer implements AgentSdkImplementer {
       const providerSession = await this.manager.startSession({
         cwd: worktreePath,
         model: resolveCodexModelSlug(persistedSession.model_id ?? this.selectedModel),
-        resumeThreadId: agentSessionId
+        resumeThreadId: agentSessionId,
+        ...(this.codexBinaryPath ? { codexBinaryPath: this.codexBinaryPath } : {})
       })
 
       const threadId = providerSession.threadId
@@ -2675,12 +2727,38 @@ export class CodexImplementer implements AgentSdkImplementer {
     userMessage: string
   ): Promise<void> {
     try {
-      const title = await generateCodexSessionTitle(userMessage, session.worktreePath)
-      if (!title) return
+      log.info('handleTitleGeneration: starting', {
+        hiveSessionId: session.hiveSessionId,
+        threadId: session.threadId,
+        worktreePath: session.worktreePath,
+        messageLength: userMessage.length,
+        messagePreview: previewText(userMessage)
+      })
+      const title = await generateCodexSessionTitle(
+        userMessage,
+        session.worktreePath,
+        this.codexBinaryPath
+      )
+      log.info('handleTitleGeneration: generateCodexSessionTitle returned', {
+        hiveSessionId: session.hiveSessionId,
+        title: title ?? null
+      })
+      if (!title) {
+        log.warn('handleTitleGeneration: generator returned null title', {
+          hiveSessionId: session.hiveSessionId,
+          threadId: session.threadId
+        })
+        return
+      }
+      log.info('handleTitleGeneration: applying generated title', {
+        hiveSessionId: session.hiveSessionId,
+        title
+      })
       await this.applyGeneratedTitle(session, title)
     } catch (err) {
       log.warn('handleTitleGeneration: failed', {
         hiveSessionId: session.hiveSessionId,
+        threadId: session.threadId,
         error: err instanceof Error ? err.message : String(err)
       })
     }
@@ -2688,7 +2766,13 @@ export class CodexImplementer implements AgentSdkImplementer {
 
   private async applyGeneratedTitle(session: CodexSessionState, title: string): Promise<void> {
     const trimmedTitle = title.trim()
-    if (!trimmedTitle) return
+    if (!trimmedTitle) {
+      log.warn('applyGeneratedTitle: received empty title after trim', {
+        hiveSessionId: session.hiveSessionId,
+        rawTitle: title
+      })
+      return
+    }
     session.titleGenerated = true
 
     let currentTitle: string | null = null
@@ -2701,11 +2785,22 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
 
     const titleChanged = currentTitle !== trimmedTitle
+    log.info('applyGeneratedTitle: evaluating title update', {
+      hiveSessionId: session.hiveSessionId,
+      currentTitle,
+      nextTitle: trimmedTitle,
+      titleChanged
+    })
 
     if (this.dbService && titleChanged) {
       this.dbService.updateSession(session.hiveSessionId, { name: trimmedTitle })
       log.info('applyGeneratedTitle: updated DB', {
         hiveSessionId: session.hiveSessionId,
+        title: trimmedTitle
+      })
+      logCodexLifecycleEvent('title/applied', {
+        hiveSessionId: session.hiveSessionId,
+        threadId: session.threadId,
         title: trimmedTitle
       })
     }

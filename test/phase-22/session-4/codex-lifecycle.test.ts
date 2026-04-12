@@ -84,6 +84,29 @@ describe('CodexImplementer lifecycle', () => {
       })
     })
 
+    it('passes resolved codexBinaryPath to manager.startSession when set', async () => {
+      impl.setCodexBinaryPath('/resolved/codex')
+      mockManager.startSession.mockResolvedValue({
+        provider: 'codex',
+        status: 'ready',
+        threadId: 'thread-abc',
+        cwd: '/test/project',
+        model: 'gpt-5.4',
+        activeTurnId: null,
+        resumeCursor: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      })
+
+      await impl.connect('/test/project', 'hive-session-1')
+
+      expect(mockManager.startSession).toHaveBeenCalledWith({
+        cwd: '/test/project',
+        model: CODEX_DEFAULT_MODEL,
+        codexBinaryPath: '/resolved/codex'
+      })
+    })
+
     it('uses selected model when set', async () => {
       impl.setSelectedModel({ providerID: 'codex', modelID: 'gpt-5.3-codex' })
 

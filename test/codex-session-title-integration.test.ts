@@ -12,13 +12,24 @@ vi.mock('../src/main/services/git-service', () => ({
   autoRenameWorktreeBranch: (...args: any[]) => mockAutoRenameWorktreeBranch(...args)
 }))
 
+const { mockLogInfo, mockLogWarn, mockLogDebug, mockLogCodexLifecycleEvent } = vi.hoisted(() => ({
+  mockLogInfo: vi.fn(),
+  mockLogWarn: vi.fn(),
+  mockLogDebug: vi.fn(),
+  mockLogCodexLifecycleEvent: vi.fn()
+}))
+
 vi.mock('../src/main/services/logger', () => ({
   createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
+    info: mockLogInfo,
+    warn: mockLogWarn,
     error: vi.fn(),
-    debug: vi.fn()
+    debug: mockLogDebug
   })
+}))
+
+vi.mock('../src/main/services/codex-debug-logger', () => ({
+  logCodexLifecycleEvent: mockLogCodexLifecycleEvent
 }))
 
 import { CodexImplementer } from '../src/main/services/codex-implementer'
@@ -114,6 +125,18 @@ describe('Codex title integration', () => {
       sessionTitle: 'Fix auth refresh',
       db: mockDb
     })
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      'handleTitleGeneration: generateCodexSessionTitle returned',
+      { hiveSessionId: 'hive-session-1', title: 'Fix auth refresh' }
+    )
+    expect(mockLogCodexLifecycleEvent).toHaveBeenCalledWith(
+      'title/applied',
+      expect.objectContaining({
+        hiveSessionId: 'hive-session-1',
+        threadId: 'thread-1',
+        title: 'Fix auth refresh'
+      })
+    )
     expect(mockWindow.webContents.send).toHaveBeenCalledWith('worktree:branchRenamed', {
       worktreeId: 'wt-1',
       newBranch: 'fix-auth-refresh'
@@ -142,6 +165,10 @@ describe('Codex title integration', () => {
       'opencode:stream',
       expect.objectContaining({ type: 'session.updated' })
     )
+    expect(mockLogDebug).toHaveBeenCalledWith(
+      'applyGeneratedTitle: title unchanged, skipping session rename event',
+      { hiveSessionId: 'hive-session-1', title: 'Fix auth refresh' }
+    )
   })
 
   it('dedupes a provider title update when the same title was already applied', async () => {
@@ -160,6 +187,14 @@ describe('Codex title integration', () => {
     expect(mockWindow.webContents.send).not.toHaveBeenCalledWith(
       'opencode:stream',
       expect.objectContaining({ type: 'session.updated' })
+    )
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      'handleProviderTitleUpdate: received provider title update',
+      expect.objectContaining({
+        threadId: 'thread-1',
+        hiveSessionId: 'hive-session-1',
+        title: 'Fix auth refresh'
+      })
     )
   })
 
@@ -186,5 +221,13 @@ describe('Codex title integration', () => {
         info: { title: 'Dark mode settings' }
       }
     })
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      'handleProviderTitleUpdate: applying provider title update',
+      {
+        threadId: 'thread-1',
+        hiveSessionId: 'hive-session-1',
+        title: 'Dark mode settings'
+      }
+    )
   })
 })

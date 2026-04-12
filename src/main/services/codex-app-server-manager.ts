@@ -5,10 +5,9 @@ import readline from 'node:readline'
 
 import { createLogger } from './logger'
 import { logCodexMessage, logCodexLifecycleEvent, resetSession } from './codex-debug-logger'
+import { getCodexCliEnv } from './codex-cli-env'
 import { asObject, asString, toJsonSnapshot } from './codex-utils'
 import { CODEX_DEFAULT_MODEL } from './codex-models'
-import { getDatabase } from '../db'
-import { getUserEnvironmentVariables } from './env-vars'
 import type { CommandExecutionApprovalDecision } from '@shared/codex-schemas/v2/CommandExecutionApprovalDecision'
 import type { FileChangeApprovalDecision } from '@shared/codex-schemas/v2/FileChangeApprovalDecision'
 import type { ThreadStartParams } from '@shared/codex-schemas/v2/ThreadStartParams'
@@ -404,11 +403,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const codexBinaryPath = options.codexBinaryPath ?? 'codex'
       const child = spawn(codexBinaryPath, ['app-server'], {
         cwd: resolvedCwd,
-        env: {
-          ...process.env,
-          ...getUserEnvironmentVariables(getDatabase()),
-          ...(options.codexHomePath ? { CODEX_HOME: options.codexHomePath } : {})
-        },
+        env: getCodexCliEnv({ codexHomePath: options.codexHomePath }),
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: process.platform === 'win32'
       })

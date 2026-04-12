@@ -42,7 +42,11 @@ import { ClaudeCodeImplementer } from './services/claude-code-implementer'
 import { CodexImplementer } from './services/codex-implementer'
 import { AgentSdkManager } from './services/agent-sdk-manager'
 import { resolveClaudeBinaryPath } from './services/claude-binary-resolver'
-import { setClaudeBinaryPath as setRouterClaudeBinaryPath } from './services/text-generation-router'
+import { resolveCodexBinaryPath } from './services/codex-binary-resolver'
+import {
+  setClaudeBinaryPath as setRouterClaudeBinaryPath,
+  setCodexBinaryPath as setRouterCodexBinaryPath
+} from './services/text-generation-router'
 import type { AgentSdkImplementer } from './services/agent-sdk-types'
 import { telemetryService } from './services/telemetry-service'
 import { perfDiagnostics } from './services/perf-diagnostics'
@@ -414,11 +418,13 @@ app.whenReady().then(async () => {
 
   // Resolve system-wide Claude binary (must run after loadShellEnv)
   const claudeBinaryPath = resolveClaudeBinaryPath()
+  const codexBinaryPath = resolveCodexBinaryPath()
 
   log.info('App starting', {
     version: app.getVersion(),
     platform: process.platform,
-    claudeBinary: claudeBinaryPath ?? 'not found'
+    claudeBinary: claudeBinaryPath ?? 'not found',
+    codexBinary: codexBinaryPath ?? 'not found'
   })
 
   if (isLogMode) {
@@ -548,6 +554,8 @@ app.whenReady().then(async () => {
     } satisfies AgentSdkImplementer
     const codexImpl = new CodexImplementer()
     codexImpl.setDatabaseService(getDatabase())
+    codexImpl.setCodexBinaryPath(codexBinaryPath)
+    setRouterCodexBinaryPath(codexBinaryPath)
     const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
     sdkManager.setMainWindow(mainWindow)
 

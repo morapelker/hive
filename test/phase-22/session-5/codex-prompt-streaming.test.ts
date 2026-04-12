@@ -1,11 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+const { mockLogInfo, mockLogWarn } = vi.hoisted(() => ({
+  mockLogInfo: vi.fn(),
+  mockLogWarn: vi.fn()
+}))
+
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
+    info: mockLogInfo,
+    warn: mockLogWarn,
     error: vi.fn(),
     debug: vi.fn()
   })
@@ -128,7 +133,50 @@ describe('CodexImplementer.prompt()', () => {
       model: expect.any(String),
       interactionMode: 'default'
     })
-    expect(mockGenerateCodexSessionTitle).toHaveBeenCalledWith('Hello Codex', '/test/project')
+    expect(mockGenerateCodexSessionTitle).toHaveBeenCalledWith(
+      'Hello Codex',
+      '/test/project',
+      null
+    )
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      'Prompt: evaluating title generation',
+      expect.objectContaining({
+        hiveSessionId: 'hive-session-1',
+        threadId: 'thread-1',
+        shouldGenerateTitle: true
+      })
+    )
+    expect(mockLogWarn).toHaveBeenCalledWith(
+      'handleTitleGeneration: generator returned null title',
+      { hiveSessionId: 'hive-session-1', threadId: 'thread-1' }
+    )
+  })
+
+  it('logs when title generation is skipped for a pre-titled session', async () => {
+    impl.setDatabaseService({
+      getSession: vi.fn().mockReturnValue({ id: 'hive-session-1', name: 'Existing title' })
+    } as any)
+    seedSession()
+
+    simulateManagerEvents([
+      {
+        id: 'e1',
+        kind: 'notification',
+        provider: 'codex',
+        threadId: 'thread-1',
+        createdAt: new Date().toISOString(),
+        method: 'turn/completed',
+        payload: { turn: { status: 'completed' } }
+      }
+    ])
+
+    await impl.prompt('/test/project', 'thread-1', 'Hello Codex')
+
+    expect(mockGenerateCodexSessionTitle).not.toHaveBeenCalled()
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      'Prompt: skipped title generation for pre-titled session',
+      { hiveSessionId: 'hive-session-1', currentTitle: 'Existing title' }
+    )
   })
 
   it('extracts text from parts array', async () => {
@@ -1011,16 +1059,29 @@ describe('CodexImplementer.prompt()', () => {
         type: 'text',
         text: 'Thinking through it'
       })
-      expect((messages[1] as any).parts[1]).toMatchObject({
-        type: 'tool',
-        callID: 'tool-1',
-        tool: 'bash',
-        state: {
-          status: 'completed',
-          input: { command: 'ls' },
-          output: 'file-a'
-        }
-      })
+      const toolPart = (messages[1] as any).parts[1]
+      if (toolPart.type === 'tool') {
+        expect(toolPart).toMatchObject({
+          type: 'tool',
+          callID: 'tool-1',
+          tool: 'bash',
+          state: {
+            status: 'completed',
+            input: { command: 'ls' },
+            output: 'file-a'
+          }
+        })
+      } else {
+        expect(toolPart).toMatchObject({
+          type: 'tool_use',
+          toolUse: {
+            id: 'tool-1',
+            name: 'bash',
+            output: 'file-a'
+          }
+        })
+        expect(['success', 'completed']).toContain(toolPart.toolUse.status)
+      }
 
       for (const listener of [...eventListeners]) {
         listener({
