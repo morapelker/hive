@@ -12,16 +12,12 @@ import { getUserEnvironmentVariables } from './env-vars'
 import type { CommandExecutionApprovalDecision } from '@shared/codex-schemas/v2/CommandExecutionApprovalDecision'
 import type { FileChangeApprovalDecision } from '@shared/codex-schemas/v2/FileChangeApprovalDecision'
 import type { ThreadStartParams } from '@shared/codex-schemas/v2/ThreadStartParams'
-import type { ThreadResumeParams } from '@shared/codex-schemas/v2/ThreadResumeParams'
 import type { ThreadStartResponse } from '@shared/codex-schemas/v2/ThreadStartResponse'
 import type { ThreadResumeResponse } from '@shared/codex-schemas/v2/ThreadResumeResponse'
-import type { TurnStartParams } from '@shared/codex-schemas/v2/TurnStartParams'
 import type { TurnStartResponse } from '@shared/codex-schemas/v2/TurnStartResponse'
 import type { TurnInterruptParams } from '@shared/codex-schemas/v2/TurnInterruptParams'
 import type { ThreadReadParams } from '@shared/codex-schemas/v2/ThreadReadParams'
 import type { ThreadRollbackParams } from '@shared/codex-schemas/v2/ThreadRollbackParams'
-import type { InitializeParams } from '@shared/codex-schemas/InitializeParams'
-import type { InitializeResponse } from '@shared/codex-schemas/InitializeResponse'
 import type { SandboxMode } from '@shared/codex-schemas/v2/SandboxMode'
 import type { AskForApproval } from '@shared/codex-schemas/v2/AskForApproval'
 
@@ -652,18 +648,15 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     const response = await this.sendRequest<TurnStartResponse>(context, 'turn/start', params)
     const turnId = response.turn.id
-    const resumeCursor = undefined // TurnStartResponse does not include resumeCursor
 
     // Update active turn
     this.updateSession(context, {
-      activeTurnId: turnId || null,
-      ...(resumeCursor ? { resumeCursor } : {})
+      activeTurnId: turnId || null
     })
 
     return {
       turnId,
-      threadId: context.session.threadId,
-      ...(resumeCursor ? { resumeCursor } : {})
+      threadId: context.session.threadId
     }
   }
 
@@ -700,7 +693,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     this.emitLifecycleEvent(
       context,
       'approval/responded',
-      `Approval ${requestId} responded with ${decision}`
+      `Approval ${requestId} responded with ${codexDecision}`
     )
   }
 
