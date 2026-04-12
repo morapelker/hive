@@ -161,6 +161,15 @@ Object.defineProperty(window, 'gitOps', {
   value: mockGitOps
 })
 
+Object.defineProperty(window, 'usageOps', {
+  writable: true,
+  configurable: true,
+  value: {
+    fetch: vi.fn().mockResolvedValue({ success: true, data: null }),
+    fetchOpenai: vi.fn().mockResolvedValue({ success: true, data: null })
+  }
+})
+
 Object.defineProperty(window, 'opencodeOps', {
   writable: true,
   configurable: true,
@@ -173,6 +182,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { getSuperPlanModePrefix } from '@/lib/constants'
 
 // ── Import component under test ─────────────────────────────────────
 import { WorktreePickerModal, _resetLastSourceBranch } from '@/components/kanban/WorktreePickerModal'
@@ -782,6 +792,69 @@ describe('Session 9: Worktree Picker Modal', () => {
       undefined,
       { codexFastMode: true }
     )
+  })
+
+  test('super-plan prompts use request_user_input wording for Codex sessions', async () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.click(screen.getByTestId('wt-picker-mode-toggle'))
+    fireEvent.click(screen.getByTestId('wt-picker-super-toggle'))
+    fireEvent.click(screen.getByTestId('worktree-item-wt-1'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalled()
+    })
+
+    const promptParts = mockOpencodeOps.prompt.mock.calls.at(-1)?.[2] as Array<{
+      type: string
+      text: string
+    }>
+    expect(promptParts[0]?.text).toContain(getSuperPlanModePrefix('codex'))
+    expect(promptParts[0]?.text).toContain('request_user_input')
+    expect(promptParts[0]?.text).not.toContain('AskUserQuestion')
+  })
+
+  test('super-plan prompts keep AskUserQuestion wording for non-Codex sessions', async () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('wt-picker-mode-toggle'))
+    fireEvent.click(screen.getByTestId('wt-picker-super-toggle'))
+    fireEvent.click(screen.getByTestId('worktree-item-wt-1'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalled()
+    })
+
+    const promptParts = mockOpencodeOps.prompt.mock.calls.at(-1)?.[2] as Array<{
+      type: string
+      text: string
+    }>
+    expect(promptParts[0]?.text).toContain(getSuperPlanModePrefix('opencode'))
+    expect(promptParts[0]?.text).toContain('AskUserQuestion')
+    expect(promptParts[0]?.text).not.toContain('request_user_input')
   })
 
   // ── Source branch picker tests ──────────────────────────────────

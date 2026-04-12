@@ -53,7 +53,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { PLAN_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX, isPlanLike } from '@/lib/constants'
+import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { buildSdkPlanImplementationPrompt } from '@/lib/proposedPlan'
 import { toast } from '@/lib/toast'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
@@ -229,7 +229,7 @@ async function sendFollowupToSession(opts: {
   // Claude Code & Codex handle plan mode via the SDK — don't prepend the text prefix
   const skipPrefix = session.agent_sdk === 'claude-code' || session.agent_sdk === 'codex'
   const modePrefix =
-    opts.followUpMode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+    opts.followUpMode === 'super-plan' ? getSuperPlanModePrefix(session.agent_sdk)
     : opts.followUpMode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
     : ''
   const fullPrompt = modePrefix + opts.prompt

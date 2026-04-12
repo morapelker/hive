@@ -25,7 +25,7 @@ import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { CodexFastToggle } from '@/components/sessions/CodexFastToggle'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { PLAN_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX, isPlanLike } from '@/lib/constants'
+import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import type { KanbanTicket } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
@@ -425,7 +425,7 @@ export function WorktreePickerModal({
         // Send prompt
         if (promptText.trim()) {
           const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
-          const modePrefix = mode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+          const modePrefix = mode === 'super-plan' ? getSuperPlanModePrefix(sessionAgentSdk)
             : mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
             : ''
           const fullPrompt = modePrefix + promptText.trim()
@@ -640,7 +640,7 @@ export function WorktreePickerModal({
       if (promptText.trim()) {
         const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
         const modePrefix =
-          mode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+          mode === 'super-plan' ? getSuperPlanModePrefix(sessionAgentSdk)
           : mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
           : ''
         const fullPrompt = modePrefix + promptText.trim()

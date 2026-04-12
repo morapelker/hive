@@ -8,7 +8,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { PLAN_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX, isPlanLike } from '@/lib/constants'
+import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 
@@ -111,7 +111,7 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
     if (config.prompt.trim()) {
       const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
       const modePrefix =
-        config.mode === 'super-plan' ? SUPER_PLAN_MODE_PREFIX
+        config.mode === 'super-plan' ? getSuperPlanModePrefix(sessionAgentSdk)
         : config.mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
         : ''
       const fullPrompt = modePrefix + config.prompt.trim()

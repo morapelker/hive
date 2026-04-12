@@ -3,7 +3,11 @@ import { UserBubble } from './UserBubble'
 import { AssistantCanvas } from './AssistantCanvas'
 import { CopyMessageButton } from './CopyMessageButton'
 import { ForkMessageButton } from './ForkMessageButton'
-import { PLAN_MODE_PREFIX, ASK_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX } from '@/lib/constants'
+import {
+  PLAN_MODE_PREFIX,
+  ASK_MODE_PREFIX,
+  stripSuperPlanModePrefix
+} from '@/lib/constants'
 import type { OpenCodeMessage } from './SessionView'
 
 interface MessageRendererProps {
@@ -68,9 +72,10 @@ export const MessageRenderer = memo(function MessageRenderer({
     const { prefix, remaining } = skipAttachments(message.content)
 
     // Check for mode prefixes in order (longest first to avoid false positives)
-    if (remaining.startsWith(SUPER_PLAN_MODE_PREFIX)) {
+    const strippedSuperPlan = stripSuperPlanModePrefix(remaining)
+    if (strippedSuperPlan !== null) {
       isSuperPlanMode = true
-      displayContent = prefix + remaining.slice(SUPER_PLAN_MODE_PREFIX.length)
+      displayContent = prefix + strippedSuperPlan
     } else if (remaining.startsWith(PLAN_MODE_PREFIX)) {
       isPlanMode = true
       displayContent = prefix + remaining.slice(PLAN_MODE_PREFIX.length)

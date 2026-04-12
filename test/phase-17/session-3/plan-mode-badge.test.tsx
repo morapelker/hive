@@ -1,6 +1,13 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { PLAN_MODE_PREFIX, stripPlanModePrefix } from '@/lib/constants'
+import {
+  PLAN_MODE_PREFIX,
+  SUPER_PLAN_MODE_PREFIX,
+  CODEX_SUPER_PLAN_MODE_PREFIX,
+  getSuperPlanModePrefix,
+  stripModePrefix,
+  stripPlanModePrefix
+} from '@/lib/constants'
 import { UserBubble } from '@/components/sessions/UserBubble'
 import { MessageRenderer } from '@/components/sessions/MessageRenderer'
 
@@ -35,6 +42,23 @@ describe('Session 3: Plan Mode Badge', () => {
 
     test('ends with double newline', () => {
       expect(PLAN_MODE_PREFIX.endsWith('\n\n')).toBe(true)
+    })
+  })
+
+  describe('super-plan prompt helpers', () => {
+    test('returns Codex-specific super-plan wording for codex sessions', () => {
+      expect(getSuperPlanModePrefix('codex')).toBe(CODEX_SUPER_PLAN_MODE_PREFIX)
+      expect(getSuperPlanModePrefix('codex')).toContain('request_user_input')
+    })
+
+    test('keeps AskUserQuestion wording for non-codex sessions', () => {
+      expect(getSuperPlanModePrefix('opencode')).toBe(SUPER_PLAN_MODE_PREFIX)
+      expect(getSuperPlanModePrefix('claude-code')).toContain('AskUserQuestion')
+    })
+
+    test('stripModePrefix removes both legacy and codex super-plan prefixes', () => {
+      expect(stripModePrefix(SUPER_PLAN_MODE_PREFIX + 'Plan text')).toBe('Plan text')
+      expect(stripModePrefix(CODEX_SUPER_PLAN_MODE_PREFIX + 'Plan text')).toBe('Plan text')
     })
   })
 
@@ -151,6 +175,23 @@ describe('Session 3: Plan Mode Badge', () => {
       )
       expect(screen.queryByTestId('plan-mode-badge')).not.toBeInTheDocument()
       expect(screen.getByText('Normal message')).toBeInTheDocument()
+    })
+
+    test('user message with Codex super-plan prefix shows SUPER badge and stripped content', () => {
+      render(
+        <MessageRenderer
+          message={{
+            id: 'msg-super-codex',
+            role: 'user',
+            content: CODEX_SUPER_PLAN_MODE_PREFIX + 'Clarify the API boundary',
+            timestamp: '2025-01-01T00:00:00.000Z',
+            parts: []
+          }}
+        />
+      )
+      expect(screen.getByTestId('super-plan-mode-badge')).toBeInTheDocument()
+      expect(screen.getByText('Clarify the API boundary')).toBeInTheDocument()
+      expect(screen.queryByText(/request_user_input/)).not.toBeInTheDocument()
     })
 
     test('only the prefix is stripped, user content preserved', () => {

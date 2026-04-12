@@ -90,7 +90,7 @@ import type { ToolStatus, ToolUseInfo } from './ToolCard'
 import {
   PLAN_MODE_PREFIX,
   ASK_MODE_PREFIX,
-  SUPER_PLAN_MODE_PREFIX,
+  getSuperPlanModePrefix,
   stripPlanModePrefix,
   isPlanLike
 } from '@/lib/constants'
@@ -3104,7 +3104,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Apply mode prefix for OpenCode sessions (Claude Code uses native plan mode)
             const modePrefix =
               currentMode === 'super-plan'
-                ? SUPER_PLAN_MODE_PREFIX
+                ? getSuperPlanModePrefix(sessionAgentSdk)
                 : currentMode === 'plan' && !skipPlanModePrefix
                   ? PLAN_MODE_PREFIX
                   : ''
@@ -4184,7 +4184,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const optimisticMode = currentModeForStatus
         const optimisticModePrefix =
           optimisticMode === 'super-plan'
-            ? SUPER_PLAN_MODE_PREFIX
+            ? getSuperPlanModePrefix(sessionAgentSdk)
             : optimisticMode === 'plan' && !skipPlanModePrefix
               ? PLAN_MODE_PREFIX
               : ''
@@ -4310,7 +4310,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               // Unknown command — send as regular prompt (SDK may handle it)
               const modePrefix =
                 currentModeForStatus === 'super-plan'
-                  ? SUPER_PLAN_MODE_PREFIX
+                  ? getSuperPlanModePrefix(sessionAgentSdk)
                   : currentModeForStatus === 'plan' && !skipPlanModePrefix
                     ? PLAN_MODE_PREFIX
                     : ''
@@ -4348,7 +4348,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             // Regular prompt — existing code (with mode prefix, attachments, etc.)
             const modePrefix =
               currentModeForStatus === 'super-plan'
-                ? SUPER_PLAN_MODE_PREFIX
+                ? getSuperPlanModePrefix(sessionAgentSdk)
                 : currentModeForStatus === 'plan' && !skipPlanModePrefix
                   ? PLAN_MODE_PREFIX
                   : ''
