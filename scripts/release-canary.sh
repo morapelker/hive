@@ -408,11 +408,6 @@ info "Building Electron app..."
 pnpm build
 ok "Electron build complete"
 
-info "Building web UI for headless mode..."
-pnpm build:web
-cp -r dist/web out/web
-ok "Web UI built and staged for packaging"
-
 # ── Phase 4: Package + Sign + Notarize + Publish ─────────────────
 tg "📦 Hive canary v${NEW_VERSION} — build complete, packaging & notarizing"
 info "Packaging, signing, notarizing, and publishing..."
