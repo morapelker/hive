@@ -167,7 +167,7 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
     }
 
     const sourceRect = sourceEl.getBoundingClientRect()
-    const sx = sourceRect.left - boardRect.left
+    const sourceCx = sourceRect.left + sourceRect.width / 2 - boardRect.left
     const sy = sourceRect.top + sourceRect.height / 2 - boardRect.top
 
     const paths: Array<{ key: string; d: string }> = []
@@ -177,8 +177,16 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
       if (!targetEl) continue
 
       const targetRect = targetEl.getBoundingClientRect()
-      const tx = targetRect.left - boardRect.left
+      const targetCx = targetRect.left + targetRect.width / 2 - boardRect.left
       const ty = targetRect.top + targetRect.height / 2 - boardRect.top
+
+      // Use the closest side: if target is to the right, exit from source's right → target's left
+      const sx = targetCx > sourceCx
+        ? sourceRect.right - boardRect.left
+        : sourceRect.left - boardRect.left
+      const tx = targetCx > sourceCx
+        ? targetRect.left - boardRect.left
+        : targetRect.right - boardRect.left
 
       // Cubic bezier with horizontal-aware control points
       const cx = (sx + tx) / 2
