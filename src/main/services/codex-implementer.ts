@@ -743,10 +743,12 @@ export class CodexImplementer implements AgentSdkImplementer {
         }
       }
 
+      const reasoningEffort = modelOverride?.variant ?? this.selectedVariant
       await this.manager.sendTurn(session.threadId, {
         text,
         model,
         ...(options?.codexFastMode ? { serviceTier: 'fast' } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
         interactionMode
       })
 
