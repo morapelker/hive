@@ -17,25 +17,23 @@ You are performing a rigorous, multi-phase code review. Your goal is to find rea
 
 Launch these agents in parallel:
 
-1. **Haiku agent - CLAUDE.md discovery**: Return a list of file paths (not contents) for all relevant CLAUDE.md and AGENTS.md files, including the root CLAUDE.md and any in directories containing modified files. Use mcp__conductor__GetWorkspaceDiff with stat option to find modified files.
+1. **Haiku agent - CLAUDE.md discovery**: Return a list of file paths (not contents) for all relevant CLAUDE.md and AGENTS.md files, including the root CLAUDE.md and any in directories containing modified files. Use the git diff to find modified files.
 
-2. **Sonnet agent - Change summary**: View all changes using mcp__conductor__GetWorkspaceDiff and return a structured summary: files changed, lines added/removed, and a prose description of what the changeset does.
+2. **Sonnet agent - Change summary**: View all changes using the git diff and return a structured summary: files changed, lines added/removed, and a prose description of what the changeset does.
 
-3. **PR context**: If this workspace has an associated PR, read the title and description (not the changes). This provides author intent.
-
-### Phase 2: Plan Alignment Check
+### Phase 2: Changeset Coherence Check
 
 Using the change summary from Phase 1, verify:
 
-- Do the changes match the stated PR title/description?
-- Are there any files modified that seem unrelated to the stated goal?
-- Are there any changes that contradict the PR description?
+- Do all the changes appear to serve a single coherent goal?
+- Are there any files modified that seem unrelated to the rest of the changeset?
+- Are there any changes that contradict each other?
 
-Flag any misalignment as an issue.
+Flag any incoherence as an issue.
 
 ### Phase 3: Deep Review (launch 5 agents in parallel)
 
-Each agent receives the PR title, description, and change summary. All agents use mcp__conductor__GetWorkspaceDiff to examine changes.
+Each agent receives the change summary. All agents use the git diff to examine changes.
 
 **Agent 1: Opus - Logic and Correctness**
 - Trace code paths introduced or modified by the diff
@@ -80,7 +78,7 @@ For every issue found in Phase 3, launch a parallel validation subagent:
 - **Opus subagents** for bugs, logic issues, and architectural concerns
 - **Sonnet subagents** for CLAUDE.md / AGENTS.md violations
 
-Each validation agent receives the issue description, PR context, and must independently verify:
+Each validation agent receives the issue description and must independently verify:
 1. The issue actually exists in the current code (not a false positive)
 2. The issue is within the scope of the diff (not pre-existing)
 3. For CLAUDE.md issues: the rule is in scope for the file and is genuinely violated
@@ -142,10 +140,9 @@ If no issues are found at a severity level, state "No [severity] issues found."
 
 ### Notes
 
-- All subagents must be explicitly instructed not to post comments themselves. Only you, the main agent, should post comments.
+- All subagents must be explicitly instructed not to post comments themselves. Only you, the main agent, should report issues.
 - Do not use the AskUserQuestion tool. Complete the entire review without user intervention.
-- Use gh CLI to interact with GitHub. Do not use web fetch.
-- Cite and link each issue in inline comments (e.g., link to the CLAUDE.md rule being violated).
+- Cite each issue with file paths and line references (e.g., link to the CLAUDE.md rule being violated).
 - If zero issues survive validation, state that the review found no actionable issues.`,
 
   adversarial: `## Adversarial Code Review - Break This Code
