@@ -472,6 +472,9 @@ export function useOpenCodeGlobalListener(): void {
             const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
             if (currentStatus?.status === 'command_approval') return
 
+            // Don't overwrite permission — session is blocked waiting for permission approval
+            if (currentStatus?.status === 'permission') return
+
             if (sessionId !== activeId) {
               const currentMode = useSessionStore.getState().getSessionMode(sessionId)
               useWorktreeStatusStore
@@ -542,6 +545,9 @@ export function useOpenCodeGlobalListener(): void {
           const statusForIdle = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
           if (statusForIdle?.status === 'command_approval') return
 
+          // Don't overwrite permission — session is blocked waiting for permission approval
+          if (statusForIdle?.status === 'permission') return
+
           // Active session is handled by SessionView.
           if (sessionId === activeId) return
 
@@ -550,7 +556,7 @@ export function useOpenCodeGlobalListener(): void {
             isBlocked: () => {
               if (useSessionStore.getState().getPendingPlan(sessionId)) return true
               const current = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-              return current?.status === 'command_approval'
+              return current?.status === 'command_approval' || current?.status === 'permission'
             },
             dequeueFollowUp: () => useSessionStore.getState().dequeueFollowUpMessage(sessionId),
             requeueFollowUp: (message) =>

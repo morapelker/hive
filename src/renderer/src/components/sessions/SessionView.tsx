@@ -2498,7 +2498,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 sessionId,
                 isBlocked: () => {
                   const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-                  return currentStatus?.status === 'command_approval'
+                  return currentStatus?.status === 'command_approval' || currentStatus?.status === 'permission'
                 },
                 dequeueFollowUp: () => useSessionStore.getState().consumeFollowUpMessage(sessionId),
                 requeueFollowUp: (message) =>
