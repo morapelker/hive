@@ -950,8 +950,8 @@ export const useKanbanStore = create<KanbanState>()(
         if (result.success) {
           set((state) => {
             const newMap = new Map(state.dependencyMap)
-            const existing = new Map(newMap.get(dependentId)?.entries() ?? [])
-            const newSet = new Set(existing.values())
+            const existing = newMap.get(dependentId) ?? new Set()
+            const newSet = new Set(existing)
             newSet.add(blockerId)
             newMap.set(dependentId, newSet)
             return { dependencyMap: newMap }
