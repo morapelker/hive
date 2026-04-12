@@ -75,7 +75,7 @@ export function mapCodexManagerEventToActivity(
         | ItemStartedNotification
         | ItemCompletedNotification
         | undefined
-      const typedItem = notification?.item as ThreadItem | undefined
+      const typedItem = notification?.item
       const legacyItem = asObject(payload?.item)
 
       // Detect item type: typed ThreadItem uses exact case (e.g. 'commandExecution'),
@@ -106,10 +106,11 @@ export function mapCodexManagerEventToActivity(
         return buildActivity(sessionId, agentSessionId, event, 'tool.updated', 'tool', toolName)
       }
 
-      const status =
-        asString((typedItem as Record<string, unknown> | undefined)?.status) ??
-        asString(legacyItem?.status) ??
-        asString(payload?.status)
+      const typedStatus =
+        typedItem?.type === 'commandExecution' ? typedItem.status :
+        typedItem?.type === 'fileChange' ? typedItem.status :
+        undefined
+      const status = (typedStatus as string | undefined) ?? asString(legacyItem?.status) ?? asString(payload?.status)
       return buildActivity(
         sessionId,
         agentSessionId,
