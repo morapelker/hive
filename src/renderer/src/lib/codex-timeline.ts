@@ -3,6 +3,7 @@ import {
   type OpenCodeMessage,
   type StreamingPart
 } from '@/lib/opencode-transcript'
+import { correlateSubtasksIntoTaskTools } from '@/lib/codex-subtask-correlation'
 import {
   normalizeCodexToolName,
   normalizeCommandExecutionTool
@@ -49,12 +50,18 @@ function parseToolPart(activity: SessionActivity): StreamingPart | null {
         'unknown'
     )
   const rawInput =
-    item?.input && typeof item.input === 'object' && !Array.isArray(item.input)
-      ? (item.input as Record<string, unknown>)
-      : {}
-  const input =
-    normalizedCommandTool?.input ??
-    (Array.isArray(item?.changes) ? { ...rawInput, changes: item.changes } : rawInput)
+    item?.type === 'collabAgentToolCall'
+      ? {
+          ...(typeof item?.prompt === 'string' ? { prompt: item.prompt } : {}),
+          ...(Array.isArray(item?.receiverThreadIds)
+            ? { receiverThreadIds: item.receiverThreadIds }
+            : {})
+        }
+      : item?.input && typeof item.input === 'object' && !Array.isArray(item.input)
+        ? (item.input as Record<string, unknown>)
+        : {}
+  const mergedInput = Array.isArray(item?.changes) ? { ...rawInput, changes: item.changes } : rawInput
+  const input = normalizedCommandTool?.input ?? mergedInput
   const output =
     item?.output ?? payload?.output ?? item?.aggregatedOutput ?? payload?.aggregatedOutput
 
@@ -626,7 +633,7 @@ export function mergeCodexActivityMessages(
     }
   }
 
-  return orderedMessages
+  return correlateSubtasksIntoTaskTools(orderedMessages)
 }
 
 export function deriveCodexTimelineMessages(

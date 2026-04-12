@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Bot, ChevronDown, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ToolViewProps } from './types'
+import { SubtaskCard } from '../SubtaskCard'
 
 const MAX_PREVIEW_LINES = 20
 const MAX_PROMPT_LENGTH = 300
@@ -16,11 +17,11 @@ function parseTaskOutput(output: string): string {
   return text.trim()
 }
 
-export function TaskToolView({ input, output, error }: ToolViewProps) {
+export function TaskToolView({ input, output, error, subtasks }: ToolViewProps) {
   const [showAllOutput, setShowAllOutput] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
 
-  const description = (input.description || '') as string
+  const description = ((input.description || input.prompt || '') as string).trim()
   const prompt = (input.prompt || '') as string
   const subagentType = (input.subagent_type || input.subagentType || '') as string
 
@@ -101,6 +102,14 @@ export function TaskToolView({ input, output, error }: ToolViewProps) {
               {showAllOutput ? 'Show less' : `Show all ${outputLines.length} lines`}
             </button>
           )}
+        </div>
+      )}
+
+      {subtasks && subtasks.length > 0 && (
+        <div className={cn((cleanOutput || error) && 'mt-2')}>
+          {subtasks.map((subtask) => (
+            <SubtaskCard key={subtask.sessionID || subtask.id} subtask={subtask} />
+          ))}
         </div>
       )}
     </div>

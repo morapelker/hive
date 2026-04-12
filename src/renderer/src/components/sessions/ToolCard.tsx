@@ -22,6 +22,7 @@ import {
   Figma
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type { SubtaskInfo } from '@/lib/opencode-transcript'
 import type { ToolViewProps } from './tools/types'
 import { ReadToolView } from './tools/ReadToolView'
 import { WriteToolView } from './tools/WriteToolView'
@@ -51,6 +52,7 @@ export interface ToolUseInfo {
   error?: string
   startTime: number
   endTime?: number
+  subtasks?: SubtaskInfo[]
 }
 
 /** Check if a tool name refers to a checklist-style tool */
@@ -227,7 +229,7 @@ function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string
 
   // Show description for task
   if (lowerName === 'task') {
-    const description = (input.description || '') as string
+    const description = ((input.description || input.prompt || '') as string).trim()
     if (description) {
       return description
     }
@@ -573,8 +575,11 @@ function CollapsedContent({
 
   // Task
   if (lowerName === 'task') {
-    const description = (input.description || '') as string
+    const description = ((input.description || input.prompt || '') as string).trim()
     const subagentType = (input.subagent_type || input.subagentType || '') as string
+    const subtasks = toolUse.subtasks ?? []
+    const completedSubtasks = subtasks.filter((subtask) => subtask.status === 'completed').length
+    const activeSubtasks = subtasks.filter((subtask) => subtask.status === 'running').length
     return (
       <>
         <span className="text-muted-foreground shrink-0">
@@ -587,6 +592,16 @@ function CollapsedContent({
           </span>
         )}
         <span className="text-muted-foreground truncate min-w-0">{description}</span>
+        {subtasks.length > 0 && (
+          <span className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 rounded px-1 py-0.5 font-medium shrink-0">
+            {completedSubtasks}/{subtasks.length} done
+          </span>
+        )}
+        {activeSubtasks > 0 && (
+          <span className="text-[10px] bg-blue-500/15 text-blue-500 dark:text-blue-400 rounded px-1 py-0.5 font-medium shrink-0">
+            {activeSubtasks} active
+          </span>
+        )}
       </>
     )
   }
@@ -812,6 +827,7 @@ const CompactFileToolCard = memo(function CompactFileToolCard({
             output={toolUse.output}
             error={toolUse.error}
             status={toolUse.status}
+            subtasks={toolUse.subtasks}
           />
         </div>
       )}
@@ -866,7 +882,11 @@ export const ToolCard = memo(function ToolCard({
 
   const hasPlanInput =
     isExitPlanMode && typeof effectiveInput?.plan === 'string' && effectiveInput.plan.length > 0
-  const hasDetail = hasOutput || hasPlanInput
+  const hasTaskDetail =
+    lowerName === 'task' &&
+    (((typeof effectiveInput?.prompt === 'string' && effectiveInput.prompt.length > 0) ||
+      (toolUse.subtasks?.length ?? 0) > 0) as boolean)
+  const hasDetail = hasOutput || hasPlanInput || hasTaskDetail
 
   const Renderer = useMemo(() => getToolRenderer(toolUse.name), [toolUse.name])
 
@@ -935,6 +955,7 @@ export const ToolCard = memo(function ToolCard({
               output={toolUse.output}
               error={toolUse.error}
               status={toolUse.status}
+              subtasks={toolUse.subtasks}
             />
           </div>
         </div>
@@ -994,6 +1015,7 @@ export const ToolCard = memo(function ToolCard({
                   output={toolUse.output}
                   error={toolUse.error}
                   status={toolUse.status}
+                  subtasks={toolUse.subtasks}
                 />
               </div>
             )}
@@ -1100,6 +1122,7 @@ export const ToolCard = memo(function ToolCard({
               output={toolUse.output}
               error={toolUse.error}
               status={toolUse.status}
+              subtasks={toolUse.subtasks}
             />
           </div>
         </div>

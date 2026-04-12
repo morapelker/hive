@@ -396,7 +396,7 @@ describe('codex timeline derivation', () => {
     ).toBe(true)
   })
 
-  it('projects persisted task activities into a single subtask row with the latest status', () => {
+  it('nests persisted task activities under the matching Task tool when receiverThreadIds are available', () => {
     const messages: SessionMessage[] = [
       {
         id: 'db-user-1',
@@ -425,6 +425,29 @@ describe('codex timeline derivation', () => {
     ]
 
     const activities: SessionActivity[] = [
+      {
+        id: 'tool-activity-1',
+        session_id: 'session-1',
+        agent_session_id: 'thread-1',
+        thread_id: 'thread-1',
+        turn_id: 'turn-1',
+        item_id: 'task-call-1',
+        request_id: null,
+        kind: 'tool.completed',
+        tone: 'tool',
+        summary: 'Task',
+        payload_json: JSON.stringify({
+          item: {
+            id: 'task-call-1',
+            type: 'collabAgentToolCall',
+            tool: 'wait',
+            prompt: 'Investigate the renderer',
+            receiverThreadIds: ['child-1']
+          }
+        }),
+        sequence: 9,
+        created_at: '2026-03-14T10:00:00.500Z'
+      },
       {
         id: 'task-activity-1',
         session_id: 'session-1',
@@ -468,14 +491,94 @@ describe('codex timeline derivation', () => {
     ]
 
     const timeline = deriveCodexTimelineMessages(messages, activities)
-    const taskRow = timeline.find((message) => message.id === 'turn-1:task:child-1')
+    const taskRow = timeline.find((message) => message.id === 'turn-1:tool:task-call-1')
+
+    expect(
+      taskRow?.parts?.find(
+        (part) =>
+          part.type === 'tool_use' &&
+          part.toolUse?.name === 'Task' &&
+          Array.isArray(part.toolUse.input?.receiverThreadIds)
+      )
+    ).toEqual({
+      type: 'tool_use',
+      toolUse: {
+        id: 'task-call-1',
+        name: 'Task',
+        input: {
+          prompt: 'Investigate the renderer',
+          receiverThreadIds: ['child-1']
+        },
+        status: 'success',
+        startTime: Date.parse('2026-03-14T10:00:00.500Z'),
+        endTime: Date.parse('2026-03-14T10:00:00.500Z'),
+        output: undefined,
+        error: undefined,
+        subtasks: [
+          {
+            id: 'child-1',
+            sessionID: 'child-1',
+            prompt: '',
+            description: 'Finished investigating the renderer',
+            agent: 'task',
+            parts: [],
+            status: 'completed'
+          }
+        ]
+      }
+    })
+    expect(timeline.find((message) => message.id === 'turn-1:task:child-1')).toBeUndefined()
+  })
+
+  it('keeps unmatched task activities as standalone subtask rows', () => {
+    const messages: SessionMessage[] = [
+      {
+        id: 'db-user-1',
+        session_id: 'session-1',
+        role: 'user',
+        content: 'Delegate the investigation',
+        opencode_message_id: 'turn-1:user',
+        opencode_message_json: null,
+        opencode_parts_json: JSON.stringify([{ type: 'text', text: 'Delegate the investigation' }]),
+        opencode_timeline_json: null,
+        created_at: '2026-03-14T10:00:00.000Z'
+      }
+    ]
+
+    const activities: SessionActivity[] = [
+      {
+        id: 'task-activity-1',
+        session_id: 'session-1',
+        agent_session_id: 'thread-1',
+        thread_id: 'thread-1',
+        turn_id: 'turn-1',
+        item_id: null,
+        request_id: null,
+        kind: 'task.completed',
+        tone: 'info',
+        summary: 'Task completed',
+        payload_json: JSON.stringify({
+          task: {
+            id: 'child-2',
+            status: 'completed',
+            message: 'Finished investigating the renderer'
+          },
+          threadId: 'child-2'
+        }),
+        sequence: 11,
+        created_at: '2026-03-14T10:00:04.000Z'
+      }
+    ]
+
+    const timeline = deriveCodexTimelineMessages(messages, activities)
+    const taskRow = timeline.find((message) => message.id === 'turn-1:task:child-2')
 
     expect(taskRow?.parts).toEqual([
       {
         type: 'subtask',
         subtask: {
-          id: 'child-1',
-          sessionID: 'child-1',
+          id: 'child-2',
+          sessionID: 'child-2',
           prompt: '',
           description: 'Finished investigating the renderer',
           agent: 'task',

@@ -7,21 +7,24 @@ export interface ToolUseInfo {
   endTime?: number
   output?: string
   error?: string
+  subtasks?: SubtaskInfo[]
+}
+
+export interface SubtaskInfo {
+  id: string
+  sessionID: string
+  prompt: string
+  description: string
+  agent: string
+  parts: StreamingPart[]
+  status: 'running' | 'completed' | 'error'
 }
 
 export interface StreamingPart {
   type: 'text' | 'tool_use' | 'subtask' | 'step_start' | 'step_finish' | 'reasoning' | 'compaction'
   text?: string
   toolUse?: ToolUseInfo
-  subtask?: {
-    id: string
-    sessionID: string
-    prompt: string
-    description: string
-    agent: string
-    parts: StreamingPart[]
-    status: 'running' | 'completed' | 'error'
-  }
+  subtask?: SubtaskInfo
   stepStart?: { snapshot?: string }
   stepFinish?: {
     reason: string
@@ -109,6 +112,26 @@ function stringifyValue(value: unknown): string | undefined {
   }
 }
 
+function mapRawSubtask(part: Record<string, unknown>, index: number): SubtaskInfo {
+  const rawParts = Array.isArray(part.parts) ? part.parts : []
+  const parts = rawParts
+    .map((rawPart, partIndex) => mapOpencodePartToStreamingPart(rawPart, partIndex))
+    .filter((mappedPart): mappedPart is StreamingPart => mappedPart !== null)
+
+  return {
+    id: asString(part.id) ?? `subtask-${index}`,
+    sessionID: asString(part.sessionID) ?? asString(part.id) ?? `subtask-${index}`,
+    prompt: asString(part.prompt) ?? '',
+    description: asString(part.description) ?? '',
+    agent: asString(part.agent) ?? 'unknown',
+    parts,
+    status:
+      part.status === 'completed' || part.status === 'error'
+        ? (part.status as 'completed' | 'error')
+        : 'running'
+  }
+}
+
 function escapeXmlAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -161,6 +184,7 @@ export function mapOpencodePartToStreamingPart(part: unknown, index = 0): Stream
   if (type === 'tool_use') {
     const toolUse = asRecord(record.toolUse)
     if (!toolUse) return null
+    const rawSubtasks = Array.isArray(toolUse.subtasks) ? toolUse.subtasks : []
 
     return {
       type: 'tool_use',
@@ -172,7 +196,14 @@ export function mapOpencodePartToStreamingPart(part: unknown, index = 0): Stream
         startTime: toTimestampMs(toolUse.startTime) ?? Date.now(),
         endTime: toTimestampMs(toolUse.endTime),
         output: stringifyValue(toolUse.output),
-        error: asString(toolUse.error)
+        error: asString(toolUse.error),
+        subtasks:
+          rawSubtasks.length > 0
+            ? rawSubtasks
+                .map((rawSubtask, subtaskIndex) => asRecord(rawSubtask))
+                .filter((rawSubtask): rawSubtask is Record<string, unknown> => rawSubtask !== null)
+                .map((rawSubtask, subtaskIndex) => mapRawSubtask(rawSubtask, subtaskIndex))
+            : undefined
       }
     }
   }
@@ -180,6 +211,7 @@ export function mapOpencodePartToStreamingPart(part: unknown, index = 0): Stream
   if (type === 'tool') {
     const state = asRecord(record.state) ?? {}
     const stateTime = asRecord(state.time) ?? {}
+    const rawSubtasks = Array.isArray(record.subtasks) ? record.subtasks : []
 
     return {
       type: 'tool_use',
@@ -191,31 +223,22 @@ export function mapOpencodePartToStreamingPart(part: unknown, index = 0): Stream
         startTime: toTimestampMs(stateTime.start) ?? Date.now(),
         endTime: toTimestampMs(stateTime.end),
         output: stringifyValue(state.output),
-        error: stringifyValue(state.error)
+        error: stringifyValue(state.error),
+        subtasks:
+          rawSubtasks.length > 0
+            ? rawSubtasks
+                .map((rawSubtask) => asRecord(rawSubtask))
+                .filter((rawSubtask): rawSubtask is Record<string, unknown> => rawSubtask !== null)
+                .map((rawSubtask, subtaskIndex) => mapRawSubtask(rawSubtask, subtaskIndex))
+            : undefined
       }
     }
   }
 
   if (type === 'subtask') {
-    const rawParts = Array.isArray(record.parts) ? record.parts : []
-    const parts = rawParts
-      .map((rawPart, partIndex) => mapOpencodePartToStreamingPart(rawPart, partIndex))
-      .filter((mappedPart): mappedPart is StreamingPart => mappedPart !== null)
-
     return {
       type: 'subtask',
-      subtask: {
-        id: asString(record.id) ?? `subtask-${index}`,
-        sessionID: asString(record.sessionID) ?? '',
-        prompt: asString(record.prompt) ?? '',
-        description: asString(record.description) ?? '',
-        agent: asString(record.agent) ?? 'unknown',
-        parts,
-        status:
-          record.status === 'completed' || record.status === 'error'
-            ? (record.status as 'completed' | 'error')
-            : 'running'
-      }
+      subtask: mapRawSubtask(record, index)
     }
   }
 

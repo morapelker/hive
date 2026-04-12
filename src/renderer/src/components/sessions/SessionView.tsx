@@ -72,6 +72,7 @@ import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
+import { correlateSubtasksIntoTaskTools } from '@/lib/codex-subtask-correlation'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
@@ -3706,12 +3707,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           parts: nextParts
         }
 
-        if (existingIndex >= 0) {
-          nextMessages[existingIndex] = nextMessage
-          return nextMessages
-        }
+        const mergedMessages =
+          existingIndex >= 0
+            ? nextMessages.map((message, index) =>
+                index === existingIndex ? nextMessage : message
+              )
+            : [...nextMessages, nextMessage]
 
-        return [...nextMessages, nextMessage]
+        return correlateSubtasksIntoTaskTools(mergedMessages)
       })
     },
     [setMessages]
@@ -3837,12 +3840,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           parts: nextParts
         }
 
-        if (existingIndex >= 0) {
-          nextMessages[existingIndex] = nextMessage
-          return nextMessages
-        }
+        const mergedMessages =
+          existingIndex >= 0
+            ? nextMessages.map((message, index) =>
+                index === existingIndex ? nextMessage : message
+              )
+            : [...nextMessages, nextMessage]
 
-        return [...nextMessages, nextMessage]
+        return correlateSubtasksIntoTaskTools(mergedMessages)
       })
     },
     [setMessages]

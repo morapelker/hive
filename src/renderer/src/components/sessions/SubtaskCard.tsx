@@ -3,10 +3,10 @@ import { ChevronRight, Loader2, Check, AlertCircle, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ToolCard } from './ToolCard'
-import type { StreamingPart } from './SessionView'
+import type { SubtaskInfo } from '@/lib/opencode-transcript'
 
 interface SubtaskCardProps {
-  subtask: NonNullable<StreamingPart['subtask']>
+  subtask: SubtaskInfo
 }
 
 function StatusIcon({ status }: { status: 'running' | 'completed' | 'error' }) {
