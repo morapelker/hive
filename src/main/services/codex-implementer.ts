@@ -1496,7 +1496,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send(channel, data)
     } else {
-      log.debug('sendToRenderer: no window (headless)')
+      log.debug('sendToRenderer: no window')
     }
   }
 

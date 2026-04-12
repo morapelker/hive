@@ -13,7 +13,6 @@ import { readClaudeTranscript, translateEntry } from './claude-transcript-reader
 import { getUserEnvironmentVariables } from './env-vars'
 import { generateSessionTitle } from './claude-session-title'
 import { autoRenameWorktreeBranch } from './git-service'
-import { getEventBus } from '../../server/event-bus'
 import { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import { CommandFilterService, type CommandFilterSettings } from './command-filter-service'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
@@ -3048,18 +3047,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send(channel, data)
     } else {
-      // Headless mode — no renderer window. Events still reach mobile
-      // clients via the EventBus emit below, so this is expected.
-      log.debug('sendToRenderer: no window (headless)')
-    }
-    try {
-      const bus = getEventBus()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (channel === 'opencode:stream') bus.emit('opencode:stream', data as any)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      else if (channel === 'worktree:branchRenamed') bus.emit('worktree:branchRenamed', data as any)
-    } catch {
-      // EventBus not available
+      // No renderer window
+      log.debug('sendToRenderer: no window')
     }
   }
 

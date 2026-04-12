@@ -4,7 +4,6 @@ import { createLogger } from './logger'
 import { notificationService } from './notification-service'
 import { getDatabase } from '../db'
 import { autoRenameWorktreeBranch } from './git-service'
-import { getEventBus } from '../../server/event-bus'
 import { getUserEnvironmentVariables } from './env-vars'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
 
@@ -1335,13 +1334,6 @@ class OpenCodeService {
       this.mainWindow.webContents.send(channel, data)
     } else {
       log.warn('Cannot send to renderer: window not available')
-    }
-    try {
-      const bus = getEventBus()
-      if (channel === 'opencode:stream') bus.emit('opencode:stream', data)
-      else if (channel === 'worktree:branchRenamed') bus.emit('worktree:branchRenamed', data)
-    } catch {
-      // EventBus not available
     }
   }
 

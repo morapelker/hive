@@ -1,7 +1,6 @@
 import { spawn, ChildProcess } from 'child_process'
 import { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
-import { getEventBus } from '../../server/event-bus'
 
 const log = createLogger({ component: 'ScriptRunner' })
 
@@ -142,11 +141,6 @@ export class ScriptRunner {
   private sendEvent(eventKey: string, event: ScriptEvent): void {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return
     this.mainWindow.webContents.send(eventKey, event)
-    try {
-      getEventBus().emit('script:output', eventKey, event)
-    } catch {
-      /* EventBus not available */
-    }
   }
 
   private scheduleOutputFlush(eventKey: string): void {

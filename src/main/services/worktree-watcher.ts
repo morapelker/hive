@@ -3,7 +3,6 @@ import { join } from 'path'
 import { existsSync, statSync, readFileSync } from 'fs'
 import { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
-import { getEventBus } from '../../server/event-bus'
 
 const log = createLogger({ component: 'WorktreeWatcher' })
 
@@ -90,11 +89,6 @@ function resolveCommonGitDir(gitDir: string): string {
 function emitGitStatusChanged(worktreePath: string): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.webContents.send('git:statusChanged', { worktreePath })
-  try {
-    getEventBus().emit('git:statusChanged', { worktreePath })
-  } catch {
-    /* EventBus not available */
-  }
 }
 
 function scheduleGitRefresh(entry: WatcherEntry, worktreePath: string): void {
