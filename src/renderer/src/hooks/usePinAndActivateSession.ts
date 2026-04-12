@@ -13,7 +13,6 @@ export function usePinAndActivateSession(onClose?: () => void) {
         if (sessionId) {
           const sessionStore = useSessionStore.getState()
           await sessionStore.pinSessionToBoard(sessionId)
-          sessionStore.setActivePinnedSession(sessionId)
           onClose?.()
         }
       } catch {

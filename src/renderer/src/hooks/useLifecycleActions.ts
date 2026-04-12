@@ -6,7 +6,9 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast } from '@/lib/toast'
 import { REVIEW_PROMPTS, DEFAULT_REVIEW_PROMPT_TYPE } from '@/constants/reviewPrompts'
-import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import { messageSendTimes, userExplicitSendTimes, lastSendMode } from '@/lib/message-send-times'
+import { snapshotTokenBaseline } from '@/lib/token-baselines'
 
 interface AttachedPR {
   number: number
@@ -203,7 +205,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
     ].join('\n')
 
     const sessionStore = useSessionStore.getState()
-    const result = await sessionStore.createSession(worktreeId, projectId)
+    const result = await sessionStore.createSession(worktreeId, projectId, undefined, undefined, { autoFocus: false })
     if (!result.success || !result.session) {
       toast.error('Failed to create review session')
       return null
@@ -213,10 +215,41 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
       result.session.id,
       `Code Review — ${branchName} vs ${target}`
     )
-    sessionStore.setPendingMessage(result.session.id, prompt)
-
     // Register the review session so ticket cards can show "Reviewing" indicator
     useWorktreeStatusStore.getState().setReviewSession(worktreeId, result.session.id)
+
+    // Fire-and-forget: eagerly connect and send the review prompt in the background
+    // so it starts without waiting for SessionView to mount.
+    const sessionId = result.session.id
+    const worktreePath = worktree.path
+    const agentSdk = result.session.agent_sdk
+    const sessionModel = result.session.model_provider_id && result.session.model_id
+      ? { providerID: result.session.model_provider_id, modelID: result.session.model_id, variant: result.session.model_variant ?? undefined }
+      : resolveModelForSdk(agentSdk || 'opencode') ?? undefined
+
+    void (async () => {
+      try {
+        const connectResult = await window.opencodeOps.connect(worktreePath, sessionId)
+        if (connectResult.success && connectResult.sessionId) {
+          sessionStore.setOpenCodeSessionId(sessionId, connectResult.sessionId)
+          window.db.session.update(sessionId, { opencode_session_id: connectResult.sessionId }).catch(() => {})
+
+          messageSendTimes.set(sessionId, Date.now())
+          userExplicitSendTimes.set(sessionId, Date.now())
+          snapshotTokenBaseline(sessionId)
+          lastSendMode.set(sessionId, 'build')
+          useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+
+          await window.opencodeOps.prompt(worktreePath, connectResult.sessionId, [
+            { type: 'text', text: prompt }
+          ], sessionModel)
+        } else {
+          sessionStore.setPendingMessage(sessionId, prompt)
+        }
+      } catch {
+        sessionStore.setPendingMessage(sessionId, prompt)
+      }
+    })()
 
     return result.session.id
   }, [worktreeId, worktree?.path])
