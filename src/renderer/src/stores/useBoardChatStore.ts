@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { OpenCodeMessage } from '@/components/sessions/SessionView'
+import { parseBoardAssistantDraftSet } from '@/lib/board-assistant-drafts'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import type { SelectedModel } from '@/stores/useSettingsStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
@@ -36,9 +37,13 @@ export interface BoardChatMessage extends OpenCodeMessage {
 
 export interface TicketDraft {
   id: string
+  draftKey: string
   title: string
   description: string | null
+  dependsOn: string[]
+  resolvedDependsOnTitles: string[]
   warnings: string[]
+  validationIssues: string[]
   projectId: string
   projectName: string
   selected: boolean
@@ -288,49 +293,38 @@ function parseDraftsFromMessage(
   scope: BoardChatScope | null,
   selectedTargetProjectId: string | null
 ): TicketDraft[] | null {
-  const match = message.content.match(BOARD_DRAFT_BLOCK_CAPTURE_RE)
-  if (!match) return null
+  const strictProjectId = scope?.kind === 'project' ? scope.projectId : null
+  const fallbackProjectId = strictProjectId ?? selectedTargetProjectId
+  const parsed = parseBoardAssistantDraftSet(message.content, {
+    fallbackProjectId,
+    strictProjectId,
+    requireExplicitDraftKeys: scope?.kind === 'project'
+  })
+  if (!parsed) return null
 
-  try {
-    const parsed = JSON.parse(match[1]) as {
-      drafts?: Array<{
-        title?: string
-        description?: string | null
-        warnings?: string[]
-        projectId?: string
-      }>
-    }
+  const drafts = parsed.drafts.map((draft) => ({
+    id: `${message.id}:${draft.draftKey}:${strictProjectId ?? draft.projectId}`,
+    draftKey: draft.draftKey,
+    title: draft.title,
+    description: draft.description,
+    dependsOn: draft.dependsOn,
+    resolvedDependsOnTitles: [] as string[],
+    warnings: draft.warnings,
+    validationIssues: [...draft.validationIssues],
+    projectId: strictProjectId ?? draft.projectId,
+    projectName: getProjectName(scope, strictProjectId ?? draft.projectId),
+    selected: true,
+    createdAt: null
+  }))
 
-    if (!Array.isArray(parsed.drafts)) return null
-
-    const fallbackProjectId =
-      scope?.kind === 'project'
-        ? scope.projectId
-        : selectedTargetProjectId
-
-    const drafts = parsed.drafts
-      .filter((draft) => typeof draft.title === 'string' && draft.title.trim().length > 0)
-      .map((draft, index) => {
-        const projectId = draft.projectId?.trim() || fallbackProjectId || ''
-        return {
-          id: `${message.id}:${index}:${projectId}`,
-          title: draft.title!.trim(),
-          description: draft.description?.trim() || null,
-          warnings: Array.isArray(draft.warnings)
-            ? draft.warnings.filter((warning): warning is string => typeof warning === 'string')
-            : [],
-          projectId,
-          projectName: getProjectName(scope, projectId),
-          selected: true,
-          createdAt: null
-        }
-      })
-      .filter((draft) => draft.projectId.length > 0)
-
-    return drafts
-  } catch {
-    return null
+  const titleByDraftKey = new Map(drafts.map((draft) => [draft.draftKey, draft.title]))
+  for (const draft of drafts) {
+    draft.resolvedDependsOnTitles = draft.dependsOn.map(
+      (dependency) => titleByDraftKey.get(dependency) ?? dependency
+    )
   }
+
+  return drafts.filter((draft) => draft.projectId.length > 0)
 }
 
 async function cleanupRuntime(sessionId: string | null, opencodeSessionId: string | null, runtimePath: string | null): Promise<void> {
@@ -403,9 +397,17 @@ function buildAssistantPrompt(
     'When you are ready to propose tickets, include exactly one fenced code block labeled board-ticket-drafts.',
     'The block must contain strict JSON shaped like:',
     '```board-ticket-drafts',
-    '{"drafts":[{"title":"string","description":"string","projectId":"string","warnings":["string"]}]}',
+    scope.kind === 'project'
+      ? '{"drafts":[{"draftKey":"string","title":"string","description":"string|null","projectId":"string","dependsOn":["draftKey"],"warnings":["string"]}]}'
+      : '{"drafts":[{"title":"string","description":"string","projectId":"string","warnings":["string"]}]}',
     '```',
     `Every proposed draft must use projectId=${targetProjectId || 'MISSING_TARGET_PROJECT'}.`,
+    ...(scope.kind === 'project'
+      ? [
+          'For project boards, every draft must include a unique draftKey.',
+          'Use dependsOn to reference other drafts by draftKey when there is a dependency.'
+        ]
+      : []),
     'Keep draft tickets concrete and local-only.',
     '</board-assistant-rules>',
     '<board-assistant-context>',
@@ -642,27 +644,31 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
     set({ status: 'starting', error: null })
 
     try {
-      const projectIds = new Set<string>()
-      const createdDraftIds: string[] = []
+      const invalidDrafts = selectedDrafts.filter((draft) => draft.validationIssues.length > 0)
+      if (invalidDrafts.length > 0) {
+        throw new Error('Fix draft validation issues before creating tickets.')
+      }
 
-      for (const draft of selectedDrafts) {
-        await window.kanban.ticket.create({
+      const draftKeysInBatch = new Set(selectedDrafts.map((draft) => draft.draftKey))
+      const result = await window.kanban.ticket.createBatch({
+        drafts: selectedDrafts.map((draft) => ({
+          draft_key: draft.draftKey,
           project_id: draft.projectId,
           title: draft.title,
           description: draft.description ?? null,
-          column: 'todo'
-        })
-        projectIds.add(draft.projectId)
-        createdDraftIds.push(draft.id)
-      }
+          column: 'todo',
+          depends_on: draft.dependsOn.filter((key) => draftKeysInBatch.has(key))
+        }))
+      })
 
-      for (const projectId of projectIds) {
+      for (const projectId of new Set(selectedDrafts.map((draft) => draft.projectId))) {
         await useKanbanStore.getState().loadTickets(projectId)
+        await useKanbanStore.getState().loadDependencies(projectId)
       }
 
-      get().markDraftsCreated(createdDraftIds)
+      get().markDraftsCreated(selectedDrafts.map((draft) => draft.id))
       get().addLocalSystemMessage(
-        `Created ${selectedDrafts.length} ticket${selectedDrafts.length === 1 ? '' : 's'}.`
+        `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'} with ${result.dependencies.length} dependenc${result.dependencies.length === 1 ? 'y' : 'ies'}.`
       )
       set({ status: 'idle' })
     } catch (error) {

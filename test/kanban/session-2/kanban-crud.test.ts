@@ -109,6 +109,59 @@ describe('Session 2: Kanban CRUD', () => {
     expect(ticket.plan_ready).toBe(true)
   })
 
+  test('createKanbanTicketBatch creates tickets and dependency links atomically', () => {
+    const result = db.createKanbanTicketBatch({
+      drafts: [
+        {
+          draft_key: 'schema',
+          project_id: projectId,
+          title: 'Create schema'
+        },
+        {
+          draft_key: 'ui',
+          project_id: projectId,
+          title: 'Build UI',
+          depends_on: ['schema']
+        }
+      ]
+    })
+
+    expect(result.tickets).toHaveLength(2)
+    expect(result.dependencies).toHaveLength(1)
+
+    const uiTicket = result.tickets.find((ticket) => ticket.title === 'Build UI')
+    const schemaTicket = result.tickets.find((ticket) => ticket.title === 'Create schema')
+    expect(uiTicket).toBeDefined()
+    expect(schemaTicket).toBeDefined()
+
+    const blockers = db.getBlockersForTicket(uiTicket!.id)
+    expect(blockers).toHaveLength(1)
+    expect(blockers[0].id).toBe(schemaTicket!.id)
+  })
+
+  test('createKanbanTicketBatch rejects cyclic draft graphs without creating tickets', () => {
+    expect(() =>
+      db.createKanbanTicketBatch({
+        drafts: [
+          {
+            draft_key: 'a',
+            project_id: projectId,
+            title: 'Draft A',
+            depends_on: ['b']
+          },
+          {
+            draft_key: 'b',
+            project_id: projectId,
+            title: 'Draft B',
+            depends_on: ['a']
+          }
+        ]
+      })
+    ).toThrow(/cycle/i)
+
+    expect(db.getKanbanTicketsByProject(projectId)).toEqual([])
+  })
+
   // --- getKanbanTicket ---
 
   test('getKanbanTicket returns null for non-existent id', () => {

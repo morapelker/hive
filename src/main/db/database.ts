@@ -35,6 +35,9 @@ import type {
   ConnectionWithMembers,
   KanbanTicket,
   KanbanTicketCreate,
+  KanbanTicketBatchCreate,
+  KanbanTicketBatchCreateItem,
+  KanbanTicketBatchCreateResult,
   KanbanTicketUpdate,
   KanbanTicketColumn,
   TicketMark,
@@ -153,6 +156,135 @@ export class DatabaseService {
       total_tokens: (row.total_tokens as number) ?? 0,
       pending_launch_config: (row.pending_launch_config as string) ?? null
     }
+  }
+
+  private normalizeBatchDrafts(
+    drafts: KanbanTicketBatchCreateItem[]
+  ): Array<KanbanTicketBatchCreateItem & { draft_key: string; title: string; project_id: string; depends_on: string[] }> {
+    if (drafts.length === 0) {
+      throw new Error('Batch ticket creation requires at least one draft')
+    }
+
+    const normalized: Array<
+      KanbanTicketBatchCreateItem & {
+        draft_key: string
+        title: string
+        project_id: string
+        depends_on: string[]
+      }
+    > = []
+    const draftKeys = new Set<string>()
+    let projectId: string | null = null
+
+    for (const draft of drafts) {
+      const draftKey = draft.draft_key.trim()
+      const title = draft.title.trim()
+      const nextProjectId = draft.project_id.trim()
+
+      if (!draftKey) {
+        throw new Error('Each batch draft must include a draft_key')
+      }
+      if (!title) {
+        throw new Error(`Draft "${draftKey}" must include a title`)
+      }
+      if (!nextProjectId) {
+        throw new Error(`Draft "${draftKey}" must include a project_id`)
+      }
+      if (draftKeys.has(draftKey)) {
+        throw new Error(`Duplicate draft_key "${draftKey}" in batch`)
+      }
+
+      if (projectId === null) {
+        projectId = nextProjectId
+      } else if (projectId !== nextProjectId) {
+        throw new Error('All drafts in a batch must belong to the same project')
+      }
+
+      const dependsOn = Array.from(
+        new Set(
+          (draft.depends_on ?? [])
+            .filter((dependency): dependency is string => typeof dependency === 'string')
+            .map((dependency) => dependency.trim())
+            .filter(Boolean)
+        )
+      )
+
+      if (dependsOn.includes(draftKey)) {
+        throw new Error(`Draft "${draftKey}" cannot depend on itself`)
+      }
+
+      draftKeys.add(draftKey)
+      normalized.push({
+        ...draft,
+        draft_key: draftKey,
+        title,
+        project_id: nextProjectId,
+        depends_on: dependsOn
+      })
+    }
+
+    const normalizedKeySet = new Set(normalized.map((draft) => draft.draft_key))
+    for (const draft of normalized) {
+      for (const dependency of draft.depends_on) {
+        if (!normalizedKeySet.has(dependency)) {
+          throw new Error(`Draft "${draft.draft_key}" depends on unknown draft "${dependency}"`)
+        }
+      }
+    }
+
+    const visitState = new Map<string, 'visiting' | 'done'>()
+    const visit = (draftKey: string): void => {
+      const state = visitState.get(draftKey)
+      if (state === 'visiting') {
+        throw new Error(`Draft dependencies contain a cycle involving "${draftKey}"`)
+      }
+      if (state === 'done') return
+
+      visitState.set(draftKey, 'visiting')
+      const draft = normalized.find((item) => item.draft_key === draftKey)
+      if (!draft) return
+
+      for (const dependency of draft.depends_on) {
+        visit(dependency)
+      }
+
+      visitState.set(draftKey, 'done')
+    }
+
+    for (const draft of normalized) {
+      visit(draft.draft_key)
+    }
+
+    return normalized
+  }
+
+  private wouldCreateTicketDependencyCycle(
+    db: Database.Database,
+    dependentId: string,
+    blockerId: string
+  ): boolean {
+    const visited = new Set<string>()
+    const queue: string[] = [blockerId]
+    visited.add(blockerId)
+
+    while (queue.length > 0) {
+      const node = queue.shift()!
+      const dependents = db
+        .prepare('SELECT dependent_id FROM ticket_dependencies WHERE blocker_id = ?')
+        .all(node) as { dependent_id: string }[]
+
+      for (const row of dependents) {
+        if (row.dependent_id === dependentId) {
+          return true
+        }
+        if (!visited.has(row.dependent_id)) {
+          visited.add(row.dependent_id)
+          queue.push(row.dependent_id)
+        }
+      }
+    }
+
+    return false
   }
 
   private runMigrations(): void {
@@ -1749,6 +1881,64 @@ export class DatabaseService {
     })
   }
 
+  createKanbanTicketBatch(data: KanbanTicketBatchCreate): KanbanTicketBatchCreateResult {
+    return this.transaction(() => {
+      const db = this.getDb()
+      const drafts = this.normalizeBatchDrafts(data.drafts)
+      const createdTickets: KanbanTicket[] = []
+      const createdByDraftKey = new Map<string, KanbanTicket>()
+
+      for (const draft of drafts) {
+        const ticket = this.createKanbanTicket({
+          project_id: draft.project_id,
+          title: draft.title,
+          description: draft.description ?? null,
+          attachments: draft.attachments ?? [],
+          column: draft.column,
+          sort_order: draft.sort_order,
+          current_session_id: draft.current_session_id,
+          worktree_id: draft.worktree_id,
+          mode: draft.mode,
+          plan_ready: draft.plan_ready,
+          external_provider: draft.external_provider,
+          external_id: draft.external_id,
+          external_url: draft.external_url,
+          github_pr_number: draft.github_pr_number,
+          github_pr_url: draft.github_pr_url,
+          mark: draft.mark
+        })
+        createdTickets.push(ticket)
+        createdByDraftKey.set(draft.draft_key, ticket)
+      }
+
+      const dependencies: TicketDependency[] = []
+      for (const draft of drafts) {
+        const dependentTicket = createdByDraftKey.get(draft.draft_key)
+        if (!dependentTicket) continue
+
+        for (const blockerDraftKey of draft.depends_on) {
+          const blockerTicket = createdByDraftKey.get(blockerDraftKey)
+          if (!blockerTicket) continue
+
+          const createdAt = new Date().toISOString()
+          db.prepare(
+            'INSERT INTO ticket_dependencies (dependent_id, blocker_id, created_at) VALUES (?, ?, ?)'
+          ).run(dependentTicket.id, blockerTicket.id, createdAt)
+          dependencies.push({
+            dependent_id: dependentTicket.id,
+            blocker_id: blockerTicket.id,
+            created_at: createdAt
+          })
+        }
+      }
+
+      return {
+        tickets: createdTickets,
+        dependencies
+      }
+    })
+  }
+
   getKanbanTicket(id: string): KanbanTicket | null {
     const db = this.getDb()
     const row = db.prepare('SELECT * FROM kanban_tickets WHERE id = ?').get(id) as
@@ -2006,28 +2196,10 @@ export class DatabaseService {
         return { success: false, error: 'Tickets must be in the same project' }
       }
 
-      // BFS cycle detection: check if dependentId is reachable from blockerId
-      const visited = new Set<string>()
-      const queue: string[] = [blockerId]
-      visited.add(blockerId)
-
-      while (queue.length > 0) {
-        const node = queue.shift()!
-        const dependents = db
-          .prepare('SELECT dependent_id FROM ticket_dependencies WHERE blocker_id = ?')
-          .all(node) as { dependent_id: string }[]
-
-        for (const row of dependents) {
-          if (row.dependent_id === dependentId) {
-            return {
-              success: false,
-              error: 'Adding this dependency would create a circular dependency'
-            }
-          }
-          if (!visited.has(row.dependent_id)) {
-            visited.add(row.dependent_id)
-            queue.push(row.dependent_id)
-          }
+      if (this.wouldCreateTicketDependencyCycle(db, dependentId, blockerId)) {
+        return {
+          success: false,
+          error: 'Adding this dependency would create a circular dependency'
         }
       }
 

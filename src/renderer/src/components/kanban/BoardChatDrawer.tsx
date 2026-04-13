@@ -21,6 +21,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { useSessionStream } from '@/hooks/useSessionStream'
+import { parseBoardAssistantDraftSet } from '@/lib/board-assistant-drafts'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useBoardChatStore, type BoardChatMessage, type BoardChatScope, type TicketDraft, stripBoardAssistantScaffolding, stripBoardDraftBlocks, resolveBoardChatAgentSdk, resolveBoardChatDefaultModel } from '@/stores/useBoardChatStore'
@@ -44,21 +45,14 @@ interface BoardChatDrawerProps {
   isPinnedMode?: boolean
 }
 
-interface ParsedDraftSet {
-  drafts: Array<{
-    title: string
-    description: string | null
-    warnings: string[]
-  }>
-}
-
 const BOARD_ASSISTANT_RULES = [
   'You are Hive Board Assistant.',
   'Stay focused on helping the user create local kanban tickets for the current board scope.',
   'Do not claim tickets are created. The UI will create them only after explicit confirmation.',
   'Ask concise clarifying questions when needed.',
   'When you are ready to propose tickets, append exactly one fenced code block tagged board-ticket-drafts.',
-  'The JSON schema is {"drafts":[{"title":"string","description":"string|null","warnings":["string"]}]}.',
+  'For project boards, the JSON schema is {"drafts":[{"draftKey":"string","title":"string","description":"string|null","projectId":"string","dependsOn":["draftKey"],"warnings":["string"]}]}.',
+  'For other board scopes, the JSON schema is {"drafts":[{"title":"string","description":"string|null","warnings":["string"]}]}.',
   'When revising drafts, output a full replacement draft set in that code block.',
   'Keep titles short, specific, and implementation-ready.'
 ].join('\n')
@@ -70,45 +64,11 @@ function buildScopeKey(scope: BoardChatScope | null): string {
   return 'pinned'
 }
 
-function parseBoardTicketDrafts(content: string): ParsedDraftSet | null {
-  const match = content.match(/```board-ticket-drafts\s*([\s\S]*?)```/i)
-  if (!match?.[1]) return null
-
-  try {
-    const parsed = JSON.parse(match[1]) as { drafts?: unknown[] }
-    if (!Array.isArray(parsed.drafts)) return null
-
-    const drafts = parsed.drafts
-      .map((draft) => {
-        if (!draft || typeof draft !== 'object') return null
-        const record = draft as Record<string, unknown>
-        const title = typeof record.title === 'string' ? record.title.trim() : ''
-        if (!title) return null
-
-        const description =
-          typeof record.description === 'string' && record.description.trim()
-            ? record.description.trim()
-            : null
-
-        const warnings = Array.isArray(record.warnings)
-          ? record.warnings.filter((warning): warning is string => typeof warning === 'string')
-          : []
-
-        return { title, description, warnings }
-      })
-      .filter((draft): draft is ParsedDraftSet['drafts'][number] => draft !== null)
-
-    return drafts.length > 0 ? { drafts } : null
-  } catch {
-    return null
-  }
-}
-
 function sanitizeBoardMessageContent(message: BoardChatMessage): string {
   const withoutScaffolding = stripBoardAssistantScaffolding(message.content)
   if (message.role === 'assistant') {
     const withoutDrafts = stripBoardDraftBlocks(withoutScaffolding)
-    const parsedDrafts = parseBoardTicketDrafts(message.content)
+    const parsedDrafts = parseBoardAssistantDraftSet(message.content)
     return withoutDrafts || (parsedDrafts ? 'Proposed ticket drafts below.' : withoutDrafts)
   }
   return withoutScaffolding
@@ -215,6 +175,13 @@ function buildBoardPrompt(input: string, scope: BoardChatScope, targetProjectId:
   return [
     '<board-assistant-rules>',
     BOARD_ASSISTANT_RULES,
+    ...(scope.kind === 'project'
+      ? [
+          `Every proposed draft must use projectId=${targetProjectId}.`,
+          'Every proposed draft must include a unique draftKey.',
+          'Use dependsOn to reference other drafts by their draftKey when there is a dependency.'
+        ]
+      : []),
     '</board-assistant-rules>',
     '<board-assistant-context>',
     JSON.stringify(context, null, 2),
@@ -464,7 +431,13 @@ function BoardChatHeader({
         <Button type="button" variant="ghost" size="icon" onClick={onMinimize} aria-label="Minimize assistant">
           <Minimize2 className="h-4 w-4" />
         </Button>
-        <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close assistant">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          aria-label="Minimize assistant"
+        >
           <X className="h-4 w-4" />
         </Button>
       </div>
@@ -505,11 +478,33 @@ function BoardChatDraftProposalCard({
               <MarkdownRenderer content={draft.description} />
             </div>
           )}
+          {draft.resolvedDependsOnTitles.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-medium uppercase tracking-[0.14em]">Depends on</span>
+              {draft.resolvedDependsOnTitles.map((dependency) => (
+                <span
+                  key={`${draft.id}-${dependency}`}
+                  className="rounded-full border border-border/70 bg-muted/30 px-2 py-0.5"
+                >
+                  {dependency}
+                </span>
+              ))}
+            </div>
+          )}
           {draft.warnings.length > 0 && (
             <div className="space-y-1 rounded-xl border border-border/70 bg-muted/30 px-3 py-2">
               {draft.warnings.map((warning) => (
                 <p key={warning} className="text-xs text-muted-foreground">
                   {warning}
+                </p>
+              ))}
+            </div>
+          )}
+          {draft.validationIssues.length > 0 && (
+            <div className="space-y-1 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2">
+              {draft.validationIssues.map((issue) => (
+                <p key={issue} className="text-xs text-destructive">
+                  {issue}
                 </p>
               ))}
             </div>
@@ -534,6 +529,7 @@ function BoardChatMessageList({
   onCreateSelected,
   onRevise,
   onCancelDrafts,
+  hasInvalidDrafts,
   onQuestionReply,
   onQuestionReject,
   onPermissionReply,
@@ -552,6 +548,7 @@ function BoardChatMessageList({
   onCreateSelected: () => void
   onRevise: () => void
   onCancelDrafts: () => void
+  hasInvalidDrafts: boolean
   onQuestionReply: (requestId: string, answers: QuestionAnswer[]) => void
   onQuestionReject: (requestId: string) => void
   onPermissionReply: (requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => void
@@ -566,6 +563,8 @@ function BoardChatMessageList({
   const scrollRef = useRef<HTMLDivElement>(null)
   const selectedCount = drafts.filter((draft) => draft.selected).length
   const creatableSelectedCount = drafts.filter((draft) => draft.selected && !draft.createdAt).length
+  const dependencyCount = drafts.reduce((count, draft) => count + draft.dependsOn.length, 0)
+  const invalidDraftCount = drafts.filter((draft) => draft.validationIssues.length > 0).length
 
   useEffect(() => {
     const element = scrollRef.current
@@ -587,7 +586,7 @@ function BoardChatMessageList({
           )
         }
 
-        const parsedDrafts = message.role === 'assistant' ? parseBoardTicketDrafts(message.content) : null
+        const parsedDrafts = message.role === 'assistant' ? parseBoardAssistantDraftSet(message.content) : null
         const sanitizedContent = sanitizeBoardMessageContent(message)
         const sanitizedParts = sanitizeStreamingParts(message.parts, message.role)
 
@@ -609,13 +608,22 @@ function BoardChatMessageList({
                   <Sparkles className="h-3.5 w-3.5" />
                   Draft proposals
                 </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span>{drafts.length} drafts</span>
+                  <span>{dependencyCount} dependenc{dependencyCount === 1 ? 'y' : 'ies'}</span>
+                  {invalidDraftCount > 0 && (
+                    <span className="text-destructive">
+                      {invalidDraftCount} invalid
+                    </span>
+                  )}
+                </div>
                 <div className="space-y-2">
                   {drafts.map((draft) => (
                     <BoardChatDraftProposalCard key={draft.id} draft={draft} onToggle={onToggleDraft} />
                   ))}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-3">
-                  <Button type="button" size="sm" onClick={onCreateAll}>
+                  <Button type="button" size="sm" onClick={onCreateAll} disabled={hasInvalidDrafts}>
                     Create all
                   </Button>
                   <Button
@@ -623,6 +631,7 @@ function BoardChatMessageList({
                     size="sm"
                     variant="outline"
                     onClick={onCreateSelected}
+                    disabled={hasInvalidDrafts}
                   >
                     <CheckSquare className="h-4 w-4" />
                     Create selected
@@ -634,7 +643,9 @@ function BoardChatMessageList({
                     Cancel
                   </Button>
                   <span className="ml-auto text-xs text-muted-foreground">
-                    {creatableSelectedCount}/{selectedCount} ready
+                    {hasInvalidDrafts
+                      ? 'Fix validation issues first'
+                      : `${creatableSelectedCount}/${selectedCount} ready`}
                   </span>
                 </div>
               </div>
@@ -890,10 +901,20 @@ export function BoardChatDrawer({
   }, [opencodeSessionId, runtimePath, sessionId, setTranscriptMessages, transcriptMessages])
 
   const latestDraftResult = useMemo(() => {
+    const strictProjectId = scope?.kind === 'project' ? scope.projectId : undefined
+    const fallbackProjectId =
+      scope?.kind === 'project'
+        ? scope.projectId
+        : selectedTargetProjectId
+
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index]
       if (message.role !== 'assistant') continue
-      const parsed = parseBoardTicketDrafts(message.content)
+      const parsed = parseBoardAssistantDraftSet(message.content, {
+        fallbackProjectId,
+        strictProjectId,
+        requireExplicitDraftKeys: scope?.kind === 'project'
+      })
       if (parsed) {
         return {
           messageId: message.id,
@@ -902,7 +923,7 @@ export function BoardChatDrawer({
       }
     }
     return null
-  }, [messages])
+  }, [messages, scope, selectedTargetProjectId])
 
   useEffect(() => {
     if (!latestDraftResult || !scope) return
@@ -917,17 +938,28 @@ export function BoardChatDrawer({
 
     if (!targetProjectId) return
 
-    const projectName =
-      projects.find((project) => project.id === targetProjectId)?.name ?? 'Unknown project'
+    const titleByDraftKey = new Map(
+      latestDraftResult.drafts.map((draft) => [draft.draftKey, draft.title])
+    )
 
     setDrafts(
       latestDraftResult.drafts.map((draft) => ({
-        id: crypto.randomUUID(),
+        id: `${latestDraftResult.messageId}:${draft.draftKey}:${scope.kind === 'project' ? targetProjectId : (draft.projectId || targetProjectId)}`,
+        draftKey: draft.draftKey,
         title: draft.title,
         description: draft.description,
+        dependsOn: draft.dependsOn,
+        resolvedDependsOnTitles: draft.dependsOn.map(
+          (dependency) => titleByDraftKey.get(dependency) ?? dependency
+        ),
         warnings: draft.warnings,
-        projectId: targetProjectId,
-        projectName,
+        validationIssues: draft.validationIssues,
+        projectId: scope.kind === 'project' ? targetProjectId : (draft.projectId || targetProjectId),
+        projectName:
+          projects.find((project) =>
+            project.id === (scope.kind === 'project' ? targetProjectId : (draft.projectId || targetProjectId))
+          )?.name ??
+          'Unknown project',
         selected: true
       })),
       latestDraftResult.messageId
@@ -976,6 +1008,7 @@ export function BoardChatDrawer({
   }, [isStreaming, streamingContent, streamingParts])
 
   const canInteract = scope !== null && scope.kind !== 'pinned'
+  const hasInvalidDrafts = drafts.some((draft) => draft.validationIssues.length > 0)
   const canSend =
     canInteract &&
     Boolean((scope?.kind === 'project' ? scope.projectId : selectedTargetProjectId) && composerValue.trim()) &&
@@ -1062,26 +1095,36 @@ export function BoardChatDrawer({
     }
 
     try {
-      await Promise.all(
-        draftsToCreate.map((draft) =>
-          useKanbanStore.getState().createTicket(draft.projectId, {
-            project_id: draft.projectId,
-            title: draft.title,
-            description: draft.description,
-            column: 'todo'
-          })
-        )
-      )
+      const invalidDrafts = draftsToCreate.filter((draft) => draft.validationIssues.length > 0)
+      if (invalidDrafts.length > 0) {
+        throw new Error('Fix draft validation issues before creating tickets.')
+      }
+
+      const draftKeysInBatch = new Set(draftsToCreate.map((draft) => draft.draftKey))
+      const result = await window.kanban.ticket.createBatch({
+        drafts: draftsToCreate.map((draft) => ({
+          draft_key: draft.draftKey,
+          project_id: draft.projectId,
+          title: draft.title,
+          description: draft.description,
+          column: 'todo',
+          depends_on: draft.dependsOn.filter((key) => draftKeysInBatch.has(key))
+        }))
+      })
+
+      await useKanbanStore.getState().loadTickets(draftsToCreate[0].projectId)
+      await useKanbanStore.getState().loadDependencies(draftsToCreate[0].projectId)
 
       markDraftsCreated(draftsToCreate.map((draft) => draft.id))
       addLocalSystemMessage(
-        `Created ${draftsToCreate.length} ticket${draftsToCreate.length === 1 ? '' : 's'} in ${draftsToCreate[0].projectName}.`
+        `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'} and ${result.dependencies.length} dependenc${result.dependencies.length === 1 ? 'y' : 'ies'} in ${draftsToCreate[0].projectName}.`
       )
       toast.success(
-        `Created ${draftsToCreate.length} ticket${draftsToCreate.length === 1 ? '' : 's'}.`
+        `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'}.`
       )
-    } catch {
-      toast.error('Failed to create one or more tickets.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create one or more tickets.'
+      toast.error(message)
     }
   }, [addLocalSystemMessage, drafts, markDraftsCreated])
 
@@ -1091,10 +1134,6 @@ export function BoardChatDrawer({
       addLocalSystemMessage('Conversation cleared.')
     }
   }, [addLocalSystemMessage, handleDiscardConversation, storedScope])
-
-  const handleClose = useCallback(async () => {
-    await handleDiscardConversation()
-  }, [handleDiscardConversation])
 
   const handleSelectModel = useCallback(async (model: SelectedModel) => {
     setSelectedModelOverride(model)
@@ -1271,9 +1310,7 @@ export function BoardChatDrawer({
             void handleClear()
           }}
           onMinimize={minimizeDrawer}
-          onClose={() => {
-            void handleClose()
-          }}
+          onClose={minimizeDrawer}
         />
 
         {error && (
@@ -1300,6 +1337,7 @@ export function BoardChatDrawer({
           }}
           onRevise={handleRevise}
           onCancelDrafts={handleCancelDrafts}
+          hasInvalidDrafts={hasInvalidDrafts}
           onQuestionReply={(requestId, answers) => {
             void handleQuestionReply(requestId, answers)
           }}

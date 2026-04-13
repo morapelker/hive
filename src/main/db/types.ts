@@ -401,10 +401,84 @@ export interface KanbanTicketUpdate {
   pending_launch_config?: string | null
 }
 
+export interface BoardAssistantDraft {
+  draftKey: string
+  title: string
+  description: string | null
+  projectId: string
+  dependsOn: string[]
+  warnings: string[]
+}
+
+export interface KanbanTicketBatchCreateItem {
+  draft_key: string
+  project_id: string
+  title: string
+  description?: string | null
+  attachments?: unknown[]
+  column?: KanbanTicketColumn
+  sort_order?: number
+  current_session_id?: string | null
+  worktree_id?: string | null
+  mode?: 'build' | 'plan' | 'super-plan' | null
+  plan_ready?: boolean
+  external_provider?: string | null
+  external_id?: string | null
+  external_url?: string | null
+  github_pr_number?: number | null
+  github_pr_url?: string | null
+  mark?: TicketMark | null
+  depends_on?: string[]
+}
+
+export interface KanbanTicketBatchCreate {
+  drafts: KanbanTicketBatchCreateItem[]
+}
+
 export interface TicketDependency {
   dependent_id: string
   blocker_id: string
   created_at: string
+}
+
+export interface TicketDependencyEdgePayload {
+  dependentId: string
+  blockerId: string
+}
+
+export interface AssistantTicketDraft {
+  draftKey: string
+  title: string
+  description?: string | null
+  projectId: string
+  dependsOn?: string[]
+  warnings?: string[]
+}
+
+export interface AssistantTicketDraftPayload {
+  drafts: AssistantTicketDraft[]
+}
+
+export interface ExistingAssistantDraftTicket {
+  draftKey: string
+  ticketId: string
+}
+
+export interface KanbanTicketBatchCreateRequest {
+  drafts: AssistantTicketDraft[]
+  existingDraftTickets?: ExistingAssistantDraftTicket[]
+  column?: KanbanTicketColumn
+}
+
+export interface KanbanTicketBatchCreateResponse {
+  tickets: KanbanTicket[]
+  dependencies: TicketDependencyEdgePayload[]
+  dependencyCount: number
+}
+
+export interface KanbanTicketBatchCreateResult {
+  tickets: KanbanTicket[]
+  dependencies: TicketDependency[]
 }
 
 export interface PendingLaunchConfig {

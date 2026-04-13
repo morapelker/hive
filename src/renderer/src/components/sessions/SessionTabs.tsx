@@ -534,6 +534,7 @@ export function SessionTabs(): React.JSX.Element | null {
   const [showJiraImport, setShowJiraImport] = useState(false)
   const [showHiveImport, setShowHiveImport] = useState(false)
   const [hiveImportTickets, setHiveImportTickets] = useState<Array<{ id: string; title: string; description?: string | null; attachments?: unknown[]; column?: string }>>([])
+  const [hiveImportDependencies, setHiveImportDependencies] = useState<Array<{ dependentId: string; blockerId: string }>>([])
 
   // Individual selectors for state values
   const activeWorktreeId = useSessionStore((s) => s.activeWorktreeId)
@@ -1441,6 +1442,7 @@ export function SessionTabs(): React.JSX.Element | null {
                 const result = await window.kanban.board.openImportFile()
                 if (result) {
                   setHiveImportTickets(result.tickets)
+                  setHiveImportDependencies(result.dependencies ?? [])
                   setShowHiveImport(true)
                 }
               }}
@@ -1490,10 +1492,14 @@ export function SessionTabs(): React.JSX.Element | null {
             open={showHiveImport}
             onOpenChange={(open) => {
               setShowHiveImport(open)
-              if (!open) setHiveImportTickets([])
+              if (!open) {
+                setHiveImportTickets([])
+                setHiveImportDependencies([])
+              }
             }}
             projectId={project.id}
             tickets={hiveImportTickets}
+            dependencies={hiveImportDependencies}
           />
         </>
       )}

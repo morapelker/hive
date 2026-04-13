@@ -27,7 +27,10 @@ export type {
   ProjectSpaceAssignment,
   KanbanTicket,
   KanbanTicketCreate,
+  KanbanTicketBatchCreate,
+  KanbanTicketBatchCreateResult,
   KanbanTicketUpdate,
   KanbanTicketColumn,
-  TicketMark
+  TicketMark,
+  TicketDependency
 } from './types'

@@ -209,6 +209,32 @@ interface KanbanTicketUpdate {
   mark?: string | null
 }
 
+interface KanbanTicketBatchCreateItem {
+  draft_key: string
+  project_id: string
+  title: string
+  description?: string | null
+  attachments?: unknown[]
+  column?: KanbanTicketColumn
+  sort_order?: number
+  current_session_id?: string | null
+  worktree_id?: string | null
+  mode?: 'build' | 'plan' | 'super-plan' | null
+  plan_ready?: boolean
+  external_provider?: string | null
+  external_id?: string | null
+  external_url?: string | null
+  github_pr_number?: number | null
+  github_pr_url?: string | null
+  mark?: string | null
+  depends_on?: string[]
+}
+
+interface KanbanTicketBatchCreateResult {
+  tickets: KanbanTicket[]
+  dependencies: Array<{ dependent_id: string; blocker_id: string; created_at: string }>
+}
+
 declare global {
   interface GhosttyTerminalConfig {
     fontFamily?: string
@@ -1403,6 +1429,7 @@ declare global {
     kanban: {
       ticket: {
         create: (data: KanbanTicketCreate) => Promise<KanbanTicket>
+        createBatch: (data: { drafts: KanbanTicketBatchCreateItem[] }) => Promise<KanbanTicketBatchCreateResult>
         get: (id: string) => Promise<KanbanTicket | null>
         getByProject: (projectId: string) => Promise<KanbanTicket[]>
         update: (id: string, data: KanbanTicketUpdate) => Promise<KanbanTicket | null>
@@ -1445,6 +1472,10 @@ declare global {
             attachments?: unknown[]
             column?: string
           }>
+          dependencies?: Array<{
+            dependentId: string
+            blockerId: string
+          }>
           projectName?: string
         } | null>
         importTickets: (
@@ -1455,8 +1486,12 @@ declare global {
             description?: string | null
             attachments?: unknown[]
             column?: string
+          }>,
+          dependencies?: Array<{
+            dependentId: string
+            blockerId: string
           }>
-        ) => Promise<{ created: number; updated: number }>
+        ) => Promise<{ created: number; updated: number; dependencyCount: number; ignoredDependencyCount: number }>
       }
     }
     ticketImport: {

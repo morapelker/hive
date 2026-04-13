@@ -2,7 +2,12 @@ import { ipcMain, dialog } from 'electron'
 import { writeFile, readFile } from 'node:fs/promises'
 import { getDatabase } from '../db'
 import { createLogger } from '../services/logger'
-import type { KanbanTicketCreate, KanbanTicketUpdate, KanbanTicketColumn } from '../db'
+import type {
+  KanbanTicketBatchCreate,
+  KanbanTicketCreate,
+  KanbanTicketUpdate,
+  KanbanTicketColumn
+} from '../db'
 
 const log = createLogger({ component: 'KanbanHandlers' })
 
@@ -11,6 +16,10 @@ export function registerKanbanHandlers(): void {
 
   ipcMain.handle('kanban:ticket:create', (_event, data: KanbanTicketCreate) => {
     return getDatabase().createKanbanTicket(data)
+  })
+
+  ipcMain.handle('kanban:ticket:createBatch', (_event, data: KanbanTicketBatchCreate) => {
+    return getDatabase().createKanbanTicketBatch(data)
   })
 
   ipcMain.handle('kanban:ticket:get', (_event, id: string) => {
@@ -116,6 +125,7 @@ export function registerKanbanHandlers(): void {
       try {
         const db = getDatabase()
         const tickets = db.getKanbanTicketsByProject(projectId, false)
+        const dependencies = db.getDependenciesForProject(projectId)
 
         const exportData = {
           projectName,
@@ -126,6 +136,10 @@ export function registerKanbanHandlers(): void {
             description: t.description,
             attachments: t.attachments,
             column: t.column
+          })),
+          dependencies: dependencies.map((dependency) => ({
+            dependentId: dependency.dependent_id,
+            blockerId: dependency.blocker_id
           }))
         }
 
@@ -183,6 +197,15 @@ export function registerKanbanHandlers(): void {
           attachments?: unknown[]
           column?: string
         }>,
+        dependencies: Array.isArray(parsed.dependencies)
+          ? parsed.dependencies.filter(
+              (dependency: unknown): dependency is { dependentId: string; blockerId: string } =>
+                typeof dependency === 'object' &&
+                dependency !== null &&
+                typeof (dependency as { dependentId?: unknown }).dependentId === 'string' &&
+                typeof (dependency as { blockerId?: unknown }).blockerId === 'string'
+            )
+          : [],
         projectName: parsed.projectName ?? null
       }
     } catch (error) {
@@ -202,11 +225,18 @@ export function registerKanbanHandlers(): void {
         description?: string | null
         attachments?: unknown[]
         column?: string
+      }>,
+      dependencies?: Array<{
+        dependentId: string
+        blockerId: string
       }>
     ) => {
       const db = getDatabase()
       let created = 0
       let updated = 0
+      let dependencyCount = 0
+      let ignoredDependencyCount = 0
+      const selectedIds = new Set(tickets.map((ticket) => ticket.id))
 
       for (const ticket of tickets) {
         const existing = db.getKanbanTicket(ticket.id)
@@ -244,7 +274,32 @@ export function registerKanbanHandlers(): void {
         }
       }
 
-      return { created, updated }
+      for (const ticketId of selectedIds) {
+        const blockers = db.getBlockersForTicket(ticketId)
+        for (const blocker of blockers) {
+          if (selectedIds.has(blocker.id)) {
+            db.removeTicketDependency(ticketId, blocker.id)
+          }
+        }
+      }
+
+      for (const dependency of dependencies ?? []) {
+        const dependentId = dependency.dependentId.trim()
+        const blockerId = dependency.blockerId.trim()
+        if (!dependentId || !blockerId || !selectedIds.has(dependentId) || !selectedIds.has(blockerId)) {
+          ignoredDependencyCount++
+          continue
+        }
+
+        const result = db.addTicketDependency(dependentId, blockerId)
+        if (result.success) {
+          dependencyCount++
+        } else {
+          ignoredDependencyCount++
+        }
+      }
+
+      return { created, updated, dependencyCount, ignoredDependencyCount }
     }
   )
 

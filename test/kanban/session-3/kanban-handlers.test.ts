@@ -83,6 +83,34 @@ describe('Session 3: Kanban IPC Handlers', () => {
     expect((result as { column: string }).column).toBe('todo')
   })
 
+  test('kanban:ticket:createBatch creates tickets and dependency links', () => {
+    const handler = handlers.get('kanban:ticket:createBatch')
+    expect(handler).toBeDefined()
+
+    const result = handler!(null, {
+      drafts: [
+        {
+          draft_key: 'api',
+          project_id: projectId,
+          title: 'Build API'
+        },
+        {
+          draft_key: 'ui',
+          project_id: projectId,
+          title: 'Build UI',
+          depends_on: ['api']
+        }
+      ]
+    }) as {
+      tickets: Array<{ id: string; title: string }>
+      dependencies: Array<{ dependent_id: string; blocker_id: string }>
+    }
+
+    expect(result.tickets).toHaveLength(2)
+    expect(result.dependencies).toHaveLength(1)
+    expect(result.tickets.map((ticket) => ticket.title)).toEqual(['Build API', 'Build UI'])
+  })
+
   test('kanban:ticket:get calls getKanbanTicket with correct id', () => {
     const handler = handlers.get('kanban:ticket:get')
     expect(handler).toBeDefined()
@@ -263,5 +291,34 @@ describe('Session 3: Kanban IPC Handlers', () => {
       .prepare('SELECT kanban_simple_mode FROM projects WHERE id = ?')
       .get(projectId) as { kanban_simple_mode: number }
     expect(row2.kanban_simple_mode).toBe(0)
+  })
+
+  test('kanban:board:importTickets restores dependency links for selected tickets', async () => {
+    const handler = handlers.get('kanban:board:importTickets')
+    expect(handler).toBeDefined()
+
+    const result = await handler!(
+      null,
+      projectId,
+      [
+        { id: 'import-a', title: 'Import A', column: 'todo' },
+        { id: 'import-b', title: 'Import B', column: 'todo' }
+      ],
+      [{ dependentId: 'import-b', blockerId: 'import-a' }]
+    ) as {
+      created: number
+      updated: number
+      dependencyCount: number
+      ignoredDependencyCount: number
+    }
+
+    expect(result.created).toBe(2)
+    expect(result.updated).toBe(0)
+    expect(result.dependencyCount).toBe(1)
+    expect(result.ignoredDependencyCount).toBe(0)
+
+    const blockers = testDb.getBlockersForTicket('import-b')
+    expect(blockers).toHaveLength(1)
+    expect(blockers[0].id).toBe('import-a')
   })
 })

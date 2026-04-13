@@ -20,18 +20,25 @@ interface ExportedTicket {
   column?: string
 }
 
+interface ExportedDependency {
+  dependentId: string
+  blockerId: string
+}
+
 interface HiveImportModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
   tickets: ExportedTicket[]
+  dependencies?: ExportedDependency[]
 }
 
 export function HiveImportModal({
   open,
   onOpenChange,
   projectId,
-  tickets
+  tickets,
+  dependencies = []
 }: HiveImportModalProps) {
   const loadTickets = useKanbanStore((s) => s.loadTickets)
   const existingTickets = useKanbanStore((s) => s.tickets)
@@ -80,12 +87,21 @@ export function HiveImportModal({
 
     setImporting(true)
     try {
-      const result = await window.kanban.board.importTickets(projectId, selected)
+      const selectedIds = new Set(selected.map((ticket) => ticket.id))
+      const importDependencies = dependencies.filter(
+        (dependency) =>
+          selectedIds.has(dependency.dependentId) && selectedIds.has(dependency.blockerId)
+      )
+
+      const result = await window.kanban.board.importTickets(projectId, selected, importDependencies)
       await loadTickets(projectId)
+      await useKanbanStore.getState().loadDependencies(projectId)
 
       const parts: string[] = []
       if (result.created > 0) parts.push(`${result.created} created`)
       if (result.updated > 0) parts.push(`${result.updated} updated`)
+      if (result.dependencyCount > 0) parts.push(`${result.dependencyCount} dependencies restored`)
+      if (result.ignoredDependencyCount > 0) parts.push(`${result.ignoredDependencyCount} dependencies ignored`)
       toast.success(`Import complete: ${parts.join(', ')}`)
 
       onOpenChange(false)
@@ -132,6 +148,9 @@ export function HiveImportModal({
                 <span className="text-yellow-500">{updateCount} update{updateCount !== 1 ? 's' : ''}</span>
               )})
             </span>
+          )}
+          {dependencies.length > 0 && (
+            <span className="ml-1">({dependencies.length} dependency links available)</span>
           )}
         </div>
 

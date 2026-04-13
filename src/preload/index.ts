@@ -1888,6 +1888,28 @@ const kanban = {
       mode?: 'build' | 'plan' | null
       plan_ready?: boolean
     }) => ipcRenderer.invoke('kanban:ticket:create', data),
+    createBatch: (data: {
+      drafts: Array<{
+        draft_key: string
+        project_id: string
+        title: string
+        description?: string | null
+        attachments?: unknown[]
+        column?: 'todo' | 'in_progress' | 'review' | 'done'
+        sort_order?: number
+        current_session_id?: string | null
+        worktree_id?: string | null
+        mode?: 'build' | 'plan' | 'super-plan' | null
+        plan_ready?: boolean
+        external_provider?: string | null
+        external_id?: string | null
+        external_url?: string | null
+        github_pr_number?: number | null
+        github_pr_url?: string | null
+        mark?: string | null
+        depends_on?: string[]
+      }>
+    }) => ipcRenderer.invoke('kanban:ticket:createBatch', data),
     get: (id: string) => ipcRenderer.invoke('kanban:ticket:get', id),
     getByProject: (projectId: string, includeArchived?: boolean) =>
       ipcRenderer.invoke('kanban:ticket:getByProject', projectId, includeArchived),
@@ -1958,6 +1980,10 @@ const kanban = {
         attachments?: unknown[]
         column?: string
       }>
+      dependencies?: Array<{
+        dependentId: string
+        blockerId: string
+      }>
       projectName?: string
     } | null> => ipcRenderer.invoke('kanban:board:openImportFile'),
     importTickets: (
@@ -1968,9 +1994,13 @@ const kanban = {
         description?: string | null
         attachments?: unknown[]
         column?: string
+      }>,
+      dependencies?: Array<{
+        dependentId: string
+        blockerId: string
       }>
-    ): Promise<{ created: number; updated: number }> =>
-      ipcRenderer.invoke('kanban:board:importTickets', projectId, tickets)
+    ): Promise<{ created: number; updated: number; dependencyCount: number; ignoredDependencyCount: number }> =>
+      ipcRenderer.invoke('kanban:board:importTickets', projectId, tickets, dependencies)
   }
 }
 
