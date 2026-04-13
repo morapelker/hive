@@ -1094,6 +1094,7 @@ export function BoardChatDrawer({
         throw new Error('Fix draft validation issues before creating tickets.')
       }
 
+      const draftKeysInBatch = new Set(draftsToCreate.map((draft) => draft.draftKey))
       const result = await window.kanban.ticket.createBatch({
         drafts: draftsToCreate.map((draft) => ({
           draft_key: draft.draftKey,
@@ -1101,7 +1102,7 @@ export function BoardChatDrawer({
           title: draft.title,
           description: draft.description,
           column: 'todo',
-          depends_on: draft.dependsOn
+          depends_on: draft.dependsOn.filter((key) => draftKeysInBatch.has(key))
         }))
       })
 
