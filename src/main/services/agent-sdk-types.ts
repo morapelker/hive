@@ -11,6 +11,7 @@ export interface AgentSdkCapabilities {
   supportsModelSelection: boolean
   supportsReconnect: boolean
   supportsPartialStreaming: boolean
+  supportsSteer: boolean
 }
 
 export interface PromptOptions {
@@ -110,7 +111,8 @@ export const OPENCODE_CAPABILITIES: AgentSdkCapabilities = {
   supportsQuestionPrompts: true,
   supportsModelSelection: true,
   supportsReconnect: true,
-  supportsPartialStreaming: true
+  supportsPartialStreaming: true,
+  supportsSteer: false
 }
 
 export const CLAUDE_CODE_CAPABILITIES: AgentSdkCapabilities = {
@@ -121,7 +123,8 @@ export const CLAUDE_CODE_CAPABILITIES: AgentSdkCapabilities = {
   supportsQuestionPrompts: true,
   supportsModelSelection: true,
   supportsReconnect: true,
-  supportsPartialStreaming: true
+  supportsPartialStreaming: true,
+  supportsSteer: false
 }
 
 export const CODEX_CAPABILITIES: AgentSdkCapabilities = {
@@ -132,7 +135,8 @@ export const CODEX_CAPABILITIES: AgentSdkCapabilities = {
   supportsQuestionPrompts: true,
   supportsModelSelection: true,
   supportsReconnect: true,
-  supportsPartialStreaming: true
+  supportsPartialStreaming: true,
+  supportsSteer: true
 }
 
 export const TERMINAL_CAPABILITIES: AgentSdkCapabilities = {
@@ -143,5 +147,6 @@ export const TERMINAL_CAPABILITIES: AgentSdkCapabilities = {
   supportsQuestionPrompts: false,
   supportsModelSelection: false,
   supportsReconnect: false,
-  supportsPartialStreaming: false
+  supportsPartialStreaming: false,
+  supportsSteer: false
 }

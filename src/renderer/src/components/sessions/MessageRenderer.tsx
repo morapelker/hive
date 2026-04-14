@@ -104,6 +104,7 @@ export const MessageRenderer = memo(function MessageRenderer({
           isPlanMode={isPlanMode}
           isSuperPlanMode={isSuperPlanMode}
           isAskMode={isAskMode}
+          isSteered={message.steered}
         />
       ) : (
         <AssistantCanvas

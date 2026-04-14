@@ -117,6 +117,14 @@ interface CodexPermissionRequest {
   always: string[]
 }
 
+interface CodexSteerResult {
+  steered: boolean
+  error?: string
+  insertedMessageId?: string
+  nextAssistantMessageId?: string
+  turnId?: string
+}
+
 function previewText(value: string, maxLength: number = 120): string {
   if (value.length <= maxLength) return value
   return value.slice(0, maxLength) + '...'
@@ -157,6 +165,32 @@ export function normalizeCodexMessageTimestamps<T extends { created_at: string }
       created_at: new Date(nextTimestampMs).toISOString()
     }
   })
+}
+
+function canonicalTurnMessagePattern(turnId: string, role: 'user' | 'assistant'): RegExp {
+  const escapedTurnId = turnId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^${escapedTurnId}:${role}(?::(\\d+))?$`)
+}
+
+function canonicalTurnMessageOrdinal(
+  messageId: string,
+  turnId: string,
+  role: 'user' | 'assistant'
+): number | null {
+  const match = messageId.match(canonicalTurnMessagePattern(turnId, role))
+  if (!match) return null
+  const rawOrdinal = match[1]
+  if (!rawOrdinal) return 1
+  const parsed = Number.parseInt(rawOrdinal, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function canonicalTurnMessageId(
+  turnId: string,
+  role: 'user' | 'assistant',
+  ordinal: number
+): string {
+  return ordinal <= 1 ? `${turnId}:${role}` : `${turnId}:${role}:${ordinal}`
 }
 
 // ── Snapshot tool-call helpers ────────────────────────────────────
@@ -936,6 +970,58 @@ export class CodexImplementer implements AgentSdkImplementer {
       session.currentTurnId = null
       session.currentAssistantMessageId = null
       this.manager.removeListener('event', handleEvent)
+    }
+  }
+
+  async steer(
+    worktreePath: string,
+    agentSessionId: string,
+    message: string
+  ): Promise<CodexSteerResult> {
+    const key = this.getSessionKey(worktreePath, agentSessionId)
+    const session = this.sessions.get(key)
+    if (!session) {
+      log.warn('Steer: session not found', { worktreePath, agentSessionId })
+      return { steered: false, error: 'session_not_found' }
+    }
+
+    if (session.status !== 'running') {
+      log.warn('Steer: session not running', { worktreePath, agentSessionId, status: session.status })
+      return { steered: false, error: 'session_not_running' }
+    }
+
+    const activeTurnId = this.manager.getSession(session.threadId)?.activeTurnId
+    if (!activeTurnId) {
+      log.warn('Steer: no active turn', { worktreePath, agentSessionId, threadId: session.threadId })
+      return { steered: false, error: 'no_active_turn' }
+    }
+
+    try {
+      const steerResult = await this.manager.steerTurn(session.threadId, { text: message }, activeTurnId)
+      const turnId = steerResult.turnId || activeTurnId
+      const insertedMessageId = this.getNextCanonicalMessageId(session, turnId, 'user')
+      const nextAssistantMessageId = this.getNextCanonicalMessageId(session, turnId, 'assistant')
+
+      const syntheticTimestamp = new Date().toISOString()
+      session.messages.push({
+        id: insertedMessageId,
+        role: 'user',
+        parts: [{ type: 'text', text: message, timestamp: syntheticTimestamp }],
+        timestamp: syntheticTimestamp
+      })
+      session.currentTurnId = turnId
+      session.currentAssistantMessageId = nextAssistantMessageId
+      this.persistCanonicalMessages(session)
+
+      return { steered: true, insertedMessageId, nextAssistantMessageId, turnId }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      log.error(
+        'Steer: steerTurn failed',
+        error instanceof Error ? error : new Error(errorMessage),
+        { worktreePath, agentSessionId, error: errorMessage }
+      )
+      return { steered: false, error: errorMessage }
     }
   }
 
@@ -1771,6 +1857,31 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
   }
 
+  private getNextCanonicalMessageId(
+    session: CodexSessionState,
+    turnId: string,
+    role: 'user' | 'assistant'
+  ): string {
+    let maxOrdinal = 0
+
+    for (const message of session.messages) {
+      const record = asObject(message)
+      const messageId = asString(record?.id)
+      if (!messageId) continue
+      const ordinal = canonicalTurnMessageOrdinal(messageId, turnId, role)
+      if (ordinal && ordinal > maxOrdinal) {
+        maxOrdinal = ordinal
+      }
+    }
+
+    return canonicalTurnMessageId(turnId, role, maxOrdinal + 1)
+  }
+
+  private isAssistantMessageIdForTurn(messageId: string | null, turnId: string): boolean {
+    if (!messageId) return false
+    return canonicalTurnMessageOrdinal(messageId, turnId, 'assistant') !== null
+  }
+
   private ensureLiveAssistantDraft(session: CodexSessionState): CodexLiveAssistantDraft {
     if (!session.liveAssistantDraft) {
       this.resetLiveAssistantDraft(session)
@@ -1779,7 +1890,12 @@ export class CodexImplementer implements AgentSdkImplementer {
   }
 
   private getAssistantMessageId(session: CodexSessionState, turnId?: string): string {
-    if (turnId) return `${turnId}:assistant`
+    if (turnId) {
+      if (this.isAssistantMessageIdForTurn(session.currentAssistantMessageId, turnId)) {
+        return session.currentAssistantMessageId!
+      }
+      return canonicalTurnMessageId(turnId, 'assistant', 1)
+    }
     if (session.currentAssistantMessageId) return session.currentAssistantMessageId
     return `codex-live-${session.threadId}`
   }

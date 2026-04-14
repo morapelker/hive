@@ -567,6 +567,45 @@ export function registerOpenCodeHandlers(
     }
   })
 
+  // Steer — inject input into a running Codex turn
+  ipcMain.handle(
+    'opencode:steer',
+    async (
+      _event,
+      {
+        worktreePath,
+        sessionId,
+        message
+      }: { worktreePath: string; sessionId: string; message: string }
+    ) => {
+      log.info('IPC: opencode:steer', { worktreePath, sessionId })
+      try {
+        // Only Codex supports steering
+        if (sdkManager && dbService) {
+          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          if (sdkId === 'codex') {
+            const impl = sdkManager.getImplementer('codex') as CodexImplementer
+            const result = await impl.steer(worktreePath, sessionId, message)
+            return {
+              success: result.steered,
+              error: result.error,
+              insertedMessageId: result.insertedMessageId,
+              nextAssistantMessageId: result.nextAssistantMessageId,
+              turnId: result.turnId
+            }
+          }
+        }
+        return { success: false, error: 'sdk_not_supported' }
+      } catch (error) {
+        log.error('IPC: opencode:steer failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }
+  )
+
   // Reply to a pending question from the AI
   ipcMain.handle(
     'opencode:question:reply',

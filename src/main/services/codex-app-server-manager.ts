@@ -14,6 +14,8 @@ import type { ThreadStartParams } from '@shared/codex-schemas/v2/ThreadStartPara
 import type { ThreadStartResponse } from '@shared/codex-schemas/v2/ThreadStartResponse'
 import type { ThreadResumeResponse } from '@shared/codex-schemas/v2/ThreadResumeResponse'
 import type { TurnStartResponse } from '@shared/codex-schemas/v2/TurnStartResponse'
+import type { TurnSteerParams } from '@shared/codex-schemas/v2/TurnSteerParams'
+import type { TurnSteerResponse } from '@shared/codex-schemas/v2/TurnSteerResponse'
 import type { TurnInterruptParams } from '@shared/codex-schemas/v2/TurnInterruptParams'
 import type { ThreadReadParams } from '@shared/codex-schemas/v2/ThreadReadParams'
 import type { ThreadRollbackParams } from '@shared/codex-schemas/v2/ThreadRollbackParams'
@@ -138,6 +140,10 @@ export interface CodexTurnStartResult {
   turnId: string
   threadId: string
   resumeCursor?: string
+}
+
+export interface CodexTurnSteerResult {
+  turnId: string
 }
 
 // ── Event types ───────────────────────────────────────────────────
@@ -674,6 +680,37 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       turnId,
       threadId: context.session.threadId
     }
+  }
+
+  async steerTurn(threadId: string, input: CodexTurnInput, expectedTurnId: string): Promise<CodexTurnSteerResult> {
+    const context = this.sessions.get(threadId)
+    if (!context) {
+      throw new Error(`steerTurn: no session found for threadId=${threadId}`)
+    }
+
+    if (!context.session.threadId) {
+      throw new Error('steerTurn: session has no threadId')
+    }
+
+    const turnInput =
+      input.input && input.input.length > 0
+        ? input.input
+        : input.text
+          ? [{ type: 'text' as const, text: input.text, text_elements: [] }]
+          : []
+
+    const params: TurnSteerParams = {
+      threadId: context.session.threadId,
+      input: turnInput,
+      expectedTurnId
+    }
+
+    const response = await this.sendRequest<TurnSteerResponse>(context, 'turn/steer', params)
+
+    // Update active turn so subsequent steers use the correct expectedTurnId
+    this.updateSession(context, { activeTurnId: response.turnId || null })
+
+    return { turnId: response.turnId }
   }
 
   // ── HITL / control-plane API ──────────────────────────────────

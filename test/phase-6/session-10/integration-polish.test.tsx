@@ -330,12 +330,12 @@ describe('Session 10: Integration & Polish', () => {
   describe('Queued messages end-to-end', () => {
     test('QueuedIndicator shows correct count', () => {
       render(<QueuedIndicator count={2} />)
-      expect(screen.getByText('2 messages queued')).toBeTruthy()
+      expect(screen.getByText('2 queued')).toBeTruthy()
     })
 
     test('QueuedIndicator singular form for 1 message', () => {
       render(<QueuedIndicator count={1} />)
-      expect(screen.getByText('1 message queued')).toBeTruthy()
+      expect(screen.getByText('1 queued')).toBeTruthy()
     })
 
     test('QueuedIndicator hidden when count is 0', () => {
@@ -348,7 +348,7 @@ describe('Session 10: Integration & Polish', () => {
       expect(screen.queryByText(/queued/)).toBeNull()
 
       rerender(<QueuedIndicator count={3} />)
-      expect(screen.getByText('3 messages queued')).toBeTruthy()
+      expect(screen.getByText('3 queued')).toBeTruthy()
 
       rerender(<QueuedIndicator count={0} />)
       expect(screen.queryByText(/queued/)).toBeNull()

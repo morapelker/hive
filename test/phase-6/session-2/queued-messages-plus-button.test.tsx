@@ -15,30 +15,30 @@ describe('Session 2: Queued Messages & Plus Button', () => {
 
     test('QueuedIndicator shows singular message for count 1', () => {
       render(<QueuedIndicator count={1} />)
-      expect(screen.getByText('1 message queued')).toBeDefined()
+      expect(screen.getByText('1 queued')).toBeDefined()
     })
 
     test('QueuedIndicator shows plural messages for count > 1', () => {
       render(<QueuedIndicator count={2} />)
-      expect(screen.getByText('2 messages queued')).toBeDefined()
+      expect(screen.getByText('2 queued')).toBeDefined()
     })
 
     test('QueuedIndicator shows count of 5', () => {
       render(<QueuedIndicator count={5} />)
-      expect(screen.getByText('5 messages queued')).toBeDefined()
+      expect(screen.getByText('5 queued')).toBeDefined()
     })
 
     test('QueuedIndicator updates when count changes', () => {
       const { rerender } = render(<QueuedIndicator count={1} />)
-      expect(screen.getByText('1 message queued')).toBeDefined()
+      expect(screen.getByText('1 queued')).toBeDefined()
 
       rerender(<QueuedIndicator count={3} />)
-      expect(screen.getByText('3 messages queued')).toBeDefined()
+      expect(screen.getByText('3 queued')).toBeDefined()
     })
 
     test('QueuedIndicator disappears when count goes to 0', () => {
       const { container, rerender } = render(<QueuedIndicator count={2} />)
-      expect(screen.getByText('2 messages queued')).toBeDefined()
+      expect(screen.getByText('2 queued')).toBeDefined()
 
       rerender(<QueuedIndicator count={0} />)
       expect(container.innerHTML).toBe('')

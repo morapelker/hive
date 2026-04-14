@@ -9,9 +9,10 @@ interface UserBubbleProps {
   isPlanMode?: boolean
   isSuperPlanMode?: boolean
   isAskMode?: boolean
+  isSteered?: boolean
 }
 
-export const UserBubble = memo(function UserBubble({ content, isPlanMode, isSuperPlanMode, isAskMode }: UserBubbleProps): React.JSX.Element {
+export const UserBubble = memo(function UserBubble({ content, isPlanMode, isSuperPlanMode, isAskMode, isSteered }: UserBubbleProps): React.JSX.Element {
   const { tickets, prComments, files, dataAttachments, cleanText } = useMemo(
     () => parseUserMessageAttachments(content),
     [content]
@@ -60,6 +61,14 @@ export const UserBubble = memo(function UserBubble({ content, isPlanMode, isSupe
             data-testid="ask-mode-badge"
           >
             ASK
+          </span>
+        )}
+        {isSteered && (
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 mb-1"
+            data-testid="steered-mode-badge"
+          >
+            STEERED
           </span>
         )}
         <p className="text-sm whitespace-pre-wrap leading-relaxed">{cleanText}</p>
