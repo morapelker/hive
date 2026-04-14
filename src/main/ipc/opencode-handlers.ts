@@ -586,7 +586,13 @@ export function registerOpenCodeHandlers(
           if (sdkId === 'codex') {
             const impl = sdkManager.getImplementer('codex') as CodexImplementer
             const result = await impl.steer(worktreePath, sessionId, message)
-            return { success: result.steered, error: result.error }
+            return {
+              success: result.steered,
+              error: result.error,
+              insertedMessageId: result.insertedMessageId,
+              nextAssistantMessageId: result.nextAssistantMessageId,
+              turnId: result.turnId
+            }
           }
         }
         return { success: false, error: 'sdk_not_supported' }

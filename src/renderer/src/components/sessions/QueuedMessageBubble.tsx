@@ -18,6 +18,7 @@ export function QueuedMessageBubble({ content, canSteer, isLoading, onSteer }: Q
           </span>
           {canSteer && (
             <button
+              type="button"
               onClick={onSteer}
               disabled={isLoading}
               className={cn(

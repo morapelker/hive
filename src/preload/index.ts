@@ -1241,7 +1241,13 @@ const opencodeOps = {
     worktreePath: string,
     opencodeSessionId: string,
     message: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<{
+    success: boolean
+    error?: string
+    insertedMessageId?: string
+    nextAssistantMessageId?: string
+    turnId?: string
+  }> =>
     ipcRenderer.invoke('opencode:steer', {
       worktreePath,
       sessionId: opencodeSessionId,

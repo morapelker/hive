@@ -706,6 +706,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     const response = await this.sendRequest<TurnSteerResponse>(context, 'turn/steer', params)
+
+    // Update active turn so subsequent steers use the correct expectedTurnId
+    this.updateSession(context, { activeTurnId: response.turnId || null })
+
     return { turnId: response.turnId }
   }
 

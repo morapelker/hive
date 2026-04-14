@@ -613,6 +613,18 @@ declare global {
         worktreePath: string,
         opencodeSessionId: string
       ) => Promise<{ success: boolean; error?: string }>
+      // Steer a running Codex turn and return the inserted boundary metadata
+      steer: (
+        worktreePath: string,
+        opencodeSessionId: string,
+        message: string
+      ) => Promise<{
+        success: boolean
+        error?: string
+        insertedMessageId?: string
+        nextAssistantMessageId?: string
+        turnId?: string
+      }>
       // Disconnect session (may kill server if last session for worktree)
       disconnect: (
         worktreePath: string,
@@ -749,6 +761,7 @@ declare global {
           supportsModelSelection: boolean
           supportsReconnect: boolean
           supportsPartialStreaming: boolean
+          supportsSteer: boolean
         }
         error?: string
       }>

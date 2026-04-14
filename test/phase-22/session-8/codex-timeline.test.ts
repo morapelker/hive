@@ -1028,4 +1028,87 @@ describe('codex timeline derivation', () => {
       'turn-2:assistant'
     ])
   })
+
+  it('preserves same-turn steered user and assistant ordinals during timeline merge', () => {
+    const messages: SessionMessage[] = [
+      {
+        id: 'db-user-1',
+        session_id: 'session-1',
+        role: 'user',
+        content: 'First question',
+        opencode_message_id: 'turn-1:user',
+        opencode_message_json: null,
+        opencode_parts_json: JSON.stringify([{ type: 'text', text: 'First question' }]),
+        opencode_timeline_json: null,
+        created_at: '2026-03-14T10:00:00.000Z'
+      },
+      {
+        id: 'db-assistant-1',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: 'First answer',
+        opencode_message_id: 'turn-1:assistant',
+        opencode_message_json: null,
+        opencode_parts_json: JSON.stringify([{ type: 'text', text: 'First answer' }]),
+        opencode_timeline_json: null,
+        created_at: '2026-03-14T10:00:01.000Z'
+      },
+      {
+        id: 'db-user-2',
+        session_id: 'session-1',
+        role: 'user',
+        content: 'Follow-up steer',
+        opencode_message_id: 'turn-1:user:2',
+        opencode_message_json: null,
+        opencode_parts_json: JSON.stringify([{ type: 'text', text: 'Follow-up steer' }]),
+        opencode_timeline_json: null,
+        created_at: '2026-03-14T10:00:02.000Z'
+      },
+      {
+        id: 'db-assistant-2',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: 'Continued answer',
+        opencode_message_id: 'turn-1:assistant:2',
+        opencode_message_json: null,
+        opencode_parts_json: JSON.stringify([{ type: 'text', text: 'Continued answer' }]),
+        opencode_timeline_json: null,
+        created_at: '2026-03-14T10:00:03.000Z'
+      }
+    ]
+
+    const activities: SessionActivity[] = [
+      {
+        id: 'activity-1',
+        session_id: 'session-1',
+        agent_session_id: 'thread-1',
+        thread_id: 'thread-1',
+        turn_id: 'turn-1',
+        item_id: 'tool-1',
+        request_id: null,
+        kind: 'tool.completed',
+        tone: 'tool',
+        summary: 'Read',
+        payload_json: JSON.stringify({
+          item: {
+            toolName: 'Read',
+            input: { filePath: 'src/index.ts' },
+            output: 'ok'
+          }
+        }),
+        sequence: null,
+        created_at: '2026-03-14T10:00:00.500Z'
+      }
+    ]
+
+    const timeline = deriveCodexTimelineMessages(messages, activities)
+
+    expect(timeline.map((message) => message.id)).toEqual([
+      'turn-1:user',
+      'turn-1:tool:tool-1',
+      'turn-1:assistant',
+      'turn-1:user:2',
+      'turn-1:assistant:2'
+    ])
+  })
 })

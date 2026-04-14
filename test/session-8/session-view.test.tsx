@@ -32,6 +32,26 @@ vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
   oneDark: {}
 }))
 
+vi.mock('../../src/renderer/src/components/sessions/ForkMessageButton', () => ({
+  ForkMessageButton: ({
+    onFork,
+    disabled,
+    isForking
+  }: {
+    onFork: () => void
+    disabled?: boolean
+    isForking?: boolean
+  }) => (
+    <button
+      data-testid="fork-message-button"
+      disabled={disabled}
+      onClick={onFork}
+    >
+      {isForking ? 'Forking' : 'Fork'}
+    </button>
+  )
+}))
+
 // Mock database messages (demo messages to test with)
 const mockDemoMessages = [
   {
@@ -272,6 +292,7 @@ beforeEach(() => {
       reconnect: vi.fn().mockResolvedValue({ success: true }),
       prompt: vi.fn().mockResolvedValue({ success: true }),
       command: vi.fn().mockResolvedValue({ success: true }),
+      steer: vi.fn().mockResolvedValue({ success: true }),
       fork: vi.fn().mockResolvedValue({ success: true, sessionId: 'opc-fork-1' }),
       sessionInfo: vi
         .fn()
@@ -301,7 +322,8 @@ beforeEach(() => {
           supportsQuestionPrompts: true,
           supportsModelSelection: true,
           supportsReconnect: true,
-          supportsPartialStreaming: true
+          supportsPartialStreaming: true,
+          supportsSteer: true
         }
       }),
       onStream: vi.fn().mockImplementation(() => () => {})

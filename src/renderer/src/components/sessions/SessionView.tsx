@@ -242,6 +242,11 @@ function hasSuspiciousCodexRoleGrouping(messages: OpenCodeMessage[]): boolean {
   return lastUserIndex < firstAssistantIndex
 }
 
+function buildCanonicalTurnRolePattern(turnId: string, role: 'user' | 'assistant'): RegExp {
+  const escapedTurnId = turnId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^${escapedTurnId}:${role}(?::\\d+)?$`)
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
@@ -330,15 +335,52 @@ function extractSessionErrorStderr(data: unknown): string | null {
 function createLocalMessage(
   role: OpenCodeMessage['role'],
   content: string,
-  extra?: Partial<Pick<OpenCodeMessage, 'steered'>>
+  extra?: Partial<Pick<OpenCodeMessage, 'id' | 'steered'>>
 ): OpenCodeMessage {
   return {
-    id: `local-${crypto.randomUUID()}`,
+    id: extra?.id ?? `local-${crypto.randomUUID()}`,
     role,
     content,
     timestamp: new Date().toISOString(),
     ...extra
   }
+}
+
+function insertSteeredMessageAtBoundary(
+  messages: OpenCodeMessage[],
+  steeredMessage: OpenCodeMessage,
+  options: {
+    anchorAssistantMessageId?: string | null
+    turnId?: string
+  }
+): { nextMessages: OpenCodeMessage[]; inserted: boolean } {
+  const existingIndex = messages.findIndex((message) => message.id === steeredMessage.id)
+  const withoutExisting =
+    existingIndex >= 0 ? messages.filter((message) => message.id !== steeredMessage.id) : messages
+
+  const anchorAssistantIndex = options.anchorAssistantMessageId
+    ? withoutExisting.findIndex((message) => message.id === options.anchorAssistantMessageId)
+    : -1
+
+  if (anchorAssistantIndex >= 0) {
+    const nextMessages = [...withoutExisting]
+    nextMessages.splice(anchorAssistantIndex + 1, 0, steeredMessage)
+    return { nextMessages, inserted: true }
+  }
+
+  if (options.turnId) {
+    const assistantPattern = buildCanonicalTurnRolePattern(options.turnId, 'assistant')
+    for (let index = withoutExisting.length - 1; index >= 0; index--) {
+      const message = withoutExisting[index]
+      if (message.role === 'assistant' && assistantPattern.test(message.id)) {
+        const nextMessages = [...withoutExisting]
+        nextMessages.splice(index + 1, 0, steeredMessage)
+        return { nextMessages, inserted: true }
+      }
+    }
+  }
+
+  return { nextMessages: [...withoutExisting, steeredMessage], inserted: false }
 }
 
 async function loadCodexDurableState(
@@ -518,6 +560,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const [revertMessageID, setRevertMessageID] = useState<string | null>(null)
   const [forkingMessageId, setForkingMessageId] = useState<string | null>(null)
   const [steeringMessageId, setSteeringMessageId] = useState<string | null>(null)
+  const steeringGuardRef = useRef(false)
   const revertDiffRef = useRef<string | null>(null)
 
   // Runtime capabilities for undo/redo gating
@@ -606,8 +649,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         sameLength && prev.every((entry, index) => entry.content === persistedFollowUpMessages[index])
       if (sameContent) return prev
 
+      const matched = new Set<number>()
       return persistedFollowUpMessages.map((content, index) => {
-        const existing = prev.find((p) => p.content === content)
+        const existingIndex = prev.findIndex((p, i) => p.content === content && !matched.has(i))
+        if (existingIndex >= 0) matched.add(existingIndex)
+        const existing = existingIndex >= 0 ? prev[existingIndex] : undefined
         return {
           id: existing?.id ?? crypto.randomUUID(),
           content,
@@ -3865,13 +3911,34 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   const handleSteerMessage = useCallback(
     async (messageId: string, content: string) => {
-      if (!worktreePath || !opencodeSessionId || steeringMessageId) return
+      if (!worktreePath || !opencodeSessionId || steeringGuardRef.current) return
+      steeringGuardRef.current = true
       setSteeringMessageId(messageId)
       try {
         const result = await window.opencodeOps?.steer?.(worktreePath, opencodeSessionId, content)
         if (result?.success) {
           setQueuedMessages((prev) => prev.filter((msg) => msg.id !== messageId))
-          setMessages((prev) => [...prev, createLocalMessage('user', content, { steered: true })])
+          const anchorAssistantMessageId = codexStreamingMessageIdRef.current
+          const insertedMessageId = result.insertedMessageId
+          const steeredMessage = createLocalMessage('user', content, {
+            id: insertedMessageId,
+            steered: true
+          })
+          const insertion = insertSteeredMessageAtBoundary(messagesRef.current, steeredMessage, {
+            anchorAssistantMessageId,
+            turnId: result.turnId
+          })
+
+          setMessages(insertion.nextMessages)
+
+          if (result.nextAssistantMessageId) {
+            codexStreamingMessageIdRef.current = result.nextAssistantMessageId
+          }
+
+          if (!insertion.inserted) {
+            void refreshMessagesFromOpenCode()
+          }
+
           // Remove the steered message from the follow-up queue by content
           const currentFollowUps = useSessionStore.getState().pendingFollowUpMessages.get(sessionId) ?? []
           const indexToRemove = currentFollowUps.indexOf(content)
@@ -3888,10 +3955,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       } catch (error) {
         console.warn('Steer error', { messageId, error })
       } finally {
+        steeringGuardRef.current = false
         setSteeringMessageId(null)
       }
     },
-    [worktreePath, opencodeSessionId, sessionId, steeringMessageId]
+    [opencodeSessionId, refreshMessagesFromOpenCode, sessionId, worktreePath]
   )
 
   const handleForkFromAssistantMessage = useCallback(

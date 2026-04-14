@@ -168,6 +168,67 @@ describe('CodexImplementer skeleton', () => {
     })
   })
 
+  describe('steer', () => {
+    it('assigns canonical same-turn IDs and rolls subsequent assistant deltas below the steered user', async () => {
+      const state = {
+        threadId: 'thread-1',
+        hiveSessionId: 'hive-1',
+        worktreePath: '/path',
+        status: 'running' as const,
+        messages: [
+          {
+            id: 'turn-1:user',
+            role: 'user',
+            parts: [{ type: 'text', text: 'First question', timestamp: '2026-03-14T10:00:00.000Z' }],
+            timestamp: '2026-03-14T10:00:00.000Z'
+          },
+          {
+            id: 'turn-1:assistant',
+            role: 'assistant',
+            parts: [{ type: 'text', text: 'First answer', timestamp: '2026-03-14T10:00:01.000Z' }],
+            timestamp: '2026-03-14T10:00:01.000Z'
+          }
+        ],
+        pendingHitlRequestIds: new Set<string>(),
+        liveAssistantDraft: null,
+        currentTurnId: 'turn-1',
+        currentAssistantMessageId: 'turn-1:assistant',
+        revertMessageID: null,
+        revertDiff: null,
+        titleGenerated: true,
+        titleGenerationStarted: true,
+        persistDebounceTimer: null
+      }
+
+      ;((impl as any).sessions as Map<string, unknown>).set('/path::session-1', state)
+      ;(impl as any).manager = {
+        getSession: vi.fn().mockReturnValue({ activeTurnId: 'turn-1' }),
+        steerTurn: vi.fn().mockResolvedValue({ turnId: 'turn-1' })
+      }
+
+      const result = await impl.steer('/path', 'session-1', 'Follow-up steer')
+
+      expect(result).toEqual({
+        steered: true,
+        insertedMessageId: 'turn-1:user:2',
+        nextAssistantMessageId: 'turn-1:assistant:2',
+        turnId: 'turn-1'
+      })
+      expect((impl as any).manager.steerTurn).toHaveBeenCalledWith(
+        'thread-1',
+        { text: 'Follow-up steer' },
+        'turn-1'
+      )
+
+      ;(impl as any).appendCanonicalAssistantText(state, 'text', 'Continued answer', 'turn-1')
+
+      expect(
+        state.messages.map((message: { id: string }) => message.id)
+      ).toEqual(['turn-1:user', 'turn-1:assistant', 'turn-1:user:2', 'turn-1:assistant:2'])
+      expect(state.currentAssistantMessageId).toBe('turn-1:assistant:2')
+    })
+  })
+
   // ── Unimplemented session info methods throw ───────────────────
 
   describe('implemented session info methods', () => {
