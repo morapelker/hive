@@ -9,6 +9,7 @@ import { toast } from '@/lib/toast'
 import type { UsageProvider } from '@shared/types/usage'
 import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
+import { isAgentSdkAvailable } from '@/lib/agent-sdk-availability'
 
 export function SettingsGeneral(): React.JSX.Element {
   const { setTheme } = useThemeStore()
@@ -25,6 +26,7 @@ export function SettingsGeneral(): React.JSX.Element {
     usageIndicatorMode,
     usageIndicatorProviders,
     defaultAgentSdk,
+    availableAgentSdks,
     stripAtMentions,
     updateSetting,
     resetToDefaults
@@ -45,6 +47,10 @@ export function SettingsGeneral(): React.JSX.Element {
       : [...current, provider]
     updateSetting('usageIndicatorProviders', updated)
   }
+
+  const opencodeAvailable = isAgentSdkAvailable('opencode', availableAgentSdks)
+  const claudeAvailable = isAgentSdkAvailable('claude-code', availableAgentSdks)
+  const codexAvailable = isAgentSdkAvailable('codex', availableAgentSdks)
 
   return (
     <div className="space-y-6">
@@ -378,37 +384,43 @@ export function SettingsGeneral(): React.JSX.Element {
         <div className="flex gap-2">
           <button
             onClick={() => updateSetting('defaultAgentSdk', 'opencode')}
+            disabled={!opencodeAvailable}
             className={cn(
-              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              'px-3 py-1.5 rounded-md text-sm border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
               defaultAgentSdk === 'opencode'
                 ? 'bg-primary text-primary-foreground border-primary'
                 : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
             )}
             data-testid="agent-sdk-opencode"
+            title={!opencodeAvailable ? 'OpenCode is not currently available' : undefined}
           >
             OpenCode
           </button>
           <button
             onClick={() => updateSetting('defaultAgentSdk', 'claude-code')}
+            disabled={!claudeAvailable}
             className={cn(
-              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              'px-3 py-1.5 rounded-md text-sm border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
               defaultAgentSdk === 'claude-code'
                 ? 'bg-primary text-primary-foreground border-primary'
                 : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
             )}
             data-testid="agent-sdk-claude-code"
+            title={!claudeAvailable ? 'Claude Code is not currently available' : undefined}
           >
             Claude Code
           </button>
           <button
             onClick={() => updateSetting('defaultAgentSdk', 'codex')}
+            disabled={!codexAvailable}
             className={cn(
-              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              'px-3 py-1.5 rounded-md text-sm border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
               defaultAgentSdk === 'codex'
                 ? 'bg-primary text-primary-foreground border-primary'
                 : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
             )}
             data-testid="agent-sdk-codex"
+            title={!codexAvailable ? 'Codex is not currently available' : undefined}
           >
             Codex
           </button>
@@ -425,6 +437,12 @@ export function SettingsGeneral(): React.JSX.Element {
             Terminal
           </button>
         </div>
+        {availableAgentSdks && (!opencodeAvailable || !claudeAvailable || !codexAvailable) && (
+          <p className="text-xs text-muted-foreground/70 italic">
+            Unavailable providers are disabled until their CLI is installed and launchable from
+            Hive.
+          </p>
+        )}
         {defaultAgentSdk === 'terminal' && (
           <p className="text-xs text-muted-foreground/70 italic">
             Opens a terminal window. Run any AI tool manually (claude, aider, cursor, etc.)

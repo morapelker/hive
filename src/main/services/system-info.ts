@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { execFileSync } from 'child_process'
 import { existsSync } from 'fs'
 import { getLogDir } from './logger'
+import { resolveOpenCodeLaunchSpec } from './opencode-binary-resolver'
 
 export interface AgentSdkDetection {
   opencode: boolean
@@ -30,7 +31,11 @@ export function detectAgentSdks(): AgentSdkDetection {
       return false
     }
   }
-  return { opencode: check('opencode'), claude: check('claude'), codex: check('codex') }
+  return {
+    opencode: resolveOpenCodeLaunchSpec() !== null,
+    claude: check('claude'),
+    codex: check('codex')
+  }
 }
 
 export function getAppPaths(): AppPaths {

@@ -6,6 +6,7 @@ import { getDatabase } from '../db'
 import { autoRenameWorktreeBranch } from './git-service'
 import { getUserEnvironmentVariables } from './env-vars'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
+import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -77,6 +78,10 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
 function messageInfo(message: unknown): { id?: string; role?: string; parts: unknown[] } {
   const record = asRecord(message)
   const info = asRecord(record?.info)
@@ -118,36 +123,80 @@ async function loadOpenCodeSDK(): Promise<{ createOpencode: any; createOpencodeC
  * Parses the listening URL from stdout.
  */
 function spawnOpenCodeServer(
-  options: { hostname?: string; timeout?: number; signal?: AbortSignal } = {}
+  options: {
+    hostname?: string
+    timeout?: number
+    signal?: AbortSignal
+    launchSpec: OpenCodeLaunchSpec
+  }
 ): Promise<{ url: string; close(): void }> {
   const hostname = options.hostname ?? '127.0.0.1'
   const timeout = options.timeout ?? 10000
+  const launchSpec = options.launchSpec
 
   const args = ['serve', `--hostname=${hostname}`]
-  const proc: ChildProcess = spawn('opencode', args, {
+  const proc: ChildProcess = spawn(launchSpec.command, args, {
     signal: options.signal,
-    env: { ...process.env, ...getUserEnvironmentVariables(getDatabase()) }
+    env: { ...process.env, ...getUserEnvironmentVariables(getDatabase()) },
+    shell: launchSpec.shell
   })
 
   const url = new Promise<string>((resolve, reject) => {
+    let settled = false
+
+    const finishResolve = (value: string): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(id)
+      resolve(value)
+    }
+
+    const finishReject = (error: Error): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(id)
+      reject(error)
+    }
+
+    const terminateProcess = (force: boolean = false): void => {
+      if (process.platform === 'win32' && proc.pid !== undefined) {
+        const taskkillArgs = ['/pid', String(proc.pid), '/t']
+        if (force) taskkillArgs.push('/f')
+        const taskkill = spawn('taskkill', taskkillArgs, { stdio: 'ignore' })
+        taskkill.on('error', () => {
+          try {
+            proc.kill(force ? 'SIGKILL' : 'SIGTERM')
+          } catch {
+            // Process already exited
+          }
+        })
+        return
+      }
+
+      try {
+        proc.kill(force ? 'SIGKILL' : 'SIGTERM')
+      } catch {
+        // Process already exited
+      }
+    }
+
     const id = setTimeout(() => {
-      reject(new Error(`Timeout waiting for opencode server to start after ${timeout}ms`))
+      terminateProcess(true)
+      finishReject(new Error(`Timeout waiting for opencode server to start after ${timeout}ms`))
     }, timeout)
 
     let output = ''
     proc.stdout?.on('data', (chunk: Buffer) => {
       output += chunk.toString()
-      const lines = output.split('\n')
+      const lines = output.split(/\r?\n/)
       for (const line of lines) {
         if (line.startsWith('opencode server listening')) {
           const match = line.match(/on\s+(https?:\/\/[^\s]+)/)
           if (!match) {
-            clearTimeout(id)
-            reject(new Error(`Failed to parse server url from output: ${line}`))
+            finishReject(new Error(`Failed to parse server url from output: ${line}`))
             return
           }
-          clearTimeout(id)
-          resolve(match[1])
+          finishResolve(match[1])
           return
         }
       }
@@ -158,23 +207,22 @@ function spawnOpenCodeServer(
     })
 
     proc.on('exit', (code) => {
-      clearTimeout(id)
+      if (settled) return
       let msg = `opencode server exited with code ${code}`
       if (output.trim()) {
         msg += `\nServer output: ${output}`
       }
-      reject(new Error(msg))
+      finishReject(new Error(msg))
     })
 
     proc.on('error', (error) => {
-      clearTimeout(id)
-      reject(error)
+      finishReject(error)
     })
 
     if (options.signal) {
       options.signal.addEventListener('abort', () => {
-        clearTimeout(id)
-        reject(new Error('Aborted'))
+        terminateProcess(true)
+        finishReject(new Error('Aborted'))
       })
     }
   })
@@ -222,9 +270,14 @@ class OpenCodeService {
   private instance: OpenCodeInstance | null = null
   private mainWindow: BrowserWindow | null = null
   private pendingConnection: Promise<OpenCodeInstance> | null = null
+  private openCodeLaunchSpec: OpenCodeLaunchSpec | null = null
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
+  }
+
+  setOpenCodeLaunchSpec(spec: OpenCodeLaunchSpec | null): void {
+    this.openCodeLaunchSpec = spec
   }
 
   private getSessionMapKey(directory: string, opencodeSessionId: string): string {
@@ -310,12 +363,20 @@ class OpenCodeService {
 
     this.pendingConnection = (async (): Promise<OpenCodeInstance> => {
       try {
+        if (!this.openCodeLaunchSpec) {
+          throw new Error('OpenCode CLI not found. Install OpenCode and ensure it is on your PATH.')
+        }
+
         // Load SDK dynamically (we only need the client, we spawn the server ourselves)
         const { createOpencodeClient } = await loadOpenCodeSDK()
 
         // Spawn opencode serve without --port so it auto-assigns an available port
-        const server = await spawnOpenCodeServer()
-        log.info('OpenCode server started', { url: server.url })
+        const server = await spawnOpenCodeServer({ launchSpec: this.openCodeLaunchSpec })
+        log.info('OpenCode server started', {
+          url: server.url,
+          command: this.openCodeLaunchSpec.command,
+          shell: this.openCodeLaunchSpec.shell
+        })
 
         // Create the SDK client pointing at the auto-assigned URL
         const client = createOpencodeClient({ baseUrl: server.url })
@@ -559,7 +620,10 @@ class OpenCodeService {
         return { success: true, sessionStatus, revertMessageID }
       }
     } catch (error) {
-      log.warn('Failed to reconnect to OpenCode session', { opencodeSessionId, error })
+      log.warn('Failed to reconnect to OpenCode session', {
+        opencodeSessionId,
+        error: toError(error).message
+      })
     }
 
     return { success: false }
@@ -581,7 +645,7 @@ class OpenCodeService {
       log.info('Got available models', { providerCount: enriched.length })
       return enriched
     } catch (error) {
-      log.error('Failed to get available models', { error })
+      log.error('Failed to get available models', toError(error))
       throw error
     }
   }
@@ -625,7 +689,7 @@ class OpenCodeService {
       log.warn('Model not found in any provider', { modelId })
       return null
     } catch (error) {
-      log.error('Failed to get model info', { modelId, error })
+      log.error('Failed to get model info', toError(error), { modelId })
       throw error
     }
   }
@@ -644,7 +708,9 @@ class OpenCodeService {
         }
       }
     } catch (error) {
-      log.warn('Failed to load selected model from DB, using default', { error })
+      log.warn('Failed to load selected model from DB, using default', {
+        error: toError(error).message
+      })
     }
     return DEFAULT_MODEL
   }
@@ -658,7 +724,7 @@ class OpenCodeService {
       db.setSetting(SELECTED_MODEL_DB_KEY, JSON.stringify(model))
       log.info('Selected model saved', { model })
     } catch (error) {
-      log.error('Failed to save selected model', { error })
+      log.error('Failed to save selected model', toError(error))
       throw error
     }
   }
@@ -669,7 +735,7 @@ class OpenCodeService {
       db.deleteSetting(SELECTED_MODEL_DB_KEY)
       log.info('Selected model cleared from backend')
     } catch (error) {
-      log.error('Failed to clear selected model from backend', { error })
+      log.error('Failed to clear selected model from backend', toError(error))
       throw error
     }
   }
@@ -721,7 +787,7 @@ class OpenCodeService {
 
       log.info('Prompt sent successfully', { opencodeSessionId })
     } catch (error) {
-      log.error('Failed to send prompt', { opencodeSessionId, error })
+      log.error('Failed to send prompt', toError(error), { opencodeSessionId })
       throw error
     }
   }
@@ -868,7 +934,7 @@ class OpenCodeService {
 
       return messages
     } catch (error) {
-      log.error('Failed to get messages', { opencodeSessionId, error })
+      log.error('Failed to get messages', toError(error), { opencodeSessionId })
       throw error
     }
   }
@@ -1042,7 +1108,7 @@ class OpenCodeService {
     try {
       this.instance.server.close()
     } catch (error) {
-      log.warn('Error closing OpenCode server', { error })
+      log.warn('Error closing OpenCode server', { error: toError(error).message })
     }
 
     this.instance = null

@@ -4,6 +4,7 @@ import type { SelectedModel } from './useSettingsStore'
 import { useWorktreeStore } from './useWorktreeStore'
 import { notifyKanbanSessionSync, notifyKanbanNewSession } from './store-coordination'
 import { useSettingsStore } from './useSettingsStore'
+import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 
 export const BOARD_TAB_ID = '__board__'
 export const BOARD_ASSISTANT_SESSION_NAME_PREFIX = '[Board Assistant]'
@@ -14,6 +15,13 @@ export function isBoardAssistantSessionName(name: string | null | undefined): bo
 
 function isVisibleSession(session: { name: string | null }): boolean {
   return !isBoardAssistantSessionName(session.name)
+}
+
+function getUnavailableProviderError(
+  sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+): string | null {
+  const { availableAgentSdks } = useSettingsStore.getState()
+  return getUnavailableAgentSdkMessage(sdk, availableAgentSdks)
 }
 
 // Session mode type
@@ -363,6 +371,10 @@ export const useSessionStore = create<SessionState>()(
           const { useSettingsStore } = await import('./useSettingsStore')
           const defaultAgentSdk =
             agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+          const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
+          if (unavailableProviderError) {
+            return { success: false, error: unavailableProviderError }
+          }
 
           const isTerminal = defaultAgentSdk === 'terminal'
 
@@ -1671,6 +1683,10 @@ export const useSessionStore = create<SessionState>()(
             const { useSettingsStore } = await import('./useSettingsStore')
             defaultAgentSdk =
               agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+            const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
+            if (unavailableProviderError) {
+              return { success: false, error: unavailableProviderError }
+            }
             // Terminal sessions skip model resolution
             if (defaultAgentSdk !== 'terminal') {
               const configuredDefaultSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'

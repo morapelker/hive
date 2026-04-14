@@ -434,8 +434,8 @@ const systemOps = {
   // Check if response logging is enabled (--log flag)
   isLogMode: (): Promise<boolean> => ipcRenderer.invoke('system:isLogMode'),
 
-  // Detect which agent SDKs (opencode, claude) are installed on the system
-  detectAgentSdks: (): Promise<{ opencode: boolean; claude: boolean }> =>
+  // Detect which agent SDKs (opencode, claude, codex) are installed on the system
+  detectAgentSdks: (): Promise<{ opencode: boolean; claude: boolean; codex: boolean }> =>
     ipcRenderer.invoke('system:detectAgentSdks'),
 
   // Quit the app (needed for macOS where window.close() doesn't quit)

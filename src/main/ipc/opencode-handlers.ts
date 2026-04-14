@@ -17,6 +17,10 @@ const log = createLogger({ component: 'OpenCodeHandlers' })
 // when the ID changes.
 const injectedWorktrees = new Set<string>()
 
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
 export function registerOpenCodeHandlers(
   mainWindow: BrowserWindow,
   sdkManager?: AgentSdkManager,
@@ -52,7 +56,7 @@ export function registerOpenCodeHandlers(
         telemetryService.track('session_started', { agent_sdk: 'opencode' })
         return { success: true, ...result }
       } catch (error) {
-        log.error('IPC: opencode:connect failed', { error })
+        log.error('IPC: opencode:connect failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -88,7 +92,7 @@ export function registerOpenCodeHandlers(
         )
         return result
       } catch (error) {
-        log.error('IPC: opencode:reconnect failed', { error })
+        log.error('IPC: opencode:reconnect failed', toError(error))
         return { success: false }
       }
     }
@@ -230,7 +234,7 @@ export function registerOpenCodeHandlers(
       telemetryService.track('prompt_sent', { agent_sdk: 'opencode' })
       return { success: true }
     } catch (error) {
-      log.error('IPC: opencode:prompt failed', { error })
+      log.error('IPC: opencode:prompt failed', toError(error))
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -258,7 +262,7 @@ export function registerOpenCodeHandlers(
         await openCodeService.disconnect(worktreePath, opencodeSessionId)
         return { success: true }
       } catch (error) {
-        log.error('IPC: opencode:disconnect failed', { error })
+        log.error('IPC: opencode:disconnect failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -284,7 +288,7 @@ export function registerOpenCodeHandlers(
         const providers = await openCodeService.getAvailableModels()
         return { success: true, providers }
       } catch (error) {
-        log.error('IPC: opencode:models failed', { error })
+        log.error('IPC: opencode:models failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',
@@ -329,7 +333,7 @@ export function registerOpenCodeHandlers(
         openCodeService.setSelectedModel(model)
         return { success: true }
       } catch (error) {
-        log.error('IPC: opencode:setModel failed', { error })
+        log.error('IPC: opencode:setModel failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -368,7 +372,7 @@ export function registerOpenCodeHandlers(
         }
         return { success: true, model }
       } catch (error) {
-        log.error('IPC: opencode:modelInfo failed', { error })
+        log.error('IPC: opencode:modelInfo failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -396,7 +400,7 @@ export function registerOpenCodeHandlers(
         const result = await openCodeService.getSessionInfo(worktreePath, sessionId)
         return { success: true, ...result }
       } catch (error) {
-        log.error('IPC: opencode:sessionInfo failed', { error })
+        log.error('IPC: opencode:sessionInfo failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -435,7 +439,7 @@ export function registerOpenCodeHandlers(
         const commands = await openCodeService.listCommands(worktreePath)
         return { success: true, commands }
       } catch (error) {
-        log.error('IPC: opencode:commands failed', { error })
+        log.error('IPC: opencode:commands failed', toError(error))
         return {
           success: false,
           commands: [],
@@ -479,7 +483,7 @@ export function registerOpenCodeHandlers(
         await openCodeService.sendCommand(worktreePath, sessionId, command, args, model)
         return { success: true }
       } catch (error) {
-        log.error('IPC: opencode:command failed', { error })
+        log.error('IPC: opencode:command failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -559,7 +563,7 @@ export function registerOpenCodeHandlers(
       const defaultCaps = sdkManager?.getCapabilities('opencode') ?? null
       return { success: true, capabilities: defaultCaps }
     } catch (error) {
-      log.error('IPC: opencode:capabilities failed', { error })
+      log.error('IPC: opencode:capabilities failed', toError(error))
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -597,7 +601,7 @@ export function registerOpenCodeHandlers(
         }
         return { success: false, error: 'sdk_not_supported' }
       } catch (error) {
-        log.error('IPC: opencode:steer failed', { error })
+        log.error('IPC: opencode:steer failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -642,7 +646,7 @@ export function registerOpenCodeHandlers(
         await openCodeService.questionReply(requestId, answers, worktreePath)
         return { success: true }
       } catch (error) {
-        log.error('IPC: opencode:question:reply failed', { error })
+        log.error('IPC: opencode:question:reply failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -680,7 +684,7 @@ export function registerOpenCodeHandlers(
         await openCodeService.questionReject(requestId, worktreePath)
         return { success: true }
       } catch (error) {
-        log.error('IPC: opencode:question:reject failed', { error })
+        log.error('IPC: opencode:question:reject failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -715,7 +719,7 @@ export function registerOpenCodeHandlers(
         }
         return { success: false, error: 'No pending plan found' }
       } catch (error) {
-        log.error('IPC: opencode:plan:approve failed', { error })
+        log.error('IPC: opencode:plan:approve failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -755,7 +759,7 @@ export function registerOpenCodeHandlers(
         }
         return { success: false, error: 'No pending plan found' }
       } catch (error) {
-        log.error('IPC: opencode:plan:reject failed', { error })
+        log.error('IPC: opencode:plan:reject failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -799,7 +803,7 @@ export function registerOpenCodeHandlers(
         await openCodeService.permissionReply(requestId, reply, worktreePath, message)
         return { success: true }
       } catch (error) {
-        log.error('IPC: opencode:permission:reply failed', { error })
+        log.error('IPC: opencode:permission:reply failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -830,7 +834,7 @@ export function registerOpenCodeHandlers(
 
         return { success: true, permissions }
       } catch (error) {
-        log.error('IPC: opencode:permission:list failed', { error })
+        log.error('IPC: opencode:permission:list failed', toError(error))
         return {
           success: false,
           permissions: [],
@@ -880,7 +884,7 @@ export function registerOpenCodeHandlers(
         }
         throw new Error('Claude Code implementer not available')
       } catch (error) {
-        log.error('IPC: opencode:commandApprovalReply failed', { error })
+        log.error('IPC: opencode:commandApprovalReply failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -915,7 +919,7 @@ export function registerOpenCodeHandlers(
         await openCodeService.renameSession(opencodeSessionId, title, worktreePath)
         return { success: true }
       } catch (error) {
-        log.error('IPC: opencode:renameSession failed', { error })
+        log.error('IPC: opencode:renameSession failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -940,7 +944,7 @@ export function registerOpenCodeHandlers(
         const result = await openCodeService.forkSession(worktreePath, sessionId, messageId)
         return { success: true, ...result }
       } catch (error) {
-        log.error('IPC: opencode:fork failed', { error })
+        log.error('IPC: opencode:fork failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -968,7 +972,7 @@ export function registerOpenCodeHandlers(
         const messages = await openCodeService.getMessages(worktreePath, opencodeSessionId)
         return { success: true, messages }
       } catch (error) {
-        log.error('IPC: opencode:messages failed', { error })
+        log.error('IPC: opencode:messages failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',
@@ -997,7 +1001,7 @@ export function registerOpenCodeHandlers(
         const result = await openCodeService.abort(worktreePath, opencodeSessionId)
         return { success: result }
       } catch (error) {
-        log.error('IPC: opencode:abort failed', { error })
+        log.error('IPC: opencode:abort failed', toError(error))
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'

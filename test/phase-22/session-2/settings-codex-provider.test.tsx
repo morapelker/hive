@@ -62,6 +62,7 @@ describe('SettingsGeneral: Codex provider button', () => {
       showModelIcons: false,
       showUsageIndicator: true,
       defaultAgentSdk: 'opencode',
+      availableAgentSdks: null,
       stripAtMentions: true,
       updateSetting: mockUpdateSetting,
       resetToDefaults: vi.fn()
@@ -127,5 +128,24 @@ describe('SettingsGeneral: Codex provider button', () => {
     const codexButton = screen.getByTestId('agent-sdk-codex')
     // Inactive button has bg-muted/50 class
     expect(codexButton.className).toContain('bg-muted/50')
+  })
+
+  it('disables unavailable providers when availability is known', async () => {
+    mockSettingsState.availableAgentSdks = {
+      opencode: false,
+      claude: true,
+      codex: true
+    }
+
+    const { SettingsGeneral } = await import(
+      '@/components/settings/SettingsGeneral'
+    )
+    render(<SettingsGeneral />)
+
+    const opencodeButton = screen.getByTestId('agent-sdk-opencode')
+    expect(opencodeButton).toBeDisabled()
+
+    await userEvent.click(opencodeButton)
+    expect(mockUpdateSetting).not.toHaveBeenCalledWith('defaultAgentSdk', 'opencode')
   })
 })

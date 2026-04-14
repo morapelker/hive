@@ -43,6 +43,7 @@ import { CodexImplementer } from './services/codex-implementer'
 import { AgentSdkManager } from './services/agent-sdk-manager'
 import { resolveClaudeBinaryPath } from './services/claude-binary-resolver'
 import { resolveCodexBinaryPath } from './services/codex-binary-resolver'
+import { resolveOpenCodeLaunchSpec } from './services/opencode-binary-resolver'
 import {
   setClaudeBinaryPath as setRouterClaudeBinaryPath,
   setCodexBinaryPath as setRouterCodexBinaryPath
@@ -56,6 +57,7 @@ import { scriptRunner } from './services/script-runner'
 import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
 import { initTicketProviderManager, GitHubProvider, JiraProvider } from './services/ticket-providers'
 import { APP_SETTINGS_DB_KEY } from '../shared/types/settings'
+import { openCodeService } from './services/opencode-service'
 
 const log = createLogger({ component: 'Main' })
 
@@ -419,10 +421,12 @@ app.whenReady().then(async () => {
   // Resolve system-wide Claude binary (must run after loadShellEnv)
   const claudeBinaryPath = resolveClaudeBinaryPath()
   const codexBinaryPath = resolveCodexBinaryPath()
+  const openCodeLaunchSpec = resolveOpenCodeLaunchSpec()
 
   log.info('App starting', {
     version: app.getVersion(),
     platform: process.platform,
+    opencodeBinary: openCodeLaunchSpec?.command ?? 'not found',
     claudeBinary: claudeBinaryPath ?? 'not found',
     codexBinary: codexBinaryPath ?? 'not found'
   })
@@ -518,6 +522,7 @@ app.whenReady().then(async () => {
     claudeImpl.setDatabaseService(getDatabase())
     claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
     setRouterClaudeBinaryPath(claudeBinaryPath)
+    openCodeService.setOpenCodeLaunchSpec(openCodeLaunchSpec)
     const openCodePlaceholder = {
       id: 'opencode' as const,
       capabilities: {
