@@ -535,6 +535,11 @@ body::after {
   background-color: rgba(139, 92, 246, 0.15);
 }
 
+/* Monaco decoration: outdated diff comment range highlight (yellow tint) */
+.diff-comment-range-highlight-outdated {
+  background-color: rgba(234, 179, 8, 0.10);
+}
+
 /* Monaco decoration: flash highlight when jumping to a comment */
 .diff-comment-jump-flash {
   background-color: rgba(139, 92, 246, 0.35);

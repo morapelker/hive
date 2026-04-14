@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus, MessageSquare, Pencil, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import { reanchorComments } from '@/lib/diff-comment-anchor'
 import { formatRelativeTime } from '@/lib/format-utils'
 import { toast } from '@/lib/toast'
 import { useDiffCommentStore, onJump } from '@/stores/useDiffCommentStore'
@@ -53,7 +55,7 @@ export function DiffCommentGutter({
       : EMPTY_COMMENTS,
     [allComments, filePath, worktreeId]
   )
-  const { create, update, remove, fetch } = useDiffCommentStore()
+  const { create, update, remove, fetch, updateLocalLines } = useDiffCommentStore()
 
   // Fetch comments on mount and when worktreeId changes
   const fetchedWorktreeRef = useRef<string | null>(null)
@@ -412,6 +414,45 @@ export function DiffCommentGutter({
   )
 
   // ---------------------------------------------------------------------------
+  // Model version tracking — detect when file content changes
+  // ---------------------------------------------------------------------------
+
+  const [modelVersion, setModelVersion] = useState(0)
+
+  useEffect(() => {
+    if (!modifiedEditor) return
+    const disposable = modifiedEditor.onDidChangeModelContent(() => {
+      setModelVersion((v) => v + 1)
+    })
+    setModelVersion((v) => v + 1) // capture initial state
+    return () => disposable.dispose()
+  }, [modifiedEditor])
+
+  // ---------------------------------------------------------------------------
+  // Re-anchoring effect — update comment positions when content changes
+  // ---------------------------------------------------------------------------
+
+  const lastAnchorKeyRef = useRef('')
+
+  useEffect(() => {
+    if (!modifiedEditor || !worktreeId || fileComments.length === 0) return
+
+    const model = modifiedEditor.getModel()
+    if (!model) return
+
+    const lineCount = model.getLineCount()
+    const commentIds = fileComments.map((c) => c.id).sort().join(',')
+    const anchorKey = `${modelVersion}:${commentIds}`
+
+    if (anchorKey === lastAnchorKeyRef.current) return
+    lastAnchorKeyRef.current = anchorKey
+
+    const getLineContent = (n: number): string => model.getLineContent(n)
+    const results = reanchorComments(fileComments, getLineContent, lineCount)
+    updateLocalLines(worktreeId, results)
+  }, [modifiedEditor, fileComments, worktreeId, modelVersion, updateLocalLines])
+
+  // ---------------------------------------------------------------------------
   // Saved comment view zones
   // ---------------------------------------------------------------------------
 
@@ -471,7 +512,12 @@ export function DiffCommentGutter({
         endLineNumber: c.line_end ?? c.line_start,
         endColumn: 1
       },
-      options: { isWholeLine: true, className: 'diff-comment-range-highlight' }
+      options: {
+        isWholeLine: true,
+        className: c.is_outdated
+          ? 'diff-comment-range-highlight-outdated'
+          : 'diff-comment-range-highlight'
+      }
     }))
     savedDecosRef.current = modifiedEditor.createDecorationsCollection(decoEntries)
 
@@ -766,7 +812,12 @@ function SavedCommentCard({
 
   return (
     <div
-      className="mx-1 my-0.5 rounded-md border border-violet-500/30 bg-violet-950/30 text-xs"
+      className={cn(
+        "mx-1 my-0.5 rounded-md text-xs",
+        comment.is_outdated
+          ? "border border-yellow-500/40 bg-yellow-950/20"
+          : "border border-violet-500/30 bg-violet-950/30"
+      )}
       onMouseDown={(e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -788,6 +839,11 @@ function SavedCommentCard({
               {formatRelativeTime(new Date(comment.created_at).getTime())}
             </span>
           </div>
+          {comment.is_outdated && (
+            <span className="px-1 py-px rounded text-[9px] font-medium bg-yellow-500/10 text-yellow-500 shrink-0">
+              outdated
+            </span>
+          )}
           {!editing && (
             <div className="flex items-center gap-0.5">
               <button
@@ -810,6 +866,12 @@ function SavedCommentCard({
             </div>
           )}
         </div>
+
+        {comment.is_outdated && comment.anchor_text && (
+          <div className="mt-1 px-2 py-1 rounded bg-yellow-500/5 border border-yellow-500/10 font-mono text-[10px] text-muted-foreground whitespace-pre-wrap leading-relaxed max-h-16 overflow-hidden">
+            {comment.anchor_text}
+          </div>
+        )}
 
         {/* Body — read vs edit mode */}
         {editing ? (

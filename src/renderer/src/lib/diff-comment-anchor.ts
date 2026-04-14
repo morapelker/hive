@@ -17,12 +17,13 @@ function scoreContext(stored: string | null, actual: string): number {
   const storedLines = stored.split('\n')
   const actualLines = actual.split('\n')
 
+  // Compare only lines present in both stored and actual context.
+  // Near file boundaries, actual context may have fewer lines — comparing
+  // against null would unfairly penalize candidates near edges.
+  const compareCount = Math.min(storedLines.length, actualLines.length, 3)
   let score = 0
-  // Compare up to 3 lines; each mismatch adds 1 to the score
-  for (let i = 0; i < 3; i++) {
-    const s = storedLines[i] ?? null
-    const a = actualLines[i] ?? null
-    if (s !== a) score++
+  for (let i = 0; i < compareCount; i++) {
+    if (storedLines[i] !== actualLines[i]) score++
   }
   return score
 }
