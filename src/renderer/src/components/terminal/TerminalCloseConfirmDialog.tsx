@@ -13,6 +13,7 @@ interface TerminalCloseConfirmDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   terminalName: string
+  description?: string
   onConfirm: () => void
 }
 
@@ -20,6 +21,7 @@ export function TerminalCloseConfirmDialog({
   open,
   onOpenChange,
   terminalName,
+  description,
   onConfirm
 }: TerminalCloseConfirmDialogProps): React.JSX.Element {
   return (
@@ -28,7 +30,7 @@ export function TerminalCloseConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Close Terminal?</AlertDialogTitle>
           <AlertDialogDescription>
-            Terminal &ldquo;{terminalName}&rdquo; has a running process. Close anyway?
+            {description ?? <>Terminal &ldquo;{terminalName}&rdquo; has a running process. Close anyway?</>}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

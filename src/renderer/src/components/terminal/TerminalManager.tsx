@@ -67,12 +67,14 @@ export function TerminalManager({
   }
 
   // Auto-create "Terminal 1" when a worktree is selected and has no tabs
-  if (selectedWorktreeId && worktreePath && isVisible) {
-    const tabs = tabsByWorktree.get(selectedWorktreeId)
-    if (!tabs || tabs.length === 0) {
-      createTab(selectedWorktreeId)
+  useEffect(() => {
+    if (selectedWorktreeId && worktreePath && isVisible) {
+      const tabs = tabsByWorktree.get(selectedWorktreeId)
+      if (!tabs || tabs.length === 0) {
+        createTab(selectedWorktreeId)
+      }
     }
-  }
+  }, [selectedWorktreeId, worktreePath, isVisible, tabsByWorktree, createTab])
 
   // When backend setting changes, tear down all active terminals so they get re-created
   // with the new backend on next visibility

@@ -88,8 +88,11 @@ export const useTerminalTabStore = create<TerminalTabState>((set, get) => ({
     const remaining = tabs.filter((t) => t.id !== tabId)
 
     if (remaining.length === 0) {
-      // Last tab closed: auto-create a fresh "Terminal 1" with counter reset
-      const freshTabId = `${worktreeId}::tab-1`
+      // Last tab closed: auto-create a fresh tab named "Terminal 1"
+      // Use next counter value for ID to avoid collision with in-flight PTY destroy
+      const currentCounter = state.tabCounterByWorktree.get(worktreeId) ?? 0
+      const nextCounter = currentCounter + 1
+      const freshTabId = `${worktreeId}::tab-${nextCounter}`
       const freshTab: TerminalTab = {
         id: freshTabId,
         worktreeId,
@@ -105,7 +108,7 @@ export const useTerminalTabStore = create<TerminalTabState>((set, get) => ({
 
         tabsByWorktree.set(worktreeId, [freshTab])
         activeTabByWorktree.set(worktreeId, freshTabId)
-        tabCounterByWorktree.set(worktreeId, 1)
+        tabCounterByWorktree.set(worktreeId, nextCounter)
 
         return { tabsByWorktree, activeTabByWorktree, tabCounterByWorktree }
       })

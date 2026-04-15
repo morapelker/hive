@@ -30,7 +30,11 @@ export function TerminalTabSidebar({ worktreeId }: TerminalTabSidebarProps): Rea
 
   const destroyTerminal = useTerminalStore((s) => s.destroyTerminal)
 
-  const [closeConfirmTab, setCloseConfirmTab] = useState<{ id: string; name: string } | null>(null)
+  const [closeConfirmTab, setCloseConfirmTab] = useState<{
+    id: string
+    name: string
+    mode: 'single' | 'close-others'
+  } | null>(null)
 
   const handleCreateTab = useCallback(() => {
     createTab(worktreeId)
@@ -42,7 +46,7 @@ export function TerminalTabSidebar({ worktreeId }: TerminalTabSidebarProps): Rea
       if (!tab) return
 
       if (tab.status === 'running') {
-        setCloseConfirmTab({ id: tab.id, name: tab.name })
+        setCloseConfirmTab({ id: tab.id, name: tab.name, mode: 'single' })
       } else {
         closeTab(worktreeId, tabId)
         destroyTerminal(tabId)
@@ -53,18 +57,38 @@ export function TerminalTabSidebar({ worktreeId }: TerminalTabSidebarProps): Rea
 
   const confirmCloseTab = useCallback(() => {
     if (!closeConfirmTab) return
-    closeTab(worktreeId, closeConfirmTab.id)
-    destroyTerminal(closeConfirmTab.id)
+
+    if (closeConfirmTab.mode === 'close-others') {
+      const tabsToClose = tabs.filter((t) => t.id !== closeConfirmTab.id)
+      for (const tab of tabsToClose) {
+        destroyTerminal(tab.id)
+      }
+      closeOtherTabs(worktreeId, closeConfirmTab.id)
+    } else {
+      closeTab(worktreeId, closeConfirmTab.id)
+      destroyTerminal(closeConfirmTab.id)
+    }
+
     setCloseConfirmTab(null)
-  }, [closeConfirmTab, worktreeId, closeTab, destroyTerminal])
+  }, [closeConfirmTab, tabs, worktreeId, closeTab, closeOtherTabs, destroyTerminal])
 
   const handleCloseOtherTabs = useCallback(
     (keepTabId: string) => {
       const tabsToClose = tabs.filter((t) => t.id !== keepTabId)
-      for (const tab of tabsToClose) {
-        destroyTerminal(tab.id)
+      const runningCount = tabsToClose.filter((t) => t.status === 'running').length
+
+      if (runningCount > 0) {
+        setCloseConfirmTab({
+          id: keepTabId,
+          name: `${runningCount} running terminal${runningCount > 1 ? 's' : ''}`,
+          mode: 'close-others'
+        })
+      } else {
+        for (const tab of tabsToClose) {
+          destroyTerminal(tab.id)
+        }
+        closeOtherTabs(worktreeId, keepTabId)
       }
-      closeOtherTabs(worktreeId, keepTabId)
     },
     [tabs, worktreeId, destroyTerminal, closeOtherTabs]
   )
@@ -73,7 +97,7 @@ export function TerminalTabSidebar({ worktreeId }: TerminalTabSidebarProps): Rea
   useEffect(() => {
     const handler = (e: CustomEvent): void => {
       const { tabId, tabName } = e.detail
-      setCloseConfirmTab({ id: tabId, name: tabName })
+      setCloseConfirmTab({ id: tabId, name: tabName, mode: 'single' })
     }
     window.addEventListener('hive:close-terminal-tab', handler as EventListener)
     return () => window.removeEventListener('hive:close-terminal-tab', handler as EventListener)
@@ -112,6 +136,11 @@ export function TerminalTabSidebar({ worktreeId }: TerminalTabSidebarProps): Rea
           if (!open) setCloseConfirmTab(null)
         }}
         terminalName={closeConfirmTab?.name ?? ''}
+        description={
+          closeConfirmTab?.mode === 'close-others'
+            ? `${closeConfirmTab.name} ${closeConfirmTab.name.startsWith('1 ') ? 'has' : 'have'} a running process. Close anyway?`
+            : undefined
+        }
         onConfirm={confirmCloseTab}
       />
     </div>
