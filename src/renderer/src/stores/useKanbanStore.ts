@@ -506,17 +506,17 @@ export const useKanbanStore = create<KanbanState>()(
             // Find tickets that list this ticket as a blocker
             for (const [depId, blockers] of dependencyMap) {
               if (!blockers.has(ticketId)) continue
-              // Check if ALL blockers of this dependent are now done
-              let allDone = true
+              // Check if ALL blockers of this dependent are now satisfied
+              let allSatisfied = true
               for (const bid of blockers) {
                 // Find the blocker ticket across all projects
                 for (const [, projTickets] of allTickets) {
                   const bt = projTickets.find(t => t.id === bid)
-                  if (bt && !isBlockerSatisfied(bt.column, triggerColumn)) { allDone = false; break }
+                  if (bt && !isBlockerSatisfied(bt.column, triggerColumn)) { allSatisfied = false; break }
                 }
-                if (!allDone) break
+                if (!allSatisfied) break
               }
-              if (allDone) {
+              if (allSatisfied) {
                 // Find the dependent ticket and auto-launch if it has pending config
                 for (const [, projTickets] of allTickets) {
                   const depTicket = projTickets.find(t => t.id === depId)
