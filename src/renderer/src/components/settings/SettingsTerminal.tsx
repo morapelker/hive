@@ -3,7 +3,8 @@ import { isMac as isMacPlatform, isWindows as isWindowsPlatform } from '@/lib/pl
 import {
   useSettingsStore,
   type TerminalOption,
-  type EmbeddedTerminalBackend
+  type EmbeddedTerminalBackend,
+  type TerminalPosition
 } from '@/stores/useSettingsStore'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -65,12 +66,30 @@ const BACKEND_OPTIONS: {
   }
 ]
 
+const POSITION_OPTIONS: {
+  id: TerminalPosition
+  label: string
+  description: string
+}[] = [
+  {
+    id: 'sidebar',
+    label: 'Sidebar',
+    description: 'Terminal appears as a tab alongside Setup and Run'
+  },
+  {
+    id: 'bottom',
+    label: 'Bottom panel',
+    description: 'Terminal gets a dedicated panel below the chat area'
+  }
+]
+
 export function SettingsTerminal(): React.JSX.Element {
   const {
     defaultTerminal,
     customTerminalCommand,
     embeddedTerminalBackend,
     ghosttyFontSize,
+    terminalPosition,
     updateSetting
   } = useSettingsStore()
   const [detectedTerminals, setDetectedTerminals] = useState<DetectedTerminal[]>([])
@@ -137,6 +156,42 @@ export function SettingsTerminal(): React.JSX.Element {
 
   return (
     <div className="space-y-8">
+      {/* Terminal Position */}
+      <div>
+        <h3 className="text-base font-medium mb-1">Terminal Position</h3>
+        <p className="text-sm text-muted-foreground mb-3">
+          Choose where the embedded terminal panel is displayed
+        </p>
+
+        <div className="space-y-1">
+          {POSITION_OPTIONS.map((opt) => {
+            const isSelected = terminalPosition === opt.id
+
+            return (
+              <button
+                key={opt.id}
+                onClick={() => updateSetting('terminalPosition', opt.id)}
+                className={cn(
+                  'w-full flex items-start justify-between px-3 py-2.5 rounded-md text-sm transition-colors text-left',
+                  isSelected
+                    ? 'bg-primary/10 border border-primary/30'
+                    : 'hover:bg-accent/50 border border-transparent'
+                )}
+                data-testid={`terminal-position-${opt.id}`}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span>{opt.label}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">{opt.description}</p>
+                </div>
+                {isSelected && <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
       {/* Embedded Terminal Backend */}
       <div>
         <h3 className="text-base font-medium mb-1">Embedded Terminal</h3>

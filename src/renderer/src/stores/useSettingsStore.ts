@@ -20,6 +20,7 @@ export type TerminalOption =
   | 'cmd'
   | 'custom'
 export type EmbeddedTerminalBackend = 'xterm' | 'ghostty'
+export type TerminalPosition = 'sidebar' | 'bottom'
 export type MergeConflictMode = 'build' | 'plan' | 'always-ask'
 
 export interface SelectedModel {
@@ -63,6 +64,7 @@ export interface AppSettings {
   embeddedTerminalBackend: EmbeddedTerminalBackend
   ghosttyFontSize: number
   ghosttyPromotionDismissed: boolean
+  terminalPosition: TerminalPosition
 
   // Model
   selectedModel: SelectedModel | null
@@ -144,6 +146,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   embeddedTerminalBackend: 'xterm',
   ghosttyFontSize: 14,
   ghosttyPromotionDismissed: false,
+  terminalPosition: 'sidebar',
   selectedModel: null,
   selectedModelByProvider: {},
   defaultModels: null,
@@ -295,6 +298,7 @@ function extractSettings(state: SettingsState): AppSettings {
     embeddedTerminalBackend: state.embeddedTerminalBackend,
     ghosttyFontSize: state.ghosttyFontSize,
     ghosttyPromotionDismissed: state.ghosttyPromotionDismissed,
+    terminalPosition: state.terminalPosition,
     selectedModel: state.selectedModel,
     selectedModelByProvider: state.selectedModelByProvider,
     defaultModels: state.defaultModels,
@@ -551,6 +555,7 @@ export const useSettingsStore = create<SettingsState>()(
         embeddedTerminalBackend: state.embeddedTerminalBackend,
         ghosttyFontSize: state.ghosttyFontSize,
         ghosttyPromotionDismissed: state.ghosttyPromotionDismissed,
+        terminalPosition: state.terminalPosition,
         selectedModel: state.selectedModel,
         selectedModelByProvider: state.selectedModelByProvider,
         defaultModels: state.defaultModels,

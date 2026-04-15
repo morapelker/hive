@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { Header } from './Header'
 import { LeftSidebar } from './LeftSidebar'
 import { MainPane } from './MainPane'
@@ -21,8 +22,13 @@ import { useAutoUpdate } from '@/hooks/useAutoUpdate'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { CreatePRModal } from '@/components/pr/CreatePRModal'
 import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDialog'
+import { TerminalPortalProvider, useTerminalPortal } from '@/contexts/TerminalPortalContext'
+import { TerminalManager } from '@/components/terminal/TerminalManager'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useDropZone } from '@/hooks/useDropZone'
@@ -48,6 +54,61 @@ function GlobalProjectSettings(): React.JSX.Element | null {
       }}
     />
   )
+}
+
+function TerminalManagerPortal(): React.JSX.Element {
+  const { getTarget, revision } = useTerminalPortal()
+  const terminalPosition = useSettingsStore((s) => s.terminalPosition)
+
+  // Read layout state for visibility computation
+  const rightSidebarCollapsed = useLayoutStore((s) => s.rightSidebarCollapsed)
+  const bottomPanelTab = useLayoutStore((s) => s.bottomPanelTab)
+  const collapsedPanel = useLayoutStore((s) => s.collapsedPanel)
+  const bottomTerminalExpanded = useLayoutStore((s) => s.bottomTerminalExpanded)
+
+  const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
+  const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
+  const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
+  const effectiveBottomPanelTab = isConnectionMode ? 'terminal' : bottomPanelTab
+
+  const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
+  const selectedConnection = useConnectionStore((s) =>
+    s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
+  )
+
+  const selectedWorktreePath = useMemo(() => {
+    if (isConnectionMode && selectedConnection?.path) {
+      return selectedConnection.path
+    }
+    if (!selectedWorktreeId) return null
+    for (const [, worktrees] of worktreesByProject) {
+      const worktree = worktrees.find((w) => w.id === selectedWorktreeId)
+      if (worktree) return worktree.path
+    }
+    return null
+  }, [selectedWorktreeId, worktreesByProject, isConnectionMode, selectedConnection?.path])
+
+  // Compute visibility based on position
+  const isVisible = terminalPosition === 'bottom'
+    ? bottomTerminalExpanded
+    : !rightSidebarCollapsed && effectiveBottomPanelTab === 'terminal' && collapsedPanel !== 'bottom'
+
+  const target = getTarget(terminalPosition)
+
+  const terminalManager = (
+    <TerminalManager
+      selectedWorktreeId={selectedWorktreeId}
+      worktreePath={selectedWorktreePath}
+      isVisible={isVisible}
+    />
+  )
+
+  if (target) {
+    return createPortal(terminalManager, target)
+  }
+
+  // Fallback: keep mounted but hidden until portal target is available
+  return <div className="hidden">{terminalManager}</div>
 }
 
 interface AppLayoutProps {
@@ -180,56 +241,59 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   }, [createPRWorktreeId, createPRWorktreePath])
 
   return (
-    <div className="h-screen flex flex-col bg-background text-foreground" data-testid="app-layout">
-      <ErrorBoundary componentName="Header" fallback={<div className="h-12 bg-muted" />}>
-        <Header />
-      </ErrorBoundary>
-      <div className="flex-1 flex min-h-0" data-testid="layout-content">
-        <ErrorBoundary
-          componentName="LeftSidebar"
-          fallback={
-            <div className="w-60 border-r bg-muted/50 flex items-center justify-center">
-              <ErrorFallback compact title="Sidebar Error" />
-            </div>
-          }
-        >
-          <LeftSidebar />
+    <TerminalPortalProvider>
+      <div className="h-screen flex flex-col bg-background text-foreground" data-testid="app-layout">
+        <ErrorBoundary componentName="Header" fallback={<div className="h-12 bg-muted" />}>
+          <Header />
         </ErrorBoundary>
-        <ErrorBoundary componentName="MainPane">
-          <MainPane>{children}</MainPane>
+        <div className="flex-1 flex min-h-0" data-testid="layout-content">
+          <ErrorBoundary
+            componentName="LeftSidebar"
+            fallback={
+              <div className="w-60 border-r bg-muted/50 flex items-center justify-center">
+                <ErrorFallback compact title="Sidebar Error" />
+              </div>
+            }
+          >
+            <LeftSidebar />
+          </ErrorBoundary>
+          <ErrorBoundary componentName="MainPane">
+            <MainPane>{children}</MainPane>
+          </ErrorBoundary>
+          <ErrorBoundary
+            componentName="RightSidebar"
+            fallback={<div className="border-l bg-muted/50" />}
+          >
+            <RightSidebar />
+          </ErrorBoundary>
+        </div>
+        <Toaster />
+        {isDragging && <DropOverlay variant={activeSessionId ? 'normal' : 'warning'} />}
+        <ErrorBoundary componentName="SessionHistory" fallback={null}>
+          <SessionHistory />
         </ErrorBoundary>
-        <ErrorBoundary
-          componentName="RightSidebar"
-          fallback={<div className="border-l bg-muted/50" />}
-        >
-          <RightSidebar />
+        <ErrorBoundary componentName="CommandPalette" fallback={null}>
+          <CommandPalette />
         </ErrorBoundary>
+        <ErrorBoundary componentName="SettingsModal" fallback={null}>
+          <SettingsModal />
+        </ErrorBoundary>
+        <ErrorBoundary componentName="FileSearchDialog" fallback={null}>
+          <FileSearchDialog />
+        </ErrorBoundary>
+        <GlobalProjectSettings />
+        {createPRWorktreeId && createPRWorktreePath && (
+          <ErrorBoundary componentName="CreatePRModal" fallback={null}>
+            <CreatePRModal
+              worktreeId={createPRWorktreeId}
+              worktreePath={createPRWorktreePath}
+            />
+          </ErrorBoundary>
+        )}
+        <AgentSetupGuard />
+        <HelpOverlay />
       </div>
-      <Toaster />
-      {isDragging && <DropOverlay variant={activeSessionId ? 'normal' : 'warning'} />}
-      <ErrorBoundary componentName="SessionHistory" fallback={null}>
-        <SessionHistory />
-      </ErrorBoundary>
-      <ErrorBoundary componentName="CommandPalette" fallback={null}>
-        <CommandPalette />
-      </ErrorBoundary>
-      <ErrorBoundary componentName="SettingsModal" fallback={null}>
-        <SettingsModal />
-      </ErrorBoundary>
-      <ErrorBoundary componentName="FileSearchDialog" fallback={null}>
-        <FileSearchDialog />
-      </ErrorBoundary>
-      <GlobalProjectSettings />
-      {createPRWorktreeId && createPRWorktreePath && (
-        <ErrorBoundary componentName="CreatePRModal" fallback={null}>
-          <CreatePRModal
-            worktreeId={createPRWorktreeId}
-            worktreePath={createPRWorktreePath}
-          />
-        </ErrorBoundary>
-      )}
-      <AgentSetupGuard />
-      <HelpOverlay />
-    </div>
+      <TerminalManagerPortal />
+    </TerminalPortalProvider>
   )
 }

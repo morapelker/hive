@@ -145,6 +145,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     category: 'sidebar',
     defaultBinding: { key: 'b', modifiers: ['meta', 'shift'] }
   },
+  {
+    id: 'sidebar:toggle-bottom-terminal',
+    label: 'Toggle Bottom Terminal',
+    description: 'Show or hide the bottom terminal panel',
+    category: 'sidebar',
+    defaultBinding: { key: '`', modifiers: ['ctrl'] }
+  },
 
   // Focus shortcuts
   {
