@@ -341,7 +341,6 @@ function KanbanTicketModalContent({
   const updateTicket = useKanbanStore((s) => s.updateTicket)
   const deleteTicket = useKanbanStore((s) => s.deleteTicket)
   const moveTicket = useKanbanStore((s) => s.moveTicket)
-  const followUpTriggerColumn = useSettingsStore(s => s.followUpTriggerColumn)
   const [editDraftDirty, setEditDraftDirty] = useState(false)
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false)
 
@@ -820,6 +819,8 @@ function EditModeContent({
   useEffect(() => {
     onDirtyChange(isDirty)
   }, [isDirty, onDirtyChange])
+
+  const followUpTriggerColumn = useSettingsStore(s => s.followUpTriggerColumn)
 
   // ── Dependency selectors ──────────────────────────────────────────
   // useShallow prevents infinite re-render loops by doing shallow equality
