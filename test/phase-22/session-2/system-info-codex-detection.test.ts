@@ -33,7 +33,33 @@ describe('system-info: detectAgentSdks codex detection logic', () => {
         return false
       }
     }
-    return { opencode: check('opencode'), claude: check('claude'), codex: check('codex') }
+
+    const checkCodex = (): boolean => {
+      try {
+        const result = (mockExecFileSync(whichCmd, ['codex'], {
+          encoding: 'utf-8',
+          timeout: 5000,
+          env: process.env
+        }) as string).trim()
+        const resolved = result.split('\n')[0].trim()
+        if (!resolved || !mockExistsSync(resolved)) {
+          return false
+        }
+
+        const helpOutput = mockExecFileSync(resolved, ['app-server', '--help'], {
+          encoding: 'utf-8',
+          timeout: 5000,
+          env: process.env,
+          shell: false
+        }) as string
+
+        return helpOutput.includes('Usage: codex app-server')
+      } catch {
+        return false
+      }
+    }
+
+    return { opencode: check('opencode'), claude: check('claude'), codex: checkCodex() }
   }
 
   beforeEach(() => {
@@ -45,6 +71,7 @@ describe('system-info: detectAgentSdks codex detection logic', () => {
     mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
       const binary = args[0]
       if (binary === 'codex') return '/usr/local/bin/codex\n'
+      if (binary === 'app-server') return 'Usage: codex app-server [OPTIONS] [COMMAND]\n'
       throw new Error('not found')
     })
     mockExistsSync.mockImplementation((p: string) => {
@@ -77,6 +104,7 @@ describe('system-info: detectAgentSdks codex detection logic', () => {
         codex: '/usr/local/bin/codex'
       }
       if (paths[binary]) return paths[binary] + '\n'
+      if (binary === 'app-server') return 'Usage: codex app-server [OPTIONS] [COMMAND]\n'
       throw new Error('not found')
     })
     mockExistsSync.mockReturnValue(true)
@@ -91,7 +119,8 @@ describe('system-info: detectAgentSdks codex detection logic', () => {
     mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
       const binary = args[0]
       if (binary === 'opencode') return '/usr/local/bin/opencode\n'
-      if (binary === 'codex') throw new Error('command timed out')
+      if (binary === 'codex') return '/usr/local/bin/codex\n'
+      if (binary === 'app-server') throw new Error('command timed out')
       throw new Error('not found')
     })
     mockExistsSync.mockReturnValue(true)
@@ -109,6 +138,19 @@ describe('system-info: detectAgentSdks codex detection logic', () => {
       throw new Error('not found')
     })
     mockExistsSync.mockReturnValue(false)
+
+    const result = detectAgentSdks()
+    expect(result.codex).toBe(false)
+  })
+
+  it('returns codex: false when the installed CLI lacks app-server support', () => {
+    mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+      const binary = args[0]
+      if (binary === 'codex') return '/usr/local/bin/codex\n'
+      if (binary === 'app-server') return 'Usage: codex [OPTIONS] [PROMPT]\n'
+      throw new Error('not found')
+    })
+    mockExistsSync.mockReturnValue(true)
 
     const result = detectAgentSdks()
     expect(result.codex).toBe(false)

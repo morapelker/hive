@@ -11,6 +11,14 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
+const { mockSupportsCodexAppServer } = vi.hoisted(() => ({
+  mockSupportsCodexAppServer: vi.fn(() => true)
+}))
+
+vi.mock('../../../src/main/services/codex-binary-resolver', () => ({
+  supportsCodexAppServer: (...args: unknown[]) => mockSupportsCodexAppServer(...args)
+}))
+
 // Mock child_process
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>
@@ -86,6 +94,7 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockSupportsCodexAppServer.mockReturnValue(true)
     manager = new CodexAppServerManager()
   })
 
@@ -107,6 +116,19 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
     const msg = messages.find((m: any) => m.method === 'turn/start')
     return msg?.params ?? null
   }
+
+  it('fails fast when the installed Codex CLI does not support app-server', async () => {
+    mockSupportsCodexAppServer.mockReturnValue(false)
+
+    await expect(
+      manager.startSession({
+        cwd: '/test/project',
+        codexBinaryPath: '/usr/local/bin/codex'
+      })
+    ).rejects.toThrow(
+      'Installed Codex CLI does not support app-server: /usr/local/bin/codex. Upgrade @openai/codex to 0.118.0 or newer.'
+    )
+  })
 
   it('includes collaborationMode with mode: plan and plan developer instructions when interactionMode is plan', async () => {
     const { context, stdin } = createTestContext()
@@ -313,5 +335,19 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
       'Title only instructions'
     )
     expect(params.collaborationMode.settings.reasoning_effort).toBe('low')
+  })
+
+  it('rejects pending requests immediately when the Codex child process errors', async () => {
+    const { context } = createTestContext()
+    ;(manager as any).attachProcessListeners(context, 'thread-123')
+
+    const errorHandler = context.child.on.mock.calls.find((call: any[]) => call[0] === 'error')?.[1]
+    expect(errorHandler).toBeTypeOf('function')
+
+    const pendingRequest = manager.sendRequest(context, 'initialize', {})
+    errorHandler(new Error('spawn ENOENT'))
+
+    await expect(pendingRequest).rejects.toThrow('spawn ENOENT')
+    expect(context.pending.size).toBe(0)
   })
 })

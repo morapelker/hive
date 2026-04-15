@@ -1,10 +1,12 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { extname } from 'node:path'
 import readline from 'node:readline'
 
 import { createLogger } from './logger'
 import { logCodexMessage, logCodexLifecycleEvent, resetSession } from './codex-debug-logger'
+import { supportsCodexAppServer } from './codex-binary-resolver'
 import { getCodexCliEnv } from './codex-cli-env'
 import { asObject, asString, toJsonSnapshot } from './codex-utils'
 import { CODEX_DEFAULT_MODEL } from './codex-models'
@@ -407,11 +409,21 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       }
 
       const codexBinaryPath = options.codexBinaryPath ?? 'codex'
+      if (!supportsCodexAppServer(codexBinaryPath)) {
+        throw new Error(
+          `Installed Codex CLI does not support app-server: ${codexBinaryPath}. Upgrade @openai/codex to 0.118.0 or newer.`
+        )
+      }
+      const binaryExtension = extname(codexBinaryPath).toLowerCase()
+      const useShell =
+        process.platform === 'win32' &&
+        (binaryExtension === '.cmd' || binaryExtension === '.bat' || binaryExtension === '.com')
+
       const child = spawn(codexBinaryPath, ['app-server'], {
         cwd: resolvedCwd,
         env: getCodexCliEnv({ codexHomePath: options.codexHomePath }),
         stdio: ['pipe', 'pipe', 'pipe'],
-        shell: process.platform === 'win32'
+        shell: useShell
       })
       resetSession() // Truncate codex.jsonl if reset-per-session is enabled
       const output = readline.createInterface({ input: child.stdout! })
@@ -931,6 +943,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     context.child.on('error', (error) => {
       const message = error.message || 'codex app-server process errored.'
+      this.rejectPendingRequests(context, message)
       logCodexLifecycleEvent('process/error', { message })
       this.updateSession(context, {
         status: 'error',
@@ -947,6 +960,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       }
 
       const message = `codex app-server exited (code=${code ?? 'null'}, signal=${signal ?? 'null'}).`
+      this.rejectPendingRequests(context, message)
       this.updateSession(context, {
         status: 'closed',
         activeTurnId: null,
@@ -964,6 +978,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       log.info('Process exited', { code, signal, trackingId })
     })
+  }
+
+  private rejectPendingRequests(context: CodexSessionContext, message: string): void {
+    for (const pending of context.pending.values()) {
+      clearTimeout(pending.timeout)
+      pending.reject(new Error(message))
+    }
+    context.pending.clear()
   }
 
   // ── Message handling ───────────��──────────────────────────────
