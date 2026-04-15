@@ -526,6 +526,23 @@ function getShortcutHandlers(
         useLayoutStore.getState().toggleRightSidebar()
       }
     },
+    {
+      id: 'sidebar:toggle-bottom-terminal',
+      binding: getEffectiveBinding('sidebar:toggle-bottom-terminal'),
+      allowInInput: true,
+      handler: () => {
+        const terminalPosition = useSettingsStore.getState().terminalPosition
+        if (terminalPosition === 'bottom') {
+          useLayoutStore.getState().toggleBottomTerminal()
+        } else {
+          // In sidebar mode: open right sidebar + switch to terminal tab
+          const layout = useLayoutStore.getState()
+          if (layout.rightSidebarCollapsed) layout.setRightSidebarCollapsed(false)
+          layout.setBottomPanelTab('terminal')
+          if (layout.collapsedPanel === 'bottom') layout.toggleBottomPanel()
+        }
+      }
+    },
 
     // =====================
     // Focus shortcuts

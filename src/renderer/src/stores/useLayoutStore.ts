@@ -11,6 +11,9 @@ const RIGHT_SIDEBAR_DEFAULT = 280
 const SPLIT_FRACTION_DEFAULT = 0.5
 const SPLIT_FRACTION_MIN = 0.15
 const SPLIT_FRACTION_MAX = 0.85
+const BOTTOM_TERMINAL_HEIGHT_DEFAULT = 0.30
+const BOTTOM_TERMINAL_HEIGHT_MIN = 0.15
+const BOTTOM_TERMINAL_HEIGHT_MAX = 0.70
 
 // Module-level Set to track suppression keys — kept outside Zustand state
 // because Set cannot be serialized by the persist middleware.
@@ -25,6 +28,8 @@ interface LayoutState {
   ghosttyOverlaySuppressed: boolean
   collapsedPanel: CollapsedPanel
   splitFractionByEntity: Record<string, number>
+  bottomTerminalExpanded: boolean
+  bottomTerminalHeightFraction: number
   toggleTopPanel: () => void
   toggleBottomPanel: () => void
   setLeftSidebarWidth: (width: number) => void
@@ -38,6 +43,8 @@ interface LayoutState {
   pushGhosttySuppression: (key: string) => void
   popGhosttySuppression: (key: string) => void
   setSplitFraction: (entityKey: string, fraction: number) => void
+  toggleBottomTerminal: () => void
+  setBottomTerminalHeightFraction: (fraction: number) => void
 }
 
 export const useLayoutStore = create<LayoutState>()(
@@ -51,6 +58,8 @@ export const useLayoutStore = create<LayoutState>()(
       ghosttyOverlaySuppressed: false,
       collapsedPanel: 'none' as CollapsedPanel,
       splitFractionByEntity: {} as Record<string, number>,
+      bottomTerminalExpanded: false,
+      bottomTerminalHeightFraction: BOTTOM_TERMINAL_HEIGHT_DEFAULT,
 
       toggleTopPanel: () => {
         set((state) => ({
@@ -117,6 +126,17 @@ export const useLayoutStore = create<LayoutState>()(
         set((state) => ({
           splitFractionByEntity: { ...state.splitFractionByEntity, [entityKey]: clamped }
         }))
+      },
+
+      toggleBottomTerminal: () => {
+        set((state) => ({
+          bottomTerminalExpanded: !state.bottomTerminalExpanded
+        }))
+      },
+
+      setBottomTerminalHeightFraction: (fraction: number) => {
+        const clamped = Math.min(Math.max(fraction, BOTTOM_TERMINAL_HEIGHT_MIN), BOTTOM_TERMINAL_HEIGHT_MAX)
+        set({ bottomTerminalHeightFraction: clamped })
       }
     }),
     {
@@ -128,7 +148,9 @@ export const useLayoutStore = create<LayoutState>()(
         rightSidebarWidth: state.rightSidebarWidth,
         rightSidebarCollapsed: state.rightSidebarCollapsed,
         collapsedPanel: state.collapsedPanel,
-        splitFractionByEntity: state.splitFractionByEntity
+        splitFractionByEntity: state.splitFractionByEntity,
+        bottomTerminalExpanded: state.bottomTerminalExpanded,
+        bottomTerminalHeightFraction: state.bottomTerminalHeightFraction
       })
     }
   )
@@ -148,5 +170,10 @@ export const LAYOUT_CONSTRAINTS = {
     default: SPLIT_FRACTION_DEFAULT,
     min: SPLIT_FRACTION_MIN,
     max: SPLIT_FRACTION_MAX
+  },
+  bottomTerminal: {
+    default: BOTTOM_TERMINAL_HEIGHT_DEFAULT,
+    min: BOTTOM_TERMINAL_HEIGHT_MIN,
+    max: BOTTOM_TERMINAL_HEIGHT_MAX
   }
 }

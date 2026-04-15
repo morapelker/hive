@@ -7,6 +7,7 @@ import { useLayoutStore } from '@/stores/useLayoutStore'
 import type { BottomPanelTab } from '@/stores/useLayoutStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import type { TerminalPosition } from '@/stores/useSettingsStore'
 import { extractDevServerUrl } from '@/lib/format-utils'
 import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
 import { SetupTab } from './SetupTab'
@@ -21,8 +22,10 @@ const tabs: { id: BottomPanelTab; label: string; keybind: string }[] = [
 ]
 
 interface BottomPanelProps {
-  /** TerminalManager rendered by RightSidebar — passed as a slot to keep it alive across sidebar collapse */
-  terminalSlot: React.ReactNode
+  /** Callback ref to register the terminal portal target container */
+  terminalContainerRef: (el: HTMLDivElement | null) => void
+  /** Current terminal position setting */
+  terminalPosition: TerminalPosition
   /** When true, only the terminal tab is shown (setup/run are worktree-specific) */
   isConnectionMode?: boolean
   /** When true, the panel content is hidden (but kept mounted to preserve PTY state) */
@@ -32,17 +35,25 @@ interface BottomPanelProps {
 }
 
 export function BottomPanel({
-  terminalSlot,
+  terminalContainerRef,
+  terminalPosition,
   isConnectionMode,
   isCollapsed,
   onToggleCollapse
 }: BottomPanelProps): React.JSX.Element {
   const activeTab = useLayoutStore((s) => s.bottomPanelTab)
   const effectiveTab = isConnectionMode ? 'terminal' : activeTab
-  useGhosttyPromotion(effectiveTab === 'terminal')
   const setActiveTab = useLayoutStore((s) => s.setBottomPanelTab)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
-  const visibleTabs = isConnectionMode ? tabs.filter((t) => t.id === 'terminal') : tabs
+  const visibleTabs = terminalPosition === 'bottom'
+    ? tabs.filter((t) => t.id !== 'terminal')
+    : isConnectionMode
+      ? tabs.filter((t) => t.id === 'terminal')
+      : tabs
+
+  // If terminal tab was active but is now hidden (moved to bottom panel), fall back
+  const resolvedTab = (terminalPosition === 'bottom' && effectiveTab === 'terminal') ? 'run' : effectiveTab
+  useGhosttyPromotion(resolvedTab === 'terminal')
 
   // Open in Chrome state
   const scriptState = useScriptStore((s) =>
@@ -92,12 +103,12 @@ export function BottomPanel({
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`text-xs px-3 py-1.5 transition-colors relative ${
-              effectiveTab === tab.id
+              resolvedTab === tab.id
                 ? 'text-foreground'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
             data-testid={`bottom-panel-tab-${tab.id}`}
-            data-active={effectiveTab === tab.id}
+            data-active={resolvedTab === tab.id}
           >
             {vimModeEnabled ? (
               <>
@@ -107,7 +118,7 @@ export function BottomPanel({
             ) : (
               tab.label
             )}
-            {effectiveTab === tab.id && (
+            {resolvedTab === tab.id && (
               <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
             )}
           </button>
@@ -190,12 +201,13 @@ export function BottomPanel({
       </div>
       {/* Use CSS hidden (not conditional rendering) to keep TerminalManager mounted and preserve PTY state */}
       <div className={cn("flex-1 min-h-0 overflow-hidden", isCollapsed && "hidden")} data-testid="bottom-panel-content">
-        {effectiveTab === 'setup' && <SetupTab worktreeId={selectedWorktreeId} />}
-        {effectiveTab === 'run' && <RunTab worktreeId={selectedWorktreeId} />}
-        {/* Terminal slot is always rendered but hidden when not active, preserving PTY state */}
-        <div className={effectiveTab === 'terminal' ? 'h-full w-full' : 'hidden'}>
-          {terminalSlot}
-        </div>
+        {resolvedTab === 'setup' && <SetupTab worktreeId={selectedWorktreeId} />}
+        {resolvedTab === 'run' && <RunTab worktreeId={selectedWorktreeId} />}
+        {/* Terminal portal target — always mounted when in sidebar mode to preserve PTY state */}
+        <div
+          ref={terminalContainerRef}
+          className={resolvedTab === 'terminal' ? 'h-full w-full' : 'hidden'}
+        />
       </div>
     </div>
   )
