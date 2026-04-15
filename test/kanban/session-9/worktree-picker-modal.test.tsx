@@ -1101,5 +1101,33 @@ describe('Session 9: Worktree Picker Modal', () => {
         )
       })
     })
+
+    test('sanitizes slash-heavy ticket titles before creating a worktree', async () => {
+      const ticket = makeTicket({ title: 'Add keyboard shortcuts for playing/pausing and speed' })
+
+      render(
+        <WorktreePickerModal
+          ticket={ticket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={vi.fn()}
+        />
+      )
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+      })
+
+      await waitFor(() => {
+        expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith(
+          'proj-1',
+          '/test/my-project',
+          'My Project',
+          'main',
+          undefined,
+          'add-keyboard-shortcuts-for-playi'
+        )
+      })
+    })
   })
 })

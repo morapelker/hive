@@ -1,7 +1,11 @@
 /**
  * Convert a ticket title into a safe git branch name.
  * Unlike canonicalizeBranchName (which takes 3 words for verbose session titles),
- * this uses the full title since ticket titles are short and intentional.
+ * this uses more of the ticket title to stay recognizable.
+ *
+ * Important: this slug is also used as part of the worktree folder name.
+ * Keep it filesystem-safe and short enough for downstream Windows paths
+ * inside the worktree (for example repos with long backlog filenames).
  *
  * Lives in shared/ so both main and renderer processes can import it
  * (git-service.ts has Node.js deps that crash the renderer).
@@ -11,9 +15,9 @@ export function canonicalizeTicketTitle(title: string): string {
     .trim()
     .toLowerCase()
     .replace(/[\s_]+/g, '-') // spaces and underscores → dashes
-    .replace(/[^a-z0-9\-/.]/g, '') // remove invalid chars
+    .replace(/[^a-z0-9\-.]/g, '') // remove chars unsafe for worktree folder names
     .replace(/-{2,}/g, '-') // collapse consecutive dashes
     .replace(/^-+|-+$/g, '') // strip leading/trailing dashes
-    .slice(0, 50) // truncate
+    .slice(0, 32) // keep ticket-named worktrees under Windows path limits
     .replace(/-+$/, '') // strip trailing dashes after truncation
 }

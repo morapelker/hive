@@ -24,7 +24,7 @@ describe('canonicalizeTicketTitle', () => {
 
   test('uses the full title, not just first 3 words', () => {
     expect(canonicalizeTicketTitle('Add user authentication with OAuth2')).toBe(
-      'add-user-authentication-with-oauth2'
+      'add-user-authentication-with-oau'
     )
   })
 
@@ -44,10 +44,10 @@ describe('canonicalizeTicketTitle', () => {
     expect(canonicalizeTicketTitle('--fix something--')).toBe('fix-something')
   })
 
-  test('truncates to 50 characters', () => {
+  test('truncates to 32 characters', () => {
     const longTitle = 'this is a very long ticket title that exceeds fifty characters by a lot'
     const result = canonicalizeTicketTitle(longTitle)
-    expect(result.length).toBeLessThanOrEqual(50)
+    expect(result.length).toBeLessThanOrEqual(32)
     expect(result).not.toMatch(/-$/) // no trailing dash after truncation
   })
 
@@ -63,7 +63,7 @@ describe('canonicalizeTicketTitle', () => {
     expect(canonicalizeTicketTitle('   ')).toBe('')
   })
 
-  test('preserves slashes and dots (valid in git branches)', () => {
-    expect(canonicalizeTicketTitle('feature/add login.page')).toBe('feature/add-login.page')
+  test('removes slashes but preserves dots for worktree-safe names', () => {
+    expect(canonicalizeTicketTitle('feature/add login.page')).toBe('featureadd-login.page')
   })
 })
