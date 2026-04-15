@@ -1,8 +1,10 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
+import { useTerminalStore } from '@/stores/useTerminalStore'
 import { useShallow } from 'zustand/react/shallow'
 import { TerminalTabEntry } from './TerminalTabEntry'
+import { TerminalCloseConfirmDialog } from './TerminalCloseConfirmDialog'
 
 interface TerminalTabSidebarProps {
   worktreeId: string
@@ -26,9 +28,56 @@ export function TerminalTabSidebar({ worktreeId }: TerminalTabSidebarProps): Rea
     }))
   )
 
+  const destroyTerminal = useTerminalStore((s) => s.destroyTerminal)
+
+  const [closeConfirmTab, setCloseConfirmTab] = useState<{ id: string; name: string } | null>(null)
+
   const handleCreateTab = useCallback(() => {
     createTab(worktreeId)
   }, [createTab, worktreeId])
+
+  const handleCloseTab = useCallback(
+    (tabId: string) => {
+      const tab = tabs.find((t) => t.id === tabId)
+      if (!tab) return
+
+      if (tab.status === 'running') {
+        setCloseConfirmTab({ id: tab.id, name: tab.name })
+      } else {
+        closeTab(worktreeId, tabId)
+        destroyTerminal(tabId)
+      }
+    },
+    [tabs, worktreeId, closeTab, destroyTerminal]
+  )
+
+  const confirmCloseTab = useCallback(() => {
+    if (!closeConfirmTab) return
+    closeTab(worktreeId, closeConfirmTab.id)
+    destroyTerminal(closeConfirmTab.id)
+    setCloseConfirmTab(null)
+  }, [closeConfirmTab, worktreeId, closeTab, destroyTerminal])
+
+  const handleCloseOtherTabs = useCallback(
+    (keepTabId: string) => {
+      const tabsToClose = tabs.filter((t) => t.id !== keepTabId)
+      for (const tab of tabsToClose) {
+        destroyTerminal(tab.id)
+      }
+      closeOtherTabs(worktreeId, keepTabId)
+    },
+    [tabs, worktreeId, destroyTerminal, closeOtherTabs]
+  )
+
+  // Listen for close-terminal-tab events dispatched by Cmd+W keyboard shortcut
+  useEffect(() => {
+    const handler = (e: CustomEvent): void => {
+      const { tabId, tabName } = e.detail
+      setCloseConfirmTab({ id: tabId, name: tabName })
+    }
+    window.addEventListener('hive:close-terminal-tab', handler as EventListener)
+    return () => window.removeEventListener('hive:close-terminal-tab', handler as EventListener)
+  }, [])
 
   return (
     <div className="w-[140px] border-l border-border flex flex-col h-full bg-background/50">
@@ -51,12 +100,20 @@ export function TerminalTabSidebar({ worktreeId }: TerminalTabSidebarProps): Rea
             tab={tab}
             isActive={tab.id === activeTabId}
             onSelect={() => setActiveTab(worktreeId, tab.id)}
-            onClose={() => closeTab(worktreeId, tab.id)}
+            onClose={() => handleCloseTab(tab.id)}
             onRename={(name) => renameTab(worktreeId, tab.id, name)}
-            onCloseOthers={() => closeOtherTabs(worktreeId, tab.id)}
+            onCloseOthers={() => handleCloseOtherTabs(tab.id)}
           />
         ))}
       </div>
+      <TerminalCloseConfirmDialog
+        open={closeConfirmTab !== null}
+        onOpenChange={(open) => {
+          if (!open) setCloseConfirmTab(null)
+        }}
+        terminalName={closeConfirmTab?.name ?? ''}
+        onConfirm={confirmCloseTab}
+      />
     </div>
   )
 }
