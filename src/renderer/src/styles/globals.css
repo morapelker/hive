@@ -452,7 +452,7 @@ body::after {
 /* Safety-net defaults: bar is visible even if JS animation fails to start */
 .progress-bounce-bar {
   left: 0;
-  width: 25%;
+  right: 75%;
 }
 
 /* PR review comment HTML body styling (GitHub bodyHTML) */
