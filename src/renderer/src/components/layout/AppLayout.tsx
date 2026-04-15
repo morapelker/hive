@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Header } from './Header'
 import { LeftSidebar } from './LeftSidebar'
@@ -57,7 +57,7 @@ function GlobalProjectSettings(): React.JSX.Element | null {
 }
 
 function TerminalManagerPortal(): React.JSX.Element {
-  const { getTarget } = useTerminalPortal()
+  const { getTarget, revision } = useTerminalPortal()
   const terminalPosition = useSettingsStore((s) => s.terminalPosition)
 
   // Read layout state for visibility computation
@@ -92,14 +92,6 @@ function TerminalManagerPortal(): React.JSX.Element {
   const isVisible = terminalPosition === 'bottom'
     ? bottomTerminalExpanded
     : !rightSidebarCollapsed && effectiveBottomPanelTab === 'terminal' && collapsedPanel !== 'bottom'
-
-  // Force re-render when portal targets mount/unmount
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    // Small delay to ensure portal targets are mounted
-    const timer = setTimeout(() => setTick((t) => t + 1), 50)
-    return () => clearTimeout(timer)
-  }, [terminalPosition])
 
   const target = getTarget(terminalPosition)
 

@@ -30,6 +30,11 @@ export function RightSidebar(): React.JSX.Element {
   const { registerTarget } = useTerminalPortal()
   const terminalPosition = useSettingsStore((s) => s.terminalPosition)
 
+  const sidebarTargetRef = useCallback(
+    (el: HTMLDivElement | null) => registerTarget('sidebar', el),
+    [registerTarget]
+  )
+
   const entityKey = selectedWorktreeId || selectedConnectionId
   const splitFraction = entityKey
     ? (splitFractionByEntity[entityKey] ?? LAYOUT_CONSTRAINTS.splitFraction.default)
@@ -101,11 +106,13 @@ export function RightSidebar(): React.JSX.Element {
           className="flex flex-col min-h-0 overflow-hidden"
           style={{
             flex:
-              collapsedPanel === 'top'
-                ? '0 0 auto'
-                : collapsedPanel === 'bottom'
-                  ? '1 1 0%'
-                  : `${splitFraction} 1 0%`
+              (isConnectionMode && terminalPosition === 'bottom')
+                ? '1 1 0%'
+                : collapsedPanel === 'top'
+                  ? '0 0 auto'
+                  : collapsedPanel === 'bottom'
+                    ? '1 1 0%'
+                    : `${splitFraction} 1 0%`
           }}
           data-testid="right-sidebar-top"
         >
@@ -125,37 +132,41 @@ export function RightSidebar(): React.JSX.Element {
               onFileClick={handleFileClick}
               className="flex-1 min-h-0"
               isCollapsed={collapsedPanel === 'top'}
-              onToggleCollapse={toggleTopPanel}
+              onToggleCollapse={(isConnectionMode && terminalPosition === 'bottom') ? undefined : toggleTopPanel}
             />
           </ErrorBoundary>
         </div>
 
-        {/* Draggable divider between top and bottom panels */}
-        {collapsedPanel === 'none' && (
-          <ResizeHandle onResize={handleVerticalResize} direction="up" />
-        )}
+        {!(isConnectionMode && terminalPosition === 'bottom') && (
+          <>
+            {/* Draggable divider between top and bottom panels */}
+            {collapsedPanel === 'none' && (
+              <ResizeHandle onResize={handleVerticalResize} direction="up" />
+            )}
 
-        {/* Bottom half: Tab panel */}
-        <div
-          className="flex flex-col min-h-0 overflow-hidden"
-          style={{
-            flex:
-              collapsedPanel === 'bottom'
-                ? '0 0 auto'
-                : collapsedPanel === 'top'
-                  ? '1 1 0%'
-                  : `${1 - splitFraction} 1 0%`
-          }}
-          data-testid="right-sidebar-bottom"
-        >
-          <BottomPanel
-            terminalContainerRef={(el) => registerTarget('sidebar', el)}
-            terminalPosition={terminalPosition}
-            isConnectionMode={isConnectionMode}
-            isCollapsed={collapsedPanel === 'bottom'}
-            onToggleCollapse={toggleBottomPanel}
-          />
-        </div>
+            {/* Bottom half: Tab panel */}
+            <div
+              className="flex flex-col min-h-0 overflow-hidden"
+              style={{
+                flex:
+                  collapsedPanel === 'bottom'
+                    ? '0 0 auto'
+                    : collapsedPanel === 'top'
+                      ? '1 1 0%'
+                      : `${1 - splitFraction} 1 0%`
+              }}
+              data-testid="right-sidebar-bottom"
+            >
+              <BottomPanel
+                terminalContainerRef={sidebarTargetRef}
+                terminalPosition={terminalPosition}
+                isConnectionMode={isConnectionMode}
+                isCollapsed={collapsedPanel === 'bottom'}
+                onToggleCollapse={toggleBottomPanel}
+              />
+            </div>
+          </>
+        )}
       </aside>
     </div>
   )

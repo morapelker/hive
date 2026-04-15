@@ -12,6 +12,11 @@ export function MainPaneTerminalPanel(): React.JSX.Element {
   const setHeightFraction = useLayoutStore((s) => s.setBottomTerminalHeightFraction)
   const { registerTarget } = useTerminalPortal()
 
+  const bottomTargetRef = useCallback(
+    (el: HTMLDivElement | null) => registerTarget('bottom', el),
+    [registerTarget]
+  )
+
   const panelRef = useRef<HTMLDivElement>(null)
   const [parentHeight, setParentHeight] = useState(0)
 
@@ -34,9 +39,10 @@ export function MainPaneTerminalPanel(): React.JSX.Element {
     (delta: number) => {
       if (parentHeight <= 0) return
       const fractionDelta = delta / parentHeight
-      setHeightFraction(heightFraction + fractionDelta)
+      const current = useLayoutStore.getState().bottomTerminalHeightFraction
+      setHeightFraction(current + fractionDelta)
     },
-    [parentHeight, heightFraction, setHeightFraction]
+    [parentHeight, setHeightFraction]
   )
 
   const computedHeight = expanded ? Math.round(parentHeight * heightFraction) : 0
@@ -44,7 +50,7 @@ export function MainPaneTerminalPanel(): React.JSX.Element {
   return (
     <div ref={panelRef} className="flex flex-col flex-shrink-0 border-t border-border">
       {/* Resize handle - only when expanded */}
-      {expanded && <ResizeHandle direction="up" onResize={handleResize} />}
+      {expanded && <ResizeHandle direction="down" onResize={handleResize} />}
 
       {/* Toggle bar - always visible */}
       <button
@@ -68,7 +74,7 @@ export function MainPaneTerminalPanel(): React.JSX.Element {
 
       {/* Terminal content - portal target */}
       <div
-        ref={(el) => registerTarget('bottom', el)}
+        ref={bottomTargetRef}
         style={{
           height: computedHeight,
           transition: 'height 150ms ease-in-out'
