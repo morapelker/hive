@@ -5782,7 +5782,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             className={cn(
               'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
               isBashMode
-                ? 'border-green-500/50 bg-green-500/5'
+                ? 'border-zinc-400/50 bg-zinc-500/5'
                 : mode === 'build'
                   ? 'border-blue-500/50 bg-blue-500/5'
                   : mode === 'super-plan'
@@ -5878,7 +5878,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   className={cn(
                     'text-xs tabular-nums whitespace-nowrap',
                     isBashMode
-                      ? 'text-green-500 font-semibold'
+                      ? 'text-zinc-400 font-semibold'
                       : elapsedTimerText && isActive
                         ? activeQuestion
                           ? 'text-amber-500 font-semibold'
