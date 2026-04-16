@@ -15,7 +15,16 @@ export function registerBashHandlers(mainWindow: BrowserWindow): void {
         command: payload.command,
         cwd: payload.cwd
       })
-      return bashService.run(payload.sessionId, payload.command, payload.cwd)
+      try {
+        const result = await bashService.run(payload.sessionId, payload.command, payload.cwd)
+        return { success: true, ...result }
+      } catch (error) {
+        log.error('IPC: bash:run failed', { error })
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
     }
   )
 

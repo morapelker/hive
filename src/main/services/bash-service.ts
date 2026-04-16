@@ -211,25 +211,26 @@ export class BashService {
       return
     }
 
+    const chunkBytes = Buffer.byteLength(chunk, 'utf-8')
     const remaining = OUTPUT_BYTES_LIMIT - run.outputBytes
-    if (chunk.length <= remaining) {
+    if (chunkBytes <= remaining) {
       run.outputBuffer += chunk
-      run.outputBytes += chunk.length
+      run.outputBytes += chunkBytes
       this.queueOutput(run.sessionId, chunk)
       return
     }
 
     // Append only enough to reach exactly 1 MB, then add the truncation sentinel
     // and kill the process tree.
-    const allowed = remaining > 0 ? chunk.slice(0, remaining) : ''
+    const allowed = remaining > 0 ? Buffer.from(chunk, 'utf-8').subarray(0, remaining).toString('utf-8') : ''
     if (allowed.length > 0) {
       run.outputBuffer += allowed
-      run.outputBytes += allowed.length
+      run.outputBytes += Buffer.byteLength(allowed, 'utf-8')
       this.queueOutput(run.sessionId, allowed)
     }
 
     run.outputBuffer += TRUNCATION_SENTINEL
-    run.outputBytes += TRUNCATION_SENTINEL.length
+    run.outputBytes += Buffer.byteLength(TRUNCATION_SENTINEL, 'utf-8')
     this.queueOutput(run.sessionId, TRUNCATION_SENTINEL)
 
     run.status = 'truncated'
@@ -418,6 +419,7 @@ export class BashService {
     for (const [sessionId, run] of this.runs) {
       if (run.proc && run.status === 'running') {
         log.info('killAll: killing run', { sessionId, runId: run.id, pid: run.proc.pid })
+        run.abortRequested = true
         this.signalProcessTree(run.proc, 'SIGKILL', sessionId)
       }
       this.clearBufferedOutput(sessionId)
