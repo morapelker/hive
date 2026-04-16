@@ -1506,14 +1506,46 @@ function PlanReviewModeContent({
     }
   }, [ticket, isActioning, planContent, onClose])
 
+  // Synchronously re-link the ticket to the new session and (if needed) move it to in_progress
+  // so the kanban board reflects the supercharge before the modal closes. Per-session timing /
+  // status bookkeeping is intentionally deferred to eagerSuperchargeStart so it only runs once
+  // the OpenCode connection actually succeeds — otherwise a failed connect leaves the ticket
+  // permanently marked 'working' with no work running.
+  const prepareTicketSuperchargeSession = useCallback((newSessionId: string): void => {
+    useKanbanStore
+      .getState()
+      .updateTicket(ticket.id, ticket.project_id, {
+        current_session_id: newSessionId,
+        plan_ready: false,
+        mode: 'build'
+      })
+      .catch((err) => {
+        console.error('[KanbanTicketModal] failed to relink supercharge session:', err)
+        toast.error('Failed to attach the new session to the ticket')
+      })
+
+    if (ticket.column === 'todo' || ticket.column === 'review') {
+      useKanbanStore
+        .getState()
+        .moveTicket(ticket.id, ticket.project_id, 'in_progress', ticket.sort_order)
+        .catch((err) => {
+          console.error('[KanbanTicketModal] failed to move supercharged ticket to in_progress:', err)
+          toast.error('Failed to move the ticket to in progress')
+        })
+    }
+  }, [ticket.id, ticket.project_id, ticket.column, ticket.sort_order])
+
   // ── Shared: eagerly connect, send /using-superpowers, queue follow-up for global listener ──
   const eagerSuperchargeStart = useCallback(async (
     worktreePath: string,
     newSessionId: string
   ) => {
-    // Connect to OpenCode
+    // Connect to OpenCode. Surface failure so the caller can alert the user — staying silent
+    // here would leave optimistic UI state with no work running and no error feedback.
     const connectResult = await window.opencodeOps.connect(worktreePath, newSessionId)
-    if (!connectResult.success || !connectResult.sessionId) return
+    if (!connectResult.success || !connectResult.sessionId) {
+      throw new Error('Failed to connect to supercharge session')
+    }
 
     // Persist the opencode session ID to Zustand + DB
     useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
@@ -1521,17 +1553,18 @@ function PlanReviewModeContent({
       opencode_session_id: connectResult.sessionId
     })
 
-    // Queue the follow-up for the global idle listener to dispatch after /using-superpowers completes
-    useSessionStore.getState().setPendingFollowUpMessages(newSessionId, [
-      'use the subagent development skill to implement the following plan:\n' + planContent
-    ])
-
-    // Set status tracking
+    // Status / timing tracking — only after connect succeeds, so a failed connect does not
+    // leave the session permanently marked 'working' on the worktree status store.
     messageSendTimes.set(newSessionId, Date.now())
     userExplicitSendTimes.set(newSessionId, Date.now())
     snapshotTokenBaseline(newSessionId)
     lastSendMode.set(newSessionId, 'build')
     useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
+
+    // Queue the follow-up for the global idle listener to dispatch after /using-superpowers completes
+    useSessionStore.getState().setPendingFollowUpMessages(newSessionId, [
+      'use the subagent development skill to implement the following plan:\n' + planContent
+    ])
 
     // Send /using-superpowers — global listener handles follow-up on idle
     const model = resolveSessionModel(newSessionId)
@@ -1592,25 +1625,30 @@ function PlanReviewModeContent({
       }
 
       const newSessionId = sessionResult.session.id
-      await sessionStore.setSessionMode(newSessionId, 'build')
+      const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+      // Hoist into a const so TS narrowing survives across the background IIFE closure.
+      const newWorktreePath = dupResult.worktree.path
 
-      // Notify kanban store: supercharge re-attaches ticket to new session
-      notifyKanbanSessionSync(sessionId, {
-        type: 'supercharge',
-        newSessionId
-      })
-
-      toast.success('Supercharge session started')
+      prepareTicketSuperchargeSession(newSessionId)
       onClose()
 
-      // Eagerly connect + send /using-superpowers in background; follow-up dispatched by global listener
-      await eagerSuperchargeStart(dupResult.worktree.path, newSessionId)
+      // Finish session configuration and startup in the background so the modal can close
+      // immediately. The success toast is deferred until the background work succeeds —
+      // otherwise we'd announce success and then have to follow it with a failure toast.
+      void (async () => {
+        await setModePromise
+        await eagerSuperchargeStart(newWorktreePath, newSessionId)
+        toast.success('Supercharge session started')
+      })().catch((error) => {
+        console.error('[KanbanTicketModal] supercharge background start failed:', error)
+        toast.error('Failed to supercharge')
+      })
     } catch {
       toast.error('Failed to supercharge')
     } finally {
       setIsActioning(false)
     }
-  }, [ticket, isActioning, planContent, onClose, eagerSuperchargeStart, worktreePath, opcSessionId])
+  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketSuperchargeSession, worktreePath, opcSessionId])
 
   // ── Supercharge Local handler (same worktree, no duplication) ───
   const handleSuperchargeLocal = useCallback(async () => {
@@ -1644,25 +1682,28 @@ function PlanReviewModeContent({
       }
 
       const newSessionId = sessionResult.session.id
-      await sessionStore.setSessionMode(newSessionId, 'build')
+      const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-      // Re-attach ticket to the new session, clear plan_ready
-      notifyKanbanSessionSync(sessionId, {
-        type: 'supercharge',
-        newSessionId
-      })
-
-      toast.success('Local supercharge session started')
+      prepareTicketSuperchargeSession(newSessionId)
       onClose()
 
-      // Eagerly connect + send /using-superpowers in background; follow-up dispatched by global listener
-      await eagerSuperchargeStart(localWorktreePath, newSessionId)
+      // Finish session configuration and startup in the background so the modal can close
+      // immediately. The success toast is deferred until the background work succeeds —
+      // otherwise we'd announce success and then have to follow it with a failure toast.
+      void (async () => {
+        await setModePromise
+        await eagerSuperchargeStart(localWorktreePath, newSessionId)
+        toast.success('Local supercharge session started')
+      })().catch((error) => {
+        console.error('[KanbanTicketModal] local supercharge background start failed:', error)
+        toast.error('Failed to supercharge locally')
+      })
     } catch {
       toast.error('Failed to supercharge locally')
     } finally {
       setIsActioning(false)
     }
-  }, [ticket, isActioning, planContent, onClose, eagerSuperchargeStart, worktreePath, opcSessionId])
+  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketSuperchargeSession, worktreePath, opcSessionId])
 
   return (
     <div ref={dropZoneRef} className="relative contents">
