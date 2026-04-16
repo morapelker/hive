@@ -291,6 +291,10 @@ export function registerDatabaseHandlers(): void {
     return getDatabase().searchSessions(options)
   })
 
+  ipcMain.handle('db:session:getActiveBoardAssistant', (_event, projectId: string) => {
+    return getDatabase().getActiveBoardAssistantByProject(projectId)
+  })
+
   ipcMain.handle('db:session:getDraft', (_event, sessionId: string) => {
     return getDatabase().getSessionDraft(sessionId)
   })

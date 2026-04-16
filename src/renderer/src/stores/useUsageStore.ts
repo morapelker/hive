@@ -15,6 +15,7 @@ interface UsageState {
   activeProvider: UsageProvider
 
   fetchUsageForProvider: (provider: UsageProvider) => Promise<void>
+  forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
   fetchUsage: () => Promise<void>
 }
@@ -52,6 +53,36 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     } else {
       if (state.openaiIsLoading) return
       if (state.openaiLastFetchedAt && Date.now() - state.openaiLastFetchedAt < DEBOUNCE_MS) return
+
+      set({ openaiIsLoading: true })
+      try {
+        const result = await window.usageOps.fetchOpenai()
+        if (result.success) {
+          set({ openaiUsage: result.data ?? null })
+        }
+      } finally {
+        set({ openaiIsLoading: false, openaiLastFetchedAt: Date.now() })
+      }
+    }
+  },
+
+  forceRefreshProvider: async (provider: UsageProvider) => {
+    const state = get()
+
+    if (provider === 'anthropic') {
+      if (state.anthropicIsLoading) return
+
+      set({ anthropicIsLoading: true })
+      try {
+        const result = await window.usageOps.fetch()
+        if (result.success) {
+          set({ anthropicUsage: result.data ?? null })
+        }
+      } finally {
+        set({ anthropicIsLoading: false, anthropicLastFetchedAt: Date.now() })
+      }
+    } else {
+      if (state.openaiIsLoading) return
 
       set({ openaiIsLoading: true })
       try {

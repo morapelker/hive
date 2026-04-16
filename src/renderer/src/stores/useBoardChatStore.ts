@@ -58,9 +58,7 @@ interface ResetBoardChatOptions {
   selectedModelOverride?: SelectedModel | null
 }
 
-interface BoardChatState {
-  isOpen: boolean
-  isMinimized: boolean
+export interface BoardChatSnapshot {
   scope: BoardChatScope | null
   messages: BoardChatMessage[]
   drafts: TicketDraft[]
@@ -75,11 +73,22 @@ interface BoardChatState {
   selectedAgentSdkOverride: 'opencode' | 'claude-code' | 'codex' | null
   selectedModelOverride: SelectedModel | null
   composerValue: string
+}
+
+interface BoardChatState extends BoardChatSnapshot {
+  isOpen: boolean
+  isMinimized: boolean
+  activeScopeKey: string
+  snapshots: Record<string, BoardChatSnapshot>
   open: () => void
   minimize: () => void
   restore: () => void
   close: () => Promise<void>
   clear: () => Promise<void>
+  activateScope: (scope: BoardChatScope | null, options?: ResetBoardChatOptions) => void
+  getProjectSnapshot: (projectId: string) => BoardChatSnapshot | null
+  getSessionSnapshot: (sessionId: string) => { key: string; snapshot: BoardChatSnapshot } | null
+  clearProjectSnapshot: (projectId: string) => void
   syncScope: (scope: BoardChatScope | null) => Promise<void>
   resetForBoardExit: () => Promise<void>
   syncTranscript: (messages: OpenCodeMessage[], isStreaming: boolean) => void
@@ -207,13 +216,108 @@ function buildDefaultTargetProjectId(scope: BoardChatScope | null): string | nul
   return null
 }
 
-function createInitialState(options?: ResetBoardChatOptions): Omit<
+function createInitialSnapshot(options?: ResetBoardChatOptions): BoardChatSnapshot {
+  const scope = options?.scope ?? null
+  return {
+    scope,
+    messages: [],
+    drafts: [],
+    createdDraftIds: [],
+    draftSourceMessageId: null,
+    status: 'idle',
+    selectedTargetProjectId:
+      options?.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope),
+    error: null,
+    sessionId: null,
+    opencodeSessionId: null,
+    runtimePath: null,
+    selectedAgentSdkOverride: options?.selectedAgentSdkOverride ?? null,
+    selectedModelOverride: options?.selectedModelOverride ?? null,
+    composerValue: ''
+  }
+}
+
+function getScopeKey(scope: BoardChatScope | null): string {
+  if (!scope) return 'none'
+  if (scope.kind === 'project') return `project:${scope.projectId}`
+  if (scope.kind === 'connection') return `connection:${scope.connectionId}`
+  return 'pinned'
+}
+
+function getSnapshotFromState(state: BoardChatState): BoardChatSnapshot {
+  return {
+    scope: state.scope,
+    messages: state.messages,
+    drafts: state.drafts,
+    createdDraftIds: state.createdDraftIds,
+    draftSourceMessageId: state.draftSourceMessageId,
+    status: state.status,
+    selectedTargetProjectId: state.selectedTargetProjectId,
+    error: state.error,
+    sessionId: state.sessionId,
+    opencodeSessionId: state.opencodeSessionId,
+    runtimePath: state.runtimePath,
+    selectedAgentSdkOverride: state.selectedAgentSdkOverride,
+    selectedModelOverride: state.selectedModelOverride,
+    composerValue: state.composerValue
+  }
+}
+
+function replaceActiveSnapshot(
+  state: BoardChatState,
+  snapshot: BoardChatSnapshot,
+  activeScopeKey = getScopeKey(snapshot.scope),
+  options?: { dropExistingSnapshot?: boolean }
+): Partial<BoardChatState> {
+  const nextSnapshots = { ...state.snapshots }
+  if (activeScopeKey !== 'none') {
+    if (options?.dropExistingSnapshot) {
+      delete nextSnapshots[activeScopeKey]
+    } else {
+      nextSnapshots[activeScopeKey] = snapshot
+    }
+  }
+
+  return {
+    ...snapshot,
+    activeScopeKey,
+    snapshots: nextSnapshots
+  }
+}
+
+function patchActiveSnapshot(
+  state: BoardChatState,
+  patch: Partial<BoardChatSnapshot>
+): Partial<BoardChatState> {
+  const activeScopeKey = state.activeScopeKey || getScopeKey(state.scope)
+  const nextSnapshot = {
+    ...getSnapshotFromState(state),
+    ...patch
+  }
+
+  const nextSnapshots = { ...state.snapshots }
+  if (activeScopeKey !== 'none') {
+    nextSnapshots[activeScopeKey] = nextSnapshot
+  }
+
+  return {
+    ...patch,
+    activeScopeKey,
+    snapshots: nextSnapshots
+  }
+}
+
+function createBaseState(): Omit<
   BoardChatState,
   | 'open'
   | 'minimize'
   | 'restore'
   | 'close'
   | 'clear'
+  | 'activateScope'
+  | 'getProjectSnapshot'
+  | 'getSessionSnapshot'
+  | 'clearProjectSnapshot'
   | 'syncScope'
   | 'resetForBoardExit'
   | 'syncTranscript'
@@ -238,33 +342,13 @@ function createInitialState(options?: ResetBoardChatOptions): Omit<
   | 'setComposerValue'
   | 'resetState'
 > {
-  const scope = options?.scope ?? null
   return {
-    isOpen: options?.preserveOpen ?? false,
+    isOpen: false,
     isMinimized: false,
-    scope,
-    messages: [],
-    drafts: [],
-    createdDraftIds: [],
-    draftSourceMessageId: null,
-    status: 'idle',
-    selectedTargetProjectId:
-      options?.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope),
-    error: null,
-    sessionId: null,
-    opencodeSessionId: null,
-    runtimePath: null,
-    selectedAgentSdkOverride: options?.selectedAgentSdkOverride ?? null,
-    selectedModelOverride: options?.selectedModelOverride ?? null,
-    composerValue: ''
+    activeScopeKey: 'none',
+    snapshots: {},
+    ...createInitialSnapshot()
   }
-}
-
-function getScopeKey(scope: BoardChatScope | null): string {
-  if (!scope) return 'none'
-  if (scope.kind === 'project') return `project:${scope.projectId}`
-  if (scope.kind === 'connection') return `connection:${scope.connectionId}`
-  return 'pinned'
 }
 
 function applyCreatedDraftState(drafts: TicketDraft[], createdDraftIds: string[]): TicketDraft[] {
@@ -479,11 +563,13 @@ async function ensureRuntime(): Promise<{
 
   await window.db.session.update(session.id, { opencode_session_id: connectResult.sessionId })
 
-  useBoardChatStore.setState({
-    sessionId: session.id,
-    opencodeSessionId: connectResult.sessionId,
-    runtimePath
-  })
+  useBoardChatStore.setState((state) =>
+    patchActiveSnapshot(state, {
+      sessionId: session.id,
+      opencodeSessionId: connectResult.sessionId,
+      runtimePath
+    })
+  )
 
   return {
     sessionId: session.id,
@@ -497,7 +583,7 @@ async function resetAndCleanup(state: Pick<BoardChatState, 'sessionId' | 'openco
 }
 
 export const useBoardChatStore = create<BoardChatState>((set, get) => ({
-  ...createInitialState(),
+  ...createBaseState(),
 
   open: () => set({ isOpen: true, isMinimized: false }),
   minimize: () => set({ isOpen: true, isMinimized: true }),
@@ -505,59 +591,142 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
 
   close: async () => {
     const state = get()
-    set({
-      ...createInitialState({
-        scope: state.scope,
-        selectedTargetProjectId:
-          state.scope?.kind === 'project' ? state.scope.projectId : state.selectedTargetProjectId,
-        selectedAgentSdkOverride: state.selectedAgentSdkOverride,
-        selectedModelOverride: state.selectedModelOverride
-      }),
-      isOpen: false
+    const resetSnapshot = createInitialSnapshot({
+      scope: state.scope,
+      selectedTargetProjectId:
+        state.scope?.kind === 'project' ? state.scope.projectId : state.selectedTargetProjectId,
+      selectedAgentSdkOverride: state.selectedAgentSdkOverride,
+      selectedModelOverride: state.selectedModelOverride
     })
+    set((current) => ({
+      isOpen: false,
+      ...replaceActiveSnapshot(current, resetSnapshot, current.activeScopeKey, {
+        dropExistingSnapshot: true
+      })
+    }))
     await resetAndCleanup(state)
   },
 
   clear: async () => {
     const state = get()
-    set({
-      ...createInitialState({
-        preserveOpen: state.isOpen,
-        scope: state.scope,
-        selectedTargetProjectId:
-          state.scope?.kind === 'project' ? state.scope.projectId : state.selectedTargetProjectId,
-        selectedAgentSdkOverride: state.selectedAgentSdkOverride,
-        selectedModelOverride: state.selectedModelOverride
-      })
-    })
+    set((current) =>
+      replaceActiveSnapshot(
+        current,
+        createInitialSnapshot({
+          scope: state.scope,
+          selectedTargetProjectId:
+            state.scope?.kind === 'project' ? state.scope.projectId : state.selectedTargetProjectId,
+          selectedAgentSdkOverride: state.selectedAgentSdkOverride,
+          selectedModelOverride: state.selectedModelOverride
+        }),
+        current.activeScopeKey
+      )
+    )
     await resetAndCleanup(state)
+  },
+
+  activateScope: (scope, options) => {
+    set((state) => {
+      const scopeKey = getScopeKey(scope)
+      const existing = scopeKey !== 'none' ? state.snapshots[scopeKey] : null
+
+      if (existing) {
+        const hydrated = {
+          ...existing,
+          scope,
+          selectedTargetProjectId:
+            scope?.kind === 'project'
+              ? scope.projectId
+              : existing.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope)
+        }
+        return replaceActiveSnapshot(state, hydrated, scopeKey)
+      }
+
+      return replaceActiveSnapshot(
+        state,
+        createInitialSnapshot({
+          ...options,
+          scope,
+          selectedTargetProjectId:
+            options?.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope)
+        }),
+        scopeKey
+      )
+    })
+  },
+
+  getProjectSnapshot: (projectId) => {
+    const key = `project:${projectId}`
+    const state = get()
+    if (state.activeScopeKey === key) {
+      return getSnapshotFromState(state)
+    }
+    return state.snapshots[key] ?? null
+  },
+
+  getSessionSnapshot: (sessionId) => {
+    const state = get()
+    if (!sessionId) return null
+
+    if (state.sessionId === sessionId) {
+      return {
+        key: state.activeScopeKey,
+        snapshot: getSnapshotFromState(state)
+      }
+    }
+
+    for (const [key, snapshot] of Object.entries(state.snapshots)) {
+      if (snapshot.sessionId === sessionId) {
+        return { key, snapshot }
+      }
+    }
+
+    return null
+  },
+
+  clearProjectSnapshot: (projectId) => {
+    set((state) => {
+      const key = `project:${projectId}`
+      const nextSnapshots = { ...state.snapshots }
+      delete nextSnapshots[key]
+
+      if (state.activeScopeKey === key) {
+        return {
+          ...createBaseState(),
+          isOpen: state.isOpen,
+          isMinimized: state.isMinimized,
+          snapshots: nextSnapshots
+        }
+      }
+
+      return { snapshots: nextSnapshots }
+    })
   },
 
   syncScope: async (scope) => {
     const current = get()
     if (getScopeKey(current.scope) === getScopeKey(scope)) {
-      set({
-        scope,
-        selectedTargetProjectId:
-          scope?.kind === 'project'
-            ? scope.projectId
-            : current.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope)
-      })
+      set((state) =>
+        patchActiveSnapshot(state, {
+          scope,
+          selectedTargetProjectId:
+            scope?.kind === 'project'
+              ? scope.projectId
+              : current.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope)
+        })
+      )
       return
     }
 
-    set({
-      ...createInitialState({
-        scope,
-        selectedTargetProjectId: buildDefaultTargetProjectId(scope)
-      })
+    get().activateScope(scope, {
+      scope,
+      selectedTargetProjectId: buildDefaultTargetProjectId(scope)
     })
-    await resetAndCleanup(current)
   },
 
   resetForBoardExit: async () => {
     const state = get()
-    set({ ...createInitialState() })
+    set({ ...createBaseState() })
     await resetAndCleanup(state)
   },
 
@@ -570,23 +739,25 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
       ? parseDraftsFromMessage(latestDraftMessage, get().scope, get().selectedTargetProjectId)
       : null
 
-    set((state) => ({
-      messages: mergedMessages,
-      drafts:
-        parsedDrafts && latestDraftMessage
-          ? applyCreatedDraftState(parsedDrafts, state.createdDraftIds)
-          : latestDraftMessage
-            ? []
-            : state.drafts,
-      draftSourceMessageId: latestDraftMessage?.id ?? state.draftSourceMessageId,
-      status: isStreaming
-        ? 'thinking'
-        : parsedDrafts && parsedDrafts.length > 0
-          ? 'awaiting_confirmation'
-          : state.status === 'error'
-            ? 'error'
-            : 'idle'
-    }))
+    set((state) =>
+      patchActiveSnapshot(state, {
+        messages: mergedMessages,
+        drafts:
+          parsedDrafts && latestDraftMessage
+            ? applyCreatedDraftState(parsedDrafts, state.createdDraftIds)
+            : latestDraftMessage
+              ? []
+              : state.drafts,
+        draftSourceMessageId: latestDraftMessage?.id ?? state.draftSourceMessageId,
+        status: isStreaming
+          ? 'thinking'
+          : parsedDrafts && parsedDrafts.length > 0
+            ? 'awaiting_confirmation'
+            : state.status === 'error'
+              ? 'error'
+              : 'idle'
+      })
+    )
   },
 
   sendMessage: async (message) => {
@@ -595,24 +766,31 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
 
     const scope = get().scope
     if (!scope || scope.kind === 'pinned') {
-      set({ status: 'error', error: 'Board Assistant is unavailable for this board.' })
+      set((state) =>
+        patchActiveSnapshot(state, {
+          status: 'error',
+          error: 'Board Assistant is unavailable for this board.'
+        })
+      )
       return
     }
 
-    set({
+    set((state) => ({
       isOpen: true,
       isMinimized: false,
-      status: 'starting',
-      error: null,
-      composerValue: ''
-    })
+      ...patchActiveSnapshot(state, {
+        status: 'starting',
+        error: null,
+        composerValue: ''
+      })
+    }))
     get().addLocalUserMessage(trimmed)
 
     try {
       const runtime = await ensureRuntime()
       const boardContext = await buildBoardContext(scope, get().selectedTargetProjectId)
       const prompt = buildAssistantPrompt(scope, get().selectedTargetProjectId, boardContext, trimmed)
-      set({ status: 'thinking' })
+      set((state) => patchActiveSnapshot(state, { status: 'thinking' }))
 
       const result = await window.opencodeOps.prompt(
         runtime.runtimePath,
@@ -626,10 +804,12 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
         throw new Error(result.error || 'Failed to send board assistant prompt.')
       }
     } catch (error) {
-      set({
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Failed to send board assistant prompt.'
-      })
+      set((state) =>
+        patchActiveSnapshot(state, {
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Failed to send board assistant prompt.'
+        })
+      )
       get().addLocalSystemMessage('Board Assistant failed to send that message.')
     }
   },
@@ -641,7 +821,7 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
       return
     }
 
-    set({ status: 'starting', error: null })
+    set((state) => patchActiveSnapshot(state, { status: 'starting', error: null }))
 
     try {
       const invalidDrafts = selectedDrafts.filter((draft) => draft.validationIssues.length > 0)
@@ -670,49 +850,62 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
       get().addLocalSystemMessage(
         `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'} with ${result.dependencies.length} dependenc${result.dependencies.length === 1 ? 'y' : 'ies'}.`
       )
-      set({ status: 'idle' })
+      set((state) => patchActiveSnapshot(state, { status: 'idle' }))
     } catch (error) {
-      set({
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Failed to create selected tickets.'
-      })
+      set((state) =>
+        patchActiveSnapshot(state, {
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Failed to create selected tickets.'
+        })
+      )
     }
   },
 
   toggleDraftSelected: (draftId) =>
-    set((state) => ({
-      drafts: state.drafts.map((draft) =>
-        draft.id === draftId ? { ...draft, selected: !draft.selected } : draft
-      )
-    })),
+    set((state) =>
+      patchActiveSnapshot(state, {
+        drafts: state.drafts.map((draft) =>
+          draft.id === draftId ? { ...draft, selected: !draft.selected } : draft
+        )
+      })
+    ),
 
   markDraftsCreated: (draftIds) =>
-    set((state) => ({
-      createdDraftIds: [...new Set([...state.createdDraftIds, ...draftIds])],
-      drafts: state.drafts.map((draft) =>
-        draftIds.includes(draft.id) ? { ...draft, createdAt: draft.createdAt ?? new Date().toISOString() } : draft
-      )
-    })),
+    set((state) =>
+      patchActiveSnapshot(state, {
+        createdDraftIds: [...new Set([...state.createdDraftIds, ...draftIds])],
+        drafts: state.drafts.map((draft) =>
+          draftIds.includes(draft.id)
+            ? { ...draft, createdAt: draft.createdAt ?? new Date().toISOString() }
+            : draft
+        )
+      })
+    ),
 
   setSelectedTargetProjectId: async (projectId) => {
     const state = get()
     if (state.selectedTargetProjectId === projectId) return
 
-    set({
-      ...createInitialState({
-        preserveOpen: state.isOpen,
-        scope: state.scope,
-        selectedTargetProjectId: projectId,
-        selectedAgentSdkOverride: state.selectedAgentSdkOverride,
-        selectedModelOverride: state.selectedModelOverride
-      })
-    })
+    set((current) =>
+      replaceActiveSnapshot(
+        current,
+        createInitialSnapshot({
+          scope: state.scope,
+          selectedTargetProjectId: projectId,
+          selectedAgentSdkOverride: state.selectedAgentSdkOverride,
+          selectedModelOverride: state.selectedModelOverride
+        }),
+        current.activeScopeKey
+      )
+    )
     await resetAndCleanup(state)
   },
 
-  setSelectedAgentSdkOverride: (selectedAgentSdkOverride) => set({ selectedAgentSdkOverride }),
+  setSelectedAgentSdkOverride: (selectedAgentSdkOverride) =>
+    set((state) => patchActiveSnapshot(state, { selectedAgentSdkOverride })),
 
-  setSelectedModelOverride: (selectedModelOverride) => set({ selectedModelOverride }),
+  setSelectedModelOverride: (selectedModelOverride) =>
+    set((state) => patchActiveSnapshot(state, { selectedModelOverride })),
 
   openDrawer: () => get().open(),
   minimizeDrawer: () => get().minimize(),
@@ -721,40 +914,60 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
   setTranscriptMessages: (messages) => get().syncTranscript(messages, false),
 
   addLocalUserMessage: (content) =>
-    set((state) => ({
-      messages: [...state.messages, makeLocalMessage('user', content)]
-    })),
+    set((state) =>
+      patchActiveSnapshot(state, {
+        messages: [...state.messages, makeLocalMessage('user', content)]
+      })
+    ),
 
   addLocalSystemMessage: (content) =>
-    set((state) => ({
-      messages: [...state.messages, makeLocalMessage('system', content)]
-    })),
+    set((state) =>
+      patchActiveSnapshot(state, {
+        messages: [...state.messages, makeLocalMessage('system', content)]
+      })
+    ),
 
   setDrafts: (drafts, sourceMessageId) =>
-    set((state) => ({
-      drafts: applyCreatedDraftState(drafts, state.createdDraftIds),
-      draftSourceMessageId: sourceMessageId,
-      status: drafts.length > 0 ? 'awaiting_confirmation' : 'idle'
-    })),
+    set((state) =>
+      patchActiveSnapshot(state, {
+        drafts: applyCreatedDraftState(drafts, state.createdDraftIds),
+        draftSourceMessageId: sourceMessageId,
+        status: drafts.length > 0 ? 'awaiting_confirmation' : 'idle'
+      })
+    ),
 
   clearDrafts: () =>
-    set((state) => ({
-      drafts: [],
-      draftSourceMessageId: null,
-      status: state.status === 'awaiting_confirmation' ? 'idle' : state.status
-    })),
+    set((state) =>
+      patchActiveSnapshot(state, {
+        drafts: [],
+        draftSourceMessageId: null,
+        status: state.status === 'awaiting_confirmation' ? 'idle' : state.status
+      })
+    ),
 
   setAllDraftsSelected: (selected) =>
-    set((state) => ({
-      drafts: state.drafts.map((draft) => (draft.createdAt ? draft : { ...draft, selected }))
-    })),
+    set((state) =>
+      patchActiveSnapshot(state, {
+        drafts: state.drafts.map((draft) => (draft.createdAt ? draft : { ...draft, selected }))
+      })
+    ),
 
-  setStatus: (status) => set({ status }),
-  setError: (error) => set({ error }),
+  setStatus: (status) => set((state) => patchActiveSnapshot(state, { status })),
+  setError: (error) => set((state) => patchActiveSnapshot(state, { error })),
   setRuntimeSession: ({ sessionId, opencodeSessionId, runtimePath }) =>
-    set({ sessionId, opencodeSessionId, runtimePath }),
-  updateOpencodeSessionId: (opencodeSessionId) => set({ opencodeSessionId }),
-  clearRuntimeSession: () => set({ sessionId: null, opencodeSessionId: null, runtimePath: null }),
-  setComposerValue: (composerValue) => set({ composerValue }),
-  resetState: (options) => set(() => ({ ...createInitialState(options) }))
+    set((state) => patchActiveSnapshot(state, { sessionId, opencodeSessionId, runtimePath })),
+  updateOpencodeSessionId: (opencodeSessionId) =>
+    set((state) => patchActiveSnapshot(state, { opencodeSessionId })),
+  clearRuntimeSession: () =>
+    set((state) => patchActiveSnapshot(state, { sessionId: null, opencodeSessionId: null, runtimePath: null })),
+  setComposerValue: (composerValue) =>
+    set((state) => patchActiveSnapshot(state, { composerValue })),
+  resetState: (options) =>
+    set((state) =>
+      replaceActiveSnapshot(
+        state,
+        createInitialSnapshot(options ? { ...options, scope: options.scope ?? state.scope } : { scope: state.scope }),
+        state.activeScopeKey
+      )
+    )
 }))

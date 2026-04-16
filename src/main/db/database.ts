@@ -116,7 +116,8 @@ export class DatabaseService {
   private mapSessionRow(row: Record<string, unknown>): Session {
     return {
       ...row,
-      pinned_to_board: !!(row.pinned_to_board as number)
+      pinned_to_board: !!(row.pinned_to_board as number),
+      session_type: (row.session_type as string) ?? 'default'
     } as Session
   }
 
@@ -389,6 +390,7 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'github_pr_number', 'INTEGER DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'github_pr_url', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'mark', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
@@ -1004,6 +1006,7 @@ export class DatabaseService {
       opencode_session_id: data.opencode_session_id ?? null,
       agent_sdk: data.agent_sdk ?? 'opencode',
       mode: data.mode ?? 'build',
+      session_type: data.session_type ?? 'default',
       model_provider_id: data.model_provider_id ?? null,
       model_id: data.model_id ?? null,
       model_variant: data.model_variant ?? null,
@@ -1014,8 +1017,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, agent_sdk, mode, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at, pinned_to_board)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, agent_sdk, mode, session_type, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at, pinned_to_board)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -1026,6 +1029,7 @@ export class DatabaseService {
       session.opencode_session_id,
       session.agent_sdk,
       session.mode,
+      session.session_type,
       session.model_provider_id,
       session.model_id,
       session.model_variant,
@@ -1092,6 +1096,16 @@ export class DatabaseService {
     return rows.map((row) => this.mapSessionRow(row))
   }
 
+  getActiveBoardAssistantByProject(projectId: string): Session | null {
+    const db = this.getDb()
+    const row = db
+      .prepare(
+        "SELECT * FROM sessions WHERE project_id = ? AND session_type = 'board-assistant' AND status = 'active' ORDER BY updated_at DESC LIMIT 1"
+      )
+      .get(projectId) as Record<string, unknown> | undefined
+    return row ? this.mapSessionRow(row) : null
+  }
+
   countActiveSessions(): number {
     const db = this.getDb()
     const row = db.prepare("SELECT COUNT(*) as count FROM sessions WHERE status = 'active'").get() as { count: number } | undefined
@@ -1125,6 +1139,10 @@ export class DatabaseService {
     if (data.mode !== undefined) {
       updates.push('mode = ?')
       values.push(data.mode)
+    }
+    if (data.session_type !== undefined) {
+      updates.push('session_type = ?')
+      values.push(data.session_type)
     }
     if (data.model_provider_id !== undefined) {
       updates.push('model_provider_id = ?')

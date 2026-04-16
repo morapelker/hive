@@ -365,6 +365,7 @@ declare global {
           name?: string | null
           opencode_session_id?: string | null
           agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+          session_type?: 'default' | 'board-assistant'
           model_provider_id?: string | null
           model_id?: string | null
           model_variant?: string | null
@@ -396,6 +397,7 @@ declare global {
         getActiveByConnection: (connectionId: string) => Promise<Session[]>
         setPinnedToBoard: (sessionId: string, pinned: boolean) => Promise<Session | null>
         getPinnedSessions: (worktreeId: string) => Promise<Session[]>
+        getActiveBoardAssistant: (projectId: string) => Promise<Session | null>
       }
       sessionMessage: {
         list: (sessionId: string) => Promise<SessionMessage[]>
@@ -893,15 +895,15 @@ declare global {
     }
     terminalOps: {
       create: (
-        worktreeId: string,
+        terminalId: string,
         cwd: string,
         shell?: string
       ) => Promise<{ success: boolean; cols?: number; rows?: number; error?: string }>
-      write: (worktreeId: string, data: string) => void
-      resize: (worktreeId: string, cols: number, rows: number) => Promise<void>
-      destroy: (worktreeId: string) => Promise<void>
-      onData: (worktreeId: string, callback: (data: string) => void) => () => void
-      onExit: (worktreeId: string, callback: (code: number) => void) => () => void
+      write: (terminalId: string, data: string) => void
+      resize: (terminalId: string, cols: number, rows: number) => Promise<void>
+      destroy: (terminalId: string) => Promise<void>
+      onData: (terminalId: string, callback: (data: string) => void) => () => void
+      onExit: (terminalId: string, callback: (code: number) => void) => () => void
       getConfig: () => Promise<GhosttyTerminalConfig>
 
       // Native Ghostty backend methods
@@ -912,17 +914,17 @@ declare global {
         platform: string
       }>
       ghosttyCreateSurface: (
-        worktreeId: string,
+        terminalId: string,
         rect: { x: number; y: number; w: number; h: number },
         opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
       ) => Promise<{ success: boolean; surfaceId?: number; error?: string }>
       ghosttySetFrame: (
-        worktreeId: string,
+        terminalId: string,
         rect: { x: number; y: number; w: number; h: number }
       ) => Promise<void>
-      ghosttySetSize: (worktreeId: string, width: number, height: number) => Promise<void>
+      ghosttySetSize: (terminalId: string, width: number, height: number) => Promise<void>
       ghosttyKeyEvent: (
-        worktreeId: string,
+        terminalId: string,
         event: {
           action: number
           keycode: number
@@ -934,21 +936,21 @@ declare global {
         }
       ) => Promise<boolean>
       ghosttyMouseButton: (
-        worktreeId: string,
+        terminalId: string,
         state: number,
         button: number,
         mods: number
       ) => Promise<void>
-      ghosttyMousePos: (worktreeId: string, x: number, y: number, mods: number) => Promise<void>
+      ghosttyMousePos: (terminalId: string, x: number, y: number, mods: number) => Promise<void>
       ghosttyMouseScroll: (
-        worktreeId: string,
+        terminalId: string,
         dx: number,
         dy: number,
         mods: number
       ) => Promise<void>
-      ghosttySetFocus: (worktreeId: string, focused: boolean) => Promise<void>
-      ghosttyPasteText: (worktreeId: string, text: string) => Promise<void>
-      ghosttyDestroySurface: (worktreeId: string) => Promise<void>
+      ghosttySetFocus: (terminalId: string, focused: boolean) => Promise<void>
+      ghosttyPasteText: (terminalId: string, text: string) => Promise<void>
+      ghosttyDestroySurface: (terminalId: string) => Promise<void>
       ghosttyShutdown: () => Promise<void>
     }
     gitOps: {

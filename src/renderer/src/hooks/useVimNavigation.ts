@@ -247,17 +247,32 @@ export function useVimNavigation(): void {
       }
 
       // --- Panel shortcuts: bottom panel tabs ---
-      if (event.key === 's' || event.key === 'u' || event.key === 't') {
+      if (event.key === 's' || event.key === 'u') {
         const layout = useLayoutStore.getState()
         if (layout.rightSidebarCollapsed) {
           layout.setRightSidebarCollapsed(false)
         }
-        const tabMap: Record<string, 'setup' | 'run' | 'terminal'> = {
+        const tabMap: Record<string, 'setup' | 'run'> = {
           s: 'setup',
-          u: 'run',
-          t: 'terminal'
+          u: 'run'
         }
         layout.setBottomPanelTab(tabMap[event.key])
+        event.preventDefault()
+        return
+      }
+
+      // Terminal shortcut: respects terminalPosition setting
+      if (event.key === 't') {
+        const terminalPosition = useSettingsStore.getState().terminalPosition
+        if (terminalPosition === 'bottom') {
+          useLayoutStore.getState().toggleBottomTerminal()
+        } else {
+          const layout = useLayoutStore.getState()
+          if (layout.rightSidebarCollapsed) {
+            layout.setRightSidebarCollapsed(false)
+          }
+          layout.setBottomPanelTab('terminal')
+        }
         event.preventDefault()
         return
       }

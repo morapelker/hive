@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 22
+export const CURRENT_SCHEMA_VERSION = 23
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -442,6 +442,12 @@ export const MIGRATIONS: Migration[] = [
 CREATE INDEX idx_ticket_deps_dependent ON ticket_dependencies(dependent_id);
 CREATE INDEX idx_ticket_deps_blocker ON ticket_dependencies(blocker_id);
 ALTER TABLE kanban_tickets ADD COLUMN pending_launch_config TEXT DEFAULT NULL;`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 23,
+    name: 'add_session_type',
+    up: `ALTER TABLE sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'default'`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

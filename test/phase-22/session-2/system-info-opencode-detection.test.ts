@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockExecFileSync, mockExistsSync, mockResolveOpenCodeLaunchSpec } = vi.hoisted(() => ({
+const { mockExecFileSync, mockExistsSync } = vi.hoisted(() => ({
   mockExecFileSync: vi.fn(),
-  mockExistsSync: vi.fn(),
-  mockResolveOpenCodeLaunchSpec: vi.fn()
+  mockExistsSync: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -11,10 +10,6 @@ vi.mock('electron', () => ({
     getPath: vi.fn().mockReturnValue('/tmp'),
     getVersion: vi.fn().mockReturnValue('1.0.0')
   }
-}))
-
-vi.mock('../../../src/main/services/opencode-binary-resolver', () => ({
-  resolveOpenCodeLaunchSpec: (...args: unknown[]) => mockResolveOpenCodeLaunchSpec(...args)
 }))
 
 vi.mock('child_process', () => ({
@@ -35,10 +30,6 @@ describe('system-info: detectAgentSdks opencode launchability', () => {
   })
 
   it('marks opencode available only when the launch spec resolves', async () => {
-    mockResolveOpenCodeLaunchSpec.mockReturnValue({
-      command: '/usr/local/bin/opencode',
-      shell: false
-    })
     mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
       const binary = args[0]
       if (binary === 'claude') return '/usr/local/bin/claude\n'
@@ -48,22 +39,23 @@ describe('system-info: detectAgentSdks opencode launchability', () => {
 
     const { detectAgentSdks } = await import('../../../src/main/services/system-info')
 
-    expect(detectAgentSdks()).toEqual({
+    expect(
+      detectAgentSdks({ command: '/usr/local/bin/opencode', shell: false })
+    ).toEqual({
       opencode: true,
       claude: true,
       codex: true
     })
   })
 
-  it('returns opencode false when the resolver cannot produce a launch spec', async () => {
-    mockResolveOpenCodeLaunchSpec.mockReturnValue(null)
+  it('returns opencode false when the launch spec is null', async () => {
     mockExecFileSync.mockImplementation(() => {
       throw new Error('not found')
     })
 
     const { detectAgentSdks } = await import('../../../src/main/services/system-info')
 
-    expect(detectAgentSdks()).toEqual({
+    expect(detectAgentSdks(null)).toEqual({
       opencode: false,
       claude: false,
       codex: false

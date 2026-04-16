@@ -15,7 +15,7 @@ export class GhosttyBackend implements TerminalBackend {
   /** Fallback font size when the setting is unavailable (points). */
   private static readonly FALLBACK_FONT_SIZE = 14
 
-  private worktreeId: string = ''
+  private terminalId: string = ''
   private container: HTMLDivElement | null = null
   private resizeObserver: ResizeObserver | null = null
   private windowResizeHandler: (() => void) | null = null
@@ -24,7 +24,7 @@ export class GhosttyBackend implements TerminalBackend {
   private lastVisibleRect: { x: number; y: number; w: number; h: number } | null = null
 
   mount(container: HTMLDivElement, opts: TerminalOpts, callbacks: TerminalBackendCallbacks): void {
-    this.worktreeId = opts.worktreeId
+    this.terminalId = opts.terminalId
     this.container = container
     this.mounted = true
 
@@ -76,7 +76,7 @@ export class GhosttyBackend implements TerminalBackend {
       this.lastVisibleRect = rect
 
       // Create the native surface
-      const result = await window.terminalOps.ghosttyCreateSurface(this.worktreeId, rect, {
+      const result = await window.terminalOps.ghosttyCreateSurface(this.terminalId, rect, {
         cwd: opts.cwd,
         shell: opts.shell,
         scaleFactor: window.devicePixelRatio || 2.0,
@@ -89,7 +89,7 @@ export class GhosttyBackend implements TerminalBackend {
       }
 
       // Set initial focus
-      await window.terminalOps.ghosttySetFocus(this.worktreeId, true)
+      await window.terminalOps.ghosttySetFocus(this.terminalId, true)
 
       return true
     } catch (err) {
@@ -161,7 +161,7 @@ export class GhosttyBackend implements TerminalBackend {
 
     this.lastVisibleRect = rect
 
-    window.terminalOps.ghosttySetFrame(this.worktreeId, rect).catch(() => {
+    window.terminalOps.ghosttySetFrame(this.terminalId, rect).catch(() => {
       // Ignore frame sync errors during teardown
     })
   }
@@ -178,7 +178,7 @@ export class GhosttyBackend implements TerminalBackend {
 
   focus(): void {
     if (!this.mounted) return
-    window.terminalOps.ghosttySetFocus(this.worktreeId, true).catch(() => {
+    window.terminalOps.ghosttySetFocus(this.terminalId, true).catch(() => {
       // Ignore focus errors
     })
   }
@@ -187,7 +187,7 @@ export class GhosttyBackend implements TerminalBackend {
     if (!this.mounted) return
 
     if (!visible) {
-      window.terminalOps.ghosttySetFocus(this.worktreeId, false).catch(() => {
+      window.terminalOps.ghosttySetFocus(this.terminalId, false).catch(() => {
         // Ignore focus errors
       })
       const hiddenRect = this.lastVisibleRect
@@ -199,7 +199,7 @@ export class GhosttyBackend implements TerminalBackend {
           }
         : GhosttyBackend.HIDDEN_RECT
 
-      window.terminalOps.ghosttySetFrame(this.worktreeId, hiddenRect).catch(() => {
+      window.terminalOps.ghosttySetFrame(this.terminalId, hiddenRect).catch(() => {
         // Ignore frame sync errors during teardown
       })
       return
@@ -210,7 +210,7 @@ export class GhosttyBackend implements TerminalBackend {
     // and the menu paste handler routes Cmd+V correctly. Without this, focus
     // restoration depends on a fragile setTimeout in TerminalView that can be
     // cancelled by rapid effectiveVisible changes (e.g. overlay suppression race).
-    window.terminalOps.ghosttySetFocus(this.worktreeId, true).catch(() => {
+    window.terminalOps.ghosttySetFocus(this.terminalId, true).catch(() => {
       // Ignore focus errors
     })
   }
@@ -241,7 +241,7 @@ export class GhosttyBackend implements TerminalBackend {
       this.container = null
     }
 
-    window.terminalOps.ghosttyDestroySurface(this.worktreeId).catch(() => {
+    window.terminalOps.ghosttyDestroySurface(this.terminalId).catch(() => {
       // Best-effort cleanup
     })
   }

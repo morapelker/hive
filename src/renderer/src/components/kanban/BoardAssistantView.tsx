@@ -3,11 +3,9 @@ import {
   Bot,
   CheckSquare,
   Loader2,
-  Minimize2,
   Send,
   Sparkles,
-  Trash2,
-  X
+  Trash2
 } from 'lucide-react'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { AssistantCanvas } from '@/components/sessions/AssistantCanvas'
@@ -23,7 +21,6 @@ import { Textarea } from '@/components/ui/textarea'
 import { useSessionStream } from '@/hooks/useSessionStream'
 import { parseBoardAssistantDraftSet } from '@/lib/board-assistant-drafts'
 import { toast } from '@/lib/toast'
-import { cn } from '@/lib/utils'
 import { useBoardChatStore, type BoardChatMessage, type BoardChatScope, type TicketDraft, stripBoardAssistantScaffolding, stripBoardDraftBlocks, resolveBoardChatAgentSdk, resolveBoardChatDefaultModel } from '@/stores/useBoardChatStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -31,18 +28,16 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useQuestionStore, type QuestionAnswer } from '@/stores/useQuestionStore'
+import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useSettingsStore, type SelectedModel } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { BOARD_ASSISTANT_SESSION_NAME_PREFIX } from '@/stores/useSessionStore'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import type { StreamingPart } from '@/components/sessions/SessionView'
 import type { QuestionRequest } from '@/stores/useQuestionStore'
 import type { CommandApprovalRequest } from '@/stores/useCommandApprovalStore'
 
-interface BoardChatDrawerProps {
-  projectId?: string
-  projectPath?: string
-  connectionId?: string
-  isPinnedMode?: boolean
+interface BoardAssistantViewProps {
+  projectId: string
 }
 
 const BOARD_ASSISTANT_RULES = [
@@ -230,25 +225,55 @@ async function ensureRuntimeSession(scope: BoardChatScope, targetProjectId: stri
     return null
   }
 
-  const session = await window.db.session.create({
-    worktree_id: worktreeId,
-    connection_id: connectionId,
-    project_id: targetProjectId,
-    name: `${BOARD_ASSISTANT_SESSION_NAME_PREFIX} Board Assistant`,
-    agent_sdk: agentSdk,
-    mode: 'build',
-    ...(selectedModel
-      ? {
-          model_provider_id: selectedModel.providerID,
-          model_id: selectedModel.modelID,
-          model_variant: selectedModel.variant ?? null
-        }
-      : {})
-  })
+  // Reuse the session already created by the session store (from createBoardAssistantSession)
+  // rather than creating a duplicate. Only create if none exists.
+  const { useSessionStore } = await import('@/stores/useSessionStore')
+  const existingStoreSession = useSessionStore.getState().boardAssistantByProject.get(targetProjectId)
+
+  let session: { id: string }
+  const isReused = Boolean(existingStoreSession)
+  if (existingStoreSession) {
+    session = existingStoreSession
+    // Update the existing session with the model/SDK settings
+    await window.db.session.update(session.id, {
+      agent_sdk: agentSdk,
+      ...(selectedModel
+        ? {
+            model_provider_id: selectedModel.providerID,
+            model_id: selectedModel.modelID,
+            model_variant: selectedModel.variant ?? null
+          }
+        : {})
+    })
+  } else {
+    session = await window.db.session.create({
+      worktree_id: worktreeId,
+      connection_id: connectionId,
+      project_id: targetProjectId,
+      name: 'Board Assistant',
+      session_type: 'board-assistant',
+      agent_sdk: agentSdk,
+      mode: 'build',
+      ...(selectedModel
+        ? {
+            model_provider_id: selectedModel.providerID,
+            model_id: selectedModel.modelID,
+            model_variant: selectedModel.variant ?? null
+          }
+        : {})
+    })
+  }
 
   const connectResult = await window.opencodeOps.connect(runtimePath, session.id)
   if (!connectResult.success || !connectResult.sessionId) {
-    await window.db.session.delete(session.id).catch(() => {})
+    // Only delete the session if we just created it. Reused sessions
+    // should be kept so the user doesn't lose the record and messages.
+    if (!isReused) {
+      await window.db.session.delete(session.id).catch(() => {})
+    }
+    // Re-sync store so the stale entry is removed and the tab disappears
+    const { useSessionStore } = await import('@/stores/useSessionStore')
+    await useSessionStore.getState().loadBoardAssistantSession(targetProjectId)
     return null
   }
 
@@ -275,6 +300,14 @@ async function cleanupBoardChatRuntime(): Promise<void> {
   const opencodeSessionId = state.opencodeSessionId
   const runtimePath = state.runtimePath
 
+  // If the store has already been reset (e.g. closeBoardAssistantSession
+  // already cleaned up), skip runtime teardown but still reset the store
+  // in case partial state remains.
+  if (!sessionId && !opencodeSessionId && !runtimePath) {
+    useBoardChatStore.getState().resetState()
+    return
+  }
+
   if (sessionId) {
     useQuestionStore.getState().clearSession(sessionId)
     usePermissionStore.getState().clearSession(sessionId)
@@ -295,13 +328,9 @@ async function cleanupBoardChatRuntime(): Promise<void> {
     }
   }
 
-  if (sessionId) {
-    try {
-      await window.db.session.delete(sessionId)
-    } catch {
-      // Best effort cleanup.
-    }
-  }
+  // Always reset the chat store after full cleanup so callers don't
+  // need to remember to call resetState() separately.
+  useBoardChatStore.getState().resetState()
 }
 
 function BoardChatHeader({
@@ -316,9 +345,7 @@ function BoardChatHeader({
   onSelectModel,
   onResetModel,
   onSelectTargetProject,
-  onClear,
-  onMinimize,
-  onClose
+  onClear
 }: {
   scope: BoardChatScope
   selectedTargetProjectId: string | null
@@ -332,8 +359,6 @@ function BoardChatHeader({
   onResetModel: () => void
   onSelectTargetProject: (projectId: string) => void
   onClear: () => void
-  onMinimize: () => void
-  onClose: () => void
 }): React.JSX.Element {
   const selectedTargetProject =
     scope.kind === 'connection'
@@ -427,18 +452,6 @@ function BoardChatHeader({
       <div className="flex items-center gap-1">
         <Button type="button" variant="ghost" size="icon" onClick={onClear} aria-label="Clear chat">
           <Trash2 className="h-4 w-4" />
-        </Button>
-        <Button type="button" variant="ghost" size="icon" onClick={onMinimize} aria-label="Minimize assistant">
-          <Minimize2 className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          aria-label="Minimize assistant"
-        >
-          <X className="h-4 w-4" />
         </Button>
       </div>
     </div>
@@ -736,54 +749,28 @@ function BoardChatComposer({
   )
 }
 
-export function BoardChatDrawer({
-  projectId,
-  projectPath,
-  connectionId,
-  isPinnedMode = false
-}: BoardChatDrawerProps): React.JSX.Element | null {
+export function BoardAssistantView({ projectId }: BoardAssistantViewProps): React.JSX.Element | null {
   const projects = useProjectStore((state) => state.projects)
-  const connections = useConnectionStore((state) => state.connections)
-  const scope = useMemo<BoardChatScope | null>(() => {
-    if (isPinnedMode) return { kind: 'pinned' }
-
-    if (connectionId) {
-      const connection = connections.find((candidate) => candidate.id === connectionId)
-      if (!connection) return null
-
-      const seen = new Set<string>()
-      const availableProjects = connection.members.reduce<Array<{ id: string; name: string }>>((acc, member) => {
-        if (seen.has(member.project_id)) return acc
-        seen.add(member.project_id)
-        acc.push({ id: member.project_id, name: member.project_name })
-        return acc
-      }, [])
-
-      return {
-        kind: 'connection',
-        connectionId: connection.id,
-        connectionName: connection.custom_name || connection.name,
-        connectionPath: connection.path,
-        availableProjects
-      }
+  const project = projects.find((p) => p.id === projectId)
+  const worktree = useWorktreeStore((state) => {
+    // find default worktree for project to get path
+    for (const worktrees of state.worktreesByProject.values()) {
+      const found = worktrees.find((w) => w.project_id === projectId && w.status === 'active')
+      if (found) return found
     }
-
-    if (projectId) {
-      const project = projects.find((candidate) => candidate.id === projectId)
-      if (!project) return null
-      return {
-        kind: 'project',
-        projectId: project.id,
-        projectName: project.name,
-        projectPath: projectPath ?? project.path
-      }
-    }
-
     return null
-  }, [connectionId, connections, isPinnedMode, projectId, projectPath, projects])
+  })
 
-  const isOpen = useBoardChatStore((state) => state.isOpen)
-  const isMinimized = useBoardChatStore((state) => state.isMinimized)
+  const scope = useMemo<BoardChatScope | null>(() => {
+    if (!project) return null
+    return {
+      kind: 'project' as const,
+      projectId: project.id,
+      projectName: project.name,
+      projectPath: worktree?.path ?? project.path
+    }
+  }, [project, worktree])
+
   const storedScope = useBoardChatStore((state) => state.scope)
   const messages = useBoardChatStore((state) => state.messages)
   const drafts = useBoardChatStore((state) => state.drafts)
@@ -804,7 +791,7 @@ export function BoardChatDrawer({
   const setDrafts = useBoardChatStore((state) => state.setDrafts)
   const clearDrafts = useBoardChatStore((state) => state.clearDrafts)
   const markDraftsCreated = useBoardChatStore((state) => state.markDraftsCreated)
-  const toggleDraftSelection = useBoardChatStore((state) => state.toggleDraftSelection)
+  const toggleDraftSelected = useBoardChatStore((state) => state.toggleDraftSelected)
   const setStatus = useBoardChatStore((state) => state.setStatus)
   const setSelectedTargetProjectId = useBoardChatStore((state) => state.setSelectedTargetProjectId)
   const setSelectedAgentSdkOverride = useBoardChatStore((state) => state.setSelectedAgentSdkOverride)
@@ -812,12 +799,9 @@ export function BoardChatDrawer({
   const setError = useBoardChatStore((state) => state.setError)
   const updateOpencodeSessionId = useBoardChatStore((state) => state.updateOpencodeSessionId)
   const setComposerValue = useBoardChatStore((state) => state.setComposerValue)
-  const minimizeDrawer = useBoardChatStore((state) => state.minimizeDrawer)
-  const restoreDrawer = useBoardChatStore((state) => state.restoreDrawer)
   const resetState = useBoardChatStore((state) => state.resetState)
+  const activateScope = useBoardChatStore((state) => state.activateScope)
 
-  const latestScopeKey = buildScopeKey(scope)
-  const scopeSyncKeyRef = useRef<string>('')
   const composerFocusRef = useRef<HTMLTextAreaElement | null>(null)
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
   const defaultBoardAgentSdk = useSettingsStore((state) => resolveBoardChatAgentSdk(state.defaultAgentSdk))
@@ -845,15 +829,14 @@ export function BoardChatDrawer({
     let cancelled = false
 
     const syncScope = async (): Promise<void> => {
-      if (scopeSyncKeyRef.current === latestScopeKey) return
-      scopeSyncKeyRef.current = latestScopeKey
+      const scopeKey = buildScopeKey(scope)
+      const existingSnapshot =
+        scope?.kind === 'project'
+          ? useBoardChatStore.getState().getProjectSnapshot(scope.projectId)
+          : null
 
-      const preserveOpen = useBoardChatStore.getState().isOpen
-      await cleanupBoardChatRuntime()
-      if (cancelled) return
-
-      resetState({
-        preserveOpen,
+      activateScope(scope, {
+        preserveOpen: true,
         scope,
         selectedTargetProjectId:
           scope?.kind === 'project'
@@ -863,7 +846,22 @@ export function BoardChatDrawer({
               : null
       })
 
-      if (preserveOpen && scope && scope.kind !== 'pinned') {
+      if (cancelled) return
+
+      const state = useBoardChatStore.getState()
+      if (state.sessionId && state.opencodeSessionId && state.runtimePath && scopeKey !== 'none') {
+        try {
+          await window.opencodeOps.reconnect(
+            state.runtimePath,
+            state.opencodeSessionId,
+            state.sessionId
+          )
+        } catch {
+          // useSessionStream will handle reconnection failures
+        }
+      }
+
+      if (!existingSnapshot && scope && scope.kind !== 'pinned') {
         addLocalSystemMessage(
           scope.kind === 'project'
             ? `Assistant scope set to ${scope.projectName}.`
@@ -877,15 +875,15 @@ export function BoardChatDrawer({
     return () => {
       cancelled = true
     }
-  }, [addLocalSystemMessage, latestScopeKey, resetState, scope])
+  }, [activateScope, addLocalSystemMessage, scope])
 
-  useEffect(() => {
-    return () => {
-      void cleanupBoardChatRuntime()
-      useBoardChatStore.getState().resetState()
-      scopeSyncKeyRef.current = ''
-    }
-  }, [])
+  // NOTE: We intentionally do NOT clean up the runtime on unmount.
+  // The board assistant is a persistent tab — the runtime and chat state
+  // must survive across tab switches, just like normal sessions.
+  // Runtime cleanup happens only when:
+  // - The user explicitly closes the board assistant tab (closeBoardAssistantSession)
+  // - The scope changes to a different project (scope sync above)
+  // - The user clicks "Clear" (handleClear)
 
   const { messages: transcriptMessages, streamingParts, streamingContent, isStreaming } = useSessionStream({
     sessionId: sessionId ?? '',
@@ -897,6 +895,11 @@ export function BoardChatDrawer({
 
   useEffect(() => {
     if (!sessionId || !opencodeSessionId || !runtimePath) return
+    // useSessionStream starts with an empty array before getMessages() loads.
+    // Syncing that empty array would wipe all existing transcript messages from
+    // the store (mergeTranscriptMessages only keeps 'local'-kind messages when
+    // the transcript array is empty). Skip the sync until real data arrives.
+    if (transcriptMessages.length === 0 && useBoardChatStore.getState().messages.length > 0) return
     setTranscriptMessages(transcriptMessages)
   }, [opencodeSessionId, runtimePath, sessionId, setTranscriptMessages, transcriptMessages])
 
@@ -1015,6 +1018,24 @@ export function BoardChatDrawer({
     status !== 'starting' &&
     status !== 'thinking'
 
+  const navigateToBoard = useCallback(() => {
+    useFileViewerStore.getState().clearActiveViews()
+
+    const sessionStore = useSessionStore.getState()
+    sessionStore.setActivePinnedSession(null)
+
+    if (useSettingsStore.getState().boardMode === 'sticky-tab') {
+      sessionStore.setActiveSession(BOARD_TAB_ID)
+      return
+    }
+
+    sessionStore.clearBoardAssistantFocus()
+    const kanbanStore = useKanbanStore.getState()
+    if (!kanbanStore.isBoardViewActive) {
+      kanbanStore.toggleBoardView()
+    }
+  }, [])
+
   const handleDiscardConversation = useCallback(
     async (options?: {
       preserveOpen?: boolean
@@ -1119,6 +1140,7 @@ export function BoardChatDrawer({
       addLocalSystemMessage(
         `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'} and ${result.dependencies.length} dependenc${result.dependencies.length === 1 ? 'y' : 'ies'} in ${draftsToCreate[0].projectName}.`
       )
+      navigateToBoard()
       toast.success(
         `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'}.`
       )
@@ -1126,7 +1148,7 @@ export function BoardChatDrawer({
       const message = error instanceof Error ? error.message : 'Failed to create one or more tickets.'
       toast.error(message)
     }
-  }, [addLocalSystemMessage, drafts, markDraftsCreated])
+  }, [addLocalSystemMessage, drafts, markDraftsCreated, navigateToBoard])
 
   const handleClear = useCallback(async () => {
     await handleDiscardConversation({ preserveOpen: true })
@@ -1253,117 +1275,81 @@ export function BoardChatDrawer({
 
   if (!scope) return null
 
-  if (!isOpen) return null
-
-  if (isMinimized) {
-    return (
-      <div className="pointer-events-auto absolute bottom-4 right-4 z-30 w-[min(28rem,calc(100%-1.5rem))]">
-        <button
-          type="button"
-          onClick={restoreDrawer}
-          className="flex h-14 w-full items-center justify-between rounded-t-2xl rounded-b-xl border border-border/70 bg-muted/30 px-4 shadow-sm transition-colors hover:bg-muted/50"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/12 text-primary">
-              <Bot className="h-4 w-4" />
-            </div>
-            <div className="text-left">
-              <p className="text-sm font-semibold text-foreground">Board Assistant</p>
-              <p className="text-xs text-muted-foreground">{getStatusLabel(status)}</p>
-            </div>
-          </div>
-          <span className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground">
-            <Minimize2 className="h-4 w-4 rotate-180" />
-          </span>
-        </button>
-      </div>
-    )
-  }
-
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-end p-3">
-      <div
-        className={cn(
-          'pointer-events-auto flex max-h-[min(72vh,42rem)] w-full flex-col overflow-hidden rounded-t-[28px] rounded-b-2xl border border-border/70 bg-card shadow-xl',
-          'sm:w-[28rem] lg:w-[32rem]'
-        )}
-      >
-        <BoardChatHeader
-          scope={scope}
-          selectedTargetProjectId={selectedTargetProjectId}
-          status={status}
-          selectedModel={effectiveSelectedModel}
-          agentSdk={effectiveAgentSdk}
-          availableAgentSdks={agentSdkOptions}
-          modelResetVisible={Boolean(selectedModelOverride)}
-          onSelectAgentSdk={(agentSdk) => {
-            void handleSelectAgentSdk(agentSdk)
-          }}
-          onSelectModel={(model) => {
-            void handleSelectModel(model)
-          }}
-          onResetModel={() => {
-            void handleResetModel()
-          }}
-          onSelectTargetProject={handleSelectTargetProject}
-          onClear={() => {
-            void handleClear()
-          }}
-          onMinimize={minimizeDrawer}
-          onClose={minimizeDrawer}
-        />
+    <div className="flex h-full flex-col overflow-hidden bg-card">
+      <BoardChatHeader
+        scope={scope}
+        selectedTargetProjectId={selectedTargetProjectId}
+        status={status}
+        selectedModel={effectiveSelectedModel}
+        agentSdk={effectiveAgentSdk}
+        availableAgentSdks={agentSdkOptions}
+        modelResetVisible={Boolean(selectedModelOverride)}
+        onSelectAgentSdk={(agentSdk) => {
+          void handleSelectAgentSdk(agentSdk)
+        }}
+        onSelectModel={(model) => {
+          void handleSelectModel(model)
+        }}
+        onResetModel={() => {
+          void handleResetModel()
+        }}
+        onSelectTargetProject={handleSelectTargetProject}
+        onClear={() => {
+          void handleClear()
+        }}
+      />
 
-        {error && (
-          <div className="border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        )}
+      {error && (
+        <div className="border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
 
-        <BoardChatMessageList
-          messages={messages}
-          drafts={drafts}
-          draftSourceMessageId={draftSourceMessageId}
-          streamingMessage={streamingMessage}
-          activeQuestion={activeQuestion}
-          activePermission={activePermission}
-          activeApproval={activeApproval}
-          sessionId={sessionId}
-          onToggleDraft={toggleDraftSelection}
-          onCreateAll={() => {
-            void handleCreateDrafts(false)
-          }}
-          onCreateSelected={() => {
-            void handleCreateDrafts(true)
-          }}
-          onRevise={handleRevise}
-          onCancelDrafts={handleCancelDrafts}
-          hasInvalidDrafts={hasInvalidDrafts}
-          onQuestionReply={(requestId, answers) => {
-            void handleQuestionReply(requestId, answers)
-          }}
-          onQuestionReject={(requestId) => {
-            void handleQuestionReject(requestId)
-          }}
-          onPermissionReply={(requestId, reply, message) => {
-            void handlePermissionReply(requestId, reply, message)
-          }}
-          onCommandApprovalReply={(requestId, approved, remember, pattern, patterns) => {
-            void handleCommandApprovalReply(requestId, approved, remember, pattern, patterns)
-          }}
-        />
+      <BoardChatMessageList
+        messages={messages}
+        drafts={drafts}
+        draftSourceMessageId={draftSourceMessageId}
+        streamingMessage={streamingMessage}
+        activeQuestion={activeQuestion}
+        activePermission={activePermission}
+        activeApproval={activeApproval}
+        sessionId={sessionId}
+        onToggleDraft={toggleDraftSelected}
+        onCreateAll={() => {
+          void handleCreateDrafts(false)
+        }}
+        onCreateSelected={() => {
+          void handleCreateDrafts(true)
+        }}
+        onRevise={handleRevise}
+        onCancelDrafts={handleCancelDrafts}
+        hasInvalidDrafts={hasInvalidDrafts}
+        onQuestionReply={(requestId, answers) => {
+          void handleQuestionReply(requestId, answers)
+        }}
+        onQuestionReject={(requestId) => {
+          void handleQuestionReject(requestId)
+        }}
+        onPermissionReply={(requestId, reply, message) => {
+          void handlePermissionReply(requestId, reply, message)
+        }}
+        onCommandApprovalReply={(requestId, approved, remember, pattern, patterns) => {
+          void handleCommandApprovalReply(requestId, approved, remember, pattern, patterns)
+        }}
+      />
 
-        <BoardChatComposer
-          value={composerValue}
-          disabled={!canInteract || (scope.kind === 'connection' && !selectedTargetProjectId)}
-          sending={status === 'starting' || status === 'thinking'}
-          canSend={canSend}
-          textareaRef={composerFocusRef}
-          onChange={setComposerValue}
-          onSend={() => {
-            void handleSend()
-          }}
-        />
-      </div>
+      <BoardChatComposer
+        value={composerValue}
+        disabled={!canInteract || (scope.kind === 'connection' && !selectedTargetProjectId)}
+        sending={status === 'starting' || status === 'thinking'}
+        canSend={canSend}
+        textareaRef={composerFocusRef}
+        onChange={setComposerValue}
+        onSend={() => {
+          void handleSend()
+        }}
+      />
     </div>
   )
 }

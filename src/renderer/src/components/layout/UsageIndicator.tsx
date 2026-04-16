@@ -111,6 +111,10 @@ function ProviderUsageBlock({
 }): React.JSX.Element | null {
   const anthropicUsage = useUsageStore((s) => s.anthropicUsage)
   const openaiUsage = useUsageStore((s) => s.openaiUsage)
+  const forceRefreshProvider = useUsageStore((s) => s.forceRefreshProvider)
+  const isLoading = useUsageStore((s) =>
+    provider === 'anthropic' ? s.anthropicIsLoading : s.openaiIsLoading
+  )
 
   const usage = normalizeUsage(provider, anthropicUsage, openaiUsage)
 
@@ -126,7 +130,21 @@ function ProviderUsageBlock({
         <TooltipTrigger asChild>
           <div className="px-3 py-1.5 space-y-0.5 cursor-default opacity-40">
             <div className="flex items-center gap-1.5">
-              <img src={providerIcon} alt={providerLabel} className="h-3 w-3 shrink-0 opacity-50" />
+              <button
+                type="button"
+                className="shrink-0 cursor-pointer bg-transparent border-none p-0"
+                onClick={() => forceRefreshProvider(provider)}
+                aria-label={`Refresh ${providerLabel} usage`}
+              >
+                <img
+                  src={providerIcon}
+                  alt={providerLabel}
+                  className={cn(
+                    'h-3 w-3 opacity-50 hover:opacity-80 transition-opacity',
+                    isLoading && 'animate-spin'
+                  )}
+                />
+              </button>
               <div className="flex-1 space-y-0.5">
                 <UsageRow label="5h" percent={0} resetTime="N/A" />
                 <UsageRow label="7d" percent={0} resetTime="N/A" />
@@ -155,7 +173,21 @@ function ProviderUsageBlock({
       <TooltipTrigger asChild>
         <div className="px-3 py-1.5 space-y-0.5 cursor-default">
           <div className="flex items-center gap-1.5">
-            <img src={providerIcon} alt={providerLabel} className="h-3 w-3 shrink-0 opacity-50" />
+            <button
+              type="button"
+              className="shrink-0 cursor-pointer bg-transparent border-none p-0"
+              onClick={() => forceRefreshProvider(provider)}
+              aria-label={`Refresh ${providerLabel} usage`}
+            >
+              <img
+                src={providerIcon}
+                alt={providerLabel}
+                className={cn(
+                  'h-3 w-3 opacity-50 hover:opacity-80 transition-opacity',
+                  isLoading && 'animate-spin'
+                )}
+              />
+            </button>
             <div className="flex-1 space-y-0.5">
               <UsageRow label="5h" percent={fiveHourPercent} resetTime={fiveHourReset} />
               <UsageRow label="7d" percent={sevenDayPercent} resetTime={sevenDayReset} />

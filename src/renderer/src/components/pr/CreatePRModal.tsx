@@ -140,7 +140,7 @@ export function CreatePRModal({
     setIsStaging(false)
 
     // Pre-fill base branch from store
-    setBaseBranch(prTargetBranch ?? 'main')
+    setBaseBranch(prTargetBranch?.replace(/^origin\//, '') ?? 'main')
 
     // Fetch remote branches
     setLoadingBranches(true)
@@ -276,6 +276,15 @@ export function CreatePRModal({
     const prBody = body.trim()
     const branchName = branchInfo?.name ?? 'Pull Request'
     const provider = resolvePRContentProvider(defaultAgentSdk, availableAgentSdks)
+
+    // Persist the selected target branch so the Header dropdowns keep showing it
+    // after the push changes branchInfo.tracking
+    const normalizedTarget = targetBase.startsWith('origin/') ? targetBase : `origin/${targetBase}`
+    useGitStore.getState().setPrTargetBranch(worktreeId, normalizedTarget)
+    // Also pin the review dropdown so it doesn't shift to the pushed branch
+    if (!useGitStore.getState().reviewTargetBranch.get(worktreeId)) {
+      useGitStore.getState().setReviewTargetBranch(worktreeId, normalizedTarget)
+    }
 
     // Close modal — PR creation continues in background via notification
     setOpen(false)

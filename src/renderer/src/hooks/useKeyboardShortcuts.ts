@@ -15,8 +15,24 @@ import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
+import { useTerminalStore } from '@/stores/useTerminalStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { toast } from '@/lib/toast'
+
+/**
+ * Check if the terminal panel is currently focused.
+ * Returns true if the active element is inside a terminal view (.xterm) or
+ * the terminal tab sidebar.
+ */
+function isTerminalFocused(): boolean {
+  const active = document.activeElement
+  if (!active) return false
+  return (
+    active.closest?.('.xterm') !== null ||
+    active.closest?.('[data-testid="terminal-view"]') !== null
+  )
+}
 
 /**
  * Runs or stops the project run script for the currently selected worktree.
@@ -181,12 +197,15 @@ export function useKeyboardShortcuts(): void {
       // Don't intercept bare-key shortcuts (no modifiers) when the xterm terminal
       // is focused — the terminal needs unmodified keystrokes for shell features
       // like Tab completion. Modified shortcuts (Cmd+T, Cmd+W, etc.) still work.
-      const isTerminalFocused = target.closest?.('.xterm') !== null
+      // Also skip bare Tab (no ctrl) since the terminal uses it for completion,
+      // but allow Ctrl+Tab through for terminal tab cycling.
+      const isXtermFocused = target.closest?.('.xterm') !== null
 
       for (const { binding, handler, allowInInput } of shortcuts) {
         if (!binding) continue
         if (isInputFocused && !allowInInput) continue
-        if (isTerminalFocused && (binding.modifiers.length === 0 || binding.key?.toLowerCase() === 'tab')) continue
+        if (isXtermFocused && binding.modifiers.length === 0) continue
+        if (isXtermFocused && binding.key?.toLowerCase() === 'tab' && !binding.modifiers.includes('ctrl')) continue
 
         if (eventMatchesBinding(event, binding)) {
           event.preventDefault()
@@ -210,6 +229,13 @@ export function useKeyboardShortcuts(): void {
     if (!window.systemOps?.onNewSessionShortcut) return
 
     const cleanup = window.systemOps.onNewSessionShortcut(() => {
+      if (isTerminalFocused()) {
+        const worktreeId = useWorktreeStore.getState().selectedWorktreeId
+        if (worktreeId) {
+          useTerminalTabStore.getState().createTab(worktreeId)
+        }
+        return
+      }
       createNewSession()
     })
 
@@ -240,6 +266,27 @@ export function useKeyboardShortcuts(): void {
     const cleanup = window.systemOps.onCloseSessionShortcut(() => {
       // Priority 0: Close any open modal/dialog
       if (tryCloseOpenModal()) return
+
+      // Priority 0.5: Close active terminal tab when terminal is focused
+      if (isTerminalFocused()) {
+        const worktreeId = useWorktreeStore.getState().selectedWorktreeId
+        if (worktreeId) {
+          const activeTab = useTerminalTabStore.getState().getActiveTab(worktreeId)
+          if (activeTab) {
+            if (activeTab.status === 'running') {
+              window.dispatchEvent(
+                new CustomEvent('hive:close-terminal-tab', {
+                  detail: { worktreeId, tabId: activeTab.id, tabName: activeTab.name }
+                })
+              )
+            } else {
+              useTerminalTabStore.getState().closeTab(worktreeId, activeTab.id)
+              useTerminalStore.getState().destroyTerminal(activeTab.id)
+            }
+          }
+        }
+        return
+      }
 
       const { activeFilePath, activeDiff } = useFileViewerStore.getState()
 
@@ -304,6 +351,13 @@ function getShortcutHandlers(
       binding: getEffectiveBinding('session:new'),
       allowInInput: true,
       handler: () => {
+        if (isTerminalFocused()) {
+          const worktreeId = useWorktreeStore.getState().selectedWorktreeId
+          if (worktreeId) {
+            useTerminalTabStore.getState().createTab(worktreeId)
+          }
+          return
+        }
         createNewSession()
       }
     },
@@ -314,6 +368,31 @@ function getShortcutHandlers(
       handler: () => {
         // Priority 0: Close any open modal/dialog
         if (tryCloseOpenModal()) return
+
+        // Priority 0.5: Close active terminal tab when terminal is focused
+        if (isTerminalFocused()) {
+          const worktreeId = useWorktreeStore.getState().selectedWorktreeId
+          if (worktreeId) {
+            const activeTab = useTerminalTabStore.getState().getActiveTab(worktreeId)
+            if (activeTab) {
+              if (activeTab.status === 'running') {
+                // Dispatch a custom event that TerminalTabSidebar can listen for
+                // to show the close confirmation dialog
+                window.dispatchEvent(
+                  new CustomEvent('hive:close-terminal-tab', {
+                    detail: { worktreeId, tabId: activeTab.id, tabName: activeTab.name }
+                  })
+                )
+              } else {
+                // Non-running tab: close directly
+                useTerminalTabStore.getState().closeTab(worktreeId, activeTab.id)
+                // Destroy the PTY
+                useTerminalStore.getState().destroyTerminal(activeTab.id)
+              }
+            }
+          }
+          return
+        }
 
         const { activeFilePath, activeDiff } = useFileViewerStore.getState()
 
@@ -526,6 +605,23 @@ function getShortcutHandlers(
         useLayoutStore.getState().toggleRightSidebar()
       }
     },
+    {
+      id: 'sidebar:toggle-bottom-terminal',
+      binding: getEffectiveBinding('sidebar:toggle-bottom-terminal'),
+      allowInInput: true,
+      handler: () => {
+        const terminalPosition = useSettingsStore.getState().terminalPosition
+        if (terminalPosition === 'bottom') {
+          useLayoutStore.getState().toggleBottomTerminal()
+        } else {
+          // In sidebar mode: open right sidebar + switch to terminal tab
+          const layout = useLayoutStore.getState()
+          if (layout.rightSidebarCollapsed) layout.setRightSidebarCollapsed(false)
+          layout.setBottomPanelTab('terminal')
+          if (layout.collapsedPanel === 'bottom') layout.toggleBottomPanel()
+        }
+      }
+    },
 
     // =====================
     // Focus shortcuts
@@ -564,6 +660,32 @@ function getShortcutHandlers(
           } else {
             mainPane.focus()
           }
+        }
+      }
+    },
+
+    // =====================
+    // Terminal tab cycling
+    // =====================
+    {
+      id: 'terminal:next-tab',
+      binding: { key: 'Tab', modifiers: ['ctrl'] },
+      allowInInput: true,
+      handler: () => {
+        const worktreeId = useWorktreeStore.getState().selectedWorktreeId
+        if (worktreeId) {
+          useTerminalTabStore.getState().cycleTab(worktreeId, 'next')
+        }
+      }
+    },
+    {
+      id: 'terminal:prev-tab',
+      binding: { key: 'Tab', modifiers: ['ctrl', 'shift'] },
+      allowInInput: true,
+      handler: () => {
+        const worktreeId = useWorktreeStore.getState().selectedWorktreeId
+        if (worktreeId) {
+          useTerminalTabStore.getState().cycleTab(worktreeId, 'prev')
         }
       }
     },

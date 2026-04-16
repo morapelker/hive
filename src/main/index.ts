@@ -43,10 +43,14 @@ import { CodexImplementer } from './services/codex-implementer'
 import { AgentSdkManager } from './services/agent-sdk-manager'
 import { resolveClaudeBinaryPath } from './services/claude-binary-resolver'
 import { resolveCodexBinaryPath } from './services/codex-binary-resolver'
-import { resolveOpenCodeLaunchSpec } from './services/opencode-binary-resolver'
+import {
+  resolveOpenCodeLaunchSpec,
+  type OpenCodeLaunchSpec
+} from './services/opencode-binary-resolver'
 import {
   setClaudeBinaryPath as setRouterClaudeBinaryPath,
-  setCodexBinaryPath as setRouterCodexBinaryPath
+  setCodexBinaryPath as setRouterCodexBinaryPath,
+  setOpenCodeLaunchSpec as setRouterOpenCodeLaunchSpec
 } from './services/text-generation-router'
 import type { AgentSdkImplementer } from './services/agent-sdk-types'
 import { telemetryService } from './services/telemetry-service'
@@ -272,7 +276,7 @@ function createWindow(): void {
 }
 
 // Register system IPC handlers
-function registerSystemHandlers(): void {
+function registerSystemHandlers(openCodeLaunchSpec: OpenCodeLaunchSpec | null): void {
   // Get log directory path
   ipcMain.handle('system:getLogDir', () => {
     return getLogDir()
@@ -379,7 +383,7 @@ function registerSystemHandlers(): void {
 
   // Detect which agent SDKs are installed on the system (first-launch setup)
   ipcMain.handle('system:detectAgentSdks', () => {
-    return detectAgentSdks()
+    return detectAgentSdks(openCodeLaunchSpec)
   })
 
   // Quit the app (needed for macOS where window.close() doesn't quit)
@@ -450,7 +454,7 @@ app.whenReady().then(async () => {
   registerDatabaseHandlers()
   registerProjectHandlers()
   registerWorktreeHandlers()
-  registerSystemHandlers()
+  registerSystemHandlers(openCodeLaunchSpec)
   registerSettingsHandlers()
   registerFileHandlers()
   registerAttachmentHandlers()
@@ -523,6 +527,7 @@ app.whenReady().then(async () => {
     claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
     setRouterClaudeBinaryPath(claudeBinaryPath)
     openCodeService.setOpenCodeLaunchSpec(openCodeLaunchSpec)
+    setRouterOpenCodeLaunchSpec(openCodeLaunchSpec)
     const openCodePlaceholder = {
       id: 'opencode' as const,
       capabilities: {

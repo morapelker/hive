@@ -6,7 +6,7 @@
 export type TerminalBackendType = 'xterm' | 'ghostty'
 
 export interface TerminalOpts {
-  worktreeId: string
+  terminalId: string
   cwd: string
   fontFamily?: string
   fontSize?: number

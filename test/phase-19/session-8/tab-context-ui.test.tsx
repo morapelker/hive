@@ -222,6 +222,53 @@ describe('Session 8: Tab Context Menus UI', () => {
     })
   })
 
+  describe('board assistant tab focus', () => {
+    test('clicking the board assistant tab clears file focus and activates the assistant', () => {
+      setupStores({ fileTabs: true })
+
+      useSessionStore.setState({
+        boardAssistantByProject: new Map([
+          [
+            projectId,
+            {
+              id: 'board-assistant-1',
+              worktree_id: null,
+              project_id: projectId,
+              connection_id: null,
+              name: 'Board Assistant',
+              status: 'active',
+              opencode_session_id: 'opc-1',
+              agent_sdk: 'opencode',
+              mode: 'build',
+              session_type: 'board-assistant',
+              model_provider_id: null,
+              model_id: null,
+              model_variant: null,
+              created_at: '2024-01-01',
+              updated_at: '2024-01-01',
+              completed_at: null
+            }
+          ]
+        ]),
+        activeBoardAssistantProjectId: null
+      })
+
+      useFileViewerStore.setState({
+        activeFilePath: '/test/project/worktree/src/app.ts'
+      })
+
+      render(<SessionTabs />)
+      const boardAssistantTab = screen.getByTestId('board-assistant-tab')
+      expect(boardAssistantTab.className).toContain('text-sm')
+      expect(boardAssistantTab.className).not.toContain('text-xs')
+
+      fireEvent.click(boardAssistantTab)
+
+      expect(useFileViewerStore.getState().activeFilePath).toBeNull()
+      expect(useSessionStore.getState().activeBoardAssistantProjectId).toBe(projectId)
+    })
+  })
+
   describe('File tab context menu', () => {
     test('right-click shows close actions and copy path items', async () => {
       setupStores({ fileTabs: true })

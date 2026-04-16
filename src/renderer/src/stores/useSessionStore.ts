@@ -13,7 +13,8 @@ export function isBoardAssistantSessionName(name: string | null | undefined): bo
   return typeof name === 'string' && name.startsWith(BOARD_ASSISTANT_SESSION_NAME_PREFIX)
 }
 
-function isVisibleSession(session: { name: string | null }): boolean {
+function isVisibleSession(session: { name: string | null; session_type?: string }): boolean {
+  if (session.session_type === 'board-assistant') return false
   return !isBoardAssistantSessionName(session.name)
 }
 
@@ -45,6 +46,7 @@ interface Session {
   opencode_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   mode: SessionMode
+  session_type: 'default' | 'board-assistant'
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -98,6 +100,10 @@ interface SessionState {
   // Pinned session state — sessions pinned to the kanban board
   pinnedSessionIds: Set<string>
   activePinnedSessionId: string | null
+
+  // Board assistant state — project-scoped, one per project
+  boardAssistantByProject: Map<string, Session>
+  activeBoardAssistantProjectId: string | null
 
   // Actions
   acknowledgeClosedTerminals: (ids: Set<string>) => void
@@ -165,6 +171,15 @@ interface SessionState {
   clearInlineConnectionSession: () => void
   loadConnectionSessionsBackground: (connectionId: string) => Promise<void>
 
+  // Board assistant actions
+  loadBoardAssistantSession: (projectId: string) => Promise<void>
+  createBoardAssistantSession: (
+    projectId: string
+  ) => Promise<{ success: boolean; session?: Session; error?: string }>
+  closeBoardAssistantSession: (projectId: string) => Promise<{ success: boolean; error?: string }>
+  focusBoardAssistantSession: (projectId: string) => void
+  clearBoardAssistantFocus: () => void
+
   // Connection session actions
   loadConnectionSessions: (connectionId: string) => Promise<void>
   createConnectionSession: (
@@ -231,6 +246,10 @@ export const useSessionStore = create<SessionState>()(
       pinnedSessionIds: new Set<string>(),
       activePinnedSessionId: null,
 
+      // Board assistant state
+      boardAssistantByProject: new Map(),
+      activeBoardAssistantProjectId: null,
+
       acknowledgeClosedTerminals: (ids: Set<string>) => {
         set((state) => {
           const remaining = new Set(state.closedTerminalSessionIds)
@@ -241,6 +260,8 @@ export const useSessionStore = create<SessionState>()(
 
       // Load sessions for a worktree from database (only active sessions for tabs)
       loadSessions: async (worktreeId: string, _projectId: string) => {
+        // Also load board assistant session for this project (fire-and-forget)
+        void get().loadBoardAssistantSession(_projectId)
         // Only show loading indicator when no sessions are cached yet.
         // When sessions already exist (e.g., after createSession populated them),
         // skip the indicator to avoid unmounting active SessionViews mid-init.
@@ -864,6 +885,7 @@ export const useSessionStore = create<SessionState>()(
         if (sessionId && worktreeId) {
           set((state) => ({
             activeSessionId: sessionId,
+            activeBoardAssistantProjectId: null,
             activeSessionByWorktree: {
               ...state.activeSessionByWorktree,
               [worktreeId]: sessionId
@@ -872,13 +894,14 @@ export const useSessionStore = create<SessionState>()(
         } else if (sessionId && connectionId) {
           set((state) => ({
             activeSessionId: sessionId,
+            activeBoardAssistantProjectId: null,
             activeSessionByConnection: {
               ...state.activeSessionByConnection,
               [connectionId]: sessionId
             }
           }))
         } else {
-          set({ activeSessionId: sessionId })
+          set({ activeSessionId: sessionId, activeBoardAssistantProjectId: null })
         }
       },
 
@@ -891,7 +914,8 @@ export const useSessionStore = create<SessionState>()(
         set({
           activeWorktreeId: worktreeId,
           activeConnectionId: null,
-          inlineConnectionSessionId: null
+          inlineConnectionSessionId: null,
+          activeBoardAssistantProjectId: null
         })
 
         if (worktreeId) {
@@ -1042,6 +1066,9 @@ export const useSessionStore = create<SessionState>()(
           const found = sessions.find((s) => s.id === sessionId)
           if (found) return found
         }
+        for (const session of get().boardAssistantByProject.values()) {
+          if (session.id === sessionId) return session
+        }
         return null
       },
 
@@ -1052,9 +1079,18 @@ export const useSessionStore = create<SessionState>()(
       hydrateSession: (session: Session) => {
         // Already in store? Skip.
         if (get().getSessionById(session.id)) return
-        if (isBoardAssistantSessionName(session.name)) return
 
         set((state) => {
+          if (session.session_type === 'board-assistant') {
+            const newMap = new Map(state.boardAssistantByProject)
+            newMap.set(session.project_id, session)
+
+            const newModeMap = new Map(state.modeBySession)
+            newModeMap.set(session.id, session.mode || 'build')
+
+            return { boardAssistantByProject: newMap, modeBySession: newModeMap }
+          }
+
           if (session.worktree_id) {
             const newMap = new Map(state.sessionsByWorktree)
             const existing = newMap.get(session.worktree_id) || []
@@ -1277,6 +1313,14 @@ export const useSessionStore = create<SessionState>()(
             }
           }
         }
+        if (agentSdk === 'opencode') {
+          for (const session of get().boardAssistantByProject.values()) {
+            if (session.id === sessionId && session.agent_sdk) {
+              agentSdk = session.agent_sdk
+              break
+            }
+          }
+        }
 
         // Push to agent backend (SDK-aware) — skip for terminal sessions
         try {
@@ -1374,6 +1418,17 @@ export const useSessionStore = create<SessionState>()(
               newConnectionSessionsMap.set(connectionId, updatedSessions)
               return { sessionsByConnection: newConnectionSessionsMap }
             }
+          }
+
+          const newBoardAssistantMap = new Map(state.boardAssistantByProject)
+          for (const [projectId, session] of newBoardAssistantMap.entries()) {
+            if (session.id !== sessionId) continue
+            updatedAny = true
+            newBoardAssistantMap.set(projectId, {
+              ...session,
+              opencode_session_id: opencodeSessionId
+            })
+            return { boardAssistantByProject: newBoardAssistantMap }
           }
 
           return {}
@@ -1510,6 +1565,182 @@ export const useSessionStore = create<SessionState>()(
 
       getPendingPlan: (sessionId: string): PendingPlan | null => {
         return get().pendingPlans.get(sessionId) ?? null
+      },
+
+      // ─── Board assistant actions ──────────────────────────────────────
+
+      loadBoardAssistantSession: async (projectId: string) => {
+        try {
+          const session = await window.db.session.getActiveBoardAssistant(projectId)
+          set((state) => {
+            const map = new Map(state.boardAssistantByProject)
+            const newModeMap = new Map(state.modeBySession)
+            if (session) {
+              map.set(projectId, session)
+              newModeMap.set(session.id, session.mode || 'build')
+            } else {
+              map.delete(projectId)
+            }
+            return { boardAssistantByProject: map, modeBySession: newModeMap }
+          })
+        } catch {
+          // Non-fatal: board assistant tab won't show until next load
+        }
+      },
+
+      createBoardAssistantSession: async (projectId: string) => {
+        try {
+          // If one already exists, just focus it
+          const existing = get().boardAssistantByProject.get(projectId)
+          if (existing) {
+            get().focusBoardAssistantSession(projectId)
+            return { success: true, session: existing }
+          }
+
+          const session = await window.db.session.create({
+            worktree_id: null,
+            project_id: projectId,
+            name: 'Board Assistant',
+            session_type: 'board-assistant',
+            agent_sdk: useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+          })
+
+          set((state) => {
+            const map = new Map(state.boardAssistantByProject)
+            const newModeMap = new Map(state.modeBySession)
+            map.set(projectId, session)
+            newModeMap.set(session.id, session.mode || 'build')
+            return {
+              boardAssistantByProject: map,
+              modeBySession: newModeMap,
+              activeBoardAssistantProjectId: projectId,
+              // Clear other active states so the board assistant view shows
+              activeSessionId: null,
+              activePinnedSessionId: null,
+              inlineConnectionSessionId: null
+            }
+          })
+
+          return { success: true, session }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to create board assistant'
+          }
+        }
+      },
+
+      closeBoardAssistantSession: async (projectId: string) => {
+        try {
+          const session = get().boardAssistantByProject.get(projectId)
+          if (!session) {
+            // Clear stale focus/map state so the UI doesn't get stuck
+            set((state) => {
+              const map = new Map(state.boardAssistantByProject)
+              map.delete(projectId)
+              return {
+                boardAssistantByProject: map,
+                activeBoardAssistantProjectId:
+                  state.activeBoardAssistantProjectId === projectId
+                    ? null
+                    : state.activeBoardAssistantProjectId
+              }
+            })
+            return { success: true }
+          }
+
+          // Clean up the runtime BEFORE updating store state.
+          // We must do this here rather than relying on component unmount,
+          // because the BoardAssistantView may not be mounted (e.g. user
+          // switched to a file tab and then closed the board assistant tab).
+          const { useBoardChatStore } = await import('./useBoardChatStore')
+          const chatSession = useBoardChatStore.getState().getSessionSnapshot(session.id)
+          if (chatSession) {
+            const { useQuestionStore } = await import('./useQuestionStore')
+            const { usePermissionStore } = await import('./usePermissionStore')
+            const { useCommandApprovalStore } = await import('./useCommandApprovalStore')
+
+            useQuestionStore.getState().clearSession(session.id)
+            usePermissionStore.getState().clearSession(session.id)
+            useCommandApprovalStore.getState().clearSession(session.id)
+
+            if (chatSession.snapshot.runtimePath && chatSession.snapshot.opencodeSessionId) {
+              try {
+                await window.opencodeOps.abort(
+                  chatSession.snapshot.runtimePath,
+                  chatSession.snapshot.opencodeSessionId
+                )
+              } catch {
+                // Best-effort cleanup
+              }
+              try {
+                await window.opencodeOps.disconnect(
+                  chatSession.snapshot.runtimePath,
+                  chatSession.snapshot.opencodeSessionId
+                )
+              } catch {
+                // Best-effort cleanup
+              }
+            }
+
+          }
+          useBoardChatStore.getState().clearProjectSnapshot(projectId)
+
+          await window.db.session.update(session.id, {
+            status: 'completed',
+            completed_at: new Date().toISOString()
+          })
+
+          set((state) => {
+            const map = new Map(state.boardAssistantByProject)
+            map.delete(projectId)
+
+            // If this was the active board assistant, clear focus and
+            // restore the previously active session for this worktree
+            const clearFocus = state.activeBoardAssistantProjectId === projectId
+
+            if (clearFocus) {
+              const worktreeId = state.activeWorktreeId
+              const connectionId = state.activeConnectionId
+              const restoredSessionId =
+                (worktreeId ? state.activeSessionByWorktree[worktreeId] : null) ??
+                (connectionId ? state.activeSessionByConnection[connectionId] : null) ??
+                null
+
+              return {
+                boardAssistantByProject: map,
+                activeBoardAssistantProjectId: null,
+                activeSessionId: restoredSessionId
+              }
+            }
+
+            return { boardAssistantByProject: map }
+          })
+
+          return { success: true }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to close board assistant'
+          }
+        }
+      },
+
+      focusBoardAssistantSession: (projectId: string) => {
+        const session = get().boardAssistantByProject.get(projectId)
+        if (!session) return
+
+        set({
+          activeBoardAssistantProjectId: projectId,
+          // Clear other active states so the board assistant view shows
+          activeSessionId: null,
+          activePinnedSessionId: null,
+          inlineConnectionSessionId: null
+        })
+      },
+
+      clearBoardAssistantFocus: () => {
+        set({ activeBoardAssistantProjectId: null })
       },
 
       // ─── Inline connection session actions ─────────────────────────────

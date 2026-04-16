@@ -80,7 +80,7 @@ export function SessionTerminalView({
 
   return (
     <div className="flex-1 flex flex-col min-h-0" data-testid="session-terminal-view">
-      <TerminalView worktreeId={sessionId} cwd={cwd} isVisible={isVisible} />
+      <TerminalView terminalId={sessionId} cwd={cwd} isVisible={isVisible} />
     </div>
   )
 }

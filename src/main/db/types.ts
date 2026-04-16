@@ -89,6 +89,7 @@ export interface WorktreeUpdate {
 }
 
 export type SessionMode = 'build' | 'plan' | 'super-plan'
+export type SessionType = 'default' | 'board-assistant'
 
 export interface Session {
   id: string
@@ -100,6 +101,7 @@ export interface Session {
   opencode_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   mode: SessionMode
+  session_type: SessionType
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -117,6 +119,7 @@ export interface SessionCreate {
   opencode_session_id?: string | null
   agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   mode?: SessionMode
+  session_type?: SessionType
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
@@ -129,6 +132,7 @@ export interface SessionUpdate {
   opencode_session_id?: string | null
   agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   mode?: SessionMode
+  session_type?: SessionType
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null

@@ -113,6 +113,9 @@ function isAppShortcut(e: KeyboardEvent): boolean {
   if (e.metaKey && e.shiftKey && e.key === 'P') return true
   if (e.metaKey && (e.key === '[' || e.key === ']')) return true
 
+  // Ctrl+Tab / Ctrl+Shift+Tab — terminal tab cycling handled by the app
+  if (e.ctrlKey && e.key === 'Tab') return true
+
   return false
 }
 
@@ -131,7 +134,7 @@ export class XtermBackend implements TerminalBackend {
   private removeDataListener: (() => void) | null = null
   private removeExitListener: (() => void) | null = null
   private inputDisposable: { dispose: () => void } | null = null
-  private worktreeId: string = ''
+  private terminalId: string = ''
   private ghosttyConfig: GhosttyTerminalConfig = {}
 
   /** Callback for the host to wire Cmd+F search toggling */
@@ -140,7 +143,7 @@ export class XtermBackend implements TerminalBackend {
   onClearRequest?: () => void
 
   mount(container: HTMLDivElement, opts: TerminalOpts, callbacks: TerminalBackendCallbacks): void {
-    this.worktreeId = opts.worktreeId
+    this.terminalId = opts.terminalId
     container.innerHTML = ''
 
     // Store config for theme rebuilding
@@ -203,7 +206,7 @@ export class XtermBackend implements TerminalBackend {
           .readText()
           .catch(() => window.projectOps.readFromClipboard())
           .then((text) => {
-            if (text) window.terminalOps.write(this.worktreeId, text)
+            if (text) window.terminalOps.write(this.terminalId, text)
           })
           .catch((err) => console.error('Terminal paste failed:', err))
         return false
@@ -248,23 +251,23 @@ export class XtermBackend implements TerminalBackend {
 
     // Wire user input -> PTY
     this.inputDisposable = terminal.onData((data) => {
-      window.terminalOps.write(this.worktreeId, data)
+      window.terminalOps.write(this.terminalId, data)
     })
 
     // Wire PTY output -> terminal display
-    this.removeDataListener = window.terminalOps.onData(this.worktreeId, (data) => {
+    this.removeDataListener = window.terminalOps.onData(this.terminalId, (data) => {
       terminal.write(data)
     })
 
     // Wire PTY exit -> status change
-    this.removeExitListener = window.terminalOps.onExit(this.worktreeId, (code) => {
+    this.removeExitListener = window.terminalOps.onExit(this.terminalId, (code) => {
       terminal.write(`\r\n\x1b[90m[Process exited with code ${code}]\x1b[0m\r\n`)
       callbacks.onStatusChange('exited', code)
     })
 
     // Create the PTY
     callbacks.onStatusChange('creating')
-    window.terminalOps.create(this.worktreeId, opts.cwd, opts.shell).then((result) => {
+    window.terminalOps.create(this.terminalId, opts.cwd, opts.shell).then((result) => {
       if (result.success) {
         callbacks.onStatusChange('running')
 
@@ -280,7 +283,7 @@ export class XtermBackend implements TerminalBackend {
             this.fitAddon.fit()
             const dims = this.fitAddon.proposeDimensions()
             if (dims) {
-              window.terminalOps.resize(this.worktreeId, dims.cols, dims.rows)
+              window.terminalOps.resize(this.terminalId, dims.cols, dims.rows)
             }
           }
         } catch {
@@ -299,7 +302,7 @@ export class XtermBackend implements TerminalBackend {
           this.fitAddon.fit()
           const dims = this.fitAddon.proposeDimensions()
           if (dims) {
-            window.terminalOps.resize(this.worktreeId, dims.cols, dims.rows)
+            window.terminalOps.resize(this.terminalId, dims.cols, dims.rows)
           }
         }
       } catch {
@@ -314,7 +317,7 @@ export class XtermBackend implements TerminalBackend {
   }
 
   resize(cols: number, rows: number): void {
-    window.terminalOps.resize(this.worktreeId, cols, rows)
+    window.terminalOps.resize(this.terminalId, cols, rows)
   }
 
   focus(): void {
@@ -337,7 +340,7 @@ export class XtermBackend implements TerminalBackend {
       this.fitAddon?.fit()
       const dims = this.fitAddon?.proposeDimensions()
       if (dims) {
-        window.terminalOps.resize(this.worktreeId, dims.cols, dims.rows)
+        window.terminalOps.resize(this.terminalId, dims.cols, dims.rows)
       }
     } catch {
       // Ignore fit errors

@@ -16,7 +16,9 @@ import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { KanbanBoard } from '@/components/kanban/KanbanBoard'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
+import { BoardAssistantView } from '@/components/kanban/BoardAssistantView'
 import { PRNotificationStack } from '@/components/pr/PRNotificationStack'
+import { MainPaneTerminalPanel } from './MainPaneTerminalPanel'
 
 const MonacoDiffView = lazy(() => import('@/components/diff/MonacoDiffView'))
 const WorktreeContextEditor = lazy(() =>
@@ -40,10 +42,12 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const closedTerminalSessionIds = useSessionStore((state) => state.closedTerminalSessionIds)
   const ghosttyOverlaySuppressed = useLayoutStore((state) => state.ghosttyOverlaySuppressed)
   const activePinnedSessionId = useSessionStore((state) => state.activePinnedSessionId)
+  const activeBoardAssistantProjectId = useSessionStore((state) => state.activeBoardAssistantProjectId)
   const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
   const isPinnedBoardActive = useKanbanStore((state) => state.isPinnedBoardActive)
   const pinnedStoreLoaded = usePinnedStore((state) => state.loaded)
   const boardMode = useSettingsStore((s) => s.boardMode)
+  const terminalPosition = useSettingsStore((s) => s.terminalPosition)
   const selectedProjectId = useProjectStore((state) => state.selectedProjectId)
   const selectedProjectPath = useProjectStore((state) =>
     state.projects.find((p) => p.id === state.selectedProjectId)?.path ?? ''
@@ -171,6 +175,11 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const renderContent = () => {
     if (children) {
       return children
+    }
+
+    // Board assistant tab is active — render BoardAssistantView in main pane
+    if (activeBoardAssistantProjectId && !activeFilePath && !activeDiff && !contextEditorWorktreeId) {
+      return <BoardAssistantView key={activeBoardAssistantProjectId} projectId={activeBoardAssistantProjectId} />
     }
 
     // Sticky-tab board mode: render board when BOARD_TAB_ID is the active session
@@ -357,16 +366,19 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     >
       <PRNotificationStack />
       {(selectedWorktreeId || selectedConnectionId) && <SessionTabs />}
-      {renderContent()}
-      {/* Always-mounted terminal sessions — kept alive to preserve PTY state across tab switches */}
-      {mountedTerminalSessionIds.map((sessionId) => {
-        const isActive = visibleTerminalId === sessionId
-        return (
-          <div key={sessionId} className={isActive ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
-            <SessionTerminalView sessionId={sessionId} isVisible={isActive} />
-          </div>
-        )
-      })}
+      <div className="flex-1 flex flex-col min-h-0">
+        {renderContent()}
+        {/* Always-mounted terminal sessions — kept alive to preserve PTY state across tab switches */}
+        {mountedTerminalSessionIds.map((sessionId) => {
+          const isActive = visibleTerminalId === sessionId
+          return (
+            <div key={sessionId} className={isActive ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
+              <SessionTerminalView sessionId={sessionId} isVisible={isActive} />
+            </div>
+          )
+        })}
+      </div>
+      {terminalPosition === 'bottom' && <MainPaneTerminalPanel />}
     </main>
   )
 }

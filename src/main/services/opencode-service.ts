@@ -7,6 +7,7 @@ import { autoRenameWorktreeBranch } from './git-service'
 import { getUserEnvironmentVariables } from './env-vars'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
 import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
+import { toError } from './error-utils'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -78,10 +79,6 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
-function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
-}
-
 function messageInfo(message: unknown): { id?: string; role?: string; parts: unknown[] } {
   const record = asRecord(message)
   const info = asRecord(record?.info)
@@ -141,6 +138,31 @@ function spawnOpenCodeServer(
     shell: launchSpec.shell
   })
 
+  // Hoisted to function scope so close() can use it. On Windows with shell:true,
+  // proc is cmd.exe — proc.kill() only kills the shell wrapper. terminateProcess
+  // uses taskkill /t to kill the entire process tree including the opencode child.
+  const terminateProcess = (force: boolean = false): void => {
+    if (process.platform === 'win32' && proc.pid !== undefined) {
+      const taskkillArgs = ['/pid', String(proc.pid), '/t']
+      if (force) taskkillArgs.push('/f')
+      const taskkill = spawn('taskkill', taskkillArgs, { stdio: 'ignore' })
+      taskkill.on('error', () => {
+        try {
+          proc.kill(force ? 'SIGKILL' : 'SIGTERM')
+        } catch {
+          // Process already exited
+        }
+      })
+      return
+    }
+
+    try {
+      proc.kill(force ? 'SIGKILL' : 'SIGTERM')
+    } catch {
+      // Process already exited
+    }
+  }
+
   const url = new Promise<string>((resolve, reject) => {
     let settled = false
 
@@ -156,28 +178,6 @@ function spawnOpenCodeServer(
       settled = true
       clearTimeout(id)
       reject(error)
-    }
-
-    const terminateProcess = (force: boolean = false): void => {
-      if (process.platform === 'win32' && proc.pid !== undefined) {
-        const taskkillArgs = ['/pid', String(proc.pid), '/t']
-        if (force) taskkillArgs.push('/f')
-        const taskkill = spawn('taskkill', taskkillArgs, { stdio: 'ignore' })
-        taskkill.on('error', () => {
-          try {
-            proc.kill(force ? 'SIGKILL' : 'SIGTERM')
-          } catch {
-            // Process already exited
-          }
-        })
-        return
-      }
-
-      try {
-        proc.kill(force ? 'SIGKILL' : 'SIGTERM')
-      } catch {
-        // Process already exited
-      }
     }
 
     const id = setTimeout(() => {
@@ -230,7 +230,7 @@ function spawnOpenCodeServer(
   return url.then((resolvedUrl) => ({
     url: resolvedUrl,
     close() {
-      proc.kill()
+      terminateProcess()
     }
   }))
 }

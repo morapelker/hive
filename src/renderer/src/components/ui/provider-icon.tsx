@@ -1,9 +1,11 @@
-import { Github, ClipboardList, type LucideIcon } from 'lucide-react'
+import { Github, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import jiraIcon from '@/assets/provider-icons/jira.svg'
 
 // ── Per-provider style config ────────────────────────────────────────
 interface ProviderConfig {
-  Icon: LucideIcon
+  Icon?: LucideIcon
+  imgSrc?: string
   bg: string
   color: string
   label: string
@@ -17,9 +19,9 @@ const PROVIDER_CONFIG: Record<string, ProviderConfig> = {
     label: 'GitHub',
   },
   jira: {
-    Icon: ClipboardList,
-    bg: 'bg-blue-100 dark:bg-blue-900',
-    color: 'text-blue-600 dark:text-blue-300',
+    imgSrc: jiraIcon,
+    bg: 'bg-blue-500 dark:bg-blue-600',
+    color: '',
     label: 'Jira',
   },
 }
@@ -40,7 +42,7 @@ interface ProviderIconProps {
 
 export function ProviderIcon({ provider, size = 'sm', className }: ProviderIconProps) {
   const config = PROVIDER_CONFIG[provider] ?? FALLBACK_CONFIG
-  const { Icon, bg, color } = config
+  const { Icon, imgSrc, bg, color } = config
 
   return (
     <span
@@ -53,13 +55,25 @@ export function ProviderIcon({ provider, size = 'sm', className }: ProviderIconP
       )}
       title={config.label}
     >
-      <Icon
-        className={cn(
-          color,
-          size === 'sm' && 'h-3 w-3',
-          size === 'md' && 'h-4 w-4'
-        )}
-      />
+      {imgSrc ? (
+        <img
+          src={imgSrc}
+          alt={config.label}
+          className={cn(
+            size === 'sm' && 'h-3 w-3',
+            size === 'md' && 'h-4 w-4'
+          )}
+          draggable={false}
+        />
+      ) : Icon ? (
+        <Icon
+          className={cn(
+            color,
+            size === 'sm' && 'h-3 w-3',
+            size === 'md' && 'h-4 w-4'
+          )}
+        />
+      ) : null}
     </span>
   )
 }

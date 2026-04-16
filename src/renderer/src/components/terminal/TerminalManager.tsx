@@ -1,8 +1,11 @@
 import { useRef, useCallback, useEffect } from 'react'
 import { TerminalView, type TerminalViewHandle } from './TerminalView'
+import { TerminalTabSidebar } from './TerminalTabSidebar'
 import { useTerminalStore } from '@/stores/useTerminalStore'
+import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useShallow } from 'zustand/react/shallow'
 
 interface TerminalManagerProps {
   /** The currently selected worktree ID (null if none selected) */
@@ -14,20 +17,19 @@ interface TerminalManagerProps {
 }
 
 /**
- * TerminalManager ensures one TerminalView per worktree is kept alive across
- * tab switches and worktree changes. It renders all active terminals but only
- * shows the one matching the selected worktree.
+ * TerminalManager renders one TerminalView per tab across all worktrees,
+ * with a TerminalTabSidebar for the currently selected worktree.
  *
- * When the user switches from Terminal to Setup and back, the terminal DOM
- * and PTY process stay alive — no state is lost.
+ * All tabs are kept mounted (CSS hidden) to preserve PTY state.
+ * The tab store owns terminal identity — no activeWorktreesRef needed.
  */
 export function TerminalManager({
   selectedWorktreeId,
   worktreePath,
   isVisible
 }: TerminalManagerProps): React.JSX.Element {
-  // Track which worktrees have had terminals opened
-  const activeWorktreesRef = useRef<Map<string, string>>(new Map()) // worktreeId -> cwd
+  // Map worktreeId -> path for resolving CWD of non-selected worktrees' tabs
+  const worktreePathsRef = useRef<Map<string, string>>(new Map())
   const terminalRefsMap = useRef<Map<string, React.RefObject<TerminalViewHandle | null>>>(new Map())
 
   const destroyTerminal = useTerminalStore((s) => s.destroyTerminal)
@@ -35,41 +37,67 @@ export function TerminalManager({
   const embeddedTerminalBackend = useSettingsStore((s) => s.embeddedTerminalBackend)
   const prevBackendRef = useRef(embeddedTerminalBackend)
 
-  // Get or create a ref for a worktree's terminal
+  const { tabsByWorktree, activeTabByWorktree, createTab, removeWorktree, removeAllTabs } =
+    useTerminalTabStore(
+      useShallow((s) => ({
+        tabsByWorktree: s.tabsByWorktree,
+        activeTabByWorktree: s.activeTabByWorktree,
+        createTab: s.createTab,
+        removeWorktree: s.removeWorktree,
+        removeAllTabs: s.removeAllTabs
+      }))
+    )
+
+  // Get or create a ref for a tab's terminal
   const getTerminalRef = useCallback(
-    (worktreeId: string): React.RefObject<TerminalViewHandle | null> => {
-      let ref = terminalRefsMap.current.get(worktreeId)
+    (tabId: string): React.RefObject<TerminalViewHandle | null> => {
+      let ref = terminalRefsMap.current.get(tabId)
       if (!ref) {
         ref = { current: null }
-        terminalRefsMap.current.set(worktreeId, ref)
+        terminalRefsMap.current.set(tabId, ref)
       }
       return ref
     },
     []
   )
 
-  // Add the selected worktree to active terminals if it has a valid path
-  if (selectedWorktreeId && worktreePath && isVisible) {
-    if (!activeWorktreesRef.current.has(selectedWorktreeId)) {
-      activeWorktreesRef.current.set(selectedWorktreeId, worktreePath)
-    }
+  // Update worktree paths map when the selected worktree changes
+  if (selectedWorktreeId && worktreePath) {
+    worktreePathsRef.current.set(selectedWorktreeId, worktreePath)
   }
 
+  // Auto-create "Terminal 1" when a worktree is selected and has no tabs.
+  // Read tabs via getState() to avoid re-triggering on every tab state change.
+  useEffect(() => {
+    if (selectedWorktreeId && worktreePath && isVisible) {
+      const tabs = useTerminalTabStore.getState().getTabs(selectedWorktreeId)
+      if (tabs.length === 0) {
+        createTab(selectedWorktreeId)
+      }
+    }
+  }, [selectedWorktreeId, worktreePath, isVisible, createTab])
+
   // When backend setting changes, tear down all active terminals so they get re-created
-  // with the new backend on next visibility
+  // with the new backend on next visibility.
+  // Read tabs via getState() — this effect responds to backend changes, not tab changes.
   useEffect(() => {
     if (prevBackendRef.current !== embeddedTerminalBackend) {
       prevBackendRef.current = embeddedTerminalBackend
-      // Destroy all active terminals — TerminalView will re-create with new backend
-      for (const [worktreeId] of activeWorktreesRef.current) {
-        destroyTerminal(worktreeId)
+      // Destroy all PTYs across all worktrees by tab ID
+      const currentTabs = useTerminalTabStore.getState().tabsByWorktree
+      for (const [, tabs] of currentTabs) {
+        for (const tab of tabs) {
+          destroyTerminal(tab.id)
+        }
       }
-      activeWorktreesRef.current.clear()
+      removeAllTabs()
       terminalRefsMap.current.clear()
     }
-  }, [embeddedTerminalBackend, destroyTerminal])
+  }, [embeddedTerminalBackend, destroyTerminal, removeAllTabs])
 
-  // Clean up terminals for worktrees that no longer exist
+  // Clean up terminals for worktrees that no longer exist.
+  // Only responds to worktreesByProject changes (actual worktree addition/removal),
+  // NOT to tab state changes. Reads tabs via getState() to avoid feedback loop with auto-create.
   useEffect(() => {
     const existingWorktreeIds = new Set<string>()
     for (const [, worktrees] of worktreesByProject) {
@@ -78,20 +106,29 @@ export function TerminalManager({
       }
     }
 
-    for (const [worktreeId] of activeWorktreesRef.current) {
+    const currentTabs = useTerminalTabStore.getState().tabsByWorktree
+    for (const [worktreeId, tabs] of currentTabs) {
       if (!existingWorktreeIds.has(worktreeId)) {
-        // Worktree was deleted/archived — clean up its terminal
-        destroyTerminal(worktreeId)
-        activeWorktreesRef.current.delete(worktreeId)
-        terminalRefsMap.current.delete(worktreeId)
+        // Worktree was deleted/archived — destroy all its tab PTYs
+        for (const tab of tabs) {
+          destroyTerminal(tab.id)
+          terminalRefsMap.current.delete(tab.id)
+        }
+        removeWorktree(worktreeId)
+        worktreePathsRef.current.delete(worktreeId)
       }
     }
-  }, [worktreesByProject, destroyTerminal])
+  }, [worktreesByProject, destroyTerminal, removeWorktree])
 
-  // Build the list of active terminals
-  const activeTerminals = Array.from(activeWorktreesRef.current.entries())
+  // Collect ALL tabs across ALL worktrees for rendering
+  const allTabs = Array.from(tabsByWorktree.values()).flat()
 
-  if (activeTerminals.length === 0 && !selectedWorktreeId) {
+  // Determine which tab is currently active for the selected worktree
+  const activeTabId = selectedWorktreeId
+    ? activeTabByWorktree.get(selectedWorktreeId)
+    : undefined
+
+  if (allTabs.length === 0 && !selectedWorktreeId) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
         Select a worktree to open a terminal
@@ -100,29 +137,37 @@ export function TerminalManager({
   }
 
   return (
-    <>
-      {activeTerminals.map(([worktreeId, cwd]) => {
-        const isActive = worktreeId === selectedWorktreeId && isVisible
-        const termRef = getTerminalRef(worktreeId)
+    <div className="flex h-full w-full">
+      <div className="flex-1 min-w-0 relative">
+        {allTabs.map((tab) => {
+          const isTabVisible =
+            tab.worktreeId === selectedWorktreeId && tab.id === activeTabId
+          const termRef = getTerminalRef(tab.id)
+          const cwd = worktreePathsRef.current.get(tab.worktreeId) ?? ''
 
-        return (
-          <div
-            key={worktreeId}
-            className={isActive ? 'h-full w-full' : 'hidden'}
-            data-testid={`terminal-instance-${worktreeId}`}
-          >
-            <TerminalView ref={termRef} worktreeId={worktreeId} cwd={cwd} isVisible={isActive} />
-          </div>
-        )
-      })}
-      {/* Show placeholder if selected worktree doesn't have a terminal yet */}
-      {selectedWorktreeId &&
-        !activeWorktreesRef.current.has(selectedWorktreeId) &&
-        !worktreePath && (
+          return (
+            <div
+              key={tab.id}
+              className={isTabVisible ? 'h-full w-full' : 'hidden'}
+              data-testid={`terminal-instance-${tab.id}`}
+            >
+              <TerminalView
+                ref={termRef}
+                terminalId={tab.id}
+                cwd={cwd}
+                isVisible={isTabVisible && isVisible}
+              />
+            </div>
+          )
+        })}
+        {/* Show placeholder if no tabs are visible */}
+        {allTabs.length === 0 && selectedWorktreeId && (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             Select a worktree to open a terminal
           </div>
         )}
-    </>
+      </div>
+      {selectedWorktreeId && <TerminalTabSidebar worktreeId={selectedWorktreeId} />}
+    </div>
   )
 }

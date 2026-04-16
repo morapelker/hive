@@ -7,6 +7,7 @@ import type { AgentSdkManager } from '../services/agent-sdk-manager'
 import type { PromptOptions } from '../services/agent-sdk-types'
 import { ClaudeCodeImplementer } from '../services/claude-code-implementer'
 import { CodexImplementer } from '../services/codex-implementer'
+import { toError } from '../services/error-utils'
 
 const log = createLogger({ component: 'OpenCodeHandlers' })
 
@@ -16,10 +17,6 @@ const log = createLogger({ component: 'OpenCodeHandlers' })
 // SDK ID after the first prompt — using the session ID would cause re-injection
 // when the ID changes.
 const injectedWorktrees = new Set<string>()
-
-function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
-}
 
 export function registerOpenCodeHandlers(
   mainWindow: BrowserWindow,

@@ -6,7 +6,7 @@ import { createLogger } from '../services/logger'
 
 const log = createLogger({ component: 'TerminalHandlers' })
 
-// Track listener cleanup functions per worktreeId to prevent duplicate registrations
+// Track listener cleanup functions per terminalId to prevent duplicate registrations
 const listenerCleanups = new Map<string, { removeData: () => void; removeExit: () => void }>()
 
 // Per-worktree data buffers for batching PTY output before IPC send.
@@ -29,65 +29,65 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   // Create a PTY for a worktree
   ipcMain.handle(
     'terminal:create',
-    async (_event, worktreeId: string, cwd: string, shell?: string) => {
-      log.info('IPC: terminal:create', { worktreeId, cwd, shell })
+    async (_event, terminalId: string, cwd: string, shell?: string) => {
+      log.info('IPC: terminal:create', { terminalId, cwd, shell })
       try {
         // Check if PTY already exists before creating — if it does, skip listener registration
-        const alreadyExists = ptyService.has(worktreeId)
-        const { cols, rows } = ptyService.create(worktreeId, { cwd, shell: shell || undefined })
+        const alreadyExists = ptyService.has(terminalId)
+        const { cols, rows } = ptyService.create(terminalId, { cwd, shell: shell || undefined })
 
         if (alreadyExists) {
-          log.info('PTY already exists, skipping listener registration', { worktreeId })
+          log.info('PTY already exists, skipping listener registration', { terminalId })
           return { success: true, cols, rows }
         }
 
-        // Clean up any stale listeners for this worktreeId (shouldn't happen, but defensive)
-        const existing = listenerCleanups.get(worktreeId)
+        // Clean up any stale listeners for this terminalId (shouldn't happen, but defensive)
+        const existing = listenerCleanups.get(terminalId)
         if (existing) {
           existing.removeData()
           existing.removeExit()
-          listenerCleanups.delete(worktreeId)
+          listenerCleanups.delete(terminalId)
         }
 
         // Wire PTY output to renderer (batched via setImmediate)
-        const removeData = ptyService.onData(worktreeId, (data) => {
+        const removeData = ptyService.onData(terminalId, (data) => {
           if (mainWindow.isDestroyed()) return
 
           // Accumulate into buffer
-          const existing = dataBuffers.get(worktreeId)
-          dataBuffers.set(worktreeId, existing ? existing + data : data)
+          const existing = dataBuffers.get(terminalId)
+          dataBuffers.set(terminalId, existing ? existing + data : data)
 
           // Schedule a flush if one isn't already pending
-          if (!flushScheduled.has(worktreeId)) {
-            flushScheduled.add(worktreeId)
+          if (!flushScheduled.has(terminalId)) {
+            flushScheduled.add(terminalId)
             setImmediate(() => {
-              flushScheduled.delete(worktreeId)
-              const buffered = dataBuffers.get(worktreeId)
-              dataBuffers.delete(worktreeId)
+              flushScheduled.delete(terminalId)
+              const buffered = dataBuffers.get(terminalId)
+              dataBuffers.delete(terminalId)
               if (buffered && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send(`terminal:data:${worktreeId}`, buffered)
+                mainWindow.webContents.send(`terminal:data:${terminalId}`, buffered)
               }
             })
           }
         })
 
         // Wire PTY exit to renderer
-        const removeExit = ptyService.onExit(worktreeId, (code) => {
+        const removeExit = ptyService.onExit(terminalId, (code) => {
           if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(`terminal:exit:${worktreeId}`, code)
+            mainWindow.webContents.send(`terminal:exit:${terminalId}`, code)
           }
           // Clean up listener tracking on exit
-          listenerCleanups.delete(worktreeId)
+          listenerCleanups.delete(terminalId)
         })
 
-        listenerCleanups.set(worktreeId, { removeData, removeExit })
+        listenerCleanups.set(terminalId, { removeData, removeExit })
 
         return { success: true, cols, rows }
       } catch (error) {
         log.error(
           'IPC: terminal:create failed',
           error instanceof Error ? error : new Error(String(error)),
-          { worktreeId }
+          { terminalId }
         )
         return {
           success: false,
@@ -98,29 +98,29 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   )
 
   // Write data to a PTY (fire-and-forget — no response needed for keystrokes)
-  ipcMain.on('terminal:write', (_event, worktreeId: string, data: string) => {
-    ptyService.write(worktreeId, data)
+  ipcMain.on('terminal:write', (_event, terminalId: string, data: string) => {
+    ptyService.write(terminalId, data)
   })
 
   // Resize a PTY
-  ipcMain.handle('terminal:resize', (_event, worktreeId: string, cols: number, rows: number) => {
-    ptyService.resize(worktreeId, cols, rows)
+  ipcMain.handle('terminal:resize', (_event, terminalId: string, cols: number, rows: number) => {
+    ptyService.resize(terminalId, cols, rows)
   })
 
   // Destroy a PTY
-  ipcMain.handle('terminal:destroy', (_event, worktreeId: string) => {
-    log.info('IPC: terminal:destroy', { worktreeId })
+  ipcMain.handle('terminal:destroy', (_event, terminalId: string) => {
+    log.info('IPC: terminal:destroy', { terminalId })
     // Clean up listener tracking
-    const cleanup = listenerCleanups.get(worktreeId)
+    const cleanup = listenerCleanups.get(terminalId)
     if (cleanup) {
       cleanup.removeData()
       cleanup.removeExit()
-      listenerCleanups.delete(worktreeId)
+      listenerCleanups.delete(terminalId)
     }
     // Discard any pending buffered data
-    dataBuffers.delete(worktreeId)
-    flushScheduled.delete(worktreeId)
-    ptyService.destroy(worktreeId)
+    dataBuffers.delete(terminalId)
+    flushScheduled.delete(terminalId)
+    ptyService.destroy(terminalId)
   })
 
   // Get Ghostty config for terminal theming
@@ -163,28 +163,28 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
     'terminal:ghostty:createSurface',
     (
       _event,
-      worktreeId: string,
+      terminalId: string,
       rect: { x: number; y: number; w: number; h: number },
       opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
     ) => {
-      log.info('IPC: terminal:ghostty:createSurface', { worktreeId, rect })
-      return ghosttyService.createSurface(worktreeId, rect, opts || {})
+      log.info('IPC: terminal:ghostty:createSurface', { terminalId, rect })
+      return ghosttyService.createSurface(terminalId, rect, opts || {})
     }
   )
 
   // Update the native view frame (position + size)
   ipcMain.handle(
     'terminal:ghostty:setFrame',
-    (_event, worktreeId: string, rect: { x: number; y: number; w: number; h: number }) => {
-      ghosttyService.setFrame(worktreeId, rect)
+    (_event, terminalId: string, rect: { x: number; y: number; w: number; h: number }) => {
+      ghosttyService.setFrame(terminalId, rect)
     }
   )
 
   // Update surface size in pixels
   ipcMain.handle(
     'terminal:ghostty:setSize',
-    (_event, worktreeId: string, width: number, height: number) => {
-      ghosttyService.setSize(worktreeId, width, height)
+    (_event, terminalId: string, width: number, height: number) => {
+      ghosttyService.setSize(terminalId, width, height)
     }
   )
 
@@ -193,7 +193,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
     'terminal:ghostty:keyEvent',
     (
       _event,
-      worktreeId: string,
+      terminalId: string,
       keyEvent: {
         action: number
         keycode: number
@@ -204,42 +204,42 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
         composing?: boolean
       }
     ) => {
-      return ghosttyService.keyEvent(worktreeId, keyEvent)
+      return ghosttyService.keyEvent(terminalId, keyEvent)
     }
   )
 
   // Forward a mouse button event
   ipcMain.handle(
     'terminal:ghostty:mouseButton',
-    (_event, worktreeId: string, state: number, button: number, mods: number) => {
-      ghosttyService.mouseButton(worktreeId, state, button, mods)
+    (_event, terminalId: string, state: number, button: number, mods: number) => {
+      ghosttyService.mouseButton(terminalId, state, button, mods)
     }
   )
 
   // Forward a mouse position event
   ipcMain.handle(
     'terminal:ghostty:mousePos',
-    (_event, worktreeId: string, x: number, y: number, mods: number) => {
-      ghosttyService.mousePos(worktreeId, x, y, mods)
+    (_event, terminalId: string, x: number, y: number, mods: number) => {
+      ghosttyService.mousePos(terminalId, x, y, mods)
     }
   )
 
   // Forward a mouse scroll event
   ipcMain.handle(
     'terminal:ghostty:mouseScroll',
-    (_event, worktreeId: string, dx: number, dy: number, mods: number) => {
-      ghosttyService.mouseScroll(worktreeId, dx, dy, mods)
+    (_event, terminalId: string, dx: number, dy: number, mods: number) => {
+      ghosttyService.mouseScroll(terminalId, dx, dy, mods)
     }
   )
 
   // Set focus state for a surface
-  ipcMain.handle('terminal:ghostty:setFocus', (_event, worktreeId: string, focused: boolean) => {
-    ghosttyService.setFocus(worktreeId, focused)
+  ipcMain.handle('terminal:ghostty:setFocus', (_event, terminalId: string, focused: boolean) => {
+    ghosttyService.setFocus(terminalId, focused)
   })
 
   // Paste text into a Ghostty surface (programmatic paste, bypasses macOS focus)
-  ipcMain.handle('terminal:ghostty:pasteText', (_event, worktreeId: string, text: string) => {
-    ghosttyService.pasteText(worktreeId, text)
+  ipcMain.handle('terminal:ghostty:pasteText', (_event, terminalId: string, text: string) => {
+    ghosttyService.pasteText(terminalId, text)
   })
 
   // Diagnostic: inspect Ghostty view hierarchy and first responder state
@@ -248,9 +248,9 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   })
 
   // Destroy a Ghostty surface for a worktree
-  ipcMain.handle('terminal:ghostty:destroySurface', (_event, worktreeId: string) => {
-    log.info('IPC: terminal:ghostty:destroySurface', { worktreeId })
-    ghosttyService.destroySurface(worktreeId)
+  ipcMain.handle('terminal:ghostty:destroySurface', (_event, terminalId: string) => {
+    log.info('IPC: terminal:ghostty:destroySurface', { terminalId })
+    ghosttyService.destroySurface(terminalId)
   })
 
   // Shut down the Ghostty runtime entirely

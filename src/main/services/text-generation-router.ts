@@ -9,6 +9,7 @@ import { resolveCodexBinaryPath } from './codex-binary-resolver'
 import { getCodexCliEnv } from './codex-cli-env'
 import { detectAgentSdks } from './system-info'
 import type { AgentSdkDetection } from './system-info'
+import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
 import { createLogger } from './logger'
 import type { AgentSdkId } from './agent-sdk-types'
 
@@ -30,6 +31,7 @@ const SDK_CACHE_TTL_MS = 60_000
 
 let claudeBinaryPath: string | null = null
 let codexBinaryPath: string | null = null
+let openCodeLaunchSpec: OpenCodeLaunchSpec | null = null
 
 export function setClaudeBinaryPath(path: string | null): void {
   claudeBinaryPath = path
@@ -39,10 +41,14 @@ export function setCodexBinaryPath(path: string | null): void {
   codexBinaryPath = path
 }
 
+export function setOpenCodeLaunchSpec(spec: OpenCodeLaunchSpec | null): void {
+  openCodeLaunchSpec = spec
+}
+
 function getCachedSdkDetection(): AgentSdkDetection {
   const now = Date.now()
   if (!cachedSdks || now - cacheTimestamp > SDK_CACHE_TTL_MS) {
-    cachedSdks = detectAgentSdks()
+    cachedSdks = detectAgentSdks(openCodeLaunchSpec)
     cacheTimestamp = now
   }
   return cachedSdks

@@ -530,6 +530,14 @@ export function useOpenCodeGlobalListener(): void {
                 }
               }
             }
+            if (!idleSession) {
+              for (const session of sessionState.boardAssistantByProject.values()) {
+                if (session.id === sessionId) {
+                  idleSession = session
+                  break
+                }
+              }
+            }
             if (idleSession) {
               const provider = resolveUsageProvider(idleSession)
               useUsageStore.getState().fetchUsageForProvider(provider)

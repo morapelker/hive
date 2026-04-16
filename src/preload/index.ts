@@ -98,6 +98,7 @@ const db = {
       opencode_session_id?: string | null
       agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
       mode?: 'build' | 'plan'
+      session_type?: 'default' | 'board-assistant'
       model_provider_id?: string | null
       model_id?: string | null
       model_variant?: string | null
@@ -142,7 +143,9 @@ const db = {
     setPinnedToBoard: (sessionId: string, pinned: boolean) =>
       ipcRenderer.invoke('db:session:setPinnedToBoard', sessionId, pinned),
     getPinnedSessions: (worktreeId: string) =>
-      ipcRenderer.invoke('db:session:getPinnedSessions', worktreeId)
+      ipcRenderer.invoke('db:session:getPinnedSessions', worktreeId),
+    getActiveBoardAssistant: (projectId: string) =>
+      ipcRenderer.invoke('db:session:getActiveBoardAssistant', projectId)
   },
 
   sessionMessage: {
@@ -1612,23 +1615,23 @@ const settingsOps = {
 // Terminal operations API (PTY management)
 const terminalOps = {
   create: (
-    worktreeId: string,
+    terminalId: string,
     cwd: string,
     shell?: string
   ): Promise<{ success: boolean; cols?: number; rows?: number; error?: string }> =>
-    ipcRenderer.invoke('terminal:create', worktreeId, cwd, shell),
+    ipcRenderer.invoke('terminal:create', terminalId, cwd, shell),
 
-  write: (worktreeId: string, data: string): void =>
-    ipcRenderer.send('terminal:write', worktreeId, data),
+  write: (terminalId: string, data: string): void =>
+    ipcRenderer.send('terminal:write', terminalId, data),
 
-  resize: (worktreeId: string, cols: number, rows: number): Promise<void> =>
-    ipcRenderer.invoke('terminal:resize', worktreeId, cols, rows),
+  resize: (terminalId: string, cols: number, rows: number): Promise<void> =>
+    ipcRenderer.invoke('terminal:resize', terminalId, cols, rows),
 
-  destroy: (worktreeId: string): Promise<void> =>
-    ipcRenderer.invoke('terminal:destroy', worktreeId),
+  destroy: (terminalId: string): Promise<void> =>
+    ipcRenderer.invoke('terminal:destroy', terminalId),
 
-  onData: (worktreeId: string, callback: (data: string) => void): (() => void) => {
-    const channel = `terminal:data:${worktreeId}`
+  onData: (terminalId: string, callback: (data: string) => void): (() => void) => {
+    const channel = `terminal:data:${terminalId}`
     const handler = (_event: Electron.IpcRendererEvent, data: string): void => {
       callback(data)
     }
@@ -1638,8 +1641,8 @@ const terminalOps = {
     }
   },
 
-  onExit: (worktreeId: string, callback: (code: number) => void): (() => void) => {
-    const channel = `terminal:exit:${worktreeId}`
+  onExit: (terminalId: string, callback: (code: number) => void): (() => void) => {
+    const channel = `terminal:exit:${terminalId}`
     const handler = (_event: Electron.IpcRendererEvent, code: number): void => {
       callback(code)
     }
@@ -1675,22 +1678,22 @@ const terminalOps = {
   }> => ipcRenderer.invoke('terminal:ghostty:isAvailable'),
 
   ghosttyCreateSurface: (
-    worktreeId: string,
+    terminalId: string,
     rect: { x: number; y: number; w: number; h: number },
     opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
   ): Promise<{ success: boolean; surfaceId?: number; error?: string }> =>
-    ipcRenderer.invoke('terminal:ghostty:createSurface', worktreeId, rect, opts),
+    ipcRenderer.invoke('terminal:ghostty:createSurface', terminalId, rect, opts),
 
   ghosttySetFrame: (
-    worktreeId: string,
+    terminalId: string,
     rect: { x: number; y: number; w: number; h: number }
-  ): Promise<void> => ipcRenderer.invoke('terminal:ghostty:setFrame', worktreeId, rect),
+  ): Promise<void> => ipcRenderer.invoke('terminal:ghostty:setFrame', terminalId, rect),
 
-  ghosttySetSize: (worktreeId: string, width: number, height: number): Promise<void> =>
-    ipcRenderer.invoke('terminal:ghostty:setSize', worktreeId, width, height),
+  ghosttySetSize: (terminalId: string, width: number, height: number): Promise<void> =>
+    ipcRenderer.invoke('terminal:ghostty:setSize', terminalId, width, height),
 
   ghosttyKeyEvent: (
-    worktreeId: string,
+    terminalId: string,
     event: {
       action: number
       keycode: number
@@ -1700,27 +1703,27 @@ const terminalOps = {
       unshiftedCodepoint?: number
       composing?: boolean
     }
-  ): Promise<boolean> => ipcRenderer.invoke('terminal:ghostty:keyEvent', worktreeId, event),
+  ): Promise<boolean> => ipcRenderer.invoke('terminal:ghostty:keyEvent', terminalId, event),
 
   ghosttyMouseButton: (
-    worktreeId: string,
+    terminalId: string,
     state: number,
     button: number,
     mods: number
   ): Promise<void> =>
-    ipcRenderer.invoke('terminal:ghostty:mouseButton', worktreeId, state, button, mods),
+    ipcRenderer.invoke('terminal:ghostty:mouseButton', terminalId, state, button, mods),
 
-  ghosttyMousePos: (worktreeId: string, x: number, y: number, mods: number): Promise<void> =>
-    ipcRenderer.invoke('terminal:ghostty:mousePos', worktreeId, x, y, mods),
+  ghosttyMousePos: (terminalId: string, x: number, y: number, mods: number): Promise<void> =>
+    ipcRenderer.invoke('terminal:ghostty:mousePos', terminalId, x, y, mods),
 
-  ghosttyMouseScroll: (worktreeId: string, dx: number, dy: number, mods: number): Promise<void> =>
-    ipcRenderer.invoke('terminal:ghostty:mouseScroll', worktreeId, dx, dy, mods),
+  ghosttyMouseScroll: (terminalId: string, dx: number, dy: number, mods: number): Promise<void> =>
+    ipcRenderer.invoke('terminal:ghostty:mouseScroll', terminalId, dx, dy, mods),
 
-  ghosttySetFocus: (worktreeId: string, focused: boolean): Promise<void> =>
-    ipcRenderer.invoke('terminal:ghostty:setFocus', worktreeId, focused),
+  ghosttySetFocus: (terminalId: string, focused: boolean): Promise<void> =>
+    ipcRenderer.invoke('terminal:ghostty:setFocus', terminalId, focused),
 
-  ghosttyPasteText: (worktreeId: string, text: string): Promise<void> =>
-    ipcRenderer.invoke('terminal:ghostty:pasteText', worktreeId, text),
+  ghosttyPasteText: (terminalId: string, text: string): Promise<void> =>
+    ipcRenderer.invoke('terminal:ghostty:pasteText', terminalId, text),
 
   ghosttyFocusDiagnostics: (): Promise<
     Array<{
@@ -1733,8 +1736,8 @@ const terminalOps = {
     }>
   > => ipcRenderer.invoke('terminal:ghostty:focusDiagnostics'),
 
-  ghosttyDestroySurface: (worktreeId: string): Promise<void> =>
-    ipcRenderer.invoke('terminal:ghostty:destroySurface', worktreeId),
+  ghosttyDestroySurface: (terminalId: string): Promise<void> =>
+    ipcRenderer.invoke('terminal:ghostty:destroySurface', terminalId),
 
   ghosttyShutdown: (): Promise<void> => ipcRenderer.invoke('terminal:ghostty:shutdown')
 }

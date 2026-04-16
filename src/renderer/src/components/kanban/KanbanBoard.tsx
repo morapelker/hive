@@ -4,9 +4,9 @@ import { Pin } from 'lucide-react'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useBoardChatStore } from '@/stores/useBoardChatStore'
+import { useSessionStore } from '@/stores/useSessionStore'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn'
 import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
-import { BoardChatDrawer } from '@/components/kanban/BoardChatDrawer'
 import { BoardChatLauncher } from '@/components/kanban/BoardChatLauncher'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { toast } from '@/lib/toast'
@@ -32,9 +32,15 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
   const getConnectionProjectIds = useKanbanStore((state) => state.getConnectionProjectIds)
   const getPinnedProjectIdsArray = useKanbanStore((state) => state.getPinnedProjectIdsArray)
   const pinnedProjectIds = usePinnedStore((state) => state.pinnedProjectIds)
-  const isBoardChatOpen = useBoardChatStore((state) => state.isOpen)
-  const boardChatStatus = useBoardChatStore((state) => state.status)
-  const openBoardChat = useBoardChatStore((state) => state.openDrawer)
+  const boardChatStatus = useBoardChatStore((state) => {
+    if (!projectId) return 'idle'
+    const key = `project:${projectId}`
+    if (state.activeScopeKey === key) return state.status
+    return state.snapshots[key]?.status ?? 'idle'
+  })
+  const boardAssistantByProject = useSessionStore((state) => state.boardAssistantByProject)
+  const createBoardAssistantSession = useSessionStore((s) => s.createBoardAssistantSession)
+  const focusBoardAssistantSession = useSessionStore((s) => s.focusBoardAssistantSession)
 
   // Dependency mode subscriptions
   const dependencyMode = useKanbanStore((state) => state.dependencyMode)
@@ -344,26 +350,26 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
           </motion.div>
         )}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-end p-4">
-          <div className="pointer-events-auto flex flex-col items-end gap-3">
-            {!isBoardChatOpen && (
-              <BoardChatLauncher
-                disabled={Boolean(isPinnedMode)}
-                disabledReason={
-                  isPinnedMode
-                    ? 'Board Assistant is not available on pinned multi-project boards yet.'
-                    : undefined
-                }
-                onClick={openBoardChat}
-                status={boardChatStatus}
-              />
-            )}
-            <BoardChatDrawer
-              projectId={projectId}
-              projectPath={projectPath}
-              connectionId={connectionId}
-              isPinnedMode={isPinnedMode}
-            />
-          </div>
+          <BoardChatLauncher
+            disabled={Boolean(isPinnedMode) || !projectId}
+            disabledReason={
+              isPinnedMode
+                ? 'Board Assistant is not available on pinned multi-project boards yet.'
+                : !projectId
+                  ? 'No project selected.'
+                  : undefined
+            }
+            onClick={() => {
+              if (!projectId) return
+              const existing = boardAssistantByProject.get(projectId)
+              if (existing) {
+                focusBoardAssistantSession(projectId)
+              } else {
+                void createBoardAssistantSession(projectId)
+              }
+            }}
+            status={boardChatStatus}
+          />
         </div>
       </div>
     </LayoutGroup>

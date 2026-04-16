@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { toast } from '@/lib/toast'
 import { registerConnectionClear, clearWorktreeSelection } from './store-coordination'
+import { useKanbanStore } from './useKanbanStore'
 
 // Connection types matching the database schema
 interface ConnectionMemberEnriched {
@@ -324,6 +325,11 @@ export const useConnectionStore = create<ConnectionState>()(
         if (id) {
           // Deconflict: clear worktree selection synchronously (same tick)
           clearWorktreeSelection()
+          // Close pinned board when entering connection mode (matches worktree behavior)
+          const kanbanState = useKanbanStore.getState()
+          if (kanbanState.isPinnedBoardActive) {
+            kanbanState.togglePinnedBoard()
+          }
         }
       }
     }),

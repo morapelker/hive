@@ -1,3 +1,5 @@
+export type SessionType = 'default' | 'board-assistant'
+
 export interface Session {
   id: string
   worktree_id: string | null
@@ -8,6 +10,7 @@ export interface Session {
   opencode_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   mode: 'build' | 'plan'
+  session_type: SessionType
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null

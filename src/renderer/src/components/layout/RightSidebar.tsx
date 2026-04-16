@@ -7,13 +7,13 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FileSidebar } from '@/components/file-tree'
 import { BottomPanel } from './BottomPanel'
-import { TerminalManager } from '@/components/terminal/TerminalManager'
+import { useTerminalPortal } from '@/contexts/TerminalPortalContext'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 
 export function RightSidebar(): React.JSX.Element {
   const { rightSidebarWidth, rightSidebarCollapsed, setRightSidebarWidth, toggleRightSidebar } =
     useLayoutStore()
-  const bottomPanelTab = useLayoutStore((s) => s.bottomPanelTab)
   const splitFractionByEntity = useLayoutStore((s) => s.splitFractionByEntity)
   const setSplitFraction = useLayoutStore((s) => s.setSplitFraction)
   const collapsedPanel = useLayoutStore((s) => s.collapsedPanel)
@@ -26,6 +26,14 @@ export function RightSidebar(): React.JSX.Element {
     s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
   )
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
+
+  const { registerTarget } = useTerminalPortal()
+  const terminalPosition = useSettingsStore((s) => s.terminalPosition)
+
+  const sidebarTargetRef = useCallback(
+    (el: HTMLDivElement | null) => registerTarget('sidebar', el),
+    [registerTarget]
+  )
 
   const entityKey = selectedWorktreeId || selectedConnectionId
   const splitFraction = entityKey
@@ -77,26 +85,8 @@ export function RightSidebar(): React.JSX.Element {
     }
   }
 
-  // For connections, the effective tab is always 'terminal' since setup/run are worktree-specific
-  const effectiveBottomPanelTab = isConnectionMode ? 'terminal' : bottomPanelTab
-
-  // TerminalManager is always rendered (even when sidebar is collapsed) to preserve
-  // PTY state across sidebar collapse/expand and worktree switches.
-  const terminalManager = (
-    <TerminalManager
-      selectedWorktreeId={selectedWorktreeId}
-      worktreePath={selectedWorktreePath}
-      isVisible={!rightSidebarCollapsed && effectiveBottomPanelTab === 'terminal'}
-    />
-  )
-
   if (rightSidebarCollapsed) {
-    return (
-      <div data-testid="right-sidebar-collapsed">
-        {/* Keep TerminalManager alive when sidebar is collapsed so PTYs persist */}
-        <div className="hidden">{terminalManager}</div>
-      </div>
-    )
+    return <div data-testid="right-sidebar-collapsed" />
   }
 
   return (
@@ -116,11 +106,13 @@ export function RightSidebar(): React.JSX.Element {
           className="flex flex-col min-h-0 overflow-hidden"
           style={{
             flex:
-              collapsedPanel === 'top'
-                ? '0 0 auto'
-                : collapsedPanel === 'bottom'
-                  ? '1 1 0%'
-                  : `${splitFraction} 1 0%`
+              (isConnectionMode && terminalPosition === 'bottom')
+                ? '1 1 0%'
+                : collapsedPanel === 'top'
+                  ? '0 0 auto'
+                  : collapsedPanel === 'bottom'
+                    ? '1 1 0%'
+                    : `${splitFraction} 1 0%`
           }}
           data-testid="right-sidebar-top"
         >
@@ -140,36 +132,41 @@ export function RightSidebar(): React.JSX.Element {
               onFileClick={handleFileClick}
               className="flex-1 min-h-0"
               isCollapsed={collapsedPanel === 'top'}
-              onToggleCollapse={toggleTopPanel}
+              onToggleCollapse={(isConnectionMode && terminalPosition === 'bottom') ? undefined : toggleTopPanel}
             />
           </ErrorBoundary>
         </div>
 
-        {/* Draggable divider between top and bottom panels */}
-        {collapsedPanel === 'none' && (
-          <ResizeHandle onResize={handleVerticalResize} direction="up" />
-        )}
+        {!(isConnectionMode && terminalPosition === 'bottom') && (
+          <>
+            {/* Draggable divider between top and bottom panels */}
+            {collapsedPanel === 'none' && (
+              <ResizeHandle onResize={handleVerticalResize} direction="up" />
+            )}
 
-        {/* Bottom half: Tab panel */}
-        <div
-          className="flex flex-col min-h-0 overflow-hidden"
-          style={{
-            flex:
-              collapsedPanel === 'bottom'
-                ? '0 0 auto'
-                : collapsedPanel === 'top'
-                  ? '1 1 0%'
-                  : `${1 - splitFraction} 1 0%`
-          }}
-          data-testid="right-sidebar-bottom"
-        >
-          <BottomPanel
-            terminalSlot={terminalManager}
-            isConnectionMode={isConnectionMode}
-            isCollapsed={collapsedPanel === 'bottom'}
-            onToggleCollapse={toggleBottomPanel}
-          />
-        </div>
+            {/* Bottom half: Tab panel */}
+            <div
+              className="flex flex-col min-h-0 overflow-hidden"
+              style={{
+                flex:
+                  collapsedPanel === 'bottom'
+                    ? '0 0 auto'
+                    : collapsedPanel === 'top'
+                      ? '1 1 0%'
+                      : `${1 - splitFraction} 1 0%`
+              }}
+              data-testid="right-sidebar-bottom"
+            >
+              <BottomPanel
+                terminalContainerRef={sidebarTargetRef}
+                terminalPosition={terminalPosition}
+                isConnectionMode={isConnectionMode}
+                isCollapsed={collapsedPanel === 'bottom'}
+                onToggleCollapse={toggleBottomPanel}
+              />
+            </div>
+          </>
+        )}
       </aside>
     </div>
   )
