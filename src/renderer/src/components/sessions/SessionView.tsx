@@ -9,7 +9,8 @@ import {
   Archive,
   X,
   Github,
-  Minimize2
+  Minimize2,
+  Terminal
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -43,6 +44,7 @@ import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
 import { useFileMentions } from '@/hooks/useFileMentions'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
+import { useBashRuns } from '@/hooks/useBashRuns'
 import type { FlatFile } from '@/lib/file-search-utils'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -602,6 +604,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
+  const isBashMode = inputValue.startsWith('!') && !!worktreePath
   const persistedFollowUpMessages =
     useSessionStore((state) => state.pendingFollowUpMessages.get(sessionId)) ?? EMPTY_STRING_ARRAY
 
@@ -616,6 +619,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     isStreamingRef.current = isStreaming
   }, [isStreaming])
   const [isCompacting, setIsCompacting] = useState(false)
+  const { runs: bashRuns, isRunning: isBashRunning, runCommand: runBashCommand, abort: abortBash } = useBashRuns(sessionId)
   const [sessionRetry, setSessionRetry] = useState<SessionRetryState | null>(null)
   const [sessionErrorMessage, setSessionErrorMessage] = useState<string | null>(null)
   const [sessionErrorStderr, setSessionErrorStderr] = useState<string | null>(null)
@@ -4033,6 +4037,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Handle send message
   const handleSend = useCallback(
     async (overrideValue?: string) => {
+      // === BASH MODE ===
+      if (!overrideValue && inputValue.startsWith('!')) {
+        const command = inputValue.slice(1).trim()
+        if (!command || !worktreePath || isBashRunning || isStreaming) return
+        setInputValue('')
+        inputValueRef.current = ''
+        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+        window.db.session.updateDraft(sessionId, null)
+        await runBashCommand(command, worktreePath)
+        return
+      }
+      // === END BASH MODE ===
+
       // Apply mention stripping when sending (unless overrideValue is provided,
       // e.g. for built-in commands like "Implement")
       const rawValue = overrideValue ?? fileMentions.getTextForSend(stripAtMentions)
@@ -4538,7 +4555,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       getModelForRequests,
       fileMentions,
       resetAutoScrollState,
-      stripAtMentions
+      stripAtMentions,
+      isBashRunning,
+      runBashCommand,
+      inputValue
     ]
   )
 
@@ -4999,11 +5019,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Abort streaming
   const handleAbort = useCallback(async () => {
+    if (isBashRunning) {
+      await abortBash()
+      return
+    }
     if (!worktreePath || !opencodeSessionId) return
     // Clear any pending command approvals — the abort will auto-deny them on the main process side
     useCommandApprovalStore.getState().clearSession(sessionId)
     await window.opencodeOps.abort(worktreePath, opencodeSessionId)
-  }, [worktreePath, opencodeSessionId, sessionId])
+  }, [isBashRunning, abortBash, worktreePath, opencodeSessionId, sessionId])
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(
@@ -5364,17 +5388,32 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Determine if there's streaming content to show
   const visibleMessages = useMemo(() => {
-    if (!revertMessageID) return messages
+    let filtered = messages
+    if (revertMessageID) {
+      const boundaryIndex = messages.findIndex((message) => message.id === revertMessageID)
+      if (boundaryIndex !== -1) {
+        filtered = messages.filter(
+          (message, index) => message.id.startsWith('local-') || index < boundaryIndex
+        )
+      }
+    }
 
-    // IDs are not guaranteed to be lexicographically ordered across providers.
-    // Use the message array order (already time-sorted) and trim by index.
-    const boundaryIndex = messages.findIndex((message) => message.id === revertMessageID)
-    if (boundaryIndex === -1) return messages
+    // Interleave bash runs as synthetic messages
+    if (bashRuns.length === 0) return filtered
 
-    return messages.filter(
-      (message, index) => message.id.startsWith('local-') || index < boundaryIndex
+    const bashMessages: OpenCodeMessage[] = bashRuns.map((run) => ({
+      id: `bash-${run.id}`,
+      role: 'bash' as const,
+      content: run.command,
+      timestamp: new Date(run.startedAt).toISOString(),
+      bashStatus: run.status,
+      bashOutput: run.output
+    }))
+
+    return [...filtered, ...bashMessages].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     )
-  }, [messages, revertMessageID])
+  }, [messages, revertMessageID, bashRuns])
 
   const revertedUserCount = useMemo(() => {
     if (!revertMessageID) return 0
@@ -5743,11 +5782,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           <div
             className={cn(
               'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
-              mode === 'build'
-                ? 'border-blue-500/50 bg-blue-500/5'
-                : mode === 'super-plan'
-                  ? 'border-orange-500/50 bg-orange-500/5'
-                  : 'border-violet-500/50 bg-violet-500/5'
+              isBashMode
+                ? 'border-green-500/50 bg-green-500/5'
+                : mode === 'build'
+                  ? 'border-blue-500/50 bg-blue-500/5'
+                  : mode === 'super-plan'
+                    ? 'border-orange-500/50 bg-orange-500/5'
+                    : 'border-violet-500/50 bg-violet-500/5'
             )}
           >
             {/* Top row: mode toggle */}
@@ -5787,13 +5828,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               onPaste={handlePaste}
               disabled={!!activePermission || isOrphanedSession}
               placeholder={
-                isOrphanedSession
-                  ? 'Read-only mode - cannot send messages'
-                  : activePermission
-                    ? 'Waiting for permission response...'
-                    : pendingPlan
-                      ? 'Send feedback to revise the plan...'
-                      : 'Type your message...'
+                isBashMode
+                  ? (inputValue.slice(1).trim() ? 'Press Enter to run' : 'Type a command')
+                  : isOrphanedSession
+                    ? 'Read-only mode - cannot send messages'
+                    : activePermission
+                      ? 'Waiting for permission response...'
+                      : pendingPlan
+                        ? 'Send feedback to revise the plan...'
+                        : 'Type your message...'
               }
               aria-label="Message input"
               aria-haspopup="listbox"
@@ -5835,15 +5878,17 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 <span
                   className={cn(
                     'text-xs tabular-nums whitespace-nowrap',
-                    elapsedTimerText && isActive
-                      ? activeQuestion
-                        ? 'text-amber-500 font-semibold'
-                        : mode === 'build'
-                          ? 'text-blue-500 font-semibold'
-                          : mode === 'super-plan'
-                            ? 'text-orange-500 font-semibold'
-                            : 'text-violet-500 font-semibold'
-                      : 'text-muted-foreground'
+                    isBashMode
+                      ? 'text-green-500 font-semibold'
+                      : elapsedTimerText && isActive
+                        ? activeQuestion
+                          ? 'text-amber-500 font-semibold'
+                          : mode === 'build'
+                            ? 'text-blue-500 font-semibold'
+                            : mode === 'super-plan'
+                              ? 'text-orange-500 font-semibold'
+                              : 'text-violet-500 font-semibold'
+                        : 'text-muted-foreground'
                   )}
                 >
                   {elapsedTimerText ??
@@ -5862,14 +5907,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                     isCompacting={isCompacting}
                   />
                 )}
-                {isStreaming && !inputValue.trim() ? (
+                {(isStreaming || isBashRunning) && !inputValue.trim() ? (
                   <Button
                     onClick={handleAbort}
                     size="sm"
                     variant="destructive"
                     className="h-7 w-7 p-0"
-                    aria-label="Stop streaming"
-                    title="Stop streaming"
+                    aria-label={isBashRunning ? 'Stop command' : 'Stop streaming'}
+                    title={isBashRunning ? 'Stop command' : 'Stop streaming'}
                     data-testid="stop-button"
                   >
                     <Square className="h-3 w-3" />
@@ -5877,7 +5922,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 ) : (
                   <Button
                     onClick={() => {
-                      // When a plan is pending and there's text, send as feedback (reject)
                       if (pendingPlan && inputValue.trim()) {
                         void handlePlanReject(inputValue.trim())
                         setInputValue('')
@@ -5888,26 +5932,38 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                       }
                       void handleSend()
                     }}
-                    disabled={!inputValue.trim() || !!activePermission || isOrphanedSession}
+                    disabled={
+                      !inputValue.trim() ||
+                      !!activePermission ||
+                      isOrphanedSession ||
+                      isBashRunning ||
+                      (isBashMode && !inputValue.slice(1).trim())
+                    }
                     size="sm"
                     className="h-7 w-7 p-0"
                     aria-label={
-                      pendingPlan && inputValue.trim()
-                        ? 'Send feedback'
-                        : isStreaming
-                          ? 'Queue message'
-                          : 'Send message'
+                      isBashMode
+                        ? 'Run command'
+                        : pendingPlan && inputValue.trim()
+                          ? 'Send feedback'
+                          : isStreaming
+                            ? 'Queue message'
+                            : 'Send message'
                     }
                     title={
-                      pendingPlan && inputValue.trim()
-                        ? 'Send feedback to revise the plan'
-                        : isStreaming
-                          ? 'Queue message'
-                          : 'Send message'
+                      isBashMode
+                        ? 'Run command'
+                        : pendingPlan && inputValue.trim()
+                          ? 'Send feedback to revise the plan'
+                          : isStreaming
+                            ? 'Queue message'
+                            : 'Send message'
                     }
                     data-testid="send-button"
                   >
-                    {isStreaming ? (
+                    {isBashMode ? (
+                      <Terminal className="h-3.5 w-3.5" />
+                    ) : isStreaming ? (
                       <ListPlus className="h-3.5 w-3.5" />
                     ) : (
                       <Send className="h-3.5 w-3.5" />
