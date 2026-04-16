@@ -49,6 +49,7 @@ const mockOpencodeOps = {
   connect: vi.fn().mockResolvedValue({ success: true, sessionId: 'opc-session-1' }),
   prompt: vi.fn().mockResolvedValue({ success: true }),
   reconnect: vi.fn().mockResolvedValue({ success: true }),
+  getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
   planApprove: vi.fn().mockResolvedValue({ success: true }),
   abort: vi.fn().mockResolvedValue({ success: true })
 }
@@ -56,6 +57,10 @@ const mockOpencodeOps = {
 const mockWorktreeOps = {
   create: vi.fn().mockResolvedValue({ success: true }),
   duplicate: vi.fn().mockResolvedValue({ success: true })
+}
+
+const mockGitOps = {
+  listBranchesWithStatus: vi.fn().mockResolvedValue({ success: true, branches: [] })
 }
 
 Object.defineProperty(window, 'kanban', {
@@ -83,6 +88,12 @@ Object.defineProperty(window, 'worktreeOps', {
   writable: true,
   configurable: true,
   value: mockWorktreeOps
+})
+
+Object.defineProperty(window, 'gitOps', {
+  writable: true,
+  configurable: true,
+  value: mockGitOps
 })
 
 // ── Mock toast ──────────────────────────────────────────────────────
@@ -426,5 +437,278 @@ describe('Plan review followup dispatch', () => {
     expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
 
     errorSpy.mockRestore()
+  })
+
+  test('codex supercharge from ticket view stays on the board and starts background work', async () => {
+    const codexPlanTicket = makeTicket({
+      id: 'ticket-codex',
+      column: 'review',
+      plan_ready: true,
+      current_session_id: 'session-codex-old',
+      worktree_id: 'wt-1',
+      mode: 'plan',
+      description: '## Plan\n\nStep 1: Implement auth flow'
+    })
+
+    mockDbSession.create.mockResolvedValueOnce(
+      makeSession({
+        id: 'session-codex-new',
+        agent_sdk: 'codex',
+        mode: 'build',
+        opencode_session_id: null
+      })
+    )
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [codexPlanTicket]]]),
+        isBoardViewActive: true,
+        selectedTicketId: 'ticket-codex'
+      })
+      useSessionStore.setState({
+        activeSessionId: null,
+        activeWorktreeId: null,
+        sessionsByWorktree: new Map([
+          [
+            'wt-1',
+            [makeSession({ id: 'session-codex-old', agent_sdk: 'codex', opencode_session_id: 'opc-session-1' })]
+          ]
+        ]),
+        pendingPlans: new Map([
+          [
+            'session-codex-old',
+            {
+              requestId: 'req-codex',
+              planContent: '## Detailed Plan\n\nStep 1: Implement auth flow',
+              toolUseID: 'tool-codex'
+            }
+          ]
+        ]),
+        pendingMessages: new Map(),
+        pendingFollowUpMessages: new Map()
+      })
+      useWorktreeStatusStore.setState({
+        sessionStatuses: {}
+      })
+      useWorktreeStore.setState({
+        selectedWorktreeId: null,
+        worktreesByProject: new Map([['proj-1', [makeWorktree()]]])
+      })
+    })
+
+    render(<KanbanTicketModal />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-review-supercharge-local-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.connect).toHaveBeenCalledWith('/test/feature-auth', 'session-codex-new')
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalled()
+    })
+
+    const promptCall = mockOpencodeOps.prompt.mock.calls.at(-1)
+    expect(promptCall?.[0]).toBe('/test/feature-auth')
+    expect(promptCall?.[1]).toBe('opc-session-1')
+    expect(promptCall?.[2]).toEqual([{ type: 'text', text: '/using-superpowers' }])
+
+    const updatedTicket = useKanbanStore.getState().tickets.get('proj-1')?.find((t) => t.id === 'ticket-codex')
+    expect(updatedTicket?.current_session_id).toBe('session-codex-new')
+    expect(updatedTicket?.plan_ready).toBe(false)
+    expect(updatedTicket?.mode).toBe('build')
+    expect(updatedTicket?.column).toBe('in_progress')
+
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
+    expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBeNull()
+    expect(useSessionStore.getState().activeSessionId).toBeNull()
+
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-codex-new']?.status).toBe('working')
+    expect(
+      useSessionStore.getState().pendingFollowUpMessages.get('session-codex-new')
+    ).toEqual([
+      'use the subagent development skill to implement the following plan:\n## Detailed Plan\n\nStep 1: Implement auth flow'
+    ])
+  })
+
+  test('supercharge does not leave session stuck "working" when background connect fails', async () => {
+    const codexPlanTicket = makeTicket({
+      id: 'ticket-codex',
+      column: 'review',
+      plan_ready: true,
+      current_session_id: 'session-codex-old',
+      worktree_id: 'wt-1',
+      mode: 'plan',
+      description: '## Plan\n\nStep 1: Implement auth flow'
+    })
+
+    mockDbSession.create.mockResolvedValueOnce(
+      makeSession({
+        id: 'session-codex-new',
+        agent_sdk: 'codex',
+        mode: 'build',
+        opencode_session_id: null
+      })
+    )
+
+    // Background connect fails — modal has already closed.
+    mockOpencodeOps.connect.mockResolvedValueOnce({ success: false })
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [codexPlanTicket]]]),
+        isBoardViewActive: true,
+        selectedTicketId: 'ticket-codex'
+      })
+      useSessionStore.setState({
+        activeSessionId: null,
+        activeWorktreeId: null,
+        sessionsByWorktree: new Map([
+          [
+            'wt-1',
+            [makeSession({ id: 'session-codex-old', agent_sdk: 'codex', opencode_session_id: 'opc-session-1' })]
+          ]
+        ]),
+        pendingPlans: new Map([
+          [
+            'session-codex-old',
+            {
+              requestId: 'req-codex',
+              planContent: '## Detailed Plan\n\nStep 1: Implement auth flow',
+              toolUseID: 'tool-codex'
+            }
+          ]
+        ]),
+        pendingMessages: new Map(),
+        pendingFollowUpMessages: new Map()
+      })
+      useWorktreeStatusStore.setState({ sessionStatuses: {} })
+      useWorktreeStore.setState({
+        selectedWorktreeId: null,
+        worktreesByProject: new Map([['proj-1', [makeWorktree()]]])
+      })
+    })
+
+    render(<KanbanTicketModal />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-review-supercharge-local-btn'))
+    })
+
+    // Wait for the background IIFE to reach connect (which we've forced to fail).
+    await waitFor(() => {
+      expect(mockOpencodeOps.connect).toHaveBeenCalledWith('/test/feature-auth', 'session-codex-new')
+    })
+
+    // Let the failing background chain settle.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // prompt must not have fired — we never got a valid opencode session id.
+    expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
+
+    // Regression guard: connect failure must not leave the new session stuck in 'working'.
+    expect(
+      useWorktreeStatusStore.getState().sessionStatuses['session-codex-new']?.status
+    ).not.toBe('working')
+
+    // User is told the supercharge failed, not falsely told it started.
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('upercharge'))
+
+    errorSpy.mockRestore()
+  })
+
+  test('supercharge shows success toast only after background work succeeds', async () => {
+    const codexPlanTicket = makeTicket({
+      id: 'ticket-codex',
+      column: 'review',
+      plan_ready: true,
+      current_session_id: 'session-codex-old',
+      worktree_id: 'wt-1',
+      mode: 'plan',
+      description: '## Plan\n\nStep 1: Implement auth flow'
+    })
+
+    mockDbSession.create.mockResolvedValueOnce(
+      makeSession({
+        id: 'session-codex-new',
+        agent_sdk: 'codex',
+        mode: 'build',
+        opencode_session_id: null
+      })
+    )
+
+    // Hold prompt pending so success can't be claimed until we release it.
+    let resolvePrompt!: () => void
+    mockOpencodeOps.prompt.mockReturnValue(
+      new Promise<{ success: boolean }>((resolve) => {
+        resolvePrompt = () => resolve({ success: true })
+      })
+    )
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [codexPlanTicket]]]),
+        isBoardViewActive: true,
+        selectedTicketId: 'ticket-codex'
+      })
+      useSessionStore.setState({
+        activeSessionId: null,
+        activeWorktreeId: null,
+        sessionsByWorktree: new Map([
+          [
+            'wt-1',
+            [makeSession({ id: 'session-codex-old', agent_sdk: 'codex', opencode_session_id: 'opc-session-1' })]
+          ]
+        ]),
+        pendingPlans: new Map([
+          [
+            'session-codex-old',
+            {
+              requestId: 'req-codex',
+              planContent: '## Detailed Plan\n\nStep 1: Implement auth flow',
+              toolUseID: 'tool-codex'
+            }
+          ]
+        ]),
+        pendingMessages: new Map(),
+        pendingFollowUpMessages: new Map()
+      })
+      useWorktreeStatusStore.setState({ sessionStatuses: {} })
+      useWorktreeStore.setState({
+        selectedWorktreeId: null,
+        worktreesByProject: new Map([['proj-1', [makeWorktree()]]])
+      })
+    })
+
+    render(<KanbanTicketModal />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-review-supercharge-local-btn'))
+    })
+
+    // Wait for the background work to reach prompt (still pending).
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalled()
+    })
+
+    // Success cannot be claimed while background prompt is still in flight.
+    expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining('upercharge'))
+
+    // Release the background prompt — now success should be reported.
+    await act(async () => {
+      resolvePrompt()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('upercharge'))
+    })
   })
 })
