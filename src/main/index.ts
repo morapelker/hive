@@ -28,6 +28,7 @@ import {
   registerUpdaterHandlers,
   registerConnectionHandlers,
   registerUsageHandlers,
+  registerAccountHandlers,
   registerKanbanHandlers,
   registerAttachmentHandlers
 } from './ipc'
@@ -460,6 +461,7 @@ app.whenReady().then(async () => {
   registerAttachmentHandlers()
   registerConnectionHandlers()
   registerUsageHandlers()
+  registerAccountHandlers()
   registerKanbanHandlers()
   initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
   registerTicketImportHandlers()
