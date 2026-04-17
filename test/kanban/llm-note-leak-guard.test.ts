@@ -1,3 +1,18 @@
+/**
+ * Guard test: the kanban ticket `note` field must NEVER be included in any
+ * LLM prompt. The `note` is a personal annotation for the user only.
+ *
+ * Approach: static analysis on the known prompt-building source files. The
+ * relevant prompt-construction helpers in these files are internal/non-exported,
+ * so behavioral testing isn't practical today. Instead we assert two regression
+ * classes are absent from each file:
+ *   1. Direct access to `ticket.note`.
+ *   2. Object spread of a ticket-like variable (`...ticket` / `...t`), which
+ *      would silently include `note` if added to the projection.
+ *
+ * MAINTENANCE: when introducing a new code path that builds an LLM prompt from
+ * `KanbanTicket`, add its source path to `LLM_PROMPT_FILES` below.
+ */
 import { describe, test, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -32,6 +47,6 @@ describe('Kanban ticket note never leaks into LLM prompts', () => {
     const content = readFileSync(typesPath, 'utf8')
     // Confirms the type-level marker is intact (defensive: anyone editing the type
     // will see the warning above the field).
-    expect(content).toMatch(/MUST NOT be included in any LLM prompt[\s\S]*\n\s*note: string \| null/)
+    expect(content).toMatch(/MUST NOT be included in any LLM prompt[\s\S]{0,200}\n\s*note\??\s*:/)
   })
 })
