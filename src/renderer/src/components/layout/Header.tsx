@@ -29,6 +29,7 @@ import {
   DropdownMenuItem
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from '@/components/ui/popover'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -325,17 +326,17 @@ export function Header(): React.JSX.Element {
           <span className="text-sm font-medium">Hive</span>
         )}
         {keepAwakeEnabled && (
-          <span
-            title={
-              streamingCount > 0
-                ? `Keeping computer awake (${streamingCount} session${streamingCount === 1 ? '' : 's'} active)`
-                : 'Keep-awake enabled (no active sessions)'
-            }
-            className={cn('shrink-0', streamingCount > 0 ? 'text-amber-500' : 'text-muted-foreground')}
-            data-testid="keep-awake-indicator"
-          >
-            <Coffee className="h-4 w-4" />
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn('shrink-0', streamingCount > 0 ? 'text-amber-500' : 'text-muted-foreground')}
+                data-testid="keep-awake-indicator"
+              >
+                <Coffee className="h-4 w-4" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Prevents your computer from sleeping while a session is running</TooltipContent>
+          </Tooltip>
         )}
         {vimModeEnabled && (
           <span
