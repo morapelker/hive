@@ -20,7 +20,7 @@ import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
 const CLAUDE_EFFORT_VARIANTS = { low: {}, medium: {}, high: {} }
-const CLAUDE_OPUS_EFFORT_VARIANTS = { low: {}, medium: {}, high: {}, max: {} }
+const CLAUDE_OPUS_EFFORT_VARIANTS = { low: {}, medium: {}, high: {}, xhigh: {}, max: {} }
 
 const CLAUDE_MODELS = [
   {
