@@ -42,6 +42,9 @@ import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
+import { TaskListWidget } from './TaskListWidget'
+import { useLatestTodoList } from './useLatestTodoList'
+import { usePRStackTopOffset } from './usePRStackTopOffset'
 import { useFileMentions } from '@/hooks/useFileMentions'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useBashRuns } from '@/hooks/useBashRuns'
@@ -5478,6 +5481,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [hasStreamingContent, sessionRecord?.agent_sdk, streamingContent, streamingParts])
 
+  const { todos: latestTodos, isIncomplete: latestTodosIncomplete } =
+    useLatestTodoList(visibleMessages, streamingMessage)
+  const taskListTopOffsetPx = usePRStackTopOffset()
+
   const handleRedoRevert = useCallback(() => {
     setInputValue('/redo')
     inputValueRef.current = '/redo'
@@ -5686,6 +5693,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             />
           )}
         </div>
+        {latestTodos && latestTodosIncomplete && (
+          <TaskListWidget todos={latestTodos} topOffsetPx={taskListTopOffsetPx} />
+        )}
         <PlanReadyImplementFab
           onImplement={handlePlanReadyImplement}
           onHandoff={handlePlanReadyHandoff}

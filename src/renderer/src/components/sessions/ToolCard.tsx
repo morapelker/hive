@@ -56,7 +56,7 @@ export interface ToolUseInfo {
 }
 
 /** Check if a tool name refers to a checklist-style tool */
-function isTodoWriteTool(name: string): boolean {
+export function isTodoWriteTool(name: string): boolean {
   const lower = name.toLowerCase()
   return lower.includes('todowrite') || lower.includes('todo_write') || lower === 'update_plan'
 }
