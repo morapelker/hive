@@ -52,6 +52,7 @@ export interface AppSettings {
   autoPullBeforeWorktree: boolean
   breedType: 'dogs' | 'cats'
   vimModeEnabled: boolean
+  taskListCollapsed: boolean
   mergeConflictMode: MergeConflictMode
   boardMode: 'toggle' | 'sticky-tab'
   followUpTriggerColumn: FollowUpTriggerColumn
@@ -139,6 +140,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoPullBeforeWorktree: true,
   breedType: 'dogs',
   vimModeEnabled: false,
+  taskListCollapsed: false,
   mergeConflictMode: 'always-ask',
   boardMode: 'sticky-tab',
   followUpTriggerColumn: 'done',
@@ -292,6 +294,7 @@ function extractSettings(state: SettingsState): AppSettings {
     autoPullBeforeWorktree: state.autoPullBeforeWorktree,
     breedType: state.breedType,
     vimModeEnabled: state.vimModeEnabled,
+    taskListCollapsed: state.taskListCollapsed,
     mergeConflictMode: state.mergeConflictMode,
     boardMode: state.boardMode,
     followUpTriggerColumn: state.followUpTriggerColumn,
@@ -550,6 +553,7 @@ export const useSettingsStore = create<SettingsState>()(
         autoPullBeforeWorktree: state.autoPullBeforeWorktree,
         breedType: state.breedType,
         vimModeEnabled: state.vimModeEnabled,
+        taskListCollapsed: state.taskListCollapsed,
         mergeConflictMode: state.mergeConflictMode,
         boardMode: state.boardMode,
         followUpTriggerColumn: state.followUpTriggerColumn,

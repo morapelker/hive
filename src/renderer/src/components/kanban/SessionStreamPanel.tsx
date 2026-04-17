@@ -1,7 +1,10 @@
-import { useRef, useState, useCallback, useEffect } from 'react'
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import { useSessionStream } from '@/hooks/useSessionStream'
 import { MessageRenderer } from '@/components/sessions/MessageRenderer'
 import { ScrollToBottomFab } from '@/components/sessions/ScrollToBottomFab'
+import { TaskListWidget } from '@/components/sessions/TaskListWidget'
+import { useLatestTodoList } from '@/components/sessions/useLatestTodoList'
+import { BASELINE_TOP_PX } from '@/components/sessions/usePRStackTopOffset'
 import type { OpenCodeMessage } from '@/components/sessions/SessionView'
 
 export interface SessionStreamPanelProps {
@@ -156,6 +159,20 @@ export function SessionStreamPanel({
 
   const hasStreamingContent = streamingParts.length > 0 || streamingContent.length > 0
 
+  const streamingMessage = useMemo<OpenCodeMessage | null>(() => {
+    if (!hasStreamingContent) return null
+    return {
+      id: 'streaming',
+      role: 'assistant',
+      content: streamingContent,
+      timestamp: new Date().toISOString(),
+      parts: streamingParts
+    }
+  }, [hasStreamingContent, streamingContent, streamingParts])
+
+  const { todos: latestTodos, isIncomplete: latestTodosIncomplete } =
+    useLatestTodoList(messages, streamingMessage)
+
   return (
     <div className={`flex flex-col h-full bg-background flex-1 min-w-0${fullWidth ? '' : ' border-l border-border/60'}`}>
       {/* Header */}
@@ -200,17 +217,9 @@ export function SessionStreamPanel({
             ))}
 
             {/* Streaming message rendered separately */}
-            {hasStreamingContent && (
+            {streamingMessage && (
               <MessageRenderer
-                message={
-                  {
-                    id: 'streaming',
-                    role: 'assistant',
-                    content: streamingContent,
-                    timestamp: new Date().toISOString(),
-                    parts: streamingParts
-                  } as OpenCodeMessage
-                }
+                message={streamingMessage}
                 isStreaming={isStreaming}
                 cwd={worktreePath}
               />
@@ -218,6 +227,10 @@ export function SessionStreamPanel({
 
             <div ref={messagesEndRef} />
           </div>
+        )}
+
+        {latestTodos && latestTodosIncomplete && (
+          <TaskListWidget todos={latestTodos} topOffsetPx={BASELINE_TOP_PX} />
         )}
 
         <ScrollToBottomFab
