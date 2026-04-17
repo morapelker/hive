@@ -1217,6 +1217,13 @@ class OpenCodeService {
       }
     }
 
+    // Notify user when an OpenCode permission request comes in and window is
+    // backgrounded. Notify for both direct and subagent permissions — a
+    // subagent permission prompt still blocks the parent.
+    if (eventType === 'permission.asked') {
+      this.maybeNotifyUserFeedbackNeeded(hiveSessionId, 'permission')
+    }
+
     // Handle session.updated events — persist title to DB before forwarding to renderer
     // The SDK event structure is: { properties: { info: Session } } where Session has { id, title, ... }
     if (eventType === 'session.updated') {
@@ -1435,6 +1442,51 @@ class OpenCodeService {
       })
     } catch (error) {
       log.warn('Failed to show session completion notification', { hiveSessionId, error })
+    }
+  }
+
+  /**
+   * Show a native notification when a session needs user feedback (question or
+   * permission prompt) while the app window is unfocused.
+   */
+  private maybeNotifyUserFeedbackNeeded(
+    hiveSessionId: string,
+    kind: 'question' | 'permission'
+  ): void {
+    try {
+      if (!this.mainWindow || this.mainWindow.isDestroyed() || this.mainWindow.isFocused()) {
+        return
+      }
+
+      const db = getDatabase()
+      const session = db.getSession(hiveSessionId)
+      if (!session) {
+        log.warn('Cannot notify: session not found', { hiveSessionId })
+        return
+      }
+
+      const project = db.getProject(session.project_id)
+      if (!project) {
+        log.warn('Cannot notify: project not found', { projectId: session.project_id })
+        return
+      }
+
+      notificationService.showPendingUserFeedback(
+        {
+          projectName: project.name,
+          sessionName: session.name || 'Untitled',
+          projectId: session.project_id,
+          worktreeId: session.worktree_id || '',
+          sessionId: hiveSessionId
+        },
+        kind
+      )
+    } catch (error) {
+      log.warn('Failed to show pending user feedback notification', {
+        hiveSessionId,
+        error,
+        kind
+      })
     }
   }
 
