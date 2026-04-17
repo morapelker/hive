@@ -51,7 +51,11 @@ const mockOpencodeOps = {
   reconnect: vi.fn().mockResolvedValue({ success: true }),
   getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
   planApprove: vi.fn().mockResolvedValue({ success: true }),
-  abort: vi.fn().mockResolvedValue({ success: true })
+  abort: vi.fn().mockResolvedValue({ success: true }),
+  commands: vi.fn().mockResolvedValue({
+    success: true,
+    commands: [{ name: 'using-superpowers' }]
+  })
 }
 
 const mockWorktreeOps = {
@@ -498,8 +502,9 @@ describe('Plan review followup dispatch', () => {
 
     render(<KanbanTicketModal />)
 
+    const superchargeLocalBtn = await screen.findByTestId('plan-review-supercharge-local-btn')
     await act(async () => {
-      fireEvent.click(screen.getByTestId('plan-review-supercharge-local-btn'))
+      fireEvent.click(superchargeLocalBtn)
     })
 
     await waitFor(() => {
@@ -596,8 +601,9 @@ describe('Plan review followup dispatch', () => {
 
     render(<KanbanTicketModal />)
 
+    const superchargeLocalBtn = await screen.findByTestId('plan-review-supercharge-local-btn')
     await act(async () => {
-      fireEvent.click(screen.getByTestId('plan-review-supercharge-local-btn'))
+      fireEvent.click(superchargeLocalBtn)
     })
 
     // Wait for the background IIFE to reach connect (which we've forced to fail).
@@ -689,8 +695,9 @@ describe('Plan review followup dispatch', () => {
 
     render(<KanbanTicketModal />)
 
+    const superchargeLocalBtn = await screen.findByTestId('plan-review-supercharge-local-btn')
     await act(async () => {
-      fireEvent.click(screen.getByTestId('plan-review-supercharge-local-btn'))
+      fireEvent.click(superchargeLocalBtn)
     })
 
     // Wait for the background work to reach prompt (still pending).

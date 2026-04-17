@@ -1245,6 +1245,33 @@ function PlanReviewModeContent({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const dropZoneRef = useRef<HTMLDivElement>(null)
 
+  const isConnectionSession = !!sessionRecord?.connection_id
+  const hasWorkingContext = !!(sessionRecord?.worktree_id || sessionRecord?.connection_id)
+
+  const [slashCommands, setSlashCommands] = useState<{ name: string }[]>([])
+  const hasSuperpowers = useMemo(
+    () => slashCommands.some((c) => c.name === 'using-superpowers'),
+    [slashCommands]
+  )
+
+  useEffect(() => {
+    if (!worktreePath || !opcSessionId) return
+    let cancelled = false
+    window.opencodeOps
+      .commands(worktreePath, opcSessionId)
+      .then((result) => {
+        if (!cancelled && result.success && result.commands) {
+          setSlashCommands(result.commands)
+        }
+      })
+      .catch(() => {
+        /* non-fatal; supercharge buttons stay hidden */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [worktreePath, opcSessionId])
+
   const planContent = pendingPlan?.planContent ?? ticket.description ?? ''
 
   const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
@@ -1490,7 +1517,7 @@ function PlanReviewModeContent({
 
   // ── Handoff handler ───────────────────────────────────────────────
   const handleHandoff = useCallback(async () => {
-    if (!ticket.current_session_id || !ticket.worktree_id || isActioning) return
+    if (!ticket.current_session_id || !hasWorkingContext || isActioning) return
     setIsActioning(true)
 
     try {
@@ -1499,8 +1526,47 @@ function PlanReviewModeContent({
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       lastSendMode.delete(sessionId)
 
+      // Connection-session branch: mirrors SessionView.tsx handoff connection path.
+      if (sessionRecord?.connection_id) {
+        // Abort the original backend session so it stops spinning (parity with SessionView).
+        if (worktreePath && opcSessionId) {
+          useCommandApprovalStore.getState().clearSession(sessionId)
+          await window.opencodeOps.abort(worktreePath, opcSessionId)
+        }
+
+        const sessionStore = useSessionStore.getState()
+        const result = await sessionStore.createConnectionSession(sessionRecord.connection_id)
+        if (!result.success || !result.session) {
+          toast.error(result.error ?? 'Failed to create handoff session')
+          return
+        }
+
+        const handoffPrompt = `Implement the following plan\n${planContent}`
+        await sessionStore.setSessionMode(result.session.id, 'build')
+        sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+        notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
+
+        // In sticky-tab mode, stay on the board; otherwise navigate to the new session
+        const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
+        if (useSettingsStore.getState().boardMode === 'sticky-tab') {
+          sessionStore.setActiveSession(BOARD_TAB_ID)
+        } else {
+          sessionStore.setActiveConnectionSession(result.session.id)
+        }
+
+        await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
+          current_session_id: result.session.id,
+          plan_ready: false,
+          mode: 'build'
+        })
+
+        toast.success('Handoff session created')
+        onClose()
+        return
+      }
+
       const sessionStore = useSessionStore.getState()
-      const result = await sessionStore.createSession(ticket.worktree_id, ticket.project_id)
+      const result = await sessionStore.createSession(ticket.worktree_id!, ticket.project_id)
       if (!result.success || !result.session) {
         toast.error(result.error ?? 'Failed to create handoff session')
         return
@@ -1532,7 +1598,7 @@ function PlanReviewModeContent({
     } finally {
       setIsActioning(false)
     }
-  }, [ticket, isActioning, planContent, onClose])
+  }, [ticket, isActioning, planContent, onClose, hasWorkingContext, sessionRecord, worktreePath, opcSessionId])
 
   // Synchronously re-link the ticket to the new session and (if needed) move it to in_progress
   // so the kanban board reflects the supercharge before the modal closes. Per-session timing /
@@ -1603,7 +1669,7 @@ function PlanReviewModeContent({
 
   // ── Supercharge handler (new branch) ────────────────────────────
   const handleSupercharge = useCallback(async () => {
-    if (!ticket.current_session_id || !ticket.worktree_id || isActioning) return
+    if (!ticket.current_session_id || !hasWorkingContext || isActioning) return
     setIsActioning(true)
 
     try {
@@ -1616,6 +1682,32 @@ function PlanReviewModeContent({
       if (worktreePath && opcSessionId) {
         useCommandApprovalStore.getState().clearSession(sessionId)
         await window.opencodeOps.abort(worktreePath, opcSessionId)
+      }
+
+      // Connection-session branch: use eager start since modal closes to the board.
+      if (sessionRecord?.connection_id) {
+        const sessionStore = useSessionStore.getState()
+        const sessionResult = await sessionStore.createConnectionSession(sessionRecord.connection_id)
+        if (!sessionResult.success || !sessionResult.session) {
+          toast.error(sessionResult.error ?? 'Failed to create supercharge session')
+          return
+        }
+        const newSessionId = sessionResult.session.id
+        const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+
+        prepareTicketSuperchargeSession(newSessionId)
+        onClose()
+
+        void (async () => {
+          await setModePromise
+          // worktreePath is the connection path for connection sessions (parent resolves it).
+          await eagerSuperchargeStart(worktreePath!, newSessionId)
+          toast.success('Supercharge session started')
+        })().catch((error) => {
+          console.error('[KanbanTicketModal] supercharge (connection) background start failed:', error)
+          toast.error('Failed to supercharge')
+        })
+        return
       }
 
       // Look up worktree and project for duplication
@@ -1676,7 +1768,7 @@ function PlanReviewModeContent({
     } finally {
       setIsActioning(false)
     }
-  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketSuperchargeSession, worktreePath, opcSessionId])
+  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketSuperchargeSession, worktreePath, opcSessionId, hasWorkingContext, sessionRecord])
 
   // ── Supercharge Local handler (same worktree, no duplication) ───
   const handleSuperchargeLocal = useCallback(async () => {
@@ -1797,7 +1889,7 @@ function PlanReviewModeContent({
           <Button
             type="button"
             data-testid="plan-review-handoff-btn"
-            disabled={isActioning || !ticket.worktree_id}
+            disabled={isActioning || !hasWorkingContext}
             onClick={handleHandoff}
             className="gap-1.5"
             variant="outline"
@@ -1805,27 +1897,31 @@ function PlanReviewModeContent({
             <ArrowRight className="h-3.5 w-3.5" />
             Handoff
           </Button>
-          <Button
-            type="button"
-            data-testid="plan-review-supercharge-local-btn"
-            disabled={isActioning || !ticket.worktree_id}
-            onClick={handleSuperchargeLocal}
-            className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
-          >
-            <Bolt className="h-3.5 w-3.5" />
-            Supercharge
-          </Button>
-          <Button
-            type="button"
-            data-testid="plan-review-supercharge-btn"
-            disabled={isActioning || !ticket.worktree_id}
-            onClick={handleSupercharge}
-            className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
-            variant="outline"
-          >
-            <Zap className="h-3.5 w-3.5" />
-            Supercharge (new branch)
-          </Button>
+          {!isConnectionSession && hasSuperpowers && (
+            <Button
+              type="button"
+              data-testid="plan-review-supercharge-local-btn"
+              disabled={isActioning || !hasWorkingContext}
+              onClick={handleSuperchargeLocal}
+              className="gap-1.5 border-violet-600 text-violet-600 hover:bg-violet-100 dark:hover:bg-violet-950"
+              variant="outline"
+            >
+              <Bolt className="h-3.5 w-3.5" />
+              Supercharge locally
+            </Button>
+          )}
+          {hasSuperpowers && (
+            <Button
+              type="button"
+              data-testid="plan-review-supercharge-btn"
+              disabled={isActioning || !hasWorkingContext}
+              onClick={handleSupercharge}
+              className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              Supercharge
+            </Button>
+          )}
           <Button
             type="button"
             data-testid="plan-review-implement-btn"
