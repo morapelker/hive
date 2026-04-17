@@ -599,6 +599,7 @@ declare global {
       onMenuAction: (channel: string, callback: () => void) => () => void
       isPackaged: () => Promise<boolean>
       getPlatform: () => Promise<string>
+      setKeepAwake: (active: boolean) => Promise<void>
       setSessionQueuedState: (sessionId: string, hasQueued: boolean) => Promise<void>
     }
     loggingOps: {

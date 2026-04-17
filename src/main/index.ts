@@ -65,6 +65,7 @@ import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
 import { initTicketProviderManager, GitHubProvider, JiraProvider } from './services/ticket-providers'
 import { APP_SETTINGS_DB_KEY } from '../shared/types/settings'
 import { openCodeService } from './services/opencode-service'
+import { setKeepAwake, cleanupPowerSaveBlocker } from './services/power-save-blocker'
 
 const log = createLogger({ component: 'Main' })
 
@@ -404,6 +405,13 @@ function registerSystemHandlers(openCodeLaunchSpec: OpenCodeLaunchSpec | null): 
     return process.platform
   })
 
+  // Prevent display sleep while renderer-driven sessions are active.
+  // The renderer owns the decision of when to hold the blocker; this handler
+  // simply forwards the desired state to the idempotent service.
+  ipcMain.handle('system:setKeepAwake', (_event, active: boolean) => {
+    setKeepAwake(Boolean(active))
+  })
+
   // Mirror renderer-side follow-up message queue state into the main process so
   // notification-service can suppress session-complete notifications while more
   // queued messages are about to be auto-sent.
@@ -696,6 +704,8 @@ app.on('will-quit', async () => {
   cleanupScripts()
   // Cleanup running bash runs (best-effort, no await)
   bashService.killAll()
+  // Release any held power save blocker so the display can sleep again
+  cleanupPowerSaveBlocker()
   // Cleanup file tree watchers
   await cleanupFileTreeWatchers()
   // Cleanup worktree watchers (git status monitoring)

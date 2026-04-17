@@ -550,6 +550,11 @@ const systemOps = {
   // Get the current platform (darwin, win32, linux)
   getPlatform: (): Promise<string> => ipcRenderer.invoke('system:getPlatform'),
 
+  // Ask the main process to hold (or release) a power save blocker so the
+  // display stays awake while a session is streaming.
+  setKeepAwake: (active: boolean): Promise<void> =>
+    ipcRenderer.invoke('system:setKeepAwake', active),
+
   // Push the renderer's follow-up-message queue state into the main process so
   // `notificationService.showSessionComplete` can suppress notifications while
   // more queued messages are about to be auto-sent.
