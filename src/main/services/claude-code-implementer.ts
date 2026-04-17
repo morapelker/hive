@@ -25,7 +25,7 @@ const CLAUDE_OPUS_EFFORT_VARIANTS = { low: {}, medium: {}, high: {}, max: {} }
 const CLAUDE_MODELS = [
   {
     id: 'opus',
-    name: 'Opus 4.6',
+    name: 'Opus 4.7',
     limit: { context: 1000000, output: 32000 },
     variants: CLAUDE_OPUS_EFFORT_VARIANTS,
     defaultVariant: 'high'
