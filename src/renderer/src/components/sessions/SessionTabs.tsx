@@ -893,6 +893,13 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Handle clicking a session tab - deactivate file tab and clear unread status
   const handleSessionTabClick = (sessionId: string) => {
+    const isAlreadyPresentedSession =
+      activeSessionId === sessionId && activeFilePath === null && !inlineConnectionSessionId
+
+    if (isAlreadyPresentedSession) {
+      return
+    }
+
     setActiveFile(null)
     clearInlineConnectionSession()
     if (isConnectionMode) {
@@ -905,6 +912,13 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Handle clicking a sticky connection session tab (inline viewing in worktree mode)
   const handleConnectionSessionTabClick = (sessionId: string) => {
+    const isAlreadyPresentedConnectionSession =
+      inlineConnectionSessionId === sessionId && activeFilePath === null
+
+    if (isAlreadyPresentedConnectionSession) {
+      return
+    }
+
     setActiveFile(null)
     setInlineConnectionSession(sessionId)
     useWorktreeStatusStore.getState().clearSessionStatus(sessionId)

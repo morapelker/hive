@@ -222,6 +222,34 @@ describe('Session 8: Tab Context Menus UI', () => {
     })
   })
 
+  describe('Session tab click behavior', () => {
+    test('clicking the already presented session tab is a noop and preserves status', () => {
+      useWorktreeStatusStore.getState().setSessionStatus('s1', 'working')
+
+      render(<SessionTabs />)
+
+      fireEvent.click(screen.getByTestId('session-tab-s1'))
+
+      expect(useWorktreeStatusStore.getState().sessionStatuses.s1?.status).toBe('working')
+      expect(screen.getByTestId('tab-spinner-s1')).toBeInTheDocument()
+    })
+
+    test('clicking the active session tab while a file tab is foregrounded restores the session view', () => {
+      setupStores({ fileTabs: true })
+      useWorktreeStatusStore.getState().setSessionStatus('s1', 'working')
+      useFileViewerStore.setState({
+        activeFilePath: '/test/project/worktree/src/app.ts'
+      })
+
+      render(<SessionTabs />)
+
+      fireEvent.click(screen.getByTestId('session-tab-s1'))
+
+      expect(useFileViewerStore.getState().activeFilePath).toBeNull()
+      expect(useWorktreeStatusStore.getState().sessionStatuses.s1).toBeNull()
+    })
+  })
+
   describe('board assistant tab focus', () => {
     test('clicking the board assistant tab clears file focus and activates the assistant', () => {
       setupStores({ fileTabs: true })
