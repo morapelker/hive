@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { act } from 'react'
 import { TaskListWidget } from '@/components/sessions/TaskListWidget'
 import { useLatestTodoList } from '@/components/sessions/useLatestTodoList'
+import { usePRStackTopOffset } from '@/components/sessions/usePRStackTopOffset'
 import { usePRNotificationStore } from '@/stores/usePRNotificationStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import type {
@@ -17,11 +18,46 @@ import type { TodoItem } from '@/components/sessions/tools/todoIcons'
 // Rendering the full SessionView would require ~20 mocks (IPC, routing, many
 // stores, etc.). Instead this wrapper mirrors the integration site's wiring:
 //   * feeds visibleMessages/streamingMessage into useLatestTodoList
-//   * selects prNotificationCount from usePRNotificationStore
-//   * conditionally renders <TaskListWidget> with the same topOffsetClass logic
+//   * uses usePRStackTopOffset to compute the pixel offset from the measured
+//     PR notification stack height
+//   * conditionally renders <TaskListWidget> with the resulting topOffsetPx
 // That proves the integration semantics (hook result + gating condition +
-// top-offset toggle) without needing SessionView itself.
+// measured offset) without needing SessionView itself.
 // -----------------------------------------------------------------------------
+
+// jsdom doesn't ship ResizeObserver — stub a minimal version so the measurement
+// hook doesn't throw. Tests that want to simulate a size change can reach into
+// `observers` and fire the callback manually.
+
+const observers: MockResizeObserver[] = []
+
+class MockResizeObserver {
+  observe = vi.fn((target: Element) => {
+    this.target = target
+  })
+  disconnect = vi.fn()
+  unobserve = vi.fn()
+  private callback: ResizeObserverCallback
+  private target: Element | null = null
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback
+    observers.push(this)
+  }
+
+  trigger(): void {
+    if (!this.target) return
+    this.callback(
+      [
+        {
+          target: this.target,
+          contentRect: this.target.getBoundingClientRect()
+        } as ResizeObserverEntry
+      ],
+      this as unknown as ResizeObserver
+    )
+  }
+}
 
 function TestHarness({
   messages,
@@ -34,20 +70,19 @@ function TestHarness({
     messages,
     streaming
   )
-  const prNotificationCount = usePRNotificationStore((s) => s.notifications.length)
-  const taskListTopOffsetClass = prNotificationCount > 0 ? 'top-20' : 'top-4'
+  const taskListTopOffsetPx = usePRStackTopOffset()
 
   return (
     <div>
       {latestTodos && latestTodosIncomplete && (
-        <TaskListWidget todos={latestTodos} topOffsetClass={taskListTopOffsetClass} />
+        <TaskListWidget todos={latestTodos} topOffsetPx={taskListTopOffsetPx} />
       )}
     </div>
   )
 }
 
 // -----------------------------------------------------------------------------
-// Store helpers
+// Store / DOM helpers
 // -----------------------------------------------------------------------------
 
 const originalPRState = usePRNotificationStore.getState()
@@ -62,6 +97,22 @@ function setPRNotifications(count: number): void {
   act(() => {
     usePRNotificationStore.setState({ notifications })
   })
+}
+
+/**
+ * Mount a fake PR notification stack element with the given offsetHeight so the
+ * usePRStackTopOffset hook's `document.querySelector` call finds it and
+ * `.offsetHeight` returns a known value (jsdom returns 0 by default).
+ */
+function mountFakeStack(height: number): HTMLElement {
+  const stack = document.createElement('div')
+  stack.setAttribute('data-testid', 'pr-notification-stack')
+  Object.defineProperty(stack, 'offsetHeight', {
+    configurable: true,
+    value: height
+  })
+  document.body.appendChild(stack)
+  return stack
 }
 
 // -----------------------------------------------------------------------------
@@ -110,6 +161,8 @@ function makeMessage(id: string, parts: StreamingPart[]): OpenCodeMessage {
 
 describe('TaskListWidget SessionView integration', () => {
   beforeEach(() => {
+    observers.length = 0
+    vi.stubGlobal('ResizeObserver', MockResizeObserver)
     act(() => {
       usePRNotificationStore.setState({ ...originalPRState, notifications: [] })
       useSettingsStore.setState({ ...originalSettingsState, taskListCollapsed: false })
@@ -118,6 +171,9 @@ describe('TaskListWidget SessionView integration', () => {
 
   afterEach(() => {
     cleanup()
+    // Clean out any fake stack elements between tests.
+    document.body.innerHTML = ''
+    vi.unstubAllGlobals()
     act(() => {
       usePRNotificationStore.setState(originalPRState)
       useSettingsStore.setState(originalSettingsState)
@@ -190,38 +246,63 @@ describe('TaskListWidget SessionView integration', () => {
     expect(widget).toBeInTheDocument()
   })
 
-  it('toggles topOffsetClass between top-4 (no PR notifications) and top-20 (>=1 PR notification)', () => {
+  it('positions the widget at the 16px baseline when there are no PR notifications', () => {
     const messages: OpenCodeMessage[] = [
-      makeMessage('m1', [
-        makeTodoWritePart([makeTodo('a', 'Pending item', 'pending')])
-      ])
+      makeMessage('m1', [makeTodoWritePart([makeTodo('a', 'Pending item', 'pending')])])
     ]
 
-    // Start with zero PR notifications → top-4
     setPRNotifications(0)
-    const { rerender } = render(<TestHarness messages={messages} />)
-    let widget = screen.getByTestId('task-list-widget')
-    expect(widget.className).toContain('top-4')
-    expect(widget.className).not.toContain('top-20')
+    render(<TestHarness messages={messages} />)
+    const widget = screen.getByTestId('task-list-widget')
+    expect(widget.style.top).toBe('16px')
+  })
 
-    // One notification → top-20
+  it('positions the widget below the measured PR stack when notifications exist', () => {
+    const messages: OpenCodeMessage[] = [
+      makeMessage('m1', [makeTodoWritePart([makeTodo('a', 'Pending item', 'pending')])])
+    ]
+
+    // A PR stack that's 100px tall — e.g. a single card with a 2-line
+    // description and an action row. `top-20` (=80px) alone would have put
+    // the widget squarely on top of this stack; the new hook puts it below.
+    mountFakeStack(100)
     setPRNotifications(1)
-    rerender(<TestHarness messages={messages} />)
-    widget = screen.getByTestId('task-list-widget')
-    expect(widget.className).toContain('top-20')
-    expect(widget.className).not.toContain('top-4')
+    render(<TestHarness messages={messages} />)
+    const widget = screen.getByTestId('task-list-widget')
+    // 16 (stack's own top-4) + 100 (measured height) + 8 (gap) = 124
+    expect(widget.style.top).toBe('124px')
+  })
 
-    // Several notifications → still top-20
+  it('positions the widget well below a tall stack of multiple notifications (regression for fixed top-20)', () => {
+    const messages: OpenCodeMessage[] = [
+      makeMessage('m1', [makeTodoWritePart([makeTodo('a', 'Pending item', 'pending')])])
+    ]
+
+    // Three stacked notification cards — each ~72px + 8px gaps ≈ 232px.
+    // The old `top-20` (=80px) constant would have put the widget roughly in
+    // the middle of the stack; the measurement-based approach puts it cleanly
+    // below the entire stack.
+    mountFakeStack(232)
     setPRNotifications(3)
-    rerender(<TestHarness messages={messages} />)
-    widget = screen.getByTestId('task-list-widget')
-    expect(widget.className).toContain('top-20')
+    render(<TestHarness messages={messages} />)
+    const widget = screen.getByTestId('task-list-widget')
+    // 16 + 232 + 8 = 256
+    expect(widget.style.top).toBe('256px')
+  })
 
-    // Back to zero → top-4 again
+  it('returns to the baseline offset when all notifications are dismissed', () => {
+    const messages: OpenCodeMessage[] = [
+      makeMessage('m1', [makeTodoWritePart([makeTodo('a', 'Pending item', 'pending')])])
+    ]
+
+    mountFakeStack(120)
+    setPRNotifications(2)
+    const { rerender } = render(<TestHarness messages={messages} />)
+    expect(screen.getByTestId('task-list-widget').style.top).toBe('144px')
+
+    // User dismisses all notifications.
     setPRNotifications(0)
     rerender(<TestHarness messages={messages} />)
-    widget = screen.getByTestId('task-list-widget')
-    expect(widget.className).toContain('top-4')
-    expect(widget.className).not.toContain('top-20')
+    expect(screen.getByTestId('task-list-widget').style.top).toBe('16px')
   })
 })

@@ -50,7 +50,7 @@ describe('TaskListWidget', () => {
       makeTodo('c', 'Third', 'in_progress')
     ]
 
-    render(<TaskListWidget todos={todos} topOffsetClass="top-4" />)
+    render(<TaskListWidget todos={todos} topOffsetPx={16} />)
 
     const widget = screen.getByTestId('task-list-widget')
     expect(widget).toBeInTheDocument()
@@ -75,7 +75,7 @@ describe('TaskListWidget', () => {
       makeTodo('c', 'Third task', 'pending')
     ]
 
-    render(<TaskListWidget todos={todos} topOffsetClass="top-4" />)
+    render(<TaskListWidget todos={todos} topOffsetPx={16} />)
 
     const widget = screen.getByTestId('task-list-widget')
     expect(widget).toBeInTheDocument()
@@ -102,7 +102,7 @@ describe('TaskListWidget', () => {
       makeTodo('d', 'Pending', 'pending')
     ]
 
-    const { container } = render(<TaskListWidget todos={todos} topOffsetClass="top-4" />)
+    const { container } = render(<TaskListWidget todos={todos} topOffsetPx={16} />)
 
     // completed → CircleCheck with text-green-500
     expect(container.querySelector('.text-green-500')).not.toBeNull()
@@ -123,7 +123,7 @@ describe('TaskListWidget', () => {
       makeTodo('c', 'Low pri', 'pending', 'low')
     ]
 
-    const { container } = render(<TaskListWidget todos={todos} topOffsetClass="top-4" />)
+    const { container } = render(<TaskListWidget todos={todos} topOffsetPx={16} />)
 
     // high → ChevronsUp with text-red-500
     expect(container.querySelector('.text-red-500')).not.toBeNull()
@@ -142,7 +142,7 @@ describe('TaskListWidget', () => {
       makeTodo('d', 'In progress item', 'in_progress')
     ]
 
-    render(<TaskListWidget todos={todos} topOffsetClass="top-4" />)
+    render(<TaskListWidget todos={todos} topOffsetPx={16} />)
 
     const doneSpan = screen.getByText('Done item')
     expect(doneSpan.className).toContain('line-through')
@@ -165,7 +165,7 @@ describe('TaskListWidget', () => {
     })
 
     const todos: TodoItem[] = [makeTodo('a', 'Task')]
-    render(<TaskListWidget todos={todos} topOffsetClass="top-4" />)
+    render(<TaskListWidget todos={todos} topOffsetPx={16} />)
 
     const toggle = screen.getByTestId('task-list-widget-toggle')
     fireEvent.click(toggle)
@@ -182,7 +182,7 @@ describe('TaskListWidget', () => {
     })
 
     const todos: TodoItem[] = [makeTodo('a', 'Task')]
-    render(<TaskListWidget todos={todos} topOffsetClass="top-4" />)
+    render(<TaskListWidget todos={todos} topOffsetPx={16} />)
 
     const toggle = screen.getByTestId('task-list-widget-toggle')
     fireEvent.click(toggle)
@@ -191,13 +191,16 @@ describe('TaskListWidget', () => {
     expect(updateSetting).toHaveBeenCalledWith('taskListCollapsed', true)
   })
 
-  it('applies topOffsetClass prop to the container', () => {
+  it('applies topOffsetPx prop as inline top style on the container', () => {
     setCollapsed(false)
     const todos: TodoItem[] = [makeTodo('a', 'Task')]
-    render(<TaskListWidget todos={todos} topOffsetClass="top-20" />)
+    render(<TaskListWidget todos={todos} topOffsetPx={124} />)
 
     const widget = screen.getByTestId('task-list-widget')
-    expect(widget.className).toContain('top-20')
+    expect(widget.style.top).toBe('124px')
+    // The old fixed `top-4` / `top-20` Tailwind classes must not leak into the
+    // class list — the offset is now driven purely by inline style.
+    expect(widget.className).not.toMatch(/\btop-\d/)
   })
 
   it('counter reflects the number of completed vs total todos', () => {
@@ -212,7 +215,7 @@ describe('TaskListWidget', () => {
     ]
 
     const { rerender } = render(
-      <TaskListWidget todos={todosThreeOfFive} topOffsetClass="top-4" />
+      <TaskListWidget todos={todosThreeOfFive} topOffsetPx={16} />
     )
     expect(screen.getByTestId('task-list-widget-toggle')).toHaveTextContent('3/5')
 
@@ -222,7 +225,7 @@ describe('TaskListWidget', () => {
       makeTodo('c', '3', 'cancelled')
     ]
 
-    rerender(<TaskListWidget todos={todosNoneOfThree} topOffsetClass="top-4" />)
+    rerender(<TaskListWidget todos={todosNoneOfThree} topOffsetPx={16} />)
     expect(screen.getByTestId('task-list-widget-toggle')).toHaveTextContent('0/3')
   })
 })

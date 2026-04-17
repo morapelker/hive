@@ -5,12 +5,17 @@ import { PriorityBadge, StatusIcon, type TodoItem } from './tools/todoIcons'
 
 export interface TaskListWidgetProps {
   todos: TodoItem[]
-  topOffsetClass: string
+  /**
+   * Distance from the top edge of the widget's positioning parent, in pixels.
+   * Driven by a measurement of the PR notification stack so the widget always
+   * clears its bottom edge (see usePRStackTopOffset).
+   */
+  topOffsetPx: number
 }
 
 export function TaskListWidget({
   todos,
-  topOffsetClass
+  topOffsetPx
 }: TaskListWidgetProps): React.JSX.Element {
   const collapsed = useSettingsStore((s) => s.taskListCollapsed)
   const updateSetting = useSettingsStore((s) => s.updateSetting)
@@ -21,7 +26,8 @@ export function TaskListWidget({
   return (
     <div
       data-testid="task-list-widget"
-      className={`absolute right-4 ${topOffsetClass} z-20 w-72 rounded-lg border border-border bg-background/95 backdrop-blur shadow-md transition-all duration-150`}
+      style={{ top: `${topOffsetPx}px` }}
+      className="absolute right-4 z-20 w-72 rounded-lg border border-border bg-background/95 backdrop-blur shadow-md transition-all duration-150"
     >
       {collapsed ? (
         <button
