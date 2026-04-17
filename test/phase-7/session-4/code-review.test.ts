@@ -242,7 +242,7 @@ describe('Session 4: Code Review', () => {
         `Use \`git diff ${target}...HEAD\` to see all changes.`
       ].join('\n')
 
-      expect(prompt).toContain('Superpowers Code Review')
+      expect(prompt).toContain('superpowers:code-reviewer')
       expect(prompt).toContain('---')
       expect(prompt).toContain('feature-auth')
       expect(prompt).toContain('origin/main')
