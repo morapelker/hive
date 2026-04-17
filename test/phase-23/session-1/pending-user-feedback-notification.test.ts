@@ -47,16 +47,34 @@ const baseData = {
   sessionId: 's-1'
 }
 
-function createMockWindow(): { window: BrowserWindow; triggerFocus: () => void } {
+function createMockWindow(): {
+  window: BrowserWindow
+  triggerFocus: () => void
+  showSpy: ReturnType<typeof vi.fn>
+  focusSpy: ReturnType<typeof vi.fn>
+  sendSpy: ReturnType<typeof vi.fn>
+} {
   let focusHandler: (() => void) | undefined
+  const showSpy = vi.fn()
+  const focusSpy = vi.fn()
+  const sendSpy = vi.fn()
   const mockWindow = {
     on: vi.fn((event: string, handler: () => void) => {
       if (event === 'focus') focusHandler = handler
-    })
+    }),
+    show: showSpy,
+    focus: focusSpy,
+    isDestroyed: vi.fn(() => false),
+    webContents: {
+      send: sendSpy
+    }
   } as unknown as BrowserWindow
   return {
     window: mockWindow,
-    triggerFocus: () => focusHandler?.()
+    triggerFocus: () => focusHandler?.(),
+    showSpy,
+    focusSpy,
+    sendSpy
   }
 }
 
@@ -85,8 +103,12 @@ describe('Phase 23 · Session 1: showPendingUserFeedback', () => {
 
   test('kind="permission" uses "needs your permission" body', () => {
     notificationService.showPendingUserFeedback(baseData, 'permission')
+    expect(notificationCtorSpy).toHaveBeenCalledTimes(1)
     const opts = notificationCtorSpy.mock.calls[0][0]
+    expect(opts.title).toBe('my-project')
     expect(opts.body).toBe('"implement auth" needs your permission')
+    expect(opts.silent).toBe(false)
+    expect(mockNotificationShow).toHaveBeenCalledTimes(1)
   })
 
   test('increments dock badge on macOS', () => {
@@ -112,5 +134,30 @@ describe('Phase 23 · Session 1: showPendingUserFeedback', () => {
     notificationService.showPendingUserFeedback(baseData, 'question')
     expect(mockNotificationShow).toHaveBeenCalledTimes(1)
     notificationService.setSessionQueuedState(baseData.sessionId, false)
+  })
+
+  test('clicking the notification navigates to the session', () => {
+    const { window, showSpy, focusSpy, sendSpy } = createMockWindow()
+    notificationService.setMainWindow(window)
+    // setMainWindow called before the Notification is constructed — clear
+    // any mock state on the Notification-level spies so our handler lookup
+    // below unambiguously references this test's click registration.
+    mockNotificationOn.mockClear()
+
+    notificationService.showPendingUserFeedback(baseData, 'question')
+
+    const clickCall = mockNotificationOn.mock.calls.find((call) => call[0] === 'click')
+    expect(clickCall).toBeDefined()
+    const clickHandler = clickCall![1] as () => void
+
+    clickHandler()
+
+    expect(showSpy).toHaveBeenCalledTimes(1)
+    expect(focusSpy).toHaveBeenCalledTimes(1)
+    expect(sendSpy).toHaveBeenCalledWith('notification:navigate', {
+      projectId: 'p-1',
+      worktreeId: 'wt-1',
+      sessionId: 's-1'
+    })
   })
 })
