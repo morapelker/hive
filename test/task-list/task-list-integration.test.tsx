@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
-import { act } from 'react'
+import { act, useMemo } from 'react'
 import { TaskListWidget } from '@/components/sessions/TaskListWidget'
 import { useLatestTodoList } from '@/components/sessions/useLatestTodoList'
 import { usePRStackTopOffset } from '@/components/sessions/usePRStackTopOffset'
@@ -59,15 +59,33 @@ class MockResizeObserver {
   }
 }
 
+// Module-level stable reference for the "not streaming" case — mirrors the
+// EMPTY_MESSAGE_ARRAY constant used at the real render sites.
+const EMPTY_MESSAGE_ARRAY: OpenCodeMessage[] = []
+
 function TestHarness({
   messages,
-  streaming = null
+  streaming = null,
+  isStreaming = true
 }: {
   messages: OpenCodeMessage[]
   streaming?: OpenCodeMessage | null
+  isStreaming?: boolean
 }): React.JSX.Element {
+  // Mirror the real render sites: gate on isStreaming and only consider the
+  // current turn (everything after the most recent user message).
+  const currentTurnMessages = useMemo(() => {
+    if (!isStreaming) return EMPTY_MESSAGE_ARRAY
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        return messages.slice(i + 1)
+      }
+    }
+    return messages
+  }, [isStreaming, messages])
+
   const { todos: latestTodos, isIncomplete: latestTodosIncomplete } = useLatestTodoList(
-    messages,
+    currentTurnMessages,
     streaming
   )
   const taskListTopOffsetPx = usePRStackTopOffset()
@@ -244,6 +262,22 @@ describe('TaskListWidget SessionView integration', () => {
 
     const widget = screen.getByTestId('task-list-widget')
     expect(widget).toBeInTheDocument()
+  })
+
+  it('does not render TaskListWidget when isStreaming is false, even with incomplete todos', () => {
+    const messages: OpenCodeMessage[] = [
+      makeMessage('m1', [
+        makeTodoWritePart([
+          makeTodo('a', 'Done one', 'completed'),
+          makeTodo('b', 'Still working', 'in_progress'),
+          makeTodo('c', 'Queued', 'pending')
+        ])
+      ])
+    ]
+
+    render(<TestHarness messages={messages} isStreaming={false} />)
+
+    expect(screen.queryByTestId('task-list-widget')).not.toBeInTheDocument()
   })
 
   it('positions the widget at the 16px baseline when there are no PR notifications', () => {
