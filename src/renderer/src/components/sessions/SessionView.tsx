@@ -42,6 +42,8 @@ import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
+import { TaskListWidget } from './TaskListWidget'
+import { useLatestTodoList } from './useLatestTodoList'
 import { useFileMentions } from '@/hooks/useFileMentions'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useBashRuns } from '@/hooks/useBashRuns'
@@ -70,6 +72,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { usePRReviewStore } from '@/stores/usePRReviewStore'
+import { usePRNotificationStore } from '@/stores/usePRNotificationStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
@@ -5478,6 +5481,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
   }, [hasStreamingContent, sessionRecord?.agent_sdk, streamingContent, streamingParts])
 
+  const { todos: latestTodos, isIncomplete: latestTodosIncomplete } =
+    useLatestTodoList(visibleMessages, streamingMessage)
+  const prNotificationCount = usePRNotificationStore((s) => s.notifications.length)
+  const taskListTopOffsetClass = prNotificationCount > 0 ? 'top-20' : 'top-4'
+
   const handleRedoRevert = useCallback(() => {
     setInputValue('/redo')
     inputValueRef.current = '/redo'
@@ -5686,6 +5694,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             />
           )}
         </div>
+        {latestTodos && latestTodosIncomplete && (
+          <TaskListWidget todos={latestTodos} topOffsetClass={taskListTopOffsetClass} />
+        )}
         <PlanReadyImplementFab
           onImplement={handlePlanReadyImplement}
           onHandoff={handlePlanReadyHandoff}
