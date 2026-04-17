@@ -7,6 +7,8 @@ import { useLatestTodoList } from '@/components/sessions/useLatestTodoList'
 import { BASELINE_TOP_PX } from '@/components/sessions/usePRStackTopOffset'
 import type { OpenCodeMessage } from '@/components/sessions/SessionView'
 
+const EMPTY_MESSAGE_ARRAY: OpenCodeMessage[] = []
+
 export interface SessionStreamPanelProps {
   sessionId: string
   worktreePath: string
@@ -170,8 +172,25 @@ export function SessionStreamPanel({
     }
   }, [hasStreamingContent, streamingContent, streamingParts])
 
+  // Only consider the current turn when deciding whether to show the
+  // TaskListWidget. If the session is not actively streaming, fall back to an
+  // empty slice so the widget disappears on abort / idle. If streaming, walk
+  // backward from the latest message to the most recent user message and
+  // return everything after it — this ensures that once the user sends a
+  // follow-up, stale todos from previous turns are hidden until the new turn
+  // emits its own TodoWrite.
+  const currentTurnMessages = useMemo(() => {
+    if (!isStreaming) return EMPTY_MESSAGE_ARRAY
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        return messages.slice(i + 1)
+      }
+    }
+    return messages
+  }, [isStreaming, messages])
+
   const { todos: latestTodos, isIncomplete: latestTodosIncomplete } =
-    useLatestTodoList(messages, streamingMessage)
+    useLatestTodoList(currentTurnMessages, streamingMessage)
 
   return (
     <div className={`flex flex-col h-full bg-background flex-1 min-w-0${fullWidth ? '' : ' border-l border-border/60'}`}>

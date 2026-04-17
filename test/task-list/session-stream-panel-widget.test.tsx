@@ -93,10 +93,14 @@ function makeTextPart(text: string): StreamingPart {
   return { type: 'text', text }
 }
 
-function makeMessage(id: string, parts: StreamingPart[]): OpenCodeMessage {
+function makeMessage(
+  id: string,
+  parts: StreamingPart[],
+  role: OpenCodeMessage['role'] = 'assistant'
+): OpenCodeMessage {
   return {
     id,
-    role: 'assistant',
+    role,
     content: '',
     timestamp: new Date(0).toISOString(),
     parts
@@ -168,6 +172,7 @@ describe('SessionStreamPanel TaskListWidget integration', () => {
 
   it('renders TaskListWidget when the latest TodoWrite has any pending or in_progress todo', () => {
     setMockStream({
+      isStreaming: true,
       messages: [
         makeMessage('m1', [
           makeTodoWritePart([
@@ -187,6 +192,7 @@ describe('SessionStreamPanel TaskListWidget integration', () => {
 
   it('positions the widget at the 16px baseline (BASELINE_TOP_PX)', () => {
     setMockStream({
+      isStreaming: true,
       messages: [
         makeMessage('m1', [
           makeTodoWritePart([makeTodo('a', 'Pending item', 'pending')])
@@ -201,5 +207,44 @@ describe('SessionStreamPanel TaskListWidget integration', () => {
     // baseline — we do NOT call usePRStackTopOffset because the PR stack is
     // hidden behind the modal backdrop.
     expect(widget.style.top).toBe('16px')
+  })
+
+  it('does not render TaskListWidget when isStreaming is false, even with incomplete todos', () => {
+    setMockStream({
+      isStreaming: false,
+      messages: [
+        makeMessage('m1', [
+          makeTodoWritePart([
+            makeTodo('a', 'Done one', 'completed'),
+            makeTodo('b', 'Still working', 'in_progress'),
+            makeTodo('c', 'Queued', 'pending')
+          ])
+        ])
+      ]
+    })
+
+    renderPanel()
+
+    expect(screen.queryByTestId('task-list-widget')).not.toBeInTheDocument()
+  })
+
+  it('does not render TaskListWidget with only historical TodoWrite once a new user message has been sent', () => {
+    setMockStream({
+      isStreaming: true,
+      messages: [
+        makeMessage('m1', [
+          makeTodoWritePart([
+            makeTodo('a', 'Done one', 'completed'),
+            makeTodo('b', 'Still working', 'in_progress'),
+            makeTodo('c', 'Queued', 'pending')
+          ])
+        ]),
+        makeMessage('m2', [makeTextPart('follow up please')], 'user')
+      ]
+    })
+
+    renderPanel()
+
+    expect(screen.queryByTestId('task-list-widget')).not.toBeInTheDocument()
   })
 })
