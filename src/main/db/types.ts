@@ -367,6 +367,8 @@ export interface KanbanTicket {
   mark: TicketMark | null
   total_tokens: number
   pending_launch_config: string | null
+  /** Personal annotation. MUST NOT be included in any LLM prompt. */
+  note: string | null
 }
 
 export interface KanbanTicketCreate {
@@ -403,6 +405,7 @@ export interface KanbanTicketUpdate {
   github_pr_url?: string | null
   mark?: TicketMark | null
   pending_launch_config?: string | null
+  note?: string | null
 }
 
 export interface BoardAssistantDraft {
