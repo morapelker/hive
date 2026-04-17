@@ -118,7 +118,6 @@ export function Header(): React.JSX.Element {
       (entry) => entry && (entry.status === 'working' || entry.status === 'planning')
     ).length
   )
-  const keepAwakeActive = keepAwakeEnabled && streamingCount > 0
   const showVimHints = vimModeEnabled && vimMode === 'normal'
   const isBoardViewActive = useKanbanStore((s) => s.isBoardViewActive)
   const toggleBoardView = useKanbanStore((s) => s.toggleBoardView)
@@ -325,10 +324,14 @@ export function Header(): React.JSX.Element {
         ) : (
           <span className="text-sm font-medium">Hive</span>
         )}
-        {keepAwakeActive && (
+        {keepAwakeEnabled && (
           <span
-            title={`Keeping computer awake (${streamingCount} session${streamingCount === 1 ? '' : 's'} active)`}
-            className="text-amber-500 shrink-0"
+            title={
+              streamingCount > 0
+                ? `Keeping computer awake (${streamingCount} session${streamingCount === 1 ? '' : 's'} active)`
+                : 'Keep-awake enabled (no active sessions)'
+            }
+            className={cn('shrink-0', streamingCount > 0 ? 'text-amber-500' : 'text-muted-foreground')}
             data-testid="keep-awake-indicator"
           >
             <Coffee className="h-4 w-4" />
