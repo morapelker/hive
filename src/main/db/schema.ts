@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 23
+export const CURRENT_SCHEMA_VERSION = 24
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -448,6 +448,12 @@ ALTER TABLE kanban_tickets ADD COLUMN pending_launch_config TEXT DEFAULT NULL;`,
     version: 23,
     name: 'add_session_type',
     up: `ALTER TABLE sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'default'`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 24,
+    name: 'add_ticket_note',
+    up: `ALTER TABLE kanban_tickets ADD COLUMN note TEXT DEFAULT NULL`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

@@ -155,7 +155,8 @@ export class DatabaseService {
       github_pr_url: (row.github_pr_url as string) ?? null,
       mark: (row.mark as TicketMark) ?? null,
       total_tokens: (row.total_tokens as number) ?? 0,
-      pending_launch_config: (row.pending_launch_config as string) ?? null
+      pending_launch_config: (row.pending_launch_config as string) ?? null,
+      note: (row.note as string) ?? null
     }
   }
 
@@ -390,6 +391,7 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'github_pr_number', 'INTEGER DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'github_pr_url', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'mark', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'note', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
 
     db.exec(`
@@ -2047,6 +2049,10 @@ export class DatabaseService {
     if (data.pending_launch_config !== undefined) {
       updates.push('pending_launch_config = ?')
       values.push(data.pending_launch_config)
+    }
+    if (data.note !== undefined) {
+      updates.push('note = ?')
+      values.push(data.note)
     }
 
     if (updates.length === 1) return existing // Only updated_at, nothing meaningful changed

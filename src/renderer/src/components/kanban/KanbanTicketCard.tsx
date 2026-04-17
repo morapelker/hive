@@ -1,7 +1,9 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus } from 'lucide-react'
+import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus, StickyNote } from 'lucide-react'
 import { UpdateStatusModal } from './UpdateStatusModal'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { NoteEditorModal } from './NoteEditorModal'
 import { cn } from '@/lib/utils'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
@@ -98,6 +100,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const [showPreAssignPicker, setShowPreAssignPicker] = useState(false)
   const [showStatusUpdate, setShowStatusUpdate] = useState(false)
   const [showPRPicker, setShowPRPicker] = useState(false)
+  const [showNoteEditor, setShowNoteEditor] = useState(false)
+  const hasNote = !!ticket.note && ticket.note.trim().length > 0
   const isExternalTicket = !!ticket.external_provider
   const dragCloneRef = useRef<HTMLElement | null>(null)
 
@@ -576,6 +580,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.id, ticket.project_id])
 
+  const handleSaveNote = useCallback(async (note: string | null) => {
+    try {
+      await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { note })
+    } catch (err) {
+      toast.error(`Failed to save note: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [ticket.id, ticket.project_id])
+
   return (
     <>
       <Popover open={showPRPicker} onOpenChange={setShowPRPicker}>
@@ -637,7 +649,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || completedReviewSessionId || isArchived || isBlocked || isRunProcessAlive || ticket.github_pr_number || isCreatingPR) && (
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || completedReviewSessionId || isArchived || isBlocked || isRunProcessAlive || ticket.github_pr_number || isCreatingPR) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -662,6 +674,22 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     <Paperclip className="h-3 w-3" />
                     {ticket.attachments.length}
                   </span>
+                )}
+                {/* Note badge */}
+                {hasNote && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-note"
+                        className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground cursor-help"
+                      >
+                        <StickyNote className="h-3 w-3" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs whitespace-pre-wrap break-words">
+                      {ticket.note}
+                    </TooltipContent>
+                  </Tooltip>
                 )}
 
                 {/* Project tag (connection mode) or worktree name badge */}
@@ -878,6 +906,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </ContextMenuItem>
           )}
 
+          <ContextMenuItem onClick={() => setShowNoteEditor(true)} className="gap-2">
+            <StickyNote className="h-3.5 w-3.5" />
+            {hasNote ? 'Edit note' : 'Add note'}
+          </ContextMenuItem>
+          {hasNote && (
+            <ContextMenuItem onClick={() => handleSaveNote(null)} className="gap-2">
+              <X className="h-3.5 w-3.5" />
+              Remove note
+            </ContextMenuItem>
+          )}
+
           <ContextMenuSeparator />
           <ContextMenuSub>
             <ContextMenuSubTrigger data-testid="ctx-mark-submenu" className="gap-2">
@@ -1033,6 +1072,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           ticketTitle={ticket.title}
         />
       )}
+
+      <NoteEditorModal
+        open={showNoteEditor}
+        onOpenChange={setShowNoteEditor}
+        ticketTitle={ticket.title}
+        initialNote={ticket.note}
+        onSave={handleSaveNote}
+      />
     </>
   )
 })

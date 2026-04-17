@@ -1953,6 +1953,7 @@ const kanban = {
         mode?: 'build' | 'plan' | null
         plan_ready?: boolean
         mark?: string | null
+        note?: string | null
       }
     ) => ipcRenderer.invoke('kanban:ticket:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('kanban:ticket:delete', id),
