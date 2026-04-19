@@ -53,6 +53,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
+import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
 import type { TokenInfo, SessionModelRef } from '@/stores/useContextStore'
 import {
   extractTokens,
@@ -4892,13 +4893,18 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       return
     }
 
+    const extractedTitle = extractPlanTitle(planContent)
+    const slug = extractedTitle ? canonicalizeTicketTitle(extractedTitle) : ''
+    const nameHint = slug.length > 0 ? slug : undefined
+
     // 3. Duplicate worktree
     const dupResult = await worktreeStore.duplicateWorktree(
       project.id,
       project.path,
       project.name,
       worktree.branch_name,
-      worktree.path
+      worktree.path,
+      nameHint
     )
     if (!dupResult.success || !dupResult.worktree) {
       toast.error(dupResult.error ?? 'Failed to duplicate worktree')
@@ -5012,15 +5018,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       return
     }
 
-    // Extract title from first markdown heading, or fall back to first non-empty line
-    const headingMatch = planContent.match(/^#+\s+(.+)$/m)
-    const title = headingMatch
-      ? headingMatch[1].trim()
-      : (planContent
-          .split('\n')
-          .find((line: string) => line.trim().length > 0)
-          ?.trim()
-          .slice(0, 100) ?? 'Plan ticket')
+    const extracted = extractPlanTitle(planContent)
+    const title = extracted ? extracted.slice(0, 100) : 'Plan ticket'
 
     try {
       await useKanbanStore.getState().createTicket(projectId, {

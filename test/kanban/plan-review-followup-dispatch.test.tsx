@@ -562,6 +562,93 @@ describe('Plan review followup dispatch', () => {
     ])
   })
 
+  test('plan review supercharge derives a branch name from the plan heading', async () => {
+    const codexPlanTicket = makeTicket({
+      id: 'ticket-codex',
+      column: 'review',
+      plan_ready: true,
+      current_session_id: 'session-codex-old',
+      worktree_id: 'wt-1',
+      mode: 'plan',
+      description: '# Add `mul_998` function\n\nImplement the new helper'
+    })
+
+    mockWorktreeOps.duplicate.mockResolvedValueOnce({
+      success: true,
+      worktree: makeWorktree({
+        id: 'wt-2',
+        name: 'add-mul-998-function',
+        branch_name: 'add-mul-998-function',
+        path: '/test/add-mul-998-function'
+      })
+    })
+
+    mockDbSession.create.mockResolvedValueOnce(
+      makeSession({
+        id: 'session-codex-new',
+        agent_sdk: 'codex',
+        mode: 'build',
+        opencode_session_id: null,
+        worktree_id: 'wt-2'
+      })
+    )
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [codexPlanTicket]]]),
+        isBoardViewActive: true,
+        selectedTicketId: 'ticket-codex'
+      })
+      useSessionStore.setState({
+        activeSessionId: null,
+        activeWorktreeId: null,
+        sessionsByWorktree: new Map([
+          [
+            'wt-1',
+            [makeSession({ id: 'session-codex-old', agent_sdk: 'codex', opencode_session_id: 'opc-session-1' })]
+          ]
+        ]),
+        pendingPlans: new Map([
+          [
+            'session-codex-old',
+            {
+              requestId: 'req-codex',
+              planContent: '# Add `mul_998` function\n\nImplement the new helper',
+              toolUseID: 'tool-codex'
+            }
+          ]
+        ]),
+        pendingMessages: new Map(),
+        pendingFollowUpMessages: new Map()
+      })
+      useWorktreeStatusStore.setState({
+        sessionStatuses: {}
+      })
+      useWorktreeStore.setState({
+        selectedWorktreeId: null,
+        worktreesByProject: new Map([['proj-1', [makeWorktree()]]])
+      })
+    })
+
+    render(<KanbanTicketModal />)
+
+    const superchargeBtn = await screen.findByTestId('plan-review-supercharge-btn')
+    await act(async () => {
+      fireEvent.click(superchargeBtn)
+    })
+
+    await waitFor(() => {
+      expect(mockWorktreeOps.duplicate).toHaveBeenCalledWith({
+        projectId: 'proj-1',
+        projectPath: '/test/my-project',
+        projectName: 'My Project',
+        sourceBranch: 'feature-auth',
+        sourceWorktreePath: '/test/feature-auth',
+        nameHint: 'add-mul-998-function'
+      })
+    })
+  })
+
   test('supercharge does not leave session stuck "working" when background connect fails', async () => {
     const codexPlanTicket = makeTicket({
       id: 'ticket-codex',

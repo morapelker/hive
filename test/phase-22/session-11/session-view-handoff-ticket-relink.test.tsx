@@ -52,26 +52,37 @@ vi.mock('../../../src/renderer/src/components/sessions/VirtualizedMessageList', 
 vi.mock('../../../src/renderer/src/components/sessions/PlanReadyImplementFab', () => ({
   PlanReadyImplementFab: ({
     visible,
-    onHandoff
+    onHandoff,
+    onSuperpowers
   }: {
     visible: boolean
     onHandoff: (override?: { agentSdk: 'claude-code' }) => void
+    onSuperpowers?: () => void
   }) =>
     visible ? (
-      <button
-        type="button"
-        data-testid="plan-ready-handoff-fab"
-        onClick={() => onHandoff({ agentSdk: 'claude-code' })}
-      >
-        Handoff
-      </button>
+      <>
+        <button
+          type="button"
+          data-testid="plan-ready-handoff-fab"
+          onClick={() => onHandoff({ agentSdk: 'claude-code' })}
+        >
+          Handoff
+        </button>
+        {onSuperpowers ? (
+          <button type="button" data-testid="plan-ready-supercharge-fab" onClick={onSuperpowers}>
+            Supercharge
+          </button>
+        ) : null}
+      </>
     ) : null
 }))
 
 import { SessionView } from '../../../src/renderer/src/components/sessions/SessionView'
 import { useKanbanStore } from '../../../src/renderer/src/stores/useKanbanStore'
+import { useProjectStore } from '../../../src/renderer/src/stores/useProjectStore'
 import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStore'
 import { useSettingsStore } from '../../../src/renderer/src/stores/useSettingsStore'
+import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '../../../src/renderer/src/stores/useWorktreeStatusStore'
 
 function createSessionRecord(
@@ -119,6 +130,10 @@ describe('SessionView handoff ticket relinking', () => {
       getBySession: vi.fn(),
       update: vi.fn()
     }
+  }
+
+  const mockWorktreeOps = {
+    duplicate: vi.fn()
   }
 
   const mockDbSession = {
@@ -187,6 +202,62 @@ describe('SessionView handoff ticket relinking', () => {
       selectedModelByProvider: {},
       lastHandoffOverride: null
     })
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'proj-1',
+          name: 'Project 1',
+          path: '/tmp/project-1',
+          description: null,
+          tags: null,
+          language: null,
+          custom_icon: null,
+          setup_script: null,
+          run_script: null,
+          archive_script: null,
+          auto_assign_port: false,
+          sort_order: 0,
+          created_at: new Date().toISOString(),
+          last_accessed_at: new Date().toISOString()
+        }
+      ]
+    })
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([
+        [
+          'proj-1',
+          [
+            {
+              id: 'wt-1',
+              project_id: 'proj-1',
+              name: 'main',
+              branch_name: 'main',
+              path: '/tmp/worktree-handoff',
+              status: 'active',
+              is_default: true,
+              branch_renamed: 0,
+              last_message_at: null,
+              session_titles: '[]',
+              last_model_provider_id: null,
+              last_model_id: null,
+              last_model_variant: null,
+              attachments: '[]',
+              pinned: 0,
+              context: null,
+              github_pr_number: null,
+              github_pr_url: null,
+              base_branch: null,
+              created_at: new Date().toISOString(),
+              last_accessed_at: new Date().toISOString()
+            }
+          ]
+        ]
+      ]),
+      worktreeOrderByProject: new Map(),
+      selectedWorktreeId: 'wt-1',
+      creatingForProjectId: null,
+      archivingWorktreeIds: new Set()
+    })
 
     mockKanban.ticket.getBySession.mockResolvedValue([
       {
@@ -214,6 +285,32 @@ describe('SessionView handoff ticket relinking', () => {
         name: 'Session 2'
       })
     )
+    mockWorktreeOps.duplicate.mockResolvedValue({
+      success: true,
+      worktree: {
+        id: 'wt-2',
+        project_id: 'proj-1',
+        name: 'add-user-authentication',
+        branch_name: 'add-user-authentication',
+        path: '/tmp/worktree-supercharged',
+        status: 'active',
+        is_default: false,
+        branch_renamed: 0,
+        last_message_at: null,
+        session_titles: '[]',
+        last_model_provider_id: null,
+        last_model_id: null,
+        last_model_variant: null,
+        attachments: '[]',
+        pinned: 0,
+        context: null,
+        github_pr_number: null,
+        github_pr_url: null,
+        base_branch: null,
+        created_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString()
+      }
+    })
 
     Object.defineProperty(window, 'kanban', {
       value: mockKanban,
@@ -335,6 +432,12 @@ describe('SessionView handoff ticket relinking', () => {
       writable: true,
       configurable: true
     })
+
+    Object.defineProperty(window, 'worktreeOps', {
+      value: mockWorktreeOps,
+      writable: true,
+      configurable: true
+    })
   })
 
   afterEach(() => {
@@ -368,5 +471,41 @@ describe('SessionView handoff ticket relinking', () => {
     expect(useSessionStore.getState().pendingMessages.get('session-build-new')).toBe(
       'Implement the following plan\n1. Add the relink helper\n2. Use it during handoff'
     )
+  })
+
+  test('supercharge derives a slug from the plan heading and passes it as nameHint', async () => {
+    useSessionStore.setState({
+      pendingPlans: new Map([
+        [
+          'session-plan-old',
+          {
+            requestId: 'req-plan-1',
+            planContent: '# Add user authentication\n\n1. Build login UI\n2. Wire auth API',
+            toolUseID: 'tool-plan-1'
+          }
+        ]
+      ])
+    })
+
+    render(<SessionView sessionId="session-plan-old" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('plan-ready-supercharge-fab')).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-ready-supercharge-fab'))
+    })
+
+    await waitFor(() => {
+      expect(mockWorktreeOps.duplicate).toHaveBeenCalledWith({
+        projectId: 'proj-1',
+        projectPath: '/tmp/project-1',
+        projectName: 'Project 1',
+        sourceBranch: 'main',
+        sourceWorktreePath: '/tmp/worktree-handoff',
+        nameHint: 'add-user-authentication'
+      })
+    })
   })
 })

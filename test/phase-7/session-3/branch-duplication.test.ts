@@ -305,5 +305,71 @@ describe('Session 3: Branch Duplication', () => {
 
       expect(result.success).toBe(true)
     })
+
+    test('duplicateWorktree forwards nameHint when provided', async () => {
+      const mockDuplicate = vi.fn().mockResolvedValue({
+        success: true,
+        worktree: {
+          id: 'new-id',
+          project_id: 'proj-1',
+          name: 'add-user-authentication',
+          branch_name: 'add-user-authentication',
+          path: '/path',
+          status: 'active',
+          is_default: false,
+          created_at: new Date().toISOString(),
+          last_accessed_at: new Date().toISOString()
+        }
+      })
+
+      Object.defineProperty(window, 'worktreeOps', {
+        writable: true,
+        value: {
+          create: vi.fn(),
+          delete: vi.fn(),
+          sync: vi.fn(),
+          exists: vi.fn(),
+          openInTerminal: vi.fn(),
+          openInEditor: vi.fn(),
+          getBranches: vi.fn(),
+          branchExists: vi.fn(),
+          duplicate: mockDuplicate
+        }
+      })
+
+      Object.defineProperty(window, 'db', {
+        writable: true,
+        value: {
+          worktree: {
+            getActiveByProject: vi.fn().mockResolvedValue([]),
+            touch: vi.fn()
+          }
+        }
+      })
+
+      const { useWorktreeStore } = await import('../../../src/renderer/src/stores/useWorktreeStore')
+
+      const result = await useWorktreeStore
+        .getState()
+        .duplicateWorktree(
+          'proj-1',
+          '/project/path',
+          'my-project',
+          'feature',
+          '/worktree/path',
+          'add-user-authentication'
+        )
+
+      expect(mockDuplicate).toHaveBeenCalledWith({
+        projectId: 'proj-1',
+        projectPath: '/project/path',
+        projectName: 'my-project',
+        sourceBranch: 'feature',
+        sourceWorktreePath: '/worktree/path',
+        nameHint: 'add-user-authentication'
+      })
+
+      expect(result.success).toBe(true)
+    })
   })
 })

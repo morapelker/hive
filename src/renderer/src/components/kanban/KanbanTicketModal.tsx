@@ -73,6 +73,7 @@ import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
 import type { HandoffSelectionOverride } from '@/lib/handoffSelection'
+import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
 import type { KanbanTicket, KanbanTicketUpdate, Worktree } from '../../../../main/db/types'
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -1820,13 +1821,18 @@ function PlanReviewModeContent({
         return
       }
 
+      const extractedTitle = extractPlanTitle(planContent)
+      const slug = extractedTitle ? canonicalizeTicketTitle(extractedTitle) : ''
+      const nameHint = slug.length > 0 ? slug : undefined
+
       // Duplicate worktree
       const dupResult = await useWorktreeStore.getState().duplicateWorktree(
         project.id,
         project.path,
         project.name,
         worktree.branch_name,
-        worktree.path
+        worktree.path,
+        nameHint
       )
       if (!dupResult.success || !dupResult.worktree) {
         toast.error(dupResult.error ?? 'Failed to duplicate worktree')
