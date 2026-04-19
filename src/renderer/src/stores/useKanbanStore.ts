@@ -126,6 +126,7 @@ interface KanbanState {
 
   // ── Session coordination ────────────────────────────────────────────
   syncTicketWithSession: (sessionId: string, event: KanbanSessionEvent) => void
+  relinkTicketsForHandoff: (oldSessionId: string, newSessionId: string) => Promise<void>
 
   // ── Getters ────────────────────────────────────────────────────────
   getTicketsForProject: (projectId: string) => KanbanTicket[]
@@ -709,6 +710,62 @@ export const useKanbanStore = create<KanbanState>()(
             }
           }
         }
+      },
+
+      relinkTicketsForHandoff: async (oldSessionId: string, newSessionId: string) => {
+        const linkedTickets = await window.kanban.ticket.getBySession(oldSessionId)
+        if (!linkedTickets || linkedTickets.length === 0) return
+
+        const relinkedById = new Map<string, KanbanTicket>()
+
+        for (const ticket of linkedTickets) {
+          const alreadyRelinked =
+            ticket.current_session_id === newSessionId &&
+            ticket.plan_ready === false &&
+            ticket.mode === 'build'
+
+          if (!alreadyRelinked) {
+            await window.kanban.ticket.update(ticket.id, {
+              current_session_id: newSessionId,
+              plan_ready: false,
+              mode: 'build'
+            })
+          }
+
+          relinkedById.set(ticket.id, {
+            ...ticket,
+            current_session_id: newSessionId,
+            plan_ready: false,
+            mode: 'build'
+          })
+        }
+
+        set((state) => {
+          const next = new Map(state.tickets)
+          let changed = false
+
+          for (const [projectId, projectTickets] of next.entries()) {
+            let projectChanged = false
+            const updatedTickets = projectTickets.map((ticket) => {
+              const relinked = relinkedById.get(ticket.id)
+              if (!relinked) return ticket
+              projectChanged = true
+              return {
+                ...ticket,
+                current_session_id: relinked.current_session_id,
+                plan_ready: relinked.plan_ready,
+                mode: relinked.mode
+              }
+            })
+
+            if (projectChanged) {
+              changed = true
+              next.set(projectId, updatedTickets)
+            }
+          }
+
+          return changed ? { tickets: next } : {}
+        })
       },
 
       // ── Merge-on-done state ──────────────────────────────────────────

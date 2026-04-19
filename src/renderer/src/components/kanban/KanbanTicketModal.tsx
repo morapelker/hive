@@ -9,7 +9,6 @@ import {
   Hammer,
   Send,
   Zap,
-  ArrowRight,
   AlertCircle,
   Bolt,
   FileSearch,
@@ -36,6 +35,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
+import { HandoffSplitButton } from '../sessions/HandoffSplitButton'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -72,6 +72,7 @@ import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
 import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
+import type { HandoffSelectionOverride } from '@/lib/handoffSelection'
 import type { KanbanTicket, KanbanTicketUpdate, Worktree } from '../../../../main/db/types'
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -1516,7 +1517,7 @@ function PlanReviewModeContent({
   }, [ticket.current_session_id, ticket.id, ticket.project_id, isActioning, pendingPlan, sessionRecord, onClose])
 
   // ── Handoff handler ───────────────────────────────────────────────
-  const handleHandoff = useCallback(async () => {
+  const handleHandoff = useCallback(async (override?: HandoffSelectionOverride) => {
     if (!ticket.current_session_id || !hasWorkingContext || isActioning) return
     setIsActioning(true)
 
@@ -1526,25 +1527,36 @@ function PlanReviewModeContent({
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       lastSendMode.delete(sessionId)
 
-      // Connection-session branch: mirrors SessionView.tsx handoff connection path.
+      // Connection-session branch: eagerly start work even if the user stays on the board.
       if (sessionRecord?.connection_id) {
-        // Abort the original backend session so it stops spinning (parity with SessionView).
         if (worktreePath && opcSessionId) {
           useCommandApprovalStore.getState().clearSession(sessionId)
           await window.opencodeOps.abort(worktreePath, opcSessionId)
         }
 
+        if (!worktreePath) {
+          toast.error('Connection path unavailable')
+          return
+        }
+
+        const connectionPath = worktreePath
         const sessionStore = useSessionStore.getState()
-        const result = await sessionStore.createConnectionSession(sessionRecord.connection_id)
+        const result = await sessionStore.createConnectionSession(
+          sessionRecord.connection_id,
+          override?.agentSdk,
+          undefined,
+          { autoFocus: false, modelOverride: override?.model }
+        )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')
           return
         }
 
         const handoffPrompt = `Implement the following plan\n${planContent}`
-        await sessionStore.setSessionMode(result.session.id, 'build')
-        sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-        notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
+        const newSessionId = result.session.id
+        const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+
+        prepareTicketBuildSession(newSessionId)
 
         // In sticky-tab mode, stay on the board; otherwise navigate to the new session.
         // setActiveConnectionSession requires activeConnectionId to be set — which
@@ -1555,17 +1567,18 @@ function PlanReviewModeContent({
           sessionStore.setActiveSession(BOARD_TAB_ID)
         } else {
           sessionStore.setActiveConnection(sessionRecord.connection_id)
-          sessionStore.setActiveConnectionSession(result.session.id)
+          sessionStore.setActiveConnectionSession(newSessionId)
         }
 
-        await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
-          current_session_id: result.session.id,
-          plan_ready: false,
-          mode: 'build'
-        })
-
-        toast.success('Handoff session created')
         onClose()
+        void (async () => {
+          await setModePromise
+          await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt)
+          toast.success('Handoff session started')
+        })().catch((error) => {
+          console.error('[KanbanTicketModal] handoff (connection) background start failed:', error)
+          toast.error('Failed to start handoff')
+        })
         return
       }
 
@@ -1577,46 +1590,67 @@ function PlanReviewModeContent({
       if (!worktreeId) return
 
       const sessionStore = useSessionStore.getState()
-      const result = await sessionStore.createSession(worktreeId, ticket.project_id)
+      const result = await sessionStore.createSession(
+        worktreeId,
+        ticket.project_id,
+        override?.agentSdk,
+        undefined,
+        { autoFocus: false, modelOverride: override?.model }
+      )
       if (!result.success || !result.session) {
         toast.error(result.error ?? 'Failed to create handoff session')
         return
       }
 
       const handoffPrompt = `Implement the following plan\n${planContent}`
-      await sessionStore.setSessionMode(result.session.id, 'build')
-      sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+      const newSessionId = result.session.id
+      const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+      const localWorktreePath = findWorktreePathById(worktreeId)
+      if (!localWorktreePath) {
+        toast.error('Could not find worktree path')
+        return
+      }
+
+      prepareTicketBuildSession(newSessionId)
 
       // In sticky-tab mode, stay on the board; otherwise navigate to the new session
       const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
       if (useSettingsStore.getState().boardMode === 'sticky-tab') {
         sessionStore.setActiveSession(BOARD_TAB_ID)
       } else {
-        sessionStore.setActiveSession(result.session.id)
+        useWorktreeStore.getState().selectWorktree(worktreeId)
+        sessionStore.setActiveWorktree(worktreeId)
+        sessionStore.setActiveSession(newSessionId)
       }
 
-      // Clear plan_ready badge and link to new session
-      await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
-        current_session_id: result.session.id,
-        plan_ready: false,
-        mode: 'build'
-      })
-
-      toast.success('Handoff session created')
       onClose()
+      void (async () => {
+        await setModePromise
+        await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt)
+        toast.success('Handoff session started')
+      })().catch((error) => {
+        console.error('[KanbanTicketModal] handoff background start failed:', error)
+        toast.error('Failed to start handoff')
+      })
     } catch {
       toast.error('Failed to create handoff session')
     } finally {
       setIsActioning(false)
     }
-  }, [ticket, isActioning, planContent, onClose, hasWorkingContext, sessionRecord, worktreePath, opcSessionId])
+  }, [
+    ticket,
+    isActioning,
+    planContent,
+    onClose,
+    hasWorkingContext,
+    sessionRecord,
+    worktreePath,
+    opcSessionId
+  ])
 
-  // Synchronously re-link the ticket to the new session and (if needed) move it to in_progress
-  // so the kanban board reflects the supercharge before the modal closes. Per-session timing /
-  // status bookkeeping is intentionally deferred to eagerSuperchargeStart so it only runs once
-  // the OpenCode connection actually succeeds — otherwise a failed connect leaves the ticket
-  // permanently marked 'working' with no work running.
-  const prepareTicketSuperchargeSession = useCallback((newSessionId: string): void => {
+  // Synchronously re-link the ticket to a new build session and (if needed) move it to
+  // in_progress so the kanban board reflects the new work before the modal closes.
+  const prepareTicketBuildSession = useCallback((newSessionId: string): void => {
     useKanbanStore
       .getState()
       .updateTicket(ticket.id, ticket.project_id, {
@@ -1678,6 +1712,36 @@ function PlanReviewModeContent({
     ], model)
   }, [planContent])
 
+  const eagerHandoffStart = useCallback(async (
+    workingPath: string,
+    newSessionId: string,
+    handoffPrompt: string
+  ) => {
+    const connectResult = await window.opencodeOps.connect(workingPath, newSessionId)
+    if (!connectResult.success || !connectResult.sessionId) {
+      throw new Error('Failed to connect to handoff session')
+    }
+
+    useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
+    await window.db.session.update(newSessionId, {
+      opencode_session_id: connectResult.sessionId
+    })
+
+    messageSendTimes.set(newSessionId, Date.now())
+    userExplicitSendTimes.set(newSessionId, Date.now())
+    snapshotTokenBaseline(newSessionId)
+    lastSendMode.set(newSessionId, 'build')
+    useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
+
+    const model = resolveSessionModel(newSessionId)
+    await window.opencodeOps.prompt(
+      workingPath,
+      connectResult.sessionId,
+      [{ type: 'text', text: handoffPrompt }],
+      model
+    )
+  }, [])
+
   // ── Supercharge handler (new branch) ────────────────────────────
   const handleSupercharge = useCallback(async () => {
     if (!ticket.current_session_id || !hasWorkingContext || isActioning) return
@@ -1718,11 +1782,11 @@ function PlanReviewModeContent({
         const newSessionId = sessionResult.session.id
         const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-        prepareTicketSuperchargeSession(newSessionId)
+        prepareTicketBuildSession(newSessionId)
         onClose()
 
         // NOTE: On IIFE failure, the ticket is left re-linked to the new session (via
-        // prepareTicketSuperchargeSession above) — same failure mode as the worktree
+        // prepareTicketBuildSession above) — same failure mode as the worktree
         // branch below. We don't roll back because the error toast tells the user what
         // happened and retrying (via a new supercharge click) creates a fresh session.
         void (async () => {
@@ -1782,7 +1846,7 @@ function PlanReviewModeContent({
       // Hoist into a const so TS narrowing survives across the background IIFE closure.
       const newWorktreePath = dupResult.worktree.path
 
-      prepareTicketSuperchargeSession(newSessionId)
+      prepareTicketBuildSession(newSessionId)
       onClose()
 
       // Finish session configuration and startup in the background so the modal can close
@@ -1801,7 +1865,7 @@ function PlanReviewModeContent({
     } finally {
       setIsActioning(false)
     }
-  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketSuperchargeSession, worktreePath, opcSessionId, hasWorkingContext, sessionRecord])
+  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketBuildSession, worktreePath, opcSessionId, hasWorkingContext, sessionRecord])
 
   // ── Supercharge Local handler (same worktree, no duplication) ───
   const handleSuperchargeLocal = useCallback(async () => {
@@ -1837,7 +1901,7 @@ function PlanReviewModeContent({
       const newSessionId = sessionResult.session.id
       const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-      prepareTicketSuperchargeSession(newSessionId)
+      prepareTicketBuildSession(newSessionId)
       onClose()
 
       // Finish session configuration and startup in the background so the modal can close
@@ -1856,7 +1920,7 @@ function PlanReviewModeContent({
     } finally {
       setIsActioning(false)
     }
-  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketSuperchargeSession, worktreePath, opcSessionId])
+  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketBuildSession, worktreePath, opcSessionId])
 
   return (
     <div ref={dropZoneRef} className="relative contents">
@@ -1919,17 +1983,12 @@ function PlanReviewModeContent({
           (matches SessionView's showPlanReadyImplementFab gating on !!pendingPlan) */}
       {!!pendingPlan && (
         <DialogFooter className="flex-shrink-0 gap-1.5 flex-wrap">
-          <Button
-            type="button"
-            data-testid="plan-review-handoff-btn"
+          <HandoffSplitButton
+            worktreeId={sessionRecord?.worktree_id ?? undefined}
+            onHandoff={handleHandoff}
+            testIdPrefix="plan-review"
             disabled={isActioning || !hasWorkingContext}
-            onClick={handleHandoff}
-            className="gap-1.5"
-            variant="outline"
-          >
-            <ArrowRight className="h-3.5 w-3.5" />
-            Handoff
-          </Button>
+          />
           {!isConnectionSession && hasSuperpowers && (
             <Button
               type="button"

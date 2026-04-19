@@ -305,6 +305,10 @@ describe('Plan review followup dispatch', () => {
       })
     })
     vi.clearAllMocks()
+    mockKanban.ticket.getBySession.mockImplementation(async (sessionId: string) => {
+      const tickets = [...useKanbanStore.getState().tickets.values()].flat()
+      return tickets.filter((ticket) => ticket.current_session_id === sessionId)
+    })
   })
 
   // ════════════════════════════════════════════════════════════════════
@@ -860,6 +864,13 @@ describe('Plan review followup dispatch', () => {
       expect(useSessionStore.getState().activeConnectionId).toBe('conn-1')
     })
     expect(useSessionStore.getState().activeSessionId).toBe('session-conn-new')
+    expect(mockOpencodeOps.connect).toHaveBeenCalledWith('/test/conn-1', 'session-conn-new')
+    expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
+      '/test/conn-1',
+      'opc-session-1',
+      [{ type: 'text', text: 'Implement the following plan\n## Detailed Plan\n\nStep 1: Implement auth' }],
+      undefined
+    )
 
     // Ticket is re-linked to the new session with plan_ready cleared.
     const updatedTicket = useKanbanStore
@@ -869,5 +880,86 @@ describe('Plan review followup dispatch', () => {
     expect(updatedTicket?.current_session_id).toBe('session-conn-new')
     expect(updatedTicket?.plan_ready).toBe(false)
     expect(updatedTicket?.mode).toBe('build')
+    expect(updatedTicket?.column).toBe('in_progress')
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-conn-new']?.status).toBe('working')
+  })
+
+  test('handoff on worktree ticket relinks the ticket to the new session', async () => {
+    mockDbSession.create.mockResolvedValueOnce(
+      makeSession({
+        id: 'session-worktree-new',
+        worktree_id: 'wt-1',
+        connection_id: null,
+        agent_sdk: 'claude-code',
+        mode: 'build',
+        opencode_session_id: null
+      })
+    )
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [planTicket]]]),
+        isBoardViewActive: true,
+        selectedTicketId: 'ticket-plan'
+      })
+      useSessionStore.setState({
+        activeSessionId: null,
+        activeWorktreeId: 'wt-1',
+        sessionsByWorktree: new Map([['wt-1', [makeSession({ id: 'session-1' })]]]),
+        sessionsByConnection: new Map(),
+        tabOrderByWorktree: new Map([['wt-1', ['session-1']]]),
+        activeSessionByWorktree: {},
+        pendingPlans: new Map([
+          [
+            'session-1',
+            {
+              requestId: 'req-1',
+              planContent: '## Detailed Plan\n\nStep 1: Setup routes\nStep 2: Add auth',
+              toolUseID: 'tool-1'
+            }
+          ]
+        ]),
+        pendingMessages: new Map(),
+        pendingFollowUpMessages: new Map()
+      })
+      useWorktreeStore.setState({
+        selectedWorktreeId: 'wt-1',
+        worktreesByProject: new Map([['proj-1', [makeWorktree()]]])
+      })
+      useWorktreeStatusStore.setState({ sessionStatuses: {} })
+      useSettingsStore.setState({ boardMode: 'toggle' })
+    })
+
+    render(<KanbanTicketModal />)
+
+    const handoffBtn = await screen.findByTestId('plan-review-handoff-btn')
+    await act(async () => {
+      fireEvent.click(handoffBtn)
+    })
+
+    await waitFor(() => {
+      expect(mockDbSession.create).toHaveBeenCalled()
+    })
+
+    await waitFor(() => {
+      expect(useSessionStore.getState().activeSessionId).toBe('session-worktree-new')
+    })
+    expect(mockOpencodeOps.connect).toHaveBeenCalledWith('/test/feature-auth', 'session-worktree-new')
+    expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
+      '/test/feature-auth',
+      'opc-session-1',
+      [{ type: 'text', text: 'Implement the following plan\n## Detailed Plan\n\nStep 1: Setup routes\nStep 2: Add auth' }],
+      undefined
+    )
+
+    const updatedTicket = useKanbanStore
+      .getState()
+      .tickets.get('proj-1')
+      ?.find((t) => t.id === 'ticket-plan')
+    expect(updatedTicket?.current_session_id).toBe('session-worktree-new')
+    expect(updatedTicket?.plan_ready).toBe(false)
+    expect(updatedTicket?.mode).toBe('build')
+    expect(updatedTicket?.column).toBe('in_progress')
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-worktree-new']?.status).toBe('working')
   })
 })

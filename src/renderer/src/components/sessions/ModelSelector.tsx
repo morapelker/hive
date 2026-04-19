@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Check, ChevronDown, Search, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { cacheHandoffModelCatalog, type HandoffAgentSdk } from '@/lib/handoffSelection'
+import {
+  findModelInfo,
+  getModelDisplayName,
+  getModelVariantKeys,
+  parseProviders,
+  type ModelInfo,
+  type ProviderModels
+} from '@/lib/parseProviders'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { toast } from '@/lib/toast'
@@ -12,28 +21,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-
-interface ModelInfo {
-  id: string
-  name?: string
-  providerID: string
-  variants?: Record<string, Record<string, unknown>>
-}
-
-interface ProviderModels {
-  providerID: string
-  providerName: string
-  models: ModelInfo[]
-}
-
-function getDisplayName(model: ModelInfo): string {
-  return model.name || model.id
-}
-
-function getVariantKeys(model: ModelInfo): string[] {
-  if (!model.variants) return []
-  return Object.keys(model.variants)
-}
 
 interface ModelSelectorProps {
   sessionId?: string
@@ -105,6 +92,7 @@ export function ModelSelector({
         if (result.success && result.providers) {
           const parsed = parseProviders(result.providers)
           setProviders(parsed)
+          cacheHandoffModelCatalog(agentSdk as HandoffAgentSdk, result.providers)
         }
       } catch (error) {
         console.error('Failed to load models:', error)
@@ -119,47 +107,8 @@ export function ModelSelector({
     }
   }, [agentSdk])
 
-  // Parse the providers response into a structured format
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function parseProviders(data: any): ProviderModels[] {
-    const list = Array.isArray(data) ? data : data?.providers || []
-    const result: ProviderModels[] = []
-
-    for (const provider of list) {
-      const models: ModelInfo[] = []
-      const providerID = provider?.id || 'unknown'
-
-      if (provider?.models && typeof provider.models === 'object') {
-        for (const [modelID, modelData] of Object.entries(provider.models)) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const md = modelData as any
-          const variants =
-            md?.variants && typeof md.variants === 'object'
-              ? (md.variants as Record<string, Record<string, unknown>>)
-              : undefined
-          models.push({
-            id: md?.id || modelID,
-            name: md?.name,
-            providerID,
-            variants
-          })
-        }
-      }
-
-      if (models.length > 0) {
-        result.push({
-          providerID,
-          providerName: provider?.name || providerID.charAt(0).toUpperCase() + providerID.slice(1),
-          models
-        })
-      }
-    }
-
-    return result
-  }
-
   function handleSelectModel(model: ModelInfo): void {
-    const variantKeys = getVariantKeys(model)
+    const variantKeys = getModelVariantKeys(model)
     const remembered = useSettingsStore
       .getState()
       .getModelVariantDefault(model.providerID, model.id)
@@ -210,13 +159,7 @@ export function ModelSelector({
   const currentModel = useMemo((): ModelInfo | null => {
     const modelID = selectedModel?.modelID || 'claude-opus-4-5-20251101'
     const providerID = selectedModel?.providerID || 'anthropic'
-    for (const provider of providers) {
-      if (provider.providerID === providerID) {
-        const found = provider.models.find((m) => m.id === modelID)
-        if (found) return found
-      }
-    }
-    return null
+    return findModelInfo(providers, providerID, modelID)
   }, [selectedModel, providers])
 
   const providerPrefix = useMemo(() => {
@@ -230,7 +173,7 @@ export function ModelSelector({
   // Cycle thinking-level variant for Alt+T
   const cycleVariant = useCallback(() => {
     if (!currentModel) return
-    const variantKeys = getVariantKeys(currentModel)
+    const variantKeys = getModelVariantKeys(currentModel)
     if (variantKeys.length <= 1) return
 
     const currentVariant = selectedModel?.variant
@@ -274,8 +217,8 @@ export function ModelSelector({
 
   // Determine display name for the pill
   const displayName = currentModel
-    ? getDisplayName(currentModel)
-    : getDisplayName({
+    ? getModelDisplayName(currentModel)
+    : getModelDisplayName({
         id: selectedModel?.modelID || 'claude-opus-4-5-20251101',
         providerID: 'anthropic'
       })
@@ -288,7 +231,7 @@ export function ModelSelector({
         ...provider,
         models: provider.models.filter(
           (m) =>
-            getDisplayName(m).toLowerCase().includes(q) ||
+            getModelDisplayName(m).toLowerCase().includes(q) ||
             m.id.toLowerCase().includes(q) ||
             provider.providerName.toLowerCase().includes(q)
         )
@@ -306,7 +249,7 @@ export function ModelSelector({
     [providers, isFavorite]
   )
 
-  const currentVariantKeys = currentModel ? getVariantKeys(currentModel) : []
+  const currentVariantKeys = currentModel ? getModelVariantKeys(currentModel) : []
   const hasVariants = currentVariantKeys.length > 0
 
   return (
@@ -367,7 +310,7 @@ export function ModelSelector({
               </DropdownMenuLabel>
               {favoriteModelObjects.map((model) => {
                 const favActive = isActiveModel(model)
-                const favVariantKeys = getVariantKeys(model)
+                const favVariantKeys = getModelVariantKeys(model)
                 return (
                   <div key={`fav-${model.providerID}:${model.id}`}>
                     <DropdownMenuItem
@@ -380,7 +323,7 @@ export function ModelSelector({
                     >
                       <span className="flex items-center gap-1.5">
                         <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
-                        <span className="truncate text-sm">{getDisplayName(model)}</span>
+                        <span className="truncate text-sm">{getModelDisplayName(model)}</span>
                       </span>
                       {favActive && <Check className="h-4 w-4 shrink-0 text-primary" />}
                     </DropdownMenuItem>
@@ -423,7 +366,7 @@ export function ModelSelector({
               </DropdownMenuLabel>
               {provider.models.map((model) => {
                 const active = isActiveModel(model)
-                const variantKeys = getVariantKeys(model)
+                const variantKeys = getModelVariantKeys(model)
                 return (
                   <div key={`${model.providerID}:${model.id}`}>
                     <DropdownMenuItem
@@ -439,7 +382,7 @@ export function ModelSelector({
                         {isFavorite(model) && (
                           <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />
                         )}
-                        <span className="truncate text-sm">{getDisplayName(model)}</span>
+                        <span className="truncate text-sm">{getModelDisplayName(model)}</span>
                       </span>
                       {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
                     </DropdownMenuItem>

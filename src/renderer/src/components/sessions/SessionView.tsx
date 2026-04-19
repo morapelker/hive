@@ -85,6 +85,7 @@ import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
+import type { HandoffSelectionOverride } from '@/lib/handoffSelection'
 
 // Stable empty array to avoid creating new references in selectors
 const EMPTY_FILE_INDEX: FlatFile[] = []
@@ -4747,7 +4748,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     ]
   )
 
-  const handlePlanReadyHandoff = useCallback(async () => {
+  const handlePlanReadyHandoff = useCallback(async (override?: HandoffSelectionOverride) => {
     const lastAssistantMessage = [...messages]
       .reverse()
       .find((message) => message.role === 'assistant' && message.content.trim().length > 0)
@@ -4770,14 +4771,21 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     if (connectionId) {
       const handoffPrompt = `Implement the following plan\n${lastAssistantMessage.content}`
       const sessionStore = useSessionStore.getState()
-      const result = await sessionStore.createConnectionSession(connectionId)
+      const result = await sessionStore.createConnectionSession(
+        connectionId,
+        override?.agentSdk,
+        undefined,
+        { modelOverride: override?.model }
+      )
       if (!result.success || !result.session) {
         toast.error(result.error ?? 'Failed to create handoff session')
         return
       }
       const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-      notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
+      await useKanbanStore
+        .getState()
+        .relinkTicketsForHandoff(sessionId, result.session.id)
       sessionStore.setActiveConnectionSession(result.session.id)
       await setModePromise
       return
@@ -4793,7 +4801,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const handoffPrompt = `Implement the following plan\n${lastAssistantMessage.content}`
 
     const sessionStore = useSessionStore.getState()
-    const result = await sessionStore.createSession(currentWorktreeId, currentProjectId)
+    const result = await sessionStore.createSession(
+      currentWorktreeId,
+      currentProjectId,
+      override?.agentSdk,
+      undefined,
+      { modelOverride: override?.model }
+    )
     if (!result.success || !result.session) {
       toast.error(result.error ?? 'Failed to create handoff session')
       return
@@ -4801,7 +4815,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
     sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-    notifyKanbanSessionSync(sessionId, { type: 'supercharge', newSessionId: result.session.id })
+    await useKanbanStore
+      .getState()
+      .relinkTicketsForHandoff(sessionId, result.session.id)
     sessionStore.setActiveSession(result.session.id)
     await setModePromise
   }, [
@@ -5717,6 +5733,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         <PlanReadyImplementFab
           onImplement={handlePlanReadyImplement}
           onHandoff={handlePlanReadyHandoff}
+          worktreeId={worktreeId ?? undefined}
           visible={showPlanReadyImplementFab}
           superpowersAvailable={hasSuperpowers}
           onSuperpowers={handlePlanReadySuperpowers}

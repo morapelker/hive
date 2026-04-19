@@ -67,6 +67,7 @@ export function useVimNavigation(): void {
       const keyToTestId: Record<string, string> = {
         m: 'plan-ready-implement-fab',
         a: 'plan-ready-handoff-fab',
+        A: 'plan-ready-handoff-chevron',
         u: 'plan-ready-supercharge-fab',
         o: 'plan-ready-supercharge-local-fab',
         s: 'plan-ready-save-ticket-fab'
@@ -185,7 +186,14 @@ export function useVimNavigation(): void {
       }
 
       // --- Plan FAB shortcuts: activate plan action buttons ---
-      if (event.key === 'm' || event.key === 'u' || event.key === 'o' || event.key === 'a' || event.key === 's') {
+      if (
+        event.key === 'm' ||
+        event.key === 'u' ||
+        event.key === 'o' ||
+        event.key === 'a' ||
+        event.key === 'A' ||
+        event.key === 's'
+      ) {
         if (clickPlanFabButton(event.key)) {
           event.preventDefault()
           return

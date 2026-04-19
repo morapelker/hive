@@ -30,6 +30,9 @@ export interface SelectedModel {
   variant?: string
 }
 
+export type AgentSdk = 'opencode' | 'claude-code' | 'codex' | 'terminal'
+export type HandoffAgentSdk = Exclude<AgentSdk, 'terminal'>
+
 export interface ModeDefaultModels {
   build: SelectedModel | null
   plan: SelectedModel | null
@@ -74,6 +77,12 @@ export interface AppSettings {
   selectedModel: SelectedModel | null
   selectedModelByProvider: Record<string, SelectedModel>
   defaultModels: ModeDefaultModels | null
+  lastHandoffOverride: {
+    agentSdk: HandoffAgentSdk
+    providerID: string
+    modelID: string
+    variant?: string
+  } | null
 
   // Quick Actions
   lastOpenAction: QuickActionType | null
@@ -98,7 +107,7 @@ export interface AppSettings {
   usageIndicatorProviders: UsageProvider[]
 
   // Agent SDK
-  defaultAgentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  defaultAgentSdk: AgentSdk
 
   // Setup
   initialSetupComplete: boolean
@@ -157,6 +166,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   selectedModel: null,
   selectedModelByProvider: {},
   defaultModels: null,
+  lastHandoffOverride: null,
   lastOpenAction: null,
   favoriteModels: [],
   customChromeCommand: '',
@@ -226,6 +236,7 @@ interface SettingsState extends AppSettings {
     model: SelectedModel | null
   ) => Promise<void>
   getModelForMode: (mode: 'build' | 'plan' | 'ask') => SelectedModel | null
+  setLastHandoffOverride: (value: AppSettings['lastHandoffOverride']) => void
   toggleFavoriteModel: (providerID: string, modelID: string) => void
   setModelVariantDefault: (providerID: string, modelID: string, variant: string) => void
   getModelVariantDefault: (providerID: string, modelID: string) => string | undefined
@@ -312,6 +323,7 @@ function extractSettings(state: SettingsState): AppSettings {
     selectedModel: state.selectedModel,
     selectedModelByProvider: state.selectedModelByProvider,
     defaultModels: state.defaultModels,
+    lastHandoffOverride: state.lastHandoffOverride,
     lastOpenAction: state.lastOpenAction,
     favoriteModels: state.favoriteModels,
     customChromeCommand: state.customChromeCommand,
@@ -493,6 +505,12 @@ export const useSettingsStore = create<SettingsState>()(
         return get().defaultModels?.[mode] ?? null
       },
 
+      setLastHandoffOverride: (value) => {
+        set({ lastHandoffOverride: value })
+        const settings = extractSettings({ ...get(), lastHandoffOverride: value } as SettingsState)
+        saveToDatabase(settings)
+      },
+
       setModelVariantDefault: (providerID: string, modelID: string, variant: string) => {
         const key = `${providerID}::${modelID}`
         const updated = { ...get().modelVariantDefaults, [key]: variant }
@@ -572,6 +590,7 @@ export const useSettingsStore = create<SettingsState>()(
         selectedModel: state.selectedModel,
         selectedModelByProvider: state.selectedModelByProvider,
         defaultModels: state.defaultModels,
+        lastHandoffOverride: state.lastHandoffOverride,
         lastOpenAction: state.lastOpenAction,
         favoriteModels: state.favoriteModels,
         customChromeCommand: state.customChromeCommand,
