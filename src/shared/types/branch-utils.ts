@@ -21,3 +21,38 @@ export function canonicalizeTicketTitle(title: string): string {
     .slice(0, 32) // keep ticket-named worktrees under Windows path limits
     .replace(/-+$/, '') // strip trailing dashes after truncation
 }
+
+function normalizePlanTitle(title: string): string {
+  const trimmed = title.trim()
+  const withoutPrefix = trimmed.replace(/^plan\s*[:\-–—]\s*/i, '').trim()
+  return withoutPrefix.length > 0 ? withoutPrefix : trimmed
+}
+
+/**
+ * Extract a human-readable title from markdown plan content.
+ * Looks for the first markdown heading (any level), then falls back to
+ * the first non-empty line. Returns null if neither yields text.
+ *
+ * Used for both deriving a branch name (Supercharge) and deriving a
+ * ticket title (Save as Ticket). Lives in shared/ so both main and
+ * renderer can import it.
+ */
+export function extractPlanTitle(content: string): string | null {
+  if (!content) return null
+
+  const headingMatch = content.match(/^#+\s+(.+)$/m)
+  if (headingMatch) {
+    const stripped = normalizePlanTitle(headingMatch[1])
+    if (stripped.length > 0) return stripped
+  }
+
+  const firstLine = content
+    .split('\n')
+    .find((line) => line.trim().length > 0)
+    ?.trim()
+
+  if (!firstLine || firstLine.length === 0) return null
+
+  const normalizedFirstLine = normalizePlanTitle(firstLine)
+  return normalizedFirstLine.length > 0 ? normalizedFirstLine : null
+}

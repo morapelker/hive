@@ -340,6 +340,7 @@ const worktreeOps = {
     projectName: string
     sourceBranch: string
     sourceWorktreePath: string
+    nameHint?: string
   }): Promise<{
     success: boolean
     worktree?: {

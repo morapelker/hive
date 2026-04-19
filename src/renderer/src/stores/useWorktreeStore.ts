@@ -139,7 +139,8 @@ interface WorktreeState {
     projectPath: string,
     projectName: string,
     sourceBranch: string,
-    sourceWorktreePath: string
+    sourceWorktreePath: string,
+    nameHint?: string
   ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
   updateWorktreeBranch: (worktreeId: string, newBranch: string) => void
   updateWorktreeModel: (worktreeId: string, model: SelectedModel) => void
@@ -711,7 +712,8 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     projectPath: string,
     projectName: string,
     sourceBranch: string,
-    sourceWorktreePath: string
+    sourceWorktreePath: string,
+    nameHint?: string
   ) => {
     try {
       const result = await window.worktreeOps.duplicate({
@@ -719,7 +721,8 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         projectPath,
         projectName,
         sourceBranch,
-        sourceWorktreePath
+        sourceWorktreePath,
+        nameHint
       })
       if (result.success && result.worktree) {
         // Reload worktrees for the project

@@ -38,6 +38,7 @@ export interface DuplicateWorktreeParams {
   projectName: string
   sourceBranch: string
   sourceWorktreePath: string
+  nameHint?: string
 }
 
 export interface RenameBranchParams {
@@ -418,7 +419,8 @@ export async function duplicateWorktreeOp(
     const result = await gitService.duplicateWorktree(
       params.sourceBranch,
       params.sourceWorktreePath,
-      params.projectName
+      params.projectName,
+      params.nameHint
     )
 
     if (!result.success || !result.name || !result.path || !result.branchName) {
