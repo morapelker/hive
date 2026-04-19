@@ -1,4 +1,6 @@
 import { cn } from '@/lib/utils'
+import { HandoffSplitButton } from './HandoffSplitButton'
+import type { HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 
 function MnemonicLabel({ letter, label }: { letter: string; label: string }): React.JSX.Element {
@@ -17,13 +19,14 @@ function MnemonicLabel({ letter, label }: { letter: string; label: string }): Re
 
 interface PlanReadyImplementFabProps {
   onImplement: () => void
-  onHandoff: () => void
+  onHandoff: (override: HandoffSelectionOverride) => void
   visible: boolean
   onSuperpowers?: () => void
   onSuperpowersLocal?: () => void
   superpowersAvailable?: boolean
   isConnectionSession?: boolean
   onSaveAsTicket?: () => void
+  worktreeId?: string
 }
 
 export function PlanReadyImplementFab({
@@ -34,7 +37,8 @@ export function PlanReadyImplementFab({
   onSuperpowersLocal,
   superpowersAvailable,
   isConnectionSession,
-  onSaveAsTicket
+  onSaveAsTicket,
+  worktreeId
 }: PlanReadyImplementFabProps): React.JSX.Element {
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
 
@@ -64,21 +68,14 @@ export function PlanReadyImplementFab({
           {vimModeEnabled ? <MnemonicLabel letter="s" label="Save as ticket" /> : 'Save as ticket'}
         </button>
       )}
-      <button
-        onClick={onHandoff}
-        className={cn(
-          'h-8 rounded-full px-3',
-          'text-xs font-medium',
-          'bg-muted/80 text-foreground border border-border',
-          'shadow-md hover:bg-muted transition-colors duration-200',
-          'cursor-pointer',
-          visible ? 'opacity-100' : 'opacity-0'
-        )}
-        aria-label="Handoff plan"
-        data-testid="plan-ready-handoff-fab"
-      >
-        {vimModeEnabled ? <MnemonicLabel letter="a" label="Handoff" /> : 'Handoff'}
-      </button>
+      <div className={cn(visible ? 'opacity-100' : 'opacity-0')}>
+        <HandoffSplitButton
+          worktreeId={worktreeId}
+          onHandoff={onHandoff}
+          vimModeEnabled={vimModeEnabled}
+          testIdPrefix="plan-ready"
+        />
+      </div>
       {superpowersAvailable && !isConnectionSession && onSuperpowersLocal && (
         <button
           onClick={onSuperpowersLocal}

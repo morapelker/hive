@@ -9,7 +9,6 @@ import {
   Hammer,
   Send,
   Zap,
-  ArrowRight,
   AlertCircle,
   Bolt,
   FileSearch,
@@ -36,6 +35,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
+import { HandoffSplitButton } from '../sessions/HandoffSplitButton'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -72,6 +72,7 @@ import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
 import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
+import type { HandoffSelectionOverride } from '@/lib/handoffSelection'
 import type { KanbanTicket, KanbanTicketUpdate, Worktree } from '../../../../main/db/types'
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -1516,7 +1517,7 @@ function PlanReviewModeContent({
   }, [ticket.current_session_id, ticket.id, ticket.project_id, isActioning, pendingPlan, sessionRecord, onClose])
 
   // ── Handoff handler ───────────────────────────────────────────────
-  const handleHandoff = useCallback(async () => {
+  const handleHandoff = useCallback(async (override?: HandoffSelectionOverride) => {
     if (!ticket.current_session_id || !hasWorkingContext || isActioning) return
     setIsActioning(true)
 
@@ -1535,7 +1536,12 @@ function PlanReviewModeContent({
         }
 
         const sessionStore = useSessionStore.getState()
-        const result = await sessionStore.createConnectionSession(sessionRecord.connection_id)
+        const result = await sessionStore.createConnectionSession(
+          sessionRecord.connection_id,
+          override?.agentSdk,
+          undefined,
+          { modelOverride: override?.model }
+        )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')
           return
@@ -1577,7 +1583,13 @@ function PlanReviewModeContent({
       if (!worktreeId) return
 
       const sessionStore = useSessionStore.getState()
-      const result = await sessionStore.createSession(worktreeId, ticket.project_id)
+      const result = await sessionStore.createSession(
+        worktreeId,
+        ticket.project_id,
+        override?.agentSdk,
+        undefined,
+        { modelOverride: override?.model }
+      )
       if (!result.success || !result.session) {
         toast.error(result.error ?? 'Failed to create handoff session')
         return
@@ -1919,17 +1931,12 @@ function PlanReviewModeContent({
           (matches SessionView's showPlanReadyImplementFab gating on !!pendingPlan) */}
       {!!pendingPlan && (
         <DialogFooter className="flex-shrink-0 gap-1.5 flex-wrap">
-          <Button
-            type="button"
-            data-testid="plan-review-handoff-btn"
+          <HandoffSplitButton
+            worktreeId={sessionRecord?.worktree_id ?? undefined}
+            onHandoff={handleHandoff}
+            testIdPrefix="plan-review"
             disabled={isActioning || !hasWorkingContext}
-            onClick={handleHandoff}
-            className="gap-1.5"
-            variant="outline"
-          >
-            <ArrowRight className="h-3.5 w-3.5" />
-            Handoff
-          </Button>
+          />
           {!isConnectionSession && hasSuperpowers && (
             <Button
               type="button"

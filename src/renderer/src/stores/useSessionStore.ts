@@ -5,6 +5,7 @@ import { useWorktreeStore } from './useWorktreeStore'
 import { notifyKanbanSessionSync, notifyKanbanNewSession } from './store-coordination'
 import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
+import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
 
 /**
  * Push the follow-up-message queue state for a session into the main process
@@ -132,7 +133,7 @@ interface SessionState {
     projectId: string,
     agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
     initialMode?: SessionMode,
-    options?: { autoFocus?: boolean }
+    options?: { autoFocus?: boolean; modelOverride?: SelectedModel }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -203,7 +204,7 @@ interface SessionState {
     connectionId: string,
     agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
     initialMode?: SessionMode,
-    opts?: { autoFocus?: boolean }
+    opts?: { autoFocus?: boolean; modelOverride?: SelectedModel }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -402,70 +403,22 @@ export const useSessionStore = create<SessionState>()(
         projectId: string,
         agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
         initialMode?: SessionMode,
-        options?: { autoFocus?: boolean }
+        options?: { autoFocus?: boolean; modelOverride?: SelectedModel }
       ) => {
         try {
           const autoFocus = options?.autoFocus !== false
-          // Resolve default agent SDK from settings
-          const { useSettingsStore } = await import('./useSettingsStore')
-          const defaultAgentSdk =
-            agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+          const { agentSdk: defaultAgentSdk, model: defaultModel } = resolveSessionCreationSelection({
+            worktreeId,
+            agentSdkOverride,
+            initialMode,
+            modelOverride: options?.modelOverride
+          })
           const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
           if (unavailableProviderError) {
             return { success: false, error: unavailableProviderError }
           }
 
           const isTerminal = defaultAgentSdk === 'terminal'
-
-          // Terminal sessions skip model resolution entirely
-          let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
-
-          if (!isTerminal) {
-            const { resolveModelForSdk } = await import('./useSettingsStore')
-            const configuredDefaultSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
-
-            // Priority 1: mode-specific default (only when session SDK matches the
-            // configured default — mode defaults are set in that SDK's context)
-            if (defaultAgentSdk === configuredDefaultSdk) {
-              const modeModel = useSettingsStore.getState().getModelForMode(initialMode ?? 'build')
-              if (modeModel) {
-                defaultModel = modeModel
-              }
-            }
-
-            // Priority 2: per-provider default → (legacy) global default
-            if (!defaultModel) {
-              defaultModel = resolveModelForSdk(defaultAgentSdk)
-            }
-
-            // Legacy worktree fallback only when per-provider feature not yet active
-            if (!defaultModel) {
-              const settingsState = useSettingsStore.getState()
-              const hasPerProviderDefaults =
-                Object.keys(settingsState.selectedModelByProvider).length > 0
-              if (!hasPerProviderDefaults) {
-                const worktree = useWorktreeStore.getState().worktreesByProject
-                let worktreeRecord:
-                  | {
-                      last_model_provider_id: string | null
-                      last_model_id: string | null
-                      last_model_variant: string | null
-                    }
-                  | undefined
-                for (const worktrees of worktree.values()) {
-                  worktreeRecord = worktrees.find((w) => w.id === worktreeId)
-                  if (worktreeRecord) break
-                }
-                if (worktreeRecord?.last_model_id) {
-                  defaultModel = {
-                    providerID: worktreeRecord.last_model_provider_id!,
-                    modelID: worktreeRecord.last_model_id,
-                    variant: worktreeRecord.last_model_variant ?? undefined
-                  }
-                }
-              }
-            }
-          }
 
           const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
           const sessionNumber = existingSessions.length + 1
@@ -1927,7 +1880,7 @@ export const useSessionStore = create<SessionState>()(
         connectionId: string,
         agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
         initialMode?: SessionMode,
-        opts?: { autoFocus?: boolean }
+        opts?: { autoFocus?: boolean; modelOverride?: SelectedModel }
       ) => {
         try {
           const autoFocus = opts?.autoFocus ?? true
@@ -1939,40 +1892,14 @@ export const useSessionStore = create<SessionState>()(
 
           const projectId = result.connection.members[0].project_id
 
-          // Determine default model and agent SDK from global settings
-          let defaultModel: { providerID: string; modelID: string; variant?: string } | null = null
-          let defaultAgentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal' = 'opencode'
-          try {
-            const { useSettingsStore } = await import('./useSettingsStore')
-            defaultAgentSdk =
-              agentSdkOverride ?? useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
-            const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
-            if (unavailableProviderError) {
-              return { success: false, error: unavailableProviderError }
-            }
-            // Terminal sessions skip model resolution
-            if (defaultAgentSdk !== 'terminal') {
-              const configuredDefaultSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
-
-              // Priority 1: mode-specific default (only when session SDK matches the
-              // configured default — mode defaults are set in that SDK's context)
-              if (defaultAgentSdk === configuredDefaultSdk) {
-                const modeModel = useSettingsStore
-                  .getState()
-                  .getModelForMode(initialMode ?? 'build')
-                if (modeModel) {
-                  defaultModel = modeModel
-                }
-              }
-
-              // Priority 2: per-provider default → (legacy) global default
-              if (!defaultModel) {
-                const { resolveModelForSdk } = await import('./useSettingsStore')
-                defaultModel = resolveModelForSdk(defaultAgentSdk)
-              }
-            }
-          } catch {
-            /* non-critical */
+          const { agentSdk: defaultAgentSdk, model: defaultModel } = resolveSessionCreationSelection({
+            agentSdkOverride,
+            initialMode,
+            modelOverride: opts?.modelOverride
+          })
+          const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
+          if (unavailableProviderError) {
+            return { success: false, error: unavailableProviderError }
           }
 
           const isTerminal = defaultAgentSdk === 'terminal'
