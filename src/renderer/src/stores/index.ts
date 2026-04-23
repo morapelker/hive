@@ -28,6 +28,13 @@ export {
   type SessionStatusEntry
 } from './useWorktreeStatusStore'
 export { useContextStore } from './useContextStore'
+export {
+  useDiffCommentStore,
+  jumpTo as jumpToDiffComment,
+  onJump as onDiffCommentJump,
+  type DiffCommentCreate,
+  type DiffCommentUpdate
+} from './useDiffCommentStore'
 export { useFileSearchStore } from './useFileSearchStore'
 export { useQuestionStore } from './useQuestionStore'
 export { usePermissionStore } from './usePermissionStore'

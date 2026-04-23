@@ -43,7 +43,10 @@ import type {
   TicketMark,
   TicketFollowupMessage,
   TicketFollowupMessageCreate,
-  TicketDependency
+  TicketDependency,
+  DiffComment,
+  DiffCommentCreate,
+  DiffCommentUpdate
 } from './types'
 
 export class DatabaseService {
@@ -157,6 +160,23 @@ export class DatabaseService {
       total_tokens: (row.total_tokens as number) ?? 0,
       pending_launch_config: (row.pending_launch_config as string) ?? null,
       note: (row.note as string) ?? null
+    }
+  }
+
+  private mapDiffCommentRow(row: Record<string, unknown>): DiffComment {
+    return {
+      id: row.id as string,
+      worktree_id: row.worktree_id as string,
+      file_path: row.file_path as string,
+      line_start: row.line_start as number,
+      line_end: (row.line_end as number) ?? null,
+      anchor_text: (row.anchor_text as string) ?? null,
+      anchor_context_before: (row.anchor_context_before as string) ?? null,
+      anchor_context_after: (row.anchor_context_after as string) ?? null,
+      body: row.body as string,
+      is_outdated: !!(row.is_outdated as number),
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string
     }
   }
 
@@ -2338,6 +2358,129 @@ export class DatabaseService {
       'SELECT * FROM ticket_followup_messages WHERE ticket_id = ? ORDER BY created_at ASC'
     ).all(ticketId) as TicketFollowupMessage[]
     return rows
+  }
+
+  // Diff comment operations
+
+  createDiffComment(data: DiffCommentCreate): DiffComment {
+    const db = this.getDb()
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    const lineEnd = data.line_end ?? null
+    const anchorText = data.anchor_text ?? null
+    const anchorContextBefore = data.anchor_context_before ?? null
+    const anchorContextAfter = data.anchor_context_after ?? null
+
+    db.prepare(
+      `INSERT INTO diff_comments (id, worktree_id, file_path, line_start, line_end, anchor_text, anchor_context_before, anchor_context_after, body, is_outdated, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+    ).run(id, data.worktree_id, data.file_path, data.line_start, lineEnd, anchorText, anchorContextBefore, anchorContextAfter, data.body, now, now)
+
+    return {
+      id,
+      worktree_id: data.worktree_id,
+      file_path: data.file_path,
+      line_start: data.line_start,
+      line_end: lineEnd,
+      anchor_text: anchorText,
+      anchor_context_before: anchorContextBefore,
+      anchor_context_after: anchorContextAfter,
+      body: data.body,
+      is_outdated: false,
+      created_at: now,
+      updated_at: now
+    }
+  }
+
+  getDiffComment(id: string): DiffComment | null {
+    const db = this.getDb()
+    const row = db.prepare('SELECT * FROM diff_comments WHERE id = ?').get(id) as Record<string, unknown> | undefined
+    if (!row) return null
+    return this.mapDiffCommentRow(row)
+  }
+
+  getDiffCommentsByWorktree(worktreeId: string): DiffComment[] {
+    const db = this.getDb()
+    const rows = db.prepare(
+      'SELECT * FROM diff_comments WHERE worktree_id = ? ORDER BY file_path, line_start'
+    ).all(worktreeId) as Record<string, unknown>[]
+    return rows.map((row) => this.mapDiffCommentRow(row))
+  }
+
+  updateDiffComment(id: string, data: DiffCommentUpdate): DiffComment | null {
+    const db = this.getDb()
+    const existing = this.getDiffComment(id)
+    if (!existing) return null
+
+    const updates: string[] = []
+    const values: (string | number | null)[] = []
+
+    if (data.body !== undefined) {
+      updates.push('body = ?')
+      values.push(data.body)
+    }
+    if (data.line_start !== undefined) {
+      updates.push('line_start = ?')
+      values.push(data.line_start)
+    }
+    if (data.line_end !== undefined) {
+      updates.push('line_end = ?')
+      values.push(data.line_end)
+    }
+    if (data.anchor_text !== undefined) {
+      updates.push('anchor_text = ?')
+      values.push(data.anchor_text)
+    }
+    if (data.anchor_context_before !== undefined) {
+      updates.push('anchor_context_before = ?')
+      values.push(data.anchor_context_before)
+    }
+    if (data.anchor_context_after !== undefined) {
+      updates.push('anchor_context_after = ?')
+      values.push(data.anchor_context_after)
+    }
+    if (data.is_outdated !== undefined) {
+      updates.push('is_outdated = ?')
+      values.push(data.is_outdated ? 1 : 0)
+    }
+
+    if (updates.length === 0) return existing
+
+    const now = new Date().toISOString()
+    updates.push('updated_at = ?')
+    values.push(now)
+
+    values.push(id)
+    db.prepare(`UPDATE diff_comments SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+
+    return this.getDiffComment(id)
+  }
+
+  setDiffCommentOutdated(id: string, isOutdated: boolean): DiffComment | null {
+    const db = this.getDb()
+    const existing = this.getDiffComment(id)
+    if (!existing) return null
+
+    const now = new Date().toISOString()
+    db.prepare('UPDATE diff_comments SET is_outdated = ?, updated_at = ? WHERE id = ?').run(
+      isOutdated ? 1 : 0,
+      now,
+      id
+    )
+
+    return this.getDiffComment(id)
+  }
+
+  deleteDiffComment(id: string): boolean {
+    const db = this.getDb()
+    const result = db.prepare('DELETE FROM diff_comments WHERE id = ?').run(id)
+    return result.changes > 0
+  }
+
+  clearAllDiffComments(worktreeId: string): number {
+    const db = this.getDb()
+    const result = db.prepare('DELETE FROM diff_comments WHERE worktree_id = ?').run(worktreeId)
+    return result.changes
   }
 
   // Check if tables exist

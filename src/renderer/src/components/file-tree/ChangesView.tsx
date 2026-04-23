@@ -13,7 +13,8 @@ import {
   Trash2,
   EyeOff,
   FileDiff,
-  Link
+  Link,
+  Paperclip
 } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { toast } from '@/lib/toast'
@@ -29,6 +30,8 @@ import { cn } from '@/lib/utils'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useDiffCommentStore } from '@/stores/useDiffCommentStore'
 import { FileIcon } from './FileIcon'
 import { GitStatusIndicator } from './GitStatusIndicator'
 import { GitCommitForm } from '@/components/git/GitCommitForm'
@@ -89,6 +92,29 @@ export function ChangesView({
 
   const fileStatusesByWorktree = useGitStore((state) => state.fileStatusesByWorktree)
   const branchInfoByWorktree = useGitStore((state) => state.branchInfoByWorktree)
+
+  // Diff comment attach-to-chat support
+  const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
+  const diffComments = useDiffCommentStore(
+    (s) => selectedWorktreeId ? s.comments.get(selectedWorktreeId) : undefined
+  )
+  const attachedCommentIds = useDiffCommentStore((s) => s.attachedCommentIds)
+  const { attachAllToChat } = useDiffCommentStore()
+
+  const nonOutdatedComments = useMemo(
+    () => (diffComments ?? []).filter((c) => !c.is_outdated),
+    [diffComments]
+  )
+  const allCommentsAttached = nonOutdatedComments.length > 0 &&
+    nonOutdatedComments.every((c) => attachedCommentIds.has(c.id))
+
+  const handleAttachComments = useCallback(() => {
+    if (!selectedWorktreeId) return
+    attachAllToChat(selectedWorktreeId)
+    // Refocus the session view so the user sees the attached comments
+    useFileViewerStore.getState().setActiveFile(null)
+    useFileViewerStore.getState().clearActiveDiff()
+  }, [selectedWorktreeId, attachAllToChat])
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -829,6 +855,23 @@ export function ChangesView({
 
       {/* Push/Pull controls */}
       <GitPushPull worktreePath={worktreePath} />
+
+      {/* Attach non-outdated diff comments to chat */}
+      {nonOutdatedComments.length > 0 && (
+        <div className="px-2 py-2 border-t">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full h-7 text-xs"
+            disabled={allCommentsAttached}
+            onClick={handleAttachComments}
+            data-testid="attach-comments-button"
+          >
+            <Paperclip className="h-3 w-3 mr-1" />
+            Attach comments to chat ({nonOutdatedComments.length})
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

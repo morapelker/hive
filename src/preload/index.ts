@@ -175,6 +175,34 @@ const db = {
     reorder: (orderedIds: string[]) => ipcRenderer.invoke('db:space:reorder', orderedIds)
   },
 
+  // Diff Comments
+  diffComment: {
+    create: (data: {
+      worktree_id: string
+      file_path: string
+      line_start: number
+      line_end?: number | null
+      anchor_text?: string | null
+      anchor_context_before?: string | null
+      anchor_context_after?: string | null
+      body: string
+    }) => ipcRenderer.invoke('db:diffComment:create', data),
+    list: (worktreeId: string) => ipcRenderer.invoke('db:diffComment:list', worktreeId),
+    update: (id: string, data: {
+      body?: string
+      line_start?: number
+      line_end?: number | null
+      anchor_text?: string | null
+      anchor_context_before?: string | null
+      anchor_context_after?: string | null
+      is_outdated?: boolean
+    }) => ipcRenderer.invoke('db:diffComment:update', id, data),
+    setOutdated: (id: string, isOutdated: boolean) =>
+      ipcRenderer.invoke('db:diffComment:setOutdated', id, isOutdated),
+    delete: (id: string) => ipcRenderer.invoke('db:diffComment:delete', id),
+    clearAll: (worktreeId: string) => ipcRenderer.invoke('db:diffComment:clearAll', worktreeId)
+  },
+
   // Utility
   schemaVersion: () => ipcRenderer.invoke('db:schemaVersion'),
   tableExists: (tableName: string) => ipcRenderer.invoke('db:tableExists', tableName),

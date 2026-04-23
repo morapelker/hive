@@ -519,3 +519,40 @@ export interface TicketFollowupMessageCreate {
   session_id?: string | null
   source?: 'direct' | 'supercharge' | 'error_retry'
 }
+
+// Diff comment types
+export interface DiffComment {
+  id: string
+  worktree_id: string
+  file_path: string
+  line_start: number
+  line_end: number | null
+  anchor_text: string | null
+  anchor_context_before: string | null
+  anchor_context_after: string | null
+  body: string
+  is_outdated: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface DiffCommentCreate {
+  worktree_id: string
+  file_path: string
+  line_start: number
+  line_end?: number | null
+  anchor_text?: string | null
+  anchor_context_before?: string | null
+  anchor_context_after?: string | null
+  body: string
+}
+
+export interface DiffCommentUpdate {
+  body?: string
+  line_start?: number
+  line_end?: number | null
+  anchor_text?: string | null
+  anchor_context_before?: string | null
+  anchor_context_after?: string | null
+  is_outdated?: boolean
+}

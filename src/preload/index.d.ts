@@ -283,6 +283,22 @@ declare global {
     | { type: 'output'; sessionId: string; runId: string; data: string }
     | { type: 'end'; sessionId: string; runId: string; status: 'exited' | 'killed' | 'truncated' | 'error'; exitCode?: number }
 
+  interface DiffComment {
+    id: string
+    worktree_id: string
+    file_path: string
+    line_start: number
+    line_end: number | null
+    anchor_text: string | null
+    anchor_context_before: string | null
+    anchor_context_after: string | null
+    body: string
+    is_outdated: boolean
+    created_at: string
+    updated_at: string
+  }
+
+
   interface Window {
     db: {
       setting: {
@@ -442,6 +458,31 @@ declare global {
         getProjectIds: (spaceId: string) => Promise<string[]>
         getAllAssignments: () => Promise<ProjectSpaceAssignment[]>
         reorder: (orderedIds: string[]) => Promise<boolean>
+      }
+      diffComment: {
+        create: (data: {
+          worktree_id: string
+          file_path: string
+          line_start: number
+          line_end?: number | null
+          anchor_text?: string | null
+          anchor_context_before?: string | null
+          anchor_context_after?: string | null
+          body: string
+        }) => Promise<DiffComment>
+        list: (worktreeId: string) => Promise<DiffComment[]>
+        update: (id: string, data: {
+          body?: string
+          line_start?: number
+          line_end?: number | null
+          anchor_text?: string | null
+          anchor_context_before?: string | null
+          anchor_context_after?: string | null
+          is_outdated?: boolean
+        }) => Promise<DiffComment | null>
+        setOutdated: (id: string, isOutdated: boolean) => Promise<DiffComment | null>
+        delete: (id: string) => Promise<boolean>
+        clearAll: (worktreeId: string) => Promise<number>
       }
       schemaVersion: () => Promise<number>
       tableExists: (tableName: string) => Promise<boolean>

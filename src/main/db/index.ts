@@ -32,5 +32,8 @@ export type {
   KanbanTicketUpdate,
   KanbanTicketColumn,
   TicketMark,
-  TicketDependency
+  TicketDependency,
+  DiffComment,
+  DiffCommentCreate,
+  DiffCommentUpdate
 } from './types'

@@ -489,6 +489,15 @@ export const useSessionStore = create<SessionState>()(
             // Non-critical — session was created successfully regardless
           }
 
+          // Auto-attach non-outdated diff comments so the new session starts with context.
+          // Lazy import to avoid circular dependencies (same pattern as kanban above).
+          try {
+            const { useDiffCommentStore } = await import('./useDiffCommentStore')
+            useDiffCommentStore.getState().attachAllToChat(worktreeId)
+          } catch {
+            // Non-critical — session was created successfully regardless
+          }
+
           return { success: true, session }
         } catch (error) {
           return {

@@ -8,7 +8,11 @@ import type { Hunk } from '@/lib/diff-utils'
 import { MonacoDiffToolbar } from './MonacoDiffToolbar'
 import { HunkActionGutter } from './HunkActionGutter'
 import { PrCommentGutter } from './PrCommentGutter'
+import { DiffCommentGutter } from './DiffCommentGutter'
+import { DiffCommentToolbar } from './DiffCommentToolbar'
+import { DiffCommentSidePanel } from './DiffCommentSidePanel'
 import { usePRReviewStore } from '@/stores/usePRReviewStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { PRReviewComment } from '@shared/types/git'
 import type { editor } from 'monaco-editor'
 
@@ -56,6 +60,15 @@ export default function MonacoDiffView({
   const modifiedEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const [editorReady, setEditorReady] = useState(false)
   const [zonesReady, setZonesReady] = useState(!prReviewWorktreeId)
+
+  // Worktree ID for diff comment toolbar
+  const worktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
+
+  const [sidePanelOpen, setSidePanelOpen] = useState(false)
+
+  const handleToggleSidePanel = useCallback(() => {
+    setSidePanelOpen(prev => !prev)
+  }, [])
 
   // PR review comments for this file (when in PR review mode)
   const allPrComments = usePRReviewStore(
@@ -331,63 +344,85 @@ export default function MonacoDiffView({
         onCopy={handleCopy}
         onClose={onClose}
       />
-      <div className="flex-1 relative min-h-0">
-        <DiffEditor
-          original={originalContent ?? ''}
-          modified={modifiedContent ?? ''}
-          language={language}
-          theme={HIVE_THEME_NAME}
-          onMount={handleEditorDidMount}
-          beforeMount={handleBeforeMount}
-          options={{
-            readOnly: true,
-            originalEditable: false,
-            renderSideBySide: sideBySide,
-            enableSplitViewResizing: true,
-            ignoreTrimWhitespace: false,
-            renderIndicators: true,
-            renderMarginRevertIcon: false,
-            diffAlgorithm: 'advanced',
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            fontSize: 12,
-            lineHeight: 20,
-            fontFamily: 'var(--font-mono)',
-            automaticLayout: true,
-            scrollbar: {
-              verticalScrollbarSize: 10,
-              horizontalScrollbarSize: 10
+      <div className="flex-1 flex min-h-0">
+        <div className="flex-1 relative min-h-0">
+          <DiffEditor
+            original={originalContent ?? ''}
+            modified={modifiedContent ?? ''}
+            language={language}
+            theme={HIVE_THEME_NAME}
+            onMount={handleEditorDidMount}
+            beforeMount={handleBeforeMount}
+            options={{
+              readOnly: true,
+              originalEditable: false,
+              renderSideBySide: sideBySide,
+              enableSplitViewResizing: true,
+              ignoreTrimWhitespace: false,
+              renderIndicators: true,
+              renderMarginRevertIcon: false,
+              diffAlgorithm: 'advanced',
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              fontSize: 12,
+              lineHeight: 20,
+              fontFamily: 'var(--font-mono)',
+              automaticLayout: true,
+              scrollbar: {
+                verticalScrollbarSize: 10,
+                horizontalScrollbarSize: 10
+              }
+            }}
+            loading={
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
             }
-          }}
-          loading={
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          }
-        />
-        {!compareBranch && originalContent !== null && modifiedContent !== null && (
-          <HunkActionGutter
-            hunks={hunks}
-            staged={staged}
-            worktreePath={worktreePath}
-            filePath={filePath}
-            originalContent={originalContent}
-            modifiedContent={modifiedContent}
-            modifiedEditor={modifiedEditorRef.current}
-            onContentChanged={handleContentChanged}
           />
-        )}
-        {prReviewWorktreeId &&
-          fileComments.length > 0 &&
-          originalContent !== null &&
-          modifiedContent !== null && (
-            <PrCommentGutter
-              comments={fileComments}
+          {!compareBranch && originalContent !== null && modifiedContent !== null && (
+            <HunkActionGutter
+              hunks={hunks}
+              staged={staged}
+              worktreePath={worktreePath}
+              filePath={filePath}
+              originalContent={originalContent}
+              modifiedContent={modifiedContent}
               modifiedEditor={modifiedEditorRef.current}
-              highlightLine={scrollToLine}
-              onZonesReady={() => setZonesReady(true)}
+              onContentChanged={handleContentChanged}
             />
           )}
+          {prReviewWorktreeId &&
+            fileComments.length > 0 &&
+            originalContent !== null &&
+            modifiedContent !== null && (
+              <PrCommentGutter
+                comments={fileComments}
+                modifiedEditor={modifiedEditorRef.current}
+                highlightLine={scrollToLine}
+                onZonesReady={() => setZonesReady(true)}
+              />
+            )}
+          {!prReviewWorktreeId && originalContent !== null && modifiedContent !== null && (
+            <DiffCommentGutter
+              modifiedEditor={modifiedEditorRef.current}
+              filePath={filePath}
+            />
+          )}
+          {!prReviewWorktreeId && originalContent !== null && modifiedContent !== null && worktreeId && (
+            <DiffCommentToolbar
+              worktreeId={worktreeId}
+              onToggleSidePanel={handleToggleSidePanel}
+              sidePanelOpen={sidePanelOpen}
+            />
+          )}
+        </div>
+        {!prReviewWorktreeId && sidePanelOpen && worktreeId && (
+          <DiffCommentSidePanel
+            worktreeId={worktreeId}
+            worktreePath={worktreePath}
+            onClose={() => setSidePanelOpen(false)}
+          />
+        )}
       </div>
     </div>
   )

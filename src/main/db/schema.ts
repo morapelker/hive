@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 24
+export const CURRENT_SCHEMA_VERSION = 25
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -455,5 +455,28 @@ ALTER TABLE kanban_tickets ADD COLUMN pending_launch_config TEXT DEFAULT NULL;`,
     name: 'add_ticket_note',
     up: `ALTER TABLE kanban_tickets ADD COLUMN note TEXT DEFAULT NULL`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 25,
+    name: 'add_diff_comments',
+    up: `CREATE TABLE IF NOT EXISTS diff_comments (
+  id TEXT PRIMARY KEY,
+  worktree_id TEXT NOT NULL REFERENCES worktrees(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL,
+  line_start INTEGER NOT NULL,
+  line_end INTEGER,
+  anchor_text TEXT,
+  anchor_context_before TEXT,
+  anchor_context_after TEXT,
+  body TEXT NOT NULL,
+  is_outdated INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_diff_comments_worktree ON diff_comments(worktree_id);
+CREATE INDEX IF NOT EXISTS idx_diff_comments_worktree_file ON diff_comments(worktree_id, file_path);`,
+    down: `DROP INDEX IF EXISTS idx_diff_comments_worktree_file;
+DROP INDEX IF EXISTS idx_diff_comments_worktree;
+DROP TABLE IF EXISTS diff_comments;`
   }
 ]

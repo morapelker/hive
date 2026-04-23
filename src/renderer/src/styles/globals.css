@@ -527,6 +527,22 @@ body::after {
   margin-right: 0.5em;
 }
 
+/* Monaco decoration: diff comment range highlight (violet tint) */
+.diff-comment-range-highlight {
+  background-color: rgba(139, 92, 246, 0.15);
+}
+
+/* Monaco decoration: outdated diff comment range highlight (yellow tint) */
+.diff-comment-range-highlight-outdated {
+  background-color: rgba(234, 179, 8, 0.10);
+}
+
+/* Monaco decoration: flash highlight when jumping to a comment */
+.diff-comment-jump-flash {
+  background-color: rgba(139, 92, 246, 0.35);
+  transition: background-color 1.5s ease-out;
+}
+
 /* Sparkle border animation for SUPER toggle when active.
    Rotating conic-gradient masked to border-only ring via mask-composite.
    @property enables CSS transition of custom angle (Chromium/Electron). */

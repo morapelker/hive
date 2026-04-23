@@ -6,10 +6,34 @@ export const isImageMime = (mime: string): boolean => mime.startsWith('image/')
 export const MAX_ATTACHMENTS = 10
 
 /** Escape characters that would break XML attribute values */
-const escapeXmlAttr = (s: string): string =>
+export const escapeXmlAttr = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-export const buildMessageParts = (attachments: Attachment[], promptText: string): MessagePart[] => {
+/** Escape `]]>` sequences that would prematurely terminate a CDATA section */
+const escapeCdata = (s: string): string => s.replace(/\]\]>/g, ']]]]><![CDATA[>')
+
+export const buildDiffCommentsXml = (comments: DiffComment[]): string => {
+  if (comments.length === 0) return ''
+  const sorted = [...comments].sort((a, b) => {
+    if (a.file_path < b.file_path) return -1
+    if (a.file_path > b.file_path) return 1
+    return a.line_start - b.line_start
+  })
+  const inner = sorted
+    .map((c) => {
+      const lines = c.line_end ? `${c.line_start}-${c.line_end}` : `${c.line_start}`
+      return [
+        `<diff-comment file="${escapeXmlAttr(c.file_path)}" lines="${lines}" outdated="${String(c.is_outdated)}">`,
+        `<snippet><![CDATA[${escapeCdata(c.anchor_text ?? '')}]]></snippet>`,
+        `<body><![CDATA[${escapeCdata(c.body)}]]></body>`,
+        `</diff-comment>`
+      ].join('\n')
+    })
+    .join('\n')
+  return `<diff-comments>\n${inner}\n</diff-comments>`
+}
+
+export const buildMessageParts = (attachments: Attachment[], promptText: string, diffComments?: DiffComment[]): MessagePart[] => {
   const parts: MessagePart[] = []
 
   // Data attachments (images, PDFs) -> file parts
@@ -45,6 +69,11 @@ export const buildMessageParts = (attachments: Attachment[], promptText: string)
     parts.push({ type: 'text', text: ticketBlocks })
   }
 
+  if (diffComments && diffComments.length > 0) {
+    const diffXml = buildDiffCommentsXml(diffComments)
+    parts.push({ type: 'text', text: diffXml })
+  }
+
   // Final text part
   parts.push({ type: 'text', text: promptText })
 
@@ -56,7 +85,7 @@ export const buildMessageParts = (attachments: Attachment[], promptText: string)
  * Returns the concatenated string that the server will store as the message
  * content, so the optimistic UI message matches what comes back from disk.
  */
-export const buildDisplayContent = (attachments: Attachment[], promptText: string): string => {
+export const buildDisplayContent = (attachments: Attachment[], promptText: string, diffComments?: DiffComment[]): string => {
   const textParts: string[] = []
 
   // Data attachments (images, PDFs) -> XML blocks
@@ -99,6 +128,10 @@ export const buildDisplayContent = (attachments: Attachment[], promptText: strin
         )
         .join('\n')
     )
+  }
+
+  if (diffComments && diffComments.length > 0) {
+    textParts.push(buildDiffCommentsXml(diffComments))
   }
 
   // Final prompt text (already includes prContext + modePrefix if applicable)
