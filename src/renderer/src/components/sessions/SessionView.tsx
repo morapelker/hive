@@ -4831,6 +4831,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     opencodeSessionId
   ])
 
+  const handlePlanReadyCopyPlan = useCallback(async () => {
+    const planContent =
+      pendingPlan?.planContent ??
+      [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim().length > 0)
+        ?.content
+    if (!planContent || !planContent.trim()) {
+      toast.error('No plan content to copy')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(planContent)
+      toast.success('Plan copied to clipboard')
+    } catch {
+      toast.error('Failed to copy')
+    }
+  }, [messages, pendingPlan?.planContent])
+
   const handlePlanReadySuperpowers = useCallback(async () => {
     // 1. Extract plan content
     const planContent =
@@ -5732,6 +5750,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         <PlanReadyImplementFab
           onImplement={handlePlanReadyImplement}
           onHandoff={handlePlanReadyHandoff}
+          onCopyPlan={handlePlanReadyCopyPlan}
           worktreeId={worktreeId ?? undefined}
           visible={showPlanReadyImplementFab}
           superpowersAvailable={hasSuperpowers}

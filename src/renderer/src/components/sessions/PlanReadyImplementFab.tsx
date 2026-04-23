@@ -20,6 +20,7 @@ function MnemonicLabel({ letter, label }: { letter: string; label: string }): Re
 interface PlanReadyImplementFabProps {
   onImplement: () => void
   onHandoff: (override: HandoffSelectionOverride) => void
+  onCopyPlan: () => void
   visible: boolean
   onSuperpowers?: () => void
   onSuperpowersLocal?: () => void
@@ -32,6 +33,7 @@ interface PlanReadyImplementFabProps {
 export function PlanReadyImplementFab({
   onImplement,
   onHandoff,
+  onCopyPlan,
   visible,
   onSuperpowers,
   onSuperpowersLocal,
@@ -68,6 +70,21 @@ export function PlanReadyImplementFab({
           {vimModeEnabled ? <MnemonicLabel letter="s" label="Save as ticket" /> : 'Save as ticket'}
         </button>
       )}
+      <button
+        onClick={onCopyPlan}
+        className={cn(
+          'h-8 rounded-full px-3',
+          'text-xs font-medium',
+          'bg-muted/80 text-foreground border border-border',
+          'shadow-md hover:bg-muted transition-colors duration-200',
+          'cursor-pointer',
+          visible ? 'opacity-100' : 'opacity-0'
+        )}
+        aria-label="Copy plan markdown"
+        data-testid="plan-ready-copy-plan-fab"
+      >
+        {vimModeEnabled ? <MnemonicLabel letter="c" label="Copy plan" /> : 'Copy plan'}
+      </button>
       <div className={cn(visible ? 'opacity-100' : 'opacity-0')}>
         <HandoffSplitButton
           worktreeId={worktreeId}
