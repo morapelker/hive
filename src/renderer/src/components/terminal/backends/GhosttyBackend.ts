@@ -181,6 +181,14 @@ export class GhosttyBackend implements TerminalBackend {
   private hideSurface(): void {
     if (!this.surfaceCreated) return
 
+    // Drop any rAF-scheduled syncFrame so a ResizeObserver firing that
+    // landed microseconds before setVisible(false) cannot race the hide
+    // IPC and leave the NSView on-screen with a shrinking height.
+    if (this.syncFrameTimer !== null) {
+      cancelAnimationFrame(this.syncFrameTimer)
+      this.syncFrameTimer = null
+    }
+
     window.terminalOps.ghosttySetFocus(this.terminalId, false).catch(() => {
       // Ignore focus errors
     })
@@ -255,8 +263,14 @@ export class GhosttyBackend implements TerminalBackend {
   /**
    * Schedule a syncFrame on the next animation frame.
    * Coalesces rapid ResizeObserver firings into a single update.
+   *
+   * Defense-in-depth: while hidden, don't even schedule — avoids a race
+   * where a rAF scheduled by the ResizeObserver during a collapse
+   * transition could land between hideSurface()'s cancel and the actual
+   * setFrame IPC, re-positioning the NSView back on-screen.
    */
   private debouncedSyncFrame(): void {
+    if (!this.visible) return
     if (this.syncFrameTimer !== null) return
     this.syncFrameTimer = requestAnimationFrame(() => {
       this.syncFrameTimer = null
@@ -280,6 +294,13 @@ export class GhosttyBackend implements TerminalBackend {
       }
       return
     }
+
+    // While hidden, never update the native frame. Without this guard, a
+    // ResizeObserver firing during a collapse transition (or the window
+    // resize listener, or resize(cols,rows)) would re-position the NSView
+    // back on-screen after hideSurface() moved it off-screen — leaving a
+    // thin strip of terminal visible below the collapsed bottom bar.
+    if (!this.visible) return
 
     const rect = this.getContainerRect()
     if (!rect) return

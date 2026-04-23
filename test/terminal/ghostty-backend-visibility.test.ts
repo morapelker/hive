@@ -268,4 +268,151 @@ describe('GhosttyBackend visibility', () => {
     // The orphaned native surface must be destroyed to avoid leaking NSViews.
     expect(mockTerminalOps.ghosttyDestroySurface).toHaveBeenCalledWith('wt-1')
   })
+
+  test('cancels pending rAF when setVisible(false) races an already-scheduled syncFrame', async () => {
+    // Regression test for a subtle ordering of the "thin line" bug:
+    // When the panel collapses, the browser fires ResizeObserver BEFORE React
+    // runs useEffect (RO callbacks run in the pre-paint step, useEffect runs
+    // after paint). That schedules a rAF that, if allowed to run, would send
+    // an on-screen setFrame IPC with the shrinking-height rect RIGHT BEFORE
+    // setVisible(false) sends its off-screen IPC — leaving the NSView on-screen
+    // with a tiny height (the "thin line" the user sees). The fix:
+    //   - hideSurface() cancels this.syncFrameTimer before sending its IPC
+    //   - debouncedSyncFrame() early-returns while hidden as defense-in-depth
+    const backend = new GhosttyBackend()
+    const container = document.createElement('div')
+    let rect = {
+      left: 100,
+      top: 80,
+      width: 640,
+      height: 360,
+      right: 740,
+      bottom: 440,
+      x: 100,
+      y: 80,
+      toJSON: () => ({})
+    }
+    container.getBoundingClientRect = vi.fn(() => rect)
+
+    backend.mount(
+      container,
+      {
+        terminalId: 'wt-1',
+        cwd: '/tmp/wt-1'
+      },
+      {
+        onStatusChange: vi.fn()
+      }
+    )
+
+    await flushPromises()
+
+    const visibilityBackend = backend as unknown as {
+      setVisible: (visible: boolean) => void
+    }
+
+    mockTerminalOps.ghosttySetFrame.mockClear()
+
+    // RO fires first with a shrinking rect and schedules an rAF for syncFrame.
+    rect = { ...rect, height: 60, bottom: rect.top + 60 }
+    observers[0].trigger(container)
+
+    // CRITICAL: do NOT flush the rAF yet — setVisible(false) must race it.
+    visibilityBackend.setVisible(false)
+
+    // Now flush the rAF. If hideSurface() didn't cancel it and the guard
+    // didn't block syncFrame, an on-screen IPC with the shrinking rect
+    // would fire AFTER the off-screen one, leaving a thin line of terminal.
+    await flushPromises()
+    await flushPromises()
+
+    // The final IPC must be off-screen, and no intermediate on-screen IPC
+    // may exist between the hide and the end of the flush.
+    const calls = mockTerminalOps.ghosttySetFrame.mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    const lastFrame = calls.at(-1)?.[1] as { x: number; y: number }
+    expect(lastFrame.x).toBeLessThan(0)
+    expect(lastFrame.y).toBeLessThan(0)
+
+    // Stronger claim: no on-screen frame ever made it through while hidden.
+    for (const call of calls) {
+      const frame = call[1] as { x: number; y: number }
+      expect(frame.x).toBeLessThan(0)
+      expect(frame.y).toBeLessThan(0)
+    }
+
+    backend.dispose()
+  })
+
+  test('ignores ResizeObserver triggers after setVisible(false) during a collapse transition', async () => {
+    // Regression test for the "thin line" bug: when the bottom panel is
+    // collapsed with a CSS `height` transition, ResizeObserver fires
+    // repeatedly with shrinking-height on-screen rects. Those firings must
+    // NOT re-position the native NSView back on-screen after setVisible(false)
+    // has moved it off-screen via hideSurface().
+    const backend = new GhosttyBackend()
+    const container = document.createElement('div')
+    let rect = {
+      left: 100,
+      top: 80,
+      width: 640,
+      height: 360,
+      right: 740,
+      bottom: 440,
+      x: 100,
+      y: 80,
+      toJSON: () => ({})
+    }
+    container.getBoundingClientRect = vi.fn(() => rect)
+
+    backend.mount(
+      container,
+      {
+        terminalId: 'wt-1',
+        cwd: '/tmp/wt-1'
+      },
+      {
+        onStatusChange: vi.fn()
+      }
+    )
+
+    await flushPromises()
+
+    const visibilityBackend = backend as unknown as {
+      setVisible: (visible: boolean) => void
+    }
+
+    // Collapse the panel: setVisible(false) fires hideSurface() → off-screen IPC.
+    visibilityBackend.setVisible(false)
+
+    const hiddenFrame = mockTerminalOps.ghosttySetFrame.mock.calls.at(-1)?.[1]
+    expect(hiddenFrame.x).toBeLessThan(0)
+    expect(hiddenFrame.y).toBeLessThan(0)
+
+    mockTerminalOps.ghosttySetFrame.mockClear()
+
+    // Simulate a CSS height transition firing ResizeObserver repeatedly with
+    // shrinking on-screen rects (180 → 60 → 5 pixels tall, still visible).
+    for (const height of [180, 60, 5]) {
+      rect = {
+        ...rect,
+        height,
+        bottom: rect.top + height
+      }
+      observers[0].trigger(container)
+      // Flush the requestAnimationFrame-scheduled syncFrame.
+      await flushPromises()
+    }
+
+    // None of those ResizeObserver-driven frames should have updated the
+    // native NSView position back to an on-screen rect. Either no call was
+    // made, or the call kept the off-screen x/y.
+    for (const call of mockTerminalOps.ghosttySetFrame.mock.calls) {
+      const frame = call[1] as { x: number; y: number; w: number; h: number }
+      expect(frame.x).toBeLessThan(0)
+      expect(frame.y).toBeLessThan(0)
+    }
+
+    backend.dispose()
+  })
 })
