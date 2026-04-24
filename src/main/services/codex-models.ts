@@ -20,7 +20,7 @@ export const CODEX_MODELS: CodexModelInfo[] = [
   {
     id: 'gpt-5.5',
     name: 'GPT-5.5',
-    limit: { context: 258400, output: 32000 },
+    limit: { context: 400000, output: 32000 },
     variants: CODEX_EFFORT_VARIANTS,
     defaultVariant: 'high'
   },

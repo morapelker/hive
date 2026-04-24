@@ -33,7 +33,7 @@ describe('codex model catalog', () => {
     expect(getCodexModelInfo('5.5')).toEqual({
       id: 'gpt-5.5',
       name: 'GPT-5.5',
-      limit: { context: 258400, output: 32000 }
+      limit: { context: 400000, output: 32000 }
     })
   })
 
@@ -43,6 +43,7 @@ describe('codex model catalog', () => {
     expect(providers[0]?.models['gpt-5.5']).toMatchObject({
       id: 'gpt-5.5',
       name: 'GPT-5.5',
+      limit: { context: 400000, output: 32000 },
       variants: {
         xhigh: {},
         high: {},

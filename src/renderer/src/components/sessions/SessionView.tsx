@@ -3043,7 +3043,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // renders immediately before the first thread/tokenUsage/updated event.
         if (sessionRecord?.agent_sdk === 'codex') {
           const codexModels = [
-            { id: 'gpt-5.5', context: 258400 },
+            { id: 'gpt-5.5', context: 400000 },
             { id: 'gpt-5.4', context: 258400 },
             { id: 'gpt-5.3-codex', context: 258400 },
             { id: 'gpt-5.3-codex-spark', context: 258400 },
