@@ -59,7 +59,7 @@ export function usePetDrag(initialPosition: PetPosition | null): {
 
         const x = Math.round(drag.startX + moveEvent.screenX - drag.startScreenX)
         const y = Math.round(drag.startY + moveEvent.screenY - drag.startScreenY)
-        if (Math.abs(x - drag.startX) > 3 || Math.abs(y - drag.startY) > 3) {
+        if (x !== drag.startX || y !== drag.startY) {
           wasDraggedRef.current = true
         }
         drag.pending = { x, y }
