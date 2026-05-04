@@ -438,18 +438,28 @@ export function MergeOnDoneDialog() {
               >
                 Keep in Review
               </button>
-              <Button
-                size="sm"
-                onClick={handleCommitBase}
-                disabled={!baseCommitMessage.trim() || committingBase}
-              >
-                {committingBase ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <GitCommit className="h-3 w-3 mr-1" />
-                )}
-                Commit
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => completeDoneMove()}
+                  disabled={committingBase}
+                >
+                  Move to Done anyway
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleCommitBase}
+                  disabled={!baseCommitMessage.trim() || committingBase}
+                >
+                  {committingBase ? (
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                  ) : (
+                    <GitCommit className="h-3 w-3 mr-1" />
+                  )}
+                  Commit
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -473,18 +483,28 @@ export function MergeOnDoneDialog() {
               >
                 Keep in Review
               </button>
-              <Button
-                size="sm"
-                onClick={handleCommit}
-                disabled={!commitMessage.trim() || committing}
-              >
-                {committing ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <GitCommit className="h-3 w-3 mr-1" />
-                )}
-                Commit
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => completeDoneMove()}
+                  disabled={committing}
+                >
+                  Move to Done anyway
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleCommit}
+                  disabled={!commitMessage.trim() || committing}
+                >
+                  {committing ? (
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                  ) : (
+                    <GitCommit className="h-3 w-3 mr-1" />
+                  )}
+                  Commit
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -509,14 +529,24 @@ export function MergeOnDoneDialog() {
               >
                 Keep in Review
               </button>
-              <Button size="sm" onClick={handleMerge} disabled={merging}>
-                {merging ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <GitMerge className="h-3 w-3 mr-1" />
-                )}
-                Merge
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => completeDoneMove()}
+                  disabled={merging}
+                >
+                  Move to Done anyway
+                </Button>
+                <Button size="sm" onClick={handleMerge} disabled={merging}>
+                  {merging ? (
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                  ) : (
+                    <GitMerge className="h-3 w-3 mr-1" />
+                  )}
+                  Merge
+                </Button>
+              </div>
             </div>
           </div>
         )}
