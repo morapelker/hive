@@ -656,6 +656,8 @@ declare global {
       hide: () => Promise<void>
       publishStatus: (payload: PetStatusPayload) => void
       setIgnoreMouse: (ignore: boolean) => void
+      beginPointerInteraction: () => void
+      endPointerInteraction: () => void
       move: (position: PetPosition) => void
       focusMain: (payload: { worktreeId: string | null }) => Promise<void>
       getConfig: () => Promise<{

@@ -67,7 +67,12 @@ import { initTicketProviderManager, GitHubProvider, JiraProvider } from './servi
 import { APP_SETTINGS_DB_KEY } from '../shared/types/settings'
 import { openCodeService } from './services/opencode-service'
 import { setKeepAwake, cleanupPowerSaveBlocker } from './services/power-save-blocker'
-import { configurePetWindow, destroyPetWindow, getPetWindow } from './services/pet-window'
+import {
+  configurePetWindow,
+  destroyPetWindow,
+  getPetWindow,
+  shouldSuppressMainWindowActivationFromPet
+} from './services/pet-window'
 
 const log = createLogger({ component: 'Main' })
 
@@ -696,6 +701,10 @@ app.whenReady().then(async () => {
 
   app.on('activate', function () {
     ensureDockVisible('activate')
+
+    if (shouldSuppressMainWindowActivationFromPet()) {
+      return
+    }
 
     // The pet overlay is an auxiliary window and should not count as a main app
     // window for Dock activation. If only the pet exists, re-create Hive.
