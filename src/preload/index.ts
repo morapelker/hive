@@ -606,6 +606,12 @@ const petOps = {
   setIgnoreMouse: (ignore: boolean): void => {
     ipcRenderer.send('pet:set-ignore-mouse', { ignore })
   },
+  beginPointerInteraction: (): void => {
+    ipcRenderer.send('pet:begin-pointer-interaction')
+  },
+  endPointerInteraction: (): void => {
+    ipcRenderer.send('pet:end-pointer-interaction')
+  },
   move: (position: PetPosition): void => {
     ipcRenderer.send('pet:move', position)
   },

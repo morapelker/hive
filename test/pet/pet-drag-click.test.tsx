@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type * as React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PetApp } from '@/pet/PetApp'
 
 vi.mock('motion/react', () => ({
@@ -49,6 +49,10 @@ describe('PetApp drag and click behavior', () => {
     petOps().onSettingsUpdated.mockReturnValue(() => {})
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('does not open the hive after a drag that moves the pet', async () => {
     render(<PetApp />)
 
@@ -64,6 +68,31 @@ describe('PetApp drag and click behavior', () => {
 
     expect(petOps().move).toHaveBeenCalledWith({ x: 12, y: 20 })
     expect(petOps().focusMain).not.toHaveBeenCalled()
+  })
+
+  it('keeps mouse events captured until the post-drag click has been swallowed', async () => {
+    render(<PetApp />)
+
+    const pet = await screen.findByRole('button', { name: 'Hive pet' })
+    vi.useFakeTimers()
+
+    fireEvent(
+      pet,
+      pointerEvent('pointerdown', { pointerId: 1, button: 0, screenX: 100, screenY: 100 })
+    )
+    window.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, screenX: 120, screenY: 100 }))
+    window.dispatchEvent(pointerEvent('pointerup', { pointerId: 1, screenX: 120, screenY: 100 }))
+
+    expect(petOps().setIgnoreMouse).toHaveBeenLastCalledWith(false)
+
+    fireEvent.click(pet)
+    vi.runOnlyPendingTimers()
+
+    expect(petOps().beginPointerInteraction).toHaveBeenCalledTimes(1)
+    expect(petOps().endPointerInteraction).toHaveBeenCalledTimes(1)
+    expect(petOps().focusMain).not.toHaveBeenCalled()
+    expect(petOps().setIgnoreMouse).toHaveBeenLastCalledWith(true)
+    vi.useRealTimers()
   })
 
   it('opens the hive on an intentional click', async () => {
