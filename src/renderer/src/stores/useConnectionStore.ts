@@ -35,6 +35,7 @@ interface ConnectionState {
   connections: Connection[]
   isLoading: boolean
   error: string | null
+  loaded: boolean
 
   // UI State
   selectedConnectionId: string | null
@@ -71,6 +72,7 @@ export const useConnectionStore = create<ConnectionState>()(
       connections: [],
       isLoading: false,
       error: null,
+      loaded: false,
       selectedConnectionId: null,
 
       // Connection mode initial state
@@ -84,13 +86,13 @@ export const useConnectionStore = create<ConnectionState>()(
         try {
           const result = await window.connectionOps.getAll()
           if (!result.success) {
-            set({ error: result.error || 'Failed to load connections', isLoading: false })
+            set({ error: result.error || 'Failed to load connections', isLoading: false, loaded: true })
             return
           }
-          set({ connections: result.connections || [], isLoading: false })
+          set({ connections: result.connections || [], isLoading: false, loaded: true })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          set({ error: message, isLoading: false })
+          set({ error: message, isLoading: false, loaded: true })
         }
       },
 
