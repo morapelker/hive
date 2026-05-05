@@ -168,6 +168,22 @@ describe('computeHiddenAreas', () => {
     ])
   })
 
+  it('keeps original gap coordinates aligned when extra modified visibility splits a gap', () => {
+    const result = computeHiddenAreas({
+      hunks: [modifyHunk(40, 42)],
+      contextLines: 3,
+      originalLineCount: 100,
+      modifiedLineCount: 100,
+      extraVisibleModified: [70]
+    })
+
+    expect(result.gaps.map((gap) => [gap.firstHiddenOriginal, gap.lastHiddenOriginal])).toEqual([
+      [1, 36],
+      [46, 66],
+      [74, 100]
+    ])
+  })
+
   it('does not change hidden ranges when extra visible line is already in context', () => {
     const withoutExtra = computeHiddenAreas({
       hunks: [modifyHunk(40, 42)],

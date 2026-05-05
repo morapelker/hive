@@ -33,8 +33,8 @@ export interface HiddenAreasResult {
     side: 'modified'
     afterLine: number
     hiddenLineCount: number
-    firstHiddenOriginal: number
-    lastHiddenOriginal: number
+    firstHiddenOriginal: number | null
+    lastHiddenOriginal: number | null
     firstHiddenModified: number
     lastHiddenModified: number
   }>
@@ -114,19 +114,80 @@ export function computeHiddenAreas({
   return {
     originalRanges: originalHidden.map(toMonacoRange),
     modifiedRanges: modifiedHidden.map(toMonacoRange),
-    gaps: modifiedHidden.map((range, index) => {
-      const originalRange = originalHidden[index] ?? range
+    gaps: modifiedHidden.map((range) => {
+      const originalRange = mapModifiedHiddenRangeToOriginal(range, hunks, originalLineCount)
       return {
         side: 'modified' as const,
         afterLine: range.start - 1,
         hiddenLineCount: range.end - range.start + 1,
-        firstHiddenOriginal: originalRange.start,
-        lastHiddenOriginal: originalRange.end,
+        firstHiddenOriginal: originalRange?.start ?? null,
+        lastHiddenOriginal: originalRange?.end ?? null,
         firstHiddenModified: range.start,
         lastHiddenModified: range.end
       }
     })
   }
+}
+
+function mapModifiedHiddenRangeToOriginal(
+  range: LineRange,
+  hunks: Hunk[],
+  originalLineCount: number
+): LineRange | null {
+  const start = mapModifiedLineToOriginal(range.start, hunks, originalLineCount)
+  const end = mapModifiedLineToOriginal(range.end, hunks, originalLineCount)
+
+  if (start === null || end === null) {
+    return null
+  }
+
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end)
+  }
+}
+
+function mapModifiedLineToOriginal(
+  modifiedLine: number,
+  hunks: Hunk[],
+  originalLineCount: number
+): number | null {
+  let lineDelta = 0
+  const sortedHunks = [...hunks].sort(
+    (a, b) => a.modifiedStartLine - b.modifiedStartLine || a.modifiedEndLine - b.modifiedEndLine
+  )
+
+  for (const hunk of sortedHunks) {
+    const modifiedEndLine =
+      hunk.modifiedEndLine === 0 ? hunk.modifiedStartLine : hunk.modifiedEndLine
+
+    if (modifiedLine < hunk.modifiedStartLine) {
+      break
+    }
+
+    if (modifiedLine <= modifiedEndLine) {
+      return null
+    }
+
+    lineDelta += getOriginalLineCount(hunk) - getModifiedLineCount(hunk)
+  }
+
+  return clampLine(modifiedLine + lineDelta, originalLineCount)
+}
+
+function getOriginalLineCount(hunk: Hunk): number {
+  if (hunk.originalEndLine === 0) return 0
+  return hunk.originalEndLine - hunk.originalStartLine + 1
+}
+
+function getModifiedLineCount(hunk: Hunk): number {
+  if (hunk.modifiedEndLine === 0) return 0
+  return hunk.modifiedEndLine - hunk.modifiedStartLine + 1
+}
+
+function clampLine(line: number, lineCount: number): number {
+  if (lineCount <= 0) return 0
+  return Math.max(1, Math.min(line, lineCount))
 }
 
 function addVisibleHunkRange(

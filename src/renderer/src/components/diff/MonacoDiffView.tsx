@@ -42,7 +42,7 @@ interface MonacoDiffViewProps {
 }
 
 interface HiddenAreasEditor extends editor.IStandaloneCodeEditor {
-  setHiddenAreas: (ranges: HiddenAreasResult['modifiedRanges']) => void
+  setHiddenAreas?: (ranges: HiddenAreasResult['modifiedRanges']) => void
 }
 
 const EMPTY_COMMENTS: PRReviewComment[] = []
@@ -82,6 +82,7 @@ export default function MonacoDiffView({
   const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null)
   const modifiedEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const [editorReady, setEditorReady] = useState(false)
+  const [diffComputed, setDiffComputed] = useState(false)
   const [zonesReady, setZonesReady] = useState(!prReviewWorktreeId)
 
   // Worktree ID for diff comment toolbar
@@ -205,6 +206,7 @@ export default function MonacoDiffView({
 
   useEffect(() => {
     setExpandedRanges([])
+    setDiffComputed(false)
   }, [worktreePath, filePath, staged, compareBranch])
 
   // Listen for external file changes (but skip if we just did a manual action)
@@ -225,11 +227,15 @@ export default function MonacoDiffView({
     // Get initial diff changes
     const changes = diffEd.getLineChanges()
     setHunks(parseHunks(changes))
+    if (changes !== null) {
+      setDiffComputed(true)
+    }
 
     // Listen for diff updates
     diffEd.onDidUpdateDiff(() => {
       const newChanges = diffEd.getLineChanges()
       setHunks(parseHunks(newChanges))
+      setDiffComputed(true)
     })
 
     // Signal that the editor is mounted and ready for scrolling
@@ -486,7 +492,7 @@ export default function MonacoDiffView({
   }, [worktreePath, filePath, staged, isUntracked, compareBranch])
 
   const language = getMonacoLanguage(filePath)
-  const isNoChangesInHunkView = renderedViewMode === 'hunk' && hunks.length === 0 && editorReady
+  const isNoChangesInHunkView = renderedViewMode === 'hunk' && hunks.length === 0 && diffComputed
 
   if (isLoading) {
     return (
@@ -496,7 +502,7 @@ export default function MonacoDiffView({
           staged={staged}
           isUntracked={isUntracked}
           compareBranch={compareBranch}
-          viewMode={effectiveViewMode}
+          viewMode={renderedViewMode}
           onSetViewMode={setViewMode}
           splitDisabled={Boolean(prReviewWorktreeId)}
           onPrevHunk={handlePrevHunk}
@@ -519,7 +525,7 @@ export default function MonacoDiffView({
           staged={staged}
           isUntracked={isUntracked}
           compareBranch={compareBranch}
-          viewMode={effectiveViewMode}
+          viewMode={renderedViewMode}
           onSetViewMode={setViewMode}
           splitDisabled={Boolean(prReviewWorktreeId)}
           onPrevHunk={handlePrevHunk}
@@ -544,7 +550,7 @@ export default function MonacoDiffView({
         staged={staged}
         isUntracked={isUntracked}
         compareBranch={compareBranch}
-        viewMode={effectiveViewMode}
+        viewMode={renderedViewMode}
         onSetViewMode={setViewMode}
         splitDisabled={Boolean(prReviewWorktreeId)}
         onPrevHunk={handlePrevHunk}
@@ -669,5 +675,12 @@ function setEditorHiddenAreas(
   ranges: HiddenAreasResult['modifiedRanges']
 ): void {
   const hiddenAreasEditor = editorInstance as HiddenAreasEditor
+  if (typeof hiddenAreasEditor.setHiddenAreas !== 'function') {
+    console.warn(
+      'Monaco editor setHiddenAreas API is unavailable; hunk view cannot collapse lines.'
+    )
+    return
+  }
+
   hiddenAreasEditor.setHiddenAreas(ranges)
 }
