@@ -58,8 +58,10 @@ export function PetApp(): React.JSX.Element {
     window.petOps.markHatched()
   }, [])
 
-  const handleClick = useCallback(() => {
+  const handleClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (wasDraggedRef.current) {
+      event.preventDefault()
+      event.stopPropagation()
       wasDraggedRef.current = false
       return
     }

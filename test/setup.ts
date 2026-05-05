@@ -149,6 +149,8 @@ if (typeof window !== 'undefined') {
         hide: vi.fn().mockResolvedValue(undefined),
         publishStatus: vi.fn(),
         setIgnoreMouse: vi.fn(),
+        beginPointerInteraction: vi.fn(),
+        endPointerInteraction: vi.fn(),
         move: vi.fn(),
         focusMain: vi.fn().mockResolvedValue(undefined),
         getConfig: vi.fn().mockResolvedValue({

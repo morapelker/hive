@@ -60,7 +60,7 @@ export function PetSprite({
   onPointerDown: (event: React.PointerEvent<HTMLElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
-  onClick: () => void
+  onClick: (event: React.MouseEvent<HTMLElement>) => void
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
 }): React.JSX.Element {
   const size = SIZE_PX[settings.size]

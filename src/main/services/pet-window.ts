@@ -15,6 +15,7 @@ import type {
 const PET_POSITION_FILE = join(app.getPath('userData'), 'pet-position.json')
 const PET_PADDING = 48
 const SCREEN_MARGIN = 24
+const PET_POINTER_INTERACTION_SUPPRESSION_MS = 250
 
 export const DEFAULT_PET_SETTINGS: PetSettings = {
   enabled: false,
@@ -81,6 +82,8 @@ let petWindow: BrowserWindow | null = null
 let getMainWindow: (() => BrowserWindow | null) | null = null
 let latestStatus: PetStatusPayload = { state: 'idle', sourceWorktreeId: null }
 let latestSettings: PetSettings = DEFAULT_PET_SETTINGS
+let petPointerInteractionActive = false
+let petPointerInteractionTimer: NodeJS.Timeout | null = null
 
 function ensureRegularMacAppActivation(): void {
   if (process.platform !== 'darwin') return
@@ -180,6 +183,30 @@ export function getPetWindow(): BrowserWindow | null {
   return petWindow
 }
 
+function clearPetPointerInteractionTimer(): void {
+  if (petPointerInteractionTimer) {
+    clearTimeout(petPointerInteractionTimer)
+    petPointerInteractionTimer = null
+  }
+}
+
+export function beginPetPointerInteraction(): void {
+  clearPetPointerInteractionTimer()
+  petPointerInteractionActive = true
+}
+
+export function endPetPointerInteraction(): void {
+  clearPetPointerInteractionTimer()
+  petPointerInteractionTimer = setTimeout(() => {
+    petPointerInteractionActive = false
+    petPointerInteractionTimer = null
+  }, PET_POINTER_INTERACTION_SUPPRESSION_MS)
+}
+
+export function shouldSuppressMainWindowActivationFromPet(): boolean {
+  return petPointerInteractionActive
+}
+
 export function getCurrentPetStatus(): PetStatusPayload {
   return latestStatus
 }
@@ -216,6 +243,7 @@ export function createPetWindow(): BrowserWindow | null {
     x: position.x,
     y: position.y,
     transparent: true,
+    type: 'panel',
     frame: false,
     hasShadow: false,
     skipTaskbar: true,
@@ -321,6 +349,8 @@ export function persistPetSettings(partial: Partial<PetSettings>): void {
 }
 
 export function focusMainWindowFromPet(worktreeId: string | null): void {
+  clearPetPointerInteractionTimer()
+  petPointerInteractionActive = false
   ensureRegularMacAppActivation()
   const mainWindow = getMainWindow?.() ?? null
   if (!mainWindow || mainWindow.isDestroyed()) return
