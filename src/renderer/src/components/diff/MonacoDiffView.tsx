@@ -3,16 +3,27 @@ import '@/lib/monaco-setup'
 import { DiffEditor, type Monaco } from '@monaco-editor/react'
 import { Loader2 } from 'lucide-react'
 import { registerHiveTheme, HIVE_THEME_NAME } from '@/lib/monaco-theme'
-import { parseHunks, getMonacoLanguage } from '@/lib/diff-utils'
-import type { Hunk } from '@/lib/diff-utils'
+import {
+  computeHiddenAreas,
+  createHunkPatch,
+  parseHunks,
+  getMonacoLanguage
+} from '@/lib/diff-utils'
+import type { HiddenAreasResult, Hunk } from '@/lib/diff-utils'
 import { MonacoDiffToolbar } from './MonacoDiffToolbar'
 import { HunkActionGutter } from './HunkActionGutter'
+import type { HunkHeaderActions } from './HunkViewDecorations'
+import { HunkViewDecorations } from './HunkViewDecorations'
 import { PrCommentGutter } from './PrCommentGutter'
 import { DiffCommentGutter } from './DiffCommentGutter'
 import { DiffCommentToolbar } from './DiffCommentToolbar'
 import { DiffCommentSidePanel } from './DiffCommentSidePanel'
 import { usePRReviewStore } from '@/stores/usePRReviewStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useDiffCommentStore } from '@/stores/useDiffCommentStore'
+import { useDiffPrefsStore } from '@/stores/useDiffPrefsStore'
+import { useGitStore } from '@/stores/useGitStore'
+import { toast } from '@/lib/toast'
 import type { PRReviewComment } from '@shared/types/git'
 import type { editor } from 'monaco-editor'
 
@@ -30,7 +41,19 @@ interface MonacoDiffViewProps {
   onClose: () => void
 }
 
+interface HiddenAreasEditor extends editor.IStandaloneCodeEditor {
+  setHiddenAreas?: (ranges: HiddenAreasResult['modifiedRanges']) => void
+}
+
 const EMPTY_COMMENTS: PRReviewComment[] = []
+const EMPTY_DIFF_COMMENTS: DiffComment[] = []
+const HUNK_CONTEXT_LINES = 3
+const HUNK_EXPAND_LINES = 10
+const EMPTY_HIDDEN_AREAS: HiddenAreasResult = {
+  originalRanges: [],
+  modifiedRanges: [],
+  gaps: []
+}
 
 export default function MonacoDiffView({
   worktreePath,
@@ -49,9 +72,9 @@ export default function MonacoDiffView({
   const [modifiedContent, setModifiedContent] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  // PR review diffs always use inline mode so view zones render naturally
-  const [sideBySide, setSideBySide] = useState(!prReviewWorktreeId)
   const [hunks, setHunks] = useState<Hunk[]>([])
+  const [expandedRanges, setExpandedRanges] = useState<Array<{ start: number; end: number }>>([])
+  const [hunkActionLoading, setHunkActionLoading] = useState<number | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const isInitialLoad = useRef(true)
   const recentActionRef = useRef(false)
@@ -59,15 +82,18 @@ export default function MonacoDiffView({
   const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null)
   const modifiedEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const [editorReady, setEditorReady] = useState(false)
+  const [diffComputed, setDiffComputed] = useState(false)
   const [zonesReady, setZonesReady] = useState(!prReviewWorktreeId)
 
   // Worktree ID for diff comment toolbar
   const worktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
+  const viewMode = useDiffPrefsStore((s) => s.viewMode)
+  const setViewMode = useDiffPrefsStore((s) => s.setViewMode)
 
   const [sidePanelOpen, setSidePanelOpen] = useState(false)
 
   const handleToggleSidePanel = useCallback(() => {
-    setSidePanelOpen(prev => !prev)
+    setSidePanelOpen((prev) => !prev)
   }, [])
 
   // PR review comments for this file (when in PR review mode)
@@ -75,12 +101,26 @@ export default function MonacoDiffView({
     (s) => (prReviewWorktreeId ? s.comments.get(prReviewWorktreeId) : undefined) ?? EMPTY_COMMENTS
   )
   const fileComments = useMemo(
-    () =>
-      prReviewWorktreeId
-        ? allPrComments.filter((c) => c.path === filePath)
-        : EMPTY_COMMENTS,
+    () => (prReviewWorktreeId ? allPrComments.filter((c) => c.path === filePath) : EMPTY_COMMENTS),
     [allPrComments, filePath, prReviewWorktreeId]
   )
+  const allDiffComments =
+    useDiffCommentStore((s) =>
+      !prReviewWorktreeId && worktreeId ? s.comments.get(worktreeId) : undefined
+    ) ?? EMPTY_DIFF_COMMENTS
+  const fileDiffComments = useMemo(
+    () =>
+      !prReviewWorktreeId && worktreeId
+        ? allDiffComments.filter((c) => c.file_path === filePath)
+        : EMPTY_DIFF_COMMENTS,
+    [allDiffComments, filePath, prReviewWorktreeId, worktreeId]
+  )
+
+  const effectiveViewMode = prReviewWorktreeId && viewMode === 'split' ? 'inline' : viewMode
+  const fallsBackToInline =
+    effectiveViewMode === 'hunk' &&
+    (isUntracked || isNewFile || originalContent === '' || modifiedContent === '')
+  const renderedViewMode = fallsBackToInline ? 'inline' : effectiveViewMode
 
   // Fetch file contents for the diff
   const fetchContent = useCallback(async () => {
@@ -164,6 +204,11 @@ export default function MonacoDiffView({
     fetchContent()
   }, [fetchContent, refreshKey])
 
+  useEffect(() => {
+    setExpandedRanges([])
+    setDiffComputed(false)
+  }, [worktreePath, filePath, staged, compareBranch])
+
   // Listen for external file changes (but skip if we just did a manual action)
   useEffect(() => {
     const cleanup = window.gitOps.onStatusChanged((event) => {
@@ -182,11 +227,15 @@ export default function MonacoDiffView({
     // Get initial diff changes
     const changes = diffEd.getLineChanges()
     setHunks(parseHunks(changes))
+    if (changes !== null) {
+      setDiffComputed(true)
+    }
 
     // Listen for diff updates
     diffEd.onDidUpdateDiff(() => {
       const newChanges = diffEd.getLineChanges()
       setHunks(parseHunks(newChanges))
+      setDiffComputed(true)
     })
 
     // Signal that the editor is mounted and ready for scrolling
@@ -251,10 +300,180 @@ export default function MonacoDiffView({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose, handleNextHunk, handlePrevHunk])
 
-  // Toggle side-by-side / inline
-  const handleToggleSideBySide = useCallback(() => {
-    setSideBySide((prev) => !prev)
+  const prCommentLines = useMemo(
+    () =>
+      fileComments
+        .map((comment) => comment.line ?? comment.originalLine ?? null)
+        .filter((line): line is number => typeof line === 'number' && line > 0),
+    [fileComments]
+  )
+
+  const diffCommentLines = useMemo(
+    () =>
+      fileDiffComments.flatMap((comment) => expandLineRange(comment.line_start, comment.line_end)),
+    [fileDiffComments]
+  )
+
+  const expandedLineNumbers = useMemo(
+    () => expandedRanges.flatMap((range) => expandLineRange(range.start, range.end)),
+    [expandedRanges]
+  )
+  const originalLines = useMemo(() => (originalContent ?? '').split('\n'), [originalContent])
+  const modifiedLines = useMemo(() => (modifiedContent ?? '').split('\n'), [modifiedContent])
+
+  const hiddenAreas = useMemo<HiddenAreasResult>(() => {
+    if (renderedViewMode !== 'hunk' || !editorReady) return EMPTY_HIDDEN_AREAS
+    const originalLineCount =
+      diffEditorRef.current?.getOriginalEditor().getModel()?.getLineCount() ??
+      getContentLineCount(originalContent)
+    const modifiedLineCount =
+      modifiedEditorRef.current?.getModel()?.getLineCount() ?? getContentLineCount(modifiedContent)
+
+    return computeHiddenAreas({
+      hunks,
+      contextLines: HUNK_CONTEXT_LINES,
+      originalLineCount,
+      modifiedLineCount,
+      extraVisibleModified: [...prCommentLines, ...diffCommentLines, ...expandedLineNumbers]
+    })
+  }, [
+    renderedViewMode,
+    hunks,
+    prCommentLines,
+    diffCommentLines,
+    expandedLineNumbers,
+    originalContent,
+    modifiedContent,
+    editorReady
+  ])
+
+  useEffect(() => {
+    const originalEditor = diffEditorRef.current?.getOriginalEditor()
+    const modifiedEditor = modifiedEditorRef.current
+    if (!originalEditor || !modifiedEditor) return
+
+    setEditorHiddenAreas(
+      originalEditor,
+      renderedViewMode === 'hunk' ? hiddenAreas.originalRanges : []
+    )
+    setEditorHiddenAreas(
+      modifiedEditor,
+      renderedViewMode === 'hunk' ? hiddenAreas.modifiedRanges : []
+    )
+  }, [hiddenAreas, renderedViewMode, editorReady])
+
+  const handleExpandGap = useCallback(
+    (gapIndex: number, direction: 'up' | 'down' | 'all') => {
+      const gap = hiddenAreas.gaps[gapIndex]
+      if (!gap) return
+
+      let start = gap.firstHiddenModified
+      let end = gap.lastHiddenModified
+      if (direction === 'up') {
+        end = Math.min(gap.lastHiddenModified, gap.firstHiddenModified + HUNK_EXPAND_LINES - 1)
+      } else if (direction === 'down') {
+        start = Math.max(gap.firstHiddenModified, gap.lastHiddenModified - HUNK_EXPAND_LINES + 1)
+      }
+
+      setExpandedRanges((prev) => [...prev, { start, end }])
+    },
+    [hiddenAreas.gaps]
+  )
+
+  // Trigger re-fetch after hunk actions — suppress watcher duplicate for 500ms
+  const handleContentChanged = useCallback(() => {
+    recentActionRef.current = true
+    setRefreshKey((k) => k + 1)
+    setTimeout(() => {
+      recentActionRef.current = false
+    }, 500)
   }, [])
+
+  const handleStageHunk = useCallback(
+    async (hunk: Hunk) => {
+      setHunkActionLoading(hunk.index)
+      try {
+        const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
+        const result = await window.gitOps.stageHunk(worktreePath, patch)
+        if (result.success) {
+          toast.success('Hunk staged')
+          useGitStore.getState().refreshStatuses(worktreePath)
+          handleContentChanged()
+        } else {
+          toast.error(result.error || 'Failed to stage hunk')
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to stage hunk')
+      } finally {
+        setHunkActionLoading(null)
+      }
+    },
+    [filePath, originalLines, modifiedLines, worktreePath, handleContentChanged]
+  )
+
+  const handleUnstageHunk = useCallback(
+    async (hunk: Hunk) => {
+      setHunkActionLoading(hunk.index)
+      try {
+        const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
+        const result = await window.gitOps.unstageHunk(worktreePath, patch)
+        if (result.success) {
+          toast.success('Hunk unstaged')
+          useGitStore.getState().refreshStatuses(worktreePath)
+          handleContentChanged()
+        } else {
+          toast.error(result.error || 'Failed to unstage hunk')
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to unstage hunk')
+      } finally {
+        setHunkActionLoading(null)
+      }
+    },
+    [filePath, originalLines, modifiedLines, worktreePath, handleContentChanged]
+  )
+
+  const handleDiscardHunk = useCallback(
+    async (hunk: Hunk) => {
+      setHunkActionLoading(hunk.index)
+      try {
+        const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
+        const result = await window.gitOps.revertHunk(worktreePath, patch)
+        if (result.success) {
+          toast.success('Hunk discarded')
+          useGitStore.getState().refreshStatuses(worktreePath)
+          handleContentChanged()
+        } else {
+          toast.error(result.error || 'Failed to discard hunk')
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to discard hunk')
+      } finally {
+        setHunkActionLoading(null)
+      }
+    },
+    [filePath, originalLines, modifiedLines, worktreePath, handleContentChanged]
+  )
+
+  const hunkHeaderActions = useMemo<HunkHeaderActions | undefined>(() => {
+    if (compareBranch || originalContent === null || modifiedContent === null) return undefined
+    return {
+      staged,
+      loadingHunkIndex: hunkActionLoading,
+      onStage: handleStageHunk,
+      onUnstage: handleUnstageHunk,
+      onDiscard: handleDiscardHunk
+    }
+  }, [
+    compareBranch,
+    originalContent,
+    modifiedContent,
+    staged,
+    hunkActionLoading,
+    handleStageHunk,
+    handleUnstageHunk,
+    handleDiscardHunk
+  ])
 
   // Copy diff content
   const handleCopy = useCallback(async () => {
@@ -272,16 +491,8 @@ export default function MonacoDiffView({
     }
   }, [worktreePath, filePath, staged, isUntracked, compareBranch])
 
-  // Trigger re-fetch after hunk actions — suppress watcher duplicate for 500ms
-  const handleContentChanged = useCallback(() => {
-    recentActionRef.current = true
-    setRefreshKey((k) => k + 1)
-    setTimeout(() => {
-      recentActionRef.current = false
-    }, 500)
-  }, [])
-
   const language = getMonacoLanguage(filePath)
+  const isNoChangesInHunkView = renderedViewMode === 'hunk' && hunks.length === 0 && diffComputed
 
   if (isLoading) {
     return (
@@ -291,8 +502,9 @@ export default function MonacoDiffView({
           staged={staged}
           isUntracked={isUntracked}
           compareBranch={compareBranch}
-          sideBySide={sideBySide}
-          onToggleSideBySide={handleToggleSideBySide}
+          viewMode={renderedViewMode}
+          onSetViewMode={setViewMode}
+          splitDisabled={Boolean(prReviewWorktreeId)}
           onPrevHunk={handlePrevHunk}
           onNextHunk={handleNextHunk}
           onCopy={handleCopy}
@@ -313,8 +525,9 @@ export default function MonacoDiffView({
           staged={staged}
           isUntracked={isUntracked}
           compareBranch={compareBranch}
-          sideBySide={sideBySide}
-          onToggleSideBySide={handleToggleSideBySide}
+          viewMode={renderedViewMode}
+          onSetViewMode={setViewMode}
+          splitDisabled={Boolean(prReviewWorktreeId)}
           onPrevHunk={handlePrevHunk}
           onNextHunk={handleNextHunk}
           onCopy={handleCopy}
@@ -337,8 +550,9 @@ export default function MonacoDiffView({
         staged={staged}
         isUntracked={isUntracked}
         compareBranch={compareBranch}
-        sideBySide={sideBySide}
-        onToggleSideBySide={handleToggleSideBySide}
+        viewMode={renderedViewMode}
+        onSetViewMode={setViewMode}
+        splitDisabled={Boolean(prReviewWorktreeId)}
         onPrevHunk={handlePrevHunk}
         onNextHunk={handleNextHunk}
         onCopy={handleCopy}
@@ -356,7 +570,7 @@ export default function MonacoDiffView({
             options={{
               readOnly: true,
               originalEditable: false,
-              renderSideBySide: sideBySide,
+              renderSideBySide: renderedViewMode === 'split',
               enableSplitViewResizing: true,
               ignoreTrimWhitespace: false,
               renderIndicators: true,
@@ -379,18 +593,30 @@ export default function MonacoDiffView({
               </div>
             }
           />
-          {!compareBranch && originalContent !== null && modifiedContent !== null && (
-            <HunkActionGutter
-              hunks={hunks}
-              staged={staged}
-              worktreePath={worktreePath}
-              filePath={filePath}
-              originalContent={originalContent}
-              modifiedContent={modifiedContent}
-              modifiedEditor={modifiedEditorRef.current}
-              onContentChanged={handleContentChanged}
-            />
-          )}
+          <HunkViewDecorations
+            modifiedEditor={modifiedEditorRef.current}
+            hunks={hunks}
+            gaps={hiddenAreas.gaps}
+            contextLines={HUNK_CONTEXT_LINES}
+            enabled={renderedViewMode === 'hunk'}
+            onExpand={handleExpandGap}
+            hunkActions={hunkHeaderActions}
+          />
+          {!compareBranch &&
+            renderedViewMode !== 'hunk' &&
+            originalContent !== null &&
+            modifiedContent !== null && (
+              <HunkActionGutter
+                hunks={hunks}
+                staged={staged}
+                worktreePath={worktreePath}
+                filePath={filePath}
+                originalContent={originalContent}
+                modifiedContent={modifiedContent}
+                modifiedEditor={modifiedEditorRef.current}
+                onContentChanged={handleContentChanged}
+              />
+            )}
           {prReviewWorktreeId &&
             fileComments.length > 0 &&
             originalContent !== null &&
@@ -403,18 +629,23 @@ export default function MonacoDiffView({
               />
             )}
           {!prReviewWorktreeId && originalContent !== null && modifiedContent !== null && (
-            <DiffCommentGutter
-              modifiedEditor={modifiedEditorRef.current}
-              filePath={filePath}
-            />
+            <DiffCommentGutter modifiedEditor={modifiedEditorRef.current} filePath={filePath} />
           )}
-          {!prReviewWorktreeId && originalContent !== null && modifiedContent !== null && worktreeId && (
-            <DiffCommentToolbar
-              worktreeId={worktreeId}
-              onToggleSidePanel={handleToggleSidePanel}
-              sidePanelOpen={sidePanelOpen}
-            />
+          {isNoChangesInHunkView && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-sm text-muted-foreground">
+              No changes
+            </div>
           )}
+          {!prReviewWorktreeId &&
+            originalContent !== null &&
+            modifiedContent !== null &&
+            worktreeId && (
+              <DiffCommentToolbar
+                worktreeId={worktreeId}
+                onToggleSidePanel={handleToggleSidePanel}
+                sidePanelOpen={sidePanelOpen}
+              />
+            )}
         </div>
         {!prReviewWorktreeId && sidePanelOpen && worktreeId && (
           <DiffCommentSidePanel
@@ -426,4 +657,30 @@ export default function MonacoDiffView({
       </div>
     </div>
   )
+}
+
+function getContentLineCount(content: string | null): number {
+  if (!content) return 0
+  return content.split('\n').length
+}
+
+function expandLineRange(start: number, end?: number | null): number[] {
+  const safeStart = Math.max(1, start)
+  const safeEnd = Math.max(safeStart, end ?? safeStart)
+  return Array.from({ length: safeEnd - safeStart + 1 }, (_, index) => safeStart + index)
+}
+
+function setEditorHiddenAreas(
+  editorInstance: editor.IStandaloneCodeEditor,
+  ranges: HiddenAreasResult['modifiedRanges']
+): void {
+  const hiddenAreasEditor = editorInstance as HiddenAreasEditor
+  if (typeof hiddenAreasEditor.setHiddenAreas !== 'function') {
+    console.warn(
+      'Monaco editor setHiddenAreas API is unavailable; hunk view cannot collapse lines.'
+    )
+    return
+  }
+
+  hiddenAreasEditor.setHiddenAreas(ranges)
 }
