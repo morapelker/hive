@@ -4,6 +4,7 @@ import { ErrorBoundary } from '@/components/error'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { initPlatform } from '@/lib/platform'
 import { useTipStore } from '@/stores/useTipStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { PetStatusBridge } from '@/components/pet/PetStatusBridge'
 
 function App(): React.JSX.Element {
@@ -13,6 +14,7 @@ function App(): React.JSX.Element {
     initPlatform().then(() => {
       // Load seen tips from DB so the tip system knows which tips to skip
       useTipStore.getState().loadSeenTips()
+      useConnectionStore.getState().loadConnections()
       setReady(true)
     })
   }, [])
