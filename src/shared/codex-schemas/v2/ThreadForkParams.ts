@@ -17,10 +17,6 @@ import type { SandboxMode } from "./SandboxMode";
  * Prefer using thread_id whenever possible.
  */
 export type ThreadForkParams = {threadId: string, /**
- * [UNSTABLE] Specify the rollout path to fork from.
- * If specified, the thread_id param will be ignored.
- */
-path?: string | null, /**
  * Configuration overrides for the forked thread, if any.
  */
 model?: string | null, modelProvider?: string | null, serviceTier?: ServiceTier | null | null, cwd?: string | null, approvalPolicy?: AskForApproval | null, /**
@@ -28,7 +24,8 @@ model?: string | null, modelProvider?: string | null, serviceTier?: ServiceTier 
  * and subsequent turns.
  */
 approvalsReviewer?: ApprovalsReviewer | null, sandbox?: SandboxMode | null, config?: { [key in string]?: JsonValue } | null, baseInstructions?: string | null, developerInstructions?: string | null, ephemeral?: boolean, /**
- * If true, persist additional rollout EventMsg variants required to
- * reconstruct a richer thread history on subsequent resume/fork/read.
+ * When true, return only thread metadata and live fork state without
+ * populating `thread.turns`. This is useful when the client plans to call
+ * `thread/turns/list` immediately after forking.
  */
-persistExtendedHistory: boolean};
+excludeTurns?: boolean};

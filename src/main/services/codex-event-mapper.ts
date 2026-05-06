@@ -589,6 +589,37 @@ function mapCodexEventToStreamEventsInner(
     return []
   }
 
+  // ── Thread goal lifecycle ─────────────────────────────────────
+  if (method === 'thread/goal/updated') {
+    const payload = asObject(event.payload)
+    const goal = asObject(payload?.goal)
+    if (!goal) return []
+
+    return [
+      {
+        type: 'codex.goal.updated',
+        sessionId: hiveSessionId,
+        data: annotateData({
+          goal,
+          threadId: asString(payload?.threadId) ?? event.threadId
+        })
+      }
+    ]
+  }
+
+  if (method === 'thread/goal/cleared') {
+    const payload = asObject(event.payload)
+    return [
+      {
+        type: 'codex.goal.cleared',
+        sessionId: hiveSessionId,
+        data: annotateData({
+          threadId: asString(payload?.threadId) ?? event.threadId
+        })
+      }
+    ]
+  }
+
   // ── Content deltas — actual Codex notification methods ───────
   const streamKind = contentStreamKindFromMethod(method)
   if (streamKind) {

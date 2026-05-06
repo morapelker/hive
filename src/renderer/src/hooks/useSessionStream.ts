@@ -3,6 +3,7 @@ import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcr
 import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import type { OpenCodeMessage, StreamingPart } from '@/components/sessions/SessionView'
 import type { ToolUseInfo } from '@/components/sessions/ToolCard'
 
@@ -555,6 +556,18 @@ export function useSessionStream({
                 void finalizeResponse()
               }
             }
+          }
+
+          // -----------------------------------------------------------
+          // Codex goal notifications
+          // -----------------------------------------------------------
+          else if (event.type === 'codex.goal.updated') {
+            const goal = event.data?.goal
+            if (goal && typeof goal === 'object') {
+              useSessionStore.getState().setCodexGoal(sessionId, goal as CodexThreadGoal)
+            }
+          } else if (event.type === 'codex.goal.cleared') {
+            useSessionStore.getState().clearCodexGoal(sessionId)
           }
 
           // -----------------------------------------------------------

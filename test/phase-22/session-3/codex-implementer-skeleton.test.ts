@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { EventEmitter } from 'events'
 
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
@@ -41,8 +42,8 @@ describe('CodexImplementer skeleton', () => {
       expect(impl.capabilities.supportsRedo).toBe(false)
     })
 
-    it('supportsCommands is false', () => {
-      expect(impl.capabilities.supportsCommands).toBe(false)
+    it('supportsCommands is true', () => {
+      expect(impl.capabilities.supportsCommands).toBe(true)
     })
 
     it('supportsModelSelection is true', () => {
@@ -186,6 +187,222 @@ describe('CodexImplementer skeleton', () => {
     })
   })
 
+  describe('goal slash command support', () => {
+    it('lists the Codex goal slash command', async () => {
+      const commands = (await impl.listCommands('/path')) as Array<{ name: string; template: string }>
+
+      expect(commands).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'goal',
+            template: '/goal '
+          })
+        ])
+      )
+    })
+
+    it('routes /goal objective to thread/goal/set and emits a visible confirmation', async () => {
+      const manager = {
+        setThreadGoal: vi.fn().mockResolvedValue({
+          goal: {
+            threadId: 'thread-1',
+            objective: 'Finish the migration',
+            status: 'active',
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: 1,
+            updatedAt: 1
+          }
+        })
+      }
+      ;(impl as any).manager = manager
+      ;(impl as any).sessions.set('/path::thread-1', {
+        threadId: 'thread-1',
+        hiveSessionId: 'hive-1',
+        worktreePath: '/path',
+        status: 'ready',
+        messages: [],
+        pendingHitlRequestIds: new Set<string>(),
+        liveAssistantDraft: null,
+        currentTurnId: null,
+        currentAssistantMessageId: null,
+        revertMessageID: null,
+        revertDiff: null,
+        titleGenerated: true,
+        titleGenerationStarted: true,
+        persistDebounceTimer: null
+      })
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      } as any
+      impl.setMainWindow(mockWindow)
+
+      await impl.sendCommand('/path', 'thread-1', 'goal', 'Finish the migration')
+
+      expect(manager.setThreadGoal).toHaveBeenCalledWith('thread-1', {
+        objective: 'Finish the migration',
+        status: 'active'
+      })
+      expect((impl as any).sessions.get('/path::thread-1').messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            parts: expect.arrayContaining([
+              expect.objectContaining({
+                type: 'text',
+                text: '/goal Finish the migration'
+              })
+            ])
+          })
+        ])
+      )
+      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
+        'opencode:stream',
+        expect.objectContaining({
+          type: 'codex.goal.updated',
+          sessionId: 'hive-1',
+          data: expect.objectContaining({
+            threadId: 'thread-1',
+            goal: expect.objectContaining({
+              objective: 'Finish the migration',
+              status: 'active'
+            })
+          })
+        })
+      )
+      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
+        'opencode:stream',
+        expect.objectContaining({
+          type: 'message.part.updated',
+          sessionId: 'hive-1',
+          data: expect.objectContaining({
+            part: expect.objectContaining({
+              type: 'text',
+              text: expect.stringContaining('Goal active')
+            })
+          })
+        })
+      )
+    })
+
+    it('does not stream goal notifications whose payload thread does not match the running session thread', async () => {
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      } as any
+      impl.setMainWindow(mockWindow)
+      const manager = new EventEmitter() as EventEmitter & {
+        sendTurn: ReturnType<typeof vi.fn>
+      }
+      manager.sendTurn = vi.fn().mockImplementation(async () => {
+        manager.emit('event', {
+          id: 'event-1',
+          kind: 'notification',
+          provider: 'codex',
+          threadId: 'thread-1',
+          method: 'thread/goal/updated',
+          payload: {
+            threadId: 'other-thread',
+            goal: {
+              threadId: 'other-thread',
+              objective: 'Unrelated goal',
+              status: 'active',
+              tokenBudget: null,
+              tokensUsed: 1,
+              timeUsedSeconds: 1,
+              createdAt: 1,
+              updatedAt: 1
+            }
+          },
+          createdAt: '2026-05-02T10:00:00.000Z'
+        })
+        manager.emit('event', {
+          id: 'event-2',
+          kind: 'notification',
+          provider: 'codex',
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          method: 'turn/completed',
+          payload: {
+            turn: { id: 'turn-1', status: 'completed' }
+          },
+          createdAt: '2026-05-02T10:00:01.000Z'
+        })
+      })
+      ;(impl as any).manager = manager
+      ;(impl as any).sessions.set('/path::thread-1', {
+        threadId: 'thread-1',
+        hiveSessionId: 'hive-1',
+        worktreePath: '/path',
+        status: 'ready',
+        messages: [],
+        pendingHitlRequestIds: new Set<string>(),
+        liveAssistantDraft: null,
+        currentTurnId: null,
+        currentAssistantMessageId: null,
+        revertMessageID: null,
+        revertDiff: null,
+        titleGenerated: true,
+        titleGenerationStarted: true,
+        persistDebounceTimer: null
+      })
+
+      await impl.prompt('/path', 'thread-1', 'continue')
+
+      expect(mockWindow.webContents.send).not.toHaveBeenCalledWith(
+        'opencode:stream',
+        expect.objectContaining({
+          type: 'codex.goal.updated',
+          sessionId: 'hive-1'
+        })
+      )
+    })
+
+    it('routes /goal clear to thread/goal/clear and emits a goal cleared stream event', async () => {
+      const manager = {
+        clearThreadGoal: vi.fn().mockResolvedValue({ cleared: true })
+      }
+      ;(impl as any).manager = manager
+      ;(impl as any).sessions.set('/path::thread-1', {
+        threadId: 'thread-1',
+        hiveSessionId: 'hive-1',
+        worktreePath: '/path',
+        status: 'ready',
+        messages: [],
+        pendingHitlRequestIds: new Set<string>(),
+        liveAssistantDraft: null,
+        currentTurnId: null,
+        currentAssistantMessageId: null,
+        revertMessageID: null,
+        revertDiff: null,
+        titleGenerated: true,
+        titleGenerationStarted: true,
+        persistDebounceTimer: null
+      })
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      } as any
+      impl.setMainWindow(mockWindow)
+
+      await impl.sendCommand('/path', 'thread-1', 'goal', 'clear')
+
+      expect(manager.clearThreadGoal).toHaveBeenCalledWith('thread-1')
+      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
+        'opencode:stream',
+        expect.objectContaining({
+          type: 'codex.goal.cleared',
+          sessionId: 'hive-1',
+          data: expect.objectContaining({
+            threadId: 'thread-1'
+          })
+        })
+      )
+    })
+  })
+
   describe('steer', () => {
     it('assigns canonical same-turn IDs and rolls subsequent assistant deltas below the steered user', async () => {
       const state = {
@@ -306,18 +523,18 @@ describe('CodexImplementer skeleton', () => {
     })
   })
 
-  // ── Unimplemented command methods throw ─────────────────────────
+  // ── Command methods ──────────────────────────────────────────────
 
-  describe('unimplemented command methods throw descriptive errors', () => {
-    it('listCommands throws', async () => {
-      await expect(impl.listCommands('/path')).rejects.toThrow(
-        'CodexImplementer.listCommands() not yet implemented'
+  describe('implemented command methods validate session and command', () => {
+    it('sendCommand throws for unsupported commands', async () => {
+      await expect(impl.sendCommand('/path', 'session-1', '/help')).rejects.toThrow(
+        'Unsupported Codex command: /help'
       )
     })
 
-    it('sendCommand throws', async () => {
-      await expect(impl.sendCommand('/path', 'session-1', '/help')).rejects.toThrow(
-        'CodexImplementer.sendCommand() not yet implemented'
+    it('sendCommand throws when the session is missing', async () => {
+      await expect(impl.sendCommand('/path', 'session-1', 'goal', 'ship')).rejects.toThrow(
+        'session not found'
       )
     })
   })

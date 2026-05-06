@@ -213,7 +213,7 @@ describe('Capability contracts are stable', () => {
     })
 
     it('does NOT support commands (slash commands)', () => {
-      expect(CODEX_CAPABILITIES.supportsCommands).toBe(false)
+      expect(CODEX_CAPABILITIES.supportsCommands).toBe(true)
     })
 
     it('supports human-in-the-loop features', () => {

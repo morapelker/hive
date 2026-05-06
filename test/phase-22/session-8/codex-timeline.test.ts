@@ -2,10 +2,67 @@ import { describe, expect, it } from 'vitest'
 
 import {
   deriveCodexTimelineMessages,
+  mergeCodexLiveAndDurableMessages,
   mergeCodexActivityMessages
 } from '../../../src/renderer/src/lib/codex-timeline'
 
 describe('codex timeline derivation', () => {
+  it('preserves durable user messages when active live Codex transcript omits them', () => {
+    const durableMessages = [
+      {
+        id: 'local-user-1',
+        role: 'user' as const,
+        content: 'Add mul 161 to main',
+        timestamp: '2026-05-02T18:17:27.000Z',
+        parts: [{ type: 'text' as const, text: 'Add mul 161 to main' }]
+      }
+    ]
+    const liveMessages = [
+      {
+        id: 'turn-1:assistant',
+        role: 'assistant' as const,
+        content: 'Working on it',
+        timestamp: '2026-05-02T18:17:28.000Z',
+        parts: [{ type: 'text' as const, text: 'Working on it' }]
+      }
+    ]
+
+    const timeline = mergeCodexLiveAndDurableMessages(liveMessages, durableMessages, [], false)
+
+    expect(timeline.map((message) => `${message.role}:${message.content}`)).toEqual([
+      'user:Add mul 161 to main',
+      'assistant:Working on it'
+    ])
+  })
+
+  it('does not duplicate live messages already present in durable Codex state', () => {
+    const durableMessages = [
+      {
+        id: 'turn-1:user',
+        role: 'user' as const,
+        content: 'Question',
+        timestamp: '2026-05-02T18:17:27.000Z',
+        parts: [{ type: 'text' as const, text: 'Question' }]
+      },
+      {
+        id: 'turn-1:assistant',
+        role: 'assistant' as const,
+        content: 'Answer',
+        timestamp: '2026-05-02T18:17:28.000Z',
+        parts: [{ type: 'text' as const, text: 'Answer' }]
+      }
+    ]
+
+    const timeline = mergeCodexLiveAndDurableMessages(
+      [{ ...durableMessages[1] }],
+      durableMessages,
+      [],
+      true
+    )
+
+    expect(timeline.map((message) => message.id)).toEqual(['turn-1:user', 'turn-1:assistant'])
+  })
+
   it('renders tool activities inside the turn block instead of collapsing them above the transcript', () => {
     const messages: SessionMessage[] = [
       {

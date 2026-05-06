@@ -44,6 +44,7 @@ import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
 import { TaskListWidget } from './TaskListWidget'
+import { GoalStatusWidget } from './GoalStatusWidget'
 import { useLatestTodoList } from './useLatestTodoList'
 import { usePRStackTopOffset } from './usePRStackTopOffset'
 import { useFileMentions } from '@/hooks/useFileMentions'
@@ -51,6 +52,7 @@ import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useBashRuns } from '@/hooks/useBashRuns'
 import type { FlatFile } from '@/lib/file-search-utils'
 import { useSessionStore } from '@/stores/useSessionStore'
+import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
@@ -79,7 +81,10 @@ import { useDiffCommentStore } from '@/stores/useDiffCommentStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
-import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/codex-timeline'
+import {
+  deriveCodexTimelineMessages,
+  mergeCodexLiveAndDurableMessages
+} from '@/lib/codex-timeline'
 import { correlateSubtasksIntoTaskTools } from '@/lib/codex-subtask-correlation'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
@@ -315,6 +320,35 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function summarizeStreamEventForDebug(event: {
+  type?: string
+  sessionId?: string
+  childSessionId?: string
+  statusPayload?: { type?: string }
+  data?: unknown
+}): Record<string, unknown> {
+  const data = asRecord(event.data)
+  const part = asRecord(data?.part)
+  const goal = asRecord(data?.goal)
+  const delta = asString(data?.delta)
+  const partText = asString(part?.text)
+  const state = asRecord(part?.state)
+  const outputDelta = asString(state?.outputDelta)
+
+  return {
+    type: event.type,
+    eventSessionId: event.sessionId,
+    childSessionId: event.childSessionId ?? null,
+    status: event.statusPayload?.type ?? asString(asRecord(data?.status)?.type) ?? null,
+    codexEventId: asString(data?._codexEventId) ?? null,
+    partType: asString(part?.type) ?? null,
+    tool: asString(part?.tool) ?? null,
+    goalStatus: asString(goal?.status) ?? null,
+    goalThreadId: asString(goal?.threadId) ?? asString(data?.threadId) ?? null,
+    deltaLength: (delta ?? partText ?? outputDelta ?? '').length
+  }
 }
 
 function extractSessionErrorMessage(data: unknown): string {
@@ -612,6 +646,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
+  const codexGoal = useSessionStore((state) => state.codexGoalsBySession.get(sessionId) ?? null)
   const persistedFollowUpMessages =
     useSessionStore((state) => state.pendingFollowUpMessages.get(sessionId)) ?? EMPTY_STRING_ARRAY
 
@@ -702,6 +737,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Falls back to checking sessionAgentSdk when capabilities haven't loaded yet (race condition)
   const canSteer = (sessionCapabilities?.supportsSteer ?? sessionAgentSdk === 'codex') && isStreaming
   const globalModel = useSettingsStore((state) => resolveModelForSdk(sessionAgentSdk, state))
+  const goalStatusCollapsed = useSettingsStore((state) => state.goalStatusCollapsed)
   const effectiveModel: SelectedModel | null =
     sessionRecord?.model_provider_id && sessionRecord.model_id
       ? {
@@ -1501,9 +1537,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
           const opencodeMessages = Array.isArray(result.messages) ? result.messages : []
           if (isCodexSession) {
-            const isIdle = currentStoredStatus?.type !== 'busy'
-            loadedMessages = mergeCodexActivityMessages(
+            const isIdle =
+              currentStoredStatus?.type === 'busy' || currentStoredStatus?.status === 'working'
+                ? false
+                : currentStoredStatus?.status === 'planning'
+                  ? false
+                  : true
+            loadedMessages = mergeCodexLiveAndDurableMessages(
               mapOpencodeMessagesToSessionViewMessages(opencodeMessages),
+              loadedMessages,
               codexActivities,
               isIdle
             )
@@ -1763,12 +1805,48 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             })
           }
 
+          const shouldTraceCodexStream =
+            sessionRecord?.agent_sdk === 'codex' ||
+            event.sessionId === sessionId ||
+            event.type?.startsWith('codex.') === true
+
+          if (shouldTraceCodexStream) {
+            console.info('[CODEX_STREAM_DEBUG] renderer received before filters', {
+              ...summarizeStreamEventForDebug(event),
+              componentSessionId: sessionId,
+              currentOpencodeSessionId: transcriptSourceRef.current.opencodeSessionId,
+              matchesComponentSession: event.sessionId === sessionId,
+              streamGeneration: streamGenerationRef.current,
+              currentGeneration
+            })
+          }
+
           // Only handle events for this session
-          if (event.sessionId !== sessionId) return
+          if (event.sessionId !== sessionId) {
+            if (shouldTraceCodexStream) {
+              console.info('[CODEX_STREAM_DEBUG] renderer dropped session mismatch', {
+                eventSessionId: event.sessionId,
+                componentSessionId: sessionId,
+                type: event.type
+              })
+            }
+            return
+          }
 
           // Guard: generation check — prevents stale closures from processing
           // events when the user has already switched to a different session.
-          if (streamGenerationRef.current !== currentGeneration) return
+          if (streamGenerationRef.current !== currentGeneration) {
+            if (shouldTraceCodexStream) {
+              console.info('[CODEX_STREAM_DEBUG] renderer dropped stale generation', {
+                eventSessionId: event.sessionId,
+                componentSessionId: sessionId,
+                type: event.type,
+                streamGeneration: streamGenerationRef.current,
+                currentGeneration
+              })
+            }
+            return
+          }
 
           if (sessionRecord?.agent_sdk === 'codex') {
             const codexEventId =
@@ -1781,6 +1859,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
             if (codexEventId) {
               if (seenCodexEventIdsRef.current.has(codexEventId)) {
+                console.info('[CODEX_STREAM_DEBUG] renderer dropped duplicate codex event', {
+                  eventSessionId: event.sessionId,
+                  componentSessionId: sessionId,
+                  type: event.type,
+                  codexEventId
+                })
                 return
               }
               seenCodexEventIdsRef.current.add(codexEventId)
@@ -1880,10 +1964,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Handle commands_available — re-fetch slash commands after SDK init
           if (event.type === 'session.commands_available') {
             const wtPath = transcriptSourceRef.current.worktreePath
-            const opcSid = transcriptSourceRef.current.opencodeSessionId
             if (wtPath) {
               window.opencodeOps
-                .commands(wtPath, opcSid ?? undefined)
+                .commands(wtPath, sessionId)
                 .then((result) => {
                   if (result.success && result.commands) {
                     setSlashCommands(result.commands)
@@ -1892,6 +1975,54 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 .catch(() => {
                   // Silently ignore — commands will be fetched on next prompt cycle
                 })
+            }
+            return
+          }
+
+          if (event.type === 'codex.goal.updated') {
+            const data = asRecord(event.data)
+            const goal = asRecord(data?.goal)
+            const eventThreadId = asString(data?.threadId) ?? asString(goal?.threadId)
+            const currentThreadId = transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
+
+            if (goal && (!currentThreadId || !eventThreadId || eventThreadId === currentThreadId)) {
+              console.info('[CODEX_STREAM_DEBUG] renderer applying goal updated', {
+                componentSessionId: sessionId,
+                eventThreadId,
+                currentThreadId,
+                goalStatus: asString(goal.status),
+                objectiveLength: asString(goal.objective)?.length ?? 0
+              })
+              useSessionStore.getState().setCodexGoal(sessionId, goal as unknown as CodexThreadGoal)
+            } else {
+              console.info('[CODEX_STREAM_DEBUG] renderer skipped goal updated', {
+                componentSessionId: sessionId,
+                eventThreadId,
+                currentThreadId,
+                hasGoal: !!goal
+              })
+            }
+            return
+          }
+
+          if (event.type === 'codex.goal.cleared') {
+            const data = asRecord(event.data)
+            const eventThreadId = asString(data?.threadId)
+            const currentThreadId = transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
+
+            if (!currentThreadId || !eventThreadId || eventThreadId === currentThreadId) {
+              console.info('[CODEX_STREAM_DEBUG] renderer applying goal cleared', {
+                componentSessionId: sessionId,
+                eventThreadId,
+                currentThreadId
+              })
+              useSessionStore.getState().clearCodexGoal(sessionId)
+            } else {
+              console.info('[CODEX_STREAM_DEBUG] renderer skipped goal cleared', {
+                componentSessionId: sessionId,
+                eventThreadId,
+                currentThreadId
+              })
             }
             return
           }
@@ -2121,7 +2252,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
           if (event.type === 'message.part.updated') {
             // Skip user-message echoes; user messages are already rendered locally.
-            if (eventRole === 'user') return
+            if (eventRole === 'user') {
+              if (sessionRecord?.agent_sdk === 'codex') {
+                console.info('[CODEX_STREAM_DEBUG] renderer skipped user echo part', {
+                  componentSessionId: sessionId,
+                  ...summarizeStreamEventForDebug(event)
+                })
+              }
+              return
+            }
 
             // Route child/subagent events into their SubtaskCard
             if (event.childSessionId) {
@@ -2295,11 +2434,21 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               if (part.type === 'text') {
                 const delta = event.data?.delta || part.text || ''
                 if (delta) {
+                  console.info('[CODEX_STREAM_DEBUG] renderer applying codex text part', {
+                    componentSessionId: sessionId,
+                    deltaLength: String(delta).length,
+                    messageCountBefore: messages.length
+                  })
                   applyCodexStreamingPart({ type: 'text', text: delta })
                 }
               } else if (part.type === 'reasoning') {
                 const delta = event.data?.delta || part.text || ''
                 if (delta) {
+                  console.info('[CODEX_STREAM_DEBUG] renderer applying codex reasoning part', {
+                    componentSessionId: sessionId,
+                    deltaLength: String(delta).length,
+                    messageCountBefore: messages.length
+                  })
                   applyCodexStreamingPart({ type: 'reasoning', reasoning: delta })
                 }
               } else if (part.type === 'tool') {
@@ -2310,6 +2459,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   completed: 'success',
                   error: 'error'
                 }
+                console.info('[CODEX_STREAM_DEBUG] renderer applying codex tool part', {
+                  componentSessionId: sessionId,
+                  tool: part.tool || 'Unknown',
+                  toolId: part.callID || part.id || null,
+                  toolStatus: state.status,
+                  outputDeltaLength: typeof state.outputDelta === 'string' ? state.outputDelta.length : 0,
+                  messageCountBefore: messages.length
+                })
                 applyCodexStreamingPart({
                   type: 'tool_use',
                   toolUse: {
@@ -3101,9 +3258,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
 
         // Fetch slash commands (fire-and-forget)
-        const fetchCommands = (path: string, opcSessionId?: string): void => {
+        const fetchCommands = (path: string): void => {
           window.opencodeOps
-            .commands(path, opcSessionId)
+            .commands(path, sessionId)
             .then((result) => {
               if (result.success && result.commands) {
                 setSlashCommands(result.commands)
@@ -3234,7 +3391,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setRevertMessageID(reconnectResult.revertMessageID)
             }
             fetchModelLimits()
-            fetchCommands(wtPath, existingOpcSessionId)
+            fetchCommands(wtPath)
             hydratePermissions(wtPath)
             // Create response log file if logging is enabled
             if (isLogModeRef.current) {
@@ -3313,8 +3470,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
           setRevertMessageID(null)
           fetchModelLimits()
-          fetchCommands(wtPath, connectResult.sessionId)
-          hydratePermissions(wtPath)
           // Persist only for first-time session connections.
           // If reconnect to an existing OpenCode session failed and we had to
           // open a temporary replacement session, keep the original pointer in
@@ -3324,6 +3479,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               opencode_session_id: connectResult.sessionId
             })
           }
+          fetchCommands(wtPath)
+          hydratePermissions(wtPath)
           // Create response log file if logging is enabled
           if (isLogModeRef.current) {
             try {
@@ -3477,7 +3634,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       let loadedMessages = mapOpencodeMessagesToSessionViewMessages(rawMessages)
       if (session.agent_sdk === 'codex') {
         const durableState = await loadCodexDurableState(sessionId)
-        loadedMessages = mergeCodexActivityMessages(loadedMessages, durableState.activities, true)
+        loadedMessages = mergeCodexLiveAndDurableMessages(
+          loadedMessages,
+          durableState.messages,
+          durableState.activities,
+          true
+        )
       }
       setMessages(loadedMessages)
       setViewState({ status: 'connected' })
@@ -3572,10 +3734,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         )
         if (transcriptResult.success) {
           const isIdle = !isStreamingRef.current
-          const liveMessages = mergeCodexActivityMessages(
+          const liveMessages = mergeCodexLiveAndDurableMessages(
             mapOpencodeMessagesToSessionViewMessages(
               Array.isArray(transcriptResult.messages) ? transcriptResult.messages : []
             ),
+            durableState.messages,
             durableState.activities,
             isIdle
           )
@@ -3613,10 +3776,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const transcriptResult = await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
     if (!transcriptResult.success) return
 
-    const liveMessages = mergeCodexActivityMessages(
+    const liveMessages = mergeCodexLiveAndDurableMessages(
       mapOpencodeMessagesToSessionViewMessages(
         Array.isArray(transcriptResult.messages) ? transcriptResult.messages : []
       ),
+      durableState.messages,
       durableState.activities,
       !isStreamingRef.current
     )
@@ -3784,6 +3948,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 index === existingIndex ? nextMessage : message
               )
             : [...nextMessages, nextMessage]
+
+        console.info('[CODEX_STREAM_DEBUG] renderer codex message state updated', {
+          messageId,
+          existingIndex,
+          nextPartsCount: nextParts.length,
+          nextContentLength: nextContent.length,
+          mergedMessageCount: mergedMessages.length
+        })
 
         return correlateSubtasksIntoTaskTools(mergedMessages)
       })
@@ -5547,6 +5719,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const { todos: latestTodos, isIncomplete: latestTodosIncomplete } =
     useLatestTodoList(currentTurnMessages, streamingMessage)
   const taskListTopOffsetPx = usePRStackTopOffset()
+  const showGoalStatusWidget = sessionAgentSdk === 'codex' && !!codexGoal
+  const goalStatusWidgetHeightPx = goalStatusCollapsed ? 48 : 190
+  const taskListStackTopOffsetPx = showGoalStatusWidget
+    ? taskListTopOffsetPx + goalStatusWidgetHeightPx
+    : taskListTopOffsetPx
 
   const handleRedoRevert = useCallback(() => {
     setInputValue('/redo')
@@ -5756,8 +5933,11 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             />
           )}
         </div>
+        {showGoalStatusWidget && (
+          <GoalStatusWidget goal={codexGoal} topOffsetPx={taskListTopOffsetPx} />
+        )}
         {latestTodos && latestTodosIncomplete && (
-          <TaskListWidget todos={latestTodos} topOffsetPx={taskListTopOffsetPx} />
+          <TaskListWidget todos={latestTodos} topOffsetPx={taskListStackTopOffsetPx} />
         )}
         <PlanReadyImplementFab
           onImplement={handlePlanReadyImplement}
