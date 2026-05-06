@@ -10,6 +10,15 @@ export interface TipDefinition {
 }
 
 export const TIP_DEFINITIONS: Record<string, TipDefinition> = {
+  'hatch-first-pet': {
+    id: 'hatch-first-pet',
+    description:
+      'Hatch your first pet — a desktop companion that reflects the worktree needing the most attention.',
+    trigger: 'mount',
+    priority: 0,
+    side: 'bottom',
+    align: 'end'
+  },
   'kanban-icon': {
     id: 'kanban-icon',
     description: 'You can manage your tickets as a kanban board from this icon.',
