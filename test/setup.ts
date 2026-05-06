@@ -139,4 +139,32 @@ if (typeof window !== 'undefined') {
       }
     })
   }
+
+  if (!window.petOps) {
+    Object.defineProperty(window, 'petOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        show: vi.fn().mockResolvedValue(undefined),
+        hide: vi.fn().mockResolvedValue(undefined),
+        publishStatus: vi.fn(),
+        setIgnoreMouse: vi.fn(),
+        beginPointerInteraction: vi.fn(),
+        endPointerInteraction: vi.fn(),
+        move: vi.fn(),
+        focusMain: vi.fn().mockResolvedValue(undefined),
+        getConfig: vi.fn().mockResolvedValue({
+          settings: { enabled: false, petId: 'bee', size: 'M', opacity: 1, hasHatched: true },
+          position: { x: 0, y: 0 },
+          manifest: { id: 'bee', name: 'Bee', version: '1.0.0', assets: {} }
+        }),
+        getCurrentStatus: vi.fn().mockResolvedValue({ state: 'idle', sourceWorktreeId: null }),
+        updateSettings: vi.fn(),
+        markHatched: vi.fn(),
+        onStatus: vi.fn().mockReturnValue(() => {}),
+        onSettingsUpdated: vi.fn().mockReturnValue(() => {}),
+        onJumpToWorktree: vi.fn().mockReturnValue(() => {})
+      }
+    })
+  }
 }

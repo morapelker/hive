@@ -1,4 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
+import type {
+  PetManifest,
+  PetPosition,
+  PetSettings,
+  PetStatusPayload
+} from '../shared/types/pet'
 
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
 // point mapping. Any zoom level breaks coordinate sync and causes misaligned
@@ -589,6 +595,70 @@ const systemOps = {
   // more queued messages are about to be auto-sent.
   setSessionQueuedState: (sessionId: string, hasQueued: boolean): Promise<void> =>
     ipcRenderer.invoke('notification:setSessionQueuedState', sessionId, hasQueued)
+}
+
+const petOps = {
+  show: (): Promise<void> => ipcRenderer.invoke('pet:show'),
+  hide: (): Promise<void> => ipcRenderer.invoke('pet:hide'),
+  publishStatus: (payload: PetStatusPayload): void => {
+    ipcRenderer.send('pet:publish-status', payload)
+  },
+  setIgnoreMouse: (ignore: boolean): void => {
+    ipcRenderer.send('pet:set-ignore-mouse', { ignore })
+  },
+  beginPointerInteraction: (): void => {
+    ipcRenderer.send('pet:begin-pointer-interaction')
+  },
+  endPointerInteraction: (): void => {
+    ipcRenderer.send('pet:end-pointer-interaction')
+  },
+  move: (position: PetPosition): void => {
+    ipcRenderer.send('pet:move', position)
+  },
+  focusMain: (payload: { worktreeId: string | null }): Promise<void> =>
+    ipcRenderer.invoke('pet:focus-main', payload),
+  getConfig: (): Promise<{
+    settings: PetSettings
+    position: PetPosition
+    manifest: PetManifest
+  }> => ipcRenderer.invoke('pet:get-config'),
+  getCurrentStatus: (): Promise<PetStatusPayload> => ipcRenderer.invoke('pet:get-current-status'),
+  updateSettings: (partial: Partial<PetSettings>): void => {
+    ipcRenderer.send('pet:update-settings', partial)
+  },
+  markHatched: (): void => {
+    ipcRenderer.send('pet:mark-hatched')
+  },
+  onStatus: (callback: (payload: PetStatusPayload) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: PetStatusPayload): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('pet:status', handler)
+    return () => {
+      ipcRenderer.removeListener('pet:status', handler)
+    }
+  },
+  onSettingsUpdated: (callback: (settings: PetSettings) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, settings: PetSettings): void => {
+      callback(settings)
+    }
+    ipcRenderer.on('pet:settings-updated', handler)
+    return () => {
+      ipcRenderer.removeListener('pet:settings-updated', handler)
+    }
+  },
+  onJumpToWorktree: (callback: (payload: { worktreeId: string }) => void): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: { worktreeId: string }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('pet:jump-to-worktree', handler)
+    return () => {
+      ipcRenderer.removeListener('pet:jump-to-worktree', handler)
+    }
+  }
 }
 
 // Response logging operations API (only functional when --log is active)
@@ -2162,6 +2232,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('projectOps', projectOps)
     contextBridge.exposeInMainWorld('worktreeOps', worktreeOps)
     contextBridge.exposeInMainWorld('systemOps', systemOps)
+    contextBridge.exposeInMainWorld('petOps', petOps)
     contextBridge.exposeInMainWorld('opencodeOps', opencodeOps)
     contextBridge.exposeInMainWorld('fileTreeOps', fileTreeOps)
     contextBridge.exposeInMainWorld('gitOps', gitOps)
@@ -2193,6 +2264,8 @@ if (process.contextIsolated) {
   window.worktreeOps = worktreeOps
   // @ts-expect-error (define in dts)
   window.systemOps = systemOps
+  // @ts-expect-error (define in dts)
+  window.petOps = petOps
   // @ts-expect-error (define in dts)
   window.opencodeOps = opencodeOps
   // @ts-expect-error (define in dts)

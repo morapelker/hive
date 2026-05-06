@@ -22,12 +22,21 @@ export default defineConfig({
     }
   },
   renderer: {
+    assetsInclude: ['**/*.lottie'],
     resolve: {
       alias: {
         '@': resolve('src/renderer/src'),
         '@shared': resolve('src/shared')
       }
     },
-    plugins: [react(), tailwindcss()]
+    plugins: [react(), tailwindcss()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          pet: resolve(__dirname, 'src/renderer/pet.html')
+        }
+      }
+    }
   }
 })

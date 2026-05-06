@@ -11,10 +11,10 @@ import {
   Eye,
   Wrench,
   Sparkles,
-  Plug
+  Plug,
+  Bug
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { SettingsAppearance } from './SettingsAppearance'
 import { SettingsGeneral } from './SettingsGeneral'
@@ -27,12 +27,14 @@ import { SettingsSecurity } from './SettingsSecurity'
 import { SettingsPrivacy } from './SettingsPrivacy'
 import { SettingsIntegrations } from './SettingsIntegrations'
 import { SettingsAdvanced } from './SettingsAdvanced'
+import { SettingsPet } from './SettingsPet'
 import { cn } from '@/lib/utils'
 
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'general', label: 'General', icon: Monitor },
   { id: 'models', label: 'Models', icon: Sparkles },
+  { id: 'pet', label: 'Pet', icon: Bug },
   { id: 'editor', label: 'Editor', icon: Code },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'integrations', label: 'Integrations', icon: Plug },
@@ -100,6 +102,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'appearance' && <SettingsAppearance />}
             {activeSection === 'general' && <SettingsGeneral />}
             {activeSection === 'models' && <SettingsModels />}
+            {activeSection === 'pet' && <SettingsPet />}
             {activeSection === 'editor' && <SettingsEditor />}
             {activeSection === 'terminal' && <SettingsTerminal />}
             {activeSection === 'integrations' && <SettingsIntegrations />}

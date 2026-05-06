@@ -44,6 +44,20 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   const initializedRef = useRef<string | null>(null)
   /** Track which backend type is currently mounted */
   const activeBackendTypeRef = useRef<TerminalBackendType | null>(null)
+  /**
+   * Per-setupTerminal-invocation abort token. Each new setupTerminal call
+   * invalidates the previous token; the useEffect cleanup also invalidates
+   * the current token. After the `await getConfig()` checkpoint, we bail
+   * if our captured token has been invalidated. Without this, React
+   * StrictMode's double-mount races two parallel setupTerminal calls past
+   * the pre-await dispose check (both see backendRef=null), so BOTH end
+   * up creating GhosttyBackend instances. The earlier one becomes orphaned
+   * but stays alive — its ResizeObserver keeps firing on-screen syncFrame
+   * IPCs against the same native NSView (surfaces are keyed by terminalId
+   * in main, so both backends share one NSView), undoing every hide the
+   * "current" backend performs on collapse.
+   */
+  const setupAbortRef = useRef<{ aborted: boolean } | null>(null)
 
   const [searchVisible, setSearchVisible] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -62,6 +76,15 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   const ghosttyOverlaySuppressed = useLayoutStore((s) => s.ghosttyOverlaySuppressed)
 
   const effectiveVisible = isVisible && !ghosttyOverlaySuppressed
+
+  // Always-current ref so setupTerminal (a useCallback whose deps intentionally
+  // do NOT include effectiveVisible) can read the latest value when it
+  // recreates the backend. Without this, a recreate that happens while the
+  // panel is collapsed (cwd change, fontSize change, backend swap, StrictMode
+  // double-mount) defaults the new backend's `visible` to true and pins the
+  // NSView on-screen even though the UI is hidden — see GhosttyBackend.mount.
+  const effectiveVisibleRef = useRef(effectiveVisible)
+  effectiveVisibleRef.current = effectiveVisible
 
   // Expose imperative methods to parent via ref
   useImperativeHandle(
@@ -186,6 +209,15 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       const container = containerRef.current
       if (!container) return
 
+      // Invalidate any prior in-flight setupTerminal so its post-await
+      // continuation bails before mounting a backend. Capture our own token
+      // we'll re-check after every async checkpoint below.
+      if (setupAbortRef.current) {
+        setupAbortRef.current.aborted = true
+      }
+      const myAbort = { aborted: false }
+      setupAbortRef.current = myAbort
+
       // Prevent re-initializing for the same terminal+backend combo
       if (initializedRef.current === terminalId && activeBackendTypeRef.current === backendType) {
         return
@@ -200,6 +232,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       // If switching backends on an existing terminal, destroy the old PTY
       if (initializedRef.current === terminalId && activeBackendTypeRef.current !== backendType) {
         await destroyTerminal(terminalId)
+        if (myAbort.aborted) return
       }
 
       initializedRef.current = terminalId
@@ -214,6 +247,16 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       } catch {
         // Failed to fetch config, use defaults
       }
+
+      // CRITICAL: bail out if a newer setupTerminal (StrictMode double-mount,
+      // backend swap, cwd change, or our useEffect cleanup) has superseded
+      // us. Without this guard, React StrictMode races two parallel
+      // setupTerminal calls past the pre-await dispose check and ends up
+      // creating two GhosttyBackend instances for the same terminalId. The
+      // older one becomes orphaned but its ResizeObserver and syncFrame()
+      // keep firing on-screen setFrame IPCs to the shared native NSView,
+      // undoing every hideSurface() the "current" backend performs.
+      if (myAbort.aborted) return
 
       const backend = createBackend(backendType)
 
@@ -231,7 +274,14 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
           fontSize: config.fontSize,
           cursorStyle: config.cursorStyle,
           scrollback: config.scrollbackLimit,
-          shell: config.shell
+          shell: config.shell,
+          // Seed visibility from the current UI state. Critical when the
+          // backend is recreated (e.g. fontSize change, cwd change, StrictMode
+          // double-mount) while the bottom panel is collapsed: defaulting to
+          // `true` would pin the Ghostty NSView on-screen and no later
+          // setVisible call would move it (because effectiveVisible never
+          // changes after recreation).
+          initialVisible: effectiveVisibleRef.current
         },
         {
           onStatusChange: (status, code) => {
@@ -276,6 +326,13 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     setupTerminal(embeddedTerminalBackend || 'xterm')
 
     return () => {
+      // Invalidate the in-flight setupTerminal so its post-await continuation
+      // bails before mounting a backend after we're (potentially fake-)unmounted.
+      // Required to avoid orphaned GhosttyBackend instances under React
+      // StrictMode's double-mount.
+      if (setupAbortRef.current) {
+        setupAbortRef.current.aborted = true
+      }
       if (backendRef.current) {
         backendRef.current.dispose()
         backendRef.current = null

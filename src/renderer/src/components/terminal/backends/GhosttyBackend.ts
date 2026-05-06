@@ -38,7 +38,15 @@ export class GhosttyBackend implements TerminalBackend {
     this.opts = opts
     this.callbacks = callbacks
     this.mounted = true
-    this.visible = true
+    // Seed visibility from the host's current UI state. If the host (e.g. the
+    // bottom-panel terminal) is collapsed at recreation time — common after a
+    // cwd/fontSize/backend-setting change or a React StrictMode double-mount —
+    // defaulting to `true` would let ensureSurface() run the on-screen
+    // syncFrame branch and pin the NSView to a stale on-screen rect that no
+    // later setVisible(false) can move (because effectiveVisible never
+    // changes). Honoring opts.initialVisible avoids that "ghost terminal"
+    // state on collapse.
+    this.visible = opts.initialVisible ?? true
     this.runtimeReady = false
     this.runtimeInitPromise = null
     this.createSurfacePromise = null
@@ -126,8 +134,25 @@ export class GhosttyBackend implements TerminalBackend {
       if (!rect) return
       this.lastVisibleRect = rect
 
+      // If we already know the backend should be hidden (e.g., user collapsed
+      // the panel before this surface finished creating, or initialVisible was
+      // false from mount because the panel was already collapsed), pass
+      // off-screen x/y to ghosttyCreateSurface so the native NSView is BORN
+      // off-screen instead of flashing at the container's last on-screen
+      // position before our follow-up hideSurface IPC arrives. We keep w/h
+      // from the real rect so the PTY grid sizes correctly for when the
+      // surface eventually becomes visible.
+      const createRect = this.visible
+        ? rect
+        : {
+            x: GhosttyBackend.HIDDEN_RECT.x,
+            y: GhosttyBackend.HIDDEN_RECT.y,
+            w: rect.w,
+            h: rect.h
+          }
+
       try {
-        const result = await window.terminalOps.ghosttyCreateSurface(this.terminalId, rect, {
+        const result = await window.terminalOps.ghosttyCreateSurface(this.terminalId, createRect, {
           cwd: this.opts.cwd,
           shell: this.opts.shell,
           scaleFactor: window.devicePixelRatio || 2.0,
@@ -180,6 +205,14 @@ export class GhosttyBackend implements TerminalBackend {
 
   private hideSurface(): void {
     if (!this.surfaceCreated) return
+
+    // Drop any rAF-scheduled syncFrame so a ResizeObserver firing that
+    // landed microseconds before setVisible(false) cannot race the hide
+    // IPC and leave the NSView on-screen with a shrinking height.
+    if (this.syncFrameTimer !== null) {
+      cancelAnimationFrame(this.syncFrameTimer)
+      this.syncFrameTimer = null
+    }
 
     window.terminalOps.ghosttySetFocus(this.terminalId, false).catch(() => {
       // Ignore focus errors
@@ -255,8 +288,14 @@ export class GhosttyBackend implements TerminalBackend {
   /**
    * Schedule a syncFrame on the next animation frame.
    * Coalesces rapid ResizeObserver firings into a single update.
+   *
+   * Defense-in-depth: while hidden, don't even schedule — avoids a race
+   * where a rAF scheduled by the ResizeObserver during a collapse
+   * transition could land between hideSurface()'s cancel and the actual
+   * setFrame IPC, re-positioning the NSView back on-screen.
    */
   private debouncedSyncFrame(): void {
+    if (!this.visible) return
     if (this.syncFrameTimer !== null) return
     this.syncFrameTimer = requestAnimationFrame(() => {
       this.syncFrameTimer = null
@@ -280,6 +319,13 @@ export class GhosttyBackend implements TerminalBackend {
       }
       return
     }
+
+    // While hidden, never update the native frame. Without this guard, a
+    // ResizeObserver firing during a collapse transition (or the window
+    // resize listener, or resize(cols,rows)) would re-position the NSView
+    // back on-screen after hideSurface() moved it off-screen — leaving a
+    // thin strip of terminal visible below the collapsed bottom bar.
+    if (!this.visible) return
 
     const rect = this.getContainerRect()
     if (!rect) return

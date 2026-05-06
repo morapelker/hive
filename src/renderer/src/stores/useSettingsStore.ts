@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import type { UsageProvider } from '@shared/types/usage'
+import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
 
 // ==========================================
@@ -131,6 +132,9 @@ export interface AppSettings {
   // Tips
   tipsEnabled: boolean
 
+  // Pet
+  pet: PetSettings
+
   // Advanced
   environmentVariables: Array<{ key: string; value: string }>
 
@@ -203,6 +207,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   telemetryEnabled: true,
   tipsEnabled: true,
+  pet: {
+    enabled: false,
+    petId: 'bee',
+    size: 'M',
+    opacity: 1,
+    hasHatched: false
+  },
   environmentVariables: [],
   perfDiagnosticsEnabled: false,
   codexJsonlLoggingEnabled: false,
@@ -271,6 +282,10 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
           commandFilter: {
             ...DEFAULT_SETTINGS.commandFilter,
             ...(parsed.commandFilter || {})
+          },
+          pet: {
+            ...DEFAULT_SETTINGS.pet,
+            ...(parsed.pet || {})
           }
         }
 
@@ -345,6 +360,7 @@ function extractSettings(state: SettingsState): AppSettings {
     commandFilter: state.commandFilter,
     telemetryEnabled: state.telemetryEnabled,
     tipsEnabled: state.tipsEnabled,
+    pet: state.pet,
     environmentVariables: state.environmentVariables,
     perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
     codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
@@ -404,6 +420,15 @@ export const useSettingsStore = create<SettingsState>()(
         // Notify main process of channel change
         if (key === 'updateChannel' && window.updaterOps?.setChannel) {
           window.updaterOps.setChannel(value as string)
+        }
+        if (key === 'pet' && window.petOps) {
+          const pet = value as PetSettings
+          window.petOps.updateSettings(pet)
+          if (pet.enabled) {
+            window.petOps.show().catch(() => {})
+          } else {
+            window.petOps.hide().catch(() => {})
+          }
         }
         // Handle board mode switching side effects
         if (key === 'boardMode') {
@@ -542,6 +567,8 @@ export const useSettingsStore = create<SettingsState>()(
       resetToDefaults: () => {
         set({ ...DEFAULT_SETTINGS })
         saveToDatabase(DEFAULT_SETTINGS)
+        window.petOps?.updateSettings(DEFAULT_SETTINGS.pet)
+        window.petOps?.hide().catch(() => {})
       },
 
       loadFromDatabase: async () => {
@@ -553,9 +580,14 @@ export const useSettingsStore = create<SettingsState>()(
             initialSetupComplete: dbSettings.initialSetupComplete ?? true,
             isLoading: false
           })
+          window.petOps?.updateSettings(dbSettings.pet)
+          if (dbSettings.pet.enabled) {
+            window.petOps?.show().catch(() => {})
+          }
         } else {
           set({ isLoading: false })
           await saveToDatabase(extractSettings(get()))
+          window.petOps?.updateSettings(get().pet)
         }
       },
 
@@ -614,6 +646,7 @@ export const useSettingsStore = create<SettingsState>()(
         commandFilter: state.commandFilter,
         telemetryEnabled: state.telemetryEnabled,
         tipsEnabled: state.tipsEnabled,
+        pet: state.pet,
         environmentVariables: state.environmentVariables,
         perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
         codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,

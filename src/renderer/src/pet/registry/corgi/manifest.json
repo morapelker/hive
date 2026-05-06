@@ -1,0 +1,51 @@
+{
+  "id": "corgi",
+  "name": "Corgi",
+  "version": "1.0.0",
+  "author": "Hive",
+  "assets": {
+    "idle": "assets/corgi-static.png",
+    "working": "assets/corgi-static.png",
+    "question": "assets/corgi-static.png",
+    "permission": "assets/corgi-static.png",
+    "plan_ready": "assets/corgi-static.png"
+  },
+  "lottieAssets": {
+    "working": "assets/corgi-anim.lottie"
+  },
+  "lottieScale": {
+    "working": 1.55
+  },
+  "animations": {
+    "idle": {
+      "type": "static",
+      "transform": "none",
+      "overlay": { "kind": "none" }
+    },
+    "working": {
+      "type": "loop",
+      "durationMs": 1800,
+      "transform": "none",
+      "overlay": { "kind": "none" }
+    },
+    "question": {
+      "type": "loop",
+      "durationMs": 1200,
+      "transform": "bounce",
+      "overlay": { "kind": "bubble", "symbol": "?", "tint": "#3b82f6" }
+    },
+    "permission": {
+      "type": "loop",
+      "durationMs": 800,
+      "transform": "bounce",
+      "overlay": { "kind": "bubble", "symbol": "!", "tint": "#ef4444" }
+    },
+    "plan_ready": {
+      "type": "loop",
+      "durationMs": 1600,
+      "transform": "pulse",
+      "overlay": { "kind": "glow", "symbol": "\u2713", "tint": "#22c55e" }
+    }
+  },
+  "defaultSize": "M"
+}

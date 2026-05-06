@@ -14,6 +14,24 @@ export interface TerminalOpts {
   scrollback?: number
   theme?: Record<string, string>
   shell?: string
+  /**
+   * Whether the terminal is visible at the moment of mount.
+   *
+   * Critical for Ghostty: the native NSView is positioned exclusively from JS
+   * via setFrame IPC. When the host (TerminalView) recreates the backend
+   * — e.g. after `cwd` change, font-size change, backend setting change, or
+   * React StrictMode double-mount — the visibility useEffect does NOT re-fire
+   * unless `effectiveVisible` itself changes. If the panel is already
+   * collapsed at recreation time and we default `this.visible = true`,
+   * ensureSurface() will run the on-screen syncFrame branch and the NSView
+   * will be positioned at the (still-measurable) container's rect — which
+   * during a collapse CSS transition is a shrinking on-screen rect that no
+   * later setVisible call can move. Pass the current `effectiveVisible` so
+   * mount() seeds the backend's visible flag correctly.
+   *
+   * Defaults to `true` for back-compat; the xterm backend ignores it.
+   */
+  initialVisible?: boolean
 }
 
 /**

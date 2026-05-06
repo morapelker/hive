@@ -1,6 +1,6 @@
 {
   "name": "hive",
-  "version": "1.0.125",
+  "version": "1.0.128",
   "description": "Native macOS app for managing git worktrees and AI-powered coding sessions",
   "main": "./out/main/index.js",
   "author": "morapelker <morapelker@users.noreply.github.com>",
@@ -65,7 +65,7 @@
     "install:mac": "bash scripts/install.sh"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.119",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.126",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
@@ -86,6 +86,7 @@
     "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.40.0",
     "@electron-toolkit/utils": "^4.0.0",
+    "@lottiefiles/dotlottie-web": "^0.71.0",
     "@monaco-editor/react": "^4.7.0",
     "@opencode-ai/sdk": "^1.1.51",
     "@radix-ui/react-context-menu": "^2.2.16",

@@ -1,4 +1,4 @@
-import type { editor } from 'monaco-editor'
+import type { editor, IRange } from 'monaco-editor'
 
 /**
  * Structured hunk representation for rendering action buttons.
@@ -10,6 +10,34 @@ export interface Hunk {
   modifiedStartLine: number
   modifiedEndLine: number
   type: 'add' | 'delete' | 'modify'
+}
+
+interface LineRange {
+  start: number
+  end: number
+}
+
+export interface HiddenAreasInput {
+  hunks: Hunk[]
+  contextLines: number
+  originalLineCount: number
+  modifiedLineCount: number
+  extraVisibleOriginal?: number[]
+  extraVisibleModified?: number[]
+}
+
+export interface HiddenAreasResult {
+  originalRanges: IRange[]
+  modifiedRanges: IRange[]
+  gaps: Array<{
+    side: 'modified'
+    afterLine: number
+    hiddenLineCount: number
+    firstHiddenOriginal: number | null
+    lastHiddenOriginal: number | null
+    firstHiddenModified: number
+    lastHiddenModified: number
+  }>
 }
 
 /**
@@ -39,6 +67,197 @@ export function parseHunks(changes: editor.ILineChange[] | null): Hunk[] {
       type: isAdd ? 'add' : isDelete ? 'delete' : 'modify'
     }
   })
+}
+
+export function computeHiddenAreas({
+  hunks,
+  contextLines,
+  originalLineCount,
+  modifiedLineCount,
+  extraVisibleOriginal = [],
+  extraVisibleModified = []
+}: HiddenAreasInput): HiddenAreasResult {
+  if (hunks.length === 0) {
+    return { originalRanges: [], modifiedRanges: [], gaps: [] }
+  }
+
+  const originalVisible: LineRange[] = []
+  const modifiedVisible: LineRange[] = []
+
+  for (const hunk of hunks) {
+    addVisibleHunkRange(
+      originalVisible,
+      hunk.originalStartLine,
+      hunk.originalEndLine,
+      contextLines,
+      originalLineCount
+    )
+    addVisibleHunkRange(
+      modifiedVisible,
+      hunk.modifiedStartLine,
+      hunk.modifiedEndLine,
+      contextLines,
+      modifiedLineCount
+    )
+  }
+
+  for (const line of extraVisibleOriginal) {
+    addClampedRange(originalVisible, line - contextLines, line + contextLines, originalLineCount)
+  }
+  for (const line of extraVisibleModified) {
+    addClampedRange(modifiedVisible, line - contextLines, line + contextLines, modifiedLineCount)
+  }
+
+  const originalHidden = invertRanges(mergeRanges(originalVisible), originalLineCount)
+  const modifiedHidden = invertRanges(mergeRanges(modifiedVisible), modifiedLineCount)
+
+  return {
+    originalRanges: originalHidden.map(toMonacoRange),
+    modifiedRanges: modifiedHidden.map(toMonacoRange),
+    gaps: modifiedHidden.map((range) => {
+      const originalRange = mapModifiedHiddenRangeToOriginal(range, hunks, originalLineCount)
+      return {
+        side: 'modified' as const,
+        afterLine: range.start - 1,
+        hiddenLineCount: range.end - range.start + 1,
+        firstHiddenOriginal: originalRange?.start ?? null,
+        lastHiddenOriginal: originalRange?.end ?? null,
+        firstHiddenModified: range.start,
+        lastHiddenModified: range.end
+      }
+    })
+  }
+}
+
+function mapModifiedHiddenRangeToOriginal(
+  range: LineRange,
+  hunks: Hunk[],
+  originalLineCount: number
+): LineRange | null {
+  const start = mapModifiedLineToOriginal(range.start, hunks, originalLineCount)
+  const end = mapModifiedLineToOriginal(range.end, hunks, originalLineCount)
+
+  if (start === null || end === null) {
+    return null
+  }
+
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end)
+  }
+}
+
+function mapModifiedLineToOriginal(
+  modifiedLine: number,
+  hunks: Hunk[],
+  originalLineCount: number
+): number | null {
+  let lineDelta = 0
+  const sortedHunks = [...hunks].sort(
+    (a, b) => a.modifiedStartLine - b.modifiedStartLine || a.modifiedEndLine - b.modifiedEndLine
+  )
+
+  for (const hunk of sortedHunks) {
+    const modifiedEndLine =
+      hunk.modifiedEndLine === 0 ? hunk.modifiedStartLine : hunk.modifiedEndLine
+
+    if (modifiedLine < hunk.modifiedStartLine) {
+      break
+    }
+
+    if (modifiedLine <= modifiedEndLine) {
+      return null
+    }
+
+    lineDelta += getOriginalLineCount(hunk) - getModifiedLineCount(hunk)
+  }
+
+  return clampLine(modifiedLine + lineDelta, originalLineCount)
+}
+
+function getOriginalLineCount(hunk: Hunk): number {
+  if (hunk.originalEndLine === 0) return 0
+  return hunk.originalEndLine - hunk.originalStartLine + 1
+}
+
+function getModifiedLineCount(hunk: Hunk): number {
+  if (hunk.modifiedEndLine === 0) return 0
+  return hunk.modifiedEndLine - hunk.modifiedStartLine + 1
+}
+
+function clampLine(line: number, lineCount: number): number {
+  if (lineCount <= 0) return 0
+  return Math.max(1, Math.min(line, lineCount))
+}
+
+function addVisibleHunkRange(
+  ranges: LineRange[],
+  startLine: number,
+  endLine: number,
+  contextLines: number,
+  lineCount: number
+): void {
+  const start = startLine
+  const end = endLine === 0 ? startLine : endLine
+  addClampedRange(ranges, start - contextLines, end + contextLines, lineCount)
+}
+
+function addClampedRange(ranges: LineRange[], start: number, end: number, lineCount: number): void {
+  if (lineCount <= 0) return
+
+  const clampedStart = Math.max(1, Math.min(start, lineCount))
+  const clampedEnd = Math.max(1, Math.min(end, lineCount))
+  if (clampedStart > clampedEnd) return
+
+  ranges.push({ start: clampedStart, end: clampedEnd })
+}
+
+function mergeRanges(ranges: LineRange[]): LineRange[] {
+  if (ranges.length === 0) return []
+
+  const sorted = [...ranges].sort((a, b) => a.start - b.start || a.end - b.end)
+  const merged: LineRange[] = [{ ...sorted[0] }]
+
+  for (const range of sorted.slice(1)) {
+    const previous = merged[merged.length - 1]
+    if (range.start <= previous.end + 1) {
+      previous.end = Math.max(previous.end, range.end)
+    } else {
+      merged.push({ ...range })
+    }
+  }
+
+  return merged
+}
+
+function invertRanges(visibleRanges: LineRange[], lineCount: number): LineRange[] {
+  if (lineCount <= 0) return []
+  if (visibleRanges.length === 0) return [{ start: 1, end: lineCount }]
+
+  const hidden: LineRange[] = []
+  let cursor = 1
+
+  for (const range of visibleRanges) {
+    if (cursor < range.start) {
+      hidden.push({ start: cursor, end: range.start - 1 })
+    }
+    cursor = range.end + 1
+  }
+
+  if (cursor <= lineCount) {
+    hidden.push({ start: cursor, end: lineCount })
+  }
+
+  return hidden
+}
+
+function toMonacoRange(range: LineRange): IRange {
+  return {
+    startLineNumber: range.start,
+    startColumn: 1,
+    endLineNumber: range.end,
+    endColumn: 1
+  }
 }
 
 /**

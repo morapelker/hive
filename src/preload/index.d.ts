@@ -1,3 +1,10 @@
+import type {
+  PetManifest,
+  PetPosition,
+  PetSettings,
+  PetStatusPayload
+} from '../shared/types/pet'
+
 // Database types for renderer
 interface Connection {
   id: string
@@ -643,6 +650,27 @@ declare global {
       getPlatform: () => Promise<string>
       setKeepAwake: (active: boolean) => Promise<void>
       setSessionQueuedState: (sessionId: string, hasQueued: boolean) => Promise<void>
+    }
+    petOps: {
+      show: () => Promise<void>
+      hide: () => Promise<void>
+      publishStatus: (payload: PetStatusPayload) => void
+      setIgnoreMouse: (ignore: boolean) => void
+      beginPointerInteraction: () => void
+      endPointerInteraction: () => void
+      move: (position: PetPosition) => void
+      focusMain: (payload: { worktreeId: string | null }) => Promise<void>
+      getConfig: () => Promise<{
+        settings: PetSettings
+        position: PetPosition
+        manifest: PetManifest
+      }>
+      getCurrentStatus: () => Promise<PetStatusPayload>
+      updateSettings: (partial: Partial<PetSettings>) => void
+      markHatched: () => void
+      onStatus: (callback: (payload: PetStatusPayload) => void) => () => void
+      onSettingsUpdated: (callback: (settings: PetSettings) => void) => () => void
+      onJumpToWorktree: (callback: (payload: { worktreeId: string }) => void) => () => void
     }
     loggingOps: {
       createResponseLog: (sessionId: string) => Promise<string>

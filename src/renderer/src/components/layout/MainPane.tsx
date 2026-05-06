@@ -45,6 +45,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const activeBoardAssistantProjectId = useSessionStore((state) => state.activeBoardAssistantProjectId)
   const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
   const isPinnedBoardActive = useKanbanStore((state) => state.isPinnedBoardActive)
+  const connectionsLoaded = useConnectionStore((state) => state.loaded)
   const pinnedStoreLoaded = usePinnedStore((state) => state.loaded)
   const boardMode = useSettingsStore((s) => s.boardMode)
   const terminalPosition = useSettingsStore((s) => s.terminalPosition)
@@ -193,7 +194,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
         return <KanbanBoard projectId={selectedProjectId} projectPath={selectedProjectPath} />
       }
       // Connection mode: show connection board
-      if (selectedConnectionId) {
+      if (selectedConnectionId && connectionsLoaded) {
         return <KanbanBoard connectionId={selectedConnectionId} />
       }
       // No project selected: empty state
@@ -224,7 +225,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     }
 
     // Board view — connection-level
-    if (isBoardViewActive && selectedConnectionId && !activeFilePath && !activeDiff && !contextEditorWorktreeId) {
+    if (isBoardViewActive && selectedConnectionId && connectionsLoaded && !activeFilePath && !activeDiff && !contextEditorWorktreeId) {
       return <KanbanBoard connectionId={selectedConnectionId} />
     }
 

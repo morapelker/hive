@@ -819,8 +819,15 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── loadTicketsForConnection ────────────────────────────────
       loadTicketsForConnection: async (connectionId: string) => {
-        const projectIds = get().getConnectionProjectIds(connectionId)
-        if (projectIds.length === 0) return
+        let projectIds = get().getConnectionProjectIds(connectionId)
+        if (projectIds.length === 0) {
+          const connStore = useConnectionStore.getState()
+          if (!connStore.loaded) {
+            await connStore.loadConnections()
+            projectIds = get().getConnectionProjectIds(connectionId)
+          }
+          if (projectIds.length === 0) return
+        }
 
         set({ isLoading: true })
         try {
@@ -863,8 +870,15 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── loadTicketsForPinnedProjects ─────────────────────────────
       loadTicketsForPinnedProjects: async () => {
-        const projectIds = [...usePinnedStore.getState().pinnedProjectIds]
-        if (projectIds.length === 0) return
+        let projectIds = [...usePinnedStore.getState().pinnedProjectIds]
+        if (projectIds.length === 0) {
+          const pinnedStore = usePinnedStore.getState()
+          if (!pinnedStore.loaded) {
+            await pinnedStore.loadPinned()
+            projectIds = [...usePinnedStore.getState().pinnedProjectIds]
+          }
+          if (projectIds.length === 0) return
+        }
 
         set({ isLoading: true })
         try {

@@ -10,6 +10,7 @@ import { BottomPanel } from './BottomPanel'
 import { useTerminalPortal } from '@/contexts/TerminalPortalContext'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
+import { cn } from '@/lib/utils'
 
 export function RightSidebar(): React.JSX.Element {
   const { rightSidebarWidth, rightSidebarCollapsed, setRightSidebarWidth, toggleRightSidebar } =
@@ -85,12 +86,23 @@ export function RightSidebar(): React.JSX.Element {
     }
   }
 
-  if (rightSidebarCollapsed) {
-    return <div data-testid="right-sidebar-collapsed" />
-  }
-
+  // CRITICAL: when collapsed, do NOT early-return / unmount the sidebar tree.
+  // Doing so unmounts BottomPanel and the terminal portal target div, which
+  // detaches the createPortal container that TerminalManagerPortal points to.
+  // The Ghostty backends would survive (their NSViews live on the Electron
+  // contentView, not in the DOM), but the prop-change → useEffect →
+  // setVisible(false) chain has been observed to leave previously-active
+  // tabs' NSViews on-screen across collapse. Keeping the tree mounted with
+  // CSS `display:none` keeps the portal target alive, preserves PTY state,
+  // and lets visibility flow through normally on collapse.
   return (
-    <div className="flex flex-shrink-0" data-testid="right-sidebar-container">
+    <div
+      className={cn(
+        'flex flex-shrink-0',
+        rightSidebarCollapsed && 'hidden'
+      )}
+      data-testid={rightSidebarCollapsed ? 'right-sidebar-collapsed' : 'right-sidebar-container'}
+    >
       <ResizeHandle onResize={handleResize} direction="right" />
       <aside
         ref={sidebarRef}
