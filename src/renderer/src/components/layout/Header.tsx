@@ -123,8 +123,14 @@ export function Header(): React.JSX.Element {
   const isBoardViewActive = useKanbanStore((s) => s.isBoardViewActive)
   const toggleBoardView = useKanbanStore((s) => s.toggleBoardView)
   const kanbanIconSeen = useTipStore((s) => s.isTipSeen('kanban-icon'))
+  const hatchFirstPetSeen = useTipStore((s) => s.isTipSeen('hatch-first-pet'))
   const nonDefaultProviderChosen = useTipStore((s) => s.nonDefaultProviderChosen)
+  const petEnabled = useSettingsStore((s) => s.pet.enabled)
   const [conflictFixFlow, setConflictFixFlow] = useState<ConflictFixFlow | null>(null)
+
+  const showHatchTip = !hatchFirstPetSeen && !petEnabled
+  const settingsTipId = showHatchTip ? 'hatch-first-pet' : 'settings-default-provider'
+  const settingsTipEnabled = showHatchTip ? true : nonDefaultProviderChosen
 
   // Track first-time kanban exit for the kanban-reenter tip
   const [justExitedKanban, setJustExitedKanban] = useState(false)
@@ -814,7 +820,7 @@ export function Header(): React.JSX.Element {
         >
           <History className="h-4 w-4" />
         </Button>
-        <Tip tipId="settings-default-provider" enabled={nonDefaultProviderChosen}>
+        <Tip tipId={settingsTipId} enabled={settingsTipEnabled}>
           <Button
             variant="ghost"
             size="icon"
