@@ -367,6 +367,8 @@ export interface KanbanTicket {
   mark: TicketMark | null
   total_tokens: number
   pending_launch_config: string | null
+  goal_mode: boolean
+  goal_success_criteria: string | null
   /** Personal annotation. MUST NOT be included in any LLM prompt. */
   note: string | null
 }
@@ -405,6 +407,8 @@ export interface KanbanTicketUpdate {
   github_pr_url?: string | null
   mark?: TicketMark | null
   pending_launch_config?: string | null
+  goal_mode?: boolean
+  goal_success_criteria?: string | null
   note?: string | null
 }
 
@@ -497,6 +501,8 @@ export interface PendingLaunchConfig {
   model: { providerID: string; modelID: string; variant?: string } | null
   sdk: 'opencode' | 'claude-code' | 'codex'
   codexFastMode: boolean
+  goalMode: boolean
+  goalSuccessCriteria: string | null
 }
 
 // Ticket followup message types

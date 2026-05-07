@@ -315,6 +315,32 @@ function resolveModalMode(ticket: KanbanTicket, sessionStatus: string | null): M
   return 'edit'
 }
 
+function TicketGoalSection({
+  ticket,
+  isEditMode = false
+}: {
+  ticket: KanbanTicket
+  isEditMode?: boolean
+}) {
+  if (!ticket.goal_mode || !ticket.goal_success_criteria) return null
+
+  return (
+    <div className="space-y-1.5" data-testid="ticket-goal-section">
+      <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        Goal
+        {isEditMode && (
+          <span className="ml-2 normal-case text-[10px] text-muted-foreground/70">
+            set when launched — read only
+          </span>
+        )}
+      </label>
+      <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-sm whitespace-pre-wrap">
+        {ticket.goal_success_criteria}
+      </div>
+    </div>
+  )
+}
+
 // ── Component ───────────────────────────────────────────────────────
 export function KanbanTicketModal() {
   const selectedTicketId = useKanbanStore((s) => s.selectedTicketId)
@@ -765,6 +791,7 @@ function KanbanTicketModalContent({
                     <MarkdownRenderer content={ticket.description} />
                   </div>
                 )}
+                <TicketGoalSection ticket={ticket} />
               </div>
             )}
             {modeContent}
@@ -1032,6 +1059,8 @@ function EditModeContent({
             />
           )}
         </div>
+
+        <TicketGoalSection ticket={ticket} isEditMode />
 
         {/* Attachments */}
         <TicketAttachmentEditor
@@ -1964,6 +1993,8 @@ function PlanReviewModeContent({
         <MarkdownRenderer content={planContent} />
       </div>
 
+      <TicketGoalSection ticket={ticket} />
+
       {/* Followup input — iterate on the plan */}
       <FollowupInput
         text={followUpText}
@@ -2408,6 +2439,7 @@ function ReviewModeContent({
           ) : (
             <p className="text-sm text-muted-foreground">Session completed.</p>
           )}
+          <TicketGoalSection ticket={ticket} />
           <p data-testid="review-session-notice" className="text-xs text-muted-foreground/80">
             View the full session conversation by clicking &quot;Jump to session&quot; above.
           </p>

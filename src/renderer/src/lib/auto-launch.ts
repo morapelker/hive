@@ -13,6 +13,11 @@ import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/cons
 import { toast } from '@/lib/toast'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 
+function wrapGoalPrompt(prompt: string, criteria: string): string {
+  const stripped = prompt.replace(/^\/goal\s+/, '')
+  return `/goal ${stripped}. Goal success criteria: ${criteria}`
+}
+
 export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
   if (!ticket.pending_launch_config) return
 
@@ -23,6 +28,8 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
     console.error('Failed to parse pending_launch_config for ticket:', ticket.id)
     return
   }
+  const configGoalMode = config.goalMode === true
+  const configGoalSuccessCriteria = config.goalSuccessCriteria?.trim() || null
 
   const project = useProjectStore.getState().projects.find(p => p.id === ticket.project_id)
   if (!project) {
@@ -88,7 +95,9 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
       pending_launch_config: null,
       current_session_id: sessionId,
       worktree_id: worktreeId,
-      mode: config.mode
+      mode: config.mode,
+      goal_mode: configGoalMode,
+      goal_success_criteria: configGoalMode ? configGoalSuccessCriteria : null
     })
 
     // 6. Trigger usage refresh
@@ -116,6 +125,10 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
         : config.mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
         : ''
       const fullPrompt = modePrefix + config.prompt.trim()
+      const outboundPrompt =
+        configGoalMode && configGoalSuccessCriteria
+          ? wrapGoalPrompt(fullPrompt, configGoalSuccessCriteria)
+          : fullPrompt
       const promptOptions =
         sessionAgentSdk === 'codex' ? { codexFastMode: config.codexFastMode } : undefined
 
@@ -125,7 +138,7 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
 
       bumpWorktreeLastMessage({ worktreeId })
       await window.opencodeOps.prompt(worktree.path, connectResult.sessionId, [
-        { type: 'text', text: fullPrompt }
+        { type: 'text', text: outboundPrompt }
       ], effectiveModel, promptOptions)
     }
   } catch (err) {

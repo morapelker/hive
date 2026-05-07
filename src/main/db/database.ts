@@ -159,6 +159,8 @@ export class DatabaseService {
       mark: (row.mark as TicketMark) ?? null,
       total_tokens: (row.total_tokens as number) ?? 0,
       pending_launch_config: (row.pending_launch_config as string) ?? null,
+      goal_mode: row.goal_mode === 1,
+      goal_success_criteria: (row.goal_success_criteria as string) ?? null,
       note: (row.note as string) ?? null
     }
   }
@@ -412,6 +414,8 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'github_pr_url', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'mark', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'note', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'goal_mode', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('kanban_tickets', 'goal_success_criteria', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
 
     db.exec(`
@@ -2069,6 +2073,14 @@ export class DatabaseService {
     if (data.pending_launch_config !== undefined) {
       updates.push('pending_launch_config = ?')
       values.push(data.pending_launch_config)
+    }
+    if (data.goal_mode !== undefined) {
+      updates.push('goal_mode = ?')
+      values.push(data.goal_mode ? 1 : 0)
+    }
+    if (data.goal_success_criteria !== undefined) {
+      updates.push('goal_success_criteria = ?')
+      values.push(data.goal_success_criteria)
     }
     if (data.note !== undefined) {
       updates.push('note = ?')
