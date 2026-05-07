@@ -46,14 +46,6 @@ export function LeftSidebar(): React.JSX.Element {
 
   const canFinalize = connectionModeSelectedIds.size >= 2
 
-  // Clear filter when entering connection mode
-  useEffect(() => {
-    if (connectionModeActive) {
-      setFilterQuery('')
-      clearAllFilters()
-    }
-  }, [connectionModeActive, clearAllFilters])
-
   // Clear language filters on space switch
   useEffect(() => {
     clearAllFilters()
