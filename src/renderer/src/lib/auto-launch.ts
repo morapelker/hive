@@ -7,6 +7,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
@@ -122,6 +123,7 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
         useSessionStore.getState().setSessionMode(sessionId, 'plan')
       }
 
+      bumpWorktreeLastMessage({ worktreeId })
       await window.opencodeOps.prompt(worktree.path, connectResult.sessionId, [
         { type: 'text', text: fullPrompt }
       ], effectiveModel, promptOptions)

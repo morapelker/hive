@@ -298,7 +298,8 @@ describe('Plan review followup dispatch', () => {
         pendingFollowUpMessages: new Map()
       })
       useWorktreeStatusStore.setState({
-        sessionStatuses: {}
+        sessionStatuses: {},
+        lastMessageTimeByWorktree: {}
       })
       useProjectStore.setState({
         projects: [makeProject()]
@@ -368,6 +369,26 @@ describe('Plan review followup dispatch', () => {
 
     const statuses = useWorktreeStatusStore.getState().sessionStatuses
     expect(statuses['session-1']?.status).toBe('planning')
+  })
+
+  test('bumps worktree last message time when rejecting plan with feedback', async () => {
+    const beforeSend = Date.now()
+
+    render(<KanbanTicketModal />)
+
+    const input = screen.getByTestId('plan-review-followup-input') as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'Add more detail' } })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-review-send-followup-btn'))
+    })
+
+    await waitFor(() => {
+      const bumpedAt = useWorktreeStatusStore.getState().getLastMessageTime('wt-1')
+      expect(bumpedAt).not.toBeNull()
+      expect(bumpedAt!).toBeGreaterThanOrEqual(beforeSend)
+      expect(bumpedAt!).toBeLessThanOrEqual(Date.now())
+    })
   })
 
   test('closes modal immediately without blocking on prompt', async () => {

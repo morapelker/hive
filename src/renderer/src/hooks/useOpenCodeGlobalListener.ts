@@ -12,6 +12,7 @@ import { useRecentStore } from '@/stores/useRecentStore'
 import { useUsageStore, resolveUsageProvider } from '@/stores'
 import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '@/lib/token-utils'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
+import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { computeTokenDelta } from '@/lib/token-baselines'
 import { messageSendTimes } from '@/lib/message-send-times'
 import { checkAutoApprove } from '@/lib/permissionUtils'
@@ -127,7 +128,7 @@ function markBackgroundSessionCompleted(sessionId: string): void {
   let found = false
   for (const [worktreeId, wSessions] of sessions) {
     if (wSessions.some((s) => s.id === sessionId)) {
-      useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, now)
+      bumpWorktreeLastMessage({ worktreeId, timestamp: now })
       useRecentStore.getState().addWorktreeToRecent(worktreeId)
       found = true
       break
@@ -135,28 +136,17 @@ function markBackgroundSessionCompleted(sessionId: string): void {
   }
 
   const connectionSessions = useSessionStore.getState().sessionsByConnection
+  let completedConnectionId: string | null = null
   for (const [connectionId, cSessions] of connectionSessions) {
     if (cSessions.some((s) => s.id === sessionId)) {
       useRecentStore.getState().addConnectionToRecent(connectionId)
+      completedConnectionId = connectionId
       break
     }
   }
 
-  if (!found) {
-    const connSessions = useSessionStore.getState().sessionsByConnection
-    for (const [connectionId, cSessions] of connSessions) {
-      if (cSessions.some((s) => s.id === sessionId)) {
-        const connection = useConnectionStore
-          .getState()
-          .connections.find((c) => c.id === connectionId)
-        if (connection) {
-          for (const member of connection.members) {
-            useWorktreeStatusStore.getState().setLastMessageTime(member.worktree_id, now)
-          }
-        }
-        break
-      }
-    }
+  if (!found && completedConnectionId) {
+    bumpWorktreeLastMessage({ connectionId: completedConnectionId, timestamp: now })
   }
 }
 
