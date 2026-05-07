@@ -192,7 +192,12 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       if (!entry) continue
 
       // answering/command_approval/permission have the highest priority — return immediately
-      if (entry.status === 'answering' || entry.status === 'command_approval' || entry.status === 'permission') return entry.status
+      if (
+        entry.status === 'answering' ||
+        entry.status === 'command_approval' ||
+        entry.status === 'permission'
+      )
+        return entry.status
       if (entry.status === 'planning') hasPlanning = true
       if (entry.status === 'working') hasWorking = true
       if (entry.status === 'plan_ready') hasPlanReady = true
@@ -240,7 +245,12 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       const entry = sessionStatuses[id]
       if (!entry) continue
 
-      if (entry.status === 'answering' || entry.status === 'command_approval' || entry.status === 'permission') return entry.status
+      if (
+        entry.status === 'answering' ||
+        entry.status === 'command_approval' ||
+        entry.status === 'permission'
+      )
+        return entry.status
       if (entry.status === 'planning') hasPlanning = true
       if (entry.status === 'working') hasWorking = true
       if (entry.status === 'plan_ready') hasPlanReady = true
@@ -292,7 +302,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     }))
 
     // Persist to SQLite (fire-and-forget)
-    window.db?.worktree?.update(worktreeId, { last_message_at: next }).catch(() => {})
+    window.db?.worktree?.update?.(worktreeId, { last_message_at: next }).catch(() => {})
   },
 
   getLastMessageTime: (worktreeId: string) => {

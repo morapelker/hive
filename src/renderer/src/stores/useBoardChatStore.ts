@@ -6,12 +6,7 @@ import type { SelectedModel } from '@/stores/useSettingsStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { BOARD_ASSISTANT_SESSION_NAME_PREFIX } from '@/stores/useSessionStore'
 
-export type BoardChatStatus =
-  | 'idle'
-  | 'starting'
-  | 'thinking'
-  | 'awaiting_confirmation'
-  | 'error'
+export type BoardChatStatus = 'idle' | 'starting' | 'thinking' | 'awaiting_confirmation' | 'error'
 
 export type BoardChatScope =
   | {
@@ -123,7 +118,10 @@ interface BoardChatState extends BoardChatSnapshot {
 }
 
 export function resolveBoardChatAgentSdk(
-  defaultAgentSdk: ReturnType<typeof useSettingsStore.getState>['defaultAgentSdk'] | null | undefined
+  defaultAgentSdk:
+    | ReturnType<typeof useSettingsStore.getState>['defaultAgentSdk']
+    | null
+    | undefined
 ): 'opencode' | 'claude-code' | 'codex' {
   const sdk = defaultAgentSdk ?? 'opencode'
   return sdk === 'terminal' ? 'opencode' : sdk
@@ -137,7 +135,11 @@ export function resolveBoardChatDefaultModel(
   agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | null
 ): SelectedModel | null {
   const agentSdk = agentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
-  return settings.getModelForMode('ask') ?? resolveModelForSdk(agentSdk, settings) ?? settings.selectedModel
+  return (
+    settings.getModelForMode('ask') ??
+    resolveModelForSdk(agentSdk, settings) ??
+    settings.selectedModel
+  )
 }
 
 const BOARD_RULES_TAG_RE = /<board-assistant-rules>[\s\S]*?<\/board-assistant-rules>/gi
@@ -146,9 +148,7 @@ const BOARD_DRAFT_BLOCK_RE = /```board-ticket-drafts[\s\S]*?```/gi
 const BOARD_DRAFT_BLOCK_CAPTURE_RE = /```board-ticket-drafts\s*([\s\S]*?)```/i
 
 export function stripBoardAssistantScaffolding(content: string): string {
-  const withoutTags = content
-    .replace(BOARD_RULES_TAG_RE, '')
-    .replace(BOARD_CONTEXT_TAG_RE, '')
+  const withoutTags = content.replace(BOARD_RULES_TAG_RE, '').replace(BOARD_CONTEXT_TAG_RE, '')
 
   const marker = 'User request:'
   const markerIndex = withoutTags.lastIndexOf(marker)
@@ -225,8 +225,7 @@ function createInitialSnapshot(options?: ResetBoardChatOptions): BoardChatSnapsh
     createdDraftIds: [],
     draftSourceMessageId: null,
     status: 'idle',
-    selectedTargetProjectId:
-      options?.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope),
+    selectedTargetProjectId: options?.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope),
     error: null,
     sessionId: null,
     opencodeSessionId: null,
@@ -367,7 +366,9 @@ function getProjectName(scope: BoardChatScope | null, projectId: string): string
   if (!scope) return 'Unknown project'
   if (scope.kind === 'project') return scope.projectName
   if (scope.kind === 'connection') {
-    return scope.availableProjects.find((project) => project.id === projectId)?.name ?? 'Unknown project'
+    return (
+      scope.availableProjects.find((project) => project.id === projectId)?.name ?? 'Unknown project'
+    )
   }
   return 'Pinned projects'
 }
@@ -411,7 +412,11 @@ function parseDraftsFromMessage(
   return drafts.filter((draft) => draft.projectId.length > 0)
 }
 
-async function cleanupRuntime(sessionId: string | null, opencodeSessionId: string | null, runtimePath: string | null): Promise<void> {
+async function cleanupRuntime(
+  sessionId: string | null,
+  opencodeSessionId: string | null,
+  runtimePath: string | null
+): Promise<void> {
   try {
     if (opencodeSessionId && runtimePath) {
       await window.opencodeOps.disconnect(runtimePath, opencodeSessionId)
@@ -429,7 +434,10 @@ async function cleanupRuntime(sessionId: string | null, opencodeSessionId: strin
   }
 }
 
-async function buildBoardContext(scope: BoardChatScope, selectedTargetProjectId: string | null): Promise<string> {
+async function buildBoardContext(
+  scope: BoardChatScope,
+  selectedTargetProjectId: string | null
+): Promise<string> {
   if (scope.kind === 'project') {
     const tickets = await window.kanban.ticket.getByProject(scope.projectId, false)
     return [
@@ -454,7 +462,9 @@ async function buildBoardContext(scope: BoardChatScope, selectedTargetProjectId:
       `Projects in scope: ${scope.availableProjects.map((project) => project.name).join(', ')}`,
       ...ticketGroups.flatMap(({ project, tickets }) => [
         `${project.name}:`,
-        ...tickets.slice(0, 20).map((ticket: KanbanTicket) => `- [${ticket.column}] ${ticket.title}`)
+        ...tickets
+          .slice(0, 20)
+          .map((ticket: KanbanTicket) => `- [${ticket.column}] ${ticket.title}`)
       ])
     ].join('\n')
   }
@@ -468,10 +478,7 @@ function buildAssistantPrompt(
   boardContext: string,
   userMessage: string
 ): string {
-  const targetProjectId =
-    scope.kind === 'project'
-      ? scope.projectId
-      : selectedTargetProjectId
+  const targetProjectId = scope.kind === 'project' ? scope.projectId : selectedTargetProjectId
 
   return [
     '<board-assistant-rules>',
@@ -528,13 +535,12 @@ async function ensureRuntime(): Promise<{
   }
 
   const settings = useSettingsStore.getState()
-  const agentSdk = state.selectedAgentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
-  const model = state.selectedModelOverride ?? resolveBoardChatDefaultModel(settings, agentSdk)
+  const baseAgentSdk =
+    state.selectedAgentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
+  const model = state.selectedModelOverride ?? resolveBoardChatDefaultModel(settings, baseAgentSdk)
+  const agentSdk = state.selectedAgentSdkOverride ?? model?.agentSdk ?? baseAgentSdk
 
-  const projectId =
-    scope.kind === 'project'
-      ? scope.projectId
-      : state.selectedTargetProjectId
+  const projectId = scope.kind === 'project' ? scope.projectId : state.selectedTargetProjectId
 
   if (!projectId) {
     throw new Error('Select a target project before starting the board assistant.')
@@ -578,7 +584,9 @@ async function ensureRuntime(): Promise<{
   }
 }
 
-async function resetAndCleanup(state: Pick<BoardChatState, 'sessionId' | 'opencodeSessionId' | 'runtimePath'>): Promise<void> {
+async function resetAndCleanup(
+  state: Pick<BoardChatState, 'sessionId' | 'opencodeSessionId' | 'runtimePath'>
+): Promise<void> {
   await cleanupRuntime(state.sessionId, state.opencodeSessionId, state.runtimePath)
 }
 
@@ -637,7 +645,7 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
           selectedTargetProjectId:
             scope?.kind === 'project'
               ? scope.projectId
-              : existing.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope)
+              : (existing.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope))
         }
         return replaceActiveSnapshot(state, hydrated, scopeKey)
       }
@@ -712,7 +720,7 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
           selectedTargetProjectId:
             scope?.kind === 'project'
               ? scope.projectId
-              : current.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope)
+              : (current.selectedTargetProjectId ?? buildDefaultTargetProjectId(scope))
         })
       )
       return
@@ -789,7 +797,12 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
     try {
       const runtime = await ensureRuntime()
       const boardContext = await buildBoardContext(scope, get().selectedTargetProjectId)
-      const prompt = buildAssistantPrompt(scope, get().selectedTargetProjectId, boardContext, trimmed)
+      const prompt = buildAssistantPrompt(
+        scope,
+        get().selectedTargetProjectId,
+        boardContext,
+        trimmed
+      )
       set((state) => patchActiveSnapshot(state, { status: 'thinking' }))
 
       const result = await window.opencodeOps.prompt(
@@ -959,14 +972,18 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
   updateOpencodeSessionId: (opencodeSessionId) =>
     set((state) => patchActiveSnapshot(state, { opencodeSessionId })),
   clearRuntimeSession: () =>
-    set((state) => patchActiveSnapshot(state, { sessionId: null, opencodeSessionId: null, runtimePath: null })),
+    set((state) =>
+      patchActiveSnapshot(state, { sessionId: null, opencodeSessionId: null, runtimePath: null })
+    ),
   setComposerValue: (composerValue) =>
     set((state) => patchActiveSnapshot(state, { composerValue })),
   resetState: (options) =>
     set((state) =>
       replaceActiveSnapshot(
         state,
-        createInitialSnapshot(options ? { ...options, scope: options.scope ?? state.scope } : { scope: state.scope }),
+        createInitialSnapshot(
+          options ? { ...options, scope: options.scope ?? state.scope } : { scope: state.scope }
+        ),
         state.activeScopeKey
       )
     )

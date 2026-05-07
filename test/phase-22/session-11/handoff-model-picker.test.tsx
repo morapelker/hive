@@ -90,9 +90,11 @@ Object.defineProperty(window, 'opencodeOps', {
 import {
   cacheHandoffModelCatalog,
   clearHandoffModelCatalogCache,
-  getEffectiveHandoffSelection
+  getEffectiveHandoffSelection,
+  resolveSessionCreationSelection
 } from '@/lib/handoffSelection'
 import { HandoffSplitButton } from '@/components/sessions/HandoffSplitButton'
+import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
@@ -124,7 +126,8 @@ describe('handoff model picker', () => {
           variant: 'high'
         },
         plan: null,
-        ask: null
+        ask: null,
+        review: null
       },
       lastHandoffOverride: null,
       defaultAgentSdk: 'claude-code',
@@ -186,6 +189,166 @@ describe('handoff model picker', () => {
       variant: 'high'
     })
     expect(effective.display.modelName).toBe('Sonnet 4.6')
+  })
+
+  test('resolveSessionCreationSelection uses a mode default from a different SDK', () => {
+    cacheHandoffModelCatalog('codex', codexProviders)
+    useSettingsStore.setState({
+      defaultAgentSdk: 'claude-code',
+      defaultModels: {
+        build: {
+          agentSdk: 'codex',
+          providerID: 'codex',
+          modelID: 'gpt-5.5',
+          variant: 'xhigh'
+        },
+        plan: null,
+        ask: null,
+        review: null
+      }
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection).toEqual({
+      agentSdk: 'codex',
+      model: {
+        agentSdk: 'codex',
+        providerID: 'codex',
+        modelID: 'gpt-5.5',
+        variant: 'xhigh'
+      }
+    })
+  })
+
+  test('controlled model selector can choose a model from another SDK catalog', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
+
+    await waitFor(() => {
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+    })
+
+    await user.click(screen.getByTestId('model-selector'))
+    await user.click(await screen.findByTestId('model-item-gpt-5.5'))
+
+    expect(onChange).toHaveBeenCalledWith({
+      agentSdk: 'codex',
+      providerID: 'codex',
+      modelID: 'gpt-5.5',
+      variant: 'high'
+    })
+  })
+
+  test('controlled model selector can filter models by SDK provider', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
+
+    await waitFor(() => {
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+    })
+
+    await user.click(await screen.findByTestId('model-provider-filter'))
+    expect(await screen.findByTestId('model-provider-filter-option-claude-code')).toHaveTextContent(
+      'Claude Code'
+    )
+    expect(screen.getByTestId('model-provider-filter-option-codex')).toHaveTextContent('Codex')
+    expect(screen.queryByText('Claude Code / Anthropic')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('model-provider-filter-option-codex'))
+
+    await user.click(screen.getByTestId('model-selector'))
+
+    expect(await screen.findByTestId('model-item-gpt-5.5')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-item-sonnet-4.6')).not.toBeInTheDocument()
+  })
+
+  test('controlled model selector selects the remembered model when switching SDK provider', async () => {
+    useSettingsStore.setState({
+      selectedModelByProvider: {
+        'claude-code': {
+          providerID: 'anthropic',
+          modelID: 'sonnet-4.6',
+          variant: 'high'
+        },
+        codex: {
+          providerID: 'codex',
+          modelID: 'gpt-5.4',
+          variant: 'xhigh'
+        }
+      }
+    })
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
+
+    await waitFor(() => {
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+    })
+
+    await user.click(await screen.findByTestId('model-provider-filter'))
+    await user.click(await screen.findByTestId('model-provider-filter-option-codex'))
+
+    expect(onChange).toHaveBeenCalledWith({
+      agentSdk: 'codex',
+      providerID: 'codex',
+      modelID: 'gpt-5.4',
+      variant: 'xhigh'
+    })
+  })
+
+  test('controlled model selector remembers the last model selected in the picker per SDK provider', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
+
+    await waitFor(() => {
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+    })
+
+    await user.click(await screen.findByTestId('model-provider-filter'))
+    await user.click(await screen.findByTestId('model-provider-filter-option-codex'))
+    await user.click(screen.getByTestId('model-selector'))
+    await user.click(await screen.findByTestId('model-item-gpt-5.4'))
+
+    await user.click(screen.getByTestId('model-provider-filter'))
+    await user.click(await screen.findByTestId('model-provider-filter-option-claude-code'))
+
+    await user.click(screen.getByTestId('model-provider-filter'))
+    await user.click(await screen.findByTestId('model-provider-filter-option-codex'))
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      agentSdk: 'codex',
+      providerID: 'codex',
+      modelID: 'gpt-5.4',
+      variant: 'high'
+    })
+  })
+
+  test('controlled model selector hides provider filter when only one provider is available', async () => {
+    useSettingsStore.setState({
+      availableAgentSdks: {
+        opencode: false,
+        claude: true,
+        codex: false
+      }
+    })
+
+    render(<ModelSelector value={null} onChange={vi.fn()} allowAgentSdkSelection />)
+
+    await waitFor(() => {
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+    })
+
+    expect(screen.queryByTestId('model-provider-filter')).not.toBeInTheDocument()
   })
 
   test('button label rerenders when lastHandoffOverride changes', async () => {

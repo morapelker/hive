@@ -6,6 +6,7 @@ import { cleanup } from '@testing-library/react'
 // Mock setup
 // ---------------------------------------------------------------------------
 const mockGitOps = {
+  listBranchesWithStatus: vi.fn().mockResolvedValue({ success: false, branches: [] }),
   getFileStatuses: vi.fn().mockResolvedValue({ success: true, files: [] }),
   getBranchInfo: vi.fn().mockResolvedValue({
     success: true,
@@ -117,6 +118,13 @@ describe('Session 4: Code Review', () => {
     Object.defineProperty(window, 'db', { writable: true, value: mockDb })
     Object.defineProperty(window, 'worktreeOps', { writable: true, value: mockWorktreeOps })
     Object.defineProperty(window, 'projectOps', { writable: true, value: mockProjectOps })
+    Object.defineProperty(window, 'opencodeOps', {
+      writable: true,
+      value: {
+        connect: vi.fn().mockResolvedValue({ success: false }),
+        prompt: vi.fn().mockResolvedValue({ success: true })
+      }
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -186,9 +194,8 @@ describe('Session 4: Code Review', () => {
     })
 
     test('default review prompt type is standard', async () => {
-      const { DEFAULT_REVIEW_PROMPT_TYPE } = await import(
-        '../../../src/renderer/src/constants/reviewPrompts'
-      )
+      const { DEFAULT_REVIEW_PROMPT_TYPE } =
+        await import('../../../src/renderer/src/constants/reviewPrompts')
 
       expect(DEFAULT_REVIEW_PROMPT_TYPE).toBe('standard')
     })
@@ -207,9 +214,11 @@ describe('Session 4: Code Review', () => {
     test('loading persisted superpowers review prompt preserves existing user preference', async () => {
       const { useSettingsStore } = await import('../../../src/renderer/src/stores/useSettingsStore')
 
-      mockDb.setting.get.mockResolvedValueOnce(JSON.stringify({
-        reviewPromptType: 'superpowers'
-      }))
+      mockDb.setting.get.mockResolvedValueOnce(
+        JSON.stringify({
+          reviewPromptType: 'superpowers'
+        })
+      )
 
       await useSettingsStore.getState().loadFromDatabase()
 
@@ -290,9 +299,8 @@ describe('Session 4: Code Review', () => {
     })
 
     test('REVIEW_PROMPT_LABELS has human-readable labels for all types', async () => {
-      const { REVIEW_PROMPT_LABELS } = await import(
-        '../../../src/renderer/src/constants/reviewPrompts'
-      )
+      const { REVIEW_PROMPT_LABELS } =
+        await import('../../../src/renderer/src/constants/reviewPrompts')
 
       expect(REVIEW_PROMPT_LABELS.superpowers).toBe('Superpowers')
       expect(REVIEW_PROMPT_LABELS.adversarial).toBe('Adversarial')
@@ -318,8 +326,118 @@ describe('Session 4: Code Review', () => {
       expect(sessionName).toBe('Code Review — unknown vs origin/main')
     })
 
+    test('uses the review default model when creating a review session', async () => {
+      const { useGitStore } = await import('../../../src/renderer/src/stores/useGitStore')
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
+      const { useSettingsStore } = await import('../../../src/renderer/src/stores/useSettingsStore')
+      const { useWorktreeStore } = await import('../../../src/renderer/src/stores/useWorktreeStore')
+      const { useLifecycleActions } =
+        await import('../../../src/renderer/src/hooks/useLifecycleActions')
+
+      const reviewModel = {
+        agentSdk: 'codex' as const,
+        providerID: 'codex',
+        modelID: 'gpt-5.5',
+        variant: 'high'
+      }
+      const createSession = vi.fn().mockResolvedValue({
+        success: true,
+        session: {
+          id: 'review-session-model',
+          worktree_id: 'wt-1',
+          project_id: 'proj-1',
+          connection_id: null,
+          name: 'Session 14:00',
+          status: 'active',
+          opencode_session_id: null,
+          agent_sdk: 'codex',
+          mode: 'build',
+          model_provider_id: 'codex',
+          model_id: 'gpt-5.5',
+          model_variant: 'high',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          completed_at: null
+        }
+      })
+      const updateSessionName = vi.fn().mockResolvedValue(undefined)
+
+      act(() => {
+        useWorktreeStore.setState({
+          worktreesByProject: new Map([
+            [
+              'proj-1',
+              [
+                {
+                  id: 'wt-1',
+                  project_id: 'proj-1',
+                  name: 'feature-auth',
+                  branch_name: 'feature-auth',
+                  path: '/tmp/review-model-worktree',
+                  status: 'active',
+                  is_default: false,
+                  branch_renamed: 0,
+                  last_message_at: null,
+                  session_titles: '[]',
+                  last_model_provider_id: null,
+                  last_model_id: null,
+                  last_model_variant: null,
+                  attachments: '[]',
+                  pinned: 0,
+                  context: null,
+                  github_pr_number: null,
+                  github_pr_url: null,
+                  base_branch: null,
+                  created_at: new Date().toISOString(),
+                  last_accessed_at: new Date().toISOString()
+                }
+              ]
+            ]
+          ])
+        })
+        useGitStore.setState({
+          branchInfoByWorktree: new Map([
+            [
+              '/tmp/review-model-worktree',
+              { name: 'feature-auth', tracking: 'origin/main', ahead: 0, behind: 0 }
+            ]
+          ]),
+          remoteInfo: new Map([
+            ['wt-1', { hasRemote: true, isGitHub: true, remoteUrl: 'git@github.com:test/repo.git' }]
+          ])
+        })
+        useSettingsStore.setState({
+          defaultModels: {
+            build: null,
+            plan: null,
+            ask: null,
+            review: reviewModel
+          }
+        })
+        useSessionStore.setState({
+          createSession,
+          updateSessionName
+        })
+      })
+
+      const { result } = renderHook(() => useLifecycleActions('wt-1'))
+
+      await result.current.createCodeReview('origin/main')
+
+      expect(createSession).toHaveBeenCalledWith('wt-1', 'proj-1', 'codex', undefined, {
+        autoFocus: false,
+        modelOverride: reviewModel
+      })
+    })
+
     test('focuses the new review tab when not currently on the board', async () => {
-      const [{ usePinAndActivateSession }, { useSessionStore }, { useKanbanStore }, { useSettingsStore }, { useFileViewerStore }] = await Promise.all([
+      const [
+        { usePinAndActivateSession },
+        { useSessionStore },
+        { useKanbanStore },
+        { useSettingsStore },
+        { useFileViewerStore }
+      ] = await Promise.all([
         import('../../../src/renderer/src/hooks/usePinAndActivateSession'),
         import('../../../src/renderer/src/stores/useSessionStore'),
         import('../../../src/renderer/src/stores/useKanbanStore'),
@@ -357,7 +475,13 @@ describe('Session 4: Code Review', () => {
     })
 
     test('keeps focus on toggle board when the board is visible', async () => {
-      const [{ usePinAndActivateSession }, { useSessionStore }, { useKanbanStore }, { useSettingsStore }, { useFileViewerStore }] = await Promise.all([
+      const [
+        { usePinAndActivateSession },
+        { useSessionStore },
+        { useKanbanStore },
+        { useSettingsStore },
+        { useFileViewerStore }
+      ] = await Promise.all([
         import('../../../src/renderer/src/hooks/usePinAndActivateSession'),
         import('../../../src/renderer/src/stores/useSessionStore'),
         import('../../../src/renderer/src/stores/useKanbanStore'),
@@ -394,7 +518,13 @@ describe('Session 4: Code Review', () => {
     })
 
     test('keeps focus on sticky board when the board tab is visible', async () => {
-      const [{ usePinAndActivateSession }, { useSessionStore, BOARD_TAB_ID }, { useKanbanStore }, { useSettingsStore }, { useFileViewerStore }] = await Promise.all([
+      const [
+        { usePinAndActivateSession },
+        { useSessionStore, BOARD_TAB_ID },
+        { useKanbanStore },
+        { useSettingsStore },
+        { useFileViewerStore }
+      ] = await Promise.all([
         import('../../../src/renderer/src/hooks/usePinAndActivateSession'),
         import('../../../src/renderer/src/stores/useSessionStore'),
         import('../../../src/renderer/src/stores/useKanbanStore'),
@@ -431,7 +561,13 @@ describe('Session 4: Code Review', () => {
     })
 
     test('focuses the new review tab when board mode is active but an overlay is covering it', async () => {
-      const [{ usePinAndActivateSession }, { useSessionStore }, { useKanbanStore }, { useSettingsStore }, { useFileViewerStore }] = await Promise.all([
+      const [
+        { usePinAndActivateSession },
+        { useSessionStore },
+        { useKanbanStore },
+        { useSettingsStore },
+        { useFileViewerStore }
+      ] = await Promise.all([
         import('../../../src/renderer/src/hooks/usePinAndActivateSession'),
         import('../../../src/renderer/src/stores/useSessionStore'),
         import('../../../src/renderer/src/stores/useKanbanStore'),

@@ -196,7 +196,8 @@ describe('SessionView handoff ticket relinking', () => {
       defaultModels: {
         build: null,
         plan: null,
-        ask: null
+        ask: null,
+        review: null
       },
       selectedModel: null,
       selectedModelByProvider: {},

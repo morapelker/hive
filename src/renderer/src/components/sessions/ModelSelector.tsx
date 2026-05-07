@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Check, ChevronDown, Search, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { cacheHandoffModelCatalog, type HandoffAgentSdk } from '@/lib/handoffSelection'
+import {
+  cacheHandoffModelCatalog,
+  getAvailableHandoffAgentSdks,
+  getHandoffSdkDisplayName
+} from '@/lib/handoffSelection'
 import {
   findModelInfo,
   getModelDisplayName,
@@ -10,7 +14,12 @@ import {
   type ModelInfo,
   type ProviderModels
 } from '@/lib/parseProviders'
-import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import {
+  useSettingsStore,
+  resolveModelForSdk,
+  type SelectedModel,
+  type HandoffAgentSdk
+} from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { toast } from '@/lib/toast'
 import {
@@ -25,12 +34,23 @@ import {
 interface ModelSelectorProps {
   sessionId?: string
   // Controlled mode (for settings)
-  value?: { providerID: string; modelID: string; variant?: string } | null
-  onChange?: (model: { providerID: string; modelID: string; variant?: string }) => void
+  value?: SelectedModel | null
+  onChange?: (model: SelectedModel) => void
   // Override the SDK used for model listing (e.g. force 'opencode' in settings when defaultAgentSdk is 'terminal')
   agentSdkOverride?: 'opencode' | 'claude-code' | 'codex'
   disableTitleTooltip?: boolean
   hideProviderPrefix?: boolean
+  allowAgentSdkSelection?: boolean
+}
+
+type SelectableModelInfo = ModelInfo & { agentSdk: HandoffAgentSdk }
+type SelectableProviderModels = Omit<ProviderModels, 'models'> & {
+  agentSdk: HandoffAgentSdk
+  models: SelectableModelInfo[]
+}
+type SdkFilterOption = {
+  agentSdk: HandoffAgentSdk
+  label: string
 }
 
 export function ModelSelector({
@@ -39,7 +59,8 @@ export function ModelSelector({
   onChange,
   agentSdkOverride,
   disableTitleTooltip = false,
-  hideProviderPrefix = false
+  hideProviderPrefix = false,
+  allowAgentSdkSelection = false
 }: ModelSelectorProps): React.JSX.Element {
   // Read per-session model from session store (with global fallback)
   const session = useSessionStore((state) => {
@@ -59,6 +80,7 @@ export function ModelSelector({
   // Terminal SDK has no models — fall back to opencode for model listing
   const agentSdk = rawAgentSdk === 'terminal' ? 'opencode' : rawAgentSdk
   const globalModel = useSettingsStore((state) => resolveModelForSdk(agentSdk, state))
+  const availableAgentSdks = useSettingsStore((s) => s.availableAgentSdks)
   const sessionModel =
     session?.model_id && session.model_provider_id
       ? {
@@ -74,11 +96,18 @@ export function ModelSelector({
   const showModelProvider = useSettingsStore((s) => s.showModelProvider)
   const favoriteModels = useSettingsStore((s) => s.favoriteModels)
   const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel)
-  const [providers, setProviders] = useState<ProviderModels[]>([])
+  const [providers, setProviders] = useState<SelectableProviderModels[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [filter, setFilter] = useState('')
+  const [agentSdkFilter, setAgentSdkFilter] = useState<HandoffAgentSdk | null>(null)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const filterInputRef = useRef<HTMLInputElement>(null)
+  const rememberedModelBySdkRef = useRef<Partial<Record<HandoffAgentSdk, SelectedModel>>>({})
+
+  const catalogAgentSdks = useMemo((): HandoffAgentSdk[] => {
+    if (!allowAgentSdkSelection) return [agentSdk as HandoffAgentSdk]
+    return getAvailableHandoffAgentSdks(availableAgentSdks)
+  }, [agentSdk, allowAgentSdkSelection, availableAgentSdks])
 
   // Load available models on mount
   useEffect(() => {
@@ -86,14 +115,24 @@ export function ModelSelector({
 
     async function loadModels(): Promise<void> {
       try {
-        const result = await window.opencodeOps.listModels({ agentSdk })
         if (!mounted) return
-
-        if (result.success && result.providers) {
-          const parsed = parseProviders(result.providers)
-          setProviders(parsed)
-          cacheHandoffModelCatalog(agentSdk as HandoffAgentSdk, result.providers)
-        }
+        setIsLoading(true)
+        const catalogs = await Promise.all(
+          catalogAgentSdks.map(async (sdk) => {
+            const result = await window.opencodeOps.listModels({ agentSdk: sdk })
+            if (!result.success || !result.providers) return []
+            const parsed = parseProviders(result.providers)
+            cacheHandoffModelCatalog(sdk, result.providers)
+            return parsed.map(
+              (provider): SelectableProviderModels => ({
+                ...provider,
+                agentSdk: sdk,
+                models: provider.models.map((model) => ({ ...model, agentSdk: sdk }))
+              })
+            )
+          })
+        )
+        if (mounted) setProviders(catalogs.flat())
       } catch (error) {
         console.error('Failed to load models:', error)
       } finally {
@@ -105,9 +144,69 @@ export function ModelSelector({
     return () => {
       mounted = false
     }
-  }, [agentSdk])
+  }, [catalogAgentSdks])
 
-  function handleSelectModel(model: ModelInfo): void {
+  const buildSelectedModel = useCallback(
+    (model: SelectableModelInfo, variant?: string): SelectedModel => {
+      return {
+        ...(allowAgentSdkSelection ? { agentSdk: model.agentSdk } : {}),
+        providerID: model.providerID,
+        modelID: model.id,
+        variant
+      }
+    },
+    [allowAgentSdkSelection]
+  )
+
+  const rememberSelectedModel = useCallback((model: SelectedModel, sdk: HandoffAgentSdk): void => {
+    rememberedModelBySdkRef.current[sdk] = {
+      ...model,
+      agentSdk: sdk
+    }
+  }, [])
+
+  const applySelectedModel = useCallback(
+    (model: SelectedModel, sdk: HandoffAgentSdk): void => {
+      rememberSelectedModel(model, sdk)
+      if (onChange) {
+        onChange(model)
+      } else if (sessionId) {
+        useSessionStore.getState().setSessionModel(sessionId, model)
+      } else {
+        useSettingsStore.getState().setSelectedModelForSdk(sdk, model)
+      }
+    },
+    [onChange, rememberSelectedModel, sessionId]
+  )
+
+  function getFallbackModelForSdk(sdk: HandoffAgentSdk): SelectableModelInfo | null {
+    return providers.find((provider) => provider.agentSdk === sdk)?.models[0] ?? null
+  }
+
+  function resolveSelectableModelForSdk(sdk: HandoffAgentSdk): SelectedModel | null {
+    const remembered =
+      rememberedModelBySdkRef.current[sdk] ?? resolveModelForSdk(sdk, useSettingsStore.getState())
+    if (remembered) {
+      const sdkProviders = providers.filter((provider) => provider.agentSdk === sdk)
+      const modelInfo = findModelInfo(
+        sdkProviders,
+        remembered.providerID,
+        remembered.modelID
+      ) as SelectableModelInfo | null
+      if (modelInfo) {
+        return {
+          ...remembered,
+          agentSdk: sdk
+        }
+      }
+    }
+
+    const fallbackModel = getFallbackModelForSdk(sdk)
+    if (!fallbackModel) return null
+    return buildSelectedModel(fallbackModel, getModelVariantKeys(fallbackModel)[0])
+  }
+
+  function handleSelectModel(model: SelectableModelInfo): void {
     const variantKeys = getModelVariantKeys(model)
     const remembered = useSettingsStore
       .getState()
@@ -118,57 +217,72 @@ export function ModelSelector({
         : variantKeys.length > 0
           ? variantKeys[0]
           : undefined
-    const newModel = { providerID: model.providerID, modelID: model.id, variant }
+    const newModel = buildSelectedModel(model, variant)
 
     // Use controlled onChange if provided (for settings), otherwise update store
-    if (onChange) {
-      onChange(newModel)
-    } else if (sessionId) {
-      useSessionStore.getState().setSessionModel(sessionId, newModel)
-    } else {
-      useSettingsStore.getState().setSelectedModelForSdk(agentSdk, newModel)
-    }
+    applySelectedModel(newModel, model.agentSdk)
   }
 
-  function handleSelectVariant(model: ModelInfo, variant: string): void {
-    const newModel = { providerID: model.providerID, modelID: model.id, variant }
+  function handleSelectVariant(model: SelectableModelInfo, variant: string): void {
+    const newModel = buildSelectedModel(model, variant)
 
     // Use controlled onChange if provided (for settings), otherwise update store
     if (onChange) {
       // In controlled mode, just notify parent - don't update global variant preference
-      onChange(newModel)
+      applySelectedModel(newModel, model.agentSdk)
     } else {
       // In uncontrolled mode, persist variant preference globally
       useSettingsStore.getState().setModelVariantDefault(model.providerID, model.id, variant)
-      if (sessionId) {
-        useSessionStore.getState().setSessionModel(sessionId, newModel)
-      } else {
-        useSettingsStore.getState().setSelectedModelForSdk(agentSdk, newModel)
-      }
+      applySelectedModel(newModel, model.agentSdk)
     }
   }
 
-  function isActiveModel(model: ModelInfo): boolean {
+  function handleSelectAgentSdkFilter(sdk: HandoffAgentSdk | null): void {
+    setAgentSdkFilter(sdk)
+    if (!sdk) return
+    const nextModel = resolveSelectableModelForSdk(sdk)
+    if (nextModel) applySelectedModel(nextModel, sdk)
+  }
+
+  function isActiveModel(model: SelectableModelInfo): boolean {
     if (!selectedModel) {
       return model.providerID === 'anthropic' && model.id === 'claude-opus-4-5-20251101'
     }
-    return selectedModel.providerID === model.providerID && selectedModel.modelID === model.id
+    const selectedAgentSdk = selectedModel.agentSdk ?? agentSdk
+    return (
+      selectedAgentSdk === model.agentSdk &&
+      selectedModel.providerID === model.providerID &&
+      selectedModel.modelID === model.id
+    )
   }
 
   // Find the currently selected model info
-  const currentModel = useMemo((): ModelInfo | null => {
+  const currentModel = useMemo((): SelectableModelInfo | null => {
     const modelID = selectedModel?.modelID || 'claude-opus-4-5-20251101'
     const providerID = selectedModel?.providerID || 'anthropic'
-    return findModelInfo(providers, providerID, modelID)
-  }, [selectedModel, providers])
+    const selectedAgentSdk = selectedModel?.agentSdk ?? agentSdk
+    const sdkProviders = providers.filter((provider) => provider.agentSdk === selectedAgentSdk)
+    return findModelInfo(sdkProviders, providerID, modelID) as SelectableModelInfo | null
+  }, [selectedModel, providers, agentSdk])
 
   const providerPrefix = useMemo(() => {
     if (hideProviderPrefix || !showModelProvider) return null
+    if (allowAgentSdkSelection) {
+      const selectedAgentSdk = currentModel?.agentSdk ?? selectedModel?.agentSdk ?? agentSdk
+      return getHandoffSdkDisplayName(selectedAgentSdk as HandoffAgentSdk)
+    }
     if (agentSdk === 'claude-code') return 'ANTHROPIC'
     return (
       currentModel?.providerID?.toUpperCase() ?? selectedModel?.providerID?.toUpperCase() ?? null
     )
-  }, [hideProviderPrefix, showModelProvider, agentSdk, currentModel, selectedModel])
+  }, [
+    hideProviderPrefix,
+    showModelProvider,
+    allowAgentSdkSelection,
+    agentSdk,
+    currentModel,
+    selectedModel
+  ])
 
   // Cycle thinking-level variant for Alt+T
   const cycleVariant = useCallback(() => {
@@ -181,29 +295,21 @@ export function ModelSelector({
     const nextIndex = (currentIndex + 1) % variantKeys.length
     const nextVariant = variantKeys[nextIndex]
 
-    const newModel = {
-      providerID: currentModel.providerID,
-      modelID: currentModel.id,
-      variant: nextVariant
-    }
+    const newModel = buildSelectedModel(currentModel, nextVariant)
 
     // Use controlled onChange if provided (for settings), otherwise update store
     if (onChange) {
       // In controlled mode, just notify parent - don't update global variant preference
-      onChange(newModel)
+      applySelectedModel(newModel, currentModel.agentSdk)
     } else {
       // In uncontrolled mode, persist variant preference globally
       useSettingsStore
         .getState()
         .setModelVariantDefault(currentModel.providerID, currentModel.id, nextVariant)
-      if (sessionId) {
-        useSessionStore.getState().setSessionModel(sessionId, newModel)
-      } else {
-        useSettingsStore.getState().setSelectedModelForSdk(agentSdk, newModel)
-      }
+      applySelectedModel(newModel, currentModel.agentSdk)
     }
     toast.success(`Variant: ${nextVariant}`)
-  }, [selectedModel, currentModel, agentSdk, sessionId, onChange])
+  }, [selectedModel, currentModel, onChange, buildSelectedModel, applySelectedModel])
 
   // Listen for centralized Alt+T shortcut via custom event (session selectors only).
   // Controlled-mode selectors (e.g. Settings > Models) must not react to the global
@@ -220,13 +326,39 @@ export function ModelSelector({
     ? getModelDisplayName(currentModel)
     : getModelDisplayName({
         id: selectedModel?.modelID || 'claude-opus-4-5-20251101',
-        providerID: 'anthropic'
+        providerID: selectedModel?.providerID || 'anthropic'
       })
 
+  const sdkFilterOptions = useMemo((): SdkFilterOption[] => {
+    const availableSdks = new Set(providers.map((provider) => provider.agentSdk))
+    return catalogAgentSdks
+      .filter((sdk) => availableSdks.has(sdk))
+      .map((sdk) => ({
+        agentSdk: sdk,
+        label: getHandoffSdkDisplayName(sdk)
+      }))
+  }, [providers, catalogAgentSdks])
+
+  useEffect(() => {
+    if (!agentSdkFilter) return
+    if (!sdkFilterOptions.some((option) => option.agentSdk === agentSdkFilter)) {
+      setAgentSdkFilter(null)
+    }
+  }, [agentSdkFilter, sdkFilterOptions])
+
+  const selectedProviderFilterLabel =
+    sdkFilterOptions.find((option) => option.agentSdk === agentSdkFilter)?.label ?? 'All providers'
+  const showProviderFilter = sdkFilterOptions.length > 1
+
+  const providerScopedProviders = useMemo(() => {
+    if (!agentSdkFilter) return providers
+    return providers.filter((provider) => provider.agentSdk === agentSdkFilter)
+  }, [providers, agentSdkFilter])
+
   const filteredProviders = useMemo(() => {
-    if (!filter.trim()) return providers
+    if (!filter.trim()) return providerScopedProviders
     const q = filter.toLowerCase()
-    return providers
+    return providerScopedProviders
       .map((provider) => ({
         ...provider,
         models: provider.models.filter(
@@ -237,7 +369,7 @@ export function ModelSelector({
         )
       }))
       .filter((p) => p.models.length > 0)
-  }, [providers, filter])
+  }, [providerScopedProviders, filter])
 
   const isFavorite = useCallback(
     (model: ModelInfo) => favoriteModels.includes(`${model.providerID}::${model.id}`),
@@ -245,8 +377,8 @@ export function ModelSelector({
   )
 
   const favoriteModelObjects = useMemo(
-    () => providers.flatMap((p) => p.models.filter((m) => isFavorite(m))),
-    [providers, isFavorite]
+    () => providerScopedProviders.flatMap((p) => p.models.filter((m) => isFavorite(m))),
+    [providerScopedProviders, isFavorite]
   )
 
   const currentVariantKeys = currentModel ? getModelVariantKeys(currentModel) : []
@@ -258,6 +390,49 @@ export function ModelSelector({
         <span className="text-[10px] font-medium text-muted-foreground uppercase shrink-0">
           {providerPrefix}
         </span>
+      )}
+      {showProviderFilter && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className={cn(
+                'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
+                'border select-none',
+                'bg-background border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+              )}
+              title="Filter providers"
+              aria-label={`Provider filter: ${selectedProviderFilterLabel}`}
+              data-testid="model-provider-filter"
+            >
+              <span className="truncate max-w-[130px]">{selectedProviderFilterLabel}</span>
+              <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuItem
+              onClick={() => handleSelectAgentSdkFilter(null)}
+              className="flex items-center justify-between gap-2 cursor-pointer"
+              data-testid="model-provider-filter-option-all"
+            >
+              <span className="truncate text-sm">All providers</span>
+              {!agentSdkFilter && <Check className="h-4 w-4 shrink-0 text-primary" />}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {sdkFilterOptions.map((option) => (
+              <DropdownMenuItem
+                key={option.agentSdk}
+                onClick={() => handleSelectAgentSdkFilter(option.agentSdk)}
+                className="flex items-center justify-between gap-2 cursor-pointer"
+                data-testid={`model-provider-filter-option-${option.agentSdk}`}
+              >
+                <span className="truncate text-sm">{option.label}</span>
+                {agentSdkFilter === option.agentSdk && (
+                  <Check className="h-4 w-4 shrink-0 text-primary" />
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
       <DropdownMenu
         open={dropdownOpen}
@@ -312,7 +487,7 @@ export function ModelSelector({
                 const favActive = isActiveModel(model)
                 const favVariantKeys = getModelVariantKeys(model)
                 return (
-                  <div key={`fav-${model.providerID}:${model.id}`}>
+                  <div key={`fav-${model.agentSdk}:${model.providerID}:${model.id}`}>
                     <DropdownMenuItem
                       onClick={() => handleSelectModel(model)}
                       onContextMenu={(e) => {
@@ -330,8 +505,7 @@ export function ModelSelector({
                     {favVariantKeys.length > 0 && (
                       <div className="flex gap-1 pl-6 pb-1">
                         {favVariantKeys.map((variant) => {
-                          const isActiveVariant =
-                            favActive && selectedModel?.variant === variant
+                          const isActiveVariant = favActive && selectedModel?.variant === variant
                           return (
                             <button
                               key={variant}
@@ -359,16 +533,18 @@ export function ModelSelector({
             </>
           )}
           {filteredProviders.map((provider, index) => (
-            <div key={provider.providerID}>
+            <div key={`${provider.agentSdk}:${provider.providerID}`}>
               {index > 0 && <DropdownMenuSeparator />}
               <DropdownMenuLabel className="text-xs text-muted-foreground">
-                {provider.providerName}
+                {allowAgentSdkSelection
+                  ? `${getHandoffSdkDisplayName(provider.agentSdk)} / ${provider.providerName}`
+                  : provider.providerName}
               </DropdownMenuLabel>
               {provider.models.map((model) => {
                 const active = isActiveModel(model)
                 const variantKeys = getModelVariantKeys(model)
                 return (
-                  <div key={`${model.providerID}:${model.id}`}>
+                  <div key={`${model.agentSdk}:${model.providerID}:${model.id}`}>
                     <DropdownMenuItem
                       onClick={() => handleSelectModel(model)}
                       onContextMenu={(e) => {
@@ -392,8 +568,7 @@ export function ModelSelector({
                         data-testid={`variant-chips-${model.id}`}
                       >
                         {variantKeys.map((variant) => {
-                          const isActiveVariant =
-                            active && selectedModel?.variant === variant
+                          const isActiveVariant = active && selectedModel?.variant === variant
                           return (
                             <button
                               key={variant}
