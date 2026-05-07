@@ -1,10 +1,11 @@
-import { describe, expect, test, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
 import {
   RunOutputLine,
   SearchHighlight
 } from '../../src/renderer/src/components/layout/RunOutputLine'
+import { useSettingsStore } from '../../src/renderer/src/stores/useSettingsStore'
 
 // Mock ansi-to-react so we can verify the raw text is passed through
 vi.mock('ansi-to-react', () => ({
@@ -12,6 +13,11 @@ vi.mock('ansi-to-react', () => ({
 }))
 
 describe('RunOutputLine', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.mocked(window.systemOps.openInChrome).mockClear()
+  })
+
   describe('marker lines', () => {
     test('renders truncation marker with \x00TRUNC: prefix', () => {
       const { container } = render(
@@ -192,6 +198,90 @@ describe('RunOutputLine', () => {
         <RunOutputLine line="hello world" highlight={highlight} />
       )
       expect(screen.queryByTestId('ansi')).toBeNull()
+    })
+  })
+
+  describe('URL linkification', () => {
+    test('plain line still uses Ansi component', () => {
+      render(<RunOutputLine line="plain output" />)
+      const ansi = screen.getByTestId('ansi')
+      expect(ansi.textContent).toBe('plain output')
+    })
+
+    test('line with one URL renders a data-url span', () => {
+      const { container } = render(<RunOutputLine line="Local: http://localhost:5173/" />)
+      const span = container.querySelector('[data-url="http://localhost:5173/"]')
+      expect(span).not.toBeNull()
+      expect(span?.textContent).toBe('http://localhost:5173/')
+    })
+
+    test('Cmd+click opens URL with custom Chrome command', () => {
+      vi.spyOn(useSettingsStore, 'getState').mockReturnValue({
+        customChromeCommand: 'open -a Firefox {url}'
+      } as ReturnType<typeof useSettingsStore.getState>)
+
+      const { container } = render(<RunOutputLine line="Local: http://localhost:5173/" />)
+      const span = container.querySelector('[data-url="http://localhost:5173/"]')!
+
+      fireEvent.click(span, { metaKey: true, button: 0 })
+
+      expect(window.systemOps.openInChrome).toHaveBeenCalledWith(
+        'http://localhost:5173/',
+        'open -a Firefox {url}'
+      )
+    })
+
+    test('plain click does not open URL', () => {
+      const { container } = render(<RunOutputLine line="Local: http://localhost:5173/" />)
+      const span = container.querySelector('[data-url="http://localhost:5173/"]')!
+
+      fireEvent.click(span, { button: 0 })
+
+      expect(window.systemOps.openInChrome).not.toHaveBeenCalled()
+    })
+
+    test('right-click context menu is suppressed without opening URL', () => {
+      const { container } = render(<RunOutputLine line="Local: http://localhost:5173/" />)
+      const span = container.querySelector('[data-url="http://localhost:5173/"]')!
+      const event = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        button: 2
+      })
+
+      span.dispatchEvent(event)
+
+      expect(event.defaultPrevented).toBe(true)
+      expect(window.systemOps.openInChrome).not.toHaveBeenCalled()
+    })
+
+    test('empty custom Chrome command is passed as undefined', () => {
+      vi.spyOn(useSettingsStore, 'getState').mockReturnValue({
+        customChromeCommand: ''
+      } as ReturnType<typeof useSettingsStore.getState>)
+
+      const { container } = render(<RunOutputLine line="Local: http://localhost:5173/" />)
+      const span = container.querySelector('[data-url="http://localhost:5173/"]')!
+
+      fireEvent.click(span, { metaKey: true, button: 0 })
+
+      expect(window.systemOps.openInChrome).toHaveBeenCalledWith(
+        'http://localhost:5173/',
+        undefined
+      )
+    })
+
+    test('highlighted URL line is not linkified', () => {
+      const highlight: SearchHighlight = {
+        matchStart: 7,
+        matchEnd: 11,
+        isCurrent: true
+      }
+      const { container } = render(
+        <RunOutputLine line="Local: http://localhost:5173/" highlight={highlight} />
+      )
+
+      expect(container.querySelector('[data-url]')).toBeNull()
     })
   })
 

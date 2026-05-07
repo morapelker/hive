@@ -3,6 +3,12 @@
 @import 'highlight.js/styles/github-dark-dimmed.css';
 @import './xterm.css';
 
+[data-meta-held='true'] .run-url:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 @font-face {
   font-family: 'DM Sans';
   src: url('../assets/fonts/DMSans-Variable.woff2') format('woff2');

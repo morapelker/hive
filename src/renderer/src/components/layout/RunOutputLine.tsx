@@ -1,6 +1,8 @@
 import React from 'react'
 import Ansi from 'ansi-to-react'
 import { parseAnsiSegments } from '@/lib/ansi-utils'
+import { splitLineByUrls } from '@/lib/url-utils'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 
 export interface SearchHighlight {
   /** Character offset where the match starts (in the stripped-ANSI plain text) */
@@ -14,6 +16,29 @@ export interface SearchHighlight {
 interface RunOutputLineProps {
   line: string
   highlight?: SearchHighlight
+}
+
+function RunUrlSpan({ url, display }: { url: string; display: string }): React.JSX.Element {
+  const onClick = (e: React.MouseEvent): void => {
+    if (e.button !== 0) return
+    if (!(e.metaKey || e.ctrlKey)) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    const customCommand = useSettingsStore.getState().customChromeCommand || undefined
+    window.systemOps.openInChrome(url, customCommand)
+  }
+  const onContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  return (
+    <span className="run-url" onClick={onClick} onContextMenu={onContextMenu} data-url={url}>
+      {display}
+    </span>
+  )
 }
 
 // When a search highlight is active, ANSI coloring is intentionally dropped
@@ -91,9 +116,24 @@ function RunOutputLineInner({ line, highlight }: RunOutputLineProps): React.JSX.
     return renderHighlightedLine(line, highlight)
   }
 
+  const chunks = splitLineByUrls(line)
+  if (chunks.length === 1 && chunks[0].type === 'text') {
+    return (
+      <div className="whitespace-pre-wrap break-all [&_code]:all-unset">
+        <Ansi>{line}</Ansi>
+      </div>
+    )
+  }
+
   return (
     <div className="whitespace-pre-wrap break-all [&_code]:all-unset">
-      <Ansi>{line}</Ansi>
+      {chunks.map((chunk, index) =>
+        chunk.type === 'url' ? (
+          <RunUrlSpan key={index} url={chunk.url} display={chunk.content} />
+        ) : (
+          <Ansi key={index}>{chunk.content}</Ansi>
+        )
+      )}
     </div>
   )
 }
