@@ -297,6 +297,7 @@ export class CodexImplementer implements AgentSdkImplementer {
   private sessions = new Map<string, CodexSessionState>()
   private pendingQuestions = new Map<string, PendingHitlEntry>()
   private pendingApprovalSessions = new Map<string, PendingHitlEntry>()
+  private promptHandledThreadIds = new Set<string>()
 
   // ── Window binding ───────────────────────────────────────────────
 
@@ -395,6 +396,19 @@ export class CodexImplementer implements AgentSdkImplementer {
         sessionId: targetSession.hiveSessionId,
         data: {}
       })
+      return
+    }
+
+    // Goal continuation turns are started internally by the Codex app-server,
+    // so they do not pass through prompt()'s scoped streaming listener.
+    // Forward those global notifications through the same renderer/canonical
+    // transcript path, while prompt-owned turns keep using their local listener.
+    if (
+      targetSession &&
+      event.kind === 'notification' &&
+      !this.promptHandledThreadIds.has(event.threadId) &&
+      this.forwardAutonomousStreamEvent(targetSession, event)
+    ) {
       return
     }
 
@@ -951,6 +965,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       }
     }
 
+    this.promptHandledThreadIds.add(session.threadId)
     this.manager.on('event', handleEvent)
 
     try {
@@ -1098,6 +1113,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       session.currentTurnId = null
       session.currentAssistantMessageId = null
       this.manager.removeListener('event', handleEvent)
+      this.promptHandledThreadIds.delete(session.threadId)
     }
   }
 
@@ -2133,6 +2149,103 @@ export class CodexImplementer implements AgentSdkImplementer {
       data: { status: statusPayload },
       statusPayload
     })
+  }
+
+  private forwardAutonomousStreamEvent(
+    session: CodexSessionState,
+    event: CodexManagerEvent
+  ): boolean {
+    if (event.method === 'thread/goal/updated' || event.method === 'thread/goal/cleared') {
+      const payloadThreadId = asString(asObject(event.payload)?.threadId)
+      if (payloadThreadId && payloadThreadId !== session.threadId) {
+        log.info('[CODEX_STREAM_DEBUG] global listener dropped goal payload thread mismatch', {
+          method: event.method,
+          payloadThreadId,
+          sessionThreadId: session.threadId,
+          hiveSessionId: session.hiveSessionId,
+          eventId: event.id
+        })
+        return false
+      }
+    }
+
+    const streamEvents = mapCodexEventToStreamEvents(event, session.hiveSessionId)
+    if (streamEvents.length === 0) return false
+
+    if (event.method === 'turn/started') {
+      session.status = 'running'
+      this.resetLiveAssistantDraft(session)
+    }
+
+    if (
+      contentStreamKindFromMethod(event.method) ||
+      event.method.startsWith('thread/goal/') ||
+      event.method.startsWith('turn/') ||
+      event.method.startsWith('item/')
+    ) {
+      const payload = asObject(event.payload)
+      const deltaText =
+        event.textDelta ??
+        asString(payload?.delta) ??
+        asString(payload?.text) ??
+        ''
+      log.info('[CODEX_STREAM_DEBUG] global listener mapped autonomous event', {
+        method: event.method,
+        eventId: event.id,
+        threadId: event.threadId,
+        turnId: event.turnId ?? null,
+        itemId: event.itemId ?? null,
+        hiveSessionId: session.hiveSessionId,
+        streamEventCount: streamEvents.length,
+        textDeltaLength: deltaText.length
+      })
+    }
+
+    for (const streamEvent of streamEvents) {
+      const streamData = asObject(streamEvent.data)
+      const part = asObject(streamData?.part)
+      const state = asObject(part?.state)
+      log.info('[CODEX_STREAM_DEBUG] sending autonomous stream event to renderer', {
+        sourceMethod: event.method,
+        eventId: event.id,
+        streamType: streamEvent.type,
+        streamSessionId: streamEvent.sessionId,
+        childSessionId: streamEvent.childSessionId ?? null,
+        partType: asString(part?.type) ?? null,
+        tool: asString(part?.tool) ?? null,
+        status: streamEvent.statusPayload?.type ?? asString(asObject(streamData?.status)?.type) ?? null,
+        deltaLength:
+          (
+            asString(streamData?.delta) ??
+            asString(part?.text) ??
+            asString(state?.outputDelta) ??
+            ''
+          ).length
+      })
+      this.sendToRenderer('opencode:stream', streamEvent)
+      this.updateLiveAssistantDraftFromStreamEvent(session, streamEvent)
+      if (this.synchronizeCanonicalAssistantFromStreamEvent(session, event, streamEvent)) {
+        this.persistCanonicalMessagesDebounced(session)
+      }
+    }
+
+    if (event.method === 'turn/completed') {
+      const typed = event.payload as TurnCompletedNotification | undefined
+      const status: string | undefined =
+        typed?.turn?.status ??
+        ((event.payload as Record<string, unknown> | undefined)?.state as string | undefined)
+
+      this.flushPendingPersist(session)
+      if (session.currentAssistantMessageId) {
+        this.persistCanonicalMessages(session)
+      }
+      session.liveAssistantDraft = null
+      session.currentTurnId = null
+      session.currentAssistantMessageId = null
+      session.status = status === 'failed' ? 'error' : 'ready'
+    }
+
+    return true
   }
 
   private resetLiveAssistantDraft(session: CodexSessionState): void {

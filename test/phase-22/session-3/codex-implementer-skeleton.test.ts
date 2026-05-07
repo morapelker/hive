@@ -401,6 +401,109 @@ describe('CodexImplementer skeleton', () => {
         })
       )
     })
+
+    it('streams autonomous goal continuation events from the global manager listener', () => {
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      } as any
+      impl.setMainWindow(mockWindow)
+      const manager = new EventEmitter()
+      ;(impl as any).manager = manager
+      ;(impl as any).sessions.set('/path::thread-1', {
+        threadId: 'thread-1',
+        hiveSessionId: 'hive-1',
+        worktreePath: '/path',
+        status: 'ready',
+        messages: [],
+        pendingHitlRequestIds: new Set<string>(),
+        liveAssistantDraft: null,
+        currentTurnId: null,
+        currentAssistantMessageId: null,
+        revertMessageID: null,
+        revertDiff: null,
+        titleGenerated: true,
+        titleGenerationStarted: true,
+        persistDebounceTimer: null
+      })
+      ;(impl as any).attachManagerListener()
+
+      manager.emit('event', {
+        id: 'goal-turn-started',
+        kind: 'notification',
+        provider: 'codex',
+        threadId: 'thread-1',
+        turnId: 'turn-goal-1',
+        method: 'turn/started',
+        payload: { threadId: 'thread-1', turn: { id: 'turn-goal-1' } },
+        createdAt: '2026-05-06T10:00:00.000Z'
+      })
+      manager.emit('event', {
+        id: 'goal-delta-1',
+        kind: 'notification',
+        provider: 'codex',
+        threadId: 'thread-1',
+        turnId: 'turn-goal-1',
+        method: 'item/agentMessage/delta',
+        textDelta: 'Goal continuation output',
+        payload: {
+          threadId: 'thread-1',
+          turnId: 'turn-goal-1',
+          delta: 'Goal continuation output'
+        },
+        createdAt: '2026-05-06T10:00:01.000Z'
+      })
+      manager.emit('event', {
+        id: 'goal-turn-completed',
+        kind: 'notification',
+        provider: 'codex',
+        threadId: 'thread-1',
+        turnId: 'turn-goal-1',
+        method: 'turn/completed',
+        payload: {
+          threadId: 'thread-1',
+          turn: { id: 'turn-goal-1', status: 'completed' }
+        },
+        createdAt: '2026-05-06T10:00:02.000Z'
+      })
+
+      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
+        'opencode:stream',
+        expect.objectContaining({
+          type: 'message.part.updated',
+          sessionId: 'hive-1',
+          data: expect.objectContaining({
+            delta: 'Goal continuation output',
+            part: expect.objectContaining({
+              type: 'text',
+              text: 'Goal continuation output'
+            })
+          })
+        })
+      )
+      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
+        'opencode:stream',
+        expect.objectContaining({
+          type: 'session.status',
+          sessionId: 'hive-1',
+          statusPayload: { type: 'idle' }
+        })
+      )
+      expect((impl as any).sessions.get('/path::thread-1').messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'turn-goal-1:assistant',
+            role: 'assistant',
+            parts: expect.arrayContaining([
+              expect.objectContaining({
+                type: 'text',
+                text: 'Goal continuation output'
+              })
+            ])
+          })
+        ])
+      )
+    })
   })
 
   describe('steer', () => {
