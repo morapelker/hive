@@ -309,6 +309,12 @@ describe('Session 9: Worktree Picker Modal', () => {
       useSettingsStore.setState({
         availableAgentSdks: { opencode: true, claude: true, codex: true },
         defaultAgentSdk: 'opencode',
+        defaultModels: {
+          build: null,
+          plan: null,
+          ask: null,
+          review: null
+        },
         codexFastMode: false,
         codexFastModeAccepted: false
       })
@@ -463,6 +469,45 @@ describe('Session 9: Worktree Picker Modal', () => {
     fireEvent.keyDown(modal, { key: 'Tab' })
     expect(toggle).toHaveAttribute('data-mode', 'plan')
     expect(document.activeElement).toBe(textarea)
+  })
+
+  test('Tab to plan mode reflects a cross-SDK mode default in the provider segment', async () => {
+    act(() => {
+      useSettingsStore.setState({
+        defaultAgentSdk: 'opencode',
+        defaultModels: {
+          build: null,
+          plan: {
+            agentSdk: 'claude-code',
+            providerID: 'anthropic',
+            modelID: 'opus-4.5',
+            variant: 'high'
+          },
+          ask: null,
+          review: null
+        }
+      })
+    })
+
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    const modal = screen.getByTestId('worktree-picker-modal')
+
+    expect(screen.getByTestId('sdk-toggle-opencode')).toHaveClass('bg-primary')
+    fireEvent.keyDown(modal, { key: 'Tab' })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveClass('bg-primary')
+    })
+    expect(screen.getByTestId('sdk-toggle-opencode')).not.toHaveClass('bg-primary')
+    expect(screen.getByTestId('model-selector')).toHaveTextContent('opus-4.5')
   })
 
   test('Tab still toggles mode when prompt textarea is already focused', () => {
