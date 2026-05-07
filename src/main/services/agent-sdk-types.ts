@@ -130,7 +130,7 @@ export const CLAUDE_CODE_CAPABILITIES: AgentSdkCapabilities = {
 export const CODEX_CAPABILITIES: AgentSdkCapabilities = {
   supportsUndo: true,
   supportsRedo: false,
-  supportsCommands: false,
+  supportsCommands: true,
   supportsPermissionRequests: true,
   supportsQuestionPrompts: true,
   supportsModelSelection: true,

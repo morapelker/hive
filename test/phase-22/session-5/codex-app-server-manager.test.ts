@@ -350,4 +350,105 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
     await expect(pendingRequest).rejects.toThrow('spawn ENOENT')
     expect(context.pending.size).toBe(0)
   })
+
+  it('sends thread/goal/set with objective, status, and token budget', async () => {
+    const { context, stdin } = createTestContext()
+    seedSession(context)
+
+    const goalPromise = manager.setThreadGoal('thread-123', {
+      objective: 'Finish the latency migration',
+      status: 'active',
+      tokenBudget: 200000
+    })
+
+    const messages = getWrittenMessages(stdin)
+    const goalSetMsg = messages.find((m: any) => m.method === 'thread/goal/set')
+    expect(goalSetMsg).toBeDefined()
+    expect(goalSetMsg.params).toEqual({
+      threadId: 'thread-123',
+      objective: 'Finish the latency migration',
+      status: 'active',
+      tokenBudget: 200000
+    })
+
+    manager.handleStdoutLine(
+      context,
+      JSON.stringify({
+        id: goalSetMsg.id,
+        result: {
+          goal: {
+            threadId: 'thread-123',
+            objective: 'Finish the latency migration',
+            status: 'active',
+            tokenBudget: 200000,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: 1,
+            updatedAt: 1
+          }
+        }
+      })
+    )
+
+    await expect(goalPromise).resolves.toMatchObject({
+      goal: {
+        threadId: 'thread-123',
+        objective: 'Finish the latency migration',
+        status: 'active'
+      }
+    })
+  })
+
+  it('sends thread/goal/get and thread/goal/clear for the provider thread', async () => {
+    const { context, stdin } = createTestContext()
+    seedSession(context)
+
+    const getPromise = manager.getThreadGoal('thread-123')
+    let messages = getWrittenMessages(stdin)
+    const getMsg = messages.find((m: any) => m.method === 'thread/goal/get')
+    expect(getMsg.params).toEqual({ threadId: 'thread-123' })
+    manager.handleStdoutLine(context, JSON.stringify({ id: getMsg.id, result: { goal: null } }))
+    await expect(getPromise).resolves.toEqual({ goal: null })
+
+    const clearPromise = manager.clearThreadGoal('thread-123')
+    messages = getWrittenMessages(stdin)
+    const clearMsg = messages.find((m: any) => m.method === 'thread/goal/clear')
+    expect(clearMsg.params).toEqual({ threadId: 'thread-123' })
+    manager.handleStdoutLine(context, JSON.stringify({ id: clearMsg.id, result: { cleared: true } }))
+    await expect(clearPromise).resolves.toEqual({ cleared: true })
+  })
+
+  it('detects goal feature support from experimentalFeature/list', async () => {
+    const { context, stdin } = createTestContext()
+    seedSession(context)
+
+    const supportPromise = manager.getGoalsFeatureStatus('thread-123')
+
+    const messages = getWrittenMessages(stdin)
+    const listMsg = messages.find((m: any) => m.method === 'experimentalFeature/list')
+    expect(listMsg).toBeDefined()
+
+    manager.handleStdoutLine(
+      context,
+      JSON.stringify({
+        id: listMsg.id,
+        result: {
+          data: [
+            {
+              name: 'goals',
+              stage: 'beta',
+              displayName: 'Goals',
+              description: 'Set a persistent goal',
+              announcement: '',
+              enabled: true,
+              defaultEnabled: false
+            }
+          ],
+          nextCursor: null
+        }
+      })
+    )
+
+    await expect(supportPromise).resolves.toEqual({ supported: true, enabled: true })
+  })
 })

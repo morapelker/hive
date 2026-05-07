@@ -124,6 +124,7 @@ describe('Codex steer boundary ordering', () => {
       pendingMessages: new Map(),
       pendingPlans: new Map(),
       pendingFollowUpMessages: new Map([['test-session-1', ['Follow-up steer']]]),
+      codexGoalsBySession: new Map(),
       isLoading: false,
       error: null,
       activeSessionId: 'test-session-1',
@@ -267,6 +268,15 @@ describe('Codex steer boundary ordering', () => {
       writable: true,
       configurable: true
     })
+
+    Object.defineProperty(window, 'bash', {
+      value: {
+        getRun: vi.fn().mockResolvedValue(null),
+        onStream: vi.fn().mockReturnValue(() => {})
+      },
+      writable: true,
+      configurable: true
+    })
   })
 
   afterEach(() => {
@@ -334,5 +344,59 @@ describe('Codex steer boundary ordering', () => {
       expect.stringContaining('STEEREDFollow-up steer'),
       expect.stringContaining('Continued answer')
     ])
+  })
+
+  test('renders and clears the sticky Codex goal status from stream events', async () => {
+    render(<SessionView sessionId="test-session-1" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('First answer')).toBeInTheDocument()
+    })
+
+    const streamCallback = (window as Window & {
+      __testStreamCallback?: (event: Record<string, unknown>) => void
+    }).__testStreamCallback
+
+    await act(async () => {
+      streamCallback?.({
+        sessionId: 'test-session-1',
+        type: 'codex.goal.updated',
+        data: {
+          threadId: 'opc-session-1',
+          goal: {
+            threadId: 'opc-session-1',
+            objective: 'Add mul 161 to main',
+            status: 'active',
+            tokenBudget: null,
+            tokensUsed: 47_957,
+            timeUsedSeconds: 80,
+            createdAt: 1,
+            updatedAt: 1
+          },
+          _codexEventId: 'goal-event-1'
+        }
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('goal-status-widget')).toBeInTheDocument()
+      expect(screen.getByText('Pursuing goal (1m)')).toBeInTheDocument()
+      expect(screen.getByText('Add mul 161 to main')).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      streamCallback?.({
+        sessionId: 'test-session-1',
+        type: 'codex.goal.cleared',
+        data: {
+          threadId: 'opc-session-1',
+          _codexEventId: 'goal-event-2'
+        }
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('goal-status-widget')).not.toBeInTheDocument()
+    })
   })
 })

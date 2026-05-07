@@ -193,7 +193,7 @@ describe('Capability-gated commands for Codex', () => {
 
   it('Codex does not support slash commands', () => {
     // Codex sessions should not show the command palette or process slash commands
-    expect(CODEX_CAPABILITIES.supportsCommands).toBe(false)
+    expect(CODEX_CAPABILITIES.supportsCommands).toBe(true)
   })
 
   it('OpenCode supports both undo and redo (contrast with Codex)', () => {

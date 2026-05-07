@@ -21,6 +21,9 @@ import type { TurnSteerResponse } from '@shared/codex-schemas/v2/TurnSteerRespon
 import type { TurnInterruptParams } from '@shared/codex-schemas/v2/TurnInterruptParams'
 import type { ThreadReadParams } from '@shared/codex-schemas/v2/ThreadReadParams'
 import type { ThreadRollbackParams } from '@shared/codex-schemas/v2/ThreadRollbackParams'
+import type { ThreadGoal } from '@shared/codex-schemas/v2/ThreadGoal'
+import type { ThreadGoalStatus } from '@shared/codex-schemas/v2/ThreadGoalStatus'
+import type { ExperimentalFeatureListResponse } from '@shared/codex-schemas/v2/ExperimentalFeatureListResponse'
 import type { SandboxMode } from '@shared/codex-schemas/v2/SandboxMode'
 import type { AskForApproval } from '@shared/codex-schemas/v2/AskForApproval'
 import type { TurnStartedNotification } from '@shared/codex-schemas/v2/TurnStartedNotification'
@@ -146,6 +149,29 @@ export interface CodexTurnStartResult {
 
 export interface CodexTurnSteerResult {
   turnId: string
+}
+
+export interface CodexThreadGoalSetInput {
+  objective?: string
+  status?: ThreadGoalStatus
+  tokenBudget?: number | null
+}
+
+export interface CodexThreadGoalSetResponse {
+  goal: ThreadGoal
+}
+
+export interface CodexThreadGoalGetResponse {
+  goal: ThreadGoal | null
+}
+
+export interface CodexThreadGoalClearResponse {
+  cleared: boolean
+}
+
+export interface CodexGoalsFeatureStatus {
+  supported: boolean
+  enabled: boolean
 }
 
 // ── Event types ───────────────────────────────────────────────────
@@ -616,6 +642,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     return Array.from(this.sessions.values(), ({ session }) => ({ ...session }))
   }
 
+  private getSessionContextForThreadRpc(threadId: string, methodName: string): CodexSessionContext {
+    const context = this.sessions.get(threadId)
+    if (!context) {
+      throw new Error(`${methodName}: no session found for threadId=${threadId}`)
+    }
+
+    if (!context.session.threadId) {
+      throw new Error(`${methodName}: session has no threadId`)
+    }
+
+    return context
+  }
+
   async sendTurn(threadId: string, input: CodexTurnInput): Promise<CodexTurnStartResult> {
     const context = this.sessions.get(threadId)
     if (!context) {
@@ -723,6 +762,62 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     this.updateSession(context, { activeTurnId: response.turnId || null })
 
     return { turnId: response.turnId }
+  }
+
+  async setThreadGoal(
+    threadId: string,
+    input: CodexThreadGoalSetInput
+  ): Promise<CodexThreadGoalSetResponse> {
+    const context = this.getSessionContextForThreadRpc(threadId, 'setThreadGoal')
+    const params: Record<string, unknown> = {
+      threadId: context.session.threadId
+    }
+
+    if (input.objective !== undefined) {
+      params.objective = input.objective
+    }
+    if (input.status !== undefined) {
+      params.status = input.status
+    }
+    if ('tokenBudget' in input) {
+      params.tokenBudget = input.tokenBudget ?? null
+    }
+
+    return this.sendRequest<CodexThreadGoalSetResponse>(context, 'thread/goal/set', params)
+  }
+
+  async getThreadGoal(threadId: string): Promise<CodexThreadGoalGetResponse> {
+    const context = this.getSessionContextForThreadRpc(threadId, 'getThreadGoal')
+    return this.sendRequest<CodexThreadGoalGetResponse>(context, 'thread/goal/get', {
+      threadId: context.session.threadId
+    })
+  }
+
+  async clearThreadGoal(threadId: string): Promise<CodexThreadGoalClearResponse> {
+    const context = this.getSessionContextForThreadRpc(threadId, 'clearThreadGoal')
+    return this.sendRequest<CodexThreadGoalClearResponse>(context, 'thread/goal/clear', {
+      threadId: context.session.threadId
+    })
+  }
+
+  async getGoalsFeatureStatus(threadId: string): Promise<CodexGoalsFeatureStatus> {
+    const context = this.getSessionContextForThreadRpc(threadId, 'getGoalsFeatureStatus')
+    let cursor: string | null = null
+
+    do {
+      const response = await this.sendRequest<ExperimentalFeatureListResponse>(
+        context,
+        'experimentalFeature/list',
+        cursor ? { cursor } : {}
+      )
+      const feature = response.data.find((entry) => entry.name === 'goals')
+      if (feature) {
+        return { supported: true, enabled: feature.enabled }
+      }
+      cursor = response.nextCursor
+    } while (cursor)
+
+    return { supported: false, enabled: false }
   }
 
   // ── HITL / control-plane API ──────────────────────────────────

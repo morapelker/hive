@@ -926,7 +926,7 @@ describe('CodexImplementer.prompt()', () => {
 
     expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
       text: 'test',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       serviceTier: 'fast',
       interactionMode: 'default'
     })

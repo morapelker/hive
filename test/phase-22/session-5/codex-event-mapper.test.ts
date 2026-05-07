@@ -271,6 +271,61 @@ describe('mapCodexEventToStreamEvents', () => {
     })
   })
 
+  describe('thread goal notifications', () => {
+    it('maps thread/goal/updated to a goal status stream event', () => {
+      const event = makeEvent({
+        method: 'thread/goal/updated',
+        payload: {
+          threadId: 'thread-1',
+          turnId: null,
+          goal: {
+            threadId: 'thread-1',
+            objective: 'Finish the migration',
+            status: 'active',
+            tokenBudget: 50000,
+            tokensUsed: 1200,
+            timeUsedSeconds: 90,
+            createdAt: 10,
+            updatedAt: 20
+          }
+        }
+      })
+
+      const result = mapCodexEventToStreamEvents(event, HIVE_SESSION)
+
+      expect(result).toHaveLength(1)
+      expect(result[0]).toMatchObject({
+        type: 'codex.goal.updated',
+        sessionId: HIVE_SESSION,
+        data: {
+          goal: {
+            objective: 'Finish the migration',
+            status: 'active',
+            tokenBudget: 50000,
+            tokensUsed: 1200,
+            timeUsedSeconds: 90
+          }
+        }
+      })
+    })
+
+    it('maps thread/goal/cleared to a goal cleared stream event', () => {
+      const event = makeEvent({
+        method: 'thread/goal/cleared',
+        payload: { threadId: 'thread-1' }
+      })
+
+      const result = mapCodexEventToStreamEvents(event, HIVE_SESSION)
+
+      expect(result).toHaveLength(1)
+      expect(result[0]).toMatchObject({
+        type: 'codex.goal.cleared',
+        sessionId: HIVE_SESSION,
+        data: { threadId: 'thread-1' }
+      })
+    })
+  })
+
   // ── Turn started ────────────────────────────────────────────
 
   describe('turn/started', () => {

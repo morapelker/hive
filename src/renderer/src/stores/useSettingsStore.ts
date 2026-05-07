@@ -60,6 +60,7 @@ export interface AppSettings {
   vimModeEnabled: boolean
   keepAwakeEnabled: boolean
   taskListCollapsed: boolean
+  goalStatusCollapsed: boolean
   mergeConflictMode: MergeConflictMode
   boardMode: 'toggle' | 'sticky-tab'
   followUpTriggerColumn: FollowUpTriggerColumn
@@ -158,6 +159,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   vimModeEnabled: false,
   keepAwakeEnabled: false,
   taskListCollapsed: false,
+  goalStatusCollapsed: false,
   mergeConflictMode: 'always-ask',
   boardMode: 'sticky-tab',
   followUpTriggerColumn: 'done',
@@ -328,6 +330,7 @@ function extractSettings(state: SettingsState): AppSettings {
     vimModeEnabled: state.vimModeEnabled,
     keepAwakeEnabled: state.keepAwakeEnabled,
     taskListCollapsed: state.taskListCollapsed,
+    goalStatusCollapsed: state.goalStatusCollapsed,
     mergeConflictMode: state.mergeConflictMode,
     boardMode: state.boardMode,
     followUpTriggerColumn: state.followUpTriggerColumn,
@@ -618,6 +621,7 @@ export const useSettingsStore = create<SettingsState>()(
         vimModeEnabled: state.vimModeEnabled,
         keepAwakeEnabled: state.keepAwakeEnabled,
         taskListCollapsed: state.taskListCollapsed,
+        goalStatusCollapsed: state.goalStatusCollapsed,
         mergeConflictMode: state.mergeConflictMode,
         boardMode: state.boardMode,
         followUpTriggerColumn: state.followUpTriggerColumn,

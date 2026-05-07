@@ -34,12 +34,21 @@ import type { ToolRequestUserInputAnswer } from '@shared/codex-schemas/v2/ToolRe
 import type { CommandExecutionRequestApprovalParams } from '@shared/codex-schemas/v2/CommandExecutionRequestApprovalParams'
 import type { ThreadItem } from '@shared/codex-schemas/v2/ThreadItem'
 import type { Thread } from '@shared/codex-schemas/v2/Thread'
+import type { ThreadGoal } from '@shared/codex-schemas/v2/ThreadGoal'
+import type { ThreadGoalStatus } from '@shared/codex-schemas/v2/ThreadGoalStatus'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 
 const log = createLogger({ component: 'CodexImplementer' })
 // Balances write coalescing during rapid streaming against data freshness for crash recovery.
 const PERSIST_DEBOUNCE_MS = 2000
 const CODEX_TURN_TIMEOUT_MS = 36_000_000
+const CODEX_GOAL_COMMAND = {
+  name: 'goal',
+  description: 'Set or manage a persistent Codex goal',
+  template: '/goal ',
+  source: 'codex',
+  hints: ['clear', 'pause', 'resume']
+}
 const HITL_REQUEST_METHODS = new Set([
   'item/tool/requestUserInput',
   'item/commandExecution/requestApproval',
@@ -237,6 +246,44 @@ function extractMessageText(parts: unknown[]): string {
   return segments.join('')
 }
 
+function formatGoalStatus(status: ThreadGoalStatus): string {
+  switch (status) {
+    case 'active':
+      return 'active'
+    case 'paused':
+      return 'paused'
+    case 'budgetLimited':
+      return 'budget limited'
+    case 'complete':
+      return 'complete'
+    default:
+      return status
+  }
+}
+
+function formatCompactCount(value: number): string {
+  if (!Number.isFinite(value)) return '0'
+  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (Math.abs(value) >= 1_000) return `${(value / 1_000).toFixed(1)}K`
+  return String(Math.round(value))
+}
+
+function formatGoalSummary(goal: ThreadGoal | null): string {
+  if (!goal) {
+    return 'No active goal is set.'
+  }
+
+  const lines = [
+    `Goal ${formatGoalStatus(goal.status)}`,
+    `Objective: ${goal.objective}`,
+    `Usage: ${formatCompactCount(goal.tokensUsed)} tokens`
+  ]
+  if (goal.tokenBudget !== null) {
+    lines[2] += ` of ${formatCompactCount(goal.tokenBudget)}`
+  }
+  return lines.join('\n')
+}
+
 export class CodexImplementer implements AgentSdkImplementer {
   readonly id = 'codex' as const
   readonly capabilities: AgentSdkCapabilities = CODEX_CAPABILITIES
@@ -250,6 +297,7 @@ export class CodexImplementer implements AgentSdkImplementer {
   private sessions = new Map<string, CodexSessionState>()
   private pendingQuestions = new Map<string, PendingHitlEntry>()
   private pendingApprovalSessions = new Map<string, PendingHitlEntry>()
+  private promptHandledThreadIds = new Set<string>()
 
   // ── Window binding ───────────────────────────────────────────────
 
@@ -348,6 +396,19 @@ export class CodexImplementer implements AgentSdkImplementer {
         sessionId: targetSession.hiveSessionId,
         data: {}
       })
+      return
+    }
+
+    // Goal continuation turns are started internally by the Codex app-server,
+    // so they do not pass through prompt()'s scoped streaming listener.
+    // Forward those global notifications through the same renderer/canonical
+    // transcript path, while prompt-owned turns keep using their local listener.
+    if (
+      targetSession &&
+      event.kind === 'notification' &&
+      !this.promptHandledThreadIds.has(event.threadId) &&
+      this.forwardAutonomousStreamEvent(targetSession, event)
+    ) {
       return
     }
 
@@ -732,6 +793,14 @@ export class CodexImplementer implements AgentSdkImplementer {
       hiveSessionId: session.hiveSessionId,
       textLength: text.length
     })
+    log.info('[CODEX_STREAM_DEBUG] prompt starting', {
+      worktreePath,
+      agentSessionId,
+      hiveSessionId: session.hiveSessionId,
+      threadId: session.threadId,
+      textLength: text.length,
+      messageCount: session.messages.length
+    })
 
     // Set up event listener for streaming
     let interactionMode: 'default' | 'plan' = 'default'
@@ -747,10 +816,60 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     const handleEvent = (event: CodexManagerEvent) => {
       // Only handle events for this thread
-      if (event.threadId !== session.threadId) return
+      if (event.threadId !== session.threadId) {
+        if (
+          contentStreamKindFromMethod(event.method) ||
+          event.method.startsWith('thread/goal/') ||
+          event.method.startsWith('turn/')
+        ) {
+          log.info('[CODEX_STREAM_DEBUG] prompt listener dropped thread mismatch', {
+            method: event.method,
+            eventThreadId: event.threadId,
+            sessionThreadId: session.threadId,
+            hiveSessionId: session.hiveSessionId,
+            eventId: event.id
+          })
+        }
+        return
+      }
+      if (event.method === 'thread/goal/updated' || event.method === 'thread/goal/cleared') {
+        const payloadThreadId = asString(asObject(event.payload)?.threadId)
+        if (payloadThreadId && payloadThreadId !== session.threadId) {
+          log.info('[CODEX_STREAM_DEBUG] prompt listener dropped goal payload thread mismatch', {
+            method: event.method,
+            payloadThreadId,
+            sessionThreadId: session.threadId,
+            hiveSessionId: session.hiveSessionId,
+            eventId: event.id
+          })
+          return
+        }
+      }
       this.syncPendingHitlRequestFromEvent(session, event)
 
       const streamEvents = mapCodexEventToStreamEvents(event, session.hiveSessionId)
+      if (
+        contentStreamKindFromMethod(event.method) ||
+        event.method.startsWith('thread/goal/') ||
+        event.method.startsWith('turn/')
+      ) {
+        const payload = asObject(event.payload)
+        const deltaText =
+          event.textDelta ??
+          asString(payload?.delta) ??
+          asString(payload?.text) ??
+          ''
+        log.info('[CODEX_STREAM_DEBUG] prompt listener mapped event', {
+          method: event.method,
+          eventId: event.id,
+          threadId: event.threadId,
+          turnId: event.turnId ?? null,
+          itemId: event.itemId ?? null,
+          hiveSessionId: session.hiveSessionId,
+          streamEventCount: streamEvents.length,
+          textDeltaLength: deltaText.length
+        })
+      }
       for (const streamEvent of streamEvents) {
         if (
           event.method === 'turn/completed' &&
@@ -759,6 +878,26 @@ export class CodexImplementer implements AgentSdkImplementer {
         ) {
           continue
         }
+        const streamData = asObject(streamEvent.data)
+        const part = asObject(streamData?.part)
+        const state = asObject(part?.state)
+        log.info('[CODEX_STREAM_DEBUG] sending stream event to renderer', {
+          sourceMethod: event.method,
+          eventId: event.id,
+          streamType: streamEvent.type,
+          streamSessionId: streamEvent.sessionId,
+          childSessionId: streamEvent.childSessionId ?? null,
+          partType: asString(part?.type) ?? null,
+          tool: asString(part?.tool) ?? null,
+          status: streamEvent.statusPayload?.type ?? asString(asObject(streamData?.status)?.type) ?? null,
+          deltaLength:
+            (
+              asString(streamData?.delta) ??
+              asString(part?.text) ??
+              asString(state?.outputDelta) ??
+              ''
+            ).length
+        })
         this.sendToRenderer('opencode:stream', streamEvent)
         this.updateLiveAssistantDraftFromStreamEvent(session, streamEvent)
         if (this.synchronizeCanonicalAssistantFromStreamEvent(session, event, streamEvent)) {
@@ -826,6 +965,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       }
     }
 
+    this.promptHandledThreadIds.add(session.threadId)
     this.manager.on('event', handleEvent)
 
     try {
@@ -973,6 +1113,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       session.currentTurnId = null
       session.currentAssistantMessageId = null
       this.manager.removeListener('event', handleEvent)
+      this.promptHandledThreadIds.delete(session.threadId)
     }
   }
 
@@ -1455,16 +1596,57 @@ export class CodexImplementer implements AgentSdkImplementer {
   // ── Commands ─────────────────────────────────────────────────────
 
   async listCommands(_worktreePath: string): Promise<unknown[]> {
-    throw new Error('CodexImplementer.listCommands() not yet implemented')
+    return [CODEX_GOAL_COMMAND]
   }
 
   async sendCommand(
-    _worktreePath: string,
-    _agentSessionId: string,
-    _command: string,
-    _args?: string
+    worktreePath: string,
+    agentSessionId: string,
+    command: string,
+    args?: string
   ): Promise<void> {
-    throw new Error('CodexImplementer.sendCommand() not yet implemented')
+    const normalizedCommand = command.trim().replace(/^\//, '').toLowerCase()
+    if (normalizedCommand !== 'goal') {
+      throw new Error(`Unsupported Codex command: /${normalizedCommand || command}`)
+    }
+
+    const session = this.sessions.get(this.getSessionKey(worktreePath, agentSessionId))
+    if (!session) {
+      throw new Error(`Command failed: session not found for ${worktreePath} / ${agentSessionId}`)
+    }
+
+    const trimmedArgs = (args ?? '').trim()
+    let summary: string
+    this.persistCommandUserMessage(session, `/${normalizedCommand}${trimmedArgs ? ` ${trimmedArgs}` : ''}`)
+
+    if (!trimmedArgs) {
+      const response = await this.manager.getThreadGoal(session.threadId)
+      summary = formatGoalSummary(response.goal)
+      if (response.goal) {
+        this.emitGoalUpdated(session, response.goal)
+      }
+    } else if (trimmedArgs.toLowerCase() === 'clear') {
+      const response = await this.manager.clearThreadGoal(session.threadId)
+      summary = response.cleared ? 'Goal cleared.' : 'No active goal was set.'
+      this.emitGoalCleared(session)
+    } else if (trimmedArgs.toLowerCase() === 'pause') {
+      const response = await this.manager.setThreadGoal(session.threadId, { status: 'paused' })
+      summary = formatGoalSummary(response.goal)
+      this.emitGoalUpdated(session, response.goal)
+    } else if (trimmedArgs.toLowerCase() === 'resume') {
+      const response = await this.manager.setThreadGoal(session.threadId, { status: 'active' })
+      summary = formatGoalSummary(response.goal)
+      this.emitGoalUpdated(session, response.goal)
+    } else {
+      const response = await this.manager.setThreadGoal(session.threadId, {
+        objective: trimmedArgs,
+        status: 'active'
+      })
+      summary = formatGoalSummary(response.goal)
+      this.emitGoalUpdated(session, response.goal)
+    }
+
+    this.emitCommandMessage(session, summary)
   }
 
   // ── Session management ───────────────────────────────────────────
@@ -1701,6 +1883,77 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
   }
 
+  private emitCommandMessage(session: CodexSessionState, text: string): void {
+    const timestamp = new Date().toISOString()
+    const messageId = `codex-command-${randomUUID()}`
+    const part = { type: 'text' as const, text, timestamp }
+
+    session.messages.push({
+      id: messageId,
+      role: 'assistant',
+      parts: [part],
+      timestamp
+    })
+    this.persistCanonicalMessages(session)
+
+    this.sendToRenderer('opencode:stream', {
+      type: 'message.part.updated',
+      sessionId: session.hiveSessionId,
+      data: {
+        part: { type: 'text', text },
+        delta: text,
+        _codexEventId: messageId
+      }
+    })
+  }
+
+  private persistCommandUserMessage(session: CodexSessionState, text: string): void {
+    const timestamp = new Date().toISOString()
+    session.messages.push({
+      id: `codex-command-user-${randomUUID()}`,
+      role: 'user',
+      parts: [{ type: 'text', text, timestamp }],
+      timestamp
+    })
+    this.persistCanonicalMessages(session)
+  }
+
+  private emitGoalUpdated(session: CodexSessionState, goal: ThreadGoal): void {
+    log.info('[CODEX_STREAM_DEBUG] emitting goal updated from command', {
+      hiveSessionId: session.hiveSessionId,
+      threadId: session.threadId,
+      goalThreadId: goal.threadId,
+      goalStatus: goal.status,
+      objectiveLength: goal.objective.length,
+      tokensUsed: goal.tokensUsed,
+      timeUsedSeconds: goal.timeUsedSeconds
+    })
+    this.sendToRenderer('opencode:stream', {
+      type: 'codex.goal.updated',
+      sessionId: session.hiveSessionId,
+      data: {
+        goal,
+        threadId: goal.threadId,
+        _codexEventId: `codex-goal-updated-${session.threadId}-${goal.updatedAt}`
+      }
+    })
+  }
+
+  private emitGoalCleared(session: CodexSessionState): void {
+    log.info('[CODEX_STREAM_DEBUG] emitting goal cleared from command', {
+      hiveSessionId: session.hiveSessionId,
+      threadId: session.threadId
+    })
+    this.sendToRenderer('opencode:stream', {
+      type: 'codex.goal.cleared',
+      sessionId: session.hiveSessionId,
+      data: {
+        threadId: session.threadId,
+        _codexEventId: `codex-goal-cleared-${session.threadId}-${Date.now()}`
+      }
+    })
+  }
+
   /**
    * Show a native notification when a session is blocked waiting for user
    * feedback (question or command/file approval) while the app window is
@@ -1896,6 +2149,103 @@ export class CodexImplementer implements AgentSdkImplementer {
       data: { status: statusPayload },
       statusPayload
     })
+  }
+
+  private forwardAutonomousStreamEvent(
+    session: CodexSessionState,
+    event: CodexManagerEvent
+  ): boolean {
+    if (event.method === 'thread/goal/updated' || event.method === 'thread/goal/cleared') {
+      const payloadThreadId = asString(asObject(event.payload)?.threadId)
+      if (payloadThreadId && payloadThreadId !== session.threadId) {
+        log.info('[CODEX_STREAM_DEBUG] global listener dropped goal payload thread mismatch', {
+          method: event.method,
+          payloadThreadId,
+          sessionThreadId: session.threadId,
+          hiveSessionId: session.hiveSessionId,
+          eventId: event.id
+        })
+        return false
+      }
+    }
+
+    const streamEvents = mapCodexEventToStreamEvents(event, session.hiveSessionId)
+    if (streamEvents.length === 0) return false
+
+    if (event.method === 'turn/started') {
+      session.status = 'running'
+      this.resetLiveAssistantDraft(session)
+    }
+
+    if (
+      contentStreamKindFromMethod(event.method) ||
+      event.method.startsWith('thread/goal/') ||
+      event.method.startsWith('turn/') ||
+      event.method.startsWith('item/')
+    ) {
+      const payload = asObject(event.payload)
+      const deltaText =
+        event.textDelta ??
+        asString(payload?.delta) ??
+        asString(payload?.text) ??
+        ''
+      log.info('[CODEX_STREAM_DEBUG] global listener mapped autonomous event', {
+        method: event.method,
+        eventId: event.id,
+        threadId: event.threadId,
+        turnId: event.turnId ?? null,
+        itemId: event.itemId ?? null,
+        hiveSessionId: session.hiveSessionId,
+        streamEventCount: streamEvents.length,
+        textDeltaLength: deltaText.length
+      })
+    }
+
+    for (const streamEvent of streamEvents) {
+      const streamData = asObject(streamEvent.data)
+      const part = asObject(streamData?.part)
+      const state = asObject(part?.state)
+      log.info('[CODEX_STREAM_DEBUG] sending autonomous stream event to renderer', {
+        sourceMethod: event.method,
+        eventId: event.id,
+        streamType: streamEvent.type,
+        streamSessionId: streamEvent.sessionId,
+        childSessionId: streamEvent.childSessionId ?? null,
+        partType: asString(part?.type) ?? null,
+        tool: asString(part?.tool) ?? null,
+        status: streamEvent.statusPayload?.type ?? asString(asObject(streamData?.status)?.type) ?? null,
+        deltaLength:
+          (
+            asString(streamData?.delta) ??
+            asString(part?.text) ??
+            asString(state?.outputDelta) ??
+            ''
+          ).length
+      })
+      this.sendToRenderer('opencode:stream', streamEvent)
+      this.updateLiveAssistantDraftFromStreamEvent(session, streamEvent)
+      if (this.synchronizeCanonicalAssistantFromStreamEvent(session, event, streamEvent)) {
+        this.persistCanonicalMessagesDebounced(session)
+      }
+    }
+
+    if (event.method === 'turn/completed') {
+      const typed = event.payload as TurnCompletedNotification | undefined
+      const status: string | undefined =
+        typed?.turn?.status ??
+        ((event.payload as Record<string, unknown> | undefined)?.state as string | undefined)
+
+      this.flushPendingPersist(session)
+      if (session.currentAssistantMessageId) {
+        this.persistCanonicalMessages(session)
+      }
+      session.liveAssistantDraft = null
+      session.currentTurnId = null
+      session.currentAssistantMessageId = null
+      session.status = status === 'failed' ? 'error' : 'ready'
+    }
+
+    return true
   }
 
   private resetLiveAssistantDraft(session: CodexSessionState): void {

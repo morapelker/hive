@@ -18,6 +18,17 @@ const log = createLogger({ component: 'OpenCodeHandlers' })
 // when the ID changes.
 const injectedWorktrees = new Set<string>()
 
+function resolveSdkId(
+  dbService: DatabaseService,
+  sessionId: string
+): 'opencode' | 'claude-code' | 'codex' | 'terminal' | null {
+  return dbService.getAgentSdkForSession(sessionId) ?? dbService.getSession(sessionId)?.agent_sdk ?? null
+}
+
+function resolveAgentSessionId(dbService: DatabaseService, sessionId: string): string {
+  return dbService.getSession(sessionId)?.opencode_session_id ?? sessionId
+}
+
 export function registerOpenCodeHandlers(
   mainWindow: BrowserWindow,
   sdkManager?: AgentSdkManager,
@@ -219,6 +230,12 @@ export function registerOpenCodeHandlers(
       // SDK-aware dispatch: route non-OpenCode sessions to their implementer
       if (sdkManager && dbService) {
         const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+        log.info('[CODEX_STREAM_DEBUG] IPC prompt route resolved', {
+          worktreePath,
+          requestedSessionId: opencodeSessionId,
+          sdkId,
+          route: sdkId && sdkId !== 'opencode' && sdkId !== 'terminal' ? 'sdk' : 'opencode'
+        })
         if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
           const impl = sdkManager.getImplementer(sdkId)
           await impl.prompt(worktreePath, opencodeSessionId, messageOrParts, model, options)
@@ -414,7 +431,7 @@ export function registerOpenCodeHandlers(
       try {
         // SDK-aware dispatch: route non-OpenCode sessions to their implementer
         if (sdkManager && dbService && sessionId) {
-          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          const sdkId = resolveSdkId(dbService, sessionId)
           if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
             const impl = sdkManager.getImplementer(sdkId)
             const commands = await impl.listCommands(worktreePath)
@@ -469,10 +486,22 @@ export function registerOpenCodeHandlers(
       try {
         // SDK-aware dispatch: route non-OpenCode sessions to their implementer
         if (sdkManager && dbService) {
-          const sdkId = dbService.getAgentSdkForSession(sessionId)
+          const sdkId = resolveSdkId(dbService, sessionId)
+          const resolvedAgentSessionId =
+            sdkId && sdkId !== 'opencode' && sdkId !== 'terminal'
+              ? resolveAgentSessionId(dbService, sessionId)
+              : sessionId
+          log.info('[CODEX_STREAM_DEBUG] IPC command route resolved', {
+            worktreePath,
+            requestedSessionId: sessionId,
+            resolvedAgentSessionId,
+            sdkId,
+            command,
+            route: sdkId && sdkId !== 'opencode' && sdkId !== 'terminal' ? 'sdk' : 'opencode'
+          })
           if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
             const impl = sdkManager.getImplementer(sdkId)
-            await impl.sendCommand(worktreePath, sessionId, command, args)
+            await impl.sendCommand(worktreePath, resolvedAgentSessionId, command, args)
             return { success: true }
           }
         }

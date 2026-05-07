@@ -112,7 +112,7 @@ describe('AgentSdkManager with Codex', () => {
       const caps = manager.getCapabilities('codex')
       expect(caps.supportsUndo).toBe(true)
       expect(caps.supportsRedo).toBe(false)
-      expect(caps.supportsCommands).toBe(false)
+      expect(caps.supportsCommands).toBe(true)
       expect(caps.supportsPermissionRequests).toBe(true)
       expect(caps.supportsQuestionPrompts).toBe(true)
       expect(caps.supportsModelSelection).toBe(true)

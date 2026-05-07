@@ -53,6 +53,18 @@ export interface PendingPlan {
   toolUseID: string
 }
 
+export interface CodexThreadGoal {
+  threadId: string
+  objective: string
+  status: 'active' | 'paused' | 'budgetLimited' | 'complete'
+  tokenBudget: number | null
+  tokensUsed: number
+  timeUsedSeconds: number
+  createdAt: number
+  updatedAt: number
+  observedAtMs?: number
+}
+
 // Session type matching the database schema
 interface Session {
   id: string
@@ -88,6 +100,8 @@ interface SessionState {
   pendingPlans: Map<string, PendingPlan>
   // Pending follow-up messages - keyed by session ID, ordered queue of messages to auto-send
   pendingFollowUpMessages: Map<string, string[]>
+  // Current Codex thread goals - keyed by Hive session ID
+  codexGoalsBySession: Map<string, CodexThreadGoal>
   isLoading: boolean
   error: string | null
 
@@ -177,6 +191,8 @@ interface SessionState {
   setPendingPlan: (sessionId: string, plan: PendingPlan) => void
   clearPendingPlan: (sessionId: string) => void
   getPendingPlan: (sessionId: string) => PendingPlan | null
+  setCodexGoal: (sessionId: string, goal: CodexThreadGoal) => void
+  clearCodexGoal: (sessionId: string) => void
 
   // Pinned session actions
   pinSessionToBoard: (sessionId: string) => Promise<void>
@@ -244,6 +260,7 @@ export const useSessionStore = create<SessionState>()(
       pendingMessages: new Map(),
       pendingPlans: new Map(),
       pendingFollowUpMessages: new Map(),
+      codexGoalsBySession: new Map(),
       isLoading: false,
       error: null,
       activeSessionId: null,
@@ -1557,6 +1574,22 @@ export const useSessionStore = create<SessionState>()(
 
       getPendingPlan: (sessionId: string): PendingPlan | null => {
         return get().pendingPlans.get(sessionId) ?? null
+      },
+
+      setCodexGoal: (sessionId: string, goal: CodexThreadGoal) => {
+        set((state) => {
+          const newMap = new Map(state.codexGoalsBySession)
+          newMap.set(sessionId, { ...goal, observedAtMs: Date.now() })
+          return { codexGoalsBySession: newMap }
+        })
+      },
+
+      clearCodexGoal: (sessionId: string) => {
+        set((state) => {
+          const newMap = new Map(state.codexGoalsBySession)
+          newMap.delete(sessionId)
+          return { codexGoalsBySession: newMap }
+        })
       },
 
       // ─── Board assistant actions ──────────────────────────────────────

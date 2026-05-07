@@ -636,6 +636,44 @@ export function mergeCodexActivityMessages(
   return correlateSubtasksIntoTaskTools(orderedMessages)
 }
 
+function messageContentSignature(message: OpenCodeMessage): string {
+  return `${message.role}:${message.content.trim()}`
+}
+
+export function mergeCodexLiveAndDurableMessages(
+  liveMessages: OpenCodeMessage[],
+  durableMessages: OpenCodeMessage[],
+  activityRows: SessionActivity[],
+  sessionIsIdle?: boolean
+): OpenCodeMessage[] {
+  const mergedById = new Map<string, OpenCodeMessage>()
+  const liveSignatures = new Set(liveMessages.map(messageContentSignature))
+
+  for (const message of liveMessages) {
+    mergedById.set(message.id, message)
+  }
+
+  for (const message of durableMessages) {
+    if (mergedById.has(message.id)) continue
+
+    const signature = messageContentSignature(message)
+    if (liveSignatures.has(signature)) continue
+
+    mergedById.set(message.id, message)
+  }
+
+  const merged = [...mergedById.values()].sort((left, right) => {
+    const leftTime = Date.parse(left.timestamp)
+    const rightTime = Date.parse(right.timestamp)
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+      return leftTime - rightTime
+    }
+    return left.id.localeCompare(right.id)
+  })
+
+  return mergeCodexActivityMessages(merged, activityRows, sessionIsIdle)
+}
+
 export function deriveCodexTimelineMessages(
   messageRows: SessionMessage[],
   activityRows: SessionActivity[],
