@@ -1376,19 +1376,13 @@ export const useSessionStore = create<SessionState>()(
         const sessionSdk = session?.agent_sdk ?? settings.defaultAgentSdk ?? 'opencode'
         if (sessionSdk === 'terminal') return
 
-        const configuredDefaultSdk = settings.defaultAgentSdk ?? 'opencode'
+        const modeDefault = settings.getModelForMode(newMode)
+        // Cross-SDK mode default on a live session is impossible to apply because the
+        // provider cannot change in an existing session. The mode still flips; model stays.
+        if (modeDefault?.agentSdk && modeDefault.agentSdk !== sessionSdk) return
 
-        // Mode defaults are configured in the context of the default SDK.
-        // Only apply them when the session SDK matches; otherwise fall back to per-SDK default.
-        const modeDefault =
-          sessionSdk === configuredDefaultSdk ? settings.getModelForMode(newMode) : null
         const newModeDefault = modeDefault ?? resolveModelForSdk(sessionSdk, settings)
-        if (!newModeDefault) {
-          // No defaults configured, keep current model
-          return
-        }
-
-        // Apply the new mode's default model (without rewriting global preferences)
+        if (!newModeDefault) return
         await get().setSessionModel(sessionId, newModeDefault, { skipGlobalUpdate: true })
       },
 
