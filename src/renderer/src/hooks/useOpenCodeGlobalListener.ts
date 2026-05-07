@@ -1,11 +1,12 @@
 import { useEffect } from 'react'
 import { useSessionStore } from '@/stores/useSessionStore'
+import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
-import { useCommandApprovalStore, type CommandApprovalRequest } from '@/stores/useCommandApprovalStore'
+import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useContextStore, type TokenInfo, type SessionModelRef } from '@/stores/useContextStore'
 import { useRecentStore } from '@/stores/useRecentStore'
@@ -420,6 +421,19 @@ export function useOpenCodeGlobalListener(): void {
             return
           }
 
+          if (event.type === 'codex.goal.updated') {
+            const data = event.data as Record<string, unknown> | undefined
+            const goal = (data?.goal ?? null) as CodexThreadGoal | null
+            if (goal && typeof goal === 'object') {
+              useSessionStore.getState().setCodexGoal(sessionId, goal)
+            }
+            return
+          }
+
+          if (event.type === 'codex.goal.cleared') {
+            useSessionStore.getState().clearCodexGoal(sessionId)
+            return
+          }
 
           // Handle plan approval events globally so pending state survives tab switches.
           if (event.type === 'plan.ready') {
