@@ -626,7 +626,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     isStreamingRef.current = isStreaming
   }, [isStreaming])
   const [isCompacting, setIsCompacting] = useState(false)
-  const { runs: bashRuns, isRunning: isBashRunning, runCommand: runBashCommand, abort: abortBash } = useBashRuns(sessionId)
+  const {
+    runs: bashRuns,
+    isRunning: isBashRunning,
+    runCommand: runBashCommand,
+    abort: abortBash
+  } = useBashRuns(sessionId)
   const isBashMode = inputValue.startsWith('!') && !!worktreePath
   const [sessionRetry, setSessionRetry] = useState<SessionRetryState | null>(null)
   const [sessionErrorMessage, setSessionErrorMessage] = useState<string | null>(null)
@@ -660,7 +665,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     setQueuedMessages((prev) => {
       const sameLength = prev.length === persistedFollowUpMessages.length
       const sameContent =
-        sameLength && prev.every((entry, index) => entry.content === persistedFollowUpMessages[index])
+        sameLength &&
+        prev.every((entry, index) => entry.content === persistedFollowUpMessages[index])
       if (sameContent) return prev
 
       const matched = new Set<number>()
@@ -700,7 +706,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const sessionAgentSdk = sessionRecord?.agent_sdk ?? 'opencode'
   // Steer capability: available when backend supports it AND a turn is actively streaming
   // Falls back to checking sessionAgentSdk when capabilities haven't loaded yet (race condition)
-  const canSteer = (sessionCapabilities?.supportsSteer ?? sessionAgentSdk === 'codex') && isStreaming
+  const canSteer =
+    (sessionCapabilities?.supportsSteer ?? sessionAgentSdk === 'codex') && isStreaming
   const globalModel = useSettingsStore((state) => resolveModelForSdk(sessionAgentSdk, state))
   const effectiveModel: SelectedModel | null =
     sessionRecord?.model_provider_id && sessionRecord.model_id
@@ -980,9 +987,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   const setMessages = useCallback(
     (
-      nextMessages:
-        | OpenCodeMessage[]
-        | ((currentMessages: OpenCodeMessage[]) => OpenCodeMessage[])
+      nextMessages: OpenCodeMessage[] | ((currentMessages: OpenCodeMessage[]) => OpenCodeMessage[])
     ) => {
       const shouldRestoreViewport = captureLockedViewportAnchor()
       setMessagesState(nextMessages)
@@ -3955,7 +3960,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           }
 
           // Remove the steered message from the follow-up queue by content
-          const currentFollowUps = useSessionStore.getState().pendingFollowUpMessages.get(sessionId) ?? []
+          const currentFollowUps =
+            useSessionStore.getState().pendingFollowUpMessages.get(sessionId) ?? []
           const indexToRemove = currentFollowUps.indexOf(content)
           if (indexToRemove >= 0) {
             const updatedFollowUps = [
@@ -4195,8 +4201,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Use the ask-specific model if configured, otherwise use session model
           const { useSettingsStore } = await import('@/stores/useSettingsStore')
           const settings = useSettingsStore.getState()
-          const askModel = settings.getModelForMode('ask') ?? settings.selectedModel
-          const selectedModel = askModel || getModelForRequests()
+          const configuredAskModel = settings.getModelForMode('ask')
+          const askModel =
+            !configuredAskModel?.agentSdk || configuredAskModel.agentSdk === sessionAgentSdk
+              ? configuredAskModel
+              : null
+          const fallbackModel =
+            !settings.selectedModel?.agentSdk || settings.selectedModel.agentSdk === sessionAgentSdk
+              ? settings.selectedModel
+              : null
+          const selectedModel = askModel ?? fallbackModel ?? getModelForRequests()
 
           // Build PR review comment context for /ask
           const prAskComments = usePRReviewStore.getState().attachedComments
@@ -4760,31 +4774,61 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     ]
   )
 
-  const handlePlanReadyHandoff = useCallback(async (override?: HandoffSelectionOverride) => {
-    const planContent =
-      pendingPlan?.planContent ??
-      [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim().length > 0)
-        ?.content
-    if (!planContent) {
-      toast.error('No plan content found to hand off')
-      return
-    }
+  const handlePlanReadyHandoff = useCallback(
+    async (override?: HandoffSelectionOverride) => {
+      const planContent =
+        pendingPlan?.planContent ??
+        [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim().length > 0)
+          ?.content
+      if (!planContent) {
+        toast.error('No plan content found to hand off')
+        return
+      }
 
-    useSessionStore.getState().clearPendingPlan(sessionId)
-    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-    lastSendMode.delete(sessionId)
+      useSessionStore.getState().clearPendingPlan(sessionId)
+      useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+      lastSendMode.delete(sessionId)
 
-    // Abort the original backend session so it stops spinning
-    if (worktreePath && opencodeSessionId) {
-      useCommandApprovalStore.getState().clearSession(sessionId)
-      await window.opencodeOps.abort(worktreePath, opencodeSessionId)
-    }
+      // Abort the original backend session so it stops spinning
+      if (worktreePath && opencodeSessionId) {
+        useCommandApprovalStore.getState().clearSession(sessionId)
+        await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+      }
 
-    if (connectionId) {
+      if (connectionId) {
+        const handoffPrompt = `Implement the following plan\n${planContent}`
+        const sessionStore = useSessionStore.getState()
+        const result = await sessionStore.createConnectionSession(
+          connectionId,
+          override?.agentSdk,
+          undefined,
+          { modelOverride: override?.model }
+        )
+        if (!result.success || !result.session) {
+          toast.error(result.error ?? 'Failed to create handoff session')
+          return
+        }
+        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+        sessionStore.setPendingMessage(result.session.id, handoffPrompt)
+        await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+        sessionStore.setActiveConnectionSession(result.session.id)
+        await setModePromise
+        return
+      }
+
+      const currentWorktreeId = worktreeId
+      const currentProjectId = sessionRecord?.project_id
+      if (!currentWorktreeId || !currentProjectId) {
+        toast.error('Could not start handoff session')
+        return
+      }
+
       const handoffPrompt = `Implement the following plan\n${planContent}`
+
       const sessionStore = useSessionStore.getState()
-      const result = await sessionStore.createConnectionSession(
-        connectionId,
+      const result = await sessionStore.createSession(
+        currentWorktreeId,
+        currentProjectId,
         override?.agentSdk,
         undefined,
         { modelOverride: override?.model }
@@ -4793,55 +4837,24 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         toast.error(result.error ?? 'Failed to create handoff session')
         return
       }
+
       const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-      await useKanbanStore
-        .getState()
-        .relinkTicketsForHandoff(sessionId, result.session.id)
-      sessionStore.setActiveConnectionSession(result.session.id)
+      await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+      sessionStore.setActiveSession(result.session.id)
       await setModePromise
-      return
-    }
-
-    const currentWorktreeId = worktreeId
-    const currentProjectId = sessionRecord?.project_id
-    if (!currentWorktreeId || !currentProjectId) {
-      toast.error('Could not start handoff session')
-      return
-    }
-
-    const handoffPrompt = `Implement the following plan\n${planContent}`
-
-    const sessionStore = useSessionStore.getState()
-    const result = await sessionStore.createSession(
-      currentWorktreeId,
-      currentProjectId,
-      override?.agentSdk,
-      undefined,
-      { modelOverride: override?.model }
-    )
-    if (!result.success || !result.session) {
-      toast.error(result.error ?? 'Failed to create handoff session')
-      return
-    }
-
-    const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
-    sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-    await useKanbanStore
-      .getState()
-      .relinkTicketsForHandoff(sessionId, result.session.id)
-    sessionStore.setActiveSession(result.session.id)
-    await setModePromise
-  }, [
-    messages,
-    worktreeId,
-    sessionRecord?.project_id,
-    connectionId,
-    sessionId,
-    worktreePath,
-    opencodeSessionId,
-    pendingPlan
-  ])
+    },
+    [
+      messages,
+      worktreeId,
+      sessionRecord?.project_id,
+      connectionId,
+      sessionId,
+      worktreePath,
+      opencodeSessionId,
+      pendingPlan
+    ]
+  )
 
   const handlePlanReadyCopyPlan = useCallback(async () => {
     const planContent =
@@ -5544,8 +5557,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     return visibleMessages
   }, [isStreaming, visibleMessages])
 
-  const { todos: latestTodos, isIncomplete: latestTodosIncomplete } =
-    useLatestTodoList(currentTurnMessages, streamingMessage)
+  const { todos: latestTodos, isIncomplete: latestTodosIncomplete } = useLatestTodoList(
+    currentTurnMessages,
+    streamingMessage
+  )
   const taskListTopOffsetPx = usePRStackTopOffset()
 
   const handleRedoRevert = useCallback(() => {
@@ -5905,7 +5920,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               disabled={!!activePermission || isOrphanedSession}
               placeholder={
                 isBashMode
-                  ? (inputValue.slice(1).trim() ? 'Press Enter to run' : 'Type a command')
+                  ? inputValue.slice(1).trim()
+                    ? 'Press Enter to run'
+                    : 'Type a command'
                   : isOrphanedSession
                     ? 'Read-only mode - cannot send messages'
                     : activePermission

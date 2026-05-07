@@ -97,9 +97,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
     return null
   })
 
-  const remoteInfo = useGitStore((s) =>
-    worktreeId ? s.remoteInfo.get(worktreeId) : undefined
-  )
+  const remoteInfo = useGitStore((s) => (worktreeId ? s.remoteInfo.get(worktreeId) : undefined))
 
   const storeAttachedPR = useGitStore((s) =>
     worktreeId ? s.attachedPR.get(worktreeId) : undefined
@@ -114,7 +112,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
   )
 
   const branchInfo = useGitStore((s) =>
-    worktree?.path ? s.branchInfoByWorktree.get(worktree.path) ?? null : null
+    worktree?.path ? (s.branchInfoByWorktree.get(worktree.path) ?? null) : null
   )
 
   const fileStatuses = useGitStore((s) =>
@@ -178,81 +176,105 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
 
   // --- Actions ---
 
-  const createCodeReview = useCallback(async (targetBranch?: string): Promise<string | null> => {
-    if (!worktreeId || !worktree?.path) return null
+  const createCodeReview = useCallback(
+    async (targetBranch?: string): Promise<string | null> => {
+      if (!worktreeId || !worktree?.path) return null
 
-    const projectId = resolveProjectId(worktreeId)
-    if (!projectId) {
-      toast.error('Could not find project for worktree')
-      return null
-    }
+      const projectId = resolveProjectId(worktreeId)
+      if (!projectId) {
+        toast.error('Could not find project for worktree')
+        return null
+      }
 
-    const currentBranchInfo = useGitStore.getState().branchInfoByWorktree.get(worktree.path)
-    const currentReviewTarget = useGitStore.getState().reviewTargetBranch.get(worktreeId)
-    const target = targetBranch || currentReviewTarget || currentBranchInfo?.tracking || 'origin/main'
-    const branchName = currentBranchInfo?.name || 'unknown'
+      const currentBranchInfo = useGitStore.getState().branchInfoByWorktree.get(worktree.path)
+      const currentReviewTarget = useGitStore.getState().reviewTargetBranch.get(worktreeId)
+      const target =
+        targetBranch || currentReviewTarget || currentBranchInfo?.tracking || 'origin/main'
+      const branchName = currentBranchInfo?.name || 'unknown'
 
-    const promptType = useSettingsStore.getState().reviewPromptType || DEFAULT_REVIEW_PROMPT_TYPE
-    const reviewTemplate = REVIEW_PROMPTS[promptType]
+      const promptType = useSettingsStore.getState().reviewPromptType || DEFAULT_REVIEW_PROMPT_TYPE
+      const reviewDefaultModel = useSettingsStore.getState().defaultModels?.review ?? undefined
+      const reviewTemplate = REVIEW_PROMPTS[promptType]
 
-    const prompt = [
-      reviewTemplate,
-      '',
-      '---',
-      '',
-      `Compare the current branch (${branchName}) against ${target}.`,
-      `Use \`git diff ${target}...HEAD\` to see all changes.`
-    ].join('\n')
+      const prompt = [
+        reviewTemplate,
+        '',
+        '---',
+        '',
+        `Compare the current branch (${branchName}) against ${target}.`,
+        `Use \`git diff ${target}...HEAD\` to see all changes.`
+      ].join('\n')
 
-    const sessionStore = useSessionStore.getState()
-    const result = await sessionStore.createSession(worktreeId, projectId, undefined, undefined, { autoFocus: false })
-    if (!result.success || !result.session) {
-      toast.error('Failed to create review session')
-      return null
-    }
+      const sessionStore = useSessionStore.getState()
+      const result = await sessionStore.createSession(
+        worktreeId,
+        projectId,
+        reviewDefaultModel?.agentSdk,
+        undefined,
+        {
+          autoFocus: false,
+          modelOverride: reviewDefaultModel
+        }
+      )
+      if (!result.success || !result.session) {
+        toast.error('Failed to create review session')
+        return null
+      }
 
-    await sessionStore.updateSessionName(
-      result.session.id,
-      `Code Review — ${branchName} vs ${target}`
-    )
-    // Register the review session so ticket cards can show "Reviewing" indicator
-    useWorktreeStatusStore.getState().setReviewSession(worktreeId, result.session.id)
+      await sessionStore.updateSessionName(
+        result.session.id,
+        `Code Review — ${branchName} vs ${target}`
+      )
+      // Register the review session so ticket cards can show "Reviewing" indicator
+      useWorktreeStatusStore.getState().setReviewSession(worktreeId, result.session.id)
 
-    // Fire-and-forget: eagerly connect and send the review prompt in the background
-    // so it starts without waiting for SessionView to mount.
-    const sessionId = result.session.id
-    const worktreePath = worktree.path
-    const agentSdk = result.session.agent_sdk
-    const sessionModel = result.session.model_provider_id && result.session.model_id
-      ? { providerID: result.session.model_provider_id, modelID: result.session.model_id, variant: result.session.model_variant ?? undefined }
-      : resolveModelForSdk(agentSdk || 'opencode') ?? undefined
+      // Fire-and-forget: eagerly connect and send the review prompt in the background
+      // so it starts without waiting for SessionView to mount.
+      const sessionId = result.session.id
+      const worktreePath = worktree.path
+      const agentSdk = result.session.agent_sdk
+      const sessionModel =
+        result.session.model_provider_id && result.session.model_id
+          ? {
+              providerID: result.session.model_provider_id,
+              modelID: result.session.model_id,
+              variant: result.session.model_variant ?? undefined
+            }
+          : (resolveModelForSdk(agentSdk || 'opencode') ?? undefined)
 
-    void (async () => {
-      try {
-        const connectResult = await window.opencodeOps.connect(worktreePath, sessionId)
-        if (connectResult.success && connectResult.sessionId) {
-          sessionStore.setOpenCodeSessionId(sessionId, connectResult.sessionId)
-          window.db.session.update(sessionId, { opencode_session_id: connectResult.sessionId }).catch(() => {})
+      void (async () => {
+        try {
+          const connectResult = await window.opencodeOps.connect(worktreePath, sessionId)
+          if (connectResult.success && connectResult.sessionId) {
+            sessionStore.setOpenCodeSessionId(sessionId, connectResult.sessionId)
+            window.db.session
+              .update(sessionId, { opencode_session_id: connectResult.sessionId })
+              .catch(() => {})
 
-          messageSendTimes.set(sessionId, Date.now())
-          userExplicitSendTimes.set(sessionId, Date.now())
-          snapshotTokenBaseline(sessionId)
-          lastSendMode.set(sessionId, 'build')
-          useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+            messageSendTimes.set(sessionId, Date.now())
+            userExplicitSendTimes.set(sessionId, Date.now())
+            snapshotTokenBaseline(sessionId)
+            lastSendMode.set(sessionId, 'build')
+            useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
 
-          await window.opencodeOps.prompt(worktreePath, connectResult.sessionId, [
-            { type: 'text', text: prompt }
-          ], sessionModel)
-        } else {
+            await window.opencodeOps.prompt(
+              worktreePath,
+              connectResult.sessionId,
+              [{ type: 'text', text: prompt }],
+              sessionModel
+            )
+          } else {
+            sessionStore.setPendingMessage(sessionId, prompt)
+          }
+        } catch {
           sessionStore.setPendingMessage(sessionId, prompt)
         }
-      } catch {
-        sessionStore.setPendingMessage(sessionId, prompt)
-      }
-    })()
+      })()
 
-    return result.session.id
-  }, [worktreeId, worktree?.path])
+      return result.session.id
+    },
+    [worktreeId, worktree?.path]
+  )
 
   const mergePR = useCallback(async (): Promise<boolean> => {
     if (!worktreeId || !worktree?.path) return false
@@ -332,9 +354,9 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
     const projectPath = resolveProjectPath(worktreeId)
     if (!projectPath) return []
 
-    const currentBranchInfo = useGitStore.getState().branchInfoByWorktree.get(
-      resolveWorktree(worktreeId)?.path ?? ''
-    )
+    const currentBranchInfo = useGitStore
+      .getState()
+      .branchInfoByWorktree.get(resolveWorktree(worktreeId)?.path ?? '')
     const currentBranch = currentBranchInfo?.name ?? ''
 
     try {

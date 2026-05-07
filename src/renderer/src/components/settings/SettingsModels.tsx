@@ -87,6 +87,7 @@ export function SettingsModels(): React.JSX.Element {
               <ModelSelector
                 value={defaultModels?.build || null}
                 onChange={(model) => setModeDefaultModel('build', model)}
+                allowAgentSdkSelection
               />
               {defaultModels?.build && (
                 <button
@@ -109,6 +110,7 @@ export function SettingsModels(): React.JSX.Element {
               <ModelSelector
                 value={defaultModels?.plan || null}
                 onChange={(model) => setModeDefaultModel('plan', model)}
+                allowAgentSdkSelection
               />
               {defaultModels?.plan && (
                 <button
@@ -131,10 +133,34 @@ export function SettingsModels(): React.JSX.Element {
               <ModelSelector
                 value={defaultModels?.ask || null}
                 onChange={(model) => setModeDefaultModel('ask', model)}
+                allowAgentSdkSelection
               />
               {defaultModels?.ask && (
                 <button
                   onClick={() => setModeDefaultModel('ask', null)}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Use global
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Review */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Review Default</label>
+            <p className="text-xs text-muted-foreground">
+              Model used when starting a Code Review session
+            </p>
+            <div className="flex items-center gap-2">
+              <ModelSelector
+                value={defaultModels?.review || null}
+                onChange={(model) => setModeDefaultModel('review', model)}
+                allowAgentSdkSelection
+              />
+              {defaultModels?.review && (
+                <button
+                  onClick={() => setModeDefaultModel('review', null)}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Use global

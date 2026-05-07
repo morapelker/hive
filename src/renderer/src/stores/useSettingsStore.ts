@@ -25,19 +25,21 @@ export type TerminalPosition = 'sidebar' | 'bottom'
 export type MergeConflictMode = 'build' | 'plan' | 'always-ask'
 export type FollowUpTriggerColumn = 'review' | 'done'
 
+export type AgentSdk = 'opencode' | 'claude-code' | 'codex' | 'terminal'
+export type HandoffAgentSdk = Exclude<AgentSdk, 'terminal'>
+
 export interface SelectedModel {
+  agentSdk?: HandoffAgentSdk
   providerID: string
   modelID: string
   variant?: string
 }
 
-export type AgentSdk = 'opencode' | 'claude-code' | 'codex' | 'terminal'
-export type HandoffAgentSdk = Exclude<AgentSdk, 'terminal'>
-
 export interface ModeDefaultModels {
   build: SelectedModel | null
   plan: SelectedModel | null
   ask: SelectedModel | null
+  review: SelectedModel | null
 }
 
 export type QuickActionType = 'cursor' | 'terminal' | 'copy-path' | 'finder'
@@ -243,10 +245,12 @@ interface SettingsState extends AppSettings {
     options?: { skipBackendPush?: boolean }
   ) => Promise<void>
   setModeDefaultModel: (
-    mode: 'build' | 'plan' | 'ask',
+    mode: 'build' | 'plan' | 'ask' | 'review',
     model: SelectedModel | null
   ) => Promise<void>
-  getModelForMode: (mode: 'build' | 'plan' | 'ask') => SelectedModel | null
+  getModelForMode: (
+    mode: 'build' | 'plan' | 'super-plan' | 'ask' | 'review'
+  ) => SelectedModel | null
   setLastHandoffOverride: (value: AppSettings['lastHandoffOverride']) => void
   toggleFavoriteModel: (providerID: string, modelID: string) => void
   setModelVariantDefault: (providerID: string, modelID: string, variant: string) => void
@@ -432,36 +436,33 @@ export const useSettingsStore = create<SettingsState>()(
           // setTimeout ensures the state update completes before side effects run.
           // Dynamic import() avoids circular dependency (useSessionStore imports useSettingsStore).
           setTimeout(() => {
-            Promise.all([
-              import('./useKanbanStore'),
-              import('./useSessionStore')
-            ]).then(([{ useKanbanStore }, { useSessionStore, BOARD_TAB_ID }]) => {
-              if (value === 'sticky-tab') {
-                // Toggle → Sticky Tab: deactivate toggle board view, activate board tab
-                if (useKanbanStore.getState().isBoardViewActive) {
-                  useKanbanStore.getState().toggleBoardView()
-                }
-                useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
-              } else {
-                // Sticky Tab → Toggle: if on board tab, fall back to first real session
-                const sessionStore = useSessionStore.getState()
-                if (sessionStore.activeSessionId === BOARD_TAB_ID) {
-                  const worktreeId = sessionStore.activeWorktreeId
-                  if (worktreeId) {
-                    const tabOrder =
-                      sessionStore.tabOrderByWorktree.get(worktreeId) || []
-                    const sessions =
-                      sessionStore.sessionsByWorktree.get(worktreeId) || []
-                    const fallbackId =
-                      tabOrder.find((id) => id !== BOARD_TAB_ID) ||
-                      (sessions.length > 0 ? sessions[0].id : null)
-                    sessionStore.setActiveSession(fallbackId)
-                  } else {
-                    sessionStore.setActiveSession(null)
+            Promise.all([import('./useKanbanStore'), import('./useSessionStore')])
+              .then(([{ useKanbanStore }, { useSessionStore, BOARD_TAB_ID }]) => {
+                if (value === 'sticky-tab') {
+                  // Toggle → Sticky Tab: deactivate toggle board view, activate board tab
+                  if (useKanbanStore.getState().isBoardViewActive) {
+                    useKanbanStore.getState().toggleBoardView()
+                  }
+                  useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
+                } else {
+                  // Sticky Tab → Toggle: if on board tab, fall back to first real session
+                  const sessionStore = useSessionStore.getState()
+                  if (sessionStore.activeSessionId === BOARD_TAB_ID) {
+                    const worktreeId = sessionStore.activeWorktreeId
+                    if (worktreeId) {
+                      const tabOrder = sessionStore.tabOrderByWorktree.get(worktreeId) || []
+                      const sessions = sessionStore.sessionsByWorktree.get(worktreeId) || []
+                      const fallbackId =
+                        tabOrder.find((id) => id !== BOARD_TAB_ID) ||
+                        (sessions.length > 0 ? sessions[0].id : null)
+                      sessionStore.setActiveSession(fallbackId)
+                    } else {
+                      sessionStore.setActiveSession(null)
+                    }
                   }
                 }
-              }
-            }).catch(console.error)
+              })
+              .catch(console.error)
           }, 0)
         }
       },
@@ -514,8 +515,16 @@ export const useSettingsStore = create<SettingsState>()(
         saveToDatabase(settings)
       },
 
-      setModeDefaultModel: async (mode: 'build' | 'plan' | 'ask', model: SelectedModel | null) => {
-        const currentDefaults = get().defaultModels || { build: null, plan: null, ask: null }
+      setModeDefaultModel: async (
+        mode: 'build' | 'plan' | 'ask' | 'review',
+        model: SelectedModel | null
+      ) => {
+        const currentDefaults = get().defaultModels || {
+          build: null,
+          plan: null,
+          ask: null,
+          review: null
+        }
         const updated = { ...currentDefaults, [mode]: model }
         set({ defaultModels: updated })
 
@@ -524,10 +533,11 @@ export const useSettingsStore = create<SettingsState>()(
         await saveToDatabase(settings)
       },
 
-      getModelForMode: (mode: 'build' | 'plan' | 'ask') => {
+      getModelForMode: (mode: 'build' | 'plan' | 'super-plan' | 'ask' | 'review') => {
         // Return only the mode-specific default (no global fallback).
         // Callers that need a fallback chain should check selectedModel separately.
-        return get().defaultModels?.[mode] ?? null
+        const key = mode === 'super-plan' ? 'plan' : mode
+        return get().defaultModels?.[key] ?? null
       },
 
       setLastHandoffOverride: (value) => {
