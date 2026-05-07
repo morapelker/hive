@@ -24,6 +24,7 @@ import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageSto
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { CodexFastToggle } from '@/components/sessions/CodexFastToggle'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
@@ -442,6 +443,7 @@ export function WorktreePickerModal({
             useSessionStore.getState().setSessionMode(sessionId, 'plan')
           }
 
+          bumpWorktreeLastMessage({ connectionId })
           await window.opencodeOps.prompt(connectionPath, connectResult.sessionId, [
             { type: 'text', text: fullPrompt }
           ], effectiveModel, promptOptions)
@@ -659,6 +661,7 @@ export function WorktreePickerModal({
           useSessionStore.getState().setSessionMode(sessionId, 'plan')
         }
 
+        bumpWorktreeLastMessage({ worktreeId })
         await window.opencodeOps.prompt(worktree.path, connectResult.sessionId, [
           { type: 'text', text: fullPrompt }
         ], effectiveModel, promptOptions)
