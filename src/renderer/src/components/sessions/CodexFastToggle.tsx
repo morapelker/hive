@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import {
   AlertDialog,
@@ -18,7 +18,7 @@ interface CodexFastToggleProps {
   onAccept: () => void
 }
 
-export function CodexFastToggle({
+export const CodexFastToggle = memo(function CodexFastToggle({
   enabled,
   accepted,
   onToggle,
@@ -77,4 +77,4 @@ export function CodexFastToggle({
       </AlertDialog>
     </>
   )
-}
+})

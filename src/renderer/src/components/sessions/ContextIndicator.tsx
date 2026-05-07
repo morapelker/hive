@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { getModelLimitKey, useContextStore } from '@/stores/useContextStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -20,7 +20,7 @@ function getBarColor(percent: number): string {
   return 'bg-green-500'
 }
 
-export function ContextIndicator({
+export const ContextIndicator = memo(function ContextIndicator({
   sessionId,
   modelId,
   providerId
@@ -105,4 +105,4 @@ export function ContextIndicator({
       </TooltipContent>
     </Tooltip>
   )
-}
+})

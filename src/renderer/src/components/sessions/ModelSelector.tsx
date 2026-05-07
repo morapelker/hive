@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Check, ChevronDown, Search, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -53,7 +53,7 @@ type SdkFilterOption = {
   label: string
 }
 
-export function ModelSelector({
+export const ModelSelector = memo(function ModelSelector({
   sessionId,
   value,
   onChange,
@@ -612,4 +612,4 @@ export function ModelSelector({
       </DropdownMenu>
     </div>
   )
-}
+})

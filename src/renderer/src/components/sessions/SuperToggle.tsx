@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { cn } from '@/lib/utils'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { Tip } from '@/components/ui/Tip'
@@ -6,7 +7,9 @@ interface SuperToggleProps {
   sessionId: string
 }
 
-export function SuperToggle({ sessionId }: SuperToggleProps): React.JSX.Element {
+export const SuperToggle = memo(function SuperToggle({
+  sessionId
+}: SuperToggleProps): React.JSX.Element {
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId)) ?? 'build'
   const toggleSuperMode = useSessionStore((state) => state.toggleSuperMode)
 
@@ -43,4 +46,4 @@ export function SuperToggle({ sessionId }: SuperToggleProps): React.JSX.Element 
       </Tip>
     </div>
   )
-}
+})

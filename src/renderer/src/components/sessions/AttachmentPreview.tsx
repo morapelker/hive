@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { X, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -14,14 +15,36 @@ export type Attachment =
       attachments: string
     }
 
-interface AttachmentPreviewProps {
-  attachments: Attachment[]
-  onRemove: (id: string) => void
-}
+export type FileAttachment = Exclude<Attachment, { kind: 'ticket' }>
+export type TicketAttachment = Extract<Attachment, { kind: 'ticket' }>
+export type AttachmentInput = Attachment extends infer T
+  ? T extends Attachment
+    ? Omit<T, 'id'>
+    : never
+  : never
 
-export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewProps) {
-  // Ticket attachments are rendered separately above the input (TicketAttachments component)
-  const fileAttachments = attachments.filter((a) => a.kind !== 'ticket')
+type AttachmentPreviewProps =
+  | {
+      attachments: Attachment[]
+      fileAttachments?: never
+      onRemove: (id: string) => void
+    }
+  | {
+      attachments?: never
+      fileAttachments: FileAttachment[]
+      onRemove: (id: string) => void
+    }
+
+export const AttachmentPreview = memo(function AttachmentPreview(
+  props: AttachmentPreviewProps
+): React.JSX.Element | null {
+  const { onRemove } = props
+  const fileAttachments =
+    props.fileAttachments ??
+    props.attachments.filter(
+      (attachment): attachment is FileAttachment => attachment.kind !== 'ticket'
+    )
+
   if (fileAttachments.length === 0) return null
 
   return (
@@ -61,4 +84,4 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
       ))}
     </div>
   )
-}
+})

@@ -86,6 +86,7 @@ export function useVimNavigation(): void {
 
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (isInputElement(document.activeElement) && event.key !== 'Escape') return
 
       const vim = useVimModeStore.getState()
       const { isOpen: commandPaletteOpen } = useCommandPaletteStore.getState()

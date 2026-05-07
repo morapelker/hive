@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { memo, useRef } from 'react'
 import { Paperclip, FileUp, KanbanSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -8,10 +8,10 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { isImageMime } from '@/lib/file-attachment-utils'
-import type { Attachment } from './AttachmentPreview'
+import type { AttachmentInput } from './AttachmentPreview'
 
 interface AttachmentButtonProps {
-  onAttach: (file: Omit<Attachment, 'id'>) => void
+  onAttach: (file: AttachmentInput) => void
   disabled?: boolean
   /** Current project ID — when non-null the "Board ticket" option is shown */
   projectId?: string | null
@@ -19,7 +19,7 @@ interface AttachmentButtonProps {
   onPickTicket?: () => void
 }
 
-export function AttachmentButton({
+export const AttachmentButton = memo(function AttachmentButton({
   onAttach,
   disabled,
   projectId,
@@ -91,18 +91,12 @@ export function AttachmentButton({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-[160px]">
-          <DropdownMenuItem
-            onSelect={handleFileSelect}
-            data-testid="attach-file"
-          >
+          <DropdownMenuItem onSelect={handleFileSelect} data-testid="attach-file">
             <FileUp className="h-4 w-4 mr-2" />
             File
           </DropdownMenuItem>
           {projectId && (
-            <DropdownMenuItem
-              onSelect={() => onPickTicket?.()}
-              data-testid="attach-board-ticket"
-            >
+            <DropdownMenuItem onSelect={() => onPickTicket?.()} data-testid="attach-board-ticket">
               <KanbanSquare className="h-4 w-4 mr-2" />
               Board ticket
             </DropdownMenuItem>
@@ -111,4 +105,4 @@ export function AttachmentButton({
       </DropdownMenu>
     </>
   )
-}
+})
