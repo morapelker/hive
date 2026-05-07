@@ -99,7 +99,9 @@ export function ModelSelector({
   const [providers, setProviders] = useState<SelectableProviderModels[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [filter, setFilter] = useState('')
-  const [agentSdkFilter, setAgentSdkFilter] = useState<HandoffAgentSdk | null>(null)
+  const [agentSdkFilter, setAgentSdkFilter] = useState<HandoffAgentSdk | null>(() =>
+    allowAgentSdkSelection ? (value?.agentSdk ?? null) : null
+  )
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const filterInputRef = useRef<HTMLInputElement>(null)
   const rememberedModelBySdkRef = useRef<Partial<Record<HandoffAgentSdk, SelectedModel>>>({})
@@ -340,7 +342,13 @@ export function ModelSelector({
   }, [providers, catalogAgentSdks])
 
   useEffect(() => {
+    if (!allowAgentSdkSelection) return
+    setAgentSdkFilter(value?.agentSdk ?? null)
+  }, [allowAgentSdkSelection, value?.agentSdk])
+
+  useEffect(() => {
     if (!agentSdkFilter) return
+    if (sdkFilterOptions.length === 0) return
     if (!sdkFilterOptions.some((option) => option.agentSdk === agentSdkFilter)) {
       setAgentSdkFilter(null)
     }

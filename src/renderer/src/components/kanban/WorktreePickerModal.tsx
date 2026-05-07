@@ -187,7 +187,7 @@ export function WorktreePickerModal({
   const codexFastModeAccepted = useSettingsStore((s) => s.codexFastModeAccepted)
   const updateSetting = useSettingsStore((s) => s.updateSetting)
   const defaultSdkNormalized = defaultAgentSdk === 'terminal' ? 'opencode' : defaultAgentSdk
-  const agentSdk = selectedSdk ?? defaultSdkNormalized
+  const baseAgentSdk = selectedSdk ?? defaultSdkNormalized
 
   const autoResolvedModel = useMemo(() => {
     const settings = useSettingsStore.getState()
@@ -195,8 +195,10 @@ export function WorktreePickerModal({
     const modeModel = settings.getModelForMode(mode)
     if (modeModel && (!selectedSdk || modeModel.agentSdk === selectedSdk)) return modeModel
     // Priority 2: per-provider / global default
-    return resolveModelForSdk(agentSdk) ?? null
-  }, [mode, agentSdk, selectedSdk])
+    return resolveModelForSdk(baseAgentSdk) ?? null
+  }, [mode, baseAgentSdk, selectedSdk])
+
+  const agentSdk = selectedSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
 
   // ── Count in-progress tickets per worktree ──────────────────────
   const ticketCountByWorktree = useMemo(() => {

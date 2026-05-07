@@ -105,6 +105,7 @@ function resolveSessionSelection(opts: {
   let resolvedSdk = requestedSdk
 
   const modeDefault = settings.getModelForMode(getModeDefaultKey(opts.mode))
+  // A mode default with its own agentSdk takes precedence over the requested SDK.
   if (modeDefault && (modeDefault.agentSdk || requestedSdk === configuredDefaultSdk)) {
     model = modeDefault
     resolvedSdk = normalizeHandoffSdk(modeDefault.agentSdk ?? requestedSdk)
