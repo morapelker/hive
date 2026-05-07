@@ -88,6 +88,34 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
     return () => document.removeEventListener('keydown', handleKeyDown, true)
   }, [])
 
+  useEffect(() => {
+    const setModifierHeld = (held: boolean): void => {
+      const el = outputRef.current
+      if (el) el.dataset.metaHeld = held ? 'true' : 'false'
+    }
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.metaKey || e.ctrlKey) setModifierHeld(true)
+    }
+    const handleKeyUp = (e: KeyboardEvent): void => {
+      if (!e.metaKey && !e.ctrlKey) setModifierHeld(false)
+    }
+    const handleBlur = (): void => setModifierHeld(false)
+    const handleVisibilityChange = (): void => {
+      if (document.hidden) setModifierHeld(false)
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    document.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
+
   // Build highlight map for O(1) lookup per visible row.
   // Limitation: only one highlight per line is stored. When a line has multiple
   // matches, the current match takes priority; otherwise the first match wins.
@@ -221,6 +249,7 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
       <div
         ref={outputRef}
         className="flex-1 min-h-0 overflow-auto p-2 font-mono text-xs leading-relaxed"
+        data-meta-held="false"
         data-testid="run-tab-output"
       >
         {lineCount === 0 && !runRunning && (
