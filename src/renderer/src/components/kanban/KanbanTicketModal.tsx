@@ -49,6 +49,7 @@ import { isBlockerSatisfied } from '@/lib/blocker-utils'
 import { useGitStore } from '@/stores/useGitStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { buildSdkPlanImplementationPrompt } from '@/lib/proposedPlan'
@@ -229,7 +230,7 @@ async function sendFollowupToSession(opts: {
     throw new Error(`Session not found: ${opts.sessionId}`)
   }
 
-  const { session, workingPath } = result
+  const { session, workingPath, connectionId } = result
 
   if (!workingPath) {
     console.error(`[KanbanTicketModal] sendFollowupToSession: workingPath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}, connection_id=${session.connection_id}`)
@@ -266,6 +267,10 @@ async function sendFollowupToSession(opts: {
   useWorktreeStatusStore
     .getState()
     .setSessionStatus(opts.sessionId, isPlanLike(opts.followUpMode) ? 'planning' : 'working')
+  bumpWorktreeLastMessage({
+    worktreeId: session.worktree_id,
+    connectionId: session.connection_id ?? connectionId
+  })
 
   // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
   const model = resolveSessionModel(opts.sessionId, result.session)
@@ -1574,7 +1579,9 @@ function PlanReviewModeContent({
         onClose()
         void (async () => {
           await setModePromise
-          await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt)
+          await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
+            connectionId: sessionRecord.connection_id
+          })
           toast.success('Handoff session started')
         })().catch((error) => {
           console.error('[KanbanTicketModal] handoff (connection) background start failed:', error)
@@ -1627,7 +1634,7 @@ function PlanReviewModeContent({
       onClose()
       void (async () => {
         await setModePromise
-        await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt)
+        await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
         toast.success('Handoff session started')
       })().catch((error) => {
         console.error('[KanbanTicketModal] handoff background start failed:', error)
@@ -1678,7 +1685,8 @@ function PlanReviewModeContent({
   // ── Shared: eagerly connect, send /using-superpowers, queue follow-up for global listener ──
   const eagerSuperchargeStart = useCallback(async (
     worktreePath: string,
-    newSessionId: string
+    newSessionId: string,
+    bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
   ) => {
     // Connect to OpenCode. Surface failure so the caller can alert the user — staying silent
     // here would leave optimistic UI state with no work running and no error feedback.
@@ -1700,6 +1708,7 @@ function PlanReviewModeContent({
     snapshotTokenBaseline(newSessionId)
     lastSendMode.set(newSessionId, 'build')
     useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
+    bumpWorktreeLastMessage(bumpTarget)
 
     // Queue the follow-up for the global idle listener to dispatch after /using-superpowers completes
     useSessionStore.getState().setPendingFollowUpMessages(newSessionId, [
@@ -1716,7 +1725,8 @@ function PlanReviewModeContent({
   const eagerHandoffStart = useCallback(async (
     workingPath: string,
     newSessionId: string,
-    handoffPrompt: string
+    handoffPrompt: string,
+    bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
   ) => {
     const connectResult = await window.opencodeOps.connect(workingPath, newSessionId)
     if (!connectResult.success || !connectResult.sessionId) {
@@ -1733,6 +1743,7 @@ function PlanReviewModeContent({
     snapshotTokenBaseline(newSessionId)
     lastSendMode.set(newSessionId, 'build')
     useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
+    bumpWorktreeLastMessage(bumpTarget)
 
     const model = resolveSessionModel(newSessionId)
     await window.opencodeOps.prompt(
@@ -1792,7 +1803,9 @@ function PlanReviewModeContent({
         // happened and retrying (via a new supercharge click) creates a fresh session.
         void (async () => {
           await setModePromise
-          await eagerSuperchargeStart(connectionPath, newSessionId)
+          await eagerSuperchargeStart(connectionPath, newSessionId, {
+            connectionId: sessionRecord.connection_id
+          })
           toast.success('Supercharge session started')
         })().catch((error) => {
           console.error('[KanbanTicketModal] supercharge (connection) background start failed:', error)
@@ -1850,6 +1863,7 @@ function PlanReviewModeContent({
       const newSessionId = sessionResult.session.id
       const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
       // Hoist into a const so TS narrowing survives across the background IIFE closure.
+      const newWorktreeId = dupResult.worktree.id
       const newWorktreePath = dupResult.worktree.path
 
       prepareTicketBuildSession(newSessionId)
@@ -1860,7 +1874,7 @@ function PlanReviewModeContent({
       // otherwise we'd announce success and then have to follow it with a failure toast.
       void (async () => {
         await setModePromise
-        await eagerSuperchargeStart(newWorktreePath, newSessionId)
+        await eagerSuperchargeStart(newWorktreePath, newSessionId, { worktreeId: newWorktreeId })
         toast.success('Supercharge session started')
       })().catch((error) => {
         console.error('[KanbanTicketModal] supercharge background start failed:', error)
@@ -1915,7 +1929,7 @@ function PlanReviewModeContent({
       // otherwise we'd announce success and then have to follow it with a failure toast.
       void (async () => {
         await setModePromise
-        await eagerSuperchargeStart(localWorktreePath, newSessionId)
+        await eagerSuperchargeStart(localWorktreePath, newSessionId, { worktreeId: ticket.worktree_id })
         toast.success('Local supercharge session started')
       })().catch((error) => {
         console.error('[KanbanTicketModal] local supercharge background start failed:', error)

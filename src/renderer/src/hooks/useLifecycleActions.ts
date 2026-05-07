@@ -8,6 +8,7 @@ import { toast } from '@/lib/toast'
 import { REVIEW_PROMPTS, DEFAULT_REVIEW_PROMPT_TYPE } from '@/constants/reviewPrompts'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { messageSendTimes, userExplicitSendTimes, lastSendMode } from '@/lib/message-send-times'
+import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
 
 interface AttachedPR {
@@ -239,6 +240,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
           snapshotTokenBaseline(sessionId)
           lastSendMode.set(sessionId, 'build')
           useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+          bumpWorktreeLastMessage({ worktreeId })
 
           await window.opencodeOps.prompt(worktreePath, connectResult.sessionId, [
             { type: 'text', text: prompt }

@@ -73,7 +73,6 @@ import { usePromptHistoryStore } from '@/stores/usePromptHistoryStore'
 import { useWorktreeStore, useDropAttachmentStore } from '@/stores'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
-import { useConnectionStore } from '@/stores/useConnectionStore'
 import { usePRReviewStore } from '@/stores/usePRReviewStore'
 import { useDiffCommentStore } from '@/stores/useDiffCommentStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
@@ -83,6 +82,7 @@ import { deriveCodexTimelineMessages, mergeCodexActivityMessages } from '@/lib/c
 import { correlateSubtasksIntoTaskTools } from '@/lib/codex-subtask-correlation'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
+import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
@@ -4226,7 +4226,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Record prompt to history
           if (worktreeId) {
             usePromptHistoryStore.getState().addPrompt(worktreeId, question)
-            useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
+            bumpWorktreeLastMessage({ worktreeId })
           }
 
           // Build message parts (support file attachments if any)
@@ -4371,18 +4371,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           usePromptHistoryStore.getState().addPrompt(hKey, trimmedValue)
         }
         if (worktreeId) {
-          useWorktreeStatusStore.getState().setLastMessageTime(worktreeId, Date.now())
+          bumpWorktreeLastMessage({ worktreeId })
         } else if (connectionId) {
-          // Connection session — update all member worktrees
-          const connection = useConnectionStore
-            .getState()
-            .connections.find((c) => c.id === connectionId)
-          if (connection) {
-            const now = Date.now()
-            for (const member of connection.members) {
-              useWorktreeStatusStore.getState().setLastMessageTime(member.worktree_id, now)
-            }
-          }
+          bumpWorktreeLastMessage({ connectionId })
         }
         setHistoryIndex(null)
         savedDraftRef.current = ''
