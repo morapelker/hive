@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from 'react'
-import {
-  Bot,
-  CheckSquare,
-  Loader2,
-  Send,
-  Sparkles,
-  Trash2
-} from 'lucide-react'
+import { Bot, CheckSquare, Loader2, Send, Sparkles, Trash2 } from 'lucide-react'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { AssistantCanvas } from '@/components/sessions/AssistantCanvas'
 import { UserBubble } from '@/components/sessions/UserBubble'
@@ -16,12 +9,26 @@ import { CommandApprovalPrompt } from '@/components/sessions/CommandApprovalProm
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { useSessionStream } from '@/hooks/useSessionStream'
 import { parseBoardAssistantDraftSet } from '@/lib/board-assistant-drafts'
 import { toast } from '@/lib/toast'
-import { useBoardChatStore, type BoardChatMessage, type BoardChatScope, type TicketDraft, stripBoardAssistantScaffolding, stripBoardDraftBlocks, resolveBoardChatAgentSdk, resolveBoardChatDefaultModel } from '@/stores/useBoardChatStore'
+import {
+  useBoardChatStore,
+  type BoardChatMessage,
+  type BoardChatScope,
+  type TicketDraft,
+  stripBoardAssistantScaffolding,
+  stripBoardDraftBlocks,
+  resolveBoardChatAgentSdk,
+  resolveBoardChatDefaultModel
+} from '@/stores/useBoardChatStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -69,7 +76,10 @@ function sanitizeBoardMessageContent(message: BoardChatMessage): string {
   return withoutScaffolding
 }
 
-function sanitizeStreamingParts(parts: StreamingPart[] | undefined, role: BoardChatMessage['role']): StreamingPart[] | undefined {
+function sanitizeStreamingParts(
+  parts: StreamingPart[] | undefined,
+  role: BoardChatMessage['role']
+): StreamingPart[] | undefined {
   if (!parts?.length) return parts
 
   return parts.map((part) => {
@@ -114,11 +124,15 @@ function truncateDescription(description: string | null | undefined): string | n
   return description.length > 240 ? `${description.slice(0, 237)}...` : description
 }
 
-async function resolveProjectRuntime(projectId: string): Promise<{ worktreeId: string; path: string } | null> {
+async function resolveProjectRuntime(
+  projectId: string
+): Promise<{ worktreeId: string; path: string } | null> {
   const worktreeStore = useWorktreeStore.getState()
   const selectedWorktreeId = worktreeStore.selectedWorktreeId
   const projectWorktrees = worktreeStore.getWorktreesForProject(projectId)
-  const selectedProjectWorktree = projectWorktrees.find((worktree) => worktree.id === selectedWorktreeId)
+  const selectedProjectWorktree = projectWorktrees.find(
+    (worktree) => worktree.id === selectedWorktreeId
+  )
   const chosenWorktree =
     selectedProjectWorktree ??
     worktreeStore.getDefaultWorktree(projectId) ??
@@ -130,7 +144,8 @@ async function resolveProjectRuntime(projectId: string): Promise<{ worktreeId: s
   }
 
   const fallbackWorktrees = await window.db.worktree.getActiveByProject(projectId)
-  const fallback = fallbackWorktrees.find((worktree) => worktree.is_default) ?? fallbackWorktrees[0] ?? null
+  const fallback =
+    fallbackWorktrees.find((worktree) => worktree.is_default) ?? fallbackWorktrees[0] ?? null
 
   return fallback?.path ? { worktreeId: fallback.id, path: fallback.path } : null
 }
@@ -187,7 +202,10 @@ function buildBoardPrompt(input: string, scope: BoardChatScope, targetProjectId:
   ].join('\n')
 }
 
-async function ensureRuntimeSession(scope: BoardChatScope, targetProjectId: string): Promise<{
+async function ensureRuntimeSession(
+  scope: BoardChatScope,
+  targetProjectId: string
+): Promise<{
   sessionId: string
   opencodeSessionId: string
   runtimePath: string
@@ -202,8 +220,11 @@ async function ensureRuntimeSession(scope: BoardChatScope, targetProjectId: stri
   }
 
   const settings = useSettingsStore.getState()
-  const agentSdk = currentState.selectedAgentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
-  const selectedModel = currentState.selectedModelOverride ?? resolveBoardChatDefaultModel(settings, agentSdk)
+  const baseAgentSdk =
+    currentState.selectedAgentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
+  const selectedModel =
+    currentState.selectedModelOverride ?? resolveBoardChatDefaultModel(settings, baseAgentSdk)
+  const agentSdk = currentState.selectedAgentSdkOverride ?? selectedModel?.agentSdk ?? baseAgentSdk
 
   let runtimePath: string | null = null
   let worktreeId: string | null = null
@@ -228,7 +249,9 @@ async function ensureRuntimeSession(scope: BoardChatScope, targetProjectId: stri
   // Reuse the session already created by the session store (from createBoardAssistantSession)
   // rather than creating a duplicate. Only create if none exists.
   const { useSessionStore } = await import('@/stores/useSessionStore')
-  const existingStoreSession = useSessionStore.getState().boardAssistantByProject.get(targetProjectId)
+  const existingStoreSession = useSessionStore
+    .getState()
+    .boardAssistantByProject.get(targetProjectId)
 
   let session: { id: string }
   const isReused = Boolean(existingStoreSession)
@@ -564,7 +587,11 @@ function BoardChatMessageList({
   hasInvalidDrafts: boolean
   onQuestionReply: (requestId: string, answers: QuestionAnswer[]) => void
   onQuestionReject: (requestId: string) => void
-  onPermissionReply: (requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => void
+  onPermissionReply: (
+    requestId: string,
+    reply: 'once' | 'always' | 'reject',
+    message?: string
+  ) => void
   onCommandApprovalReply: (
     requestId: string,
     approved: boolean,
@@ -583,7 +610,15 @@ function BoardChatMessageList({
     const element = scrollRef.current
     if (!element) return
     element.scrollTop = element.scrollHeight
-  }, [messages, drafts, draftSourceMessageId, streamingMessage, activeQuestion, activePermission, activeApproval])
+  }, [
+    messages,
+    drafts,
+    draftSourceMessageId,
+    streamingMessage,
+    activeQuestion,
+    activePermission,
+    activeApproval
+  ])
 
   return (
     <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
@@ -599,7 +634,8 @@ function BoardChatMessageList({
           )
         }
 
-        const parsedDrafts = message.role === 'assistant' ? parseBoardAssistantDraftSet(message.content) : null
+        const parsedDrafts =
+          message.role === 'assistant' ? parseBoardAssistantDraftSet(message.content) : null
         const sanitizedContent = sanitizeBoardMessageContent(message)
         const sanitizedParts = sanitizeStreamingParts(message.parts, message.role)
 
@@ -623,16 +659,20 @@ function BoardChatMessageList({
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <span>{drafts.length} drafts</span>
-                  <span>{dependencyCount} dependenc{dependencyCount === 1 ? 'y' : 'ies'}</span>
+                  <span>
+                    {dependencyCount} dependenc{dependencyCount === 1 ? 'y' : 'ies'}
+                  </span>
                   {invalidDraftCount > 0 && (
-                    <span className="text-destructive">
-                      {invalidDraftCount} invalid
-                    </span>
+                    <span className="text-destructive">{invalidDraftCount} invalid</span>
                   )}
                 </div>
                 <div className="space-y-2">
                   {drafts.map((draft) => (
-                    <BoardChatDraftProposalCard key={draft.id} draft={draft} onToggle={onToggleDraft} />
+                    <BoardChatDraftProposalCard
+                      key={draft.id}
+                      draft={draft}
+                      onToggle={onToggleDraft}
+                    />
                   ))}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-3">
@@ -738,7 +778,9 @@ function BoardChatComposer({
           }}
         />
         <div className="flex items-center justify-between gap-3 px-2 pb-1">
-          <span className="text-xs text-muted-foreground">Enter to send. Shift+Enter for a new line.</span>
+          <span className="text-xs text-muted-foreground">
+            Enter to send. Shift+Enter for a new line.
+          </span>
           <Button type="button" size="sm" onClick={onSend} disabled={!canSend}>
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             Send
@@ -749,7 +791,9 @@ function BoardChatComposer({
   )
 }
 
-export function BoardAssistantView({ projectId }: BoardAssistantViewProps): React.JSX.Element | null {
+export function BoardAssistantView({
+  projectId
+}: BoardAssistantViewProps): React.JSX.Element | null {
   const projects = useProjectStore((state) => state.projects)
   const project = projects.find((p) => p.id === projectId)
   const worktree = useWorktreeStore((state) => {
@@ -794,7 +838,9 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
   const toggleDraftSelected = useBoardChatStore((state) => state.toggleDraftSelected)
   const setStatus = useBoardChatStore((state) => state.setStatus)
   const setSelectedTargetProjectId = useBoardChatStore((state) => state.setSelectedTargetProjectId)
-  const setSelectedAgentSdkOverride = useBoardChatStore((state) => state.setSelectedAgentSdkOverride)
+  const setSelectedAgentSdkOverride = useBoardChatStore(
+    (state) => state.setSelectedAgentSdkOverride
+  )
   const setSelectedModelOverride = useBoardChatStore((state) => state.setSelectedModelOverride)
   const setError = useBoardChatStore((state) => state.setError)
   const updateOpencodeSessionId = useBoardChatStore((state) => state.updateOpencodeSessionId)
@@ -804,10 +850,16 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
 
   const composerFocusRef = useRef<HTMLTextAreaElement | null>(null)
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
-  const defaultBoardAgentSdk = useSettingsStore((state) => resolveBoardChatAgentSdk(state.defaultAgentSdk))
-  const effectiveAgentSdk = selectedAgentSdkOverride ?? defaultBoardAgentSdk
-  const resolvedDefaultModel = useSettingsStore((state) => resolveBoardChatDefaultModel(state, effectiveAgentSdk))
+  const defaultBoardAgentSdk = useSettingsStore((state) =>
+    resolveBoardChatAgentSdk(state.defaultAgentSdk)
+  )
+  const baseAgentSdk = selectedAgentSdkOverride ?? defaultBoardAgentSdk
+  const resolvedDefaultModel = useSettingsStore((state) =>
+    resolveBoardChatDefaultModel(state, baseAgentSdk)
+  )
   const effectiveSelectedModel = selectedModelOverride ?? resolvedDefaultModel
+  const effectiveAgentSdk =
+    selectedAgentSdkOverride ?? effectiveSelectedModel?.agentSdk ?? defaultBoardAgentSdk
   const agentSdkOptions = useMemo(() => {
     const options: Array<'opencode' | 'claude-code' | 'codex'> = []
     if (!availableAgentSdks) return [effectiveAgentSdk]
@@ -816,14 +868,19 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
     if (availableAgentSdks.codex) options.push('codex')
     return options.length > 0 ? options : [effectiveAgentSdk]
   }, [availableAgentSdks, effectiveAgentSdk])
-  const handleMaterializedSessionId = useCallback((nextOpencodeSessionId: string) => {
-    updateOpencodeSessionId(nextOpencodeSessionId)
-    if (sessionId) {
-      void window.db.session.update(sessionId, {
-        opencode_session_id: nextOpencodeSessionId
-      }).catch(() => {})
-    }
-  }, [sessionId, updateOpencodeSessionId])
+  const handleMaterializedSessionId = useCallback(
+    (nextOpencodeSessionId: string) => {
+      updateOpencodeSessionId(nextOpencodeSessionId)
+      if (sessionId) {
+        void window.db.session
+          .update(sessionId, {
+            opencode_session_id: nextOpencodeSessionId
+          })
+          .catch(() => {})
+      }
+    },
+    [sessionId, updateOpencodeSessionId]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -842,7 +899,7 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
           scope?.kind === 'project'
             ? scope.projectId
             : scope?.kind === 'connection'
-              ? scope.availableProjects[0]?.id ?? null
+              ? (scope.availableProjects[0]?.id ?? null)
               : null
       })
 
@@ -885,7 +942,12 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
   // - The scope changes to a different project (scope sync above)
   // - The user clicks "Clear" (handleClear)
 
-  const { messages: transcriptMessages, streamingParts, streamingContent, isStreaming } = useSessionStream({
+  const {
+    messages: transcriptMessages,
+    streamingParts,
+    streamingContent,
+    isStreaming
+  } = useSessionStream({
     sessionId: sessionId ?? '',
     worktreePath: runtimePath ?? '',
     opencodeSessionId: opencodeSessionId ?? '',
@@ -905,10 +967,7 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
 
   const latestDraftResult = useMemo(() => {
     const strictProjectId = scope?.kind === 'project' ? scope.projectId : undefined
-    const fallbackProjectId =
-      scope?.kind === 'project'
-        ? scope.projectId
-        : selectedTargetProjectId
+    const fallbackProjectId = scope?.kind === 'project' ? scope.projectId : selectedTargetProjectId
 
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index]
@@ -947,7 +1006,7 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
 
     setDrafts(
       latestDraftResult.drafts.map((draft) => ({
-        id: `${latestDraftResult.messageId}:${draft.draftKey}:${scope.kind === 'project' ? targetProjectId : (draft.projectId || targetProjectId)}`,
+        id: `${latestDraftResult.messageId}:${draft.draftKey}:${scope.kind === 'project' ? targetProjectId : draft.projectId || targetProjectId}`,
         draftKey: draft.draftKey,
         title: draft.title,
         description: draft.description,
@@ -957,12 +1016,13 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
         ),
         warnings: draft.warnings,
         validationIssues: draft.validationIssues,
-        projectId: scope.kind === 'project' ? targetProjectId : (draft.projectId || targetProjectId),
+        projectId: scope.kind === 'project' ? targetProjectId : draft.projectId || targetProjectId,
         projectName:
-          projects.find((project) =>
-            project.id === (scope.kind === 'project' ? targetProjectId : (draft.projectId || targetProjectId))
-          )?.name ??
-          'Unknown project',
+          projects.find(
+            (project) =>
+              project.id ===
+              (scope.kind === 'project' ? targetProjectId : draft.projectId || targetProjectId)
+          )?.name ?? 'Unknown project',
         selected: true
       })),
       latestDraftResult.messageId
@@ -1014,7 +1074,10 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
   const hasInvalidDrafts = drafts.some((draft) => draft.validationIssues.length > 0)
   const canSend =
     canInteract &&
-    Boolean((scope?.kind === 'project' ? scope.projectId : selectedTargetProjectId) && composerValue.trim()) &&
+    Boolean(
+      (scope?.kind === 'project' ? scope.projectId : selectedTargetProjectId) &&
+      composerValue.trim()
+    ) &&
     status !== 'starting' &&
     status !== 'thinking'
 
@@ -1054,14 +1117,13 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
           (activeScope?.kind === 'project'
             ? activeScope.projectId
             : activeScope?.kind === 'connection'
-              ? activeScope.availableProjects[0]?.id ?? null
+              ? (activeScope.availableProjects[0]?.id ?? null)
               : null),
         selectedAgentSdkOverride:
           options?.nextSelectedAgentSdkOverride ??
           useBoardChatStore.getState().selectedAgentSdkOverride,
         selectedModelOverride:
-          options?.nextSelectedModelOverride ??
-          useBoardChatStore.getState().selectedModelOverride
+          options?.nextSelectedModelOverride ?? useBoardChatStore.getState().selectedModelOverride
       })
     },
     [resetState]
@@ -1073,8 +1135,7 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
     const input = composerValue.trim()
     if (!input) return
 
-    const targetProjectId =
-      scope.kind === 'project' ? scope.projectId : selectedTargetProjectId
+    const targetProjectId = scope.kind === 'project' ? scope.projectId : selectedTargetProjectId
 
     if (!targetProjectId) {
       setError('Select a target project before starting the assistant.')
@@ -1094,61 +1155,80 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
       }
 
       const prompt = buildBoardPrompt(input, scope, targetProjectId)
-      const result = await window.opencodeOps.prompt(runtime.runtimePath, runtime.opencodeSessionId, prompt)
+      const result = await window.opencodeOps.prompt(
+        runtime.runtimePath,
+        runtime.opencodeSessionId,
+        prompt
+      )
       if (!result.success) {
         throw new Error(result.error || 'The assistant could not send your message.')
       }
     } catch (sendError) {
-      const message = sendError instanceof Error ? sendError.message : 'Failed to send assistant message.'
+      const message =
+        sendError instanceof Error ? sendError.message : 'Failed to send assistant message.'
       setError(message)
       setStatus('error')
       addLocalSystemMessage(message)
       toast.error(message)
     }
-  }, [addLocalSystemMessage, addLocalUserMessage, composerValue, scope, selectedTargetProjectId, sessionId, setComposerValue, setError, setStatus])
+  }, [
+    addLocalSystemMessage,
+    addLocalUserMessage,
+    composerValue,
+    scope,
+    selectedTargetProjectId,
+    sessionId,
+    setComposerValue,
+    setError,
+    setStatus
+  ])
 
-  const handleCreateDrafts = useCallback(async (onlySelected: boolean) => {
-    const draftsToCreate = drafts.filter(
-      (draft) => !draft.createdAt && (!onlySelected || draft.selected)
-    )
-    if (draftsToCreate.length === 0) {
-      return
-    }
-
-    try {
-      const invalidDrafts = draftsToCreate.filter((draft) => draft.validationIssues.length > 0)
-      if (invalidDrafts.length > 0) {
-        throw new Error('Fix draft validation issues before creating tickets.')
+  const handleCreateDrafts = useCallback(
+    async (onlySelected: boolean) => {
+      const draftsToCreate = drafts.filter(
+        (draft) => !draft.createdAt && (!onlySelected || draft.selected)
+      )
+      if (draftsToCreate.length === 0) {
+        return
       }
 
-      const draftKeysInBatch = new Set(draftsToCreate.map((draft) => draft.draftKey))
-      const result = await window.kanban.ticket.createBatch({
-        drafts: draftsToCreate.map((draft) => ({
-          draft_key: draft.draftKey,
-          project_id: draft.projectId,
-          title: draft.title,
-          description: draft.description,
-          column: 'todo',
-          depends_on: draft.dependsOn.filter((key) => draftKeysInBatch.has(key))
-        }))
-      })
+      try {
+        const invalidDrafts = draftsToCreate.filter((draft) => draft.validationIssues.length > 0)
+        if (invalidDrafts.length > 0) {
+          throw new Error('Fix draft validation issues before creating tickets.')
+        }
 
-      await useKanbanStore.getState().loadTickets(draftsToCreate[0].projectId)
-      await useKanbanStore.getState().loadDependencies(draftsToCreate[0].projectId)
+        const draftKeysInBatch = new Set(draftsToCreate.map((draft) => draft.draftKey))
+        const result = await window.kanban.ticket.createBatch({
+          drafts: draftsToCreate.map((draft) => ({
+            draft_key: draft.draftKey,
+            project_id: draft.projectId,
+            title: draft.title,
+            description: draft.description,
+            column: 'todo',
+            depends_on: draft.dependsOn.filter((key) => draftKeysInBatch.has(key))
+          }))
+        })
 
-      markDraftsCreated(draftsToCreate.map((draft) => draft.id))
-      addLocalSystemMessage(
-        `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'} and ${result.dependencies.length} dependenc${result.dependencies.length === 1 ? 'y' : 'ies'} in ${draftsToCreate[0].projectName}.`
-      )
-      navigateToBoard()
-      toast.success(
-        `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'}.`
-      )
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to create one or more tickets.'
-      toast.error(message)
-    }
-  }, [addLocalSystemMessage, drafts, markDraftsCreated, navigateToBoard])
+        await useKanbanStore.getState().loadTickets(draftsToCreate[0].projectId)
+        await useKanbanStore.getState().loadDependencies(draftsToCreate[0].projectId)
+
+        markDraftsCreated(draftsToCreate.map((draft) => draft.id))
+        addLocalSystemMessage(
+          `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'} and ${result.dependencies.length} dependenc${result.dependencies.length === 1 ? 'y' : 'ies'} in ${draftsToCreate[0].projectName}.`
+        )
+        navigateToBoard()
+        toast.success(
+          `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'}.`
+        )
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Failed to create one or more tickets.'
+        toast.error(message)
+      }
+    },
+    [addLocalSystemMessage, drafts, markDraftsCreated, navigateToBoard]
+  )
 
   const handleClear = useCallback(async () => {
     await handleDiscardConversation({ preserveOpen: true })
@@ -1157,14 +1237,19 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
     }
   }, [addLocalSystemMessage, handleDiscardConversation, storedScope])
 
-  const handleSelectModel = useCallback(async (model: SelectedModel) => {
-    setSelectedModelOverride(model)
-    await handleDiscardConversation({
-      preserveOpen: true,
-      nextSelectedModelOverride: model
-    })
-    addLocalSystemMessage(`Board assistant model changed to ${model.providerID}/${model.modelID}.`)
-  }, [addLocalSystemMessage, handleDiscardConversation, setSelectedModelOverride])
+  const handleSelectModel = useCallback(
+    async (model: SelectedModel) => {
+      setSelectedModelOverride(model)
+      await handleDiscardConversation({
+        preserveOpen: true,
+        nextSelectedModelOverride: model
+      })
+      addLocalSystemMessage(
+        `Board assistant model changed to ${model.providerID}/${model.modelID}.`
+      )
+    },
+    [addLocalSystemMessage, handleDiscardConversation, setSelectedModelOverride]
+  )
 
   const handleResetModel = useCallback(async () => {
     setSelectedModelOverride(null)
@@ -1175,20 +1260,33 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
     addLocalSystemMessage('Board assistant model reset to the app default.')
   }, [addLocalSystemMessage, handleDiscardConversation, setSelectedModelOverride])
 
-  const handleSelectAgentSdk = useCallback(async (nextAgentSdk: 'opencode' | 'claude-code' | 'codex') => {
-    const nextOverride = nextAgentSdk === defaultBoardAgentSdk ? null : nextAgentSdk
-    setSelectedAgentSdkOverride(nextOverride)
-    setSelectedModelOverride(null)
-    await handleDiscardConversation({
-      preserveOpen: true,
-      nextSelectedAgentSdkOverride: nextOverride,
-      nextSelectedModelOverride: null
-    })
-    addLocalSystemMessage(`Board assistant provider changed to ${getAgentSdkLabel(nextAgentSdk)}.`)
-  }, [addLocalSystemMessage, defaultBoardAgentSdk, handleDiscardConversation, setSelectedAgentSdkOverride, setSelectedModelOverride])
+  const handleSelectAgentSdk = useCallback(
+    async (nextAgentSdk: 'opencode' | 'claude-code' | 'codex') => {
+      const nextOverride = nextAgentSdk === defaultBoardAgentSdk ? null : nextAgentSdk
+      setSelectedAgentSdkOverride(nextOverride)
+      setSelectedModelOverride(null)
+      await handleDiscardConversation({
+        preserveOpen: true,
+        nextSelectedAgentSdkOverride: nextOverride,
+        nextSelectedModelOverride: null
+      })
+      addLocalSystemMessage(
+        `Board assistant provider changed to ${getAgentSdkLabel(nextAgentSdk)}.`
+      )
+    },
+    [
+      addLocalSystemMessage,
+      defaultBoardAgentSdk,
+      handleDiscardConversation,
+      setSelectedAgentSdkOverride,
+      setSelectedModelOverride
+    ]
+  )
 
   const handleRevise = useCallback(() => {
-    setComposerValue('Revise the current draft tickets. Keep them small, specific, and implementation-ready.')
+    setComposerValue(
+      'Revise the current draft tickets. Keep them small, specific, and implementation-ready.'
+    )
     composerFocusRef.current?.focus()
   }, [setComposerValue])
 
@@ -1197,12 +1295,16 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
     addLocalSystemMessage('Draft proposals discarded.')
   }, [addLocalSystemMessage, clearDrafts])
 
-  const handleSelectTargetProject = useCallback(async (nextProjectId: string) => {
-    await setSelectedTargetProjectId(nextProjectId)
-    await handleDiscardConversation({ preserveOpen: true, nextTargetProjectId: nextProjectId })
-    const projectName = projects.find((project) => project.id === nextProjectId)?.name ?? 'the selected project'
-    addLocalSystemMessage(`Target project changed to ${projectName}.`)
-  }, [addLocalSystemMessage, handleDiscardConversation, projects, setSelectedTargetProjectId])
+  const handleSelectTargetProject = useCallback(
+    async (nextProjectId: string) => {
+      await setSelectedTargetProjectId(nextProjectId)
+      await handleDiscardConversation({ preserveOpen: true, nextTargetProjectId: nextProjectId })
+      const projectName =
+        projects.find((project) => project.id === nextProjectId)?.name ?? 'the selected project'
+      addLocalSystemMessage(`Target project changed to ${projectName}.`)
+    },
+    [addLocalSystemMessage, handleDiscardConversation, projects, setSelectedTargetProjectId]
+  )
 
   const handleQuestionReply = useCallback(
     async (requestId: string, answers: QuestionAnswer[]) => {
@@ -1235,7 +1337,12 @@ export function BoardAssistantView({ projectId }: BoardAssistantViewProps): Reac
   const handlePermissionReply = useCallback(
     async (requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => {
       try {
-        await window.opencodeOps.permissionReply(requestId, reply, runtimePath || undefined, message)
+        await window.opencodeOps.permissionReply(
+          requestId,
+          reply,
+          runtimePath || undefined,
+          message
+        )
         if (sessionId) {
           usePermissionStore.getState().removePermission(sessionId, requestId)
         }

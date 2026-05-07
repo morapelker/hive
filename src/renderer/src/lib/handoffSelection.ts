@@ -7,7 +7,12 @@ import {
   parseProviders,
   type ProviderModels
 } from './parseProviders'
-import { resolveModelForSdk, useSettingsStore, type HandoffAgentSdk, type SelectedModel } from '@/stores/useSettingsStore'
+import {
+  resolveModelForSdk,
+  useSettingsStore,
+  type HandoffAgentSdk,
+  type SelectedModel
+} from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
 export interface EffectiveHandoffSelection {
@@ -47,7 +52,14 @@ function normalizeHandoffSdk(
   return 'opencode'
 }
 
-function buildModelSelection(model: SelectedModel | null, agentSdk: HandoffAgentSdk): SelectedModel {
+function getModeDefaultKey(mode: 'build' | 'plan' | 'super-plan' | undefined): 'build' | 'plan' {
+  return mode === 'plan' || mode === 'super-plan' ? 'plan' : 'build'
+}
+
+function buildModelSelection(
+  model: SelectedModel | null,
+  agentSdk: HandoffAgentSdk
+): SelectedModel {
   if (model) return model
 
   const cachedProviders = getCachedModelCatalog(agentSdk)
@@ -90,27 +102,30 @@ function resolveSessionSelection(opts: {
   const requestedSdk = normalizeHandoffSdk(opts.agentSdk ?? settings.defaultAgentSdk ?? 'opencode')
   const configuredDefaultSdk = normalizeHandoffSdk(settings.defaultAgentSdk ?? 'opencode')
   let model: SelectedModel | null = null
+  let resolvedSdk = requestedSdk
 
-  if (requestedSdk === configuredDefaultSdk && (opts.mode ?? 'build') === 'build') {
-    model = settings.defaultModels?.build ?? null
+  const modeDefault = settings.getModelForMode(getModeDefaultKey(opts.mode))
+  if (modeDefault && (modeDefault.agentSdk || requestedSdk === configuredDefaultSdk)) {
+    model = modeDefault
+    resolvedSdk = normalizeHandoffSdk(modeDefault.agentSdk ?? requestedSdk)
   }
 
   if (!model) {
-    model = resolveModelForSdk(requestedSdk, settings)
+    model = resolveModelForSdk(resolvedSdk, settings)
   }
 
   if (!model && Object.keys(settings.selectedModelByProvider).length === 0) {
     model = getWorktreeFallbackModel(opts.worktreeId)
   }
 
-  const resolvedModel = buildModelSelection(model, requestedSdk)
-  const modelInfo = getModelInfoFromCache(requestedSdk, resolvedModel)
+  const resolvedModel = buildModelSelection(model, resolvedSdk)
+  const modelInfo = getModelInfoFromCache(resolvedSdk, resolvedModel)
 
   return {
-    agentSdk: requestedSdk,
+    agentSdk: resolvedSdk,
     model: resolvedModel,
     display: {
-      sdkName: SDK_DISPLAY_NAMES[requestedSdk],
+      sdkName: SDK_DISPLAY_NAMES[resolvedSdk],
       modelName: modelInfo ? getModelDisplayName(modelInfo) : resolvedModel.modelID,
       variant: resolvedModel.variant
     }
@@ -155,7 +170,9 @@ export function clearHandoffModelCatalogCache(): void {
   inflightModelCatalogRequests.clear()
 }
 
-export async function loadHandoffModelCatalog(agentSdk: HandoffAgentSdk): Promise<ProviderModels[]> {
+export async function loadHandoffModelCatalog(
+  agentSdk: HandoffAgentSdk
+): Promise<ProviderModels[]> {
   const cached = getCachedModelCatalog(agentSdk)
   if (cached) return cached
 
@@ -200,10 +217,7 @@ export function getEffectiveHandoffSelection(opts: {
   if (!isAgentSdkAvailable(override.agentSdk, settings.availableAgentSdks)) return fallback
 
   const cachedProviders = getCachedModelCatalog(override.agentSdk)
-  if (
-    cachedProviders &&
-    !findModelInfo(cachedProviders, override.providerID, override.modelID)
-  ) {
+  if (cachedProviders && !findModelInfo(cachedProviders, override.providerID, override.modelID)) {
     return fallback
   }
 
@@ -235,7 +249,8 @@ export function resolveSessionCreationSelection(opts: {
   model: SelectedModel | null
 } {
   const settings = useSettingsStore.getState()
-  const agentSdk = opts.agentSdkOverride ?? settings.defaultAgentSdk ?? 'opencode'
+  const agentSdk =
+    opts.modelOverride?.agentSdk ?? opts.agentSdkOverride ?? settings.defaultAgentSdk ?? 'opencode'
 
   if (agentSdk === 'terminal') {
     return { agentSdk, model: null }
@@ -250,5 +265,5 @@ export function resolveSessionCreationSelection(opts: {
     agentSdk,
     mode: opts.initialMode
   })
-  return { agentSdk, model: resolved.model }
+  return { agentSdk: resolved.agentSdk, model: resolved.model }
 }

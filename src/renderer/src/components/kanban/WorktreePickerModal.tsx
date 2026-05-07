@@ -1,5 +1,15 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { Hammer, Map, Sparkles, Plus, GitBranch, Send, ChevronDown, Loader2, Search } from 'lucide-react'
+import {
+  Hammer,
+  Map,
+  Sparkles,
+  Plus,
+  GitBranch,
+  Send,
+  ChevronDown,
+  Loader2,
+  Search
+} from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -79,17 +89,21 @@ function getModePrefix(mode: PickerMode): string {
 function swapModePrefix(text: string, fromMode: PickerMode, toMode: PickerMode): string {
   const fromPrefix = getModePrefix(fromMode)
   const toPrefix = getModePrefix(toMode)
-  if (fromPrefix === toPrefix) return text          // plan ↔ super-plan: same prefix
+  if (fromPrefix === toPrefix) return text // plan ↔ super-plan: same prefix
   if (text.startsWith(fromPrefix)) {
-    return toPrefix + text.slice(fromPrefix.length)  // swap prefix, keep the rest
+    return toPrefix + text.slice(fromPrefix.length) // swap prefix, keep the rest
   }
-  return text                                        // prefix not found: don't touch
+  return text // prefix not found: don't touch
 }
 
 function buildPrompt(mode: PickerMode, ticket: KanbanTicket): string {
   const prefix = getModePrefix(mode)
   const description = ticket.description ?? ''
-  const attachments = (ticket.attachments ?? []) as Array<{ type: string; url: string; label: string }>
+  const attachments = (ticket.attachments ?? []) as Array<{
+    type: string
+    url: string
+    label: string
+  }>
 
   let attachmentsXml = ''
   if (attachments.length > 0) {
@@ -132,23 +146,20 @@ export function WorktreePickerModal({
   const [branchFilter, setBranchFilter] = useState('')
   const [branchesLoading, setBranchesLoading] = useState(false)
   const [selectedModel, setSelectedModel] = useState<{
-    providerID: string; modelID: string; variant?: string
+    agentSdk?: 'opencode' | 'claude-code' | 'codex'
+    providerID: string
+    modelID: string
+    variant?: string
   } | null>(null)
   const [selectedSdk, setSelectedSdk] = useState<'opencode' | 'claude-code' | 'codex' | null>(null)
 
   // ── Store access ────────────────────────────────────────────────
   const worktrees = useWorktreeStore(
-    useCallback(
-      (state) => state.worktreesByProject.get(projectId) ?? EMPTY_ARRAY,
-      [projectId]
-    )
+    useCallback((state) => state.worktreesByProject.get(projectId) ?? EMPTY_ARRAY, [projectId])
   )
 
   const ticketsForProject = useKanbanStore(
-    useCallback(
-      (state) => state.tickets.get(projectId) ?? EMPTY_ARRAY,
-      [projectId]
-    )
+    useCallback((state) => state.tickets.get(projectId) ?? EMPTY_ARRAY, [projectId])
   )
 
   const updateTicket = useKanbanStore((state) => state.updateTicket)
@@ -157,14 +168,11 @@ export function WorktreePickerModal({
   const syncWorktrees = useWorktreeStore((state) => state.syncWorktrees)
 
   const project = useProjectStore(
-    useCallback(
-      (state) => state.projects.find((p) => p.id === projectId) ?? null,
-      [projectId]
-    )
+    useCallback((state) => state.projects.find((p) => p.id === projectId) ?? null, [projectId])
   )
 
   const defaultBranchName = useMemo(() => {
-    const defaultWt = worktrees.find(w => w.is_default)
+    const defaultWt = worktrees.find((w) => w.is_default)
     return defaultWt?.branch_name ?? 'main'
   }, [worktrees])
 
@@ -185,10 +193,10 @@ export function WorktreePickerModal({
     const settings = useSettingsStore.getState()
     // Priority 1: mode-specific default
     const modeModel = settings.getModelForMode(mode)
-    if (modeModel) return modeModel
+    if (modeModel && (!selectedSdk || modeModel.agentSdk === selectedSdk)) return modeModel
     // Priority 2: per-provider / global default
     return resolveModelForSdk(agentSdk) ?? null
-  }, [mode, agentSdk])
+  }, [mode, agentSdk, selectedSdk])
 
   // ── Count in-progress tickets per worktree ──────────────────────
   const ticketCountByWorktree = useMemo(() => {
@@ -206,12 +214,13 @@ export function WorktreePickerModal({
     // branches.length guard: only fetch once per modal-open cycle (reset clears branches on close)
     if (!isNewWorktree || !project?.path || branches.length > 0) return
     setBranchesLoading(true)
-    window.gitOps.listBranchesWithStatus(project.path)
+    window.gitOps
+      .listBranchesWithStatus(project.path)
       .then((result) => {
         if (result.success) {
           setBranches(result.branches)
           const remembered = _lastSourceBranchByProject[projectId]
-          if (remembered && !result.branches.some(b => b.name === remembered)) {
+          if (remembered && !result.branches.some((b) => b.name === remembered)) {
             setSourceBranch(null)
           }
         }
@@ -249,7 +258,7 @@ export function WorktreePickerModal({
   const filteredBranches = useMemo(() => {
     const lower = branchFilter.toLowerCase()
     return branches
-      .filter(b => b.name.toLowerCase().includes(lower))
+      .filter((b) => b.name.toLowerCase().includes(lower))
       .sort((a, b) => {
         if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1
         return a.name.localeCompare(b.name)
@@ -259,15 +268,13 @@ export function WorktreePickerModal({
   // ── Handle SDK change ───────────────────────────────────────────
   const handleSdkChange = useCallback((sdk: 'opencode' | 'claude-code' | 'codex') => {
     setSelectedSdk(sdk)
-    setSelectedModel(null)  // reset model — new SDK has different models
+    setSelectedModel(null) // reset model — new SDK has different models
   }, [])
 
   // ── Handle mode toggle ──────────────────────────────────────────
   const toggleMode = useCallback(() => {
     setMode((prev) => {
-      const next: PickerMode = prev === 'build'
-        ? (superArmed ? 'super-plan' : 'plan')
-        : 'build'
+      const next: PickerMode = prev === 'build' ? (superArmed ? 'super-plan' : 'plan') : 'build'
       setPromptText((current) => swapModePrefix(current, prev, next))
       return next
     })
@@ -301,7 +308,7 @@ export function WorktreePickerModal({
     if (!open || preAssignOnly) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey) return
-      if (branchPopoverOpen) return  // Don't toggle mode while picking a branch
+      if (branchPopoverOpen) return // Don't toggle mode while picking a branch
       e.preventDefault()
       e.stopImmediatePropagation()
 
@@ -382,7 +389,9 @@ export function WorktreePickerModal({
         userExplicitSendTimes.set(sessionId, Date.now())
         snapshotTokenBaseline(sessionId)
         lastSendMode.set(sessionId, mode)
-        useWorktreeStatusStore.getState().setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
+        useWorktreeStatusStore
+          .getState()
+          .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
 
         // Apply model override
         const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
@@ -391,10 +400,12 @@ export function WorktreePickerModal({
         }
 
         // Update ticket — worktree_id stays null for connection sessions
-        const sortOrder = useKanbanStore.getState().computeSortOrder(
-          useKanbanStore.getState().getTicketsByColumnForConnection(connectionId, 'in_progress'),
-          0
-        )
+        const sortOrder = useKanbanStore
+          .getState()
+          .computeSortOrder(
+            useKanbanStore.getState().getTicketsByColumnForConnection(connectionId, 'in_progress'),
+            0
+          )
 
         await updateTicket(ticket.id, ticket.project_id, {
           current_session_id: sessionId,
@@ -420,7 +431,9 @@ export function WorktreePickerModal({
         toast.success('Session started')
 
         // Connect to opencode using connection path
-        const connectionPath = useConnectionStore.getState().connections.find(c => c.id === connectionId)?.path
+        const connectionPath = useConnectionStore
+          .getState()
+          .connections.find((c) => c.id === connectionId)?.path
         if (!connectionPath) return
 
         const connectResult = await window.opencodeOps.connect(connectionPath, sessionId)
@@ -432,29 +445,35 @@ export function WorktreePickerModal({
         // Send prompt
         if (promptText.trim()) {
           const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
-          const modePrefix = mode === 'super-plan' ? getSuperPlanModePrefix(sessionAgentSdk)
-            : mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
-            : ''
+          const modePrefix =
+            mode === 'super-plan'
+              ? getSuperPlanModePrefix(sessionAgentSdk)
+              : mode === 'plan' && !skipPrefix
+                ? PLAN_MODE_PREFIX
+                : ''
           const fullPrompt = modePrefix + promptText.trim()
-          const promptOptions =
-            sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
+          const promptOptions = sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
 
           if (mode === 'super-plan') {
             useSessionStore.getState().setSessionMode(sessionId, 'plan')
           }
 
           bumpWorktreeLastMessage({ connectionId })
-          await window.opencodeOps.prompt(connectionPath, connectResult.sessionId, [
-            { type: 'text', text: fullPrompt }
-          ], effectiveModel, promptOptions)
+          await window.opencodeOps.prompt(
+            connectionPath,
+            connectResult.sessionId,
+            [{ type: 'text', text: fullPrompt }],
+            effectiveModel,
+            promptOptions
+          )
         }
-        return  // Done with connection path
+        return // Done with connection path
       } catch {
         toast.error('Failed to start session')
       } finally {
         setIsSending(false)
       }
-      return  // Don't fall through to worktree logic
+      return // Don't fall through to worktree logic
     }
 
     try {
@@ -473,10 +492,12 @@ export function WorktreePickerModal({
           codexFastMode
         }
 
-        const sortOrder = useKanbanStore.getState().computeSortOrder(
-          useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'),
-          0
-        )
+        const sortOrder = useKanbanStore
+          .getState()
+          .computeSortOrder(
+            useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'),
+            0
+          )
 
         await updateTicket(ticket.id, projectId, {
           pending_launch_config: JSON.stringify(pendingConfig),
@@ -598,10 +619,7 @@ export function WorktreePickerModal({
       // Update the ticket with session info and move to in_progress
       const sortOrder = useKanbanStore
         .getState()
-        .computeSortOrder(
-          useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'),
-          0
-        )
+        .computeSortOrder(useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'), 0)
 
       await updateTicket(ticket.id, projectId, {
         current_session_id: sessionId,
@@ -648,12 +666,13 @@ export function WorktreePickerModal({
       if (promptText.trim()) {
         const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
         const modePrefix =
-          mode === 'super-plan' ? getSuperPlanModePrefix(sessionAgentSdk)
-          : mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
-          : ''
+          mode === 'super-plan'
+            ? getSuperPlanModePrefix(sessionAgentSdk)
+            : mode === 'plan' && !skipPrefix
+              ? PLAN_MODE_PREFIX
+              : ''
         const fullPrompt = modePrefix + promptText.trim()
-        const promptOptions =
-          sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
+        const promptOptions = sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
 
         // Auto-revert super-plan → plan immediately (one-shot mode).
         // The prefix is already captured in fullPrompt above.
@@ -662,9 +681,13 @@ export function WorktreePickerModal({
         }
 
         bumpWorktreeLastMessage({ worktreeId })
-        await window.opencodeOps.prompt(worktree.path, connectResult.sessionId, [
-          { type: 'text', text: fullPrompt }
-        ], effectiveModel, promptOptions)
+        await window.opencodeOps.prompt(
+          worktree.path,
+          connectResult.sessionId,
+          [{ type: 'text', text: fullPrompt }],
+          effectiveModel,
+          promptOptions
+        )
       }
     } catch {
       toast.error('Failed to start session')
@@ -712,207 +735,219 @@ export function WorktreePickerModal({
       >
         <DialogHeader className="space-y-2.5 pb-1">
           <DialogTitle className="text-base">
-            {saveConfigOnly ? 'Pre-configure Launch' : preAssignOnly ? 'Assign Worktree' : 'Start Session'}
+            {saveConfigOnly
+              ? 'Pre-configure Launch'
+              : preAssignOnly
+                ? 'Assign Worktree'
+                : 'Start Session'}
           </DialogTitle>
           <DialogDescription>
-            {preAssignOnly ? 'Pre-assign a worktree to' : isConnectionMode ? 'Start a session for' : 'Pick a worktree for'}{' '}
+            {preAssignOnly
+              ? 'Pre-assign a worktree to'
+              : isConnectionMode
+                ? 'Start a session for'
+                : 'Pick a worktree for'}{' '}
             <span className="font-medium text-foreground">{ticket.title}</span>
           </DialogDescription>
           {/* Build/Plan chip toggle — below description to avoid overlapping the X close button */}
-          {!preAssignOnly && <div className="flex items-center gap-1.5">
-            <button
-              data-testid="wt-picker-mode-toggle"
-              data-mode={mode}
-              type="button"
-              onClick={toggleMode}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors',
-                'border select-none',
-                mode === 'build'
-                  ? 'bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20'
-                  : 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
-              )}
-              title={`${modeLabel} mode`}
-              aria-label={`Current mode: ${modeLabel}. Click to switch`}
-            >
-              <ModeIcon className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>{modeLabel}</span>
-            </button>
-            <div
-              className={cn(
-                'transition-all duration-200 overflow-hidden',
-                mode === 'plan' || mode === 'super-plan'
-                  ? 'opacity-100 translate-x-0 max-w-[80px]'
-                  : 'opacity-0 -translate-x-2 max-w-0 pointer-events-none'
-              )}
-            >
+          {!preAssignOnly && (
+            <div className="flex items-center gap-1.5">
               <button
+                data-testid="wt-picker-mode-toggle"
+                data-mode={mode}
                 type="button"
-                onClick={toggleSuper}
-                aria-pressed={mode === 'super-plan'}
-                aria-label={`Super mode ${mode === 'super-plan' ? 'enabled' : 'disabled'}`}
-                data-testid="wt-picker-super-toggle"
+                onClick={toggleMode}
                 className={cn(
-                  'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
-                  'border select-none whitespace-nowrap',
-                  mode === 'super-plan'
-                    ? 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20 super-sparkle'
-                    : 'bg-muted/50 border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+                  'flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors',
+                  'border select-none',
+                  mode === 'build'
+                    ? 'bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20'
+                    : 'bg-violet-500/10 border-violet-500/30 text-violet-500 hover:bg-violet-500/20'
+                )}
+                title={`${modeLabel} mode`}
+                aria-label={`Current mode: ${modeLabel}. Click to switch`}
+              >
+                <ModeIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{modeLabel}</span>
+              </button>
+              <div
+                className={cn(
+                  'transition-all duration-200 overflow-hidden',
+                  mode === 'plan' || mode === 'super-plan'
+                    ? 'opacity-100 translate-x-0 max-w-[80px]'
+                    : 'opacity-0 -translate-x-2 max-w-0 pointer-events-none'
                 )}
               >
-                SUPER
-              </button>
+                <button
+                  type="button"
+                  onClick={toggleSuper}
+                  aria-pressed={mode === 'super-plan'}
+                  aria-label={`Super mode ${mode === 'super-plan' ? 'enabled' : 'disabled'}`}
+                  data-testid="wt-picker-super-toggle"
+                  className={cn(
+                    'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
+                    'border select-none whitespace-nowrap',
+                    mode === 'super-plan'
+                      ? 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20 super-sparkle'
+                      : 'bg-muted/50 border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+                  )}
+                >
+                  SUPER
+                </button>
+              </div>
             </div>
-          </div>}
+          )}
         </DialogHeader>
 
         <div className="space-y-5">
           {/* ── Worktree list (hidden in connection mode) ────── */}
-          {!isConnectionMode && <div className="space-y-2">
-            <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Worktree
-            </label>
-            <div
-              data-testid="worktree-list"
-              className="max-h-[200px] overflow-y-auto rounded-lg border border-border/60"
-            >
-              {/* "New worktree" option — always at top */}
-              <button
-                data-testid="worktree-item-new"
-                type="button"
-                onClick={handleSelectNewWorktree}
-                className={cn(
-                  'flex w-full items-center gap-3 px-3.5 py-2.5 text-sm transition-colors',
-                  'border-b border-border/40',
-                  'hover:bg-muted/30',
-                  isNewWorktree && 'bg-primary/8 ring-1 ring-inset ring-primary/20'
-                )}
+          {!isConnectionMode && (
+            <div className="space-y-2">
+              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Worktree
+              </label>
+              <div
+                data-testid="worktree-list"
+                className="max-h-[200px] overflow-y-auto rounded-lg border border-border/60"
               >
-                <span
+                {/* "New worktree" option — always at top */}
+                <button
+                  data-testid="worktree-item-new"
+                  type="button"
+                  onClick={handleSelectNewWorktree}
                   className={cn(
-                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                    'bg-primary/10 text-primary'
+                    'flex w-full items-center gap-3 px-3.5 py-2.5 text-sm transition-colors',
+                    'border-b border-border/40',
+                    'hover:bg-muted/30',
+                    isNewWorktree && 'bg-primary/8 ring-1 ring-inset ring-primary/20'
                   )}
                 >
-                  <Plus className="h-3.5 w-3.5" />
-                </span>
-                <span className="font-medium text-foreground">New worktree</span>
-              </button>
-
-              {isNewWorktree && (
-                <div className="flex items-center gap-2 px-3.5 py-2 border-b border-border/40 bg-muted/5">
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">from</span>
-                  <Popover open={branchPopoverOpen} onOpenChange={setBranchPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        data-testid="source-branch-trigger"
-                        className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md border border-border/60 hover:bg-muted/30 transition-colors"
-                      >
-                        <GitBranch className="h-3 w-3 text-muted-foreground" />
-                        <span className="truncate max-w-[180px]">
-                          {sourceBranch ?? defaultBranchName}
-                        </span>
-                        <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-72 p-0" align="start">
-                      <div className="p-2 border-b border-border/40">
-                        <div className="relative">
-                          <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
-                          <Input
-                            placeholder="Filter branches..."
-                            value={branchFilter}
-                            onChange={(e) => setBranchFilter(e.target.value)}
-                            className="pl-7 h-8 text-xs"
-                            autoFocus
-                          />
-                        </div>
-                      </div>
-                      <div className="max-h-[200px] overflow-y-auto py-1">
-                        {branchesLoading ? (
-                          <div className="flex items-center justify-center py-4">
-                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                          </div>
-                        ) : filteredBranches.length === 0 ? (
-                          <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                            No branches found
-                          </div>
-                        ) : (
-                          filteredBranches.map((branch) => (
-                            <button
-                              type="button"
-                              key={`${branch.name}-${branch.isRemote}`}
-                              data-testid={`source-branch-${branch.name}`}
-                              className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left hover:bg-muted/30 transition-colors"
-                              onClick={() => {
-                                setSourceBranch(branch.name)
-                                _lastSourceBranchByProject[projectId] = branch.name
-                                setBranchPopoverOpen(false)
-                                setBranchFilter('')
-                              }}
-                            >
-                              <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
-                              <span className="flex-1 truncate">{branch.name}</span>
-                              {branch.isRemote && (
-                                <span className="text-[10px] text-muted-foreground">remote</span>
-                              )}
-                              {branch.isCheckedOut && (
-                                <span className="text-[10px] text-primary">active</span>
-                              )}
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                  {worktreeNamePreview && (
-                    <span className="ml-auto text-xs text-muted-foreground font-mono truncate max-w-[180px]">
-                      {worktreeNamePreview}
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Existing worktrees */}
-              {worktrees.map((wt) => {
-                const count = ticketCountByWorktree[wt.id] || 0
-                const isSelected = selectedWorktreeId === wt.id
-
-                return (
-                  <button
-                    key={wt.id}
-                    data-testid={`worktree-item-${wt.id}`}
-                    type="button"
-                    onClick={() => handleSelectWorktree(wt.id)}
+                  <span
                     className={cn(
-                      'flex w-full items-center gap-3 px-3.5 py-2.5 text-sm transition-colors',
-                      'border-b border-border/40 last:border-b-0',
-                      'hover:bg-muted/30',
-                      isSelected && 'bg-primary/8 ring-1 ring-inset ring-primary/20'
+                      'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
+                      'bg-primary/10 text-primary'
                     )}
                   >
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/40 text-muted-foreground">
-                      <GitBranch className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="flex-1 truncate text-left font-medium text-foreground">
-                      {wt.name}
-                    </span>
-                    {wt.is_default && (
-                      <span className="rounded-full bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                        default
+                    <Plus className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="font-medium text-foreground">New worktree</span>
+                </button>
+
+                {isNewWorktree && (
+                  <div className="flex items-center gap-2 px-3.5 py-2 border-b border-border/40 bg-muted/5">
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">from</span>
+                    <Popover open={branchPopoverOpen} onOpenChange={setBranchPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="source-branch-trigger"
+                          className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md border border-border/60 hover:bg-muted/30 transition-colors"
+                        >
+                          <GitBranch className="h-3 w-3 text-muted-foreground" />
+                          <span className="truncate max-w-[180px]">
+                            {sourceBranch ?? defaultBranchName}
+                          </span>
+                          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-72 p-0" align="start">
+                        <div className="p-2 border-b border-border/40">
+                          <div className="relative">
+                            <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+                            <Input
+                              placeholder="Filter branches..."
+                              value={branchFilter}
+                              onChange={(e) => setBranchFilter(e.target.value)}
+                              className="pl-7 h-8 text-xs"
+                              autoFocus
+                            />
+                          </div>
+                        </div>
+                        <div className="max-h-[200px] overflow-y-auto py-1">
+                          {branchesLoading ? (
+                            <div className="flex items-center justify-center py-4">
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            </div>
+                          ) : filteredBranches.length === 0 ? (
+                            <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                              No branches found
+                            </div>
+                          ) : (
+                            filteredBranches.map((branch) => (
+                              <button
+                                type="button"
+                                key={`${branch.name}-${branch.isRemote}`}
+                                data-testid={`source-branch-${branch.name}`}
+                                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left hover:bg-muted/30 transition-colors"
+                                onClick={() => {
+                                  setSourceBranch(branch.name)
+                                  _lastSourceBranchByProject[projectId] = branch.name
+                                  setBranchPopoverOpen(false)
+                                  setBranchFilter('')
+                                }}
+                              >
+                                <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                <span className="flex-1 truncate">{branch.name}</span>
+                                {branch.isRemote && (
+                                  <span className="text-[10px] text-muted-foreground">remote</span>
+                                )}
+                                {branch.isCheckedOut && (
+                                  <span className="text-[10px] text-primary">active</span>
+                                )}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    {worktreeNamePreview && (
+                      <span className="ml-auto text-xs text-muted-foreground font-mono truncate max-w-[180px]">
+                        {worktreeNamePreview}
                       </span>
                     )}
-                    {count > 0 && (
-                      <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-blue-500/10 px-1.5 text-[11px] font-medium text-blue-500">
-                        {count}
+                  </div>
+                )}
+
+                {/* Existing worktrees */}
+                {worktrees.map((wt) => {
+                  const count = ticketCountByWorktree[wt.id] || 0
+                  const isSelected = selectedWorktreeId === wt.id
+
+                  return (
+                    <button
+                      key={wt.id}
+                      data-testid={`worktree-item-${wt.id}`}
+                      type="button"
+                      onClick={() => handleSelectWorktree(wt.id)}
+                      className={cn(
+                        'flex w-full items-center gap-3 px-3.5 py-2.5 text-sm transition-colors',
+                        'border-b border-border/40 last:border-b-0',
+                        'hover:bg-muted/30',
+                        isSelected && 'bg-primary/8 ring-1 ring-inset ring-primary/20'
+                      )}
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/40 text-muted-foreground">
+                        <GitBranch className="h-3.5 w-3.5" />
                       </span>
-                    )}
-                  </button>
-                )
-              })}
+                      <span className="flex-1 truncate text-left font-medium text-foreground">
+                        {wt.name}
+                      </span>
+                      {wt.is_default && (
+                        <span className="rounded-full bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          default
+                        </span>
+                      )}
+                      {count > 0 && (
+                        <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-blue-500/10 px-1.5 text-[11px] font-medium text-blue-500">
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
-          </div>}
+          )}
 
           {/* ── Provider & Model picker (hidden in pre-assign mode) ── */}
           {!preAssignOnly && (
@@ -921,63 +956,68 @@ export function WorktreePickerModal({
                 Provider & Model
               </label>
               {/* SDK toggle — only when 2+ SDKs are available */}
-              {availableAgentSdks && (
-                [availableAgentSdks.opencode, availableAgentSdks.claude, availableAgentSdks.codex].filter(Boolean).length >= 2
-              ) && (
-                <div className="flex gap-1.5" data-testid="sdk-toggle">
-                  {availableAgentSdks.opencode && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-opencode"
-                      onClick={() => handleSdkChange('opencode')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'opencode'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      OpenCode
-                    </button>
-                  )}
-                  {availableAgentSdks.claude && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-claude-code"
-                      onClick={() => handleSdkChange('claude-code')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'claude-code'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      Claude Code
-                    </button>
-                  )}
-                  {availableAgentSdks.codex && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-codex"
-                      onClick={() => handleSdkChange('codex')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'codex'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      Codex
-                    </button>
-                  )}
-                </div>
-              )}
+              {availableAgentSdks &&
+                [
+                  availableAgentSdks.opencode,
+                  availableAgentSdks.claude,
+                  availableAgentSdks.codex
+                ].filter(Boolean).length >= 2 && (
+                  <div className="flex gap-1.5" data-testid="sdk-toggle">
+                    {availableAgentSdks.opencode && (
+                      <button
+                        type="button"
+                        data-testid="sdk-toggle-opencode"
+                        onClick={() => handleSdkChange('opencode')}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                          agentSdk === 'opencode'
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                        )}
+                      >
+                        OpenCode
+                      </button>
+                    )}
+                    {availableAgentSdks.claude && (
+                      <button
+                        type="button"
+                        data-testid="sdk-toggle-claude-code"
+                        onClick={() => handleSdkChange('claude-code')}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                          agentSdk === 'claude-code'
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                        )}
+                      >
+                        Claude Code
+                      </button>
+                    )}
+                    {availableAgentSdks.codex && (
+                      <button
+                        type="button"
+                        data-testid="sdk-toggle-codex"
+                        onClick={() => handleSdkChange('codex')}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                          agentSdk === 'codex'
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                        )}
+                      >
+                        Codex
+                      </button>
+                    )}
+                  </div>
+                )}
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="min-w-0">
                   <ModelSelector
                     value={selectedModel ?? autoResolvedModel}
                     onChange={setSelectedModel}
-                    agentSdkOverride={agentSdk}
+                    agentSdkOverride={
+                      selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? agentSdk
+                    }
                   />
                 </div>
                 {agentSdk === 'codex' && (
