@@ -1,14 +1,4 @@
-import {
-  memo,
-  Profiler,
-  useState,
-  useRef,
-  useEffect,
-  useLayoutEffect,
-  useCallback,
-  useMemo,
-  type ProfilerOnRenderCallback
-} from 'react'
+import { memo, useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import {
   Send,
   ListPlus,
@@ -101,12 +91,6 @@ import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import type { HandoffSelectionOverride } from '@/lib/handoffSelection'
-import {
-  isPerfProbeEnabled,
-  markKeystrokeEnd,
-  markKeystrokePainted,
-  markKeystrokeStart
-} from '@/lib/perf-marks'
 
 // Stable empty array to avoid creating new references in selectors
 const EMPTY_FILE_INDEX: FlatFile[] = []
@@ -577,53 +561,6 @@ const PrCommentAttachments = memo(function PrCommentAttachments(): React.JSX.Ele
 
 // Main SessionView component
 export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element {
-  const perfProbeEnabled = isPerfProbeEnabled()
-  const renderCountRef = useRef(0)
-  renderCountRef.current++
-  if (perfProbeEnabled) {
-    console.debug('[SessionView] render', renderCountRef.current)
-  }
-
-  const handleProfilerRender = useCallback<ProfilerOnRenderCallback>(
-    (id, phase, actualDuration, baseDuration, startTime, commitTime) => {
-      if (!isPerfProbeEnabled()) return
-      console.table([
-        {
-          id,
-          phase,
-          actualDuration: Number(actualDuration.toFixed(2)),
-          baseDuration: Number(baseDuration.toFixed(2)),
-          startTime: Number(startTime.toFixed(2)),
-          commitTime: Number(commitTime.toFixed(2))
-        }
-      ])
-    },
-    []
-  )
-
-  const renderWithProfiler = useCallback(
-    (content: React.JSX.Element): React.JSX.Element => {
-      if (!isPerfProbeEnabled()) return content
-      return (
-        <Profiler id="SessionView" onRender={handleProfilerRender}>
-          {content}
-        </Profiler>
-      )
-    },
-    [handleProfilerRender]
-  )
-
-  useEffect(() => {
-    if (!isPerfProbeEnabled()) return
-    markKeystrokeEnd('keystroke', { preserveStart: true })
-    const frame = requestAnimationFrame(() => {
-      markKeystrokePainted('keystroke')
-    })
-    return () => {
-      cancelAnimationFrame(frame)
-    }
-  })
-
   // State
   const [messages, setMessagesState] = useState<OpenCodeMessage[]>([])
   const [inputValue, setInputValue] = useState('')
@@ -5505,50 +5442,37 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   // Slash command handlers
   const handleInputChange = useCallback(
     (value: string, newCursorPos?: number) => {
-      markKeystrokeStart('handleInputChange')
-      try {
-        const oldValue = inputValueRef.current
-        setInputValue(value)
-        inputValueRef.current = value
+      const oldValue = inputValueRef.current
+      setInputValue(value)
+      inputValueRef.current = value
 
-        // Update mention indices for the text change (skip if pasting to avoid
-        // opening the popover for pasted '@' characters)
-        if (!isPastingRef.current && fileMentionCount > 0) {
-          updateFileMentions(oldValue, value)
-        }
-        isPastingRef.current = false
-
-        // Track cursor position in state only while it can affect the mention popover.
-        if (newCursorPos !== undefined) {
-          cursorPositionRef.current = newCursorPos
-          if (value[newCursorPos - 1] === '@' || fileMentionsOpen) {
-            setCursorPosition(newCursorPos)
-          }
-        }
-
-        // Exit history navigation on manual typing
-        setHistoryIndex((prev) => (prev !== null ? null : prev))
-
-        if (slashDismissed && (!value.startsWith('/') || !oldValue.startsWith('/'))) {
-          setSlashDismissed(false)
-        }
-
-        // Debounce draft persistence (3 seconds)
-        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-        draftTimerRef.current = setTimeout(() => {
-          if (isPerfProbeEnabled()) {
-            console.time('updateDraft-call')
-          }
-          const updateDraftResult = window.db.session.updateDraft(sessionId, value || null)
-          if (isPerfProbeEnabled()) {
-            Promise.resolve(updateDraftResult).finally(() => {
-              console.timeEnd('updateDraft-call')
-            })
-          }
-        }, 3000)
-      } finally {
-        markKeystrokeEnd('handleInputChange')
+      // Update mention indices for the text change (skip if pasting to avoid
+      // opening the popover for pasted '@' characters)
+      if (!isPastingRef.current && fileMentionCount > 0) {
+        updateFileMentions(oldValue, value)
       }
+      isPastingRef.current = false
+
+      // Track cursor position in state only while it can affect the mention popover.
+      if (newCursorPos !== undefined) {
+        cursorPositionRef.current = newCursorPos
+        if (value[newCursorPos - 1] === '@' || fileMentionsOpen) {
+          setCursorPosition(newCursorPos)
+        }
+      }
+
+      // Exit history navigation on manual typing
+      setHistoryIndex((prev) => (prev !== null ? null : prev))
+
+      if (slashDismissed && (!value.startsWith('/') || !oldValue.startsWith('/'))) {
+        setSlashDismissed(false)
+      }
+
+      // Debounce draft persistence (3 seconds)
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+      draftTimerRef.current = setTimeout(() => {
+        window.db.session.updateDraft(sessionId, value || null)
+      }, 3000)
     },
     [sessionId, slashDismissed, fileMentionsOpen, fileMentionCount, updateFileMentions]
   )
@@ -5941,7 +5865,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Render based on view state
   if (viewState.status === 'connecting') {
-    return renderWithProfiler(
+    return (
       <div className="flex-1 flex flex-col" data-testid="session-view" data-session-id={sessionId}>
         <LoadingState />
       </div>
@@ -5949,7 +5873,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }
 
   if (viewState.status === 'error') {
-    return renderWithProfiler(
+    return (
       <div className="flex-1 flex flex-col" data-testid="session-view" data-session-id={sessionId}>
         <ErrorState
           message={viewState.errorMessage || 'Failed to connect to session'}
@@ -5959,7 +5883,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     )
   }
 
-  return renderWithProfiler(
+  return (
     <div
       className="flex-1 flex flex-col min-h-0"
       data-testid="session-view"
@@ -6174,7 +6098,6 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               ref={textareaRef}
               value={inputValue}
               onChange={(e) => {
-                markKeystrokeStart('keystroke')
                 const pos = e.currentTarget.selectionStart ?? 0
                 handleInputChange(e.target.value, pos)
               }}
