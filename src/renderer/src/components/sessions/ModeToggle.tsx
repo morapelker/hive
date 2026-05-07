@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Hammer, Map, Sparkles } from 'lucide-react'
 import { useSessionStore, type SessionMode } from '@/stores/useSessionStore'
 import { cn } from '@/lib/utils'
@@ -27,9 +28,12 @@ const MODE_CONFIG: Record<
   }
 }
 
-export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
+export const ModeToggle = memo(function ModeToggle({
+  sessionId
+}: ModeToggleProps): React.JSX.Element {
   const rawMode = useSessionStore((state) => state.modeBySession.get(sessionId))
-  const mode: SessionMode = rawMode === 'plan' ? 'plan' : rawMode === 'super-plan' ? 'super-plan' : 'build'
+  const mode: SessionMode =
+    rawMode === 'plan' ? 'plan' : rawMode === 'super-plan' ? 'super-plan' : 'build'
   const toggleSessionMode = useSessionStore((state) => state.toggleSessionMode)
 
   const config = MODE_CONFIG[mode === 'super-plan' ? 'plan' : mode] ?? MODE_CONFIG.build
@@ -55,4 +59,4 @@ export function ModeToggle({ sessionId }: ModeToggleProps): React.JSX.Element {
       <span>{config.label}</span>
     </button>
   )
-}
+})

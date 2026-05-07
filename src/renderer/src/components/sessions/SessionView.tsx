@@ -1,4 +1,14 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
+import {
+  memo,
+  Profiler,
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  type ProfilerOnRenderCallback
+} from 'react'
 import {
   Send,
   ListPlus,
@@ -30,7 +40,7 @@ import { AttachmentPreview } from './AttachmentPreview'
 import { TicketAttachments } from './TicketAttachments'
 import { DiffCommentAttachments } from './DiffCommentAttachments'
 import { CodexFastToggle } from './CodexFastToggle'
-import type { Attachment } from './AttachmentPreview'
+import type { Attachment, AttachmentInput } from './AttachmentPreview'
 import {
   buildMessageParts,
   buildDisplayContent,
@@ -80,10 +90,7 @@ import { useDiffCommentStore } from '@/stores/useDiffCommentStore'
 import { useFileTreeStore } from '@/stores/useFileTreeStore'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
-import {
-  deriveCodexTimelineMessages,
-  mergeCodexLiveAndDurableMessages
-} from '@/lib/codex-timeline'
+import { deriveCodexTimelineMessages, mergeCodexLiveAndDurableMessages } from '@/lib/codex-timeline'
 import { correlateSubtasksIntoTaskTools } from '@/lib/codex-subtask-correlation'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
@@ -94,6 +101,12 @@ import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import type { HandoffSelectionOverride } from '@/lib/handoffSelection'
+import {
+  isPerfProbeEnabled,
+  markKeystrokeEnd,
+  markKeystrokePainted,
+  markKeystrokeStart
+} from '@/lib/perf-marks'
 
 // Stable empty array to avoid creating new references in selectors
 const EMPTY_FILE_INDEX: FlatFile[] = []
@@ -519,7 +532,7 @@ function ErrorState({ message, onRetry }: ErrorStateProps): React.JSX.Element {
   )
 }
 
-function PrCommentAttachments(): React.JSX.Element | null {
+const PrCommentAttachments = memo(function PrCommentAttachments(): React.JSX.Element | null {
   const attachedComments = usePRReviewStore((s) => s.attachedComments)
   const removeAttachment = usePRReviewStore((s) => s.removeAttachment)
 
@@ -560,10 +573,57 @@ function PrCommentAttachments(): React.JSX.Element | null {
       })}
     </div>
   )
-}
+})
 
 // Main SessionView component
 export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element {
+  const perfProbeEnabled = isPerfProbeEnabled()
+  const renderCountRef = useRef(0)
+  renderCountRef.current++
+  if (perfProbeEnabled) {
+    console.debug('[SessionView] render', renderCountRef.current)
+  }
+
+  const handleProfilerRender = useCallback<ProfilerOnRenderCallback>(
+    (id, phase, actualDuration, baseDuration, startTime, commitTime) => {
+      if (!isPerfProbeEnabled()) return
+      console.table([
+        {
+          id,
+          phase,
+          actualDuration: Number(actualDuration.toFixed(2)),
+          baseDuration: Number(baseDuration.toFixed(2)),
+          startTime: Number(startTime.toFixed(2)),
+          commitTime: Number(commitTime.toFixed(2))
+        }
+      ])
+    },
+    []
+  )
+
+  const renderWithProfiler = useCallback(
+    (content: React.JSX.Element): React.JSX.Element => {
+      if (!isPerfProbeEnabled()) return content
+      return (
+        <Profiler id="SessionView" onRender={handleProfilerRender}>
+          {content}
+        </Profiler>
+      )
+    },
+    [handleProfilerRender]
+  )
+
+  useEffect(() => {
+    if (!isPerfProbeEnabled()) return
+    markKeystrokeEnd('keystroke', { preserveStart: true })
+    const frame = requestAnimationFrame(() => {
+      markKeystrokePainted('keystroke')
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  })
+
   // State
   const [messages, setMessagesState] = useState<OpenCodeMessage[]>([])
   const [inputValue, setInputValue] = useState('')
@@ -578,6 +638,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   >([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [ticketPickerOpen, setTicketPickerOpen] = useState(false)
+  const fileAttachments = useMemo(
+    () =>
+      attachments.filter((a): a is Exclude<Attachment, { kind: 'ticket' }> => a.kind !== 'ticket'),
+    [attachments]
+  )
+  const ticketAttachments = useMemo(
+    () =>
+      attachments.filter((a): a is Extract<Attachment, { kind: 'ticket' }> => a.kind === 'ticket'),
+    [attachments]
+  )
 
   // Consume files dropped from Finder via the global drop zone
   const pendingDropFiles = useDropAttachmentStore((s) => s.pending)
@@ -602,7 +672,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }, [pendingDropFiles])
 
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([])
-  const [showSlashCommands, setShowSlashCommands] = useState(false)
+  const [slashDismissed, setSlashDismissed] = useState(false)
   const [revertMessageID, setRevertMessageID] = useState<string | null>(null)
   const [forkingMessageId, setForkingMessageId] = useState<string | null>(null)
   const [steeringMessageId, setSteeringMessageId] = useState<string | null>(null)
@@ -643,6 +713,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     () => slashCommands.some((c) => c.name === 'using-superpowers'),
     [slashCommands]
   )
+  const showSlashCommands =
+    inputValue.startsWith('/') && !inputValue.includes(' ') && !slashDismissed
 
   // Mode state for input border color
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) || 'build')
@@ -892,6 +964,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     () => (sessionAgentSdk === 'codex' ? { codexFastMode } : undefined),
     [sessionAgentSdk, codexFastMode]
   )
+  const handleCodexFastToggle = useCallback(() => {
+    updateSetting('codexFastMode', !codexFastMode)
+  }, [updateSetting, codexFastMode])
+  const handleCodexFastAccept = useCallback(() => {
+    updateSetting('codexFastModeAccepted', true)
+  }, [updateSetting])
+  const handlePickTicket = useCallback(() => {
+    setTicketPickerOpen(true)
+  }, [])
 
   // Streaming dedup refs
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
@@ -1988,7 +2069,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             const data = asRecord(event.data)
             const goal = asRecord(data?.goal)
             const eventThreadId = asString(data?.threadId) ?? asString(goal?.threadId)
-            const currentThreadId = transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
+            const currentThreadId =
+              transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
 
             if (goal && (!currentThreadId || !eventThreadId || eventThreadId === currentThreadId)) {
               console.info('[CODEX_STREAM_DEBUG] renderer applying goal updated', {
@@ -2013,7 +2095,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           if (event.type === 'codex.goal.cleared') {
             const data = asRecord(event.data)
             const eventThreadId = asString(data?.threadId)
-            const currentThreadId = transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
+            const currentThreadId =
+              transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
 
             if (!currentThreadId || !eventThreadId || eventThreadId === currentThreadId) {
               console.info('[CODEX_STREAM_DEBUG] renderer applying goal cleared', {
@@ -2469,7 +2552,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   tool: part.tool || 'Unknown',
                   toolId: part.callID || part.id || null,
                   toolStatus: state.status,
-                  outputDeltaLength: typeof state.outputDelta === 'string' ? state.outputDelta.length : 0,
+                  outputDeltaLength:
+                    typeof state.outputDelta === 'string' ? state.outputDelta.length : 0,
                   messageCountBefore: messages.length
                 })
                 applyCodexStreamingPart({
@@ -4254,7 +4338,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
-          setShowSlashCommands(false)
+          setSlashDismissed(false)
           setInputValue('')
           inputValueRef.current = ''
           setHistoryIndex(null)
@@ -4313,7 +4397,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         if (commandName === 'clear') {
           setInputValue('')
           inputValueRef.current = ''
-          setShowSlashCommands(false)
+          setSlashDismissed(false)
 
           const currentSessionId = sessionId
           const currentWorktreeId = worktreeId
@@ -4348,7 +4432,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             return
           }
 
-          setShowSlashCommands(false)
+          setSlashDismissed(false)
 
           // Clear input and update UI state immediately
           setInputValue('')
@@ -5381,7 +5465,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   )
 
   // Attachment handlers
-  const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
+  const handleAttach = useCallback((file: AttachmentInput) => {
     setAttachments((prev) => [...prev, { id: crypto.randomUUID(), ...file }])
   }, [])
 
@@ -5414,49 +5498,65 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     })
   }, [])
 
+  const fileMentionsOpen = fileMentions.isOpen
+  const fileMentionCount = fileMentions.mentions.length
+  const updateFileMentions = fileMentions.updateMentions
+
   // Slash command handlers
   const handleInputChange = useCallback(
     (value: string, newCursorPos?: number) => {
-      const oldValue = inputValueRef.current
-      setInputValue(value)
-      inputValueRef.current = value
+      markKeystrokeStart('handleInputChange')
+      try {
+        const oldValue = inputValueRef.current
+        setInputValue(value)
+        inputValueRef.current = value
 
-      // Update mention indices for the text change (skip if pasting to avoid
-      // opening the popover for pasted '@' characters)
-      if (!isPastingRef.current) {
-        fileMentions.updateMentions(oldValue, value)
+        // Update mention indices for the text change (skip if pasting to avoid
+        // opening the popover for pasted '@' characters)
+        if (!isPastingRef.current && fileMentionCount > 0) {
+          updateFileMentions(oldValue, value)
+        }
+        isPastingRef.current = false
+
+        // Track cursor position in state only while it can affect the mention popover.
+        if (newCursorPos !== undefined) {
+          cursorPositionRef.current = newCursorPos
+          if (value[newCursorPos - 1] === '@' || fileMentionsOpen) {
+            setCursorPosition(newCursorPos)
+          }
+        }
+
+        // Exit history navigation on manual typing
+        setHistoryIndex((prev) => (prev !== null ? null : prev))
+
+        if (slashDismissed && (!value.startsWith('/') || !oldValue.startsWith('/'))) {
+          setSlashDismissed(false)
+        }
+
+        // Debounce draft persistence (3 seconds)
+        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+        draftTimerRef.current = setTimeout(() => {
+          if (isPerfProbeEnabled()) {
+            console.time('updateDraft-call')
+          }
+          const updateDraftResult = window.db.session.updateDraft(sessionId, value || null)
+          if (isPerfProbeEnabled()) {
+            Promise.resolve(updateDraftResult).finally(() => {
+              console.timeEnd('updateDraft-call')
+            })
+          }
+        }, 3000)
+      } finally {
+        markKeystrokeEnd('handleInputChange')
       }
-      isPastingRef.current = false
-
-      // Track cursor position
-      if (newCursorPos !== undefined) {
-        cursorPositionRef.current = newCursorPos
-        setCursorPosition(newCursorPos)
-      }
-
-      // Exit history navigation on manual typing
-      if (historyIndex !== null) {
-        setHistoryIndex(null)
-      }
-
-      if (value.startsWith('/') && !value.includes(' ')) {
-        setShowSlashCommands(true)
-      } else {
-        setShowSlashCommands(false)
-      }
-
-      // Debounce draft persistence (3 seconds)
-      if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-      draftTimerRef.current = setTimeout(() => {
-        window.db.session.updateDraft(sessionId, value || null)
-      }, 3000)
     },
-    [sessionId, historyIndex, fileMentions]
+    [sessionId, slashDismissed, fileMentionsOpen, fileMentionCount, updateFileMentions]
   )
 
   const handleCommandSelect = useCallback((cmd: { name: string; template: string }) => {
     setInputValue(`/${cmd.name} `)
-    setShowSlashCommands(false)
+    inputValueRef.current = `/${cmd.name} `
+    setSlashDismissed(false)
     textareaRef.current?.focus()
   }, [])
 
@@ -5481,7 +5581,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   )
 
   const handleSlashClose = useCallback(() => {
-    setShowSlashCommands(false)
+    setSlashDismissed(true)
   }, [])
 
   const handlePaste = useCallback(
@@ -5734,6 +5834,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const handleRedoRevert = useCallback(() => {
     setInputValue('/redo')
     inputValueRef.current = '/redo'
+    setSlashDismissed(true)
     textareaRef.current?.focus()
   }, [])
 
@@ -5840,7 +5941,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
   // Render based on view state
   if (viewState.status === 'connecting') {
-    return (
+    return renderWithProfiler(
       <div className="flex-1 flex flex-col" data-testid="session-view" data-session-id={sessionId}>
         <LoadingState />
       </div>
@@ -5848,7 +5949,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   }
 
   if (viewState.status === 'error') {
-    return (
+    return renderWithProfiler(
       <div className="flex-1 flex flex-col" data-testid="session-view" data-session-id={sessionId}>
         <ErrorState
           message={viewState.errorMessage || 'Failed to connect to session'}
@@ -5858,7 +5959,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     )
   }
 
-  return (
+  return renderWithProfiler(
     <div
       className="flex-1 flex flex-col min-h-0"
       data-testid="session-view"
@@ -6040,7 +6141,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           {/* Diff comment attachments — above the input container */}
           <DiffCommentAttachments />
           {/* Ticket attachments — above the input container */}
-          <TicketAttachments attachments={attachments} onRemove={handleRemoveAttachment} />
+          <TicketAttachments
+            ticketAttachments={ticketAttachments}
+            onRemove={handleRemoveAttachment}
+          />
           <div
             className={cn(
               'rounded-xl border-2 transition-colors duration-200 overflow-hidden',
@@ -6060,25 +6164,27 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             </div>
 
             {/* Attachment previews */}
-            <AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
+            <AttachmentPreview
+              fileAttachments={fileAttachments}
+              onRemove={handleRemoveAttachment}
+            />
 
             {/* Middle: textarea */}
             <textarea
               ref={textareaRef}
               value={inputValue}
               onChange={(e) => {
+                markKeystrokeStart('keystroke')
                 const pos = e.currentTarget.selectionStart ?? 0
                 handleInputChange(e.target.value, pos)
               }}
               onKeyUp={(e) => {
                 const pos = e.currentTarget.selectionStart ?? 0
                 cursorPositionRef.current = pos
-                setCursorPosition(pos)
               }}
               onClick={(e) => {
                 const pos = e.currentTarget.selectionStart ?? 0
                 cursorPositionRef.current = pos
-                setCursorPosition(pos)
               }}
               onKeyDown={handleKeyDown}
               onCompositionStart={() => {
@@ -6124,14 +6230,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                   <CodexFastToggle
                     enabled={codexFastMode}
                     accepted={codexFastModeAccepted}
-                    onToggle={() => updateSetting('codexFastMode', !codexFastMode)}
-                    onAccept={() => updateSetting('codexFastModeAccepted', true)}
+                    onToggle={handleCodexFastToggle}
+                    onAccept={handleCodexFastAccept}
                   />
                 )}
                 <AttachmentButton
                   onAttach={handleAttach}
                   projectId={sessionRecord?.project_id ?? null}
-                  onPickTicket={() => setTicketPickerOpen(true)}
+                  onPickTicket={handlePickTicket}
                   disabled={isOrphanedSession}
                 />
                 <ContextIndicator

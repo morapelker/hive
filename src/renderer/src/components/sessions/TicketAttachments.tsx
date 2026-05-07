@@ -1,6 +1,7 @@
+import { memo } from 'react'
 import { X, KanbanSquare } from 'lucide-react'
 import { useKanbanStore } from '@/stores/useKanbanStore'
-import type { Attachment } from './AttachmentPreview'
+import type { TicketAttachment } from './AttachmentPreview'
 
 // ── Column labels for ticket attachment cards ───────────────────────
 const COLUMN_LABELS: Record<string, string> = {
@@ -11,17 +12,14 @@ const COLUMN_LABELS: Record<string, string> = {
 }
 
 interface TicketAttachmentsProps {
-  attachments: Attachment[]
+  ticketAttachments: TicketAttachment[]
   onRemove: (id: string) => void
 }
 
-export function TicketAttachments({
-  attachments,
+export const TicketAttachments = memo(function TicketAttachments({
+  ticketAttachments,
   onRemove
 }: TicketAttachmentsProps): React.JSX.Element | null {
-  const ticketAttachments = attachments.filter(
-    (a): a is Extract<Attachment, { kind: 'ticket' }> => a.kind === 'ticket'
-  )
   if (ticketAttachments.length === 0) return null
 
   return (
@@ -54,9 +52,7 @@ export function TicketAttachments({
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
-            {columnLabel && (
-              <span className="text-xs text-muted-foreground">{columnLabel}</span>
-            )}
+            {columnLabel && <span className="text-xs text-muted-foreground">{columnLabel}</span>}
             {t.description && (
               <span className="text-xs text-muted-foreground line-clamp-2">
                 {t.description.length > 120 ? t.description.slice(0, 120) + '...' : t.description}
@@ -67,4 +63,4 @@ export function TicketAttachments({
       })}
     </div>
   )
-}
+})
