@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -121,6 +122,11 @@ function buildPrompt(mode: PickerMode, ticket: KanbanTicket): string {
   return `${prefix}\n\n<ticket title="${ticket.title}">${description}${attachmentsXml}</ticket>`
 }
 
+function wrapGoalPrompt(prompt: string, criteria: string): string {
+  const stripped = prompt.replace(/^\/goal\s+/, '')
+  return `/goal ${stripped}. Goal success criteria: ${criteria}`
+}
+
 // ── Component ───────────────────────────────────────────────────────
 export function WorktreePickerModal({
   ticket,
@@ -139,6 +145,8 @@ export function WorktreePickerModal({
   const [isNewWorktree, setIsNewWorktree] = useState(false)
   const [promptText, setPromptText] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const [goalMode, setGoalMode] = useState(false)
+  const [goalCriteria, setGoalCriteria] = useState('')
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const [sourceBranch, setSourceBranch] = useState<string | null>(null) // null = default
   const [branchPopoverOpen, setBranchPopoverOpen] = useState(false)
@@ -199,6 +207,7 @@ export function WorktreePickerModal({
   }, [mode, baseAgentSdk, selectedSdk])
 
   const agentSdk = selectedSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
+  const goalAvailable = agentSdk === 'codex' && mode === 'build' && !preAssignOnly
 
   // ── Count in-progress tickets per worktree ──────────────────────
   const ticketCountByWorktree = useMemo(() => {
@@ -243,6 +252,8 @@ export function WorktreePickerModal({
       setIsNewWorktree(true)
       setPromptText(buildPrompt('build', ticket))
       setIsSending(false)
+      setGoalMode(false)
+      setGoalCriteria('')
       setSelectedModel(null)
       setSelectedSdk(null)
       setSourceBranch(_lastSourceBranchByProject[projectId] ?? null)
@@ -271,6 +282,10 @@ export function WorktreePickerModal({
   const handleSdkChange = useCallback((sdk: 'opencode' | 'claude-code' | 'codex') => {
     setSelectedSdk(sdk)
     setSelectedModel(null) // reset model — new SDK has different models
+    if (sdk !== 'codex') {
+      setGoalMode(false)
+      setGoalCriteria('')
+    }
   }, [])
 
   // ── Handle mode toggle ──────────────────────────────────────────
@@ -278,6 +293,10 @@ export function WorktreePickerModal({
     setMode((prev) => {
       const next: PickerMode = prev === 'build' ? (superArmed ? 'super-plan' : 'plan') : 'build'
       setPromptText((current) => swapModePrefix(current, prev, next))
+      if (next !== 'build') {
+        setGoalMode(false)
+        setGoalCriteria('')
+      }
       return next
     })
   }, [superArmed])
@@ -287,6 +306,8 @@ export function WorktreePickerModal({
     if (mode === 'plan') {
       setMode('super-plan')
       setSuperArmed(true)
+      setGoalMode(false)
+      setGoalCriteria('')
     } else if (mode === 'super-plan') {
       setMode('plan')
       setSuperArmed(false)
@@ -298,6 +319,10 @@ export function WorktreePickerModal({
     setMode((prev) => {
       const next: PickerMode = prev === 'super-plan' ? 'plan' : 'super-plan'
       setPromptText((current) => swapModePrefix(current, prev, next))
+      if (next !== 'build') {
+        setGoalMode(false)
+        setGoalCriteria('')
+      }
       return next
     })
   }, [])
@@ -362,9 +387,10 @@ export function WorktreePickerModal({
   }, [])
 
   // ── Send flow ───────────────────────────────────────────────────
-  const canSend = isConnectionMode
+  const goalCriteriaValid = !goalMode || goalCriteria.trim().length > 0
+  const canSend = (isConnectionMode
     ? !isSending
-    : (selectedWorktreeId !== null || isNewWorktree) && !isSending
+    : (selectedWorktreeId !== null || isNewWorktree) && !isSending) && goalCriteriaValid
 
   const handleSend = useCallback(async () => {
     if (!canSend) return
@@ -415,7 +441,9 @@ export function WorktreePickerModal({
           mode,
           column: 'in_progress',
           sort_order: sortOrder,
-          plan_ready: false
+          plan_ready: false,
+          goal_mode: goalMode,
+          goal_success_criteria: goalMode ? goalCriteria.trim() : null
         })
 
         // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
@@ -454,6 +482,10 @@ export function WorktreePickerModal({
                 ? PLAN_MODE_PREFIX
                 : ''
           const fullPrompt = modePrefix + promptText.trim()
+          const outboundPrompt =
+            goalMode && goalCriteria.trim()
+              ? wrapGoalPrompt(fullPrompt, goalCriteria.trim())
+              : fullPrompt
           const promptOptions = sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
 
           if (mode === 'super-plan') {
@@ -464,7 +496,7 @@ export function WorktreePickerModal({
           await window.opencodeOps.prompt(
             connectionPath,
             connectResult.sessionId,
-            [{ type: 'text', text: fullPrompt }],
+            [{ type: 'text', text: outboundPrompt }],
             effectiveModel,
             promptOptions
           )
@@ -491,7 +523,9 @@ export function WorktreePickerModal({
           mode,
           model: selectedModel ?? null,
           sdk: agentSdk,
-          codexFastMode
+          codexFastMode,
+          goalMode,
+          goalSuccessCriteria: goalMode ? goalCriteria.trim() : null
         }
 
         const sortOrder = useKanbanStore
@@ -505,7 +539,9 @@ export function WorktreePickerModal({
           pending_launch_config: JSON.stringify(pendingConfig),
           column: 'in_progress',
           sort_order: sortOrder,
-          mode
+          mode,
+          goal_mode: goalMode,
+          goal_success_criteria: goalMode ? goalCriteria.trim() : null
         })
 
         onSendComplete?.()
@@ -629,7 +665,9 @@ export function WorktreePickerModal({
         mode,
         column: 'in_progress',
         sort_order: sortOrder,
-        plan_ready: false
+        plan_ready: false,
+        goal_mode: goalMode,
+        goal_success_criteria: goalMode ? goalCriteria.trim() : null
       })
 
       // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
@@ -674,6 +712,10 @@ export function WorktreePickerModal({
               ? PLAN_MODE_PREFIX
               : ''
         const fullPrompt = modePrefix + promptText.trim()
+        const outboundPrompt =
+          goalMode && goalCriteria.trim()
+            ? wrapGoalPrompt(fullPrompt, goalCriteria.trim())
+            : fullPrompt
         const promptOptions = sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
 
         // Auto-revert super-plan → plan immediately (one-shot mode).
@@ -686,7 +728,7 @@ export function WorktreePickerModal({
         await window.opencodeOps.prompt(
           worktree.path,
           connectResult.sessionId,
-          [{ type: 'text', text: fullPrompt }],
+          [{ type: 'text', text: outboundPrompt }],
           effectiveModel,
           promptOptions
         )
@@ -710,9 +752,7 @@ export function WorktreePickerModal({
     mode,
     promptText,
     updateTicket,
-    ticket.id,
-    ticket.title,
-    ticket.project_id,
+    ticket,
     onSendComplete,
     onOpenChange,
     preAssignOnly,
@@ -720,6 +760,8 @@ export function WorktreePickerModal({
     selectedModel,
     autoResolvedModel,
     codexFastMode,
+    goalMode,
+    goalCriteria,
     isConnectionMode,
     connectionId
   ])
@@ -1012,6 +1054,40 @@ export function WorktreePickerModal({
                     )}
                   </div>
                 )}
+              {goalAvailable && (
+                <div className="space-y-2 rounded-md border border-border/50 bg-muted/20 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-foreground">Goal mode</span>
+                    <Switch
+                      checked={goalMode}
+                      onCheckedChange={setGoalMode}
+                      data-testid="goal-mode-toggle"
+                    />
+                  </div>
+                  {goalMode && (
+                    <div className="space-y-1.5">
+                      <label
+                        htmlFor="goal-success-criteria"
+                        className="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                      >
+                        Success criteria <span className="text-destructive">*</span>
+                      </label>
+                      <Textarea
+                        id="goal-success-criteria"
+                        value={goalCriteria}
+                        onChange={(e) => setGoalCriteria(e.target.value)}
+                        placeholder="What does success look like?"
+                        data-testid="goal-success-criteria"
+                        rows={3}
+                        className="resize-y text-sm"
+                      />
+                      {goalCriteria.trim().length === 0 && (
+                        <p className="text-xs text-destructive">Required</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="min-w-0">
                   <ModelSelector

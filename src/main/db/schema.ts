@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 25
+export const CURRENT_SCHEMA_VERSION = 26
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -478,5 +478,14 @@ CREATE INDEX IF NOT EXISTS idx_diff_comments_worktree_file ON diff_comments(work
     down: `DROP INDEX IF EXISTS idx_diff_comments_worktree_file;
 DROP INDEX IF EXISTS idx_diff_comments_worktree;
 DROP TABLE IF EXISTS diff_comments;`
+  },
+  {
+    version: 26,
+    name: 'add_ticket_goal',
+    up: `
+      ALTER TABLE kanban_tickets ADD COLUMN goal_mode INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE kanban_tickets ADD COLUMN goal_success_criteria TEXT DEFAULT NULL;
+    `,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

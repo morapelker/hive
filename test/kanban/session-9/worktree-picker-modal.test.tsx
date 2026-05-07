@@ -171,6 +171,20 @@ Object.defineProperty(window, 'usageOps', {
   }
 })
 
+Object.defineProperty(window, 'connectionOps', {
+  writable: true,
+  configurable: true,
+  value: {
+    get: vi.fn().mockResolvedValue({
+      success: true,
+      connection: {
+        id: 'conn-1',
+        members: [{ project_id: 'proj-1' }]
+      }
+    })
+  }
+})
+
 Object.defineProperty(window, 'opencodeOps', {
   writable: true,
   configurable: true,
@@ -183,6 +197,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { getSuperPlanModePrefix } from '@/lib/constants'
 
 // ── Import component under test ─────────────────────────────────────
@@ -206,6 +221,18 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     plan_ready: false,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
+    archived_at: null,
+    external_provider: null,
+    external_id: null,
+    external_url: null,
+    github_pr_number: null,
+    github_pr_url: null,
+    mark: null,
+    total_tokens: 0,
+    pending_launch_config: null,
+    goal_mode: false,
+    goal_success_criteria: null,
+    note: null,
     ...overrides
   }
 }
@@ -317,6 +344,22 @@ describe('Session 9: Worktree Picker Modal', () => {
         },
         codexFastMode: false,
         codexFastModeAccepted: false
+      })
+      useConnectionStore.setState({
+        connections: [
+          {
+            id: 'conn-1',
+            name: 'Main connection',
+            path: '/test/connection',
+            status: 'active',
+            pinned: false,
+            color: null,
+            custom_name: null,
+            members: [{ project_id: 'proj-1' }],
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z'
+          }
+        ],
       })
     })
     vi.clearAllMocks()
@@ -709,6 +752,257 @@ describe('Session 9: Worktree Picker Modal', () => {
       expect(useSettingsStore.getState().codexFastModeAccepted).toBe(true)
       expect(useSettingsStore.getState().codexFastMode).toBe(true)
     })
+  })
+
+  test('Goal switch only renders for codex+build', () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    expect(screen.queryByTestId('goal-mode-toggle')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    expect(screen.getByTestId('goal-mode-toggle')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('wt-picker-mode-toggle'))
+    expect(screen.queryByTestId('goal-mode-toggle')).not.toBeInTheDocument()
+  })
+
+  test('Goal switch hides and clears criteria on SDK switch away from codex', async () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.click(screen.getByTestId('goal-mode-toggle'))
+    fireEvent.change(screen.getByTestId('goal-success-criteria'), {
+      target: { value: 'Ship tested auth flow' }
+    })
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-opencode'))
+    expect(screen.queryByTestId('goal-mode-toggle')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    const goalSwitch = screen.getByTestId('goal-mode-toggle')
+    expect(goalSwitch).toHaveAttribute('aria-checked', 'false')
+    expect(screen.queryByTestId('goal-success-criteria')).not.toBeInTheDocument()
+  })
+
+  test('Goal switch hides and clears criteria on mode switch to plan/super-plan', () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.click(screen.getByTestId('goal-mode-toggle'))
+    fireEvent.change(screen.getByTestId('goal-success-criteria'), {
+      target: { value: 'Complete the implementation' }
+    })
+
+    fireEvent.click(screen.getByTestId('wt-picker-mode-toggle'))
+    expect(screen.queryByTestId('goal-mode-toggle')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('wt-picker-super-toggle'))
+    expect(screen.queryByTestId('goal-mode-toggle')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('wt-picker-mode-toggle'))
+    const goalSwitch = screen.getByTestId('goal-mode-toggle')
+    expect(goalSwitch).toHaveAttribute('aria-checked', 'false')
+    expect(screen.queryByTestId('goal-success-criteria')).not.toBeInTheDocument()
+  })
+
+  test('Send disabled when goalMode is on and criteria is empty', () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.click(screen.getByTestId('goal-mode-toggle'))
+
+    expect(screen.getByText('Required')).toBeInTheDocument()
+    expect(screen.getByTestId('wt-picker-send-btn')).toBeDisabled()
+
+    fireEvent.change(screen.getByTestId('goal-success-criteria'), {
+      target: { value: 'All tests pass' }
+    })
+    expect(screen.getByTestId('wt-picker-send-btn')).not.toBeDisabled()
+  })
+
+  test('worktree-mode Codex goal launch wraps prompt and persists goal columns', async () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.change(screen.getByTestId('wt-picker-prompt'), {
+      target: { value: 'Build auth' }
+    })
+    fireEvent.click(screen.getByTestId('goal-mode-toggle'))
+    fireEvent.change(screen.getByTestId('goal-success-criteria'), {
+      target: { value: '  Login and signup work  ' }
+    })
+    fireEvent.click(screen.getByTestId('worktree-item-wt-1'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalled()
+    })
+
+    const promptParts = mockOpencodeOps.prompt.mock.calls.at(-1)?.[2] as Array<{
+      type: string
+      text: string
+    }>
+    expect(promptParts[0]?.text).toBe('/goal Build auth. Goal success criteria: Login and signup work')
+    expect(mockKanban.ticket.update).toHaveBeenCalledWith(
+      'ticket-1',
+      expect.objectContaining({
+        column: 'in_progress',
+        goal_mode: true,
+        goal_success_criteria: 'Login and signup work'
+      })
+    )
+  })
+
+  test('connection-mode Codex goal launch wraps prompt', async () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+        connectionId="conn-1"
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.change(screen.getByTestId('wt-picker-prompt'), {
+      target: { value: 'Build auth' }
+    })
+    fireEvent.click(screen.getByTestId('goal-mode-toggle'))
+    fireEvent.change(screen.getByTestId('goal-success-criteria'), {
+      target: { value: 'Auth works end to end' }
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalled()
+    })
+
+    const promptParts = mockOpencodeOps.prompt.mock.calls.at(-1)?.[2] as Array<{
+      type: string
+      text: string
+    }>
+    expect(promptParts[0]?.text).toBe('/goal Build auth. Goal success criteria: Auth works end to end')
+  })
+
+  test('saveConfigOnly persists goalMode and goalSuccessCriteria in pending config JSON', async () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+        saveConfigOnly
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.click(screen.getByTestId('goal-mode-toggle'))
+    fireEvent.change(screen.getByTestId('goal-success-criteria'), {
+      target: { value: '  Criteria are met  ' }
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockKanban.ticket.update).toHaveBeenCalled()
+    })
+
+    const updatePayload = mockKanban.ticket.update.mock.calls.at(-1)?.[1] as {
+      pending_launch_config: string
+      goal_mode: boolean
+      goal_success_criteria: string | null
+    }
+    expect(JSON.parse(updatePayload.pending_launch_config)).toEqual(
+      expect.objectContaining({
+        goalMode: true,
+        goalSuccessCriteria: 'Criteria are met'
+      })
+    )
+    expect(updatePayload).toEqual(
+      expect.objectContaining({
+        goal_mode: true,
+        goal_success_criteria: 'Criteria are met'
+      })
+    )
+  })
+
+  test('Double-wrap guard: prompt that already starts with /goal produces a single prefix', async () => {
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.change(screen.getByTestId('wt-picker-prompt'), {
+      target: { value: '/goal Build auth' }
+    })
+    fireEvent.click(screen.getByTestId('goal-mode-toggle'))
+    fireEvent.change(screen.getByTestId('goal-success-criteria'), {
+      target: { value: 'No duplicate goal command' }
+    })
+    fireEvent.click(screen.getByTestId('worktree-item-wt-1'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalled()
+    })
+
+    const promptParts = mockOpencodeOps.prompt.mock.calls.at(-1)?.[2] as Array<{
+      type: string
+      text: string
+    }>
+    expect(promptParts[0]?.text).toBe('/goal Build auth. Goal success criteria: No duplicate goal command')
   })
 
   // ── Submit flow tests ────────────────────────────────────────────
