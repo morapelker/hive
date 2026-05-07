@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { KanbanTicket, Project, Worktree } from '../../src/main/db/types'
 import { MergeOnDoneDialog } from '../../src/renderer/src/components/kanban/MergeOnDoneDialog'
 import { useKanbanStore } from '../../src/renderer/src/stores/useKanbanStore'
+import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
 
 const toastError = vi.fn()
 const toastSuccess = vi.fn()
@@ -19,6 +20,7 @@ vi.mock('sonner', () => ({
 const ticketMove = vi.fn()
 const mergeAbort = vi.fn()
 const merge = vi.fn()
+const originalArchiveWorktree = useWorktreeStore.getState().archiveWorktree
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -159,6 +161,8 @@ describe('MergeOnDoneDialog', () => {
         sortOrder: 100
       }
     })
+
+    useWorktreeStore.setState({ archiveWorktree: originalArchiveWorktree })
   })
 
   test('keeps ticket in review when merge returns conflicts', async () => {
@@ -221,5 +225,42 @@ describe('MergeOnDoneDialog', () => {
     expect(useKanbanStore.getState().tickets.get('project-1')?.[0]?.column).toBe('done')
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
     expect(toastSuccess).toHaveBeenCalledWith('Branch merged successfully')
+  })
+
+  test('moves ticket to done and closes immediately while archive continues in the background', async () => {
+    merge.mockResolvedValue({ success: true })
+    let resolveArchive!: (value: { success: boolean }) => void
+    const archiveWorktree = vi.fn(
+      () =>
+        new Promise<{ success: boolean }>((resolve) => {
+          resolveArchive = resolve
+        })
+    )
+    useWorktreeStore.setState({ archiveWorktree })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^merge$/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^archive$/i }))
+
+    await waitFor(() => {
+      expect(ticketMove).toHaveBeenCalledWith('ticket-1', 'done', 100)
+    })
+
+    expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+    expect(screen.queryByText('Archive worktree')).not.toBeInTheDocument()
+    expect(archiveWorktree).toHaveBeenCalledWith(
+      'feature-wt',
+      '/repo/feature',
+      'feature',
+      '/repo/main'
+    )
+    expect(toastSuccess).not.toHaveBeenCalledWith('Worktree archived')
+
+    resolveArchive({ success: true })
+
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalledWith('Worktree archived')
+    })
   })
 })

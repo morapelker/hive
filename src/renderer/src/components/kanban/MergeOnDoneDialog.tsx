@@ -357,26 +357,43 @@ export function MergeOnDoneDialog() {
 
   const handleArchive = useCallback(async () => {
     if (!resolved) return
-    setArchiving(true)
-    try {
-      const result = await useWorktreeStore.getState().archiveWorktree(
-        resolved.featureWorktreeId,
-        resolved.featureWorktreePath,
-        resolved.featureBranch,
-        resolved.projectPath
-      )
 
-      if (result.success) {
-        toast.success('Worktree archived')
-      } else {
-        toast.error(`Failed to archive: ${result.error}`)
-      }
-    } catch (err) {
-      toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`)
-    } finally {
-      setArchiving(false)
-      await completeDoneMove()
+    const archiveTarget = {
+      featureWorktreeId: resolved.featureWorktreeId,
+      featureWorktreePath: resolved.featureWorktreePath,
+      featureBranch: resolved.featureBranch,
+      projectPath: resolved.projectPath
     }
+
+    try {
+      setArchiving(true)
+      await completeDoneMove()
+    } catch (err) {
+      setArchiving(false)
+      toast.error(
+        `Failed to move ticket to done: ${err instanceof Error ? err.message : String(err)}`
+      )
+      return
+    }
+
+    useWorktreeStore
+      .getState()
+      .archiveWorktree(
+        archiveTarget.featureWorktreeId,
+        archiveTarget.featureWorktreePath,
+        archiveTarget.featureBranch,
+        archiveTarget.projectPath
+      )
+      .then((result) => {
+        if (result.success) {
+          toast.success('Worktree archived')
+        } else {
+          toast.error(`Failed to archive: ${result.error}`)
+        }
+      })
+      .catch((err) => {
+        toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`)
+      })
   }, [resolved, completeDoneMove])
 
   const stepTitle: Record<Step, string> = {
