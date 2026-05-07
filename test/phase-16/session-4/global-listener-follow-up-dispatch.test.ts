@@ -74,6 +74,8 @@ const sessionStoreState = {
   getSessionMode: vi.fn(() => 'build'),
   getPendingPlan: vi.fn(() => null),
   updateSessionName: vi.fn(),
+  setCodexGoal: vi.fn(),
+  clearCodexGoal: vi.fn(),
   sessionsByWorktree: new Map<string, Array<{ id: string; opencode_session_id: string | null }>>(),
   sessionsByConnection: new Map<
     string,
@@ -419,5 +421,40 @@ describe('Global listener background follow-up dispatcher', () => {
       { type: 'text', text: 'follow-up 2' }
     ])
     expect(followUpQueues.has('session-B')).toBe(false)
+  })
+
+  test('goal update events update Codex goal state for background sessions', () => {
+    const goal = {
+      threadId: 'thread-1',
+      objective: 'finish the narrow fix',
+      status: 'complete',
+      tokenBudget: null,
+      tokensUsed: 42,
+      timeUsedSeconds: 12,
+      createdAt: 100,
+      updatedAt: 200
+    }
+
+    const cb = mountAndGetCallback()
+    cb({
+      type: 'codex.goal.updated',
+      sessionId: 'session-B',
+      data: { goal }
+    })
+
+    expect(sessionStoreState.setCodexGoal).toHaveBeenCalledWith('session-B', goal)
+  })
+
+  test('goal cleared events clear Codex goal state for active sessions too', () => {
+    sessionStoreState.activeSessionId = 'session-A'
+
+    const cb = mountAndGetCallback()
+    cb({
+      type: 'codex.goal.cleared',
+      sessionId: 'session-A',
+      data: {}
+    })
+
+    expect(sessionStoreState.clearCodexGoal).toHaveBeenCalledWith('session-A')
   })
 })
