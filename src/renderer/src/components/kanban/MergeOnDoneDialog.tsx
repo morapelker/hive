@@ -54,6 +54,10 @@ export function MergeOnDoneDialog() {
     const init = async () => {
       setStep('loading')
       setResolved(null)
+      setCommittingBase(false)
+      setCommitting(false)
+      setMerging(false)
+      setArchiving(false)
 
       try {
         // Look up ticket from store

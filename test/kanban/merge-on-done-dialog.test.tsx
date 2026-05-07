@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { KanbanTicket, Project, Worktree } from '../../src/main/db/types'
 import { MergeOnDoneDialog } from '../../src/renderer/src/components/kanban/MergeOnDoneDialog'
@@ -262,5 +262,69 @@ describe('MergeOnDoneDialog', () => {
     await waitFor(() => {
       expect(toastSuccess).toHaveBeenCalledWith('Worktree archived')
     })
+  })
+
+  test('starts a new done-move archive step with the archive button enabled while a previous archive is still running', async () => {
+    const secondTicket = makeTicket({
+      id: 'ticket-2',
+      title: 'Fix second issue',
+      worktree_id: 'feature-wt-2'
+    })
+    const secondWorktree = makeWorktree({
+      id: 'feature-wt-2',
+      name: 'feature-two',
+      branch_name: 'feature-two',
+      path: '/repo/feature-two'
+    })
+    ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      Promise.resolve(id === 'feature-wt-2' ? secondWorktree : makeWorktree())
+    )
+    ;(window.db.worktree.getActiveByProject as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeWorktree(),
+      secondWorktree,
+      baseWorktree
+    ])
+    merge.mockResolvedValue({ success: true })
+    const archiveWorktree = vi.fn(
+      () =>
+        new Promise<{ success: boolean }>(() => {
+          // Keep the first archive pending to reproduce the leaked loading state.
+        })
+    )
+    useWorktreeStore.setState({ archiveWorktree })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^merge$/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^archive$/i }))
+
+    await waitFor(() => {
+      expect(ticketMove).toHaveBeenCalledWith('ticket-1', 'done', 100)
+    })
+    expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([
+          [
+            'project-1',
+            [
+              makeTicket({ column: 'done', sort_order: 100 }),
+              secondTicket
+            ]
+          ]
+        ]),
+        pendingDoneMove: {
+          ticketId: 'ticket-2',
+          projectId: 'project-1',
+          sortOrder: 200
+        }
+      })
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: /^merge$/i }))
+    const secondArchiveButton = await screen.findByRole('button', { name: /^archive$/i })
+
+    expect(secondArchiveButton).toBeEnabled()
   })
 })
