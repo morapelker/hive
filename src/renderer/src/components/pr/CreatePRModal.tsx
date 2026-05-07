@@ -28,6 +28,7 @@ import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
 import { usePRNotificationStore } from '@/stores/usePRNotificationStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useProjectStore } from '@/stores/useProjectStore'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -390,12 +391,35 @@ export function CreatePRModal({
           // Auto-attach the existing PR
           await attachPR(worktreeId, existingNumber, existingUrl)
 
+          let existingTitle: string | undefined
+          try {
+            const worktreeStore = useWorktreeStore.getState()
+            let projectId: string | null = null
+            for (const [pid, worktrees] of worktreeStore.worktreesByProject) {
+              if (worktrees.some((w) => w.id === worktreeId)) {
+                projectId = pid
+                break
+              }
+            }
+
+            const projectPath = projectId
+              ? useProjectStore.getState().projects.find((p) => p.id === projectId)?.path
+              : undefined
+            if (projectPath) {
+              const state = await window.gitOps.getPRState(projectPath, existingNumber)
+              if (state.success) existingTitle = state.title
+            }
+          } catch {
+            // Best-effort: existing PR notification still works without a title.
+          }
+
           update(notifId, {
             status: 'info',
             message: `PR #${existingNumber} already exists`,
             description: 'Attached to workspace',
             prUrl: existingUrl,
             prNumber: existingNumber,
+            prTitle: existingTitle,
             worktreeId
           })
           return
@@ -420,6 +444,7 @@ export function CreatePRModal({
           : undefined,
         prUrl,
         prNumber,
+        prTitle: finalTitle,
         worktreeId
       })
     } catch (err) {

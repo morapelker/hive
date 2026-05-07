@@ -54,4 +54,21 @@ describe('Session 6: PR notification stack layering', () => {
     expect(dialog).toHaveClass('z-50')
     expect(screen.getByText('PR created')).toBeInTheDocument()
   })
+
+  test('renders pull request title below the notification message', async () => {
+    act(() => {
+      usePRNotificationStore.getState().show({
+        status: 'success',
+        message: 'Pull request #123 created',
+        prTitle: 'Test: title visible in widget'
+      })
+    })
+
+    render(<PRNotificationStack />)
+
+    expect(screen.getByText('Pull request #123 created')).toBeInTheDocument()
+    const title = await screen.findByText('Test: title visible in widget')
+    expect(title).toHaveClass('text-xs', 'text-muted-foreground', 'line-clamp-2')
+    expect(title).toHaveAttribute('title', 'Test: title visible in widget')
+  })
 })

@@ -38,6 +38,7 @@ function PRNotificationCard({
   status,
   message,
   description,
+  prTitle,
   prUrl,
   prNumber,
   worktreeId
@@ -46,6 +47,7 @@ function PRNotificationCard({
   status: string
   message: string
   description?: string
+  prTitle?: string
   prUrl?: string
   prNumber?: number
   worktreeId?: string
@@ -166,6 +168,14 @@ function PRNotificationCard({
       {/* Content */}
       <div className="flex-1 min-w-0 space-y-1">
         <p className="text-sm font-medium text-foreground leading-snug">{message}</p>
+        {prTitle && (
+          <p
+            className="text-xs text-muted-foreground leading-snug line-clamp-2"
+            title={prTitle}
+          >
+            {prTitle}
+          </p>
+        )}
         {description && (
           <p className="text-xs text-muted-foreground leading-snug line-clamp-2">
             {description}
@@ -286,6 +296,7 @@ export function PRNotificationStack(): React.JSX.Element | null {
           status={n.status}
           message={n.message}
           description={n.description}
+          prTitle={n.prTitle}
           prUrl={n.prUrl}
           prNumber={n.prNumber}
           worktreeId={n.worktreeId}
