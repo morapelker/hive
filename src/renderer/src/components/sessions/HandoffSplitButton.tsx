@@ -48,6 +48,7 @@ export function HandoffSplitButton({
   const selectedModelByProvider = useSettingsStore((state) => state.selectedModelByProvider)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [catalogVersion, setCatalogVersion] = useState(0)
+  const [goalMode, setGoalMode] = useState(false)
 
   const showChevron = getAvailableHandoffAgentSdks(availableAgentSdks).length > 1
   void availableAgentSdks
@@ -58,6 +59,7 @@ export function HandoffSplitButton({
   void selectedModelByProvider
   void catalogVersion
   const effective = getEffectiveHandoffSelection({ worktreeId })
+  const isGoalModeActive = goalMode && effective.agentSdk === 'codex'
 
   useEffect(() => {
     let active = true
@@ -72,22 +74,43 @@ export function HandoffSplitButton({
     }
   }, [effective.agentSdk])
 
+  useEffect(() => {
+    if (effective.agentSdk !== 'codex') {
+      setGoalMode(false)
+    }
+  }, [effective.agentSdk])
+
+  const withGoalMode = (override: HandoffSelectionOverride): HandoffSelectionOverride => {
+    const finalGoalMode = override.agentSdk === 'codex' ? isGoalModeActive : false
+    return { ...override, goalMode: finalGoalMode }
+  }
+
   const labelTitle = `Handoff · ${effective.display.sdkName} / ${effective.display.modelName}${
     effective.display.variant ? ` ${effective.display.variant.toUpperCase()}` : ''
   }`
   const leftButtonTestId =
-    testIdPrefix === 'plan-review'
-      ? `${testIdPrefix}-handoff-btn`
-      : `${testIdPrefix}-handoff-fab`
+    testIdPrefix === 'plan-review' ? `${testIdPrefix}-handoff-btn` : `${testIdPrefix}-handoff-fab`
   const chevronTestId = `${testIdPrefix}-handoff-chevron`
 
   return (
     <div
       className={cn(
-        'inline-flex h-8 items-center rounded-full border border-border bg-muted/80 text-foreground shadow-md transition-colors duration-200',
-        disabled ? 'opacity-60' : 'hover:bg-muted'
+        'inline-flex h-8 items-center rounded-full border text-foreground shadow-md transition-colors duration-200',
+        isGoalModeActive ? 'relative border-primary/40 bg-primary/15' : 'border-border bg-muted/80',
+        disabled ? 'opacity-60' : isGoalModeActive ? 'hover:bg-primary/20' : 'hover:bg-muted'
       )}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        if (disabled) return
+        if (effective.agentSdk !== 'codex') return
+        setGoalMode((current) => !current)
+      }}
     >
+      {isGoalModeActive && (
+        <span className="pointer-events-none absolute -top-4 left-1/2 -translate-x-1/2 text-[10px] font-semibold uppercase tracking-wide text-primary">
+          Goal mode
+        </span>
+      )}
       <button
         type="button"
         title={labelTitle}
@@ -95,7 +118,7 @@ export function HandoffSplitButton({
         disabled={disabled}
         data-testid={leftButtonTestId}
         onClick={() => {
-          onHandoff({ agentSdk: effective.agentSdk, model: effective.model })
+          onHandoff(withGoalMode({ agentSdk: effective.agentSdk, model: effective.model }))
         }}
         className={cn(
           'flex min-w-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium',
@@ -124,7 +147,9 @@ export function HandoffSplitButton({
               if (!disabled) setPickerOpen(open)
             }}
             worktreeId={worktreeId}
-            onConfirm={onHandoff}
+            onConfirm={(override) => {
+              onHandoff(withGoalMode(override))
+            }}
             anchor={
               <button
                 type="button"

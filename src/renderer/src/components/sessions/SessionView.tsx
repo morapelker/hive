@@ -90,7 +90,7 @@ import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
-import type { HandoffSelectionOverride } from '@/lib/handoffSelection'
+import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 
 // Stable empty array to avoid creating new references in selectors
 const EMPTY_FILE_INDEX: FlatFile[] = []
@@ -4980,7 +4980,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
 
       if (connectionId) {
-        const handoffPrompt = `Implement the following plan\n${planContent}`
+        const handoffPrompt = buildHandoffPrompt(planContent, override)
         const sessionStore = useSessionStore.getState()
         const result = await sessionStore.createConnectionSession(
           connectionId,
@@ -5007,7 +5007,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const handoffPrompt = `Implement the following plan\n${planContent}`
+      const handoffPrompt = buildHandoffPrompt(planContent, override)
 
       const sessionStore = useSessionStore.getState()
       const result = await sessionStore.createSession(

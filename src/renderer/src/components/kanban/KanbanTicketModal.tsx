@@ -73,7 +73,7 @@ import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
 import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
-import type { HandoffSelectionOverride } from '@/lib/handoffSelection'
+import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
 import type { KanbanTicket, KanbanTicketUpdate, Worktree } from '../../../../main/db/types'
 
@@ -1587,7 +1587,7 @@ function PlanReviewModeContent({
           return
         }
 
-        const handoffPrompt = `Implement the following plan\n${planContent}`
+        const handoffPrompt = buildHandoffPrompt(planContent, override)
         const newSessionId = result.session.id
         const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
@@ -1639,7 +1639,7 @@ function PlanReviewModeContent({
         return
       }
 
-      const handoffPrompt = `Implement the following plan\n${planContent}`
+      const handoffPrompt = buildHandoffPrompt(planContent, override)
       const newSessionId = result.session.id
       const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
       const localWorktreePath = findWorktreePathById(worktreeId)

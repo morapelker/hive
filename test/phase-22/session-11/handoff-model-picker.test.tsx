@@ -447,6 +447,7 @@ describe('handoff model picker', () => {
     })
     expect(onHandoff).toHaveBeenCalledWith({
       agentSdk: 'codex',
+      goalMode: false,
       model: {
         providerID: 'codex',
         modelID: 'gpt-5.5',
