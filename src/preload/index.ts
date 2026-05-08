@@ -5,6 +5,12 @@ import type {
   PetSettings,
   PetStatusPayload
 } from '../shared/types/pet'
+import type {
+  TelegramConfig,
+  TelegramDiscoveredChat,
+  TelegramForwardingStatus,
+  TelegramMode
+} from '../shared/types/telegram'
 
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
 // point mapping. Any zoom level breaks coordinate sync and causes misaligned
@@ -1598,6 +1604,53 @@ const opencodeOps = {
   }
 }
 
+const telegramOps = {
+  getConfig: (): Promise<TelegramConfig | null> => ipcRenderer.invoke('telegram:getConfig'),
+  setConfig: (config: TelegramConfig | null): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('telegram:setConfig', config),
+  verifyToken: (
+    botToken: string
+  ): Promise<{ ok: boolean; botUsername?: string; error?: string }> =>
+    ipcRenderer.invoke('telegram:verifyToken', botToken),
+  discoverChats: (config?: TelegramConfig | null): Promise<TelegramDiscoveredChat[]> =>
+    ipcRenderer.invoke('telegram:discoverChats', config),
+  sendTestMessage: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('telegram:sendTestMessage'),
+  startForwarding: (params: {
+    sessionId: string
+    worktreeId: string
+    mode: TelegramMode
+  }): Promise<{ ok: boolean; status: TelegramForwardingStatus; error?: string }> =>
+    ipcRenderer.invoke('telegram:startForwarding', params),
+  stopForwarding: (): Promise<{ status: TelegramForwardingStatus }> =>
+    ipcRenderer.invoke('telegram:stopForwarding'),
+  getStatus: (): Promise<TelegramForwardingStatus> => ipcRenderer.invoke('telegram:getStatus'),
+  onStatusChanged: (callback: (status: TelegramForwardingStatus) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, status: TelegramForwardingStatus): void => {
+      callback(status)
+    }
+    ipcRenderer.on('telegram:statusChanged', handler)
+    return () => ipcRenderer.removeListener('telegram:statusChanged', handler)
+  },
+  onPlanImplementRequested: (
+    callback: (payload: {
+      sessionId: string
+      worktreeId: string
+      requestId: string
+      plan: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      payload: { sessionId: string; worktreeId: string; requestId: string; plan: string }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('telegram:planImplementRequested', handler)
+    return () => ipcRenderer.removeListener('telegram:planImplementRequested', handler)
+  }
+}
+
 // Script operations API
 interface ScriptOutputEvent {
   type: 'command-start' | 'output' | 'error' | 'done'
@@ -2234,6 +2287,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('systemOps', systemOps)
     contextBridge.exposeInMainWorld('petOps', petOps)
     contextBridge.exposeInMainWorld('opencodeOps', opencodeOps)
+    contextBridge.exposeInMainWorld('telegramOps', telegramOps)
     contextBridge.exposeInMainWorld('fileTreeOps', fileTreeOps)
     contextBridge.exposeInMainWorld('gitOps', gitOps)
     contextBridge.exposeInMainWorld('settingsOps', settingsOps)
@@ -2268,6 +2322,8 @@ if (process.contextIsolated) {
   window.petOps = petOps
   // @ts-expect-error (define in dts)
   window.opencodeOps = opencodeOps
+  // @ts-expect-error (define in dts)
+  window.telegramOps = telegramOps
   // @ts-expect-error (define in dts)
   window.fileTreeOps = fileTreeOps
   // @ts-expect-error (define in dts)

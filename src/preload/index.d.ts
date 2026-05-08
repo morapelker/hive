@@ -4,6 +4,12 @@ import type {
   PetSettings,
   PetStatusPayload
 } from '../shared/types/pet'
+import type {
+  TelegramConfig,
+  TelegramDiscoveredChat,
+  TelegramForwardingStatus,
+  TelegramMode
+} from '../shared/types/telegram'
 
 // Database types for renderer
 interface Connection {
@@ -866,6 +872,31 @@ declare global {
       ) => Promise<{ success: boolean; sessionId?: string; error?: string }>
       // Subscribe to streaming events
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
+    }
+    telegramOps: {
+      getConfig: () => Promise<TelegramConfig | null>
+      setConfig: (config: TelegramConfig | null) => Promise<{ ok: boolean; error?: string }>
+      verifyToken: (
+        botToken: string
+      ) => Promise<{ ok: boolean; botUsername?: string; error?: string }>
+      discoverChats: (config?: TelegramConfig | null) => Promise<TelegramDiscoveredChat[]>
+      sendTestMessage: () => Promise<{ ok: boolean; error?: string }>
+      startForwarding: (params: {
+        sessionId: string
+        worktreeId: string
+        mode: TelegramMode
+      }) => Promise<{ ok: boolean; status: TelegramForwardingStatus; error?: string }>
+      stopForwarding: () => Promise<{ status: TelegramForwardingStatus }>
+      getStatus: () => Promise<TelegramForwardingStatus>
+      onStatusChanged: (callback: (status: TelegramForwardingStatus) => void) => () => void
+      onPlanImplementRequested: (
+        callback: (payload: {
+          sessionId: string
+          worktreeId: string
+          requestId: string
+          plan: string
+        }) => void
+      ) => () => void
     }
     fileTreeOps: {
       // Scan a directory and return the file tree
