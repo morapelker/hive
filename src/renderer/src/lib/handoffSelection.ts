@@ -28,6 +28,15 @@ export interface EffectiveHandoffSelection {
 export interface HandoffSelectionOverride {
   agentSdk: HandoffAgentSdk
   model: SelectedModel
+  goalMode?: boolean
+}
+
+export function buildHandoffPrompt(
+  planContent: string,
+  override?: HandoffSelectionOverride
+): string {
+  const goalPrefix = override?.goalMode && override.agentSdk === 'codex' ? '/goal ' : ''
+  return `${goalPrefix}Implement the following plan\n${planContent}`
 }
 
 const SDK_DISPLAY_NAMES: Record<HandoffAgentSdk, string> = {
