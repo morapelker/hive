@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
 
 vi.mock('../../src/main/services/logger', () => ({
@@ -33,10 +33,86 @@ import {
 import { agentEventBus } from '../../src/main/services/agent-event-bus'
 import type { OpenCodeStreamEvent } from '../../src/shared/types/opencode'
 
+type SendMessageBody = { text: string }
+
+function createTelegramFetchMock(): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    const body = init?.body ? JSON.parse(String(init.body)) as SendMessageBody : {}
+    if (String(_url).endsWith('/sendMessage')) {
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+        })
+      } as Response
+    }
+    return {
+      ok: true,
+      json: async () => ({ ok: true, result: true })
+    } as Response
+  })
+  return fetchMock
+}
+
+function sentTelegramTexts(fetchMock: ReturnType<typeof vi.fn>): string[] {
+  return fetchMock.mock.calls
+    .filter(([url]) => String(url).endsWith('/sendMessage'))
+    .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as SendMessageBody)
+    .map((body) => body.text)
+}
+
+function seedForwardingState(
+  service: TelegramForwardingService,
+  overrides: Record<string, unknown> = {}
+): void {
+  Reflect.set(service, 'db', {
+    getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+    getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
+    getSession: () => ({ project_id: 'p1', agent_sdk: 'opencode', opencode_session_id: 'agent-1' }),
+    getProject: () => ({ name: 'Project' })
+  })
+  Reflect.set(service, 'state', {
+    sessionId: 's1',
+    worktreeId: 'w1',
+    mode: 'all',
+    contextSize: 3,
+    recentAssistantTurns: [],
+    assistantBuffer: '',
+    assistantFlushTimer: null,
+    currentTurnText: '',
+    pendingQueuedPrompt: null,
+    lastUpdateId: 0,
+    startedAtSeconds: 1,
+    isBusy: false,
+    previousWasAssistantText: false,
+    hasOutstandingInteraction: false,
+    pollAbort: null,
+    firstFailureSurfaced: false,
+    ...overrides
+  })
+}
+
+function assistantDelta(text: string): OpenCodeStreamEvent {
+  return {
+    type: 'message.part.updated',
+    sessionId: 's1',
+    data: {
+      role: 'assistant',
+      part: { type: 'text', text }
+    }
+  }
+}
+
 describe('telegram forwarding helpers', () => {
   beforeEach(() => {
     questionReply.mockReset()
     prompt.mockReset()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
   it('formats Telegram plain text within the API message limit', () => {
@@ -140,6 +216,9 @@ describe('telegram forwarding helpers', () => {
       mode: 'questions',
       contextSize: 3,
       recentAssistantTurns: ['assistant context'],
+      assistantBuffer: '',
+      assistantFlushTimer: null,
+      currentTurnText: '',
       pendingQueuedPrompt: null,
       lastUpdateId: 0,
       startedAtSeconds: 1,
@@ -258,6 +337,9 @@ describe('telegram forwarding helpers', () => {
       mode: 'questions',
       contextSize: 3,
       recentAssistantTurns: [],
+      assistantBuffer: '',
+      assistantFlushTimer: null,
+      currentTurnText: '',
       pendingQueuedPrompt: null,
       lastUpdateId: 0,
       startedAtSeconds: 1,
@@ -348,6 +430,9 @@ describe('telegram forwarding helpers', () => {
       mode: 'questions',
       contextSize: 3,
       recentAssistantTurns: [],
+      assistantBuffer: '',
+      assistantFlushTimer: null,
+      currentTurnText: '',
       pendingQueuedPrompt: null,
       lastUpdateId: 0,
       startedAtSeconds: 1,
@@ -425,6 +510,9 @@ describe('telegram forwarding helpers', () => {
       mode: 'questions',
       contextSize: 3,
       recentAssistantTurns: [],
+      assistantBuffer: '',
+      assistantFlushTimer: null,
+      currentTurnText: '',
       pendingQueuedPrompt: null,
       lastUpdateId: 0,
       startedAtSeconds: 1,
@@ -513,6 +601,9 @@ describe('telegram forwarding helpers', () => {
       mode: 'questions',
       contextSize: 3,
       recentAssistantTurns: [],
+      assistantBuffer: '',
+      assistantFlushTimer: null,
+      currentTurnText: '',
       pendingQueuedPrompt: null,
       lastUpdateId: 0,
       startedAtSeconds: 1,
@@ -600,6 +691,9 @@ describe('telegram forwarding helpers', () => {
       mode: 'questions',
       contextSize: 3,
       recentAssistantTurns: [],
+      assistantBuffer: '',
+      assistantFlushTimer: null,
+      currentTurnText: '',
       pendingQueuedPrompt: null,
       lastUpdateId: 0,
       startedAtSeconds: 1,
@@ -667,6 +761,9 @@ describe('telegram forwarding helpers', () => {
       mode: 'questions',
       contextSize: 3,
       recentAssistantTurns: [],
+      assistantBuffer: '',
+      assistantFlushTimer: null,
+      currentTurnText: '',
       pendingQueuedPrompt: null,
       lastUpdateId: 0,
       startedAtSeconds: 100,
@@ -745,5 +842,137 @@ describe('telegram forwarding helpers', () => {
 
     expect(lastUpdateId).toBe(4)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('throttles streaming assistant text in all mode', async () => {
+    vi.useFakeTimers()
+    const service = new TelegramForwardingService()
+    const fetchMock = createTelegramFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+    seedForwardingState(service)
+    const handleAgentEvent = Reflect.get(service, 'handleAgentEvent') as (
+      event: OpenCodeStreamEvent
+    ) => Promise<void>
+
+    for (let i = 0; i < 10; i++) {
+      await handleAgentEvent.call(service, assistantDelta(String(i)))
+    }
+
+    expect(sentTelegramTexts(fetchMock)).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(sentTelegramTexts(fetchMock)).toEqual(['0123456789'])
+  })
+
+  it('sends separate assistant messages for separate flush windows', async () => {
+    vi.useFakeTimers()
+    const service = new TelegramForwardingService()
+    const fetchMock = createTelegramFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+    seedForwardingState(service)
+    const handleAgentEvent = Reflect.get(service, 'handleAgentEvent') as (
+      event: OpenCodeStreamEvent
+    ) => Promise<void>
+
+    for (const text of ['a', 'b', 'c', 'd', 'e']) {
+      await handleAgentEvent.call(service, assistantDelta(text))
+    }
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(sentTelegramTexts(fetchMock)).toEqual(['abcde'])
+
+    for (const text of ['f', 'g', 'h', 'i', 'j']) {
+      await handleAgentEvent.call(service, assistantDelta(text))
+    }
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(sentTelegramTexts(fetchMock)).toEqual(['abcde', 'fghij'])
+  })
+
+  it('flushes assistant text immediately on session idle and cancels the pending timer', async () => {
+    vi.useFakeTimers()
+    const service = new TelegramForwardingService()
+    const fetchMock = createTelegramFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+    seedForwardingState(service)
+    const handleAgentEvent = Reflect.get(service, 'handleAgentEvent') as (
+      event: OpenCodeStreamEvent
+    ) => Promise<void>
+
+    await handleAgentEvent.call(service, assistantDelta('hel'))
+    await handleAgentEvent.call(service, assistantDelta('lo'))
+    await handleAgentEvent.call(service, {
+      type: 'session.idle',
+      sessionId: 's1'
+    })
+
+    expect(sentTelegramTexts(fetchMock)).toEqual(['hello'])
+
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(sentTelegramTexts(fetchMock)).toEqual(['hello'])
+  })
+
+  it('does not send streaming text in questions mode but records one full turn for idle context', async () => {
+    vi.useFakeTimers()
+    const service = new TelegramForwardingService()
+    const fetchMock = createTelegramFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+    seedForwardingState(service, { mode: 'questions' })
+    const handleAgentEvent = Reflect.get(service, 'handleAgentEvent') as (
+      event: OpenCodeStreamEvent
+    ) => Promise<void>
+
+    await handleAgentEvent.call(service, assistantDelta('Readable '))
+    await handleAgentEvent.call(service, assistantDelta('full '))
+    await handleAgentEvent.call(service, assistantDelta('turn.'))
+
+    expect(sentTelegramTexts(fetchMock)).toEqual([])
+
+    await handleAgentEvent.call(service, {
+      type: 'session.idle',
+      sessionId: 's1'
+    })
+
+    expect(sentTelegramTexts(fetchMock)).toEqual([
+      'Session idle.\n\nRecent context:\nReadable full turn.'
+    ])
+  })
+
+  it('drops buffered assistant text when forwarding stops mid-stream', async () => {
+    vi.useFakeTimers()
+    const service = new TelegramForwardingService()
+    const fetchMock = createTelegramFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+    seedForwardingState(service)
+    const handleAgentEvent = Reflect.get(service, 'handleAgentEvent') as (
+      event: OpenCodeStreamEvent
+    ) => Promise<void>
+
+    await handleAgentEvent.call(service, assistantDelta('late text'))
+    await service.stopForwarding('manual')
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(sentTelegramTexts(fetchMock)).toEqual(['Forwarding stopped.'])
+  })
+
+  it('does not schedule a flush for empty assistant deltas', async () => {
+    vi.useFakeTimers()
+    const service = new TelegramForwardingService()
+    const fetchMock = createTelegramFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+    seedForwardingState(service)
+    const handleAgentEvent = Reflect.get(service, 'handleAgentEvent') as (
+      event: OpenCodeStreamEvent
+    ) => Promise<void>
+
+    await handleAgentEvent.call(service, assistantDelta('   '))
+
+    expect(vi.getTimerCount()).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(sentTelegramTexts(fetchMock)).toEqual([])
   })
 })

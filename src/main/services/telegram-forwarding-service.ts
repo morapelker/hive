@@ -15,6 +15,7 @@ import { agentEventBus } from './agent-event-bus'
 
 const TELEGRAM_CONFIG_KEY = 'telegram_config'
 const MAX_TELEGRAM_TEXT = 4096
+const ASSISTANT_FLUSH_INTERVAL_MS = 2000
 const LONG_PLAN_THRESHOLD = 3500
 
 type CallbackKind = 'question' | 'permission' | 'command' | 'plan'
@@ -26,6 +27,9 @@ interface ForwardingState {
   mode: TelegramMode
   contextSize: number
   recentAssistantTurns: string[]
+  assistantBuffer: string
+  assistantFlushTimer: NodeJS.Timeout | null
+  currentTurnText: string
   pendingQueuedPrompt: string | null
   lastUpdateId: number
   startedAtSeconds: number
@@ -218,6 +222,7 @@ export class TelegramForwardingService {
 
   dispose(): void {
     this.stopPolling()
+    this.cancelAssistantFlush()
     this.unsubscribeBus?.()
     this.unsubscribeBus = null
   }
@@ -310,6 +315,9 @@ export class TelegramForwardingService {
       mode: params.mode,
       contextSize: Math.min(10, Math.max(1, cfg.contextSize || 3)),
       recentAssistantTurns: [],
+      assistantBuffer: '',
+      assistantFlushTimer: null,
+      currentTurnText: '',
       pendingQueuedPrompt: null,
       lastUpdateId: 0,
       startedAtSeconds: Math.floor(Date.now() / 1000),
@@ -335,6 +343,7 @@ export class TelegramForwardingService {
     if (!state) return this.getStatus()
 
     this.stopPolling()
+    this.cancelAssistantFlush()
     for (const interaction of this.messageIndex.values()) {
       await this.resolveTelegramMessage(interaction, 'Forwarding stopped').catch(() => {})
     }
@@ -370,10 +379,11 @@ export class TelegramForwardingService {
     if (event.type === 'message.part.updated' || event.type === 'message.updated') {
       const text = extractAssistantText(event)
       if (text) {
-        this.recordAssistantText(text)
+        state.currentTurnText += text
         state.previousWasAssistantText = true
         if (state.mode === 'all') {
-          await this.safeSend(formatTelegramText(text))
+          state.assistantBuffer += text
+          this.scheduleAssistantFlush()
         }
       }
       return
@@ -925,6 +935,14 @@ export class TelegramForwardingService {
     if (!state) return
     state.isBusy = false
     await this.flushQueuedPrompt()
+    this.cancelAssistantFlush()
+    await this.flushAssistantBuffer()
+
+    if (state.currentTurnText.trim().length > 0) {
+      this.recordAssistantText(state.currentTurnText)
+      state.currentTurnText = ''
+    }
+
     if (
       state.mode === 'questions' &&
       !state.hasOutstandingInteraction &&
@@ -933,6 +951,31 @@ export class TelegramForwardingService {
       await this.safeSend(`Session idle.\n\n${this.contextPrefix()}`)
       state.previousWasAssistantText = false
     }
+  }
+
+  private scheduleAssistantFlush(): void {
+    const state = this.state
+    if (!state || state.assistantFlushTimer) return
+    state.assistantFlushTimer = setTimeout(() => {
+      if (this.state) this.state.assistantFlushTimer = null
+      void this.flushAssistantBuffer()
+    }, ASSISTANT_FLUSH_INTERVAL_MS)
+  }
+
+  private async flushAssistantBuffer(): Promise<void> {
+    const state = this.state
+    if (!state || state.assistantBuffer.length === 0) return
+    const text = state.assistantBuffer
+    state.assistantBuffer = ''
+    const formatted = formatTelegramText(text)
+    if (formatted) await this.safeSend(formatted)
+  }
+
+  private cancelAssistantFlush(): void {
+    const state = this.state
+    if (!state?.assistantFlushTimer) return
+    clearTimeout(state.assistantFlushTimer)
+    state.assistantFlushTimer = null
   }
 
   private recordAssistantText(text: string): void {
@@ -994,6 +1037,7 @@ export class TelegramForwardingService {
     const cfg = this.getConfig()
     const state = this.state
     if (!cfg || !state) return
+    this.cancelAssistantFlush()
     await this.sendMessage(cfg, `Session ended: ${this.getSessionLabel(state.sessionId, state.worktreeId)}.`)
     await this.stopForwarding('session-ended')
   }
