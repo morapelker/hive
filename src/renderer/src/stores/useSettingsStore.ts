@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
@@ -134,6 +135,9 @@ export interface AppSettings {
   // Tips
   tipsEnabled: boolean
 
+  // Telegram
+  telegramConfig: TelegramConfig | null
+
   // Pet
   pet: PetSettings
 
@@ -209,6 +213,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   telemetryEnabled: true,
   tipsEnabled: true,
+  telegramConfig: null,
   pet: {
     enabled: false,
     petId: 'bee',
@@ -237,6 +242,7 @@ interface SettingsState extends AppSettings {
   closeSettings: () => void
   setActiveSection: (section: string) => void
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
+  setTelegramConfig: (config: TelegramConfig | null) => void
   setSelectedModel: (
     model: SelectedModel | null,
     agentSdk?: AppSettings['defaultAgentSdk']
@@ -364,6 +370,7 @@ function extractSettings(state: SettingsState): AppSettings {
     commandFilter: state.commandFilter,
     telemetryEnabled: state.telemetryEnabled,
     tipsEnabled: state.tipsEnabled,
+    telegramConfig: null,
     pet: state.pet,
     environmentVariables: state.environmentVariables,
     perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
@@ -468,6 +475,10 @@ export const useSettingsStore = create<SettingsState>()(
               .catch(console.error)
           }, 0)
         }
+      },
+
+      setTelegramConfig: (config) => {
+        set({ telegramConfig: config })
       },
 
       setSelectedModel: async (
@@ -583,9 +594,11 @@ export const useSettingsStore = create<SettingsState>()(
 
       loadFromDatabase: async () => {
         const dbSettings = await loadSettingsFromDatabase()
+        const telegramConfig = await window.telegramOps?.getConfig?.().catch(() => null)
         if (dbSettings) {
           set({
             ...dbSettings,
+            telegramConfig: telegramConfig ?? null,
             // Existing users upgrading: if field missing, they've already set up
             initialSetupComplete: dbSettings.initialSetupComplete ?? true,
             isLoading: false
@@ -595,7 +608,7 @@ export const useSettingsStore = create<SettingsState>()(
             window.petOps?.show().catch(() => {})
           }
         } else {
-          set({ isLoading: false })
+          set({ isLoading: false, telegramConfig: telegramConfig ?? null })
           await saveToDatabase(extractSettings(get()))
           window.petOps?.updateSettings(get().pet)
         }

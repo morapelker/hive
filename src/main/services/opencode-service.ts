@@ -8,6 +8,7 @@ import { getUserEnvironmentVariables } from './env-vars'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
 import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
 import { toError } from './error-utils'
+import { agentEventBus } from './agent-event-bus'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -274,6 +275,7 @@ class OpenCodeService {
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
+    agentEventBus.setMainWindow(window)
   }
 
   setOpenCodeLaunchSpec(spec: OpenCodeLaunchSpec | null): void {
@@ -1403,6 +1405,10 @@ class OpenCodeService {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private sendToRenderer(channel: string, data: any): void {
+    if (channel === 'opencode:stream') {
+      agentEventBus.publish(data)
+      return
+    }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send(channel, data)
     } else {

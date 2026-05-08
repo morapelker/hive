@@ -31,7 +31,8 @@ import {
   registerAccountHandlers,
   registerKanbanHandlers,
   registerAttachmentHandlers,
-  registerPetHandlers
+  registerPetHandlers,
+  registerTelegramHandlers
 } from './ipc'
 import { buildMenu, updateMenuState, shutdownMenu } from './menu'
 import type { MenuState } from './menu'
@@ -66,6 +67,8 @@ import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
 import { initTicketProviderManager, GitHubProvider, JiraProvider } from './services/ticket-providers'
 import { APP_SETTINGS_DB_KEY } from '../shared/types/settings'
 import { openCodeService } from './services/opencode-service'
+import { agentEventBus } from './services/agent-event-bus'
+import { telegramForwardingService } from './services/telegram-forwarding-service'
 import { setKeepAwake, cleanupPowerSaveBlocker } from './services/power-save-blocker'
 import {
   configurePetWindow,
@@ -508,6 +511,7 @@ app.whenReady().then(async () => {
   registerUsageHandlers()
   registerAccountHandlers()
   registerKanbanHandlers()
+  registerTelegramHandlers()
   configurePetWindow({ getMainWindow: () => mainWindow })
   registerPetHandlers()
   initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
@@ -587,7 +591,8 @@ app.whenReady().then(async () => {
         supportsQuestionPrompts: true,
         supportsModelSelection: true,
         supportsReconnect: true,
-        supportsPartialStreaming: true
+        supportsPartialStreaming: true,
+        supportsSteer: false
       },
       connect: async () => ({ sessionId: '' }),
       reconnect: async () => ({ success: false }),
@@ -617,8 +622,10 @@ app.whenReady().then(async () => {
     setRouterCodexBinaryPath(codexBinaryPath)
     const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
     sdkManager.setMainWindow(mainWindow)
+    agentEventBus.setMainWindow(mainWindow)
 
     const databaseService = getDatabase()
+    telegramForwardingService.initialize({ mainWindow, db: databaseService, sdkManager })
 
     log.info('Registering OpenCode handlers')
     registerOpenCodeHandlers(mainWindow, sdkManager, databaseService)
@@ -766,6 +773,7 @@ app.on('will-quit', async () => {
   await cleanupBranchWatchers()
   // Cleanup OpenCode connections
   await cleanupOpenCode()
+  telegramForwardingService.dispose()
   // Flush telemetry before closing database
   telemetryService.track('app_session_ended', {
     session_duration_ms: Date.now() - appStartTime

@@ -54,6 +54,7 @@ import { useTipStore } from '@/stores/useTipStore'
 import { Tip } from '@/components/ui/Tip'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { QuickActions } from './QuickActions'
+import { HeaderTelegramToggle } from './HeaderTelegramToggle'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
 import hiveLogo from '@/assets/icon.png'
@@ -820,6 +821,7 @@ export function Header(): React.JSX.Element {
         >
           <History className="h-4 w-4" />
         </Button>
+        <HeaderTelegramToggle />
         <Tip tipId={settingsTipId} enabled={settingsTipEnabled}>
           <Button
             variant="ghost"
