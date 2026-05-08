@@ -633,11 +633,11 @@ export class TelegramForwardingService {
         await this.resolveTelegramMessage(interaction, 'Command approval resolved')
       } else if (prefix === 'pl' && action === 'i') {
         await this.approvePlan(interaction)
-        this.publishPlanResolved(interaction, true)
+        this.publishPlanResolved(interaction, true, 'implement')
         await this.resolveTelegramMessage(interaction, 'Implementing plan')
       } else if (prefix === 'pl' && action === 'h') {
         await this.requestPlanHandoff(interaction)
-        this.publishPlanResolved(interaction, true)
+        this.publishPlanResolved(interaction, true, 'handoff')
         await this.resolveTelegramMessage(interaction, 'Starting handoff')
       }
       this.deleteInteraction(interaction)
@@ -855,7 +855,7 @@ export class TelegramForwardingService {
 
   private async sendPlanFeedback(interaction: TrackedInteraction, feedback: string): Promise<void> {
     await this.rejectPlan(interaction, feedback)
-    this.publishPlanResolved(interaction, false, feedback)
+    this.publishPlanResolved(interaction, false, 'feedback', feedback)
     await this.resolveTelegramMessage(interaction, 'Feedback sent')
     this.deleteInteraction(interaction)
   }
@@ -873,6 +873,7 @@ export class TelegramForwardingService {
   private publishPlanResolved(
     interaction: TrackedInteraction,
     approved: boolean,
+    resolution: 'implement' | 'handoff' | 'feedback',
     feedback?: string
   ): void {
     const state = this.state
@@ -884,6 +885,7 @@ export class TelegramForwardingService {
         requestId: interaction.requestId,
         id: interaction.requestId,
         approved,
+        resolution,
         ...(feedback ? { feedback } : {})
       }
     })

@@ -3,6 +3,10 @@ import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
 import { resetSessionFollowUpDispatchState } from '@/lib/session-follow-up-dispatch'
 
+const { notifyKanbanSessionSyncSpy } = vi.hoisted(() => ({
+  notifyKanbanSessionSyncSpy: vi.fn()
+}))
+
 let streamCallback: ((event: Record<string, unknown>) => void) | null = null
 
 const mockPrompt = vi.fn<
@@ -61,18 +65,30 @@ Object.defineProperty(window, 'connectionOps', {
 })
 
 const setSessionStatusSpy = vi.fn()
+const clearSessionStatusSpy = vi.fn()
 const setLastMessageTimeSpy = vi.fn()
 const addWorktreeToRecentSpy = vi.fn()
 const addConnectionToRecentSpy = vi.fn()
 const fetchUsageForProviderSpy = vi.fn().mockResolvedValue(undefined)
 const fetchUsageSpy = vi.fn().mockResolvedValue(undefined)
+const removeQuestionSpy = vi.fn()
+const removePermissionSpy = vi.fn()
+const removeApprovalSpy = vi.fn()
+const clearPendingPlanSpy = vi.fn()
+const setSessionModeSpy = vi.fn().mockResolvedValue(undefined)
 
 const followUpQueues = new Map<string, string[]>()
+const questionQueues = new Map<string, Array<{ id: string }>>()
+const permissionQueues = new Map<string, Array<{ id: string }>>()
+const approvalQueues = new Map<string, Array<{ id: string }>>()
+const pendingPlans = new Map<string, unknown>()
 
 const sessionStoreState = {
   activeSessionId: 'session-A',
   getSessionMode: vi.fn(() => 'build'),
-  getPendingPlan: vi.fn(() => null),
+  getPendingPlan: vi.fn((sessionId: string) => pendingPlans.get(sessionId) ?? null),
+  clearPendingPlan: clearPendingPlanSpy,
+  setSessionMode: setSessionModeSpy,
   updateSessionName: vi.fn(),
   setCodexGoal: vi.fn(),
   clearCodexGoal: vi.fn(),
@@ -130,7 +146,7 @@ vi.mock('@/stores/useWorktreeStatusStore', () => ({
     getState: () => ({
       setSessionStatus: setSessionStatusSpy,
       setLastMessageTime: setLastMessageTimeSpy,
-      clearSessionStatus: vi.fn(),
+      clearSessionStatus: clearSessionStatusSpy,
       sessionStatuses: {}
     })
   }
@@ -149,7 +165,8 @@ vi.mock('@/stores/useQuestionStore', () => ({
   useQuestionStore: {
     getState: () => ({
       addQuestion: vi.fn(),
-      removeQuestion: vi.fn()
+      removeQuestion: removeQuestionSpy,
+      getQuestions: (sessionId: string) => questionQueues.get(sessionId) ?? []
     })
   }
 }))
@@ -158,11 +175,30 @@ vi.mock('@/stores/usePermissionStore', () => ({
   usePermissionStore: {
     getState: () => ({
       addPermission: vi.fn(),
-      removePermission: vi.fn(),
-      pendingBySession: new Map()
+      removePermission: removePermissionSpy,
+      getPermissions: (sessionId: string) => permissionQueues.get(sessionId) ?? [],
+      pendingBySession: permissionQueues
     })
   }
 }))
+
+vi.mock('@/stores/useCommandApprovalStore', () => ({
+  useCommandApprovalStore: {
+    getState: () => ({
+      addApproval: vi.fn(),
+      removeApproval: removeApprovalSpy,
+      getApprovals: (sessionId: string) => approvalQueues.get(sessionId) ?? []
+    })
+  }
+}))
+
+vi.mock('@/stores/store-coordination', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/stores/store-coordination')>()
+  return {
+    ...actual,
+    notifyKanbanSessionSync: notifyKanbanSessionSyncSpy
+  }
+})
 
 vi.mock('@/stores/useContextStore', () => ({
   useContextStore: {
@@ -211,6 +247,13 @@ describe('Global listener background follow-up dispatcher', () => {
     resetSessionFollowUpDispatchState()
     streamCallback = null
     followUpQueues.clear()
+    questionQueues.clear()
+    permissionQueues.clear()
+    approvalQueues.clear()
+    pendingPlans.clear()
+    clearPendingPlanSpy.mockImplementation((sessionId: string) => {
+      pendingPlans.delete(sessionId)
+    })
     sessionStoreState.activeSessionId = 'session-A'
     sessionStoreState.getSessionMode.mockReturnValue('build')
     sessionStoreState.sessionsByWorktree = new Map()
@@ -232,6 +275,109 @@ describe('Global listener background follow-up dispatcher', () => {
     expect(streamCallback).not.toBeNull()
     return streamCallback!
   }
+
+  test('background question reply clears the prompt and restores working status', () => {
+    questionQueues.set('session-B', [])
+
+    const cb = mountAndGetCallback()
+    cb({
+      type: 'question.replied',
+      sessionId: 'session-B',
+      data: { requestId: 'question-1' }
+    })
+
+    expect(removeQuestionSpy).toHaveBeenCalledWith('session-B', 'question-1')
+    expect(setSessionStatusSpy).toHaveBeenCalledWith('session-B', 'working')
+  })
+
+  test('background question reply keeps answering status when another question remains', () => {
+    questionQueues.set('session-B', [{ id: 'question-2' }])
+
+    const cb = mountAndGetCallback()
+    cb({
+      type: 'question.replied',
+      sessionId: 'session-B',
+      data: { requestId: 'question-1' }
+    })
+
+    expect(removeQuestionSpy).toHaveBeenCalledWith('session-B', 'question-1')
+    expect(setSessionStatusSpy).not.toHaveBeenCalledWith('session-B', 'working')
+  })
+
+  test('background permission reply clears the prompt and restores working status', () => {
+    permissionQueues.set('session-B', [])
+
+    const cb = mountAndGetCallback()
+    cb({
+      type: 'permission.replied',
+      sessionId: 'session-B',
+      data: { requestId: 'permission-1' }
+    })
+
+    expect(removePermissionSpy).toHaveBeenCalledWith('session-B', 'permission-1')
+    expect(setSessionStatusSpy).toHaveBeenCalledWith('session-B', 'working')
+  })
+
+  test('background command approval reply clears the prompt and restores working status', () => {
+    approvalQueues.set('session-B', [])
+
+    const cb = mountAndGetCallback()
+    cb({
+      type: 'command.approval_replied',
+      sessionId: 'session-B',
+      data: { requestId: 'approval-1' }
+    })
+
+    expect(removeApprovalSpy).toHaveBeenCalledWith('session-B', 'approval-1')
+    expect(setSessionStatusSpy).toHaveBeenCalledWith('session-B', 'working')
+  })
+
+  test('background plan implement clears review state and marks the session working', async () => {
+    pendingPlans.set('session-B', { requestId: 'plan-1' })
+
+    const cb = mountAndGetCallback()
+    cb({
+      type: 'plan.resolved',
+      sessionId: 'session-B',
+      data: { requestId: 'plan-1', approved: true, resolution: 'implement' }
+    })
+    await flushAsync()
+
+    expect(clearPendingPlanSpy).toHaveBeenCalledWith('session-B')
+    expect(setSessionModeSpy).toHaveBeenCalledWith('session-B', 'build')
+    expect(notifyKanbanSessionSyncSpy).toHaveBeenCalledWith('session-B', { type: 'implement' })
+    expect(setSessionStatusSpy).toHaveBeenCalledWith('session-B', 'working')
+  })
+
+  test('background plan feedback clears review state and marks the session planning', async () => {
+    pendingPlans.set('session-B', { requestId: 'plan-1' })
+
+    const cb = mountAndGetCallback()
+    cb({
+      type: 'plan.resolved',
+      sessionId: 'session-B',
+      data: { requestId: 'plan-1', approved: false, resolution: 'feedback' }
+    })
+    await flushAsync()
+
+    expect(clearPendingPlanSpy).toHaveBeenCalledWith('session-B')
+    expect(setSessionStatusSpy).toHaveBeenCalledWith('session-B', 'planning')
+  })
+
+  test('background plan handoff clears the old session without marking it working', () => {
+    pendingPlans.set('session-B', { requestId: 'plan-1' })
+
+    const cb = mountAndGetCallback()
+    cb({
+      type: 'plan.resolved',
+      sessionId: 'session-B',
+      data: { requestId: 'plan-1', approved: true, resolution: 'handoff' }
+    })
+
+    expect(clearPendingPlanSpy).toHaveBeenCalledWith('session-B')
+    expect(clearSessionStatusSpy).toHaveBeenCalledWith('session-B')
+    expect(setSessionStatusSpy).not.toHaveBeenCalledWith('session-B', 'working')
+  })
 
   test('background idle with queued follow-up dispatches prompt and skips completed status', async () => {
     followUpQueues.set('session-B', ['follow-up 2'])

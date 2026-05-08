@@ -388,7 +388,7 @@ describe('telegram forwarding helpers', () => {
     expect(streamEvents).toContainEqual({
       type: 'plan.resolved',
       sessionId: 's1',
-      data: { requestId: 'plan-1', id: 'plan-1', approved: true }
+      data: { requestId: 'plan-1', id: 'plan-1', approved: true, resolution: 'implement' }
     })
   })
 
@@ -562,6 +562,7 @@ describe('telegram forwarding helpers', () => {
         requestId: 'plan-1',
         id: 'plan-1',
         approved: false,
+        resolution: 'feedback',
         feedback: 'Please change the plan.'
       }
     })
@@ -645,6 +646,7 @@ describe('telegram forwarding helpers', () => {
         requestId: 'plan-2',
         id: 'plan-2',
         approved: false,
+        resolution: 'feedback',
         feedback: 'Revise this plan.'
       }
     })

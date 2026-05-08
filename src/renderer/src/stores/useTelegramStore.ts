@@ -79,36 +79,43 @@ if (typeof window !== 'undefined' && window.telegramOps) {
   window.telegramOps.onPlanImplementRequested((payload) => {
     void (async () => {
       try {
-        const [{ getEffectiveHandoffSelection }, { useSessionStore }, { useKanbanStore }] =
+        const [
+          { getEffectiveHandoffSelection },
+          { useSessionStore },
+          { useKanbanStore },
+          { startBackgroundSessionPrompt }
+        ] =
           await Promise.all([
             import('@/lib/handoffSelection'),
             import('./useSessionStore'),
-            import('./useKanbanStore')
+            import('./useKanbanStore'),
+            import('@/lib/backgroundSessionStart')
           ])
         const session = await window.db.session.get(payload.sessionId)
         if (!session?.project_id || !payload.worktreeId) {
           toast.error('Could not start Telegram plan handoff')
           return
         }
+        const worktree = await window.db.worktree.get(payload.worktreeId)
+        if (!worktree?.path) {
+          toast.error('Could not start Telegram plan handoff')
+          return
+        }
         if (session.opencode_session_id) {
-          const worktree = await window.db.worktree.get(payload.worktreeId)
-          if (worktree?.path) {
-            await window.opencodeOps.abort(worktree.path, session.opencode_session_id).catch(() => {})
-          }
+          await window.opencodeOps.abort(worktree.path, session.opencode_session_id).catch(() => {})
         }
         const selection = getEffectiveHandoffSelection({ worktreeId: payload.worktreeId })
         const result = await useSessionStore
           .getState()
           .createSession(payload.worktreeId, session.project_id, selection.agentSdk, 'build', {
+            autoFocus: false,
             modelOverride: selection.model
           })
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create Telegram handoff session')
           return
         }
-        useSessionStore
-          .getState()
-          .setPendingMessage(result.session.id, `Implement the following plan\n${payload.plan}`)
+        const handoffPrompt = `Implement the following plan\n${payload.plan}`
         await useKanbanStore
           .getState()
           .relinkTicketsForHandoff(payload.sessionId, result.session.id)
@@ -119,12 +126,19 @@ if (typeof window !== 'undefined' && window.telegramOps) {
           worktreeId: payload.worktreeId,
           mode
         })
+        const forwardingMoved = forwarding.ok
         if (forwarding.ok) {
           useTelegramStore.getState().setStatus(forwarding.status)
-          toast.success('Telegram plan handoff started')
         } else {
           toast.error(forwarding.error ?? 'Telegram handoff session created, but forwarding did not move')
         }
+        await startBackgroundSessionPrompt({
+          worktreePath: worktree.path,
+          sessionId: result.session.id,
+          prompt: handoffPrompt,
+          bumpTarget: { worktreeId: payload.worktreeId }
+        })
+        toast.success(forwardingMoved ? 'Telegram plan handoff started' : 'Handoff session started')
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Telegram handoff failed')
       }

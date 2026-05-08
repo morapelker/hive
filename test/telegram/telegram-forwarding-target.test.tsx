@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '../utils/render'
+import { act, fireEvent, render, screen, waitFor } from '../utils/render'
 import userEvent from '@testing-library/user-event'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
 import { HeaderTelegramToggle } from '@/components/layout/HeaderTelegramToggle'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { BOARD_TAB_ID, useSessionStore } from '@/stores/useSessionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -16,6 +17,7 @@ import { useQuestionStore } from '@/stores/useQuestionStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { getTelegramForwardingTarget } from '@/lib/telegramForwardingTarget'
+import { startBackgroundSessionPrompt } from '@/lib/backgroundSessionStart'
 import type { KanbanTicket } from '../../src/main/db/types'
 
 vi.mock('@/components/kanban/WorktreePickerModal', () => ({
@@ -54,12 +56,17 @@ vi.mock('@/lib/toast', () => ({
 }))
 
 const mockDb = {
+  session: {
+    update: vi.fn().mockResolvedValue(undefined)
+  },
   worktree: {
     touch: vi.fn().mockResolvedValue(undefined)
   }
 }
 
 const startForwarding = vi.fn()
+const connectPromptSession = vi.fn()
+const promptSession = vi.fn()
 const getTicketsBySession = vi.fn()
 const updateTicket = vi.fn()
 
@@ -217,6 +224,16 @@ function seedStores(ticket = makeTicket()): void {
 describe('Telegram forwarding board target', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    class ResizeObserverMock {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    Object.defineProperty(window, 'ResizeObserver', {
+      writable: true,
+      configurable: true,
+      value: ResizeObserverMock
+    })
     Object.defineProperty(window, 'db', {
       writable: true,
       configurable: true,
@@ -228,6 +245,12 @@ describe('Telegram forwarding board target', () => {
       value: {
         startForwarding,
         stopForwarding: vi.fn(),
+        getConfig: vi.fn().mockResolvedValue({
+          botToken: 'token',
+          chatId: 123,
+          chatName: 'me',
+          contextSize: 3
+        }),
         getStatus: vi.fn().mockResolvedValue({
           active: false,
           sessionId: null,
@@ -250,6 +273,17 @@ describe('Telegram forwarding board target', () => {
         }
       }
     })
+    Object.defineProperty(window, 'opencodeOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        connect: connectPromptSession,
+        prompt: promptSession
+      }
+    })
+    mockDb.session.update.mockResolvedValue(undefined)
+    connectPromptSession.mockResolvedValue({ success: true, sessionId: 'opc-session-new' })
+    promptSession.mockResolvedValue({ success: true })
     startForwarding.mockResolvedValue({
       ok: true,
       status: {
@@ -321,14 +355,6 @@ describe('Telegram forwarding board target', () => {
   it('starts forwarding the selected board ticket session from the header toggle', async () => {
     const user = userEvent.setup()
     seedStores()
-    useSettingsStore.setState({
-      telegramConfig: {
-        botToken: 'token',
-        chatId: 123,
-        chatName: 'me',
-        contextSize: 3
-      }
-    })
     useKanbanStore.getState().setBoardTelegramTarget({
       ticketId: 'ticket-1',
       projectId: 'proj-1',
@@ -336,7 +362,22 @@ describe('Telegram forwarding board target', () => {
       sessionId: 'session-1'
     })
 
-    render(<HeaderTelegramToggle />)
+    render(
+      <TooltipProvider>
+        <HeaderTelegramToggle />
+      </TooltipProvider>
+    )
+    act(() => {
+      useSettingsStore.getState().setTelegramConfig({
+        botToken: 'token',
+        chatId: 123,
+        chatName: 'me',
+        contextSize: 3
+      })
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('telegram-forwarding-toggle')).not.toBeDisabled()
+    })
     await user.click(screen.getByTestId('telegram-forwarding-toggle'))
     await user.click(await screen.findByText(/^Questions/))
 
@@ -368,5 +409,27 @@ describe('Telegram forwarding board target', () => {
       worktreeId: 'wt-1',
       sessionId: 'session-new'
     })
+  })
+
+  it('starts a handoff prompt in the background without focusing the session', async () => {
+    seedStores(makeTicket({ current_session_id: 'session-new' }))
+
+    await startBackgroundSessionPrompt({
+      worktreePath: '/tmp/project/feature',
+      sessionId: 'session-1',
+      prompt: 'Implement the following plan\nDo it.',
+      bumpTarget: { worktreeId: 'wt-1' }
+    })
+
+    expect(connectPromptSession).toHaveBeenCalledWith('/tmp/project/feature', 'session-1')
+    expect(mockDb.session.update).toHaveBeenCalledWith('session-1', {
+      opencode_session_id: 'opc-session-new'
+    })
+    expect(promptSession.mock.calls[0]?.slice(0, 3)).toEqual([
+      '/tmp/project/feature',
+      'opc-session-new',
+      [{ type: 'text', text: 'Implement the following plan\nDo it.' }]
+    ])
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']?.status).toBe('working')
   })
 })
