@@ -392,6 +392,94 @@ describe('telegram forwarding helpers', () => {
     })
   })
 
+  it('sends a final Telegram confirmation when a plan implementation becomes idle', async () => {
+    const service = new TelegramForwardingService()
+    const approvePlan = vi.fn().mockResolvedValue(undefined)
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { text?: string } : {}
+      if (String(_url).endsWith('/sendMessage')) {
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+          })
+        } as Response
+      }
+      return {
+        ok: true,
+        json: async () => ({ ok: true, result: true })
+      } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    Reflect.set(service, 'approvePlan', approvePlan)
+    Reflect.set(service, 'db', {
+      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
+      getSession: () => ({ project_id: 'p1', agent_sdk: 'claude-code' }),
+      getProject: () => ({ name: 'Project' })
+    })
+    Reflect.set(service, 'state', {
+      sessionId: 's1',
+      worktreeId: 'w1',
+      mode: 'questions',
+      contextSize: 3,
+      recentAssistantTurns: [],
+      pendingQueuedPrompt: null,
+      lastUpdateId: 0,
+      startedAtSeconds: 1,
+      isBusy: false,
+      previousWasAssistantText: false,
+      hasOutstandingInteraction: false,
+      pollAbort: null,
+      firstFailureSurfaced: false
+    })
+
+    const handleAgentEvent = Reflect.get(service, 'handleAgentEvent') as (
+      event: OpenCodeStreamEvent
+    ) => Promise<void>
+    const handleCallbackQuery = Reflect.get(service, 'handleCallbackQuery') as (query: {
+      id: string
+      data: string
+      message: { message_id: number; chat: { id: number; type: 'private' } }
+    }) => Promise<void>
+
+    await handleAgentEvent.call(service, {
+      type: 'plan.ready',
+      sessionId: 's1',
+      data: {
+        id: 'plan-1',
+        plan: 'Original plan.'
+      }
+    })
+    await handleCallbackQuery.call(service, {
+      id: 'cb-implement',
+      data: 'pl:plan-1:i',
+      message: { message_id: 1, chat: { id: 123, type: 'private' } }
+    })
+    await handleAgentEvent.call(service, {
+      type: 'message.part.updated',
+      sessionId: 's1',
+      data: {
+        role: 'assistant',
+        part: { type: 'text', text: 'Implementation complete.' }
+      }
+    })
+    await handleAgentEvent.call(service, {
+      type: 'session.status',
+      sessionId: 's1',
+      statusPayload: { type: 'idle' },
+      data: { status: { type: 'idle' } }
+    })
+
+    const sentTexts = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith('/sendMessage'))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as { text: string })
+      .map((body) => body.text)
+
+    expect(sentTexts).toContain('Session idle.\n\nRecent context:\nImplementation complete.')
+  })
+
   it('treats plain text as feedback while a plan is pending', async () => {
     const service = new TelegramForwardingService()
     const rejectPlan = vi.fn().mockResolvedValue(undefined)

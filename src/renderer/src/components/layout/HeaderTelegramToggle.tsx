@@ -8,7 +8,9 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { getTelegramForwardingTarget } from '@/lib/telegramForwardingTarget'
 import { cn } from '@/lib/utils'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useTelegramStore } from '@/stores/useTelegramStore'
@@ -17,11 +19,33 @@ import type { TelegramMode } from '@shared/types/telegram'
 export function HeaderTelegramToggle(): React.JSX.Element {
   const telegramConfig = useSettingsStore((s) => s.telegramConfig)
   const openSettings = useSettingsStore((s) => s.openSettings)
-  const activeSessionId = useSessionStore((s) => s.activeSessionId)
-  const activeWorktreeId = useSessionStore((s) => s.activeWorktreeId)
+  const activeSessionIdRaw = useSessionStore((s) => s.activeSessionId)
+  const activeWorktreeIdRaw = useSessionStore((s) => s.activeWorktreeId)
+  const activePinnedSessionId = useSessionStore((s) => s.activePinnedSessionId)
+  const sessionsByWorktree = useSessionStore((s) => s.sessionsByWorktree)
+  const sessionsByConnection = useSessionStore((s) => s.sessionsByConnection)
+  const boardMode = useSettingsStore((s) => s.boardMode)
+  const boardTelegramTarget = useKanbanStore((s) => s.boardTelegramTarget)
+  const isBoardViewActive = useKanbanStore((s) => s.isBoardViewActive)
+  const isPinnedBoardActive = useKanbanStore((s) => s.isPinnedBoardActive)
+  const tickets = useKanbanStore((s) => s.tickets)
   const { activeForwardingSessionId, activeForwardingMode, health, refreshStatus } =
     useTelegramStore()
 
+  const forwardingTarget = getTelegramForwardingTarget({
+    activeSessionId: activeSessionIdRaw,
+    activeWorktreeId: activeWorktreeIdRaw,
+    activePinnedSessionId,
+    sessionsByWorktree,
+    sessionsByConnection,
+    boardMode,
+    boardTelegramTarget,
+    isBoardViewActive,
+    isPinnedBoardActive,
+    tickets
+  })
+  const activeSessionId = forwardingTarget.sessionId
+  const activeWorktreeId = forwardingTarget.worktreeId
   const configured = !!telegramConfig?.botToken && !!telegramConfig.chatId
   const isHere = !!activeSessionId && activeForwardingSessionId === activeSessionId
   const isElsewhere = !!activeForwardingSessionId && !isHere
@@ -58,14 +82,18 @@ export function HeaderTelegramToggle(): React.JSX.Element {
       onClick={() => {
         if (!configured) openSettings('telegram')
       }}
-      className={cn(isHere && 'bg-accent text-accent-foreground')}
-      title={!configured ? 'Configure in Settings' : 'Telegram forwarding'}
+      className={cn(isHere && 'bg-[#229ED9]/10 text-[#229ED9] hover:bg-[#229ED9]/15 hover:text-[#229ED9]')}
+      title={!configured
+        ? 'Configure in Settings'
+        : forwardingTarget.source === 'board-ticket'
+          ? 'Telegram forwarding: selected ticket session'
+          : 'Telegram forwarding'}
       data-testid="telegram-forwarding-toggle"
     >
       <span className="relative inline-flex">
-        <Send className={cn('h-4 w-4', isHere && 'text-emerald-500')} />
+        <Send className={cn('h-4 w-4', isHere && 'text-[#229ED9]')} />
         {isHere && activeForwardingMode && (
-          <span className="absolute -right-2 -top-2 text-[9px] leading-3 min-w-3 h-3 rounded-full bg-emerald-500 text-white">
+          <span className="absolute -right-2 -top-2 text-[9px] leading-3 min-w-3 h-3 rounded-full bg-[#229ED9] text-white">
             {activeForwardingMode === 'questions' ? 'Q' : 'A'}
           </span>
         )}

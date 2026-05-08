@@ -16,6 +16,13 @@ import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 
+export interface BoardTelegramTarget {
+  ticketId: string
+  projectId: string
+  worktreeId: string
+  sessionId: string
+}
+
 // ── Shared drag state (module-level, avoids DataTransfer issues in Electron) ──
 export interface KanbanDragData {
   ticketId: string
@@ -99,9 +106,13 @@ interface KanbanState {
     projectId: string
     sortOrder: number
   } | null
+  /** Ephemeral board focus target used by the header Telegram toggle. */
+  boardTelegramTarget: BoardTelegramTarget | null
 
   // ── Actions ────────────────────────────────────────────────────────
   setSelectedTicketId: (id: string | null) => void
+  setBoardTelegramTarget: (target: BoardTelegramTarget | null) => void
+  clearBoardTelegramTarget: () => void
   loadTickets: (projectId: string) => Promise<void>
   createTicket: (projectId: string, data: KanbanTicketCreate) => Promise<KanbanTicket>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
@@ -182,6 +193,7 @@ export const useKanbanStore = create<KanbanState>()(
       draggingTicketId: null,
       showArchivedByProject: {} as Record<string, boolean>,
       pendingDoneMove: null,
+      boardTelegramTarget: null,
       dependencyMap: new Map(),
       dependencyMode: null,
       hoveredBlockedTicketId: null,
@@ -189,6 +201,14 @@ export const useKanbanStore = create<KanbanState>()(
       // ── setSelectedTicketId ────────────────────────────────────────
       setSelectedTicketId: (id: string | null) => {
         set({ selectedTicketId: id })
+      },
+
+      setBoardTelegramTarget: (target: BoardTelegramTarget | null) => {
+        set({ boardTelegramTarget: target })
+      },
+
+      clearBoardTelegramTarget: () => {
+        set({ boardTelegramTarget: null })
       },
 
       // ── loadTickets ──────────────────────────────────────────────
@@ -743,6 +763,7 @@ export const useKanbanStore = create<KanbanState>()(
         set((state) => {
           const next = new Map(state.tickets)
           let changed = false
+          let boardTelegramTarget = state.boardTelegramTarget
 
           for (const [projectId, projectTickets] of next.entries()) {
             let projectChanged = false
@@ -750,6 +771,13 @@ export const useKanbanStore = create<KanbanState>()(
               const relinked = relinkedById.get(ticket.id)
               if (!relinked) return ticket
               projectChanged = true
+              if (boardTelegramTarget?.ticketId === ticket.id) {
+                boardTelegramTarget = {
+                  ...boardTelegramTarget,
+                  sessionId: newSessionId,
+                  worktreeId: relinked.worktree_id ?? boardTelegramTarget.worktreeId
+                }
+              }
               return {
                 ...ticket,
                 current_session_id: relinked.current_session_id,
@@ -764,7 +792,7 @@ export const useKanbanStore = create<KanbanState>()(
             }
           }
 
-          return changed ? { tickets: next } : {}
+          return changed ? { tickets: next, boardTelegramTarget } : { boardTelegramTarget }
         })
       },
 
@@ -1131,4 +1159,12 @@ registerKanbanNewSession((sessionId, worktreeId, projectId, sessionMode) => {
     mode: sessionMode as 'build' | 'plan',
     plan_ready: false
   })
+  if (store.isBoardViewActive || store.isPinnedBoardActive) {
+    store.setBoardTelegramTarget({
+      ticketId: orphan.id,
+      projectId,
+      worktreeId,
+      sessionId
+    })
+  }
 })

@@ -358,8 +358,7 @@ export class TelegramForwardingService {
       const statusType = event.statusPayload?.type
       if (statusType === 'busy') state.isBusy = true
       if (statusType === 'idle') {
-        state.isBusy = false
-        await this.flushQueuedPrompt()
+        await this.handleSessionIdle()
       }
     }
 
@@ -411,16 +410,7 @@ export class TelegramForwardingService {
     }
 
     if (event.type === 'session.idle') {
-      state.isBusy = false
-      await this.flushQueuedPrompt()
-      if (
-        state.mode === 'questions' &&
-        !state.hasOutstandingInteraction &&
-        state.previousWasAssistantText
-      ) {
-        await this.safeSend(`Session idle.\n\n${this.contextPrefix()}`)
-        state.previousWasAssistantText = false
-      }
+      await this.handleSessionIdle()
       return
     }
 
@@ -926,6 +916,21 @@ export class TelegramForwardingService {
     const prompt = state.pendingQueuedPrompt
     state.pendingQueuedPrompt = null
     await this.sendPrompt(prompt)
+  }
+
+  private async handleSessionIdle(): Promise<void> {
+    const state = this.state
+    if (!state) return
+    state.isBusy = false
+    await this.flushQueuedPrompt()
+    if (
+      state.mode === 'questions' &&
+      !state.hasOutstandingInteraction &&
+      state.previousWasAssistantText
+    ) {
+      await this.safeSend(`Session idle.\n\n${this.contextPrefix()}`)
+      state.previousWasAssistantText = false
+    }
   }
 
   private recordAssistantText(text: string): void {
