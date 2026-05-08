@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus, StickyNote } from 'lucide-react'
+import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus, StickyNote, Send } from 'lucide-react'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { NoteEditorModal } from './NoteEditorModal'
@@ -47,6 +47,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useTelegramStore } from '@/stores/useTelegramStore'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
 import { formatTokenCount } from '@/lib/format-utils'
@@ -217,7 +218,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
-  const connectionSession = connectionSessionId ? { connectionId: connectionSessionId } : null
+  const connectionSession = useMemo(
+    () => connectionSessionId ? { connectionId: connectionSessionId } : null,
+    [connectionSessionId]
+  )
 
   // ── Lookup connection name for project board badge ─────────────
   const connectionName = useConnectionStore(
@@ -355,9 +359,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
-  const isActive = sessionStatus === 'active'
   const isError = sessionStatus === 'error'
   const hasAttachments = ticket.attachments.length > 0
+  const isForwardedToTelegram = useTelegramStore(
+    useCallback(
+      (state) => !!ticket.current_session_id && state.activeForwardingSessionId === ticket.current_session_id,
+      [ticket.current_session_id]
+    )
+  )
 
   // ── Border state computation ────────────────────────────────────
   const borderState = useMemo(() => {
@@ -417,6 +426,16 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     setIsDragging(false)
   }, [])
 
+  const recordBoardTelegramTarget = useCallback(() => {
+    if (!ticket.current_session_id || !ticket.worktree_id) return
+    useKanbanStore.getState().setBoardTelegramTarget({
+      ticketId: ticket.id,
+      projectId: ticket.project_id,
+      worktreeId: ticket.worktree_id,
+      sessionId: ticket.current_session_id
+    })
+  }, [ticket.current_session_id, ticket.id, ticket.project_id, ticket.worktree_id])
+
   // ── Click handler — open ticket detail modal ───────────────────
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -427,6 +446,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select attached worktree
       if ((e.metaKey || e.ctrlKey) && ticket.worktree_id && !isArchived) {
         e.preventDefault()
+        recordBoardTelegramTarget()
         const selectionOptions = isPinnedMode ? { preservePinnedBoard: true } : undefined
         useWorktreeStore.getState().selectWorktree(ticket.worktree_id, selectionOptions)
         useProjectStore.getState().selectProject(ticket.project_id, selectionOptions)
@@ -436,7 +456,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
       useKanbanStore.getState().setSelectedTicketId(ticket.id)
     },
-    [ticket.id, ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode]
+    [ticket.id, ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode, recordBoardTelegramTarget]
   )
 
   // ── Middle-click — select attached worktree (same as sidebar) ─
@@ -448,12 +468,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       e.preventDefault()                     // suppress browser auto-scroll
 
       // Select worktree — same as sidebar's WorktreeItem.handleClick
+      recordBoardTelegramTarget()
       const selectionOptions = isPinnedMode ? { preservePinnedBoard: true } : undefined
       useWorktreeStore.getState().selectWorktree(ticket.worktree_id, selectionOptions)
       useProjectStore.getState().selectProject(ticket.project_id, selectionOptions)
       useWorktreeStatusStore.getState().clearWorktreeUnread(ticket.worktree_id)
     },
-    [ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode]
+    [ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode, recordBoardTelegramTarget]
   )
 
   const handleMouseEnter = useCallback(() => {
@@ -649,13 +670,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || completedReviewSessionId || isArchived || isBlocked || isRunProcessAlive || ticket.github_pr_number || isCreatingPR) && (
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || completedReviewSessionId || isArchived || isBlocked || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     <Archive className="h-3 w-3" />
                     Archived
+                  </span>
+                )}
+                {isForwardedToTelegram && (
+                  <span
+                    title="Forwarding to Telegram"
+                    className="inline-flex items-center rounded-full bg-[#229ED9]/10 border border-[#229ED9]/30 px-1.5 py-0.5 text-[#229ED9]"
+                  >
+                    <Send className="h-3 w-3" />
                   </span>
                 )}
                 {/* Blocked badge */}

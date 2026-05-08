@@ -15,11 +15,12 @@ import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { computeTokenDelta } from '@/lib/token-baselines'
-import { messageSendTimes } from '@/lib/message-send-times'
+import { lastSendMode, messageSendTimes } from '@/lib/message-send-times'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
 
 interface PromptDispatchContext {
@@ -149,6 +150,25 @@ function markBackgroundSessionCompleted(sessionId: string): void {
   if (!found && completedConnectionId) {
     bumpWorktreeLastMessage({ connectionId: completedConnectionId, timestamp: now })
   }
+}
+
+function hasOutstandingBlockingInteraction(sessionId: string): boolean {
+  if (useSessionStore.getState().getPendingPlan(sessionId)) return true
+  if (useQuestionStore.getState().getQuestions(sessionId).length > 0) return true
+  if (usePermissionStore.getState().getPermissions(sessionId).length > 0) return true
+  if (useCommandApprovalStore.getState().getApprovals(sessionId).length > 0) return true
+  return false
+}
+
+function restoreSessionRunningStatus(
+  sessionId: string,
+  modeOverride?: 'build' | 'plan'
+): void {
+  if (hasOutstandingBlockingInteraction(sessionId)) return
+  const mode = modeOverride ?? useSessionStore.getState().getSessionMode(sessionId)
+  useWorktreeStatusStore
+    .getState()
+    .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
 }
 
 /**
@@ -323,6 +343,7 @@ export function useOpenCodeGlobalListener(): void {
             const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
             if (requestId) {
               useQuestionStore.getState().removeQuestion(sessionId, requestId)
+              restoreSessionRunningStatus(sessionId)
             }
             return
           }
@@ -361,16 +382,7 @@ export function useOpenCodeGlobalListener(): void {
             const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
             if (requestId) {
               usePermissionStore.getState().removePermission(sessionId, requestId)
-              // Revert to working/planning if no more pending permissions (background only)
-              if (sessionId !== activeId) {
-                const remaining = usePermissionStore.getState().pendingBySession.get(sessionId)
-                if (!remaining || remaining.length === 0) {
-                  const mode = useSessionStore.getState().getSessionMode(sessionId)
-                  useWorktreeStatusStore
-                    .getState()
-                    .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
-                }
-              }
+              restoreSessionRunningStatus(sessionId)
             }
             return
           }
@@ -407,16 +419,7 @@ export function useOpenCodeGlobalListener(): void {
             const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
             if (requestId) {
               useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
-              // Revert to working/planning if no more pending approvals (background only)
-              if (sessionId !== activeId) {
-                const remaining = useCommandApprovalStore.getState().getApprovals(sessionId)
-                if (remaining.length === 0) {
-                  const mode = useSessionStore.getState().getSessionMode(sessionId)
-                  useWorktreeStatusStore
-                    .getState()
-                    .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
-                }
-              }
+              restoreSessionRunningStatus(sessionId)
             }
             return
           }
@@ -453,11 +456,36 @@ export function useOpenCodeGlobalListener(): void {
           }
 
           if (event.type === 'plan.resolved') {
+            const data = event.data as
+              | {
+                  approved?: boolean
+                  resolution?: 'implement' | 'handoff' | 'feedback'
+                }
+              | undefined
             useSessionStore.getState().clearPendingPlan(sessionId)
-            // If session is no longer busy/planning, clear stale plan_ready badge.
+
+            if (data?.resolution === 'handoff') {
+              useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+              return
+            }
+
+            if (data?.approved === true) {
+              lastSendMode.set(sessionId, 'build')
+              void useSessionStore.getState().setSessionMode(sessionId, 'build')
+              notifyKanbanSessionSync(sessionId, { type: 'implement' })
+              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+              return
+            }
+
+            if (data?.approved === false) {
+              lastSendMode.set(sessionId, 'plan')
+              restoreSessionRunningStatus(sessionId, 'plan')
+              return
+            }
+
             const current = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
             if (current?.status === 'plan_ready') {
-              useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+              restoreSessionRunningStatus(sessionId)
             }
             return
           }

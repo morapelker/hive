@@ -10,6 +10,7 @@ import {
   resolveCodexModelSlug
 } from './codex-models'
 import { createLogger } from './logger'
+import { agentEventBus } from './agent-event-bus'
 import { CodexAppServerManager, type CodexManagerEvent } from './codex-app-server-manager'
 import { mapCodexManagerEventToActivity } from './codex-activity-mapper'
 import { mapCodexEventToStreamEvents, contentStreamKindFromMethod } from './codex-event-mapper'
@@ -24,6 +25,7 @@ import {
   normalizeCodexToolName,
   normalizeCommandExecutionTool
 } from '@shared/codex-tool-normalizer'
+import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import type { UserInput } from '@shared/codex-schemas/v2/UserInput'
 import type { TurnStartParams } from '@shared/codex-schemas/v2/TurnStartParams'
 import type { ThreadNameUpdatedNotification } from '@shared/codex-schemas/v2/ThreadNameUpdatedNotification'
@@ -303,6 +305,7 @@ export class CodexImplementer implements AgentSdkImplementer {
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
+    agentEventBus.setMainWindow(window)
   }
 
   setDatabaseService(db: DatabaseService): void {
@@ -1876,6 +1879,10 @@ export class CodexImplementer implements AgentSdkImplementer {
   }
 
   private sendToRenderer(channel: string, data: unknown): void {
+    if (channel === 'opencode:stream') {
+      agentEventBus.publish(data as OpenCodeStreamEvent)
+      return
+    }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send(channel, data)
     } else {

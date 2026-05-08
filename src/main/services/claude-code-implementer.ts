@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 import { createLogger } from './logger'
+import { agentEventBus } from './agent-event-bus'
 import { notificationService } from './notification-service'
 import { loadClaudeSDK } from './claude-sdk-loader'
 import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
@@ -16,6 +17,7 @@ import { autoRenameWorktreeBranch } from './git-service'
 import { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import { CommandFilterService, type CommandFilterSettings } from './command-filter-service'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -170,6 +172,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
+    agentEventBus.setMainWindow(window)
   }
 
   setDatabaseService(db: DatabaseService): void {
@@ -3093,6 +3096,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
   }
 
   protected sendToRenderer(channel: string, data: unknown): void {
+    if (channel === 'opencode:stream') {
+      agentEventBus.publish(data as OpenCodeStreamEvent)
+      return
+    }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send(channel, data)
     } else {
