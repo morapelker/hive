@@ -28,6 +28,7 @@ export default defineConfig({
         'src/preload/index.ts',
         'src/shared/codex-schemas/**'
       ],
+      all: true,
       // Baseline only; thresholds are not enforced yet.
       thresholds: {
         lines: 0,
