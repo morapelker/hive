@@ -7,13 +7,15 @@ export class IpcError extends Data.TaggedError('IpcError')<{
 }> {}
 
 export const catchIpcCode =
-  <A, R, B, E2, R2>(
+  <B, E2, R2>(
     code: string,
     recover: (error: IpcError) => Effect.Effect<B, E2, R2>
   ) =>
-  (self: Effect.Effect<A, IpcError, R>): Effect.Effect<A | B, E2 | IpcError, R | R2> =>
+  <A, E extends { readonly _tag: string }, R>(
+    self: Effect.Effect<A, IpcError | E, R>
+  ): Effect.Effect<A | B, IpcError | E | E2, R | R2> =>
     self.pipe(
-      Effect.catchTag('IpcError', (error: IpcError): Effect.Effect<B, E2 | IpcError, R2> =>
+      Effect.catchTag('IpcError', (error): Effect.Effect<B, E2 | IpcError, R2> =>
         error.errorCode === code ? recover(error) : Effect.fail(error)
       )
     )
