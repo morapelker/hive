@@ -42,7 +42,7 @@ export function registerWorktreeHandlers(): void {
 
   // Create a new worktree
   ipcMain.handle('worktree:create', async (_event, params: CreateWorktreeParams) => {
-    const result = await createWorktreeOp(getDatabase(), params)
+    const result = await createWorktreeOp(params)
     if (result.success) {
       telemetryService.track('worktree_created')
     }
@@ -51,17 +51,17 @@ export function registerWorktreeHandlers(): void {
 
   // Delete/Archive a worktree
   ipcMain.handle('worktree:delete', async (_event, params: DeleteWorktreeParams) => {
-    return deleteWorktreeOp(getDatabase(), params)
+    return deleteWorktreeOp(params)
   })
 
   // Sync worktrees with actual git state
   ipcMain.handle('worktree:sync', async (_event, params: SyncWorktreesParams) => {
-    return syncWorktreesOp(getDatabase(), params)
+    return syncWorktreesOp(params)
   })
 
   // Duplicate a worktree (clone branch with uncommitted state)
   ipcMain.handle('worktree:duplicate', async (_event, params: DuplicateWorktreeParams) => {
-    return duplicateWorktreeOp(getDatabase(), params)
+    return duplicateWorktreeOp(params)
   })
 
   // Check if worktree path exists on disk
@@ -140,7 +140,7 @@ export function registerWorktreeHandlers(): void {
 
   // Rename a branch in a worktree
   ipcMain.handle('worktree:renameBranch', async (_event, params: RenameBranchParams) => {
-    return renameWorktreeBranchOp(getDatabase(), params)
+    return renameWorktreeBranchOp(params)
   })
 
   // List all branches with checkout status
@@ -163,7 +163,7 @@ export function registerWorktreeHandlers(): void {
 
   // Create a worktree from a specific existing branch
   ipcMain.handle('worktree:createFromBranch', async (_event, params: CreateFromBranchParams) => {
-    return createWorktreeFromBranchOp(getDatabase(), params)
+    return createWorktreeFromBranchOp(params)
   })
 
   // Get worktree context
