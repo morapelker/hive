@@ -48,7 +48,9 @@ export function DiffModal({
       setDiff('')
 
       try {
-        const result = await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
+        const result = unwrapEnvelope(
+          await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
+        )
 
         if (result.success && result.diff) {
           setDiff(result.diff)

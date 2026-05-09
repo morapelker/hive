@@ -14,6 +14,7 @@ import {
   type SelectedModel
 } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export interface EffectiveHandoffSelection {
   agentSdk: HandoffAgentSdk
@@ -192,6 +193,7 @@ export async function loadHandoffModelCatalog(
 
   const request = window.opencodeOps
     .listModels({ agentSdk })
+    .then(unwrapEnvelope)
     .then((result) => {
       const parsed = result.success ? cacheHandoffModelCatalog(agentSdk, result.providers) : []
       inflightModelCatalogRequests.delete(agentSdk)

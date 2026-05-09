@@ -69,7 +69,9 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
     }
     setIsLoadingFiles(true)
     try {
-      const result = await window.gitOps.getBranchDiffFiles(worktreePath, selectedBranch)
+      const result = unwrapEnvelope(
+        await window.gitOps.getBranchDiffFiles(worktreePath, selectedBranch)
+      )
       if (result.success && result.files) {
         setFiles(result.files)
         setDiffError(null)

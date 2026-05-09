@@ -618,10 +618,10 @@ export function useOpenCodeGlobalListener(): void {
               if (!context || !window.opencodeOps?.prompt) return false
               if (context.opencodeSessionId.startsWith('pending::')) return false
 
-              const result = await window.opencodeOps.prompt(
-                context.worktreePath,
-                context.opencodeSessionId,
-                [{ type: 'text', text: message }]
+              const result = unwrapEnvelope(
+                await window.opencodeOps.prompt(context.worktreePath, context.opencodeSessionId, [
+                  { type: 'text', text: message }
+                ])
               )
 
               return result.success

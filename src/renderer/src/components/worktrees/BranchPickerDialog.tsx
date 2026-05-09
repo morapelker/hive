@@ -90,6 +90,7 @@ export function BranchPickerDialog({
 
     window.gitOps
       .listPRs(projectPath)
+      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setPrs(result.prs)

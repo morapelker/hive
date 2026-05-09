@@ -51,7 +51,7 @@ export function InlineDiffViewer({
     setIsLoading(true)
     setError(null)
     try {
-      const result = await window.gitOps.getFileContent(worktreePath, filePath)
+      const result = unwrapEnvelope(await window.gitOps.getFileContent(worktreePath, filePath))
       if (result.success && result.content !== null) {
         setFileContent(result.content)
       } else {
@@ -70,7 +70,9 @@ export function InlineDiffViewer({
       setIsLoading(true)
       setError(null)
       try {
-        const result = await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked, ctx)
+        const result = unwrapEnvelope(
+          await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked, ctx)
+        )
         if (result.success && result.diff) {
           setDiff(result.diff)
         } else {

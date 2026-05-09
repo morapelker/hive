@@ -459,7 +459,9 @@ export function WorktreePickerModal({
           .connections.find((c) => c.id === connectionId)?.path
         if (!connectionPath) return
 
-        const connectResult = await window.opencodeOps.connect(connectionPath, sessionId)
+        const connectResult = unwrapEnvelope(
+          await window.opencodeOps.connect(connectionPath, sessionId)
+        )
         if (!connectResult.success || !connectResult.sessionId) return
 
         useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
@@ -486,12 +488,14 @@ export function WorktreePickerModal({
           }
 
           bumpWorktreeLastMessage({ connectionId })
-          await window.opencodeOps.prompt(
-            connectionPath,
-            connectResult.sessionId,
-            [{ type: 'text', text: outboundPrompt }],
-            effectiveModel,
-            promptOptions
+          unwrapEnvelope(
+            await window.opencodeOps.prompt(
+              connectionPath,
+              connectResult.sessionId,
+              [{ type: 'text', text: outboundPrompt }],
+              effectiveModel,
+              promptOptions
+            )
           )
         }
         return // Done with connection path
@@ -686,7 +690,9 @@ export function WorktreePickerModal({
       if (!worktree?.path) return
 
       // Connect to OpenCode to create the AI session
-      const connectResult = await window.opencodeOps.connect(worktree.path, sessionId)
+      const connectResult = unwrapEnvelope(
+        await window.opencodeOps.connect(worktree.path, sessionId)
+      )
       if (!connectResult.success || !connectResult.sessionId) return
 
       // Persist the opencodeSessionId to Zustand + DB
@@ -718,12 +724,14 @@ export function WorktreePickerModal({
         }
 
         bumpWorktreeLastMessage({ worktreeId })
-        await window.opencodeOps.prompt(
-          worktree.path,
-          connectResult.sessionId,
-          [{ type: 'text', text: outboundPrompt }],
-          effectiveModel,
-          promptOptions
+        unwrapEnvelope(
+          await window.opencodeOps.prompt(
+            worktree.path,
+            connectResult.sessionId,
+            [{ type: 'text', text: outboundPrompt }],
+            effectiveModel,
+            promptOptions
+          )
         )
       }
     } catch {

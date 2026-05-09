@@ -12,6 +12,7 @@ import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 function wrapGoalPrompt(prompt: string, criteria: string): string {
   const stripped = prompt.replace(/^\/goal\s+/, '')
@@ -31,7 +32,7 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
   const configGoalMode = config.goalMode === true
   const configGoalSuccessCriteria = config.goalSuccessCriteria?.trim() || null
 
-  const project = useProjectStore.getState().projects.find(p => p.id === ticket.project_id)
+  const project = useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)
   if (!project) {
     console.error('Project not found for auto-launch:', ticket.project_id)
     return
@@ -42,13 +43,15 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
     let worktreeId: string
     if (config.worktree.type === 'new') {
       const nameHint = canonicalizeTicketTitle(ticket.title)
-      const result = await useWorktreeStore.getState().createWorktreeFromBranch(
-        ticket.project_id,
-        project.path,
-        project.name,
-        config.worktree.sourceBranch,
-        nameHint || undefined
-      )
+      const result = await useWorktreeStore
+        .getState()
+        .createWorktreeFromBranch(
+          ticket.project_id,
+          project.path,
+          project.name,
+          config.worktree.sourceBranch,
+          nameHint || undefined
+        )
       if (!result.success || !result.worktree?.id) {
         toast.error(`Auto-launch failed: ${result.error || 'Could not create worktree'}`)
         return
@@ -59,13 +62,9 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
     }
 
     // 2. Create session
-    const sessionResult = await useSessionStore.getState().createSession(
-      worktreeId,
-      ticket.project_id,
-      config.sdk,
-      config.mode,
-      { autoFocus: false }
-    )
+    const sessionResult = await useSessionStore
+      .getState()
+      .createSession(worktreeId, ticket.project_id, config.sdk, config.mode, { autoFocus: false })
     if (!sessionResult.success || !sessionResult.session) {
       toast.error(`Auto-launch failed: ${sessionResult.error || 'Could not create session'}`)
       return
@@ -79,10 +78,9 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
     userExplicitSendTimes.set(sessionId, Date.now())
     snapshotTokenBaseline(sessionId)
     lastSendMode.set(sessionId, config.mode)
-    useWorktreeStatusStore.getState().setSessionStatus(
-      sessionId,
-      isPlanLike(config.mode) ? 'planning' : 'working'
-    )
+    useWorktreeStatusStore
+      .getState()
+      .setSessionStatus(sessionId, isPlanLike(config.mode) ? 'planning' : 'working')
 
     // 4. Apply model override
     const effectiveModel = config.model ?? undefined
@@ -108,10 +106,10 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
 
     // 8. Connect to OpenCode and send prompt
     const allWorktrees = Array.from(useWorktreeStore.getState().worktreesByProject.values()).flat()
-    const worktree = allWorktrees.find(w => w.id === worktreeId)
+    const worktree = allWorktrees.find((w) => w.id === worktreeId)
     if (!worktree?.path) return
 
-    const connectResult = await window.opencodeOps.connect(worktree.path, sessionId)
+    const connectResult = unwrapEnvelope(await window.opencodeOps.connect(worktree.path, sessionId))
     if (!connectResult.success || !connectResult.sessionId) return
 
     useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
@@ -121,9 +119,11 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
     if (config.prompt.trim()) {
       const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
       const modePrefix =
-        config.mode === 'super-plan' ? getSuperPlanModePrefix(sessionAgentSdk)
-        : config.mode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
-        : ''
+        config.mode === 'super-plan'
+          ? getSuperPlanModePrefix(sessionAgentSdk)
+          : config.mode === 'plan' && !skipPrefix
+            ? PLAN_MODE_PREFIX
+            : ''
       const fullPrompt = modePrefix + config.prompt.trim()
       const outboundPrompt =
         configGoalMode && configGoalSuccessCriteria
@@ -137,9 +137,15 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
       }
 
       bumpWorktreeLastMessage({ worktreeId })
-      await window.opencodeOps.prompt(worktree.path, connectResult.sessionId, [
-        { type: 'text', text: outboundPrompt }
-      ], effectiveModel, promptOptions)
+      unwrapEnvelope(
+        await window.opencodeOps.prompt(
+          worktree.path,
+          connectResult.sessionId,
+          [{ type: 'text', text: outboundPrompt }],
+          effectiveModel,
+          promptOptions
+        )
+      )
     }
   } catch (err) {
     console.error('Auto-launch failed for ticket:', ticket.id, err)

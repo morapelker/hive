@@ -249,7 +249,9 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
 
       void (async () => {
         try {
-          const connectResult = await window.opencodeOps.connect(worktreePath, sessionId)
+          const connectResult = unwrapEnvelope(
+            await window.opencodeOps.connect(worktreePath, sessionId)
+          )
           if (connectResult.success && connectResult.sessionId) {
             sessionStore.setOpenCodeSessionId(sessionId, connectResult.sessionId)
             window.db.session
@@ -263,11 +265,13 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
             useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
             bumpWorktreeLastMessage({ worktreeId })
 
-            await window.opencodeOps.prompt(
-              worktreePath,
-              connectResult.sessionId,
-              [{ type: 'text', text: prompt }],
-              sessionModel
+            unwrapEnvelope(
+              await window.opencodeOps.prompt(
+                worktreePath,
+                connectResult.sessionId,
+                [{ type: 'text', text: prompt }],
+                sessionModel
+              )
             )
           } else {
             sessionStore.setPendingMessage(sessionId, prompt)
@@ -289,7 +293,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
 
     setIsMergingPR(true)
     try {
-      const result = await window.gitOps.prMerge(worktree.path, pr.number)
+      const result = unwrapEnvelope(await window.gitOps.prMerge(worktree.path, pr.number))
       if (result.success) {
         toast.success('PR merged successfully')
         setPrLiveState((prev) => ({ state: 'MERGED', title: prev?.title }))
@@ -366,7 +370,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
     const currentBranch = currentBranchInfo?.name ?? ''
 
     try {
-      const res = await window.gitOps.listPRs(projectPath)
+      const res = unwrapEnvelope(await window.gitOps.listPRs(projectPath))
       if (res.success) {
         const sorted = [...res.prs].sort((a, b) => {
           const aMatch = a.headRefName === currentBranch ? 1 : 0
@@ -393,7 +397,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
     if (!projectPath) return
 
     try {
-      const res = await window.gitOps.getPRState(projectPath, pr.number)
+      const res = unwrapEnvelope(await window.gitOps.getPRState(projectPath, pr.number))
       if (res.success) {
         setPrLiveState({ state: res.state, title: res.title })
       }

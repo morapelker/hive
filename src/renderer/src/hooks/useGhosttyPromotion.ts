@@ -3,6 +3,7 @@ import { toast as sonnerToast } from 'sonner'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { toast } from '@/lib/toast'
 import { GhosttyPromoToast } from '@/components/toasts/GhosttyPromoToast'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /**
  * Shows a promotional toast when Ghostty native terminal is available
@@ -27,7 +28,7 @@ export function useGhosttyPromotion(terminalTabVisible: boolean): void {
 
     async function checkAndPromote(): Promise<void> {
       try {
-        const result = await window.terminalOps.ghosttyIsAvailable()
+        const result = unwrapEnvelope(await window.terminalOps.ghosttyIsAvailable())
         if (cancelled || !result.available) return
 
         shownRef.current = true

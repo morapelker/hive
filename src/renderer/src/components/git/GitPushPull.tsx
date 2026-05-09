@@ -205,11 +205,14 @@ export function GitPushPull({
       setIsBranchMerged(false)
       return
     }
-    window.gitOps.isBranchMerged(worktreePath, mergeBranch).then((result) => {
-      if (result.success) {
-        setIsBranchMerged(result.isMerged)
-      }
-    })
+    window.gitOps
+      .isBranchMerged(worktreePath, mergeBranch)
+      .then(unwrapEnvelope)
+      .then((result) => {
+        if (result.success) {
+          setIsBranchMerged(result.isMerged)
+        }
+      })
   }, [worktreePath, mergeBranch, mergedCheckVersion])
 
   // Look up whether the selected merge branch is checked out in a worktree
@@ -264,7 +267,9 @@ export function GitPushPull({
     if (!selectedBranchInfo?.worktreePath) return
 
     try {
-      const result = await window.gitOps.getDiffStat(selectedBranchInfo.worktreePath)
+      const result = unwrapEnvelope(
+        await window.gitOps.getDiffStat(selectedBranchInfo.worktreePath)
+      )
       if (result.success && result.files && result.files.length > 0) {
         setArchiveConfirmFiles(result.files)
         setArchiveConfirmOpen(true)
@@ -291,7 +296,7 @@ export function GitPushPull({
     if (!worktreePath || !mergeBranch.trim()) return
     setIsMerging(true)
     try {
-      const result = await window.gitOps.merge(worktreePath, mergeBranch.trim())
+      const result = unwrapEnvelope(await window.gitOps.merge(worktreePath, mergeBranch.trim()))
       if (result.success) {
         toast.success(`Merged ${mergeBranch} successfully`)
         // Refresh file statuses and branch info after merge
@@ -319,7 +324,9 @@ export function GitPushPull({
     // Check if the source branch is checked out in a worktree with dirty files
     if (selectedBranchInfo?.worktreePath) {
       try {
-        const result = await window.gitOps.getDiffStat(selectedBranchInfo.worktreePath)
+        const result = unwrapEnvelope(
+          await window.gitOps.getDiffStat(selectedBranchInfo.worktreePath)
+        )
         if (result.success && result.files && result.files.length > 0) {
           setMergeConfirmFiles(result.files)
           setMergeConfirmOpen(true)

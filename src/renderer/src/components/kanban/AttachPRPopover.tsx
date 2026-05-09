@@ -8,6 +8,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { KanbanTicket } from '../../../../main/db/types'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface PRItem {
   number: number
@@ -58,8 +59,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
   // ── Helpers ────────────────────────────────────────────────────────
 
   function buildPRUrl(prNumber: number): string {
-    const worktrees =
-      useWorktreeStore.getState().worktreesByProject.get(ticket.project_id) ?? []
+    const worktrees = useWorktreeStore.getState().worktreesByProject.get(ticket.project_id) ?? []
     for (const wt of worktrees) {
       const info = useGitStore.getState().remoteInfo.get(wt.id)
       if (info?.url) {
@@ -72,8 +72,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
 
   function getTicketBranchName(): string {
     if (!ticket.worktree_id) return ''
-    const worktrees =
-      useWorktreeStore.getState().worktreesByProject.get(ticket.project_id) ?? []
+    const worktrees = useWorktreeStore.getState().worktreesByProject.get(ticket.project_id) ?? []
     const wt = worktrees.find((w) => w.id === ticket.worktree_id)
     return wt?.branch_name ?? ''
   }
@@ -101,6 +100,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     setIsLoading(true)
     window.gitOps
       .listPRs(projectPath)
+      .then(unwrapEnvelope)
       .then((result) => {
         if (stale) return
         if (result.success) {
@@ -176,7 +176,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
         return
       }
       try {
-        const result = await window.gitOps.getPRState(projectPath, prNumber)
+        const result = unwrapEnvelope(await window.gitOps.getPRState(projectPath, prNumber))
         if (result.success && result.state && result.title) {
           setLookedUpPR({ number: prNumber, title: result.title, state: result.state })
         } else {
@@ -216,11 +216,9 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     !filteredPRs.some((p) => p.number === lookedUpPR.number)
 
   // All selectable items for keyboard nav
-  const allItems: Array<PRItem | { number: number; title: string; state: string; isLookedUp: true }> =
-    [
-      ...(showLookedUp ? [{ ...lookedUpPR!, isLookedUp: true as const }] : []),
-      ...filteredPRs
-    ]
+  const allItems: Array<
+    PRItem | { number: number; title: string; state: string; isLookedUp: true }
+  > = [...(showLookedUp ? [{ ...lookedUpPR!, isLookedUp: true as const }] : []), ...filteredPRs]
 
   // ── Reset selectedIndex on filter change ──────────────────────────
   useEffect(() => {

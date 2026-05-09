@@ -6,6 +6,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import type { OpenCodeMessage, StreamingPart } from '@/components/sessions/SessionView'
 import type { ToolUseInfo } from '@/components/sessions/ToolCard'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -117,7 +118,11 @@ export function useSessionStream({
   const upsertToolUse = useCallback(
     (
       toolId: string,
-      update: Partial<ToolUseInfo> & { name?: string; input?: Record<string, unknown>; outputDelta?: string }
+      update: Partial<ToolUseInfo> & {
+        name?: string
+        input?: Record<string, unknown>
+        outputDelta?: string
+      }
     ) => {
       const { outputDelta } = update as { outputDelta?: string }
       updateStreamingPartsRef((parts) => {
@@ -212,20 +217,17 @@ export function useSessionStream({
       const streamedContentSnapshot = streamingContentRef.current
 
       try {
-        const result = await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+        const result = unwrapEnvelope(
+          await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+        )
         if (generationRef.current !== currentGeneration) return
 
         if (result.success && result.messages) {
-          const refreshed = mapOpencodeMessagesToSessionViewMessages(
-            result.messages as unknown[]
-          )
+          const refreshed = mapOpencodeMessagesToSessionViewMessages(result.messages as unknown[])
 
           if (refreshed.length > 0) {
             setMessages(refreshed)
-          } else if (
-            streamedPartsSnapshot.length > 0 ||
-            streamedContentSnapshot.length > 0
-          ) {
+          } else if (streamedPartsSnapshot.length > 0 || streamedContentSnapshot.length > 0) {
             // Fallback: use appendStreamedAssistantFallback
             setMessages((current) =>
               appendStreamedAssistantFallback(current, {
@@ -298,7 +300,10 @@ export function useSessionStream({
                     if (lastPart?.type === 'text') {
                       newChildParts = [
                         ...oldParts.slice(0, -1),
-                        { ...lastPart, text: (lastPart.text || '') + (event.data?.delta || childPart.text || '') }
+                        {
+                          ...lastPart,
+                          text: (lastPart.text || '') + (event.data?.delta || childPart.text || '')
+                        }
                       ]
                     } else {
                       newChildParts = [
@@ -402,10 +407,7 @@ export function useSessionStream({
               const toolId = part.callID || part.id || `tool-${Date.now()}`
               const toolName = part.tool || undefined
               const state = part.state || {}
-              const statusMap: Record<
-                string,
-                'pending' | 'running' | 'success' | 'error'
-              > = {
+              const statusMap: Record<string, 'pending' | 'running' | 'success' | 'error'> = {
                 pending: 'pending',
                 running: 'running',
                 completed: 'success',
@@ -452,8 +454,7 @@ export function useSessionStream({
                     ...parts.slice(0, -1),
                     {
                       ...last,
-                      reasoning:
-                        (last.reasoning || '') + (event.data?.delta || part.text || '')
+                      reasoning: (last.reasoning || '') + (event.data?.delta || part.text || '')
                     }
                   ]
                 }
@@ -483,14 +484,10 @@ export function useSessionStream({
                     reason: part.reason || '',
                     cost: typeof part.cost === 'number' ? part.cost : 0,
                     tokens: {
-                      input:
-                        typeof part.tokens?.input === 'number' ? part.tokens.input : 0,
-                      output:
-                        typeof part.tokens?.output === 'number' ? part.tokens.output : 0,
+                      input: typeof part.tokens?.input === 'number' ? part.tokens.input : 0,
+                      output: typeof part.tokens?.output === 'number' ? part.tokens.output : 0,
                       reasoning:
-                        typeof part.tokens?.reasoning === 'number'
-                          ? part.tokens.reasoning
-                          : 0
+                        typeof part.tokens?.reasoning === 'number' ? part.tokens.reasoning : 0
                     }
                   }
                 }
@@ -577,7 +574,9 @@ export function useSessionStream({
           // the next effect run fetches messages with the real ID.
           // -----------------------------------------------------------
           else if (event.type === 'session.materialized') {
-            const newId = (event.data as Record<string, unknown> | undefined)?.newSessionId as string | undefined
+            const newId = (event.data as Record<string, unknown> | undefined)?.newSessionId as
+              | string
+              | undefined
             if (newId) {
               onMaterializedSessionId?.(newId)
               useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
@@ -588,10 +587,24 @@ export function useSessionStream({
 
     // ---- Async initialization: load initial messages ----
     const loadInitialMessages = async (): Promise<void> => {
-      console.info('[useSessionStream] loadInitialMessages — sessionId=%s, worktreePath=%s, opcSessionId=%s, generation=%d', sessionId, worktreePath, opencodeSessionId, currentGeneration)
+      console.info(
+        '[useSessionStream] loadInitialMessages — sessionId=%s, worktreePath=%s, opcSessionId=%s, generation=%d',
+        sessionId,
+        worktreePath,
+        opencodeSessionId,
+        currentGeneration
+      )
       try {
-        let result = await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
-        console.info('[useSessionStream] getMessages result — success=%s, messageCount=%d, generation=%d (current=%d)', result.success, Array.isArray(result.messages) ? result.messages.length : 0, currentGeneration, generationRef.current)
+        let result = unwrapEnvelope(
+          await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+        )
+        console.info(
+          '[useSessionStream] getMessages result — success=%s, messageCount=%d, generation=%d (current=%d)',
+          result.success,
+          Array.isArray(result.messages) ? result.messages.length : 0,
+          currentGeneration,
+          generationRef.current
+        )
         if (generationRef.current !== currentGeneration) {
           console.info('[useSessionStream] stale generation after first getMessages, aborting')
           return
@@ -611,15 +624,19 @@ export function useSessionStream({
             console.info('[useSessionStream] stale generation after retry delay, aborting')
             return
           }
-          result = await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
-          console.info('[useSessionStream] retry getMessages result — success=%s, messageCount=%d', result.success, Array.isArray(result.messages) ? result.messages.length : 0)
+          result = unwrapEnvelope(
+            await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+          )
+          console.info(
+            '[useSessionStream] retry getMessages result — success=%s, messageCount=%d',
+            result.success,
+            Array.isArray(result.messages) ? result.messages.length : 0
+          )
           if (generationRef.current !== currentGeneration) return
         }
 
         if (result.success && result.messages) {
-          const mapped = mapOpencodeMessagesToSessionViewMessages(
-            result.messages as unknown[]
-          )
+          const mapped = mapOpencodeMessagesToSessionViewMessages(result.messages as unknown[])
 
           // Part B: Restore streaming parts from the last persisted assistant
           // message, but ONLY when the session is actively busy. For idle

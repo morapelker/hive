@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // Session type with worktree/project/connection metadata for display
 interface SessionWithWorktree {
@@ -189,9 +190,8 @@ export const useSessionHistoryStore = create<SessionHistoryState>((set, get) => 
         return []
       }
 
-      const result = await window.opencodeOps.getMessages(
-        worktree.path,
-        session.opencode_session_id
+      const result = unwrapEnvelope(
+        await window.opencodeOps.getMessages(worktree.path, session.opencode_session_id)
       )
 
       if (!result.success) {

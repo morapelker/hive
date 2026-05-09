@@ -134,7 +134,7 @@ export default function MonacoDiffView({
     try {
       if (isNewFile || isUntracked) {
         // Untracked/new files have no git history – read from disk
-        const modResult = await window.gitOps.getFileContent(worktreePath, filePath)
+        const modResult = unwrapEnvelope(await window.gitOps.getFileContent(worktreePath, filePath))
         setOriginalContent('')
         setModifiedContent(modResult.success ? (modResult.content ?? '') : '')
         return
@@ -145,8 +145,10 @@ export default function MonacoDiffView({
         // Uses merge-base so only changes from commits ahead of the target branch
         // are shown (not changes introduced on the target after divergence).
         const [origResult, modResult] = await Promise.all([
-          window.gitOps.getBranchBaseContent(worktreePath, compareBranch, filePath),
-          window.gitOps.getFileContent(worktreePath, filePath)
+          window.gitOps
+            .getBranchBaseContent(worktreePath, compareBranch, filePath)
+            .then(unwrapEnvelope),
+          window.gitOps.getFileContent(worktreePath, filePath).then(unwrapEnvelope)
         ])
 
         // File added (doesn't exist in branch) — empty original
@@ -156,8 +158,8 @@ export default function MonacoDiffView({
       } else if (staged) {
         // Staged diff: original = HEAD, modified = Index (staged)
         const [origResult, modResult] = await Promise.all([
-          window.gitOps.getRefContent(worktreePath, 'HEAD', filePath),
-          window.gitOps.getRefContent(worktreePath, '', filePath)
+          window.gitOps.getRefContent(worktreePath, 'HEAD', filePath).then(unwrapEnvelope),
+          window.gitOps.getRefContent(worktreePath, '', filePath).then(unwrapEnvelope)
         ])
 
         if (!origResult.success && !origResult.error?.includes('does not exist')) {
@@ -176,8 +178,11 @@ export default function MonacoDiffView({
         const [origResult, modResult] = await Promise.all([
           window.gitOps
             .getRefContent(worktreePath, '', filePath)
-            .catch(() => window.gitOps.getRefContent(worktreePath, 'HEAD', filePath)),
-          window.gitOps.getFileContent(worktreePath, filePath)
+            .then(unwrapEnvelope)
+            .catch(() =>
+              window.gitOps.getRefContent(worktreePath, 'HEAD', filePath).then(unwrapEnvelope)
+            ),
+          window.gitOps.getFileContent(worktreePath, filePath).then(unwrapEnvelope)
         ])
 
         if (!origResult.success && !origResult.error?.includes('does not exist')) {
@@ -395,7 +400,7 @@ export default function MonacoDiffView({
       setHunkActionLoading(hunk.index)
       try {
         const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
-        const result = await window.gitOps.stageHunk(worktreePath, patch)
+        const result = unwrapEnvelope(await window.gitOps.stageHunk(worktreePath, patch))
         if (result.success) {
           toast.success('Hunk staged')
           useGitStore.getState().refreshStatuses(worktreePath)
@@ -417,7 +422,7 @@ export default function MonacoDiffView({
       setHunkActionLoading(hunk.index)
       try {
         const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
-        const result = await window.gitOps.unstageHunk(worktreePath, patch)
+        const result = unwrapEnvelope(await window.gitOps.unstageHunk(worktreePath, patch))
         if (result.success) {
           toast.success('Hunk unstaged')
           useGitStore.getState().refreshStatuses(worktreePath)
@@ -439,7 +444,7 @@ export default function MonacoDiffView({
       setHunkActionLoading(hunk.index)
       try {
         const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
-        const result = await window.gitOps.revertHunk(worktreePath, patch)
+        const result = unwrapEnvelope(await window.gitOps.revertHunk(worktreePath, patch))
         if (result.success) {
           toast.success('Hunk discarded')
           useGitStore.getState().refreshStatuses(worktreePath)
@@ -479,13 +484,17 @@ export default function MonacoDiffView({
   // Copy diff content
   const handleCopy = useCallback(async () => {
     if (compareBranch) {
-      const result = await window.gitOps.getBranchFileDiff(worktreePath, compareBranch, filePath)
+      const result = unwrapEnvelope(
+        await window.gitOps.getBranchFileDiff(worktreePath, compareBranch, filePath)
+      )
       if (result.success && result.diff) {
         unwrapEnvelope(await window.projectOps.copyToClipboard(result.diff))
       }
     } else {
       // Get the unified diff via existing IPC
-      const result = await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
+      const result = unwrapEnvelope(
+        await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
+      )
       if (result.success && result.diff) {
         unwrapEnvelope(await window.projectOps.copyToClipboard(result.diff))
       }

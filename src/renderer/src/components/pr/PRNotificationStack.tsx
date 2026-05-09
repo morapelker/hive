@@ -1,10 +1,21 @@
 import { useCallback, useState } from 'react'
-import { Loader2, Check, AlertCircle, AlertTriangle, Info, X, ExternalLink, GitMerge, Archive } from 'lucide-react'
+import {
+  Loader2,
+  Check,
+  AlertCircle,
+  AlertTriangle,
+  Info,
+  X,
+  ExternalLink,
+  GitMerge,
+  Archive
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePRNotificationStore } from '@/stores/usePRNotificationStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { toast } from '@/lib/toast'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // ---------------------------------------------------------------------------
 // Status icon
@@ -53,7 +64,8 @@ function PRNotificationCard({
   worktreeId?: string
 }): React.JSX.Element {
   const dismiss = usePRNotificationStore((s) => s.dismiss)
-  const isDone = status === 'success' || status === 'error' || status === 'info' || status === 'warning'
+  const isDone =
+    status === 'success' || status === 'error' || status === 'info' || status === 'warning'
 
   const [mergePhase, setMergePhase] = useState<MergePhase>('idle')
   const showMergeButton = !!(prNumber && worktreeId && (status === 'success' || status === 'info'))
@@ -82,7 +94,7 @@ function PRNotificationCard({
 
     setMergePhase('merging')
     try {
-      const result = await window.gitOps.prMerge(worktreePath, prNumber)
+      const result = unwrapEnvelope(await window.gitOps.prMerge(worktreePath, prNumber))
       if (result.success) {
         setMergePhase('merged')
       } else {
@@ -169,17 +181,12 @@ function PRNotificationCard({
       <div className="flex-1 min-w-0 space-y-1">
         <p className="text-sm font-medium text-foreground leading-snug">{message}</p>
         {prTitle && (
-          <p
-            className="text-xs text-muted-foreground leading-snug line-clamp-2"
-            title={prTitle}
-          >
+          <p className="text-xs text-muted-foreground leading-snug line-clamp-2" title={prTitle}>
             {prTitle}
           </p>
         )}
         {description && (
-          <p className="text-xs text-muted-foreground leading-snug line-clamp-2">
-            {description}
-          </p>
+          <p className="text-xs text-muted-foreground leading-snug line-clamp-2">{description}</p>
         )}
         {prUrl && isDone && (
           <a

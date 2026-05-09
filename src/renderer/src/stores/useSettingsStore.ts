@@ -501,7 +501,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ selectedModel: model })
         // Persist to backend (settings DB + opencode service)
         try {
-          await window.opencodeOps.setModel(model)
+          unwrapEnvelope(await window.opencodeOps.setModel(model))
         } catch (error) {
           console.error('Failed to persist model selection:', error)
         }
@@ -526,7 +526,7 @@ export const useSettingsStore = create<SettingsState>()(
         // Push to backend (skip for terminal — no backend service, or when caller already pushed)
         if (agentSdk !== 'terminal' && !options?.skipBackendPush) {
           try {
-            await window.opencodeOps.setModel(model ? { ...model, agentSdk } : null)
+            unwrapEnvelope(await window.opencodeOps.setModel(model ? { ...model, agentSdk } : null))
           } catch (error) {
             console.error('Failed to persist model selection for SDK:', error)
           }

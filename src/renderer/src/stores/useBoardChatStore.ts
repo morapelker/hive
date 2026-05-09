@@ -5,6 +5,7 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import type { SelectedModel } from '@/stores/useSettingsStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { BOARD_ASSISTANT_SESSION_NAME_PREFIX } from '@/stores/useSessionStore'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export type BoardChatStatus = 'idle' | 'starting' | 'thinking' | 'awaiting_confirmation' | 'error'
 
@@ -419,7 +420,7 @@ async function cleanupRuntime(
 ): Promise<void> {
   try {
     if (opencodeSessionId && runtimePath) {
-      await window.opencodeOps.disconnect(runtimePath, opencodeSessionId)
+      unwrapEnvelope(await window.opencodeOps.disconnect(runtimePath, opencodeSessionId))
     }
   } catch {
     // Best effort only.
@@ -526,7 +527,9 @@ async function ensureRuntime(): Promise<{
   }
 
   if (state.sessionId && state.opencodeSessionId) {
-    await window.opencodeOps.reconnect(runtimePath, state.opencodeSessionId, state.sessionId)
+    unwrapEnvelope(
+      await window.opencodeOps.reconnect(runtimePath, state.opencodeSessionId, state.sessionId)
+    )
     return {
       sessionId: state.sessionId,
       opencodeSessionId: state.opencodeSessionId,
@@ -561,7 +564,7 @@ async function ensureRuntime(): Promise<{
       : {})
   })
 
-  const connectResult = await window.opencodeOps.connect(runtimePath, session.id)
+  const connectResult = unwrapEnvelope(await window.opencodeOps.connect(runtimePath, session.id))
   if (!connectResult.success || !connectResult.sessionId) {
     await window.db.session.delete(session.id).catch(() => {})
     throw new Error(connectResult.error || 'Failed to start board assistant session.')
@@ -805,12 +808,14 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
       )
       set((state) => patchActiveSnapshot(state, { status: 'thinking' }))
 
-      const result = await window.opencodeOps.prompt(
-        runtime.runtimePath,
-        runtime.opencodeSessionId,
-        prompt,
-        undefined,
-        { codexFastMode: useSettingsStore.getState().codexFastMode }
+      const result = unwrapEnvelope(
+        await window.opencodeOps.prompt(
+          runtime.runtimePath,
+          runtime.opencodeSessionId,
+          prompt,
+          undefined,
+          { codexFastMode: useSettingsStore.getState().codexFastMode }
+        )
       )
 
       if (!result.success) {

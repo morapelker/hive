@@ -920,6 +920,7 @@ function useMenuStateUpdater(): void {
 
     window.opencodeOps
       ?.capabilities?.(opencodeSessionId)
+      .then(unwrapEnvelope)
       ?.then((result) => {
         window.systemOps.updateMenuState({
           ...baseState,

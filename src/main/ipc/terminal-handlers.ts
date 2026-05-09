@@ -1,10 +1,48 @@
 import { ipcMain, BrowserWindow } from 'electron'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
 import { ptyService } from '../services/pty-service'
 import { ghosttyService } from '../services/ghostty-service'
 import { parseGhosttyConfig } from '../services/ghostty-config'
 import { createLogger } from '../services/logger'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'TerminalHandlers' })
+
+class TerminalIpcError extends Data.TaggedError('TerminalIpcError')<{
+  message: string
+  cause?: unknown
+}> {}
+
+const toMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error)
+
+const syncEffect = <A>(operation: () => A): Effect.Effect<A, TerminalIpcError> =>
+  Effect.try({
+    try: operation,
+    catch: (error) => new TerminalIpcError({ message: toMessage(error), cause: error })
+  })
+
+const asyncEffect = <A>(operation: () => Promise<A>): Effect.Effect<A> => Effect.promise(operation)
+
+const rectSchema = z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() })
+const ghosttyOptsSchema = z
+  .object({
+    cwd: z.string().optional(),
+    shell: z.string().optional(),
+    scaleFactor: z.number().optional(),
+    fontSize: z.number().optional()
+  })
+  .optional()
+const ghosttyKeyEventSchema = z.object({
+  action: z.number(),
+  keycode: z.number(),
+  mods: z.number(),
+  consumedMods: z.number().optional(),
+  text: z.string().optional(),
+  unshiftedCodepoint: z.number().optional(),
+  composing: z.boolean().optional()
+})
 
 // Track listener cleanup functions per terminalId to prevent duplicate registrations
 const listenerCleanups = new Map<string, { removeData: () => void; removeExit: () => void }>()
@@ -27,74 +65,76 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   // -----------------------------------------------------------------------
 
   // Create a PTY for a worktree
-  ipcMain.handle(
+  defineHandler(
     'terminal:create',
-    async (_event, terminalId: string, cwd: string, shell?: string) => {
-      log.info('IPC: terminal:create', { terminalId, cwd, shell })
-      try {
-        // Check if PTY already exists before creating — if it does, skip listener registration
-        const alreadyExists = ptyService.has(terminalId)
-        const { cols, rows } = ptyService.create(terminalId, { cwd, shell: shell || undefined })
+    z.tuple([z.string().min(1), z.string().min(1), z.string().optional()]),
+    ([terminalId, cwd, shell]) =>
+      asyncEffect(async () => {
+        log.info('IPC: terminal:create', { terminalId, cwd, shell })
+        try {
+          // Check if PTY already exists before creating — if it does, skip listener registration
+          const alreadyExists = ptyService.has(terminalId)
+          const { cols, rows } = ptyService.create(terminalId, { cwd, shell: shell || undefined })
 
-        if (alreadyExists) {
-          log.info('PTY already exists, skipping listener registration', { terminalId })
+          if (alreadyExists) {
+            log.info('PTY already exists, skipping listener registration', { terminalId })
+            return { success: true, cols, rows }
+          }
+
+          // Clean up any stale listeners for this terminalId (shouldn't happen, but defensive)
+          const existing = listenerCleanups.get(terminalId)
+          if (existing) {
+            existing.removeData()
+            existing.removeExit()
+            listenerCleanups.delete(terminalId)
+          }
+
+          // Wire PTY output to renderer (batched via setImmediate)
+          const removeData = ptyService.onData(terminalId, (data) => {
+            if (mainWindow.isDestroyed()) return
+
+            // Accumulate into buffer
+            const existing = dataBuffers.get(terminalId)
+            dataBuffers.set(terminalId, existing ? existing + data : data)
+
+            // Schedule a flush if one isn't already pending
+            if (!flushScheduled.has(terminalId)) {
+              flushScheduled.add(terminalId)
+              setImmediate(() => {
+                flushScheduled.delete(terminalId)
+                const buffered = dataBuffers.get(terminalId)
+                dataBuffers.delete(terminalId)
+                if (buffered && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send(`terminal:data:${terminalId}`, buffered)
+                }
+              })
+            }
+          })
+
+          // Wire PTY exit to renderer
+          const removeExit = ptyService.onExit(terminalId, (code) => {
+            if (!mainWindow.isDestroyed()) {
+              mainWindow.webContents.send(`terminal:exit:${terminalId}`, code)
+            }
+            // Clean up listener tracking on exit
+            listenerCleanups.delete(terminalId)
+          })
+
+          listenerCleanups.set(terminalId, { removeData, removeExit })
+
           return { success: true, cols, rows }
-        }
-
-        // Clean up any stale listeners for this terminalId (shouldn't happen, but defensive)
-        const existing = listenerCleanups.get(terminalId)
-        if (existing) {
-          existing.removeData()
-          existing.removeExit()
-          listenerCleanups.delete(terminalId)
-        }
-
-        // Wire PTY output to renderer (batched via setImmediate)
-        const removeData = ptyService.onData(terminalId, (data) => {
-          if (mainWindow.isDestroyed()) return
-
-          // Accumulate into buffer
-          const existing = dataBuffers.get(terminalId)
-          dataBuffers.set(terminalId, existing ? existing + data : data)
-
-          // Schedule a flush if one isn't already pending
-          if (!flushScheduled.has(terminalId)) {
-            flushScheduled.add(terminalId)
-            setImmediate(() => {
-              flushScheduled.delete(terminalId)
-              const buffered = dataBuffers.get(terminalId)
-              dataBuffers.delete(terminalId)
-              if (buffered && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send(`terminal:data:${terminalId}`, buffered)
-              }
-            })
+        } catch (error) {
+          log.error(
+            'IPC: terminal:create failed',
+            error instanceof Error ? error : new Error(String(error)),
+            { terminalId }
+          )
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
           }
-        })
-
-        // Wire PTY exit to renderer
-        const removeExit = ptyService.onExit(terminalId, (code) => {
-          if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(`terminal:exit:${terminalId}`, code)
-          }
-          // Clean up listener tracking on exit
-          listenerCleanups.delete(terminalId)
-        })
-
-        listenerCleanups.set(terminalId, { removeData, removeExit })
-
-        return { success: true, cols, rows }
-      } catch (error) {
-        log.error(
-          'IPC: terminal:create failed',
-          error instanceof Error ? error : new Error(String(error)),
-          { terminalId }
-        )
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
         }
-      }
-    }
+      })
   )
 
   // Write data to a PTY (fire-and-forget — no response needed for keystrokes)
@@ -103,161 +143,161 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   })
 
   // Resize a PTY
-  ipcMain.handle('terminal:resize', (_event, terminalId: string, cols: number, rows: number) => {
-    ptyService.resize(terminalId, cols, rows)
-  })
+  defineHandler(
+    'terminal:resize',
+    z.tuple([z.string().min(1), z.number(), z.number()]),
+    ([terminalId, cols, rows]) => syncEffect(() => ptyService.resize(terminalId, cols, rows))
+  )
 
   // Destroy a PTY
-  ipcMain.handle('terminal:destroy', (_event, terminalId: string) => {
-    log.info('IPC: terminal:destroy', { terminalId })
-    // Clean up listener tracking
-    const cleanup = listenerCleanups.get(terminalId)
-    if (cleanup) {
-      cleanup.removeData()
-      cleanup.removeExit()
-      listenerCleanups.delete(terminalId)
-    }
-    // Discard any pending buffered data
-    dataBuffers.delete(terminalId)
-    flushScheduled.delete(terminalId)
-    ptyService.destroy(terminalId)
-  })
+  defineHandler('terminal:destroy', z.string().min(1), (terminalId) =>
+    syncEffect(() => {
+      log.info('IPC: terminal:destroy', { terminalId })
+      // Clean up listener tracking
+      const cleanup = listenerCleanups.get(terminalId)
+      if (cleanup) {
+        cleanup.removeData()
+        cleanup.removeExit()
+        listenerCleanups.delete(terminalId)
+      }
+      // Discard any pending buffered data
+      dataBuffers.delete(terminalId)
+      flushScheduled.delete(terminalId)
+      ptyService.destroy(terminalId)
+    })
+  )
 
   // Get Ghostty config for terminal theming
-  ipcMain.handle('terminal:getConfig', () => {
-    log.info('IPC: terminal:getConfig')
-    try {
-      return parseGhosttyConfig()
-    } catch (error) {
-      log.error(
-        'IPC: terminal:getConfig failed',
-        error instanceof Error ? error : new Error(String(error))
-      )
-      return {}
-    }
-  })
+  defineHandler('terminal:getConfig', z.tuple([]), () =>
+    syncEffect(() => {
+      log.info('IPC: terminal:getConfig')
+      try {
+        return parseGhosttyConfig()
+      } catch (error) {
+        log.error(
+          'IPC: terminal:getConfig failed',
+          error instanceof Error ? error : new Error(String(error))
+        )
+        return {}
+      }
+    })
+  )
 
   // -----------------------------------------------------------------------
   // Native Ghostty backend handlers
   // -----------------------------------------------------------------------
 
   // Initialize the Ghostty runtime (loads native addon + calls ghostty_init)
-  ipcMain.handle('terminal:ghostty:init', () => {
-    log.info('IPC: terminal:ghostty:init')
-    return ghosttyService.init()
-  })
+  defineHandler('terminal:ghostty:init', z.tuple([]), () =>
+    syncEffect(() => {
+      log.info('IPC: terminal:ghostty:init')
+      return ghosttyService.init()
+    })
+  )
 
   // Check if the native Ghostty backend is available
-  ipcMain.handle('terminal:ghostty:isAvailable', () => {
-    // Attempt to load the addon if not already loaded
-    ghosttyService.loadAddon()
-    return {
-      available: ghosttyService.isAvailable(),
-      initialized: ghosttyService.isInitialized(),
-      platform: process.platform
-    }
-  })
+  defineHandler('terminal:ghostty:isAvailable', z.tuple([]), () =>
+    syncEffect(() => {
+      // Attempt to load the addon if not already loaded
+      ghosttyService.loadAddon()
+      return {
+        available: ghosttyService.isAvailable(),
+        initialized: ghosttyService.isInitialized(),
+        platform: process.platform
+      }
+    })
+  )
 
   // Create a native Ghostty surface for a worktree
-  ipcMain.handle(
+  defineHandler(
     'terminal:ghostty:createSurface',
-    (
-      _event,
-      terminalId: string,
-      rect: { x: number; y: number; w: number; h: number },
-      opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
-    ) => {
-      log.info('IPC: terminal:ghostty:createSurface', { terminalId, rect })
-      return ghosttyService.createSurface(terminalId, rect, opts || {})
-    }
+    z.tuple([z.string().min(1), rectSchema, ghosttyOptsSchema]),
+    ([terminalId, rect, opts]) =>
+      syncEffect(() => {
+        log.info('IPC: terminal:ghostty:createSurface', { terminalId, rect })
+        return ghosttyService.createSurface(terminalId, rect, opts || {})
+      })
   )
 
   // Update the native view frame (position + size)
-  ipcMain.handle(
+  defineHandler(
     'terminal:ghostty:setFrame',
-    (_event, terminalId: string, rect: { x: number; y: number; w: number; h: number }) => {
-      ghosttyService.setFrame(terminalId, rect)
-    }
+    z.tuple([z.string().min(1), rectSchema]),
+    ([terminalId, rect]) => syncEffect(() => ghosttyService.setFrame(terminalId, rect))
   )
 
   // Update surface size in pixels
-  ipcMain.handle(
+  defineHandler(
     'terminal:ghostty:setSize',
-    (_event, terminalId: string, width: number, height: number) => {
-      ghosttyService.setSize(terminalId, width, height)
-    }
+    z.tuple([z.string().min(1), z.number(), z.number()]),
+    ([terminalId, width, height]) =>
+      syncEffect(() => ghosttyService.setSize(terminalId, width, height))
   )
 
   // Forward a keyboard event to the Ghostty surface
-  ipcMain.handle(
+  defineHandler(
     'terminal:ghostty:keyEvent',
-    (
-      _event,
-      terminalId: string,
-      keyEvent: {
-        action: number
-        keycode: number
-        mods: number
-        consumedMods?: number
-        text?: string
-        unshiftedCodepoint?: number
-        composing?: boolean
-      }
-    ) => {
-      return ghosttyService.keyEvent(terminalId, keyEvent)
-    }
+    z.tuple([z.string().min(1), ghosttyKeyEventSchema]),
+    ([terminalId, keyEvent]) => syncEffect(() => ghosttyService.keyEvent(terminalId, keyEvent))
   )
 
   // Forward a mouse button event
-  ipcMain.handle(
+  defineHandler(
     'terminal:ghostty:mouseButton',
-    (_event, terminalId: string, state: number, button: number, mods: number) => {
-      ghosttyService.mouseButton(terminalId, state, button, mods)
-    }
+    z.tuple([z.string().min(1), z.number(), z.number(), z.number()]),
+    ([terminalId, state, button, mods]) =>
+      syncEffect(() => ghosttyService.mouseButton(terminalId, state, button, mods))
   )
 
   // Forward a mouse position event
-  ipcMain.handle(
+  defineHandler(
     'terminal:ghostty:mousePos',
-    (_event, terminalId: string, x: number, y: number, mods: number) => {
-      ghosttyService.mousePos(terminalId, x, y, mods)
-    }
+    z.tuple([z.string().min(1), z.number(), z.number(), z.number()]),
+    ([terminalId, x, y, mods]) => syncEffect(() => ghosttyService.mousePos(terminalId, x, y, mods))
   )
 
   // Forward a mouse scroll event
-  ipcMain.handle(
+  defineHandler(
     'terminal:ghostty:mouseScroll',
-    (_event, terminalId: string, dx: number, dy: number, mods: number) => {
-      ghosttyService.mouseScroll(terminalId, dx, dy, mods)
-    }
+    z.tuple([z.string().min(1), z.number(), z.number(), z.number()]),
+    ([terminalId, dx, dy, mods]) =>
+      syncEffect(() => ghosttyService.mouseScroll(terminalId, dx, dy, mods))
   )
 
   // Set focus state for a surface
-  ipcMain.handle('terminal:ghostty:setFocus', (_event, terminalId: string, focused: boolean) => {
-    ghosttyService.setFocus(terminalId, focused)
-  })
+  defineHandler(
+    'terminal:ghostty:setFocus',
+    z.tuple([z.string().min(1), z.boolean()]),
+    ([terminalId, focused]) => syncEffect(() => ghosttyService.setFocus(terminalId, focused))
+  )
 
   // Paste text into a Ghostty surface (programmatic paste, bypasses macOS focus)
-  ipcMain.handle('terminal:ghostty:pasteText', (_event, terminalId: string, text: string) => {
-    ghosttyService.pasteText(terminalId, text)
-  })
+  defineHandler(
+    'terminal:ghostty:pasteText',
+    z.tuple([z.string().min(1), z.string()]),
+    ([terminalId, text]) => syncEffect(() => ghosttyService.pasteText(terminalId, text))
+  )
 
   // Diagnostic: inspect Ghostty view hierarchy and first responder state
-  ipcMain.handle('terminal:ghostty:focusDiagnostics', () => {
-    return ghosttyService.focusDiagnostics()
-  })
+  defineHandler('terminal:ghostty:focusDiagnostics', z.tuple([]), () =>
+    syncEffect(() => ghosttyService.focusDiagnostics())
+  )
 
   // Destroy a Ghostty surface for a worktree
-  ipcMain.handle('terminal:ghostty:destroySurface', (_event, terminalId: string) => {
-    log.info('IPC: terminal:ghostty:destroySurface', { terminalId })
-    ghosttyService.destroySurface(terminalId)
-  })
+  defineHandler('terminal:ghostty:destroySurface', z.string().min(1), (terminalId) =>
+    syncEffect(() => {
+      log.info('IPC: terminal:ghostty:destroySurface', { terminalId })
+      ghosttyService.destroySurface(terminalId)
+    })
+  )
 
   // Shut down the Ghostty runtime entirely
-  ipcMain.handle('terminal:ghostty:shutdown', () => {
-    log.info('IPC: terminal:ghostty:shutdown')
-    ghosttyService.shutdown()
-  })
+  defineHandler('terminal:ghostty:shutdown', z.tuple([]), () =>
+    syncEffect(() => {
+      log.info('IPC: terminal:ghostty:shutdown')
+      ghosttyService.shutdown()
+    })
+  )
 
   log.info('Terminal IPC handlers registered')
 }

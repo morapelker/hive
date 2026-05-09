@@ -268,33 +268,38 @@ export class XtermBackend implements TerminalBackend {
 
     // Create the PTY
     callbacks.onStatusChange('creating')
-    window.terminalOps.create(this.terminalId, opts.cwd, opts.shell).then((result) => {
-      if (result.success) {
-        callbacks.onStatusChange('running')
+    window.terminalOps
+      .create(this.terminalId, opts.cwd, opts.shell)
+      .then(unwrapEnvelope)
+      .then((result) => {
+        if (result.success) {
+          callbacks.onStatusChange('running')
 
-        // Immediately sync PTY size with xterm.js's actual dimensions.
-        // The PTY is created with default 80×24, but xterm.js was already fit
-        // to the container (which may be much wider/taller). The ResizeObserver
-        // initial callback likely fired BEFORE the PTY existed, so its resize
-        // was silently dropped. Without this, zsh uses 80-col cursor positioning
-        // while xterm.js renders at the actual width, causing visual mismatches
-        // (e.g. auto-suggest redraws writing text at wrong positions).
-        try {
-          if (this.fitAddon) {
-            this.fitAddon.fit()
-            const dims = this.fitAddon.proposeDimensions()
-            if (dims) {
-              window.terminalOps.resize(this.terminalId, dims.cols, dims.rows)
+          // Immediately sync PTY size with xterm.js's actual dimensions.
+          // The PTY is created with default 80×24, but xterm.js was already fit
+          // to the container (which may be much wider/taller). The ResizeObserver
+          // initial callback likely fired BEFORE the PTY existed, so its resize
+          // was silently dropped. Without this, zsh uses 80-col cursor positioning
+          // while xterm.js renders at the actual width, causing visual mismatches
+          // (e.g. auto-suggest redraws writing text at wrong positions).
+          try {
+            if (this.fitAddon) {
+              this.fitAddon.fit()
+              const dims = this.fitAddon.proposeDimensions()
+              if (dims) {
+                window.terminalOps
+                  .resize(this.terminalId, dims.cols, dims.rows)
+                  .then(unwrapEnvelope)
+              }
             }
+          } catch {
+            // Ignore fit errors during setup
           }
-        } catch {
-          // Ignore fit errors during setup
+        } else {
+          terminal.write(`\x1b[31mFailed to create terminal: ${result.error}\x1b[0m\r\n`)
+          callbacks.onStatusChange('exited')
         }
-      } else {
-        terminal.write(`\x1b[31mFailed to create terminal: ${result.error}\x1b[0m\r\n`)
-        callbacks.onStatusChange('exited')
-      }
-    })
+      })
 
     // ResizeObserver for auto-fit
     this.resizeObserver = new ResizeObserver(() => {
@@ -303,7 +308,7 @@ export class XtermBackend implements TerminalBackend {
           this.fitAddon.fit()
           const dims = this.fitAddon.proposeDimensions()
           if (dims) {
-            window.terminalOps.resize(this.terminalId, dims.cols, dims.rows)
+            window.terminalOps.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
           }
         }
       } catch {
@@ -318,7 +323,7 @@ export class XtermBackend implements TerminalBackend {
   }
 
   resize(cols: number, rows: number): void {
-    window.terminalOps.resize(this.terminalId, cols, rows)
+    window.terminalOps.resize(this.terminalId, cols, rows).then(unwrapEnvelope)
   }
 
   focus(): void {
@@ -341,7 +346,7 @@ export class XtermBackend implements TerminalBackend {
       this.fitAddon?.fit()
       const dims = this.fitAddon?.proposeDimensions()
       if (dims) {
-        window.terminalOps.resize(this.terminalId, dims.cols, dims.rows)
+        window.terminalOps.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
       }
     } catch {
       // Ignore fit errors

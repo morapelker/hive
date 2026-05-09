@@ -559,7 +559,7 @@ export const useSessionStore = create<SessionState>()(
           // Destroy PTY for terminal sessions
           if (isTerminalSession) {
             try {
-              await window.terminalOps.destroy(sessionId)
+              unwrapEnvelope(await window.terminalOps.destroy(sessionId))
             } catch {
               // Best-effort cleanup — PTY may already be gone
             }
@@ -580,7 +580,7 @@ export const useSessionStore = create<SessionState>()(
                 }
               }
               if (worktreePath) {
-                await window.opencodeOps.disconnect(worktreePath, opencodeSessionId)
+                unwrapEnvelope(await window.opencodeOps.disconnect(worktreePath, opencodeSessionId))
               }
             } catch {
               // Best-effort cleanup — session may already be disconnected
@@ -1336,7 +1336,7 @@ export const useSessionStore = create<SessionState>()(
         // Push to agent backend (SDK-aware) — skip for terminal sessions
         try {
           if (agentSdk !== 'terminal') {
-            await window.opencodeOps.setModel({ ...model, agentSdk })
+            unwrapEnvelope(await window.opencodeOps.setModel({ ...model, agentSdk }))
           }
         } catch (error) {
           console.error('Failed to push model to agent backend:', error)
@@ -1691,17 +1691,21 @@ export const useSessionStore = create<SessionState>()(
 
             if (chatSession.snapshot.runtimePath && chatSession.snapshot.opencodeSessionId) {
               try {
-                await window.opencodeOps.abort(
-                  chatSession.snapshot.runtimePath,
-                  chatSession.snapshot.opencodeSessionId
+                unwrapEnvelope(
+                  await window.opencodeOps.abort(
+                    chatSession.snapshot.runtimePath,
+                    chatSession.snapshot.opencodeSessionId
+                  )
                 )
               } catch {
                 // Best-effort cleanup
               }
               try {
-                await window.opencodeOps.disconnect(
-                  chatSession.snapshot.runtimePath,
-                  chatSession.snapshot.opencodeSessionId
+                unwrapEnvelope(
+                  await window.opencodeOps.disconnect(
+                    chatSession.snapshot.runtimePath,
+                    chatSession.snapshot.opencodeSessionId
+                  )
                 )
               } catch {
                 // Best-effort cleanup

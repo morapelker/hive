@@ -84,13 +84,13 @@ export function FileContextMenu({
 
   // Handle open in editor
   const handleOpenInEditor = useCallback(async () => {
-    await window.gitOps.openInEditor(node.path)
+    unwrapEnvelope(await window.gitOps.openInEditor(node.path))
     onClose?.()
   }, [node.path, onClose])
 
   // Handle open in Finder
   const handleOpenInFinder = useCallback(async () => {
-    await window.gitOps.showInFinder(node.path)
+    unwrapEnvelope(await window.gitOps.showInFinder(node.path))
     onClose?.()
   }, [node.path, onClose])
 

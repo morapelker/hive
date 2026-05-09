@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { PRReviewComment } from '@shared/types/git'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface PRReviewStoreState {
   // Data - keyed by worktreeId
@@ -51,7 +52,7 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
       return { loading, error }
     })
     try {
-      const result = await window.gitOps.getPRReviewComments(projectPath, prNumber)
+      const result = unwrapEnvelope(await window.gitOps.getPRReviewComments(projectPath, prNumber))
       if (result.success && result.comments) {
         set((s) => {
           const comments = new Map(s.comments)
@@ -111,9 +112,7 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
   selectAll: (worktreeId) => {
     const comments = get().getVisibleComments(worktreeId)
     // Select only root comments (not replies)
-    const rootIds = comments
-      .filter((c) => c.inReplyToId === null)
-      .map((c) => c.id)
+    const rootIds = comments.filter((c) => c.inReplyToId === null).map((c) => c.id)
     set({ selectedCommentIds: new Set(rootIds) })
   },
 
@@ -204,10 +203,7 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
     for (const [key, thread] of threads) {
       threads.set(
         key,
-        thread.sort(
-          (a, b) =>
-            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-        )
+        thread.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
       )
     }
     return threads

@@ -5,6 +5,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { lastSendMode, messageSendTimes, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 type SessionModelSource = {
   id: string
@@ -50,7 +51,9 @@ export async function startBackgroundSessionPrompt(opts: {
   prompt: string
   bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
 }): Promise<void> {
-  const connectResult = await window.opencodeOps.connect(opts.worktreePath, opts.sessionId)
+  const connectResult = unwrapEnvelope(
+    await window.opencodeOps.connect(opts.worktreePath, opts.sessionId)
+  )
   if (!connectResult.success || !connectResult.sessionId) {
     throw new Error(connectResult.error ?? 'Failed to connect to handoff session')
   }
@@ -68,11 +71,13 @@ export async function startBackgroundSessionPrompt(opts: {
   bumpWorktreeLastMessage(opts.bumpTarget)
 
   const model = resolveBackgroundSessionModel(opts.sessionId)
-  const result = await window.opencodeOps.prompt(
-    opts.worktreePath,
-    connectResult.sessionId,
-    [{ type: 'text', text: opts.prompt }],
-    model
+  const result = unwrapEnvelope(
+    await window.opencodeOps.prompt(
+      opts.worktreePath,
+      connectResult.sessionId,
+      [{ type: 'text', text: opts.prompt }],
+      model
+    )
   )
   if (!result.success) {
     throw new Error(result.error ?? 'Failed to start background session prompt')

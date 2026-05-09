@@ -125,7 +125,7 @@ export function SettingsTerminal(): React.JSX.Element {
     let cancelled = false
     async function checkGhostty(): Promise<void> {
       try {
-        const result = await window.terminalOps.ghosttyIsAvailable()
+        const result = unwrapEnvelope(await window.terminalOps.ghosttyIsAvailable())
         if (!cancelled) {
           setGhosttyAvailable(result.available)
           setIsMac(result.platform === 'darwin')

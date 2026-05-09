@@ -375,7 +375,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const handleArchive = useCallback(async (): Promise<void> => {
     if (!worktree) return
     try {
-      const result = await window.gitOps.getDiffStat(worktree.path)
+      const result = unwrapEnvelope(await window.gitOps.getDiffStat(worktree.path))
       if (result.success && result.files && result.files.length > 0) {
         setArchiveConfirmFiles(result.files)
         setArchiveConfirmOpen(true)
