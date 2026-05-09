@@ -69,6 +69,8 @@ This is enforced by code review for now. An ESLint rule may be added later if dr
 - **`_shared/runtime.ts`** - `getOrCreateRuntime(name, factory)`, `disposeRuntime(name)`, `disposeAllRuntimes()`. Islands MUST use this; do not create a `ManagedRuntime` outside.
 - **`_shared/zod-adapter.ts`** - `decodeWithZod(schema, input, schemaName?)` and `ZodDecodeError`. Use at every external input boundary (IPC payloads, SDK responses, settings).
 
+The `db/` island (`src/main/effect/db/`) provides the `Db` service tag (`query`/`queryOne`/`exec`/`transaction`) and tagged DB errors. See `src/main/effect/db/service.ts` and the worktree consumer in `src/main/services/worktree-ops.ts` for an end-to-end example.
+
 ## Test conventions
 
 Use the helpers in `test/utils/effect-test-utils.ts`:
