@@ -6,7 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { Loader2, GitMerge, GitCommit, Archive } from 'lucide-react'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 type Step = 'loading' | 'commit_base' | 'commit' | 'merge' | 'archive'
 
@@ -71,7 +73,7 @@ export function MergeOnDoneDialog() {
         }
 
         // Fetch feature worktree
-        const featureWorktree = await window.db.worktree.get(ticket.worktree_id)
+        const featureWorktree = await db.worktree.get(ticket.worktree_id)
         if (!featureWorktree || featureWorktree.status !== 'active') {
           toast.warning('Cannot merge — feature worktree is not active')
           clearPendingDoneMove()
@@ -79,7 +81,7 @@ export function MergeOnDoneDialog() {
         }
 
         // Resolve base branch
-        const activeWorktrees = await window.db.worktree.getActiveByProject(pending.projectId)
+        const activeWorktrees = await db.worktree.getActiveByProject(pending.projectId)
         const defaultWt = activeWorktrees.find((w) => w.is_default)
         const resolvedBaseBranch = featureWorktree.base_branch ?? defaultWt?.branch_name
 
@@ -161,7 +163,7 @@ export function MergeOnDoneDialog() {
         }
 
         // Get project path for archive step
-        const project = await window.db.project.get(featureWorktree.project_id)
+        const project = await db.project.get(featureWorktree.project_id)
         if (cancelled) return
 
         setResolved({

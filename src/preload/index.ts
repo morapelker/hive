@@ -10,6 +10,9 @@ import type { Envelope } from '@shared/types/ipc-envelope'
 import type { ConnectionWithMembers } from '../main/db/types'
 import type { BashRunSnapshot, BashStreamEvent } from '../main/effect/bash/types'
 
+const invokeEnvelope = <A>(channel: string, ...args: unknown[]): Promise<Envelope<A>> =>
+  ipcRenderer.invoke(channel, ...args)
+
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
 // point mapping. Any zoom level breaks coordinate sync and causes misaligned
 // rendering. This also resets zoom for users who accidentally changed it.
@@ -20,10 +23,10 @@ webFrame.setVisualZoomLevelLimits(1, 1)
 const db = {
   // Settings
   setting: {
-    get: (key: string) => ipcRenderer.invoke('db:setting:get', key),
-    set: (key: string, value: string) => ipcRenderer.invoke('db:setting:set', key, value),
-    delete: (key: string) => ipcRenderer.invoke('db:setting:delete', key),
-    getAll: () => ipcRenderer.invoke('db:setting:getAll')
+    get: (key: string) => invokeEnvelope('db:setting:get', key),
+    set: (key: string, value: string) => invokeEnvelope('db:setting:set', key, value),
+    delete: (key: string) => invokeEnvelope('db:setting:delete', key),
+    getAll: () => invokeEnvelope('db:setting:getAll')
   },
 
   // Projects
@@ -33,10 +36,10 @@ const db = {
       path: string
       description?: string | null
       tags?: string[] | null
-    }) => ipcRenderer.invoke('db:project:create', data),
-    get: (id: string) => ipcRenderer.invoke('db:project:get', id),
-    getByPath: (path: string) => ipcRenderer.invoke('db:project:getByPath', path),
-    getAll: () => ipcRenderer.invoke('db:project:getAll'),
+    }) => invokeEnvelope('db:project:create', data),
+    get: (id: string) => invokeEnvelope('db:project:get', id),
+    getByPath: (path: string) => invokeEnvelope('db:project:getByPath', path),
+    getAll: () => invokeEnvelope('db:project:getAll'),
     update: (
       id: string,
       data: {
@@ -52,50 +55,50 @@ const db = {
         auto_assign_port?: boolean
         last_accessed_at?: string
       }
-    ) => ipcRenderer.invoke('db:project:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('db:project:delete', id),
-    touch: (id: string) => ipcRenderer.invoke('db:project:touch', id),
-    reorder: (orderedIds: string[]) => ipcRenderer.invoke('db:project:reorder', orderedIds),
-    sortByLastMessage: () => ipcRenderer.invoke('db:project:sortByLastMessage')
+    ) => invokeEnvelope('db:project:update', id, data),
+    delete: (id: string) => invokeEnvelope('db:project:delete', id),
+    touch: (id: string) => invokeEnvelope('db:project:touch', id),
+    reorder: (orderedIds: string[]) => invokeEnvelope('db:project:reorder', orderedIds),
+    sortByLastMessage: () => invokeEnvelope('db:project:sortByLastMessage')
   },
 
   // Worktrees
   worktree: {
     create: (data: { project_id: string; name: string; branch_name: string; path: string }) =>
-      ipcRenderer.invoke('db:worktree:create', data),
-    get: (id: string) => ipcRenderer.invoke('db:worktree:get', id),
-    getByProject: (projectId: string) => ipcRenderer.invoke('db:worktree:getByProject', projectId),
+      invokeEnvelope('db:worktree:create', data),
+    get: (id: string) => invokeEnvelope('db:worktree:get', id),
+    getByProject: (projectId: string) => invokeEnvelope('db:worktree:getByProject', projectId),
     getActiveByProject: (projectId: string) =>
-      ipcRenderer.invoke('db:worktree:getActiveByProject', projectId),
+      invokeEnvelope('db:worktree:getActiveByProject', projectId),
     getRecentlyActive: (cutoffMs: number) =>
-      ipcRenderer.invoke('db:worktree:getRecentlyActive', cutoffMs),
+      invokeEnvelope('db:worktree:getRecentlyActive', cutoffMs),
     update: (
       id: string,
       data: { name?: string; status?: 'active' | 'archived'; last_accessed_at?: string }
-    ) => ipcRenderer.invoke('db:worktree:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('db:worktree:delete', id),
-    archive: (id: string) => ipcRenderer.invoke('db:worktree:archive', id),
-    touch: (id: string) => ipcRenderer.invoke('db:worktree:touch', id),
+    ) => invokeEnvelope('db:worktree:update', id, data),
+    delete: (id: string) => invokeEnvelope('db:worktree:delete', id),
+    archive: (id: string) => invokeEnvelope('db:worktree:archive', id),
+    touch: (id: string) => invokeEnvelope('db:worktree:touch', id),
     appendSessionTitle: (worktreeId: string, title: string) =>
-      ipcRenderer.invoke('db:worktree:appendSessionTitle', { worktreeId, title }),
+      invokeEnvelope('db:worktree:appendSessionTitle', { worktreeId, title }),
     updateModel: (params: {
       worktreeId: string
       modelProviderId: string
       modelId: string
       modelVariant: string | null
-    }) => ipcRenderer.invoke('db:worktree:updateModel', params),
+    }) => invokeEnvelope('db:worktree:updateModel', params),
     addAttachment: (
       worktreeId: string,
       attachment: { type: 'jira' | 'figma'; url: string; label: string }
-    ) => ipcRenderer.invoke('db:worktree:addAttachment', { worktreeId, attachment }),
+    ) => invokeEnvelope('db:worktree:addAttachment', { worktreeId, attachment }),
     removeAttachment: (worktreeId: string, attachmentId: string) =>
-      ipcRenderer.invoke('db:worktree:removeAttachment', { worktreeId, attachmentId }),
+      invokeEnvelope('db:worktree:removeAttachment', { worktreeId, attachmentId }),
     attachPR: (worktreeId: string, prNumber: number, prUrl: string) =>
-      ipcRenderer.invoke('db:worktree:attachPR', { worktreeId, prNumber, prUrl }),
-    detachPR: (worktreeId: string) => ipcRenderer.invoke('db:worktree:detachPR', { worktreeId }),
+      invokeEnvelope('db:worktree:attachPR', { worktreeId, prNumber, prUrl }),
+    detachPR: (worktreeId: string) => invokeEnvelope('db:worktree:detachPR', { worktreeId }),
     setPinned: (worktreeId: string, pinned: boolean) =>
-      ipcRenderer.invoke('db:worktree:setPinned', { worktreeId, pinned }),
-    getPinned: () => ipcRenderer.invoke('db:worktree:getPinned')
+      invokeEnvelope('db:worktree:setPinned', { worktreeId, pinned }),
+    getPinned: () => invokeEnvelope('db:worktree:getPinned')
   },
 
   // Sessions
@@ -112,13 +115,12 @@ const db = {
       model_provider_id?: string | null
       model_id?: string | null
       model_variant?: string | null
-    }) => ipcRenderer.invoke('db:session:create', data),
-    get: (id: string) => ipcRenderer.invoke('db:session:get', id),
-    getByWorktree: (worktreeId: string) =>
-      ipcRenderer.invoke('db:session:getByWorktree', worktreeId),
-    getByProject: (projectId: string) => ipcRenderer.invoke('db:session:getByProject', projectId),
+    }) => invokeEnvelope('db:session:create', data),
+    get: (id: string) => invokeEnvelope('db:session:get', id),
+    getByWorktree: (worktreeId: string) => invokeEnvelope('db:session:getByWorktree', worktreeId),
+    getByProject: (projectId: string) => invokeEnvelope('db:session:getByProject', projectId),
     getActiveByWorktree: (worktreeId: string) =>
-      ipcRenderer.invoke('db:session:getActiveByWorktree', worktreeId),
+      invokeEnvelope('db:session:getActiveByWorktree', worktreeId),
     update: (
       id: string,
       data: {
@@ -133,8 +135,8 @@ const db = {
         updated_at?: string
         completed_at?: string | null
       }
-    ) => ipcRenderer.invoke('db:session:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('db:session:delete', id),
+    ) => invokeEnvelope('db:session:update', id, data),
+    delete: (id: string) => invokeEnvelope('db:session:delete', id),
     search: (options: {
       keyword?: string
       project_id?: string
@@ -142,47 +144,47 @@ const db = {
       dateFrom?: string
       dateTo?: string
       includeArchived?: boolean
-    }) => ipcRenderer.invoke('db:session:search', options),
-    getDraft: (sessionId: string) => ipcRenderer.invoke('db:session:getDraft', sessionId),
+    }) => invokeEnvelope('db:session:search', options),
+    getDraft: (sessionId: string) => invokeEnvelope('db:session:getDraft', sessionId),
     updateDraft: (sessionId: string, draft: string | null) =>
-      ipcRenderer.invoke('db:session:updateDraft', sessionId, draft),
+      invokeEnvelope('db:session:updateDraft', sessionId, draft),
     getByConnection: (connectionId: string) =>
-      ipcRenderer.invoke('db:session:getByConnection', connectionId),
+      invokeEnvelope('db:session:getByConnection', connectionId),
     getActiveByConnection: (connectionId: string) =>
-      ipcRenderer.invoke('db:session:getActiveByConnection', connectionId),
+      invokeEnvelope('db:session:getActiveByConnection', connectionId),
     setPinnedToBoard: (sessionId: string, pinned: boolean) =>
-      ipcRenderer.invoke('db:session:setPinnedToBoard', sessionId, pinned),
+      invokeEnvelope('db:session:setPinnedToBoard', sessionId, pinned),
     getPinnedSessions: (worktreeId: string) =>
-      ipcRenderer.invoke('db:session:getPinnedSessions', worktreeId),
+      invokeEnvelope('db:session:getPinnedSessions', worktreeId),
     getActiveBoardAssistant: (projectId: string) =>
-      ipcRenderer.invoke('db:session:getActiveBoardAssistant', projectId)
+      invokeEnvelope('db:session:getActiveBoardAssistant', projectId)
   },
 
   sessionMessage: {
-    list: (sessionId: string) => ipcRenderer.invoke('db:sessionMessage:list', sessionId)
+    list: (sessionId: string) => invokeEnvelope('db:sessionMessage:list', sessionId)
   },
 
   sessionActivity: {
-    list: (sessionId: string) => ipcRenderer.invoke('db:sessionActivity:list', sessionId)
+    list: (sessionId: string) => invokeEnvelope('db:sessionActivity:list', sessionId)
   },
 
   // Spaces
   space: {
-    list: () => ipcRenderer.invoke('db:space:list'),
+    list: () => invokeEnvelope('db:space:list'),
     create: (data: { name: string; icon_type?: string; icon_value?: string }) =>
-      ipcRenderer.invoke('db:space:create', data),
+      invokeEnvelope('db:space:create', data),
     update: (
       id: string,
       data: { name?: string; icon_type?: string; icon_value?: string; sort_order?: number }
-    ) => ipcRenderer.invoke('db:space:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('db:space:delete', id),
+    ) => invokeEnvelope('db:space:update', id, data),
+    delete: (id: string) => invokeEnvelope('db:space:delete', id),
     assignProject: (projectId: string, spaceId: string) =>
-      ipcRenderer.invoke('db:space:assignProject', projectId, spaceId),
+      invokeEnvelope('db:space:assignProject', projectId, spaceId),
     removeProject: (projectId: string, spaceId: string) =>
-      ipcRenderer.invoke('db:space:removeProject', projectId, spaceId),
-    getProjectIds: (spaceId: string) => ipcRenderer.invoke('db:space:getProjectIds', spaceId),
-    getAllAssignments: () => ipcRenderer.invoke('db:space:getAllAssignments'),
-    reorder: (orderedIds: string[]) => ipcRenderer.invoke('db:space:reorder', orderedIds)
+      invokeEnvelope('db:space:removeProject', projectId, spaceId),
+    getProjectIds: (spaceId: string) => invokeEnvelope('db:space:getProjectIds', spaceId),
+    getAllAssignments: () => invokeEnvelope('db:space:getAllAssignments'),
+    reorder: (orderedIds: string[]) => invokeEnvelope('db:space:reorder', orderedIds)
   },
 
   // Diff Comments
@@ -196,8 +198,8 @@ const db = {
       anchor_context_before?: string | null
       anchor_context_after?: string | null
       body: string
-    }) => ipcRenderer.invoke('db:diffComment:create', data),
-    list: (worktreeId: string) => ipcRenderer.invoke('db:diffComment:list', worktreeId),
+    }) => invokeEnvelope('db:diffComment:create', data),
+    list: (worktreeId: string) => invokeEnvelope('db:diffComment:list', worktreeId),
     update: (
       id: string,
       data: {
@@ -209,17 +211,17 @@ const db = {
         anchor_context_after?: string | null
         is_outdated?: boolean
       }
-    ) => ipcRenderer.invoke('db:diffComment:update', id, data),
+    ) => invokeEnvelope('db:diffComment:update', id, data),
     setOutdated: (id: string, isOutdated: boolean) =>
-      ipcRenderer.invoke('db:diffComment:setOutdated', id, isOutdated),
-    delete: (id: string) => ipcRenderer.invoke('db:diffComment:delete', id),
-    clearAll: (worktreeId: string) => ipcRenderer.invoke('db:diffComment:clearAll', worktreeId)
+      invokeEnvelope('db:diffComment:setOutdated', id, isOutdated),
+    delete: (id: string) => invokeEnvelope('db:diffComment:delete', id),
+    clearAll: (worktreeId: string) => invokeEnvelope('db:diffComment:clearAll', worktreeId)
   },
 
   // Utility
-  schemaVersion: () => ipcRenderer.invoke('db:schemaVersion'),
-  tableExists: (tableName: string) => ipcRenderer.invoke('db:tableExists', tableName),
-  getIndexes: () => ipcRenderer.invoke('db:getIndexes')
+  schemaVersion: () => invokeEnvelope('db:schemaVersion'),
+  tableExists: (tableName: string) => invokeEnvelope('db:tableExists', tableName),
+  getIndexes: () => invokeEnvelope('db:getIndexes')
 }
 
 // Project operations API (dialog, shell, clipboard)
@@ -2266,7 +2268,7 @@ const kanban = {
       worktree_id?: string | null
       mode?: 'build' | 'plan' | null
       plan_ready?: boolean
-    }) => ipcRenderer.invoke('kanban:ticket:create', data),
+    }) => invokeEnvelope('kanban:ticket:create', data),
     createBatch: (data: {
       drafts: Array<{
         draft_key: string
@@ -2288,10 +2290,10 @@ const kanban = {
         mark?: string | null
         depends_on?: string[]
       }>
-    }) => ipcRenderer.invoke('kanban:ticket:createBatch', data),
-    get: (id: string) => ipcRenderer.invoke('kanban:ticket:get', id),
+    }) => invokeEnvelope('kanban:ticket:createBatch', data),
+    get: (id: string) => invokeEnvelope('kanban:ticket:get', id),
     getByProject: (projectId: string, includeArchived?: boolean) =>
-      ipcRenderer.invoke('kanban:ticket:getByProject', projectId, includeArchived),
+      invokeEnvelope('kanban:ticket:getByProject', projectId, includeArchived),
     update: (
       id: string,
       data: {
@@ -2307,68 +2309,79 @@ const kanban = {
         mark?: string | null
         note?: string | null
       }
-    ) => ipcRenderer.invoke('kanban:ticket:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('kanban:ticket:delete', id),
-    archive: (id: string) => ipcRenderer.invoke('kanban:ticket:archive', id),
+    ) => invokeEnvelope('kanban:ticket:update', id, data),
+    delete: (id: string) => invokeEnvelope('kanban:ticket:delete', id),
+    archive: (id: string) => invokeEnvelope('kanban:ticket:archive', id),
     archiveAllDone: (projectId: string) =>
-      ipcRenderer.invoke('kanban:ticket:archiveAllDone', projectId),
-    unarchive: (id: string) => ipcRenderer.invoke('kanban:ticket:unarchive', id),
+      invokeEnvelope('kanban:ticket:archiveAllDone', projectId),
+    unarchive: (id: string) => invokeEnvelope('kanban:ticket:unarchive', id),
     move: (id: string, column: 'todo' | 'in_progress' | 'review' | 'done', sortOrder: number) =>
-      ipcRenderer.invoke('kanban:ticket:move', id, column, sortOrder),
+      invokeEnvelope('kanban:ticket:move', id, column, sortOrder),
     reorder: (id: string, sortOrder: number) =>
-      ipcRenderer.invoke('kanban:ticket:reorder', id, sortOrder),
-    getBySession: (sessionId: string) =>
-      ipcRenderer.invoke('kanban:ticket:getBySession', sessionId),
+      invokeEnvelope('kanban:ticket:reorder', id, sortOrder),
+    getBySession: (sessionId: string) => invokeEnvelope('kanban:ticket:getBySession', sessionId),
     addTokens: (id: string, tokens: number) =>
-      ipcRenderer.invoke('kanban:ticket:addTokens', id, tokens),
+      invokeEnvelope('kanban:ticket:addTokens', id, tokens),
     syncPR: (worktreeId: string, prNumber: number, prUrl: string) =>
-      ipcRenderer.invoke('kanban:ticket:syncPR', worktreeId, prNumber, prUrl),
-    clearPR: (worktreeId: string) => ipcRenderer.invoke('kanban:ticket:clearPR', worktreeId),
+      invokeEnvelope('kanban:ticket:syncPR', worktreeId, prNumber, prUrl),
+    clearPR: (worktreeId: string) => invokeEnvelope('kanban:ticket:clearPR', worktreeId),
     attachPR: (ticketId: string, projectId: string, prNumber: number, prUrl: string) =>
-      ipcRenderer.invoke('kanban:ticket:attachPR', ticketId, projectId, prNumber, prUrl),
+      invokeEnvelope('kanban:ticket:attachPR', ticketId, projectId, prNumber, prUrl),
     detachPR: (ticketId: string, projectId: string) =>
-      ipcRenderer.invoke('kanban:ticket:detachPR', ticketId, projectId),
+      invokeEnvelope('kanban:ticket:detachPR', ticketId, projectId),
     detachWorktree: (worktreeId: string) =>
-      ipcRenderer.invoke('kanban:ticket:detachWorktree', worktreeId)
+      invokeEnvelope('kanban:ticket:detachWorktree', worktreeId)
   },
   simpleMode: {
     toggle: (projectId: string, enabled: boolean) =>
-      ipcRenderer.invoke('kanban:simpleMode:toggle', projectId, enabled)
+      invokeEnvelope('kanban:simpleMode:toggle', projectId, enabled)
   },
   dependency: {
-    add: (dependentId: string, blockerId: string): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('kanban:dependency:add', dependentId, blockerId),
-    remove: (dependentId: string, blockerId: string): Promise<boolean> =>
-      ipcRenderer.invoke('kanban:dependency:remove', dependentId, blockerId),
-    getBlockers: (ticketId: string) =>
-      ipcRenderer.invoke('kanban:dependency:getBlockers', ticketId),
+    add: (
+      dependentId: string,
+      blockerId: string
+    ): Promise<Envelope<{ success: boolean; error?: string }>> =>
+      invokeEnvelope<{ success: boolean; error?: string }>(
+        'kanban:dependency:add',
+        dependentId,
+        blockerId
+      ),
+    remove: (dependentId: string, blockerId: string): Promise<Envelope<boolean>> =>
+      invokeEnvelope<boolean>('kanban:dependency:remove', dependentId, blockerId),
+    getBlockers: (ticketId: string) => invokeEnvelope('kanban:dependency:getBlockers', ticketId),
     getDependents: (ticketId: string) =>
-      ipcRenderer.invoke('kanban:dependency:getDependents', ticketId),
+      invokeEnvelope('kanban:dependency:getDependents', ticketId),
     getForProject: (projectId: string) =>
-      ipcRenderer.invoke('kanban:dependency:getForProject', projectId),
-    removeAll: (ticketId: string): Promise<number> =>
-      ipcRenderer.invoke('kanban:dependency:removeAll', ticketId)
+      invokeEnvelope('kanban:dependency:getForProject', projectId),
+    removeAll: (ticketId: string): Promise<Envelope<number>> =>
+      invokeEnvelope<number>('kanban:dependency:removeAll', ticketId)
   },
   board: {
     export: (
       projectId: string,
       projectName: string
-    ): Promise<{ success: boolean; ticketCount: number; path?: string }> =>
-      ipcRenderer.invoke('kanban:board:export', projectId, projectName),
-    openImportFile: (): Promise<{
-      tickets: Array<{
-        id: string
-        title: string
-        description?: string | null
-        attachments?: unknown[]
-        column?: string
-      }>
-      dependencies?: Array<{
-        dependentId: string
-        blockerId: string
-      }>
-      projectName?: string
-    } | null> => ipcRenderer.invoke('kanban:board:openImportFile'),
+    ): Promise<Envelope<{ success: boolean; ticketCount: number; path?: string }>> =>
+      invokeEnvelope<{ success: boolean; ticketCount: number; path?: string }>(
+        'kanban:board:export',
+        projectId,
+        projectName
+      ),
+    openImportFile: (): Promise<
+      Envelope<{
+        tickets: Array<{
+          id: string
+          title: string
+          description?: string | null
+          attachments?: unknown[]
+          column?: string
+        }>
+        dependencies?: Array<{
+          dependentId: string
+          blockerId: string
+        }>
+        projectName?: string
+      } | null>
+    > => invokeEnvelope('kanban:board:openImportFile'),
     importTickets: (
       projectId: string,
       tickets: Array<{
@@ -2382,12 +2395,14 @@ const kanban = {
         dependentId: string
         blockerId: string
       }>
-    ): Promise<{
-      created: number
-      updated: number
-      dependencyCount: number
-      ignoredDependencyCount: number
-    }> => ipcRenderer.invoke('kanban:board:importTickets', projectId, tickets, dependencies)
+    ): Promise<
+      Envelope<{
+        created: number
+        updated: number
+        dependencyCount: number
+        ignoredDependencyCount: number
+      }>
+    > => invokeEnvelope('kanban:board:importTickets', projectId, tickets, dependencies)
   }
 }
 

@@ -12,7 +12,9 @@ import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 function wrapGoalPrompt(prompt: string, criteria: string): string {
   const stripped = prompt.replace(/^\/goal\s+/, '')
@@ -113,7 +115,7 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
     if (!connectResult.success || !connectResult.sessionId) return
 
     useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
-    await window.db.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
+    await db.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
 
     // 9. Send prompt
     if (config.prompt.trim()) {

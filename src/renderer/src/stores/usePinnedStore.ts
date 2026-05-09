@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import { toast } from '@/lib/toast'
 import { useWorktreeStore } from './useWorktreeStore'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 interface PinnedState {
   pinnedWorktreeIds: Set<string>
@@ -47,7 +49,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   loadPinned: async () => {
     try {
       const [pinnedWorktrees, pinnedConnections] = await Promise.all([
-        window.db.worktree.getPinned(),
+        db.worktree.getPinned(),
         window.connectionOps.getPinned().then(unwrapEnvelope)
       ])
 
@@ -82,7 +84,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   },
 
   pinWorktree: async (id: string) => {
-    const result = await window.db.worktree.setPinned(id, true)
+    const result = await db.worktree.setPinned(id, true)
     if (result.success) {
       const projectId = findProjectIdForWorktree(id)
       set((state) => {
@@ -98,7 +100,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   },
 
   unpinWorktree: async (id: string) => {
-    const result = await window.db.worktree.setPinned(id, false)
+    const result = await db.worktree.setPinned(id, false)
     if (result.success) {
       const projectId = findProjectIdForWorktree(id)
       set((state) => {

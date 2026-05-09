@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -32,6 +32,8 @@ import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/cons
 import { toast } from '@/lib/toast'
 import type { KanbanTicket } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
 const EMPTY_ARRAY: readonly never[] = []
@@ -465,7 +467,7 @@ export function WorktreePickerModal({
         if (!connectResult.success || !connectResult.sessionId) return
 
         useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
-        await window.db.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
+        await db.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
 
         // Send prompt
         if (promptText.trim()) {
@@ -697,7 +699,7 @@ export function WorktreePickerModal({
 
       // Persist the opencodeSessionId to Zustand + DB
       useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
-      await window.db.session.update(sessionId, {
+      await db.session.update(sessionId, {
         opencode_session_id: connectResult.sessionId
       })
 

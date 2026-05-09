@@ -1,7 +1,10 @@
 import { create } from 'zustand'
 import { useWorktreeStore } from './useWorktreeStore'
 import { useKanbanStore } from './useKanbanStore'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
+const kanban = unwrapEnvelopeApi(() => window.kanban)
 
 // Debounce timers for git status refresh per worktree
 const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -419,7 +422,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       return { attachedPR: newMap }
     })
     try {
-      const result = await window.db.worktree.attachPR(worktreeId, prNumber, prUrl)
+      const result = await db.worktree.attachPR(worktreeId, prNumber, prUrl)
       if (!result.success) {
         // Rollback on failure
         set((s) => {
@@ -434,7 +437,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       } else {
         // Sync PR to linked kanban tickets (only on success)
         try {
-          await window.kanban.ticket.syncPR(worktreeId, prNumber, prUrl)
+          await kanban.ticket.syncPR(worktreeId, prNumber, prUrl)
           useKanbanStore.getState().syncPRToTicket(worktreeId, prNumber, prUrl)
         } catch {
           // Non-critical — ticket badge sync failure should not block PR attach
@@ -464,7 +467,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       return { attachedPR: newMap }
     })
     try {
-      const result = await window.db.worktree.detachPR(worktreeId)
+      const result = await db.worktree.detachPR(worktreeId)
       if (!result.success) {
         // Rollback on failure
         set((s) => {
@@ -475,7 +478,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       } else {
         // Clear PR from linked kanban tickets (only on success)
         try {
-          await window.kanban.ticket.clearPR(worktreeId)
+          await kanban.ticket.clearPR(worktreeId)
           useKanbanStore.getState().clearPRFromTicket(worktreeId)
         } catch {
           // Non-critical

@@ -42,7 +42,10 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import type { StreamingPart } from '@/components/sessions/SessionView'
 import type { QuestionRequest } from '@/stores/useQuestionStore'
 import type { CommandApprovalRequest } from '@/stores/useCommandApprovalStore'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
+const kanban = unwrapEnvelopeApi(() => window.kanban)
 
 interface BoardAssistantViewProps {
   projectId: string
@@ -144,7 +147,7 @@ async function resolveProjectRuntime(
     return { worktreeId: chosenWorktree.id, path: chosenWorktree.path }
   }
 
-  const fallbackWorktrees = await window.db.worktree.getActiveByProject(projectId)
+  const fallbackWorktrees = await db.worktree.getActiveByProject(projectId)
   const fallback =
     fallbackWorktrees.find((worktree) => worktree.is_default) ?? fallbackWorktrees[0] ?? null
 
@@ -259,7 +262,7 @@ async function ensureRuntimeSession(
   if (existingStoreSession) {
     session = existingStoreSession
     // Update the existing session with the model/SDK settings
-    await window.db.session.update(session.id, {
+    await db.session.update(session.id, {
       agent_sdk: agentSdk,
       ...(selectedModel
         ? {
@@ -270,7 +273,7 @@ async function ensureRuntimeSession(
         : {})
     })
   } else {
-    session = await window.db.session.create({
+    session = await db.session.create({
       worktree_id: worktreeId,
       connection_id: connectionId,
       project_id: targetProjectId,
@@ -293,7 +296,7 @@ async function ensureRuntimeSession(
     // Only delete the session if we just created it. Reused sessions
     // should be kept so the user doesn't lose the record and messages.
     if (!isReused) {
-      await window.db.session.delete(session.id).catch(() => {})
+      await db.session.delete(session.id).catch(() => {})
     }
     // Re-sync store so the stale entry is removed and the tab disappears
     const { useSessionStore } = await import('@/stores/useSessionStore')
@@ -301,7 +304,7 @@ async function ensureRuntimeSession(
     return null
   }
 
-  await window.db.session.update(session.id, {
+  await db.session.update(session.id, {
     opencode_session_id: connectResult.sessionId
   })
 
@@ -873,7 +876,7 @@ export function BoardAssistantView({
     (nextOpencodeSessionId: string) => {
       updateOpencodeSessionId(nextOpencodeSessionId)
       if (sessionId) {
-        void window.db.session
+        void db.session
           .update(sessionId, {
             opencode_session_id: nextOpencodeSessionId
           })
@@ -1200,7 +1203,7 @@ export function BoardAssistantView({
         }
 
         const draftKeysInBatch = new Set(draftsToCreate.map((draft) => draft.draftKey))
-        const result = await window.kanban.ticket.createBatch({
+        const result = await kanban.ticket.createBatch({
           drafts: draftsToCreate.map((draft) => ({
             draft_key: draft.draftKey,
             project_id: draft.projectId,

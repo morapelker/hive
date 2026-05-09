@@ -3,6 +3,9 @@ import { useSessionStore } from './useSessionStore'
 import { useConnectionStore } from './useConnectionStore'
 import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from './store-coordination'
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 export type SessionStatusType =
   | 'working'
@@ -302,7 +305,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     }))
 
     // Persist to SQLite (fire-and-forget)
-    window.db?.worktree?.update?.(worktreeId, { last_message_at: next }).catch(() => {})
+    db?.worktree?.update?.(worktreeId, { last_message_at: next }).catch(() => {})
   },
 
   getLastMessageTime: (worktreeId: string) => {

@@ -72,6 +72,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tip } from '@/components/ui/Tip'
 import { useTipStore } from '@/stores/useTipStore'
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const kanban = unwrapEnvelopeApi(() => window.kanban)
 
 interface SessionTabProps {
   sessionId: string
@@ -265,9 +268,7 @@ const SessionTab = memo(function SessionTab({
           Close
           <ContextMenuShortcut>&#8984;W</ContextMenuShortcut>
         </ContextMenuItem>
-        {onCloseOthers && (
-          <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>
-        )}
+        {onCloseOthers && <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>}
         {onCloseToRight && (
           <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
         )}
@@ -533,8 +534,18 @@ export function SessionTabs(): React.JSX.Element | null {
   const [showImport, setShowImport] = useState(false)
   const [showJiraImport, setShowJiraImport] = useState(false)
   const [showHiveImport, setShowHiveImport] = useState(false)
-  const [hiveImportTickets, setHiveImportTickets] = useState<Array<{ id: string; title: string; description?: string | null; attachments?: unknown[]; column?: string }>>([])
-  const [hiveImportDependencies, setHiveImportDependencies] = useState<Array<{ dependentId: string; blockerId: string }>>([])
+  const [hiveImportTickets, setHiveImportTickets] = useState<
+    Array<{
+      id: string
+      title: string
+      description?: string | null
+      attachments?: unknown[]
+      column?: string
+    }>
+  >([])
+  const [hiveImportDependencies, setHiveImportDependencies] = useState<
+    Array<{ dependentId: string; blockerId: string }>
+  >([])
 
   // Individual selectors for state values
   const activeWorktreeId = useSessionStore((s) => s.activeWorktreeId)
@@ -542,7 +553,13 @@ export function SessionTabs(): React.JSX.Element | null {
   const inlineConnectionSessionId = useSessionStore((s) => s.inlineConnectionSessionId)
 
   // useShallow: subscribes to these 5 fields only, re-renders when any field reference changes
-  const { sessionsByWorktree, tabOrderByWorktree, sessionsByConnection, tabOrderByConnection, orphanedSessions } = useSessionStore(
+  const {
+    sessionsByWorktree,
+    tabOrderByWorktree,
+    sessionsByConnection,
+    tabOrderByConnection,
+    orphanedSessions
+  } = useSessionStore(
     useShallow((s) => ({
       sessionsByWorktree: s.sessionsByWorktree,
       tabOrderByWorktree: s.tabOrderByWorktree,
@@ -569,7 +586,9 @@ export function SessionTabs(): React.JSX.Element | null {
   const closeConnectionSessionsToRight = useSessionStore((s) => s.closeConnectionSessionsToRight)
   const setInlineConnectionSession = useSessionStore((s) => s.setInlineConnectionSession)
   const clearInlineConnectionSession = useSessionStore((s) => s.clearInlineConnectionSession)
-  const loadConnectionSessionsBackground = useSessionStore((s) => s.loadConnectionSessionsBackground)
+  const loadConnectionSessionsBackground = useSessionStore(
+    (s) => s.loadConnectionSessionsBackground
+  )
   const closeOrphanedSessions = useSessionStore((s) => s.closeOrphanedSessions)
 
   const {
@@ -592,7 +611,9 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Board assistant state
   const boardAssistantByProject = useSessionStore((state) => state.boardAssistantByProject)
-  const activeBoardAssistantProjectId = useSessionStore((state) => state.activeBoardAssistantProjectId)
+  const activeBoardAssistantProjectId = useSessionStore(
+    (state) => state.activeBoardAssistantProjectId
+  )
   const createBoardAssistantSession = useSessionStore((s) => s.createBoardAssistantSession)
   const closeBoardAssistantSession = useSessionStore((s) => s.closeBoardAssistantSession)
   const focusBoardAssistantSession = useSessionStore((s) => s.focusBoardAssistantSession)
@@ -642,11 +663,10 @@ export function SessionTabs(): React.JSX.Element | null {
   const autoStartSession = useSettingsStore((state) => state.autoStartSession)
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
   const defaultAgentSdk = useSettingsStore((state) => state.defaultAgentSdk)
-  const multipleProvidersAvailable = [
-    availableAgentSdks?.opencode,
-    availableAgentSdks?.claude,
-    availableAgentSdks?.codex
-  ].filter(Boolean).length >= 2
+  const multipleProvidersAvailable =
+    [availableAgentSdks?.opencode, availableAgentSdks?.claude, availableAgentSdks?.codex].filter(
+      Boolean
+    ).length >= 2
   const autoStartedRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -667,7 +687,9 @@ export function SessionTabs(): React.JSX.Element | null {
       if (sessions.length > 0) return
 
       autoStartedRef.current = selectedWorktreeId
-      await createSession(selectedWorktreeId, project.id, undefined, undefined, { autoFocus: false })
+      await createSession(selectedWorktreeId, project.id, undefined, undefined, {
+        autoFocus: false
+      })
 
       // In toggle mode with no prior session, the auto-created session is the only
       // thing to show — focus it. In sticky-tab mode, the board tab is already active.
@@ -1074,7 +1096,8 @@ export function SessionTabs(): React.JSX.Element | null {
   const isFileTabActive = activeFilePath !== null
 
   // Sticky-tab mode: board is visible when its tab is selected and no file is foregrounded
-  const isStickyBoardActive = boardMode === 'sticky-tab' && activeSessionId === BOARD_TAB_ID && !isFileTabActive
+  const isStickyBoardActive =
+    boardMode === 'sticky-tab' && activeSessionId === BOARD_TAB_ID && !isFileTabActive
 
   /** Renders connection tabs + session tabs — shared between sticky-tab and normal mode */
   const renderSessionTabs = () => (
@@ -1303,9 +1326,11 @@ export function SessionTabs(): React.JSX.Element | null {
             >
               <KanbanIcon className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
               <span className="truncate flex-1">Board</span>
-              {activeSessionId === BOARD_TAB_ID && !isFileTabActive && !inlineConnectionSessionId && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-              )}
+              {activeSessionId === BOARD_TAB_ID &&
+                !isFileTabActive &&
+                !inlineConnectionSessionId && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                )}
             </div>
             {/* Normal session tabs alongside the sticky board tab */}
             {renderSessionTabs()}
@@ -1329,14 +1354,19 @@ export function SessionTabs(): React.JSX.Element | null {
             >
               <KanbanIcon className="h-3.5 w-3.5 flex-shrink-0 text-blue-400" />
               <span className="truncate flex-1">Board</span>
-              {!isFileTabActive && !activePinnedSessionId && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+              {!isFileTabActive && !activePinnedSessionId && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+              )}
             </div>
             {/* Pinned session tabs */}
             {Array.from(pinnedSessionIds).map((sessionId) => {
               let session: { id: string; name: string | null; mode?: string } | null = null
               for (const sessions of sessionsByWorktree.values()) {
                 const found = sessions.find((s) => s.id === sessionId)
-                if (found) { session = found; break }
+                if (found) {
+                  session = found
+                  break
+                }
               }
               if (!session) return null
 
@@ -1371,27 +1401,27 @@ export function SessionTabs(): React.JSX.Element | null {
                   >
                     <X className="h-3 w-3" />
                   </button>
-                  {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+                  {isActive && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                  )}
                 </div>
               )
             })}
           </>
-        ) : (
-          /* Normal mode (toggle, board not active): empty state OR session tabs */
-          orderedSessions.length === 0 &&
+        ) : /* Normal mode (toggle, board not active): empty state OR session tabs */
+        orderedSessions.length === 0 &&
           !(
             !isConnectionMode &&
             connectionsForWorktree.some((c) => (sessionsByConnection.get(c.id) || []).length > 0)
           ) ? (
-            <div
-              className="flex items-center px-3 py-1.5 text-sm text-muted-foreground"
-              data-testid="no-sessions"
-            >
-              No sessions yet. Click + to create one.
-            </div>
-          ) : (
-            renderSessionTabs()
-          )
+          <div
+            className="flex items-center px-3 py-1.5 text-sm text-muted-foreground"
+            data-testid="no-sessions"
+          >
+            No sessions yet. Click + to create one.
+          </div>
+        ) : (
+          renderSessionTabs()
         )}
 
         {/* File viewer tabs — always rendered, shared across both modes */}
@@ -1510,7 +1540,7 @@ export function SessionTabs(): React.JSX.Element | null {
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={async () => {
-                const result = await window.kanban.board.openImportFile()
+                const result = await kanban.board.openImportFile()
                 if (result) {
                   setHiveImportTickets(result.tickets)
                   setHiveImportDependencies(result.dependencies ?? [])
@@ -1525,7 +1555,7 @@ export function SessionTabs(): React.JSX.Element | null {
             <DropdownMenuItem
               onClick={async () => {
                 if (!project) return
-                const result = await window.kanban.board.export(project.id, project.name)
+                const result = await kanban.board.export(project.id, project.name)
                 if (result.success) {
                   toast.success(`Exported ${result.ticketCount} tickets`)
                 }
@@ -1545,14 +1575,14 @@ export function SessionTabs(): React.JSX.Element | null {
             open={isTicketCreateOpen}
             onOpenChange={setIsTicketCreateOpen}
             projectId={project.id}
-            connectionId={isConnectionMode ? selectedConnectionId ?? undefined : undefined}
+            connectionId={isConnectionMode ? (selectedConnectionId ?? undefined) : undefined}
           />
           <ImportTicketsModal
             open={showImport}
             onOpenChange={setShowImport}
             projectId={project.id}
             projectPath={project.path}
-            connectionId={isConnectionMode ? selectedConnectionId ?? undefined : undefined}
+            connectionId={isConnectionMode ? (selectedConnectionId ?? undefined) : undefined}
           />
           <JiraImportModal
             open={showJiraImport}

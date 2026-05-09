@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
 import { revealLabel } from '@/lib/platform'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import {
   AlertCircle,
   Archive,
@@ -73,6 +73,8 @@ import { AddAttachmentDialog } from '@/components/worktrees/AddAttachmentDialog'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
 import { useSiblingAggregate, type SiblingBucket } from '@/hooks/useSiblingAggregate'
 import { useGhosttySuppression } from '@/hooks'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 type PinnedItem = { kind: 'worktree'; id: string } | { kind: 'connection'; id: string }
 
@@ -254,7 +256,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
 
   const handleDetachAttachment = useCallback(
     async (attachmentId: string): Promise<void> => {
-      const result = await window.db.worktree.removeAttachment(worktreeId, attachmentId)
+      const result = await db.worktree.removeAttachment(worktreeId, attachmentId)
       if (result.success) {
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
         toast.success('Attachment removed')
@@ -266,7 +268,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   )
 
   const handleAttachmentAdded = useCallback((): void => {
-    window.db.worktree.get(worktreeId).then((w) => {
+    db.worktree.get(worktreeId).then((w) => {
       if (w) {
         try {
           setAttachments(JSON.parse(w.attachments || '[]'))

@@ -77,7 +77,9 @@ import { useImagePaste } from '@/hooks/useImagePaste'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
 import type { KanbanTicket, KanbanTicketUpdate, Worktree } from '../../../../main/db/types'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // ── Types ───────────────────────────────────────────────────────────
 type ModalMode = 'edit' | 'plan_review' | 'review' | 'error' | 'question'
@@ -156,7 +158,7 @@ async function findSessionById(sessionId: string): Promise<{
       let worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
       // Worktree not in the in-memory store (project not loaded in sidebar) — try DB
       if (!worktreePath && found.worktree_id) {
-        worktreePath = (await window.db.worktree.get(found.worktree_id))?.path ?? null
+        worktreePath = (await db.worktree.get(found.worktree_id))?.path ?? null
       }
       return { session: found, worktreePath, connectionId: null, workingPath: worktreePath }
     }
@@ -175,7 +177,7 @@ async function findSessionById(sessionId: string): Promise<{
     }
   }
   // DB fallback: session not in store (worktree not currently selected)
-  const dbSession = await window.db.session.get(sessionId)
+  const dbSession = await db.session.get(sessionId)
   if (!dbSession) {
     console.warn(
       `[KanbanTicketModal] findSessionById: session not found in store or DB — sessionId=${sessionId}`
@@ -187,7 +189,7 @@ async function findSessionById(sessionId: string): Promise<{
   useSessionStore.getState().hydrateSession(dbSession)
 
   const worktreePath = dbSession.worktree_id
-    ? ((await window.db.worktree.get(dbSession.worktree_id))?.path ?? null)
+    ? ((await db.worktree.get(dbSession.worktree_id))?.path ?? null)
     : null
   return {
     session: {
@@ -596,7 +598,7 @@ function KanbanTicketModalContent({
     }
 
     // Worktree not in store — load from DB
-    window.db.worktree.get(sessionRecord.worktree_id).then((wt) => {
+    db.worktree.get(sessionRecord.worktree_id).then((wt) => {
       setDbWorktreePath(wt?.path ?? null)
     })
   }, [sessionRecord?.worktree_id])
@@ -668,7 +670,7 @@ function KanbanTicketModalContent({
       return
     }
     let cancelled = false
-    window.db.session
+    db.session
       .get(ticket.current_session_id)
       .then((dbSess: { opencode_session_id?: string | null } | null) => {
         if (cancelled) return
@@ -1924,7 +1926,7 @@ function PlanReviewModeContent({
 
       // Persist the opencode session ID to Zustand + DB
       useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
-      await window.db.session.update(newSessionId, {
+      await db.session.update(newSessionId, {
         opencode_session_id: connectResult.sessionId
       })
 
@@ -1973,7 +1975,7 @@ function PlanReviewModeContent({
       }
 
       useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
-      await window.db.session.update(newSessionId, {
+      await db.session.update(newSessionId, {
         opencode_session_id: connectResult.sessionId
       })
 
@@ -2450,7 +2452,7 @@ function ReviewModeContent({
       return
     }
 
-    window.db.worktree
+    db.worktree
       .get(ticket.worktree_id)
       .then((dbWorktree) => {
         if (!cancelled) {
@@ -2478,7 +2480,7 @@ function ReviewModeContent({
 
     ;(async () => {
       try {
-        const defaultWorktrees = await window.db.worktree.getActiveByProject(ticket.project_id)
+        const defaultWorktrees = await db.worktree.getActiveByProject(ticket.project_id)
         const defaultWt = defaultWorktrees.find((w) => w.is_default)
         if (!cancelled) {
           setResolvedBaseBranch(resolvedWorktree.base_branch ?? defaultWt?.branch_name ?? null)
@@ -2656,9 +2658,9 @@ function ReviewModeContent({
     // Merge-on-done: intercept for feature-branch worktrees
     if (ticket.worktree_id) {
       try {
-        const worktree = await window.db.worktree.get(ticket.worktree_id)
+        const worktree = await db.worktree.get(ticket.worktree_id)
         if (worktree) {
-          const defaultWorktrees = await window.db.worktree.getActiveByProject(ticket.project_id)
+          const defaultWorktrees = await db.worktree.getActiveByProject(ticket.project_id)
           const defaultWt = defaultWorktrees.find((w) => w.is_default)
           const resolvedBaseBranch = worktree.base_branch ?? defaultWt?.branch_name
 

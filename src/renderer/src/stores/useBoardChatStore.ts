@@ -5,7 +5,10 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import type { SelectedModel } from '@/stores/useSettingsStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { BOARD_ASSISTANT_SESSION_NAME_PREFIX } from '@/stores/useSessionStore'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
+const kanban = unwrapEnvelopeApi(() => window.kanban)
 
 export type BoardChatStatus = 'idle' | 'starting' | 'thinking' | 'awaiting_confirmation' | 'error'
 
@@ -428,7 +431,7 @@ async function cleanupRuntime(
 
   try {
     if (sessionId) {
-      await window.db.session.delete(sessionId)
+      await db.session.delete(sessionId)
     }
   } catch {
     // Best effort only.
@@ -440,7 +443,7 @@ async function buildBoardContext(
   selectedTargetProjectId: string | null
 ): Promise<string> {
   if (scope.kind === 'project') {
-    const tickets = await window.kanban.ticket.getByProject(scope.projectId, false)
+    const tickets = await kanban.ticket.getByProject(scope.projectId, false)
     return [
       `Single-project board: ${scope.projectName}`,
       `Target project ID: ${scope.projectId}`,
@@ -453,7 +456,7 @@ async function buildBoardContext(
     const ticketGroups = await Promise.all(
       scope.availableProjects.map(async (project) => ({
         project,
-        tickets: await window.kanban.ticket.getByProject(project.id, false)
+        tickets: await kanban.ticket.getByProject(project.id, false)
       }))
     )
 
@@ -549,7 +552,7 @@ async function ensureRuntime(): Promise<{
     throw new Error('Select a target project before starting the board assistant.')
   }
 
-  const session = await window.db.session.create({
+  const session = await db.session.create({
     worktree_id: null,
     connection_id: null,
     project_id: projectId,
@@ -566,11 +569,11 @@ async function ensureRuntime(): Promise<{
 
   const connectResult = unwrapEnvelope(await window.opencodeOps.connect(runtimePath, session.id))
   if (!connectResult.success || !connectResult.sessionId) {
-    await window.db.session.delete(session.id).catch(() => {})
+    await db.session.delete(session.id).catch(() => {})
     throw new Error(connectResult.error || 'Failed to start board assistant session.')
   }
 
-  await window.db.session.update(session.id, { opencode_session_id: connectResult.sessionId })
+  await db.session.update(session.id, { opencode_session_id: connectResult.sessionId })
 
   useBoardChatStore.setState((state) =>
     patchActiveSnapshot(state, {
@@ -848,7 +851,7 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
       }
 
       const draftKeysInBatch = new Set(selectedDrafts.map((draft) => draft.draftKey))
-      const result = await window.kanban.ticket.createBatch({
+      const result = await kanban.ticket.createBatch({
         drafts: selectedDrafts.map((draft) => ({
           draft_key: draft.draftKey,
           project_id: draft.projectId,

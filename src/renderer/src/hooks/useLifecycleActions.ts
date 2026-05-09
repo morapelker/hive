@@ -10,7 +10,9 @@ import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { messageSendTimes, userExplicitSendTimes, lastSendMode } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 interface AttachedPR {
   number: number
@@ -254,7 +256,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
           )
           if (connectResult.success && connectResult.sessionId) {
             sessionStore.setOpenCodeSessionId(sessionId, connectResult.sessionId)
-            window.db.session
+            db.session
               .update(sessionId, { opencode_session_id: connectResult.sessionId })
               .catch(() => {})
 

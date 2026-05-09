@@ -11,6 +11,9 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { toast } from 'sonner'
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const kanban = unwrapEnvelopeApi(() => window.kanban)
 
 interface ExportedTicket {
   id: string
@@ -93,7 +96,7 @@ export function HiveImportModal({
           selectedIds.has(dependency.dependentId) && selectedIds.has(dependency.blockerId)
       )
 
-      const result = await window.kanban.board.importTickets(projectId, selected, importDependencies)
+      const result = await kanban.board.importTickets(projectId, selected, importDependencies)
       await loadTickets(projectId)
       await useKanbanStore.getState().loadDependencies(projectId)
 
@@ -101,7 +104,8 @@ export function HiveImportModal({
       if (result.created > 0) parts.push(`${result.created} created`)
       if (result.updated > 0) parts.push(`${result.updated} updated`)
       if (result.dependencyCount > 0) parts.push(`${result.dependencyCount} dependencies restored`)
-      if (result.ignoredDependencyCount > 0) parts.push(`${result.ignoredDependencyCount} dependencies ignored`)
+      if (result.ignoredDependencyCount > 0)
+        parts.push(`${result.ignoredDependencyCount} dependencies ignored`)
       toast.success(`Import complete: ${parts.join(', ')}`)
 
       onOpenChange(false)
@@ -145,8 +149,11 @@ export function HiveImportModal({
               ({newCount > 0 && <span className="text-green-500">{newCount} new</span>}
               {newCount > 0 && updateCount > 0 && ', '}
               {updateCount > 0 && (
-                <span className="text-yellow-500">{updateCount} update{updateCount !== 1 ? 's' : ''}</span>
-              )})
+                <span className="text-yellow-500">
+                  {updateCount} update{updateCount !== 1 ? 's' : ''}
+                </span>
+              )}
+              )
             </span>
           )}
           {dependencies.length > 0 && (
@@ -156,10 +163,7 @@ export function HiveImportModal({
 
         {/* Select all */}
         <div className="flex items-center gap-2 px-1 py-1 border-b">
-          <Checkbox
-            checked={selectedIds.size === tickets.length}
-            onCheckedChange={toggleAll}
-          />
+          <Checkbox checked={selectedIds.size === tickets.length} onCheckedChange={toggleAll} />
           <span className="text-xs text-muted-foreground font-medium">Select all</span>
         </div>
 

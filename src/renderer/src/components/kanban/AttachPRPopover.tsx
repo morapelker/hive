@@ -8,7 +8,9 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { KanbanTicket } from '../../../../main/db/types'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const kanban = unwrapEnvelopeApi(() => window.kanban)
 
 interface PRItem {
   number: number
@@ -273,7 +275,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     // Optimistic update
     useKanbanStore.getState().attachPRToTicket(ticket.id, ticket.project_id, pr.number, prUrl)
     try {
-      await window.kanban.ticket.attachPR(ticket.id, ticket.project_id, pr.number, prUrl)
+      await kanban.ticket.attachPR(ticket.id, ticket.project_id, pr.number, prUrl)
       toast.success(`PR #${pr.number} attached`)
     } catch {
       // Rollback
@@ -292,7 +294,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     // Optimistic
     useKanbanStore.getState().detachPRFromTicket(ticket.id, ticket.project_id)
     try {
-      await window.kanban.ticket.detachPR(ticket.id, ticket.project_id)
+      await kanban.ticket.detachPR(ticket.id, ticket.project_id)
       toast.success('PR detached')
     } catch {
       // Rollback

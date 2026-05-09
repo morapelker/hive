@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // Session type with worktree/project/connection metadata for display
 interface SessionWithWorktree {
@@ -150,7 +152,7 @@ export const useSessionHistoryStore = create<SessionHistoryState>((set, get) => 
     set({ isSearching: true, error: null })
     try {
       const { filters } = get()
-      const results = await window.db.session.search({
+      const results = await db.session.search({
         keyword: filters.keyword || undefined,
         project_id: filters.projectId || undefined,
         worktree_id: filters.worktreeId || undefined,
@@ -185,7 +187,7 @@ export const useSessionHistoryStore = create<SessionHistoryState>((set, get) => 
     }
 
     try {
-      const worktree = await window.db.worktree.get(session.worktree_id)
+      const worktree = await db.worktree.get(session.worktree_id)
       if (!worktree?.path) {
         return []
       }

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
 import { ModeToggle } from './ModeToggle'
@@ -92,6 +92,8 @@ import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // Stable empty array to avoid creating new references in selectors
 const EMPTY_FILE_INDEX: FlatFile[] = []
@@ -430,12 +432,12 @@ function insertSteeredMessageAtBoundary(
 async function loadCodexDurableState(
   sessionId: string
 ): Promise<{ messages: OpenCodeMessage[]; activities: SessionActivity[] }> {
-  if (!window.db.sessionMessage?.list || !window.db.sessionActivity?.list) {
+  if (!db.sessionMessage?.list || !db.sessionActivity?.list) {
     return { messages: [], activities: [] }
   }
   const [messageRows, activityRows] = await Promise.all([
-    window.db.sessionMessage.list(sessionId),
-    window.db.sessionActivity.list(sessionId)
+    db.sessionMessage.list(sessionId),
+    db.sessionActivity.list(sessionId)
   ])
   return {
     messages: deriveCodexTimelineMessages(messageRows, activityRows, true),
@@ -1481,7 +1483,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     childToSubtaskIndexRef.current.clear()
 
     // Load saved draft for this session
-    window.db.session.getDraft(sessionId).then((draft) => {
+    db.session.getDraft(sessionId).then((draft) => {
       if (draft) {
         setInputValue(draft)
         inputValueRef.current = draft
@@ -3062,7 +3064,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       try {
         // 1. Resolve session/worktree metadata so transcript loading can prefer OpenCode
-        const session = (await window.db.session.get(sessionId)) as DbSession | null
+        const session = (await db.session.get(sessionId)) as DbSession | null
         if (shouldAbortInit()) return
         if (!session) {
           throw new Error('Session not found')
@@ -3084,7 +3086,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         let wtPath: string | null = null
         if (session.worktree_id) {
           setWorktreeId(session.worktree_id)
-          const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
+          const worktree = (await db.worktree.get(session.worktree_id)) as DbWorktree | null
           if (shouldAbortInit()) return
           if (worktree) {
             wtPath = worktree.path
@@ -3505,7 +3507,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // open a temporary replacement session, keep the original pointer in
           // DB to avoid losing historical transcript linkage.
           if (!existingOpcSessionId) {
-            await window.db.session.update(sessionId, {
+            await db.session.update(sessionId, {
               opencode_session_id: connectResult.sessionId
             })
           }
@@ -3560,7 +3562,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       const currentValue = inputValueRef.current
       if (currentValue) {
-        window.db.session.updateDraft(sessionId, currentValue)
+        db.session.updateDraft(sessionId, currentValue)
       }
     }
   }, [sessionId])
@@ -3580,7 +3582,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
 
     try {
-      const session = (await window.db.session.get(sessionId)) as DbSession | null
+      const session = (await db.session.get(sessionId)) as DbSession | null
       if (!session) {
         throw new Error('Session not found')
       }
@@ -3591,7 +3593,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
+      const worktree = (await db.worktree.get(session.worktree_id)) as DbWorktree | null
       if (!worktree) {
         setMessages([])
         setViewState({ status: 'connected' })
@@ -3643,7 +3645,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
         setRevertMessageID(null)
         if (!existingOpcSessionId) {
-          await window.db.session.update(sessionId, {
+          await db.session.update(sessionId, {
             opencode_session_id: connectResult.sessionId
           })
         }
@@ -4201,7 +4203,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const sourceSession = sessionRecord ?? (await window.db.session.get(sessionId))
+      const sourceSession = sessionRecord ?? (await db.session.get(sessionId))
       if (!sourceSession) {
         toast.error('Session is not ready to fork yet')
         return
@@ -4235,7 +4237,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
 
         const fallbackForkName = sourceSession.name ? `${sourceSession.name} (fork)` : null
-        const forkedSession = await window.db.session.create({
+        const forkedSession = await db.session.create({
           worktree_id: targetWorktreeId,
           project_id: sourceSession.project_id,
           name: fallbackForkName,
@@ -4266,7 +4268,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         setInputValue('')
         inputValueRef.current = ''
         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-        window.db.session.updateDraft(sessionId, null)
+        db.session.updateDraft(sessionId, null)
         await runBashCommand(command, worktreePath)
         return
       }
@@ -4295,7 +4297,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           setHistoryIndex(null)
           savedDraftRef.current = ''
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          window.db.session.updateDraft(sessionId, null)
+          db.session.updateDraft(sessionId, null)
 
           try {
             if (commandName === 'undo') {
@@ -4394,7 +4396,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           inputValueRef.current = ''
           fileMentions.clearMentions()
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          window.db.session.updateDraft(sessionId, null)
+          db.session.updateDraft(sessionId, null)
 
           // Set sending state
           hasFinalizedCurrentResponseRef.current = false
@@ -4504,14 +4506,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         inputValueRef.current = ''
         fileMentions.clearMentions()
         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-        window.db.session.updateDraft(sessionId, null)
+        db.session.updateDraft(sessionId, null)
         return
       }
       setInputValue('')
       inputValueRef.current = ''
       fileMentions.clearMentions()
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-      window.db.session.updateDraft(sessionId, null)
+      db.session.updateDraft(sessionId, null)
 
       resetAutoScrollState()
 
@@ -4626,7 +4628,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Track which model is being used on this worktree
           if (requestModel && worktreeId) {
             useWorktreeStore.getState().updateWorktreeModel(worktreeId, requestModel)
-            window.db?.worktree
+            db?.worktree
               ?.updateModel({
                 worktreeId,
                 modelProviderId: requestModel.providerID,
@@ -5339,7 +5341,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           setInputValue('')
           inputValueRef.current = ''
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          window.db.session.updateDraft(sessionId, null)
+          db.session.updateDraft(sessionId, null)
           return
         }
         handleSend()
@@ -5501,7 +5503,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       // Debounce draft persistence (3 seconds)
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       draftTimerRef.current = setTimeout(() => {
-        window.db.session.updateDraft(sessionId, value || null)
+        db.session.updateDraft(sessionId, value || null)
       }, 3000)
     },
     [sessionId, slashDismissed, fileMentionsOpen, fileMentionCount, updateFileMentions]
@@ -6254,7 +6256,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                         setInputValue('')
                         inputValueRef.current = ''
                         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-                        window.db.session.updateDraft(sessionId, null)
+                        db.session.updateDraft(sessionId, null)
                         return
                       }
                       void handleSend()

@@ -9,8 +9,10 @@ import { useFileViewerStore } from './useFileViewerStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 /** Fire-and-forget: run setup script for a worktree, subscribing to output events
  *  so output is captured even when SetupTab is not mounted. */
@@ -286,7 +288,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   loadWorktrees: async (projectId: string) => {
     set({ isLoading: true, error: null })
     try {
-      const worktrees = await window.db.worktree.getActiveByProject(projectId)
+      const worktrees = await db.worktree.getActiveByProject(projectId)
       // Sort: non-default worktrees by last_accessed_at descending, default worktree last
       const sortedWorktrees = worktrees.sort((a, b) => {
         if (a.is_default && !b.is_default) return 1
@@ -676,7 +678,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Touch worktree (update last_accessed_at)
   touchWorktree: async (id: string) => {
     try {
-      await window.db.worktree.touch(id)
+      await db.worktree.touch(id)
       // Update local state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -876,7 +878,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     })
 
     // Persist to database (fire-and-forget)
-    window.db.worktree.appendSessionTitle?.(worktreeId, title)
+    db.worktree.appendSessionTitle?.(worktreeId, title)
   }
 }))
 

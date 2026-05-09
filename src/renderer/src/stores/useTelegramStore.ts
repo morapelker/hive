@@ -6,7 +6,9 @@ import type {
   TelegramForwardingStatus,
   TelegramMode
 } from '@shared/types/telegram'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 interface TelegramStore {
   connectionStatus: TelegramConnectionStatus
@@ -93,7 +95,7 @@ if (typeof window !== 'undefined' && window.telegramOps) {
           import('./useKanbanStore'),
           import('@/lib/backgroundSessionStart')
         ])
-        const session = await window.db.session.get(payload.sessionId)
+        const session = await db.session.get(payload.sessionId)
         if (!session) {
           toast.error('Could not start Telegram plan handoff')
           return
@@ -169,7 +171,7 @@ if (typeof window !== 'undefined' && window.telegramOps) {
           toast.error('Could not start Telegram plan handoff')
           return
         }
-        const worktree = await window.db.worktree.get(payload.worktreeId)
+        const worktree = await db.worktree.get(payload.worktreeId)
         if (!worktree?.path) {
           toast.error('Could not start Telegram plan handoff')
           return

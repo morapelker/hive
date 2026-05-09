@@ -6,7 +6,9 @@ import { notifyKanbanSessionSync, notifyKanbanNewSession } from './store-coordin
 import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 /**
  * Push the follow-up-message queue state for a session into the main process
@@ -306,10 +308,10 @@ export const useSessionStore = create<SessionState>()(
         set({ isLoading: !hasCached, error: null })
         try {
           // Only load active sessions - completed sessions appear in history only
-          const sessions = await window.db.session.getActiveByWorktree(worktreeId)
+          const sessions = await db.session.getActiveByWorktree(worktreeId)
 
           // Also load pinned sessions for this worktree
-          const pinnedSessions = await window.db.session.getPinnedSessions(worktreeId)
+          const pinnedSessions = await db.session.getPinnedSessions(worktreeId)
           const pinnedIds = new Set(pinnedSessions.map((s: { id: string }) => s.id))
 
           // Sort by updated_at descending (most recent first)
@@ -436,7 +438,7 @@ export const useSessionStore = create<SessionState>()(
           const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
           const sessionNumber = existingSessions.length + 1
 
-          const session = await window.db.session.create({
+          const session = await db.session.create({
             worktree_id: worktreeId,
             project_id: projectId,
             name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
@@ -551,7 +553,7 @@ export const useSessionStore = create<SessionState>()(
 
           // Mark session as completed instead of deleting
           // This preserves it in session history
-          await window.db.session.update(sessionId, {
+          await db.session.update(sessionId, {
             status: 'completed',
             completed_at: new Date().toISOString()
           })
@@ -730,7 +732,7 @@ export const useSessionStore = create<SessionState>()(
       reopenSession: async (sessionId: string, worktreeId: string) => {
         try {
           // 1. Update database status first - this ensures persistence
-          const updatedSession = await window.db.session.update(sessionId, {
+          const updatedSession = await db.session.update(sessionId, {
             status: 'active',
             completed_at: null
           })
@@ -807,7 +809,7 @@ export const useSessionStore = create<SessionState>()(
       reopenConnectionSession: async (sessionId: string, connectionId: string) => {
         try {
           // 1. Update database status first - this ensures persistence
-          const updatedSession = await window.db.session.update(sessionId, {
+          const updatedSession = await db.session.update(sessionId, {
             status: 'active',
             completed_at: null
           })
@@ -975,7 +977,7 @@ export const useSessionStore = create<SessionState>()(
       // Update session name (scope-agnostic)
       updateSessionName: async (sessionId: string, name: string) => {
         try {
-          const updatedSession = await window.db.session.update(sessionId, { name })
+          const updatedSession = await db.session.update(sessionId, { name })
           if (updatedSession) {
             const scope = findSessionScope(get(), sessionId)
 
@@ -1150,7 +1152,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Persist to database
         try {
-          await window.db.session.update(sessionId, { mode: newMode })
+          await db.session.update(sessionId, { mode: newMode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1192,7 +1194,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Persist to database
         try {
-          await window.db.session.update(sessionId, { mode: newMode })
+          await db.session.update(sessionId, { mode: newMode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1217,7 +1219,7 @@ export const useSessionStore = create<SessionState>()(
         })
 
         try {
-          await window.db.session.update(sessionId, { mode: newMode })
+          await db.session.update(sessionId, { mode: newMode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1235,7 +1237,7 @@ export const useSessionStore = create<SessionState>()(
         })
 
         try {
-          await window.db.session.update(sessionId, { mode })
+          await db.session.update(sessionId, { mode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1297,7 +1299,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Persist to database
         try {
-          await window.db.session.update(sessionId, {
+          await db.session.update(sessionId, {
             model_provider_id: model.providerID,
             model_id: model.modelID,
             model_variant: model.variant ?? null
@@ -1359,7 +1361,7 @@ export const useSessionStore = create<SessionState>()(
         const scope = findSessionScope(get(), sessionId)
         if (scope?.type === 'worktree') {
           try {
-            await window.db.worktree.updateModel({
+            await db.worktree.updateModel({
               worktreeId: scope.scopeId,
               modelProviderId: model.providerID,
               modelId: model.modelID,
@@ -1596,7 +1598,7 @@ export const useSessionStore = create<SessionState>()(
 
       loadBoardAssistantSession: async (projectId: string) => {
         try {
-          const session = await window.db.session.getActiveBoardAssistant(projectId)
+          const session = await db.session.getActiveBoardAssistant(projectId)
           set((state) => {
             const map = new Map(state.boardAssistantByProject)
             const newModeMap = new Map(state.modeBySession)
@@ -1622,7 +1624,7 @@ export const useSessionStore = create<SessionState>()(
             return { success: true, session: existing }
           }
 
-          const session = await window.db.session.create({
+          const session = await db.session.create({
             worktree_id: null,
             project_id: projectId,
             name: 'Board Assistant',
@@ -1714,7 +1716,7 @@ export const useSessionStore = create<SessionState>()(
           }
           useBoardChatStore.getState().clearProjectSnapshot(projectId)
 
-          await window.db.session.update(session.id, {
+          await db.session.update(session.id, {
             status: 'completed',
             completed_at: new Date().toISOString()
           })
@@ -1785,7 +1787,7 @@ export const useSessionStore = create<SessionState>()(
       // Used by sticky tabs in worktree mode to pre-load connection sessions.
       loadConnectionSessionsBackground: async (connectionId: string) => {
         try {
-          const sessions = await window.db.session.getActiveByConnection(connectionId)
+          const sessions = await db.session.getActiveByConnection(connectionId)
           const sortedSessions = sessions
             .filter(isVisibleSession)
             .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
@@ -1837,7 +1839,7 @@ export const useSessionStore = create<SessionState>()(
       loadConnectionSessions: async (connectionId: string) => {
         set({ isLoading: true, error: null })
         try {
-          const sessions = await window.db.session.getActiveByConnection(connectionId)
+          const sessions = await db.session.getActiveByConnection(connectionId)
           const sortedSessions = sessions
             .filter(isVisibleSession)
             .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
@@ -1949,7 +1951,7 @@ export const useSessionStore = create<SessionState>()(
           const existingSessions = get().sessionsByConnection.get(connectionId) || []
           const sessionNumber = existingSessions.length + 1
 
-          const session = await window.db.session.create({
+          const session = await db.session.create({
             worktree_id: null,
             project_id: projectId,
             connection_id: connectionId,
@@ -2175,7 +2177,7 @@ export const useSessionStore = create<SessionState>()(
           return { pinnedSessionIds: newPinnedIds }
         })
         try {
-          await window.db.session.setPinnedToBoard(sessionId, true)
+          await db.session.setPinnedToBoard(sessionId, true)
         } catch {
           // Rollback on failure
           set((state) => {
@@ -2201,7 +2203,7 @@ export const useSessionStore = create<SessionState>()(
           }
         })
         // Fire-and-forget DB update
-        window.db.session.setPinnedToBoard(sessionId, false).catch(() => {})
+        db.session.setPinnedToBoard(sessionId, false).catch(() => {})
       },
 
       setActivePinnedSession: (sessionId: string | null) => {
@@ -2210,7 +2212,7 @@ export const useSessionStore = create<SessionState>()(
 
       loadPinnedSessions: async (worktreeId: string) => {
         try {
-          const pinnedSessions = await window.db.session.getPinnedSessions(worktreeId)
+          const pinnedSessions = await db.session.getPinnedSessions(worktreeId)
           set({
             pinnedSessionIds: new Set(pinnedSessions.map((s) => s.id))
           })

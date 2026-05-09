@@ -37,7 +37,9 @@ import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageSto
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
 import type { KanbanTicket, KanbanTicketColumn as ColumnType } from '../../../../main/db/types'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // ── Layout animation spring ─────────────────────────────────────────
 const CARD_LAYOUT_SPRING = {
@@ -381,11 +383,10 @@ export function KanbanColumn({
           const draggedTicket = findTicket(ticketId)
           if (draggedTicket?.worktree_id) {
             try {
-              const worktree = await window.db.worktree.get(draggedTicket.worktree_id)
+              const worktree = await db.worktree.get(draggedTicket.worktree_id)
               if (worktree) {
                 // Resolve the effective base branch
-                const defaultWorktrees =
-                  await window.db.worktree.getActiveByProject(ticketProjectId)
+                const defaultWorktrees = await db.worktree.getActiveByProject(ticketProjectId)
                 const defaultWt = defaultWorktrees.find((w) => w.is_default)
                 const resolvedBaseBranch = worktree.base_branch ?? defaultWt?.branch_name
 
@@ -469,9 +470,9 @@ export function KanbanColumn({
       const draggedTicket = findTicket(ticketId)
       if (draggedTicket?.current_session_id) {
         // Abort the running agent process (not just the DB status)
-        const session = await window.db.session.get(draggedTicket.current_session_id)
+        const session = await db.session.get(draggedTicket.current_session_id)
         if (session?.opencode_session_id && session.worktree_id) {
-          const worktree = await window.db.worktree.get(session.worktree_id)
+          const worktree = await db.worktree.get(session.worktree_id)
           if (worktree?.path) {
             try {
               unwrapEnvelope(
@@ -483,7 +484,7 @@ export function KanbanColumn({
           }
         }
 
-        await window.db.session.update(draggedTicket.current_session_id, {
+        await db.session.update(draggedTicket.current_session_id, {
           status: 'completed',
           completed_at: new Date().toISOString()
         })

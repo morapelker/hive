@@ -5,7 +5,9 @@ import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // ==========================================
 // Types
@@ -271,8 +273,8 @@ interface SettingsState extends AppSettings {
 
 async function saveToDatabase(settings: AppSettings): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && window.db?.setting) {
-      await window.db.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+    if (typeof window !== 'undefined' && db?.setting) {
+      await db.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
     }
   } catch (error) {
     console.error('Failed to save settings to database:', error)
@@ -281,8 +283,8 @@ async function saveToDatabase(settings: AppSettings): Promise<void> {
 
 async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
   try {
-    if (typeof window !== 'undefined' && window.db?.setting) {
-      const value = await window.db.setting.get(APP_SETTINGS_DB_KEY)
+    if (typeof window !== 'undefined' && db?.setting) {
+      const value = await db.setting.get(APP_SETTINGS_DB_KEY)
       if (value) {
         const parsed = JSON.parse(value)
         const result = {

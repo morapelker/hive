@@ -4,6 +4,9 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { toast } from '@/lib/toast'
 import type { KanbanTicket, Worktree } from '../../../main/db/types'
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 /**
  * Combined state + actions for running the project's `run_script` against
@@ -59,7 +62,7 @@ export function useTicketRunScript(ticket: KanbanTicket): TicketRunScriptState {
       return
     }
 
-    window.db.worktree
+    db.worktree
       .get(ticket.worktree_id)
       .then((wt) => {
         if (!cancelled) setDbWorktree(wt ?? null)

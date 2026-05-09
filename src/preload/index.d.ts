@@ -7,6 +7,14 @@ import type {
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
 
+type Enveloped<T> = {
+  [K in keyof T]: T[K] extends (...args: infer Args) => Promise<infer Result>
+    ? (...args: Args) => Promise<Envelope<Result>>
+    : T[K] extends (...args: infer Args) => infer Result
+      ? (...args: Args) => Result
+      : Enveloped<T[K]>
+}
+
 // Database types for renderer
 interface Connection {
   id: string
@@ -322,7 +330,7 @@ declare global {
   }
 
   interface Window {
-    db: {
+    db: Enveloped<{
       setting: {
         get: (key: string) => Promise<string | null>
         set: (key: string, value: string) => Promise<boolean>
@@ -511,7 +519,7 @@ declare global {
       schemaVersion: () => Promise<number>
       tableExists: (tableName: string) => Promise<boolean>
       getIndexes: () => Promise<{ name: string; tbl_name: string }[]>
-    }
+    }>
     projectOps: {
       openDirectoryDialog: () => Promise<Envelope<string | null>>
       isGitRepository: (path: string) => Promise<Envelope<boolean>>
@@ -1759,14 +1767,14 @@ declare global {
     codexDebugLoggerOps: {
       configure: (enabled: boolean, resetPerSession: boolean) => Promise<void>
     }
-    kanban: {
+    kanban: Enveloped<{
       ticket: {
         create: (data: KanbanTicketCreate) => Promise<KanbanTicket>
         createBatch: (data: {
           drafts: KanbanTicketBatchCreateItem[]
         }) => Promise<KanbanTicketBatchCreateResult>
         get: (id: string) => Promise<KanbanTicket | null>
-        getByProject: (projectId: string) => Promise<KanbanTicket[]>
+        getByProject: (projectId: string, includeArchived?: boolean) => Promise<KanbanTicket[]>
         update: (id: string, data: KanbanTicketUpdate) => Promise<KanbanTicket | null>
         delete: (id: string) => Promise<boolean>
         archive: (id: string) => Promise<KanbanTicket | null>
@@ -1846,7 +1854,7 @@ declare global {
           ignoredDependencyCount: number
         }>
       }
-    }
+    }>
     ticketImport: {
       listProviders: () => Promise<Envelope<Array<{ id: string; name: string; icon: string }>>>
       getSettingsSchema: (providerId: string) => Promise<

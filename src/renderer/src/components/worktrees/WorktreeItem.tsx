@@ -1,6 +1,6 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
 import { revealLabel } from '@/lib/platform'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import {
   AlertCircle,
   GitBranch,
@@ -69,6 +69,8 @@ import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 import { AddAttachmentDialog } from './AddAttachmentDialog'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 interface Worktree {
   id: string
@@ -218,7 +220,7 @@ export function WorktreeItem({
 
   const handleDetachAttachment = useCallback(
     async (attachmentId: string): Promise<void> => {
-      const result = await window.db.worktree.removeAttachment(worktree.id, attachmentId)
+      const result = await db.worktree.removeAttachment(worktree.id, attachmentId)
       if (result.success) {
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
         toast.success('Attachment removed')
@@ -231,7 +233,7 @@ export function WorktreeItem({
 
   const handleAttachmentAdded = useCallback((): void => {
     // Reload worktree data to get fresh attachments
-    window.db.worktree.get(worktree.id).then((w) => {
+    db.worktree.get(worktree.id).then((w) => {
       if (w) {
         try {
           setAttachments(JSON.parse(w.attachments || '[]'))

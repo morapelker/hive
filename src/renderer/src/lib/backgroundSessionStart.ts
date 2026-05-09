@@ -5,7 +5,9 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { lastSendMode, messageSendTimes, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 type SessionModelSource = {
   id: string
@@ -59,7 +61,7 @@ export async function startBackgroundSessionPrompt(opts: {
   }
 
   useSessionStore.getState().setOpenCodeSessionId(opts.sessionId, connectResult.sessionId)
-  await window.db.session.update(opts.sessionId, {
+  await db.session.update(opts.sessionId, {
     opencode_session_id: connectResult.sessionId
   })
 

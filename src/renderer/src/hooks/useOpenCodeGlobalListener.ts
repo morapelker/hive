@@ -16,13 +16,15 @@ import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { computeTokenDelta } from '@/lib/token-baselines'
 import { lastSendMode, messageSendTimes } from '@/lib/message-send-times'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 interface PromptDispatchContext {
   worktreePath: string
@@ -71,12 +73,12 @@ async function resolvePromptDispatchContext(
 ): Promise<PromptDispatchContext | null> {
   const storeContext = resolvePromptDispatchContextFromStores(sessionId)
 
-  if (!window.db?.session?.get) {
+  if (!db?.session?.get) {
     return storeContext
   }
 
   try {
-    const dbSession = (await window.db.session.get(sessionId)) as {
+    const dbSession = (await db.session.get(sessionId)) as {
       worktree_id?: string | null
       connection_id?: string | null
       opencode_session_id?: string | null
@@ -87,8 +89,8 @@ async function resolvePromptDispatchContext(
       return storeContext
     }
 
-    if (dbSession?.worktree_id && window.db?.worktree?.get) {
-      const dbWorktree = (await window.db.worktree.get(dbSession.worktree_id)) as {
+    if (dbSession?.worktree_id && db?.worktree?.get) {
+      const dbWorktree = (await db.worktree.get(dbSession.worktree_id)) as {
         path?: string | null
       } | null
       if (dbWorktree?.path) {
