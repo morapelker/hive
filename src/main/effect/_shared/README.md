@@ -1,0 +1,83 @@
+# Effect Conventions
+
+This directory holds shared infrastructure for every Effect "island" in the main process. Read this before adding a new island or editing an existing one.
+
+## What is an island?
+
+An **island** is a self-contained Effect-using subsystem that lives at `src/main/effect/<name>/`. It exposes a Promise-returning facade to the rest of the codebase and keeps all Effect types (`Effect`, `Layer`, `Context.Tag`, `ManagedRuntime`, etc.) internal to the island.
+
+The reference implementation is `src/main/effect/bash/`.
+
+## Required file layout
+
+Every island MUST contain these files (additional files are fine when they help):
+
+```
+src/main/effect/<name>/
+|-- errors.ts        # Tagged error classes (Data.TaggedError(...))
+|-- service.ts       # Context.Tag definitions for the island's services
+|-- layers.ts        # Live Layer implementations
+|-- runtime.ts       # Thin runtime accessor that delegates to _shared/runtime.ts
+|-- facade.ts        # Public Promise-returning API (the only file outsiders import)
+`-- __tests__/
+    `-- <name>-service.effect.test.ts
+```
+
+## Layering rules
+
+1. **`errors.ts`** - every failure mode is a `Data.TaggedError("...")<{ ... }>` class. The `_tag` becomes the `errorCode` at the IPC envelope boundary, so pick names that read well in user-facing error reports.
+2. **`service.ts`** - `Context.Tag` declarations only. Tag IDs must be namespaced (e.g. `'BashIsland/Bash'`, `'BashIsland/EventSink'`) to avoid collisions across islands.
+3. **`layers.ts`** - Live `Layer` implementations. Side-effecting dependencies (spawning processes, opening sockets, talking to Electron APIs) live here, not in `service.ts`.
+4. **`runtime.ts`** - calls `getOrCreateRuntime('<island-name>', () => ManagedRuntime.make(AppLive(...)))` from `_shared/runtime.ts`. Do NOT hold a module-scoped `let runtime` - the registry owns singleton storage.
+5. **`facade.ts`** - exports a `<Name>Facade` class (or singleton) whose methods return Promises. Each method runs an Effect on `getRuntime()` and converts the resulting `Exit` into either a plain value or a discriminated `{ success: true, ... } | { success: false, errorCode, error, details? }` envelope.
+
+## Facade pattern
+
+Two flavors of facade method:
+
+- **"Plain" methods** return the success value or `null` (used for read-only / no-fail operations like `getRun(sessionId): Promise<Snapshot | null>`).
+- **"Envelope" methods** return `Envelope<A>` where `A` is the success type and the failure case carries `errorCode` (the Effect error's `_tag`) plus a human-readable `error` string. Used for any operation that can fail with a typed error the caller needs to discriminate.
+
+The reference implementation in `bash/facade.ts` shows both:
+
+- `run(...)` returns `RunEnvelope` (envelope flavor).
+- `getRun(...)` returns `BashRunSnapshot | null` (plain flavor).
+
+A shared `fromCause(cause)` helper for envelope construction lands in Session 2 - until then, copy the `humanMessage` + `toEnvelope` pattern from `bash/facade.ts`.
+
+## Import-boundary rule
+
+**The only files outside `src/main/effect/<island>/` may import from are:**
+
+1. `src/main/effect/<island>/facade.ts` - the public facade.
+2. `src/main/effect/_shared/*` - shared helpers (runtime registry, zod adapter, future utilities).
+
+**They MUST NOT import from:**
+
+- `src/main/effect/<island>/service.ts`
+- `src/main/effect/<island>/layers.ts`
+- `src/main/effect/<island>/errors.ts`
+- `src/main/effect/<island>/runtime.ts`
+- `src/main/effect/<island>/types.ts` (unless the type is genuinely cross-cutting - re-export from the facade if so)
+
+If you find yourself wanting to import an internal Effect type into a non-Effect file, that's a signal the facade needs a new method or a new return type, not a deeper import.
+
+This is enforced by code review for now. An ESLint rule may be added later if drift becomes a problem.
+
+## Shared infrastructure
+
+- **`_shared/runtime.ts`** - `getOrCreateRuntime(name, factory)`, `disposeRuntime(name)`, `disposeAllRuntimes()`. Islands MUST use this; do not create a `ManagedRuntime` outside.
+- **`_shared/zod-adapter.ts`** - `decodeWithZod(schema, input, schemaName?)` and `ZodDecodeError`. Use at every external input boundary (IPC payloads, SDK responses, settings).
+
+## Test conventions
+
+Use the helpers in `test/utils/effect-test-utils.ts`:
+
+- `runEffect(effect)` -> `Promise<Exit<A, E>>`.
+- `expectExitSuccess(exit)` -> unwraps the success value or throws.
+- `expectExitFailure(exit, '<Tag>')` -> asserts the failure tag and returns the typed error.
+- `withTestLayers(...overrides)` -> `Layer.mergeAll` wrapper for composing test layer overrides.
+
+Use `Effect.provide(Layer.provide(<Live>, withTestLayers(...)))` to inject fakes for the island's external dependencies (event sinks, spawners, DB connections, etc.).
+
+`TestClock` from `effect` substitutes for real time in tests - see `bash/__tests__/bash-service.effect.test.ts:83` for an example.
