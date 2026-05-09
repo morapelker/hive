@@ -223,7 +223,8 @@ const fakeDb = {
   query: vi.fn(),
   queryOne: vi.fn(),
   exec: vi.fn(),
-  transaction: vi.fn()
+  transaction: <A, E, R>(self: Effect.Effect<A, E, R>) => self,
+  raw: Effect.die('raw is not provided in this test')
 }
 
 const TestDbLive = Layer.succeed(Db, fakeDb)
@@ -240,8 +241,8 @@ For success and typed-failure assertions, use `runEffect` with
 `expectExitSuccess` / `expectExitFailure`, or `Effect.either` when the test
 wants to assert on `Either` directly inside the Effect graph.
 
-`db/__tests__/db-layer-override.example.test.ts` is the heavily-commented
-copy-from template for this pattern.
+Session 8 adds `db/__tests__/db-layer-override.example.test.ts` as the
+heavily-commented copy-from template for this pattern.
 
 ## IPC handler migration: defineHandler may import island internals
 
