@@ -12,6 +12,11 @@ class FileReadFailed extends Data.TaggedError('FileReadFailed')<{
   readonly reason: string
 }> {}
 
+class FileWriteFailed extends Data.TaggedError('FileWriteFailed')<{
+  readonly filePath: string
+  readonly reason: string
+}> {}
+
 export function registerFileHandlers(): void {
   log.info('Registering file handlers')
 
@@ -55,22 +60,21 @@ export function registerFileHandlers(): void {
       })
   )
 
-  ipcMain.handle(
+  // file:write - migrated to defineHandler (EFFECT_ADOPTION Session 3)
+  defineHandler(
     'file:write',
-    async (
-      _event,
-      filePath: string,
-      content: string
-    ): Promise<{
-      success: boolean
-      error?: string
-    }> => {
-      const result = writeFile(filePath, content)
-      if (!result.success) {
-        log.error('Failed to write file', new Error(result.error ?? 'Unknown error'), { filePath })
-      }
-      return result
-    }
+    z.tuple([z.string().min(1, 'filePath is required'), z.string()]),
+    ([filePath, content]) =>
+      Effect.suspend(() => {
+        const result = writeFile(filePath, content)
+        if (result.success) return Effect.succeed(null)
+        return Effect.fail(
+          new FileWriteFailed({
+            filePath,
+            reason: result.error ?? 'Unknown error'
+          })
+        )
+      })
   )
 
 }
