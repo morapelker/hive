@@ -171,3 +171,103 @@ const result = await handlers.get('file:write')!(mockEvent, path, content)
 - **One runtime per island.** `defineHandler` uses the shared `'ipc'` runtime
   (`getIpcRuntime`). Island-backed handlers pre-`Effect.provide(...)` their
   layers before reaching `defineHandler`.
+
+## TestClock for time-dependent Effects
+
+Use `TestClock` for any Effect test that depends on time: `Effect.timeout`,
+`Effect.sleep`, `Schedule.exponential`, retry backoff, debounce windows, or
+polling loops. Tests should advance virtual time instead of waiting on real
+timers.
+
+The helper `runEffectWithTestClock` in `test/utils/effect-test-utils.ts` runs
+an Effect with the test clock available. Pair it with `Fiber` when the Effect
+must start first and complete only after time is advanced.
+
+```ts
+import { Effect, Fiber, TestClock } from 'effect'
+import {
+  expectExitSuccess,
+  runEffectWithTestClock
+} from '../../../../../test/utils/effect-test-utils'
+
+it('completes after virtual time advances', async () => {
+  const exit = await runEffectWithTestClock(
+    Effect.gen(function* () {
+      const fiber = yield* Effect.sleep('30 seconds').pipe(
+        Effect.as('done'),
+        Effect.fork
+      )
+
+      yield* TestClock.adjust('30 seconds')
+
+      return yield* Fiber.join(fiber)
+    })
+  )
+
+  expect(expectExitSuccess(exit)).toBe('done')
+})
+```
+
+The bash service test is the canonical worked example for time-dependent
+Effect tests.
+
+## Layer-override pattern (per-island example tests)
+
+Each island test should override only the services it needs to fake. The fake
+service should match the island's `Context.Tag` shape from `service.ts`, then be
+provided with `Layer.succeed` for simple objects or `Layer.effect` when setup
+itself is an Effect.
+
+```ts
+const fakeDb = {
+  query: vi.fn(),
+  queryOne: vi.fn(),
+  exec: vi.fn(),
+  transaction: vi.fn()
+}
+
+const TestDbLive = Layer.succeed(Db, fakeDb)
+
+const exit = await runEffect(
+  program.pipe(
+    Effect.provide(TestDbLive),
+    Effect.either
+  )
+)
+```
+
+For success and typed-failure assertions, use `runEffect` with
+`expectExitSuccess` / `expectExitFailure`, or `Effect.either` when the test
+wants to assert on `Either` directly inside the Effect graph.
+
+`db/__tests__/db-layer-override.example.test.ts` is the heavily-commented
+copy-from template for this pattern.
+
+## IPC handler migration: defineHandler may import island internals
+
+The import-boundary rule has one narrow exception: IPC handler modules that use
+`defineHandler` MAY import an island's `service.ts` Tags and `layers.ts` Live so
+the handler can provide island services before registration.
+
+IPC handlers MUST NOT import island `errors.ts` or `runtime.ts`. Typed errors
+should be defined at the IPC boundary or returned through the island facade, and
+runtime ownership stays inside the island or `_shared/runtime.ts`.
+
+See `src/main/ipc/git-file-handlers.ts` for the git-file handler migration
+shape.
+
+## Coverage
+
+Run coverage with:
+
+```bash
+pnpm test:coverage
+```
+
+Vitest prints a terminal summary and writes detailed reports under
+`coverage/`, including HTML and lcov output. Coverage configuration lives in
+`vitest.config.ts` and is shared by workspace projects through `extends` in
+`vitest.workspace.ts`.
+
+Coverage thresholds are intentionally set to `0` for now. The goal is to make
+coverage visible before ratcheting thresholds upward.
