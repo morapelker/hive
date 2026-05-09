@@ -38,6 +38,7 @@ export default defineWorkspace([
         'test/codex-migration/**/*.test.ts',
         'test/utils/**/*.test.ts',
         'src/main/effect/**/*.test.ts',
+        'src/main/ipc/**/*.test.ts',
         'src/main/services/**/*.test.ts'
       ],
       globals: true
