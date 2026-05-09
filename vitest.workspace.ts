@@ -17,7 +17,8 @@ export default defineWorkspace([
         'test/kanban/session-1/**/*.test.ts',
         'test/kanban/session-2/**/*.test.ts',
         'test/kanban/session-3/**/*.test.ts',
-        'test/codex-migration/**/*.test.ts'
+        'test/codex-migration/**/*.test.ts',
+        'test/utils/**/*.test.ts'
       ]
     }
   },
@@ -35,6 +36,7 @@ export default defineWorkspace([
         'test/kanban/session-2/**/*.test.ts',
         'test/kanban/session-3/**/*.test.ts',
         'test/codex-migration/**/*.test.ts',
+        'test/utils/**/*.test.ts',
         'src/main/effect-island/**/*.test.ts'
       ],
       globals: true
