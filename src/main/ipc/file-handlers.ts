@@ -1,8 +1,16 @@
 import { ipcMain } from 'electron'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
 import { createLogger } from '../services/logger'
 import { readFile, readFileAsBase64, writeFile } from '../services/file-ops'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'FileHandlers' })
+
+class FileReadFailed extends Data.TaggedError('FileReadFailed')<{
+  readonly filePath: string
+  readonly reason: string
+}> {}
 
 export function registerFileHandlers(): void {
   log.info('Registering file handlers')
@@ -25,25 +33,26 @@ export function registerFileHandlers(): void {
     }
   )
 
-  ipcMain.handle(
+  // file:readImageAsBase64 - migrated to defineHandler (EFFECT_ADOPTION Session 3)
+  defineHandler(
     'file:readImageAsBase64',
-    async (
-      _event,
-      filePath: string
-    ): Promise<{
-      success: boolean
-      data?: string
-      mimeType?: string
-      error?: string
-    }> => {
-      const result = readFileAsBase64(filePath)
-      if (!result.success) {
-        log.error('Failed to read image as base64', new Error(result.error ?? 'Unknown error'), {
-          filePath
-        })
-      }
-      return result
-    }
+    z.string().min(1, 'filePath is required'),
+    (filePath) =>
+      Effect.suspend(() => {
+        const result = readFileAsBase64(filePath)
+        if (result.success) {
+          return Effect.succeed({
+            data: result.data!,
+            mimeType: result.mimeType
+          })
+        }
+        return Effect.fail(
+          new FileReadFailed({
+            filePath,
+            reason: result.error ?? 'Unknown error'
+          })
+        )
+      })
   )
 
   ipcMain.handle(
