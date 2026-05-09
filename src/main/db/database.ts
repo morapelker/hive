@@ -93,6 +93,16 @@ export class DatabaseService {
     return this.db
   }
 
+  /**
+   * Public accessor for the raw better-sqlite3 handle. Used by the Effect DB
+   * island (`src/main/effect/db`) which prepares its own statements. Callers
+   * outside the Effect island should keep using the typed methods on
+   * DatabaseService rather than reaching for this.
+   */
+  getRawDb(): Database.Database {
+    return this.getDb()
+  }
+
   // Maps SQLite INTEGER 0/1 to boolean for worktree rows
   private mapWorktreeRow(row: Record<string, unknown>): Worktree {
     return {
