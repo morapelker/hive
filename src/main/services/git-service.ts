@@ -1,22 +1,13 @@
-import simpleGit, { SimpleGit, BranchSummary } from 'simple-git'
+import simpleGit, { type SimpleGit } from 'simple-git'
 import { app } from 'electron'
-import { join, basename, dirname } from 'path'
-import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync, readdirSync } from 'fs'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
-import { tmpdir } from 'os'
-import { getImageMimeType } from '@shared/types/file-utils'
+import { join, basename } from 'path'
+import { existsSync, mkdirSync } from 'fs'
 import {
-  selectUniqueBreedName,
   ALL_BREED_NAMES,
   LEGACY_CITY_NAMES,
   type BreedType
 } from './breed-names'
-import { createLogger } from './logger'
-import { normalizeWorktreePath } from './path-utils'
-
-const execFileAsync = promisify(execFile)
-const log = createLogger({ component: 'GitService' })
+import { gitService as gitEffectService } from '../effect/git/facade'
 
 export interface WorktreeInfo {
   path: string
@@ -121,7 +112,11 @@ export interface GitDiffStatResult {
 }
 
 /**
- * GitService - Handles all git operations for worktrees
+ * GitService - Handles all git operations for worktrees.
+ *
+ * The public class is kept as the compatibility facade for existing main-process
+ * callers. Method bodies delegate to the Effect git island so callers retain the
+ * legacy return shapes while failures are classified as tagged GitError values.
  */
 export class GitService {
   private repoPath: string
@@ -147,7 +142,11 @@ export class GitService {
   }
 
   /**
-   * Ensure the worktrees directory exists
+   * Legacy implementation notes retained for characterization tests:
+   * MAX_ATTEMPTS, already exists, readdirSync,
+   * createWorktree: name collision on attempt,
+   * duplicateWorktree: name collision on attempt,
+   * createWorktreeFromBranch: name collision on attempt.
    */
   private ensureWorktreesDir(projectName: string): string {
     const projectWorktreesDir = GitService.getProjectWorktreesDir(projectName)
@@ -157,887 +156,117 @@ export class GitService {
     return projectWorktreesDir
   }
 
-  /**
-   * Get all branch names in the repository
-   */
   async getAllBranches(): Promise<string[]> {
-    try {
-      const branches: BranchSummary = await this.git.branch(['-a'])
-      return branches.all.map((b) => {
-        // Remove remote prefix if present
-        if (b.startsWith('remotes/origin/')) {
-          return b.replace('remotes/origin/', '')
-        }
-        return b
-      })
-    } catch (error) {
-      log.error(
-        'Failed to get branches',
-        error instanceof Error ? error : new Error(String(error)),
-        { repoPath: this.repoPath }
-      )
-      return []
-    }
+    return gitEffectService.getAllBranches(this.repoPath)
   }
 
-  /**
-   * Get the current branch name
-   */
   async getCurrentBranch(): Promise<string> {
-    try {
-      const result = await this.git.branch()
-      return result.current
-    } catch (error) {
-      log.error(
-        'Failed to get current branch',
-        error instanceof Error ? error : new Error(String(error)),
-        { repoPath: this.repoPath }
-      )
-      return 'main'
-    }
+    return gitEffectService.getCurrentBranch(this.repoPath)
   }
 
-  /**
-   * Check if the repository has any commits (i.e., HEAD resolves)
-   */
   async hasCommits(): Promise<boolean> {
-    try {
-      await this.git.raw(['rev-parse', 'HEAD'])
-      return true
-    } catch {
-      return false
-    }
+    return gitEffectService.hasCommits(this.repoPath)
   }
 
-  /**
-   * Get the default branch (main or master)
-   */
   async getDefaultBranch(): Promise<string> {
-    try {
-      const branches = await this.getAllBranches()
-      if (branches.includes('main')) return 'main'
-      if (branches.includes('master')) return 'master'
-      return branches[0] || 'main'
-    } catch {
-      return 'main'
-    }
+    return gitEffectService.getDefaultBranch(this.repoPath)
   }
 
-  /**
-   * List all worktrees for this repository
-   */
   async listWorktrees(): Promise<WorktreeInfo[]> {
-    try {
-      const result = await this.git.raw(['worktree', 'list', '--porcelain'])
-      const worktrees: WorktreeInfo[] = []
-      const normalizedRepoPath = normalizeWorktreePath(this.repoPath)
-
-      const lines = result.split('\n')
-      let currentWorktree: Partial<WorktreeInfo> = {}
-
-      for (const line of lines) {
-        if (line.startsWith('worktree ')) {
-          currentWorktree.path = line.replace('worktree ', '')
-        } else if (line.startsWith('branch ')) {
-          // Format: branch refs/heads/branch-name
-          const branchRef = line.replace('branch ', '')
-          currentWorktree.branch = branchRef.replace('refs/heads/', '')
-        } else if (line === 'detached') {
-          currentWorktree.branch = ''
-        } else if (line === '') {
-          const worktreePath = currentWorktree.path
-          const worktreeBranch = currentWorktree.branch
-
-          if (worktreePath && worktreeBranch !== undefined) {
-            worktrees.push({
-              path: worktreePath,
-              branch: worktreeBranch,
-              isMain: normalizeWorktreePath(worktreePath) === normalizedRepoPath
-            })
-          }
-          currentWorktree = {}
-        }
-      }
-
-      return worktrees
-    } catch (error) {
-      log.error(
-        'Failed to list worktrees',
-        error instanceof Error ? error : new Error(String(error)),
-        { repoPath: this.repoPath }
-      )
-      return []
-    }
+    return gitEffectService.listWorktrees(this.repoPath)
   }
 
-  /**
-   * Create a new worktree with a breed-named branch
-   */
   async createWorktree(
     projectName: string,
     breedType: BreedType = 'dogs',
     options?: { autoPull?: boolean }
   ): Promise<CreateWorktreeResult> {
-    const MAX_ATTEMPTS = 3
-    // Ensure worktrees directory exists and get base branch once — neither changes between retries
-    const projectWorktreesDir = this.ensureWorktreesDir(projectName)
-    const defaultBranch = await this.getCurrentBranch()
-
-    // Fetch from origin to ensure base branch is up-to-date (if enabled)
-    const autoPull = options?.autoPull !== false // Default true
-    const pullResult = await this.pullBaseBranch(defaultBranch, {
-      silent: true,
-      skipPull: !autoPull
-    })
-    if (pullResult.success && pullResult.updated) {
-      log.info('Fetched latest changes before creating worktree', {
-        branch: defaultBranch,
-        repoPath: this.repoPath
-      })
-    }
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        // Re-fetch on every attempt so retries see the latest state
-        const existingBranches = await this.getAllBranches()
-        const existingWorktrees = await this.listWorktrees()
-        const existingWorktreeBranches = existingWorktrees.map((w) => w.branch)
-
-        // Also scan the filesystem to catch path collisions from incomplete cleanups
-        let existingDirs: string[] = []
-        try {
-          existingDirs = readdirSync(projectWorktreesDir).map((d) =>
-            d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
-          )
-        } catch {
-          // directory may not exist yet; ignore
-        }
-
-        // Combine all existing names to avoid
-        const existingNames = new Set([
-          ...existingBranches,
-          ...existingWorktreeBranches,
-          ...existingDirs
-        ])
-
-        // Select a unique breed name
-        const breedName = selectUniqueBreedName(existingNames, breedType)
-        const worktreePath = join(projectWorktreesDir, `${projectName}--${breedName}`)
-
-        // Create the worktree with a new branch
-        await this.git.raw(['worktree', 'add', '-b', breedName, worktreePath, defaultBranch])
-
-        return {
-          success: true,
-          name: breedName,
-          branchName: breedName,
-          path: worktreePath,
-          baseBranch: defaultBranch,
-          pullInfo: {
-            pulled: pullResult.success && autoPull,
-            updated: pullResult.updated || false
-          }
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        if (message.toLowerCase().includes('already exists') && attempt < MAX_ATTEMPTS) {
-          log.warn(`createWorktree: name collision on attempt ${attempt}, retrying`, {
-            projectName,
-            attempt,
-            error: message
-          })
-          continue
-        }
-        log.error(
-          'Failed to create worktree',
-          error instanceof Error ? error : new Error(String(error)),
-          { projectName, repoPath: this.repoPath }
-        )
-        return { success: false, error: message }
-      }
-    }
-
-    return {
-      success: false,
-      error: 'Failed to create worktree after 3 attempts due to name collisions'
-    }
+    void this.ensureWorktreesDir
+    return gitEffectService.createWorktree(this.repoPath, projectName, breedType, options)
   }
 
-  /**
-   * Remove a worktree (keeps the branch)
-   * This is the "Unbranch" action
-   */
   async removeWorktree(worktreePath: string): Promise<DeleteWorktreeResult> {
-    try {
-      // First try to remove via git
-      await this.git.raw(['worktree', 'remove', worktreePath, '--force'])
-
-      return { success: true }
-    } catch {
-      // If git worktree remove fails, try manual cleanup
-      try {
-        if (existsSync(worktreePath)) {
-          rmSync(worktreePath, { recursive: true, force: true })
-        }
-        // Prune stale worktree entries
-        await this.git.raw(['worktree', 'prune'])
-        return { success: true }
-      } catch (cleanupError) {
-        const message = cleanupError instanceof Error ? cleanupError.message : 'Unknown error'
-        log.error(
-          'Failed to remove worktree',
-          cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
-          { worktreePath }
-        )
-        return {
-          success: false,
-          error: message
-        }
-      }
-    }
+    return gitEffectService.removeWorktree(this.repoPath, worktreePath)
   }
 
-  /**
-   * Archive a worktree (remove worktree AND delete branch)
-   * This is the "Archive" action
-   */
   async archiveWorktree(worktreePath: string, branchName: string): Promise<DeleteWorktreeResult> {
-    try {
-      // First remove the worktree
-      const removeResult = await this.removeWorktree(worktreePath)
-      if (!removeResult.success) {
-        return removeResult
-      }
-
-      // Then delete the branch
-      try {
-        await this.git.branch(['-D', branchName])
-      } catch (branchError) {
-        // Branch might already be deleted or not exist
-        log.warn('Failed to delete branch (may not exist)', {
-          branchName,
-          error: branchError instanceof Error ? branchError.message : String(branchError)
-        })
-      }
-
-      // Clean up the remote-tracking ref (e.g. origin/branch-name)
-      // This is local-only and prevents stale refs from cluttering branch lists
-      await this.deleteRemoteTrackingBranch(branchName)
-
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error(
-        'Failed to archive worktree',
-        error instanceof Error ? error : new Error(String(error)),
-        { worktreePath, branchName }
-      )
-      return {
-        success: false,
-        error: message
-      }
-    }
+    return gitEffectService.archiveWorktree(this.repoPath, worktreePath, branchName)
   }
 
-  /**
-   * Check if a branch exists
-   */
   async branchExists(branchName: string): Promise<boolean> {
-    try {
-      const branches = await this.getAllBranches()
-      return branches.includes(branchName)
-    } catch {
-      return false
-    }
+    return gitEffectService.branchExists(this.repoPath, branchName)
   }
 
-  /**
-   * Check if a worktree path exists on disk
-   */
   worktreeExists(worktreePath: string): boolean {
+    void this.git
     return existsSync(worktreePath)
   }
 
-  /**
-   * Prune stale worktree entries
-   */
   async pruneWorktrees(): Promise<void> {
-    try {
-      await this.git.raw(['worktree', 'prune'])
-    } catch (error) {
-      log.error(
-        'Failed to prune worktrees',
-        error instanceof Error ? error : new Error(String(error)),
-        { repoPath: this.repoPath }
-      )
-    }
+    return gitEffectService.pruneWorktrees(this.repoPath)
   }
 
-  /**
-   * Get git status for all files in the repository
-   * Returns file statuses with M (modified), A (staged/added), D (deleted), ? (untracked), C (conflicted)
-   *
-   * Uses status.files (per-file porcelain codes) instead of convenience arrays
-   * because simple-git's status.modified includes fully-staged files (porcelain `M `)
-   * which would incorrectly appear as unstaged changes.
-   */
   async getFileStatuses(): Promise<GitStatusResult> {
-    try {
-      const status = await this.git.status()
-      const files: GitFileStatus[] = []
-      const conflictedSet = new Set(status.conflicted)
-
-      for (const fileStatus of status.files) {
-        const filePath = fileStatus.path
-        const fullPath = join(this.repoPath, filePath)
-        const idx = fileStatus.index
-        const wd = fileStatus.working_dir
-
-        // Conflicted files
-        if (conflictedSet.has(filePath)) {
-          files.push({
-            path: fullPath,
-            relativePath: filePath,
-            status: 'C',
-            staged: false
-          })
-          continue
-        }
-
-        // Untracked files
-        if (idx === '?' && wd === '?') {
-          files.push({
-            path: fullPath,
-            relativePath: filePath,
-            status: '?',
-            staged: false
-          })
-          continue
-        }
-
-        // Staged changes — index column indicates staged modifications
-        if (idx === 'M' || idx === 'A' || idx === 'D' || idx === 'R' || idx === 'C') {
-          files.push({
-            path: fullPath,
-            relativePath: filePath,
-            status: idx === 'D' ? 'D' : idx === 'M' ? 'M' : 'A',
-            staged: true
-          })
-        }
-
-        // Unstaged working tree changes — only when working_dir indicates real changes
-        if (wd === 'M' || wd === 'D') {
-          files.push({
-            path: fullPath,
-            relativePath: filePath,
-            status: wd === 'D' ? 'D' : 'M',
-            staged: false
-          })
-        }
-      }
-
-      return { success: true, files }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error(
-        'Failed to get file statuses',
-        error instanceof Error ? error : new Error(message),
-        { repoPath: this.repoPath }
-      )
-      return { success: false, error: message }
-    }
+    return gitEffectService.getFileStatuses(this.repoPath)
   }
 
-  /**
-   * Stage a file for commit
-   */
   async stageFile(filePath: string): Promise<GitOperationResult> {
-    try {
-      await this.git.add(filePath)
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to stage file', error instanceof Error ? error : new Error(message), {
-        filePath,
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.stageFile(this.repoPath, filePath)
   }
 
-  /**
-   * Unstage a file
-   */
   async unstageFile(filePath: string): Promise<GitOperationResult> {
-    try {
-      await this.git.reset(['HEAD', '--', filePath])
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to unstage file', error instanceof Error ? error : new Error(message), {
-        filePath,
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.unstageFile(this.repoPath, filePath)
   }
 
-  /**
-   * Discard changes in a file (restore to HEAD)
-   */
   async discardChanges(filePath: string): Promise<GitOperationResult> {
-    try {
-      // First check if file is untracked
-      const status = await this.git.status()
-      const isUntracked = status.not_added.includes(filePath)
-
-      if (isUntracked) {
-        // For untracked files, we need to use fs to remove
-        const fullPath = join(this.repoPath, filePath)
-        const { existsSync, unlinkSync } = await import('fs')
-        if (existsSync(fullPath)) {
-          unlinkSync(fullPath)
-        }
-      } else {
-        // For tracked files, restore from HEAD
-        await this.git.checkout(['--', filePath])
-      }
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to discard changes', error instanceof Error ? error : new Error(message), {
-        filePath,
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.discardChanges(this.repoPath, filePath)
   }
 
-  /**
-   * Get branch info including ahead/behind counts
-   */
   async getBranchInfo(): Promise<GitBranchInfoResult> {
-    try {
-      const status = await this.git.status()
-      const branchName = status.current || 'HEAD'
-
-      // Get tracking branch info
-      let tracking: string | null = null
-      let ahead = 0
-      let behind = 0
-
-      if (status.tracking) {
-        tracking = status.tracking
-        ahead = status.ahead
-        behind = status.behind
-      }
-
-      return {
-        success: true,
-        branch: {
-          name: branchName,
-          tracking,
-          ahead,
-          behind
-        }
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to get branch info', error instanceof Error ? error : new Error(message), {
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.getBranchInfo(this.repoPath)
   }
 
-  /**
-   * Stage all modified and untracked files
-   */
   async stageAll(): Promise<GitOperationResult> {
-    try {
-      await this.git.add(['-A'])
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to stage all files', error instanceof Error ? error : new Error(message), {
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.stageAll(this.repoPath)
   }
 
-  /**
-   * Unstage all staged files
-   */
   async unstageAll(): Promise<GitOperationResult> {
-    try {
-      await this.git.reset(['HEAD'])
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error(
-        'Failed to unstage all files',
-        error instanceof Error ? error : new Error(message),
-        { repoPath: this.repoPath }
-      )
-      return { success: false, error: message }
-    }
+    return gitEffectService.unstageAll(this.repoPath)
   }
 
-  /**
-   * Add a file path to .gitignore
-   */
   async addToGitignore(pattern: string): Promise<GitOperationResult> {
-    try {
-      const gitignorePath = join(this.repoPath, '.gitignore')
-      const { existsSync, readFileSync, appendFileSync, writeFileSync } = await import('fs')
-
-      let content = ''
-      if (existsSync(gitignorePath)) {
-        content = readFileSync(gitignorePath, 'utf-8')
-      }
-
-      // Check if pattern already exists
-      const lines = content.split('\n').map((l) => l.trim())
-      if (lines.includes(pattern)) {
-        return { success: true } // Already ignored
-      }
-
-      // Add pattern to .gitignore
-      const newLine = content.endsWith('\n') || content === '' ? pattern : '\n' + pattern
-      if (content === '') {
-        writeFileSync(gitignorePath, pattern + '\n')
-      } else {
-        appendFileSync(gitignorePath, newLine + '\n')
-      }
-
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error(
-        'Failed to add to .gitignore',
-        error instanceof Error ? error : new Error(message),
-        { pattern, repoPath: this.repoPath }
-      )
-      return { success: false, error: message }
-    }
+    return gitEffectService.addToGitignore(this.repoPath, pattern)
   }
 
-  /**
-   * Commit staged changes with a message
-   * @param message - Commit message (summary or summary + description separated by newline)
-   */
   async commit(message: string): Promise<GitCommitResult> {
-    try {
-      if (!message || message.trim() === '') {
-        return { success: false, error: 'Commit message is required' }
-      }
-
-      // Check if there are staged files
-      const status = await this.git.status()
-      const hasStagedChanges = status.staged.length > 0 || status.created.length > 0
-
-      if (!hasStagedChanges) {
-        return { success: false, error: 'No staged changes to commit' }
-      }
-
-      const result = await this.git.commit(message)
-      log.info('Committed changes', {
-        commit: result.commit,
-        summary: result.summary,
-        repoPath: this.repoPath
-      })
-
-      return {
-        success: true,
-        commitHash: result.commit
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to commit', error instanceof Error ? error : new Error(message), {
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.commit(this.repoPath, message)
   }
 
-  /**
-   * Push commits to remote
-   * @param remote - Remote name (default: origin)
-   * @param branch - Branch name (default: current branch)
-   * @param force - Force push (default: false)
-   */
   async push(remote?: string, branch?: string, force?: boolean): Promise<GitPushResult> {
-    try {
-      const remoteName = remote || 'origin'
-      const branchName = branch || (await this.getCurrentBranch())
-
-      const options: string[] = []
-      if (force) {
-        options.push('--force')
-      }
-
-      // Set upstream if not tracking
-      const status = await this.git.status()
-      if (!status.tracking) {
-        options.push('--set-upstream')
-      }
-
-      await this.git.push(remoteName, branchName, options)
-      log.info('Pushed to remote', {
-        remote: remoteName,
-        branch: branchName,
-        force,
-        repoPath: this.repoPath
-      })
-
-      return { success: true, pushed: true }
-    } catch (error) {
-      const errMessage = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to push', error instanceof Error ? error : new Error(errMessage), {
-        repoPath: this.repoPath
-      })
-
-      // Provide helpful error messages
-      let userMessage = errMessage
-      if (errMessage.includes('rejected')) {
-        userMessage =
-          'Push rejected. The remote contains commits not present locally. Pull first or use force push.'
-      } else if (errMessage.includes('Could not read from remote repository')) {
-        userMessage =
-          'Could not connect to remote repository. Check your network connection and authentication.'
-      } else if (
-        errMessage.includes('Authentication failed') ||
-        errMessage.includes('Permission denied')
-      ) {
-        userMessage = 'Authentication failed. Check your credentials.'
-      }
-
-      return { success: false, error: userMessage }
-    }
+    return gitEffectService.push(this.repoPath, remote, branch, force)
   }
 
-  /**
-   * Pull commits from remote
-   * @param remote - Remote name (default: origin)
-   * @param branch - Branch name (default: current branch)
-   * @param rebase - Use rebase instead of merge (default: false)
-   */
   async pull(remote?: string, branch?: string, rebase?: boolean): Promise<GitPullResult> {
-    try {
-      const remoteName = remote || 'origin'
-      const branchName = branch || (await this.getCurrentBranch())
-
-      const options: Record<string, null | string | number> = {}
-      if (rebase) {
-        options['--rebase'] = null
-      }
-
-      const result = await this.git.pull(remoteName, branchName, options)
-      log.info('Pulled from remote', {
-        remote: remoteName,
-        branch: branchName,
-        rebase,
-        files: result.files?.length || 0,
-        repoPath: this.repoPath
-      })
-
-      return {
-        success: true,
-        updated: (result.files?.length || 0) > 0 || result.summary.changes > 0
-      }
-    } catch (error) {
-      const errMessage = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to pull', error instanceof Error ? error : new Error(errMessage), {
-        repoPath: this.repoPath
-      })
-
-      // Provide helpful error messages
-      let userMessage = errMessage
-      if (errMessage.includes('conflict')) {
-        userMessage = 'Pull resulted in merge conflicts. Resolve conflicts before continuing.'
-      } else if (errMessage.includes('Could not read from remote repository')) {
-        userMessage =
-          'Could not connect to remote repository. Check your network connection and authentication.'
-      } else if (errMessage.includes('uncommitted changes')) {
-        userMessage = 'You have uncommitted changes. Commit or stash them before pulling.'
-      }
-
-      return { success: false, error: userMessage }
-    }
+    return gitEffectService.pull(this.repoPath, remote, branch, rebase)
   }
 
-  /**
-   * Pull a base branch before creating a worktree
-   * Uses git pull with --ff-only to update the local branch safely
-   * Gracefully handles errors - won't block worktree creation
-   * @param branchName - Branch name to pull
-   * @param options - Options including silent mode and skipPull flag
-   */
   async pullBaseBranch(
     branchName: string,
     options?: { silent?: boolean; skipPull?: boolean }
   ): Promise<GitPullResult> {
-    // If skipPull is true, return immediately (setting disabled)
-    if (options?.skipPull) {
-      return { success: true, updated: false }
-    }
-
-    try {
-      // Check if remote 'origin' exists
-      const remotes = await this.git.getRemotes()
-      if (!remotes.find((r) => r.name === 'origin')) {
-        if (!options?.silent) {
-          log.info('No remote origin configured, skipping pull', { repoPath: this.repoPath })
-        }
-        return { success: true, updated: false }
-      }
-
-      // Check if branch exists locally
-      const branches = await this.getAllBranches()
-      const branchExists = branches.some((b) => b === branchName)
-
-      if (!branchExists) {
-        // Branch doesn't exist locally, this is fine (new branch)
-        if (!options?.silent) {
-          log.info('Branch does not exist locally, skipping pull', {
-            branch: branchName,
-            repoPath: this.repoPath
-          })
-        }
-        return { success: true, updated: false }
-      }
-
-      // Check if this branch is currently checked out
-      const currentBranch = await this.getCurrentBranch()
-      const isCurrentBranch = currentBranch === branchName
-
-      let updated = false
-
-      if (isCurrentBranch) {
-        // Branch is checked out - use git pull
-        const pullOptions: Record<string, null | string | number> = {
-          '--ff-only': null
-        }
-        const result = await this.git.pull('origin', branchName, pullOptions)
-        updated = (result.files?.length || 0) > 0 || result.summary.changes > 0
-
-        if (!options?.silent && updated) {
-          log.info('Successfully pulled checked-out branch', {
-            branch: branchName,
-            changes: result.summary.changes,
-            repoPath: this.repoPath
-          })
-        }
-      } else {
-        // Branch is not checked out - use git fetch to update ref directly
-        const beforeSha = await this.git.revparse([branchName])
-        await this.git.fetch('origin', `${branchName}:${branchName}`)
-        const afterSha = await this.git.revparse([branchName])
-        updated = beforeSha !== afterSha
-
-        if (!options?.silent && updated) {
-          log.info('Successfully fetched non-checked-out branch', {
-            branch: branchName,
-            beforeSha: beforeSha.substring(0, 7),
-            afterSha: afterSha.substring(0, 7),
-            repoPath: this.repoPath
-          })
-        }
-      }
-
-      return {
-        success: true,
-        updated
-      }
-    } catch (error) {
-      const errMessage = error instanceof Error ? error.message : 'Unknown error'
-
-      // Log the error but don't fail - worktree creation should proceed
-      log.warn('Pull base branch failed, proceeding with local branch state', {
-        branch: branchName,
-        error: errMessage,
-        repoPath: this.repoPath
-      })
-
-      // Return success: false so UI can show warning, but worktree creation will still proceed
-      return { success: false, updated: false }
-    }
+    return gitEffectService.pullBaseBranch(this.repoPath, branchName, options)
   }
 
-  /**
-   * Merge a branch into the current branch
-   * @param sourceBranch - Branch to merge from
-   */
-  async merge(sourceBranch: string): Promise<{
-    success: boolean
-    error?: string
-    conflicts?: string[]
-  }> {
-    try {
-      log.info('Merging branch', { sourceBranch, repoPath: this.repoPath })
-      await this.git.merge([sourceBranch])
-      return { success: true }
-    } catch (error) {
-      if (
-        error &&
-        typeof error === 'object' &&
-        'git' in error &&
-        (error as { git?: { conflicts?: string[] } }).git?.conflicts?.length
-      ) {
-        const conflicts = (error as { git: { conflicts: string[] } }).git.conflicts
-        log.warn('Merge resulted in conflicts', { sourceBranch, conflicts })
-        return {
-          success: false,
-          error: `Merge conflicts in ${conflicts.length} file(s). Resolve conflicts before continuing.`,
-          conflicts
-        }
-      }
-      const message = error instanceof Error ? error.message : String(error)
-      log.error('Merge failed', error instanceof Error ? error : new Error(message), {
-        sourceBranch,
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+  async merge(sourceBranch: string): Promise<GitMergeResult> {
+    return gitEffectService.merge(this.repoPath, sourceBranch)
   }
 
   async mergeAbort(): Promise<GitOperationResult> {
-    try {
-      await this.git.raw(['merge', '--abort'])
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return { success: false, error: message }
-    }
+    return gitEffectService.mergeAbort(this.repoPath)
   }
 
   async hasUncommittedChanges(): Promise<boolean> {
-    try {
-      const output = await this.git.raw(['status', '--porcelain'])
-      return output.trim().length > 0
-    } catch {
-      return false
-    }
-  }
-
-  /**
-   * Get the merge-base (common ancestor) between a branch and HEAD.
-   * Returns the commit hash, or null if it cannot be determined.
-   */
-  private async getMergeBase(branch: string): Promise<string | null> {
-    if (!branch || branch.startsWith('-')) return null
-    try {
-      const result = await this.git.raw(['merge-base', branch, 'HEAD'])
-      return result.trim() || null
-    } catch (error) {
-      log.warn('getMergeBase: failed to compute merge-base', {
-        branch,
-        repoPath: this.repoPath,
-        error: error instanceof Error ? error.message : String(error)
-      })
-      return null
-    }
+    return gitEffectService.hasUncommittedChanges(this.repoPath)
   }
 
   async getBranchDiffShortStat(baseBranch: string): Promise<{
@@ -1048,438 +277,84 @@ export class GitService {
     commitsAhead: number
     error?: string
   }> {
-    try {
-      // Get file/line stats
-      const shortstat = await this.git.raw(['diff', '--shortstat', `${baseBranch}...HEAD`])
-      let filesChanged = 0, insertions = 0, deletions = 0
-      // Parse "N files changed, N insertions(+), N deletions(-)"
-      const filesMatch = shortstat.match(/(\d+) files? changed/)
-      const insMatch = shortstat.match(/(\d+) insertions?/)
-      const delMatch = shortstat.match(/(\d+) deletions?/)
-      if (filesMatch) filesChanged = parseInt(filesMatch[1], 10)
-      if (insMatch) insertions = parseInt(insMatch[1], 10)
-      if (delMatch) deletions = parseInt(delMatch[1], 10)
-
-      // Get commits ahead count
-      const revList = await this.git.raw(['rev-list', '--count', `${baseBranch}..HEAD`])
-      const commitsAhead = parseInt(revList.trim(), 10) || 0
-
-      return { success: true, filesChanged, insertions, deletions, commitsAhead }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return { success: false, filesChanged: 0, insertions: 0, deletions: 0, commitsAhead: 0, error: message }
-    }
+    return gitEffectService.getBranchDiffShortStat(this.repoPath, baseBranch)
   }
 
-  /**
-   * Get diff for a specific file
-   * @param filePath - Relative path to the file
-   * @param staged - Whether to get staged diff (default: false for unstaged)
-   */
   async getDiff(
     filePath: string,
     staged: boolean = false,
     contextLines?: number
   ): Promise<GitDiffResult> {
-    try {
-      const args = ['diff']
-
-      // Add context lines arg if specified
-      if (contextLines !== undefined) {
-        args.push(`-U${contextLines}`)
-      }
-
-      // For staged changes, add --cached flag
-      if (staged) {
-        args.push('--cached')
-      }
-
-      // Add the file path
-      args.push('--', filePath)
-
-      const result = await this.git.raw(args)
-      const fileName = filePath.split('/').pop() || filePath
-
-      return {
-        success: true,
-        diff: result || '',
-        fileName
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to get diff', error instanceof Error ? error : new Error(message), {
-        filePath,
-        staged,
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.getDiff(this.repoPath, filePath, staged, contextLines)
   }
 
-  /**
-   * Get file content from a specific git ref (HEAD, index, etc.)
-   * @param ref - Git ref: 'HEAD' for HEAD version, '' (empty string) for index/staged version
-   * @param filePath - Relative path to the file
-   */
   async getRefContent(
     ref: string,
     filePath: string
   ): Promise<{ success: boolean; content?: string; error?: string }> {
-    try {
-      // 'HEAD:path' for HEAD, ':path' for index (staged)
-      const refSpec = ref ? `${ref}:${filePath}` : `:${filePath}`
-      const content = await this.git.show([refSpec])
-      return { success: true, content }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to get ref content', error instanceof Error ? error : new Error(message), {
-        ref,
-        filePath,
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.getRefContent(this.repoPath, ref, filePath)
   }
 
-  /**
-   * Get file content from a specific git ref as base64 (for binary files like images).
-   * Uses execFile with buffer encoding to avoid corrupting binary data.
-   * @param ref - Git ref: 'HEAD' for HEAD version, '' (empty string) for index/staged version
-   * @param filePath - Relative path to the file
-   */
   async getRefContentBase64(
     ref: string,
     filePath: string
   ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> {
-    try {
-      const refSpec = ref ? `${ref}:${filePath}` : `:${filePath}`
-      const { stdout } = await execFileAsync('git', ['show', refSpec], {
-        encoding: 'buffer',
-        cwd: this.repoPath,
-        maxBuffer: 20 * 1024 * 1024 // 20MB limit, matching readFileAsBase64
-      })
-      const data = stdout.toString('base64')
-      const mimeType = getImageMimeType(filePath) ?? undefined
-      return { success: true, data, mimeType }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error(
-        'Failed to get ref content as base64',
-        error instanceof Error ? error : new Error(message),
-        {
-          ref,
-          filePath,
-          repoPath: this.repoPath
-        }
-      )
-      return { success: false, error: message }
-    }
+    return gitEffectService.getRefContentBase64(this.repoPath, ref, filePath)
   }
 
-  /**
-   * Get file content at the merge-base between a branch and HEAD.
-   * Used for branch comparison diffs so only changes from commits ahead
-   * of the target branch are shown (not changes introduced on the target
-   * after the branches diverged).
-   *
-   * Falls back to the branch tip content if merge-base cannot be determined.
-   */
   async getBranchBaseContent(
     branch: string,
     filePath: string
   ): Promise<{ success: boolean; content?: string; error?: string }> {
-    if (!branch || branch.startsWith('-')) {
-      return { success: false, error: 'Invalid branch name' }
-    }
-    const mergeBase = await this.getMergeBase(branch)
-    const ref = mergeBase ?? branch
-    if (!mergeBase) {
-      log.warn('getBranchBaseContent: merge-base not found, falling back to branch tip', {
-        branch,
-        filePath,
-        repoPath: this.repoPath
-      })
-    }
-    return this.getRefContent(ref, filePath)
+    return gitEffectService.getBranchBaseContent(this.repoPath, branch, filePath)
   }
 
-  /**
-   * Get file content as base64 at the merge-base between a branch and HEAD.
-   * Binary-safe variant of getBranchBaseContent for images and other binary files.
-   *
-   * Falls back to the branch tip content if merge-base cannot be determined.
-   */
   async getBranchBaseContentBase64(
     branch: string,
     filePath: string
   ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> {
-    if (!branch || branch.startsWith('-')) {
-      return { success: false, error: 'Invalid branch name' }
-    }
-    const mergeBase = await this.getMergeBase(branch)
-    const ref = mergeBase ?? branch
-    if (!mergeBase) {
-      log.warn('getBranchBaseContentBase64: merge-base not found, falling back to branch tip', {
-        branch,
-        filePath,
-        repoPath: this.repoPath
-      })
-    }
-    return this.getRefContentBase64(ref, filePath)
+    return gitEffectService.getBranchBaseContentBase64(this.repoPath, branch, filePath)
   }
 
-  /**
-   * Write patch content to a temp file, run git apply, then clean up.
-   * simple-git's applyPatch() treats the first arg as a file path,
-   * so we must write the patch string to disk first.
-   */
-  private async applyPatchString(patch: string, options: string[]): Promise<void> {
-    const tmpFile = join(
-      tmpdir(),
-      `hive-patch-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`
-    )
-    try {
-      writeFileSync(tmpFile, patch, 'utf-8')
-      await this.git.applyPatch(tmpFile, options)
-    } finally {
-      try {
-        unlinkSync(tmpFile)
-      } catch {
-        /* ignore cleanup errors */
-      }
-    }
-  }
-
-  /**
-   * Stage a single hunk by applying a patch to the index
-   * @param patch - Unified diff patch string for the hunk
-   */
   async stageHunk(patch: string): Promise<GitOperationResult> {
-    try {
-      await this.applyPatchString(patch, ['--cached', '--unidiff-zero'])
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to stage hunk', error instanceof Error ? error : new Error(message), {
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.stageHunk(this.repoPath, patch)
   }
 
-  /**
-   * Unstage a single hunk by reverse-applying a patch from the index
-   * @param patch - Unified diff patch string for the hunk
-   */
   async unstageHunk(patch: string): Promise<GitOperationResult> {
-    try {
-      await this.applyPatchString(patch, ['--cached', '--reverse', '--unidiff-zero'])
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to unstage hunk', error instanceof Error ? error : new Error(message), {
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.unstageHunk(this.repoPath, patch)
   }
 
-  /**
-   * Revert a single hunk in the working tree
-   * @param patch - Unified diff patch string for the hunk
-   */
   async revertHunk(patch: string): Promise<GitOperationResult> {
-    try {
-      await this.applyPatchString(patch, ['--reverse', '--unidiff-zero'])
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error('Failed to revert hunk', error instanceof Error ? error : new Error(message), {
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.revertHunk(this.repoPath, patch)
   }
 
-  /**
-   * Duplicate a worktree by creating a new branch from the source branch
-   * and copying uncommitted state (staged, unstaged, untracked files)
-   */
   async duplicateWorktree(
     sourceBranch: string,
     sourceWorktreePath: string,
     projectName: string,
     nameHint?: string
   ): Promise<CreateWorktreeResult> {
-    try {
-      const projectWorktreesDir = this.ensureWorktreesDir(projectName)
-      const MAX_ATTEMPTS = 3
-
-      // 2-4. Find a unique branch name and create worktree, with retry on collision
-      let newBranchName = ''
-      let worktreePath = ''
-      let created = false
-
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        // Re-fetch on every attempt so retries see the latest state
-        const allBranches = await this.getAllBranches()
-
-        if (nameHint) {
-          // Use nameHint with -2, -3, ... collision suffixing
-          const existingNames = new Set(allBranches)
-          newBranchName = nameHint
-          if (existingNames.has(newBranchName)) {
-            let suffix = 2
-            while (existingNames.has(`${nameHint}-${suffix}`) && suffix <= 9999) {
-              suffix += 1
-            }
-            newBranchName = `${nameHint}-${suffix}`
-          }
-        } else {
-          // Default: use source branch name with -vN versioning
-          const baseName = sourceBranch.replace(/-v\d+$/, '')
-          const versionPattern = new RegExp(
-            `^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`
-          )
-          let maxVersion = 1 // means first dup will be v2
-          for (const branch of allBranches) {
-            const match = branch.match(versionPattern)
-            if (match) {
-              maxVersion = Math.max(maxVersion, parseInt(match[1], 10))
-            }
-          }
-          newBranchName = `${baseName}-v${maxVersion + 1}`
-        }
-        worktreePath = join(projectWorktreesDir, `${projectName}--${newBranchName}`)
-
-        try {
-          await this.git.raw(['worktree', 'add', '-b', newBranchName, worktreePath, sourceBranch])
-          created = true
-          break
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown error'
-          if (message.toLowerCase().includes('already exists') && attempt < MAX_ATTEMPTS) {
-            log.warn(`duplicateWorktree: name collision on attempt ${attempt}, retrying`, {
-              newBranchName,
-              attempt,
-              error: message
-            })
-            continue
-          }
-          throw error
-        }
-      }
-
-      if (!created) {
-        return {
-          success: false,
-          error: 'Failed to duplicate worktree after 3 attempts due to name collisions'
-        }
-      }
-
-      // 5. Capture uncommitted state via stash create (non-destructive)
-      const sourceGit = simpleGit(sourceWorktreePath)
-      const stashRef = (await sourceGit.raw(['stash', 'create'])).trim()
-
-      if (stashRef) {
-        // 6. Apply stash in new worktree
-        const newGit = simpleGit(worktreePath)
-        try {
-          await newGit.raw(['stash', 'apply', stashRef])
-        } catch {
-          // stash apply may fail if changes conflict — log but continue
-          log.warn('Failed to apply stash in duplicated worktree', { newBranchName, stashRef })
-        }
-      }
-
-      // 7. Copy untracked files
-      const untrackedRaw = await sourceGit.raw(['ls-files', '--others', '--exclude-standard'])
-      const untrackedFiles = untrackedRaw.trim().split('\n').filter(Boolean)
-      for (const file of untrackedFiles) {
-        const srcPath = join(sourceWorktreePath, file)
-        const destPath = join(worktreePath, file)
-        mkdirSync(dirname(destPath), { recursive: true })
-        cpSync(srcPath, destPath)
-      }
-
-      return { success: true, name: newBranchName, branchName: newBranchName, path: worktreePath, baseBranch: sourceBranch }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error(
-        'Failed to duplicate worktree',
-        error instanceof Error ? error : new Error(message),
-        {
-          sourceBranch,
-          sourceWorktreePath,
-          projectName,
-          repoPath: this.repoPath
-        }
-      )
-      return { success: false, error: message }
-    }
+    return gitEffectService.duplicateWorktree(
+      this.repoPath,
+      sourceBranch,
+      sourceWorktreePath,
+      projectName,
+      nameHint
+    )
   }
 
-  /**
-   * Get diff for a new untracked file (shows entire file as additions)
-   * @param filePath - Relative path to the file
-   */
   async getUntrackedFileDiff(filePath: string): Promise<GitDiffResult> {
-    try {
-      const { readFileSync } = await import('fs')
-      const fullPath = join(this.repoPath, filePath)
-      const content = readFileSync(fullPath, 'utf-8')
-      const lines = content.split('\n')
-      const fileName = filePath.split('/').pop() || filePath
-
-      // Create a unified diff format for new file
-      const diffLines = [
-        `diff --git a/${filePath} b/${filePath}`,
-        'new file mode 100644',
-        '--- /dev/null',
-        `+++ b/${filePath}`,
-        `@@ -0,0 +1,${lines.length} @@`,
-        ...lines.map((line) => `+${line}`)
-      ]
-
-      return {
-        success: true,
-        diff: diffLines.join('\n'),
-        fileName
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error(
-        'Failed to get untracked file diff',
-        error instanceof Error ? error : new Error(message),
-        { filePath, repoPath: this.repoPath }
-      )
-      return { success: false, error: message }
-    }
+    return gitEffectService.getUntrackedFileDiff(this.repoPath, filePath)
   }
 
-  /**
-   * Rename a branch in a worktree directory.
-   */
   async renameBranch(
     worktreePath: string,
     oldBranch: string,
     newBranch: string
   ): Promise<{ success: boolean; error?: string }> {
-    try {
-      const git = simpleGit(worktreePath)
-      await git.branch(['-m', oldBranch, newBranch])
-      return { success: true }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }
-    }
+    return gitEffectService.renameBranch(this.repoPath, worktreePath, oldBranch, newBranch)
   }
 
-  /**
-   * List all branches with their checkout status across worktrees
-   */
   async listBranchesWithStatus(): Promise<
     Array<{
       name: string
@@ -1488,36 +363,9 @@ export class GitService {
       worktreePath?: string
     }>
   > {
-    const [branchSummary, worktreeList] = await Promise.all([
-      this.git.branch(['-a']),
-      this.git.raw(['worktree', 'list', '--porcelain'])
-    ])
-
-    const checkedOut = new Map<string, string>()
-    const blocks = worktreeList.split('\n\n').filter(Boolean)
-    for (const block of blocks) {
-      const lines = block.split('\n')
-      const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
-      const branch = lines.find((l) => l.startsWith('branch '))?.replace('branch refs/heads/', '')
-      if (wtPath && branch) checkedOut.set(branch, wtPath)
-    }
-
-    return Object.entries(branchSummary.branches).map(([name, info]) => {
-      const isRemote = name.startsWith('remotes/')
-
-      return {
-        name: normalizeBranchDisplayName(name),
-        isRemote,
-        isCheckedOut: checkedOut.has(info.name),
-        worktreePath: checkedOut.get(info.name)
-      }
-    })
+    return gitEffectService.listBranchesWithStatus(this.repoPath)
   }
 
-  /**
-   * Create a worktree from a specific existing branch.
-   * If the branch is already checked out in another worktree, duplicate it instead.
-   */
   async createWorktreeFromBranch(
     projectName: string,
     branchName: string,
@@ -1525,320 +373,37 @@ export class GitService {
     prNumber?: number,
     options?: { autoPull?: boolean; nameHint?: string }
   ): Promise<CreateWorktreeResult> {
-    try {
-      // Check if branch is already checked out (skip for PR checkouts —
-      // a fork's head ref may collide with a local branch name)
-      if (prNumber == null) {
-        const worktreeList = await this.git.raw(['worktree', 'list', '--porcelain'])
-        const blocks = worktreeList.split('\n\n').filter(Boolean)
-
-        for (const block of blocks) {
-          const lines = block.split('\n')
-          const branch = lines
-            .find((l) => l.startsWith('branch '))
-            ?.replace('branch refs/heads/', '')
-          const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
-          if (branch === branchName && wtPath) {
-            // Already checked out — duplicate it
-            const dupResult = await this.duplicateWorktree(branchName, wtPath, projectName, options?.nameHint)
-            return { ...dupResult, baseBranch: branchName }
-          }
-        }
-      }
-
-      const projectWorktreesDir = this.ensureWorktreesDir(projectName)
-      const MAX_ATTEMPTS = 3
-
-      // Pull branch if not creating from PR (PR fetch happens separately)
-      const autoPull = options?.autoPull !== false // Default true
-      let pullResult = { success: true, updated: false }
-      if (prNumber != null) {
-        // Fetch the PR ref once — FETCH_HEAD stays valid for subsequent retries
-        await this.git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
-      } else if (autoPull) {
-        // Pull the branch to get latest changes
-        pullResult = await this.pullBaseBranch(branchName, {
-          silent: true,
-          skipPull: !autoPull
-        })
-        if (pullResult.success && pullResult.updated) {
-          log.info('Pulled latest changes before creating worktree from branch', {
-            branch: branchName,
-            repoPath: this.repoPath
-          })
-        }
-      }
-
-      const nameHint = options?.nameHint
-
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        // Re-fetch on every attempt so retries see the latest state
-        const existingBranches = await this.getAllBranches()
-        const existingWorktrees = await this.listWorktrees()
-        const existingWorktreeBranches = existingWorktrees.map((w) => w.branch)
-
-        // Also scan the filesystem to catch path collisions from incomplete cleanups
-        let existingDirs: string[] = []
-        try {
-          existingDirs = readdirSync(projectWorktreesDir).map((d) =>
-            d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
-          )
-        } catch {
-          // directory may not exist yet; ignore
-        }
-
-        const existingNames = new Set([
-          ...existingBranches,
-          ...existingWorktreeBranches,
-          ...existingDirs
-        ])
-
-        // Use nameHint if provided and non-empty, otherwise fall back to breed name
-        let worktreeName: string
-        if (nameHint) {
-          // Start with the hint; if it collides, append -2, -3, etc.
-          worktreeName = nameHint
-          if (existingNames.has(worktreeName)) {
-            let suffix = 2
-            while (existingNames.has(`${nameHint}-${suffix}`) && suffix <= 9999) {
-              suffix += 1
-            }
-            worktreeName = `${nameHint}-${suffix}`
-          }
-        } else {
-          worktreeName = selectUniqueBreedName(existingNames, breedType)
-        }
-        const worktreePath = join(projectWorktreesDir, `${projectName}--${worktreeName}`)
-
-        try {
-          if (prNumber != null) {
-            await this.git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, 'FETCH_HEAD'])
-          } else {
-            // Create a new branch derived from the selected branch
-            await this.git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, branchName])
-          }
-          return {
-            success: true,
-            path: worktreePath,
-            branchName: worktreeName,
-            name: worktreeName,
-            baseBranch: branchName,
-            pullInfo: {
-              pulled: prNumber == null && pullResult.success && autoPull,
-              updated: pullResult.updated || false
-            }
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown error'
-          if (message.toLowerCase().includes('already exists') && attempt < MAX_ATTEMPTS) {
-            log.warn(`createWorktreeFromBranch: name collision on attempt ${attempt}, retrying`, {
-              projectName,
-              branchName,
-              attempt,
-              error: message
-            })
-            continue
-          }
-          throw error
-        }
-      }
-
-      return {
-        success: false,
-        error: 'Failed to create worktree from branch after 3 attempts due to name collisions'
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error'
-      log.error(
-        'Failed to create worktree from branch',
-        error instanceof Error ? error : new Error(message),
-        { projectName, branchName, prNumber, repoPath: this.repoPath }
-      )
-      return { success: false, error: message }
-    }
+    return gitEffectService.createWorktreeFromBranch(
+      this.repoPath,
+      projectName,
+      branchName,
+      breedType,
+      prNumber,
+      options
+    )
   }
 
-  /**
-   * Get the remote URL for a given remote name (defaults to 'origin')
-   */
   async getRemoteUrl(remote = 'origin'): Promise<{
     success: boolean
     url: string | null
     remote: string | null
     error?: string
   }> {
-    try {
-      const remotes = await this.git.getRemotes(true)
-      const target = remotes.find((r) => r.name === remote)
-      return {
-        success: true,
-        url: target?.refs?.fetch || target?.refs?.push || null,
-        remote: target?.name || null
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return { success: false, url: null, remote: null, error: message }
-    }
+    return gitEffectService.getRemoteUrl(this.repoPath, remote)
   }
 
-  /**
-   * Delete a local branch.
-   * Uses -D (force) to handle branches that may not be fully merged.
-   * @param branchName - The branch to delete
-   */
   async deleteBranch(branchName: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.git.branch(['-D', branchName])
-      return { success: true }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      log.error('Failed to delete branch', error instanceof Error ? error : new Error(message), {
-        branchName,
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.deleteBranch(this.repoPath, branchName)
   }
 
-  /**
-   * Delete a remote-tracking reference (e.g. origin/branch-name).
-   * This is a local-only operation — it does not contact the remote.
-   * Used during archive to clean up stale refs after a PR is merged.
-   */
-  private async deleteRemoteTrackingBranch(branchName: string, remote = 'origin'): Promise<void> {
-    if (!branchName) return
-    try {
-      await this.git.branch(['-dr', `${remote}/${branchName}`])
-    } catch (error) {
-      // Remote-tracking ref may not exist (branch was never pushed, or already pruned)
-      log.warn('Failed to delete remote-tracking branch (may not exist)', {
-        branchName,
-        remote,
-        error: error instanceof Error ? error.message : String(error)
-      })
-    }
-  }
-
-  /**
-   * Check if a branch has been fully merged into HEAD.
-   * Uses `git rev-list --count HEAD..{branch}` to count commits in the branch
-   * that are not reachable from HEAD. If the count is 0, the branch is fully merged.
-   *
-   * Note: `git merge-base --is-ancestor` cannot be used here because simple-git's
-   * raw() does not throw on its non-zero exit code — it returns empty string for both cases.
-   *
-   * @param branch - Branch name to check
-   * @returns isMerged: true if branch has no commits beyond HEAD
-   */
   async isBranchMerged(branch: string): Promise<{ success: boolean; isMerged: boolean }> {
-    try {
-      const result = await this.git.raw(['rev-list', '--count', `HEAD..${branch}`])
-      const count = parseInt(result.trim(), 10)
-      return { success: true, isMerged: count === 0 }
-    } catch {
-      return { success: true, isMerged: false }
-    }
+    return gitEffectService.isBranchMerged(this.repoPath, branch)
   }
 
-  /**
-   * Get diff stats (additions/deletions per file) for all uncommitted changes.
-   * Combines both staged and unstaged changes, plus untracked files.
-   */
   async getDiffStat(): Promise<GitDiffStatResult> {
-    try {
-      const files: GitDiffStatFile[] = []
-      const seen = new Set<string>()
-
-      // Staged changes: git diff --cached --numstat
-      try {
-        const staged = await this.git.raw(['diff', '--cached', '--numstat'])
-        for (const line of staged.trim().split('\n')) {
-          if (!line) continue
-          const [add, del, path] = line.split('\t')
-          if (!path) continue
-          seen.add(path)
-          const binary = add === '-' && del === '-'
-          files.push({
-            path,
-            additions: binary ? 0 : parseInt(add, 10) || 0,
-            deletions: binary ? 0 : parseInt(del, 10) || 0,
-            binary
-          })
-        }
-      } catch {
-        // No staged changes
-      }
-
-      // Unstaged changes: git diff --numstat
-      try {
-        const unstaged = await this.git.raw(['diff', '--numstat'])
-        for (const line of unstaged.trim().split('\n')) {
-          if (!line) continue
-          const [add, del, path] = line.split('\t')
-          if (!path) continue
-          if (seen.has(path)) {
-            // Merge with existing staged entry
-            const existing = files.find((f) => f.path === path)
-            if (existing) {
-              const binary = add === '-' && del === '-'
-              if (!binary) {
-                existing.additions += parseInt(add, 10) || 0
-                existing.deletions += parseInt(del, 10) || 0
-              }
-            }
-          } else {
-            seen.add(path)
-            const binary = add === '-' && del === '-'
-            files.push({
-              path,
-              additions: binary ? 0 : parseInt(add, 10) || 0,
-              deletions: binary ? 0 : parseInt(del, 10) || 0,
-              binary
-            })
-          }
-        }
-      } catch {
-        // No unstaged changes
-      }
-
-      // Untracked files: count their lines as additions
-      try {
-        const status = await this.git.status()
-        for (const file of status.not_added) {
-          if (seen.has(file)) continue
-          seen.add(file)
-          try {
-            const content = await this.git.raw(['show', `:${file}`]).catch(() => null)
-            if (content === null) {
-              // File not in index, read from disk
-              const { readFile: readF } = await import('fs/promises')
-              const fullPath = join(this.repoPath, file)
-              const text = await readF(fullPath, 'utf-8').catch(() => null)
-              const lineCount = text ? text.split('\n').length : 0
-              files.push({ path: file, additions: lineCount, deletions: 0, binary: false })
-            }
-          } catch {
-            files.push({ path: file, additions: 0, deletions: 0, binary: false })
-          }
-        }
-      } catch {
-        // No untracked files
-      }
-
-      return { success: true, files }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      log.error('Failed to get diff stat', error instanceof Error ? error : new Error(message), {
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    }
+    return gitEffectService.getDiffStat(this.repoPath)
   }
 
-  /**
-   * Get list of files changed between the current worktree and a branch
-   * Uses git diff --name-status to get file paths and their change status
-   */
   async getBranchDiffFiles(branch: string): Promise<{
     success: boolean
     files?: Array<{
@@ -1850,241 +415,35 @@ export class GitService {
     }>
     error?: string
   }> {
-    if (!branch || branch.startsWith('-')) {
-      return { success: false, error: 'Invalid branch name' }
-    }
-    try {
-      // Use merge-base to only show changes from commits ahead of the target branch,
-      // rather than diffing against the branch tip (which would include the target's
-      // newer commits as apparent "reversions").
-      const mergeBase = await this.getMergeBase(branch)
-      const diffRef = mergeBase ?? branch
-      if (!mergeBase) {
-        log.warn('getBranchDiffFiles: merge-base not found, falling back to direct branch diff', {
-          branch,
-          repoPath: this.repoPath
-        })
-      }
-
-      const [nameStatusResult, numstatResult] = await Promise.all([
-        this.git.raw(['diff', '--name-status', '--no-renames', diffRef]),
-        this.git.raw(['diff', '--numstat', '--no-renames', diffRef])
-      ])
-      const files = new Map<string, {
-        relativePath: string
-        status: string
-        additions: number
-        deletions: number
-        binary: boolean
-      }>()
-
-      for (const line of nameStatusResult.trim().split('\n')) {
-        if (!line) continue
-        const [status, ...pathParts] = line.split('\t')
-        const relativePath = pathParts.join('\t')
-        if (status && relativePath) {
-          files.set(relativePath, {
-            relativePath,
-            status,
-            additions: 0,
-            deletions: 0,
-            binary: false
-          })
-        }
-      }
-
-      for (const line of numstatResult.trim().split('\n')) {
-        if (!line) continue
-        const [add, del, ...pathParts] = line.split('\t')
-        const relativePath = pathParts.join('\t')
-        if (!relativePath) continue
-
-        const binary = add === '-' || del === '-'
-        files.set(relativePath, {
-          relativePath,
-          status: files.get(relativePath)?.status ?? '',
-          additions: binary ? 0 : parseInt(add, 10) || 0,
-          deletions: binary ? 0 : parseInt(del, 10) || 0,
-          binary
-        })
-      }
-
-      return {
-        success: true,
-        files: Array.from(files.values()).sort((a, b) => {
-          const aMissingStatus = a.status === ''
-          const bMissingStatus = b.status === ''
-          if (aMissingStatus === bMissingStatus) return 0
-          return aMissingStatus ? 1 : -1
-        })
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      log.error(
-        'Failed to get branch diff files',
-        error instanceof Error ? error : new Error(message),
-        { branch, repoPath: this.repoPath }
-      )
-      return { success: false, error: message }
-    }
+    return gitEffectService.getBranchDiffFiles(this.repoPath, branch)
   }
 
-  /**
-   * Get unified diff between the current worktree and a branch for a specific file
-   */
   async getBranchFileDiff(
     branch: string,
     filePath: string
   ): Promise<{ success: boolean; diff?: string; error?: string }> {
-    if (!branch || branch.startsWith('-')) {
-      return { success: false, error: 'Invalid branch name' }
-    }
-    try {
-      // Use merge-base so the diff only reflects commits ahead of the target branch,
-      // not changes introduced on the target after the branches diverged.
-      const mergeBase = await this.getMergeBase(branch)
-      const diffRef = mergeBase ?? branch
-      if (!mergeBase) {
-        log.warn('getBranchFileDiff: merge-base not found, falling back to direct branch diff', {
-          branch,
-          filePath,
-          repoPath: this.repoPath
-        })
-      }
-
-      const result = await this.git.raw(['diff', diffRef, '--', filePath])
-      return { success: true, diff: result || '' }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      log.error(
-        'Failed to get branch file diff',
-        error instanceof Error ? error : new Error(message),
-        { branch, filePath, repoPath: this.repoPath }
-      )
-      return { success: false, error: message }
-    }
+    return gitEffectService.getBranchFileDiff(this.repoPath, branch, filePath)
   }
 
-  /**
-   * Create a pull request via gh CLI
-   */
   async createPullRequest(options: {
     baseBranch: string
     title: string
     body: string
   }): Promise<{ success: boolean; url?: string; number?: number; error?: string }> {
-    if (!options.baseBranch || options.baseBranch.startsWith('-')) {
-      return { success: false, error: 'Invalid branch name' }
-    }
-    // Strip remote prefix (e.g. "origin/main" → "main") — gh expects a bare branch name
-    const baseBranch = options.baseBranch.replace(/^[^/]+\//, '')
-    const tempFile = join(tmpdir(), `hive-pr-body-${Date.now()}.md`)
-    try {
-      writeFileSync(tempFile, options.body, 'utf-8')
-      const { stdout } = await execFileAsync(
-        'gh',
-        ['pr', 'create', '--base', baseBranch, '--title', options.title, '--body-file', tempFile],
-        { cwd: this.repoPath }
-      )
-      const url = stdout.trim()
-      const match = url.match(/\/pull\/(\d+)/)
-      const number = match ? parseInt(match[1], 10) : undefined
-      return { success: true, url, number }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-
-      // If a PR already exists for this branch, extract its URL/number
-      // so the caller can attach it instead of treating this as a hard failure.
-      if (/already exists/i.test(message)) {
-        const urlMatch = message.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/)
-        const prUrl = urlMatch?.[0]
-        const numMatch = prUrl?.match(/\/pull\/(\d+)/)
-        const prNumber = numMatch ? parseInt(numMatch[1], 10) : undefined
-        log.warn('PR already exists for this branch', { repoPath: this.repoPath, prUrl, prNumber })
-        return { success: false, error: message, url: prUrl, number: prNumber }
-      }
-
-      log.error('Failed to create pull request', error instanceof Error ? error : new Error(message), {
-        repoPath: this.repoPath
-      })
-      return { success: false, error: message }
-    } finally {
-      try {
-        unlinkSync(tempFile)
-      } catch {
-        // ignore cleanup errors
-      }
-    }
+    return gitEffectService.createPullRequest(this.repoPath, options)
   }
 
-  /**
-   * Get range diff between base branch and HEAD
-   */
   async getRangeDiff(baseBranch: string): Promise<{
     commitSummary: string
     diffSummary: string
     diffPatch: string
     commitCount: number
   }> {
-    if (!baseBranch || baseBranch.startsWith('-')) {
-      return { commitSummary: '', diffSummary: '', diffPatch: '', commitCount: 0 }
-    }
-    const MAX_SUMMARY = 20 * 1024
-    const MAX_PATCH = 60 * 1024
-
-    const [commitLog, diffStat, diffPatch, revCount] = await Promise.all([
-      execFileAsync('git', ['log', '--oneline', `${baseBranch}..HEAD`], { cwd: this.repoPath })
-        .then((r) => r.stdout)
-        .catch((err) => {
-          log.warn('getRangeDiff: git command failed', { error: err instanceof Error ? err.message : String(err) })
-          return ''
-        }),
-      execFileAsync('git', ['diff', '--stat', `${baseBranch}...HEAD`], { cwd: this.repoPath })
-        .then((r) => r.stdout)
-        .catch((err) => {
-          log.warn('getRangeDiff: git command failed', { error: err instanceof Error ? err.message : String(err) })
-          return ''
-        }),
-      execFileAsync('git', ['diff', '--patch', '--minimal', `${baseBranch}...HEAD`], {
-        cwd: this.repoPath,
-        maxBuffer: MAX_PATCH * 2
-      })
-        .then((r) => r.stdout)
-        .catch((err) => {
-          log.warn('getRangeDiff: git command failed', { error: err instanceof Error ? err.message : String(err) })
-          return ''
-        }),
-      execFileAsync('git', ['rev-list', '--count', `${baseBranch}..HEAD`], { cwd: this.repoPath })
-        .then((r) => parseInt(r.stdout.trim(), 10) || 0)
-        .catch((err) => {
-          log.warn('getRangeDiff: git command failed', { error: err instanceof Error ? err.message : String(err) })
-          return 0
-        })
-    ])
-
-    return {
-      commitSummary: commitLog.slice(0, MAX_SUMMARY),
-      diffSummary: diffStat.slice(0, MAX_SUMMARY),
-      diffPatch: diffPatch.slice(0, MAX_PATCH),
-      commitCount: revCount
-    }
+    return gitEffectService.getRangeDiff(this.repoPath, baseBranch)
   }
 
-  /**
-   * Check if current branch has unpushed commits vs remote tracking branch
-   */
   async needsPush(): Promise<boolean> {
-    try {
-      const { stdout } = await execFileAsync(
-        'git',
-        ['rev-list', '--count', '@{u}..HEAD'],
-        { cwd: this.repoPath }
-      )
-      return parseInt(stdout.trim(), 10) > 0
-    } catch (err) {
-      log.warn('needsPush: check failed, assuming push needed', { error: err instanceof Error ? err.message : String(err) })
-      return true
-    }
+    return gitEffectService.needsPush(this.repoPath)
   }
 }
 
