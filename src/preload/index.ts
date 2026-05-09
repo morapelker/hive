@@ -110,11 +110,12 @@ const db = {
       name?: string | null
       opencode_session_id?: string | null
       agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-      mode?: 'build' | 'plan'
+      mode?: 'build' | 'plan' | 'super-plan'
       session_type?: 'default' | 'board-assistant'
       model_provider_id?: string | null
       model_id?: string | null
       model_variant?: string | null
+      pinned_to_board?: boolean
     }) => invokeEnvelope('db:session:create', data),
     get: (id: string) => invokeEnvelope('db:session:get', id),
     getByWorktree: (worktreeId: string) => invokeEnvelope('db:session:getByWorktree', worktreeId),
@@ -128,12 +129,14 @@ const db = {
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
         agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-        mode?: 'build' | 'plan'
+        mode?: 'build' | 'plan' | 'super-plan'
+        session_type?: 'default' | 'board-assistant'
         model_provider_id?: string | null
         model_id?: string | null
         model_variant?: string | null
         updated_at?: string
         completed_at?: string | null
+        pinned_to_board?: boolean
       }
     ) => invokeEnvelope('db:session:update', id, data),
     delete: (id: string) => invokeEnvelope('db:session:delete', id),
@@ -2258,6 +2261,7 @@ const analyticsOps = {
 const kanban = {
   ticket: {
     create: (data: {
+      id?: string
       project_id: string
       title: string
       description?: string | null
@@ -2266,8 +2270,14 @@ const kanban = {
       sort_order?: number
       current_session_id?: string | null
       worktree_id?: string | null
-      mode?: 'build' | 'plan' | null
+      mode?: 'build' | 'plan' | 'super-plan' | null
       plan_ready?: boolean
+      external_provider?: string | null
+      external_id?: string | null
+      external_url?: string | null
+      github_pr_number?: number | null
+      github_pr_url?: string | null
+      mark?: 'common' | 'rare' | 'epic' | 'legendary' | null
     }) => invokeEnvelope('kanban:ticket:create', data),
     createBatch: (data: {
       drafts: Array<{
@@ -2304,9 +2314,14 @@ const kanban = {
         sort_order?: number
         current_session_id?: string | null
         worktree_id?: string | null
-        mode?: 'build' | 'plan' | null
+        mode?: 'build' | 'plan' | 'super-plan' | null
         plan_ready?: boolean
-        mark?: string | null
+        github_pr_number?: number | null
+        github_pr_url?: string | null
+        mark?: 'common' | 'rare' | 'epic' | 'legendary' | null
+        pending_launch_config?: string | null
+        goal_mode?: boolean
+        goal_success_criteria?: string | null
         note?: string | null
       }
     ) => invokeEnvelope('kanban:ticket:update', id, data),
@@ -2360,8 +2375,10 @@ const kanban = {
     export: (
       projectId: string,
       projectName: string
-    ): Promise<Envelope<{ success: boolean; ticketCount: number; path?: string }>> =>
-      invokeEnvelope<{ success: boolean; ticketCount: number; path?: string }>(
+    ): Promise<
+      Envelope<{ success: boolean; ticketCount: number; path?: string; error?: string }>
+    > =>
+      invokeEnvelope<{ success: boolean; ticketCount: number; path?: string; error?: string }>(
         'kanban:board:export',
         projectId,
         projectName
@@ -2372,7 +2389,7 @@ const kanban = {
           id: string
           title: string
           description?: string | null
-          attachments?: unknown[]
+          attachments?: unknown[] | null
           column?: string
         }>
         dependencies?: Array<{
@@ -2388,7 +2405,7 @@ const kanban = {
         id: string
         title: string
         description?: string | null
-        attachments?: unknown[]
+        attachments?: unknown[] | null
         column?: string
       }>,
       dependencies?: Array<{

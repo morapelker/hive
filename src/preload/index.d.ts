@@ -97,7 +97,8 @@ interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-  mode: 'build' | 'plan'
+  mode: 'build' | 'plan' | 'super-plan'
+  session_type: 'default' | 'board-assistant'
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -176,6 +177,8 @@ interface SessionSearchOptions {
 }
 
 type KanbanTicketColumn = 'todo' | 'in_progress' | 'review' | 'done'
+type KanbanTicketMode = 'build' | 'plan' | 'super-plan'
+type TicketMark = 'common' | 'rare' | 'epic' | 'legendary'
 
 interface KanbanTicket {
   id: string
@@ -187,17 +190,26 @@ interface KanbanTicket {
   sort_order: number
   current_session_id: string | null
   worktree_id: string | null
-  mode: 'build' | 'plan' | null
+  mode: KanbanTicketMode | null
   plan_ready: boolean
   created_at: string
   updated_at: string
   archived_at: string | null
+  external_provider: string | null
+  external_id: string | null
+  external_url: string | null
   github_pr_number: number | null
   github_pr_url: string | null
-  mark: string | null
+  mark: TicketMark | null
+  total_tokens: number
+  pending_launch_config: string | null
+  goal_mode: boolean
+  goal_success_criteria: string | null
+  note: string | null
 }
 
 interface KanbanTicketCreate {
+  id?: string
   project_id: string
   title: string
   description?: string | null
@@ -206,10 +218,14 @@ interface KanbanTicketCreate {
   sort_order?: number
   current_session_id?: string | null
   worktree_id?: string | null
-  mode?: 'build' | 'plan' | null
+  mode?: KanbanTicketMode | null
   plan_ready?: boolean
+  external_provider?: string | null
+  external_id?: string | null
+  external_url?: string | null
   github_pr_number?: number | null
   github_pr_url?: string | null
+  mark?: TicketMark | null
 }
 
 interface KanbanTicketUpdate {
@@ -220,11 +236,15 @@ interface KanbanTicketUpdate {
   sort_order?: number
   current_session_id?: string | null
   worktree_id?: string | null
-  mode?: 'build' | 'plan' | null
+  mode?: KanbanTicketMode | null
   plan_ready?: boolean
   github_pr_number?: number | null
   github_pr_url?: string | null
-  mark?: string | null
+  mark?: TicketMark | null
+  pending_launch_config?: string | null
+  goal_mode?: boolean
+  goal_success_criteria?: string | null
+  note?: string | null
 }
 
 interface KanbanTicketBatchCreateItem {
@@ -237,14 +257,14 @@ interface KanbanTicketBatchCreateItem {
   sort_order?: number
   current_session_id?: string | null
   worktree_id?: string | null
-  mode?: 'build' | 'plan' | 'super-plan' | null
+  mode?: KanbanTicketMode | null
   plan_ready?: boolean
   external_provider?: string | null
   external_id?: string | null
   external_url?: string | null
   github_pr_number?: number | null
   github_pr_url?: string | null
-  mark?: string | null
+  mark?: TicketMark | null
   depends_on?: string[]
 }
 
@@ -429,10 +449,12 @@ declare global {
           name?: string | null
           opencode_session_id?: string | null
           agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+          mode?: 'build' | 'plan' | 'super-plan'
           session_type?: 'default' | 'board-assistant'
           model_provider_id?: string | null
           model_id?: string | null
           model_variant?: string | null
+          pinned_to_board?: boolean
         }) => Promise<Session>
         get: (id: string) => Promise<Session | null>
         getByWorktree: (worktreeId: string) => Promise<Session[]>
@@ -445,12 +467,14 @@ declare global {
             status?: 'active' | 'completed' | 'error'
             opencode_session_id?: string | null
             agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-            mode?: 'build' | 'plan'
+            mode?: 'build' | 'plan' | 'super-plan'
+            session_type?: 'default' | 'board-assistant'
             model_provider_id?: string | null
             model_id?: string | null
             model_variant?: string | null
             updated_at?: string
             completed_at?: string | null
+            pinned_to_board?: boolean
           }
         ) => Promise<Session | null>
         delete: (id: string) => Promise<boolean>
@@ -1819,13 +1843,13 @@ declare global {
         export: (
           projectId: string,
           projectName: string
-        ) => Promise<{ success: boolean; ticketCount: number; path?: string }>
+        ) => Promise<{ success: boolean; ticketCount: number; path?: string; error?: string }>
         openImportFile: () => Promise<{
           tickets: Array<{
             id: string
             title: string
             description?: string | null
-            attachments?: unknown[]
+            attachments?: unknown[] | null
             column?: string
           }>
           dependencies?: Array<{
@@ -1840,7 +1864,7 @@ declare global {
             id: string
             title: string
             description?: string | null
-            attachments?: unknown[]
+            attachments?: unknown[] | null
             column?: string
           }>,
           dependencies?: Array<{

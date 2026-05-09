@@ -1,5 +1,3 @@
-import type { KanbanTicket } from '../../../../main/db/types'
-import type { PendingLaunchConfig } from '../../../../main/db/types'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -16,12 +14,32 @@ import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 
 const db = unwrapEnvelopeApi(() => window.db)
 
+type AutoLaunchMode = 'build' | 'plan' | 'super-plan'
+
+interface AutoLaunchTicket {
+  id: string
+  project_id: string
+  title: string
+  pending_launch_config: string | null
+}
+
+interface PendingLaunchConfig {
+  worktree: { type: 'new'; sourceBranch: string } | { type: 'existing'; worktreeId: string }
+  prompt: string
+  mode: AutoLaunchMode
+  model: { providerID: string; modelID: string; variant?: string } | null
+  sdk: 'opencode' | 'claude-code' | 'codex'
+  codexFastMode: boolean
+  goalMode: boolean
+  goalSuccessCriteria: string | null
+}
+
 function wrapGoalPrompt(prompt: string, criteria: string): string {
   const stripped = prompt.replace(/^\/goal\s+/, '')
   return `/goal ${stripped}. Goal success criteria: ${criteria}`
 }
 
-export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
+export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> {
   if (!ticket.pending_launch_config) return
 
   let config: PendingLaunchConfig
@@ -79,7 +97,7 @@ export async function autoLaunchTicket(ticket: KanbanTicket): Promise<void> {
     messageSendTimes.set(sessionId, Date.now())
     userExplicitSendTimes.set(sessionId, Date.now())
     snapshotTokenBaseline(sessionId)
-    lastSendMode.set(sessionId, config.mode)
+    lastSendMode.set(sessionId, isPlanLike(config.mode) ? 'plan' : 'build')
     useWorktreeStatusStore
       .getState()
       .setSessionStatus(sessionId, isPlanLike(config.mode) ? 'planning' : 'working')

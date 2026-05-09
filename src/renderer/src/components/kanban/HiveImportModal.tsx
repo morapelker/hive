@@ -19,7 +19,7 @@ interface ExportedTicket {
   id: string
   title: string
   description?: string | null
-  attachments?: unknown[]
+  attachments?: unknown[] | null
   column?: string
 }
 

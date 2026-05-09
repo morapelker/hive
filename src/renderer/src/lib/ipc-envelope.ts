@@ -5,7 +5,13 @@ export function unwrapEnvelope<A>(envelope: Envelope<A>): A {
   throw new Error(envelope.error)
 }
 
-export type UnwrappedEnvelopeApi<T> = T extends object ? any : never
+export type UnwrappedEnvelopeApi<T> = T extends (...args: infer Args) => Promise<Envelope<infer A>>
+  ? (...args: Args) => Promise<A>
+  : T extends (...args: infer Args) => infer R
+    ? (...args: Args) => R
+    : T extends object
+      ? { [K in keyof T]: UnwrappedEnvelopeApi<T[K]> }
+      : T
 
 export function unwrapEnvelopeApi<T extends object>(api: T | (() => T)): UnwrappedEnvelopeApi<T> {
   const resolve = (): Record<PropertyKey, unknown> => {

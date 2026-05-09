@@ -54,13 +54,66 @@ const stringArgSchema = z.string()
 const stringPairSchema = z.tuple([z.string(), z.string()])
 const stringNumberPairSchema = z.tuple([z.string(), z.number()])
 const ticketColumnSchema = z.enum(['todo', 'in_progress', 'review', 'done'])
-const typedSchema = <A>(): z.ZodType<A> => z.custom<A>()
+const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
+const ticketMarkSchema = z.enum(['common', 'rare', 'epic', 'legendary'])
+
+const kanbanTicketCreateSchema = z.object({
+  id: z.string().optional(),
+  project_id: z.string(),
+  title: z.string(),
+  description: z.string().nullable().optional(),
+  attachments: z.array(z.unknown()).optional(),
+  column: ticketColumnSchema.optional(),
+  sort_order: z.number().optional(),
+  current_session_id: z.string().nullable().optional(),
+  worktree_id: z.string().nullable().optional(),
+  mode: sessionModeSchema.nullable().optional(),
+  plan_ready: z.boolean().optional(),
+  external_provider: z.string().nullable().optional(),
+  external_id: z.string().nullable().optional(),
+  external_url: z.string().nullable().optional(),
+  github_pr_number: z.number().nullable().optional(),
+  github_pr_url: z.string().nullable().optional(),
+  mark: ticketMarkSchema.nullable().optional()
+}) satisfies z.ZodType<KanbanTicketCreate>
+
+const kanbanTicketUpdateSchema = z.object({
+  title: z.string().optional(),
+  description: z.string().nullable().optional(),
+  attachments: z.array(z.unknown()).optional(),
+  column: ticketColumnSchema.optional(),
+  sort_order: z.number().optional(),
+  current_session_id: z.string().nullable().optional(),
+  worktree_id: z.string().nullable().optional(),
+  mode: sessionModeSchema.nullable().optional(),
+  plan_ready: z.boolean().optional(),
+  github_pr_number: z.number().nullable().optional(),
+  github_pr_url: z.string().nullable().optional(),
+  mark: ticketMarkSchema.nullable().optional(),
+  pending_launch_config: z.string().nullable().optional(),
+  goal_mode: z.boolean().optional(),
+  goal_success_criteria: z.string().nullable().optional(),
+  note: z.string().nullable().optional()
+}) satisfies z.ZodType<KanbanTicketUpdate>
+
+const kanbanTicketBatchCreateItemSchema = kanbanTicketCreateSchema
+  .extend({
+    draft_key: z.string(),
+    project_id: z.string(),
+    title: z.string(),
+    depends_on: z.array(z.string()).optional()
+  })
+  .omit({ id: true })
+
+const kanbanTicketBatchCreateSchema = z.object({
+  drafts: z.array(kanbanTicketBatchCreateItemSchema)
+}) satisfies z.ZodType<KanbanTicketBatchCreate>
 
 const importTicketSchema = z.object({
   id: z.string(),
   title: z.string(),
   description: z.string().nullable().optional(),
-  attachments: z.array(z.unknown()).optional(),
+  attachments: z.array(z.unknown()).nullable().optional(),
   column: z.string().optional()
 })
 
@@ -75,11 +128,11 @@ type ImportDependency = z.infer<typeof importDependencySchema>
 export function registerKanbanHandlers(): void {
   log.info('Registering kanban handlers')
 
-  defineHandler('kanban:ticket:create', typedSchema<KanbanTicketCreate>(), (data) =>
+  defineHandler('kanban:ticket:create', kanbanTicketCreateSchema, (data) =>
     tryKanban('kanban:ticket:create', () => getDatabase().createKanbanTicket(data))
   )
 
-  defineHandler('kanban:ticket:createBatch', typedSchema<KanbanTicketBatchCreate>(), (data) =>
+  defineHandler('kanban:ticket:createBatch', kanbanTicketBatchCreateSchema, (data) =>
     tryKanban('kanban:ticket:createBatch', () => getDatabase().createKanbanTicketBatch(data))
   )
 
@@ -98,7 +151,7 @@ export function registerKanbanHandlers(): void {
 
   defineHandler(
     'kanban:ticket:update',
-    z.tuple([z.string(), typedSchema<KanbanTicketUpdate>()]),
+    z.tuple([z.string(), kanbanTicketUpdateSchema]),
     ([id, data]) =>
       tryKanban('kanban:ticket:update', () => getDatabase().updateKanbanTicket(id, data))
   )
@@ -268,7 +321,11 @@ export function registerKanbanHandlers(): void {
         )
 
         return { success: true, ticketCount, path: filePath }
-      })
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.succeed({ success: false, ticketCount: 0, error: error.reason })
+        )
+      )
   )
 
   defineHandler('kanban:board:openImportFile', z.tuple([]), () =>
@@ -318,7 +375,7 @@ export function registerKanbanHandlers(): void {
           projectName: parsed.projectName ?? null
         }
       })
-    })
+    }).pipe(Effect.catchAll(() => Effect.succeed(null)))
   )
 
   defineHandler(

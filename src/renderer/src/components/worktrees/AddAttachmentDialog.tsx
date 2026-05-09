@@ -38,6 +38,7 @@ export function AddAttachmentDialog({
 
   const handleAdd = useCallback(async (): Promise<void> => {
     if (!detected) return
+    if (detected.type !== 'jira' && detected.type !== 'figma') return
     setIsAdding(true)
     try {
       const result = await db.worktree.addAttachment(worktreeId, {

@@ -43,7 +43,130 @@ const stringArgSchema = z.string()
 const stringPairSchema = z.tuple([z.string(), z.string()])
 const stringBooleanPairSchema = z.tuple([z.string(), z.boolean()])
 const stringArraySchema = z.array(z.string())
-const typedSchema = <A>(): z.ZodType<A> => z.custom<A>()
+const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
+const sessionTypeSchema = z.enum(['default', 'board-assistant'])
+const agentSdkSchema = z.enum(['opencode', 'claude-code', 'codex', 'terminal'])
+
+const projectCreateSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  description: z.string().nullable().optional(),
+  tags: z.array(z.string()).nullable().optional(),
+  setup_script: z.string().nullable().optional(),
+  run_script: z.string().nullable().optional(),
+  archive_script: z.string().nullable().optional()
+}) satisfies z.ZodType<ProjectCreate>
+
+const projectUpdateSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().nullable().optional(),
+  tags: z.array(z.string()).nullable().optional(),
+  language: z.string().nullable().optional(),
+  custom_icon: z.string().nullable().optional(),
+  detected_icon: z.string().nullable().optional(),
+  setup_script: z.string().nullable().optional(),
+  run_script: z.string().nullable().optional(),
+  archive_script: z.string().nullable().optional(),
+  auto_assign_port: z.boolean().optional(),
+  last_accessed_at: z.string().optional()
+}) satisfies z.ZodType<ProjectUpdate>
+
+const worktreeCreateSchema = z.object({
+  project_id: z.string(),
+  name: z.string(),
+  branch_name: z.string(),
+  path: z.string(),
+  is_default: z.boolean().optional(),
+  base_branch: z.string().nullable().optional()
+}) satisfies z.ZodType<WorktreeCreate>
+
+const worktreeUpdateSchema = z.object({
+  name: z.string().optional(),
+  branch_name: z.string().optional(),
+  status: z.enum(['active', 'archived']).optional(),
+  branch_renamed: z.number().optional(),
+  last_message_at: z.number().nullable().optional(),
+  last_model_provider_id: z.string().nullable().optional(),
+  last_model_id: z.string().nullable().optional(),
+  last_model_variant: z.string().nullable().optional(),
+  pinned: z.number().optional(),
+  github_pr_number: z.number().nullable().optional(),
+  github_pr_url: z.string().nullable().optional(),
+  last_accessed_at: z.string().optional()
+}) satisfies z.ZodType<WorktreeUpdate>
+
+const sessionCreateSchema = z.object({
+  worktree_id: z.string().nullable(),
+  project_id: z.string(),
+  connection_id: z.string().nullable().optional(),
+  name: z.string().nullable().optional(),
+  opencode_session_id: z.string().nullable().optional(),
+  agent_sdk: agentSdkSchema.optional(),
+  mode: sessionModeSchema.optional(),
+  session_type: sessionTypeSchema.optional(),
+  model_provider_id: z.string().nullable().optional(),
+  model_id: z.string().nullable().optional(),
+  model_variant: z.string().nullable().optional(),
+  pinned_to_board: z.boolean().optional()
+}) satisfies z.ZodType<SessionCreate>
+
+const sessionUpdateSchema = z.object({
+  name: z.string().nullable().optional(),
+  status: z.enum(['active', 'completed', 'error']).optional(),
+  opencode_session_id: z.string().nullable().optional(),
+  agent_sdk: agentSdkSchema.optional(),
+  mode: sessionModeSchema.optional(),
+  session_type: sessionTypeSchema.optional(),
+  model_provider_id: z.string().nullable().optional(),
+  model_id: z.string().nullable().optional(),
+  model_variant: z.string().nullable().optional(),
+  updated_at: z.string().optional(),
+  completed_at: z.string().nullable().optional(),
+  pinned_to_board: z.boolean().optional()
+}) satisfies z.ZodType<SessionUpdate>
+
+const sessionSearchOptionsSchema = z.object({
+  keyword: z.string().optional(),
+  project_id: z.string().optional(),
+  worktree_id: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+  includeArchived: z.boolean().optional()
+}) satisfies z.ZodType<SessionSearchOptions>
+
+const spaceCreateSchema = z.object({
+  name: z.string(),
+  icon_type: z.string().optional(),
+  icon_value: z.string().optional()
+}) satisfies z.ZodType<SpaceCreate>
+
+const spaceUpdateSchema = z.object({
+  name: z.string().optional(),
+  icon_type: z.string().optional(),
+  icon_value: z.string().optional(),
+  sort_order: z.number().optional()
+}) satisfies z.ZodType<SpaceUpdate>
+
+const diffCommentCreateSchema = z.object({
+  worktree_id: z.string(),
+  file_path: z.string(),
+  line_start: z.number(),
+  line_end: z.number().nullable().optional(),
+  anchor_text: z.string().nullable().optional(),
+  anchor_context_before: z.string().nullable().optional(),
+  anchor_context_after: z.string().nullable().optional(),
+  body: z.string()
+}) satisfies z.ZodType<DiffCommentCreate>
+
+const diffCommentUpdateSchema = z.object({
+  body: z.string().optional(),
+  line_start: z.number().optional(),
+  line_end: z.number().nullable().optional(),
+  anchor_text: z.string().nullable().optional(),
+  anchor_context_before: z.string().nullable().optional(),
+  anchor_context_after: z.string().nullable().optional(),
+  is_outdated: z.boolean().optional()
+}) satisfies z.ZodType<DiffCommentUpdate>
 
 const worktreeModelSchema = z.object({
   worktreeId: z.string(),
@@ -102,7 +225,7 @@ export function registerDatabaseHandlers(): void {
   )
 
   // Projects
-  defineHandler('db:project:create', typedSchema<ProjectCreate>(), (data) =>
+  defineHandler('db:project:create', projectCreateSchema, (data) =>
     tryDb('db:project:create', () => {
       const db = getDatabase()
       const project = db.createProject(data)
@@ -131,10 +254,8 @@ export function registerDatabaseHandlers(): void {
     tryDb('db:project:getAll', () => getDatabase().getAllProjects())
   )
 
-  defineHandler(
-    'db:project:update',
-    z.tuple([z.string(), typedSchema<ProjectUpdate>()]),
-    ([id, data]) => tryDb('db:project:update', () => getDatabase().updateProject(id, data))
+  defineHandler('db:project:update', z.tuple([z.string(), projectUpdateSchema]), ([id, data]) =>
+    tryDb('db:project:update', () => getDatabase().updateProject(id, data))
   )
 
   defineHandler('db:project:delete', stringArgSchema, (id) =>
@@ -160,7 +281,7 @@ export function registerDatabaseHandlers(): void {
   )
 
   // Worktrees
-  defineHandler('db:worktree:create', typedSchema<WorktreeCreate>(), (data) =>
+  defineHandler('db:worktree:create', worktreeCreateSchema, (data) =>
     tryDb('db:worktree:create', () => getDatabase().createWorktree(data))
   )
 
@@ -182,10 +303,8 @@ export function registerDatabaseHandlers(): void {
     tryDb('db:worktree:getRecentlyActive', () => getDatabase().getRecentlyActiveWorktrees(cutoffMs))
   )
 
-  defineHandler(
-    'db:worktree:update',
-    z.tuple([z.string(), typedSchema<WorktreeUpdate>()]),
-    ([id, data]) => tryDb('db:worktree:update', () => getDatabase().updateWorktree(id, data))
+  defineHandler('db:worktree:update', z.tuple([z.string(), worktreeUpdateSchema]), ([id, data]) =>
+    tryDb('db:worktree:update', () => getDatabase().updateWorktree(id, data))
   )
 
   defineHandler('db:worktree:delete', stringArgSchema, (id) =>
@@ -229,7 +348,9 @@ export function registerDatabaseHandlers(): void {
     'db:worktree:addAttachment',
     worktreeAttachmentSchema,
     ({ worktreeId, attachment }) =>
-      tryDb('db:worktree:addAttachment', () => getDatabase().addAttachment(worktreeId, attachment))
+      tryDb('db:worktree:addAttachment', () =>
+        getDatabase().addAttachment(worktreeId, attachment)
+      ).pipe(Effect.catchAll((error) => Effect.succeed({ success: false, error: error.reason })))
   )
 
   defineHandler(
@@ -238,7 +359,7 @@ export function registerDatabaseHandlers(): void {
     ({ worktreeId, attachmentId }) =>
       tryDb('db:worktree:removeAttachment', () =>
         getDatabase().removeAttachment(worktreeId, attachmentId)
-      )
+      ).pipe(Effect.catchAll((error) => Effect.succeed({ success: false, error: error.reason })))
   )
 
   defineHandler('db:worktree:attachPR', worktreePrSchema, ({ worktreeId, prNumber, prUrl }) =>
@@ -261,7 +382,7 @@ export function registerDatabaseHandlers(): void {
   )
 
   // Sessions
-  defineHandler('db:session:create', typedSchema<SessionCreate>(), (data) =>
+  defineHandler('db:session:create', sessionCreateSchema, (data) =>
     tryDb('db:session:create', () => getDatabase().createSession(data))
   )
 
@@ -283,10 +404,8 @@ export function registerDatabaseHandlers(): void {
     )
   )
 
-  defineHandler(
-    'db:session:update',
-    z.tuple([z.string(), typedSchema<SessionUpdate>()]),
-    ([id, data]) => tryDb('db:session:update', () => getDatabase().updateSession(id, data))
+  defineHandler('db:session:update', z.tuple([z.string(), sessionUpdateSchema]), ([id, data]) =>
+    tryDb('db:session:update', () => getDatabase().updateSession(id, data))
   )
 
   defineHandler('db:session:delete', stringArgSchema, (id) =>
@@ -313,7 +432,7 @@ export function registerDatabaseHandlers(): void {
     tryDb('db:session:getPinnedSessions', () => getDatabase().getPinnedSessions(worktreeId))
   )
 
-  defineHandler('db:session:search', typedSchema<SessionSearchOptions>(), (options) =>
+  defineHandler('db:session:search', sessionSearchOptionsSchema, (options) =>
     tryDb('db:session:search', () => getDatabase().searchSessions(options))
   )
 
@@ -349,14 +468,12 @@ export function registerDatabaseHandlers(): void {
     tryDb('db:space:list', () => getDatabase().listSpaces())
   )
 
-  defineHandler('db:space:create', typedSchema<SpaceCreate>(), (data) =>
+  defineHandler('db:space:create', spaceCreateSchema, (data) =>
     tryDb('db:space:create', () => getDatabase().createSpace(data))
   )
 
-  defineHandler(
-    'db:space:update',
-    z.tuple([z.string(), typedSchema<SpaceUpdate>()]),
-    ([id, data]) => tryDb('db:space:update', () => getDatabase().updateSpace(id, data))
+  defineHandler('db:space:update', z.tuple([z.string(), spaceUpdateSchema]), ([id, data]) =>
+    tryDb('db:space:update', () => getDatabase().updateSpace(id, data))
   )
 
   defineHandler('db:space:delete', stringArgSchema, (id) =>
@@ -393,7 +510,7 @@ export function registerDatabaseHandlers(): void {
   )
 
   // Diff Comments
-  defineHandler('db:diffComment:create', typedSchema<DiffCommentCreate>(), (data) =>
+  defineHandler('db:diffComment:create', diffCommentCreateSchema, (data) =>
     tryDb('db:diffComment:create', () => getDatabase().createDiffComment(data))
   )
 
@@ -403,7 +520,7 @@ export function registerDatabaseHandlers(): void {
 
   defineHandler(
     'db:diffComment:update',
-    z.tuple([z.string(), typedSchema<DiffCommentUpdate>()]),
+    z.tuple([z.string(), diffCommentUpdateSchema]),
     ([id, data]) => tryDb('db:diffComment:update', () => getDatabase().updateDiffComment(id, data))
   )
 
