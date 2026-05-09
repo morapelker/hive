@@ -11,10 +11,14 @@ const log = createLogger({ component: 'BashHandlers' })
 class BashHandlerFailed extends Data.TaggedError('BashHandlerFailed')<{
   readonly operation: string
   readonly reason: string
+  readonly message: string
 }> {}
 
 const toReason = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause)
+
+const bashHandlerFailed = (operation: string, reason: string): BashHandlerFailed =>
+  new BashHandlerFailed({ operation, reason, message: reason })
 
 export function registerBashHandlers(mainWindow: BrowserWindow): void {
   bashService.setMainWindow(mainWindow)
@@ -37,21 +41,13 @@ export function registerBashHandlers(mainWindow: BrowserWindow): void {
         try: () => bashService.run(payload.sessionId, payload.command, payload.cwd),
         catch: (cause) => {
           log.error('IPC: bash:run failed', cause instanceof Error ? cause : new Error(String(cause)))
-          return new BashHandlerFailed({
-            operation: 'bash:run',
-            reason: toReason(cause)
-          })
+          return bashHandlerFailed('bash:run', toReason(cause))
         }
       }).pipe(
         Effect.flatMap((envelope) =>
           envelope.success
             ? Effect.succeed({ runId: envelope.runId })
-            : Effect.fail(
-                new BashHandlerFailed({
-                  operation: 'bash:run',
-                  reason: envelope.error
-                })
-              )
+            : Effect.fail(bashHandlerFailed('bash:run', envelope.error))
         )
       )
     }
@@ -63,10 +59,7 @@ export function registerBashHandlers(mainWindow: BrowserWindow): void {
       try: () => bashService.abort(sessionId),
       catch: (cause) => {
         log.error('IPC: bash:abort failed', cause instanceof Error ? cause : new Error(String(cause)))
-        return new BashHandlerFailed({
-          operation: 'bash:abort',
-          reason: toReason(cause)
-        })
+        return bashHandlerFailed('bash:abort', toReason(cause))
       }
     })
   })
@@ -76,10 +69,7 @@ export function registerBashHandlers(mainWindow: BrowserWindow): void {
       try: () => bashService.getRun(sessionId),
       catch: (cause) => {
         log.error('IPC: bash:getRun failed', cause instanceof Error ? cause : new Error(String(cause)))
-        return new BashHandlerFailed({
-          operation: 'bash:getRun',
-          reason: toReason(cause)
-        })
+        return bashHandlerFailed('bash:getRun', toReason(cause))
       }
     })
   })

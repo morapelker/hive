@@ -1,7 +1,14 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast as sonnerToast } from 'sonner'
 
 import { useBashRuns } from '../useBashRuns'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn()
+  }
+}))
 
 type BashApi = typeof window.bash
 
@@ -35,6 +42,14 @@ const installBashMock = (overrides: Partial<BashApi> = {}): BashApi => {
 }
 
 describe('useBashRuns', () => {
+  beforeEach(() => {
+    vi.mocked(sonnerToast.error).mockReset()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('seeds runs from getRun success envelopes on mount', async () => {
     installBashMock({
       getRun: vi.fn().mockResolvedValue({ success: true, value: snapshot })
@@ -72,6 +87,12 @@ describe('useBashRuns', () => {
       })
     ).resolves.toBeUndefined()
     expect(window.bash.run).toHaveBeenCalledWith('session-1', 'pnpm test', '/repo')
+    await waitFor(() => {
+      expect(sonnerToast.error).toHaveBeenCalledWith(
+        'Could not start command',
+        expect.objectContaining({ duration: 5000 })
+      )
+    })
   })
 
   it('subscribes to bash stream events and unsubscribes on unmount', () => {
