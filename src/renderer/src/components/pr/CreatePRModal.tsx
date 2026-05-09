@@ -29,6 +29,7 @@ import { usePRNotificationStore } from '@/stores/usePRNotificationStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -45,10 +46,7 @@ interface CreatePRModalProps {
 // Component
 // ---------------------------------------------------------------------------
 
-export function CreatePRModal({
-  worktreeId,
-  worktreePath
-}: CreatePRModalProps): React.JSX.Element {
+export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps): React.JSX.Element {
   const open = useGitStore((s) => s.createPRModalOpen)
   const setOpen = useGitStore((s) => s.setCreatePRModalOpen)
   const branchInfo = useGitStore((s) =>
@@ -97,9 +95,7 @@ export function CreatePRModal({
   const [body, setBody] = useState('')
   const [baseBranch, setBaseBranch] = useState('')
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false)
-  const [remoteBranches, setRemoteBranches] = useState<
-    { name: string; isRemote: boolean }[]
-  >([])
+  const [remoteBranches, setRemoteBranches] = useState<{ name: string; isRemote: boolean }[]>([])
   const [commitCount, setCommitCount] = useState<number | null>(null)
   const [loadingBranches, setLoadingBranches] = useState(false)
 
@@ -133,9 +129,7 @@ export function CreatePRModal({
     // Pre-fill commit message from session titles (same as GitCommitForm)
     setCommitSummary(sessionTitles[0] ?? '')
     setCommitDescription(
-      sessionTitles.length > 1
-        ? sessionTitles.map((t) => `- ${t}`).join('\n')
-        : ''
+      sessionTitles.length > 1 ? sessionTitles.map((t) => `- ${t}`).join('\n') : ''
     )
     setCommitError('')
     setIsStaging(false)
@@ -147,6 +141,7 @@ export function CreatePRModal({
     setLoadingBranches(true)
     window.gitOps
       .listBranchesWithStatus(worktreePath)
+      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setRemoteBranches(result.branches.filter((b) => b.isRemote))
@@ -158,10 +153,7 @@ export function CreatePRModal({
       .finally(() => setLoadingBranches(false))
 
     // Check for uncommitted changes — show commit phase if any
-    Promise.all([
-      window.gitOps.hasUncommittedChanges(worktreePath),
-      loadFileStatuses(worktreePath)
-    ])
+    Promise.all([window.gitOps.hasUncommittedChanges(worktreePath), loadFileStatuses(worktreePath)])
       .then(([hasUncommitted]) => {
         if (hasUncommitted) setPhase('commit')
       })
@@ -245,9 +237,7 @@ export function CreatePRModal({
 
     if (result.success) {
       toast.success('Changes committed', {
-        description: result.commitHash
-          ? `Commit: ${result.commitHash.slice(0, 7)}`
-          : undefined
+        description: result.commitHash ? `Commit: ${result.commitHash.slice(0, 7)}` : undefined
       })
       // Refresh commit count and branch info after committing
       if (baseBranch) {
@@ -341,7 +331,8 @@ export function CreatePRModal({
             } else {
               console.warn('PR content generation failed, using fallback:', genResult.error)
               generationFailureReason =
-                genResult.error ?? 'AI content generation failed — you may want to edit the title and description'
+                genResult.error ??
+                'AI content generation failed — you may want to edit the title and description'
               usedFallbackContent = true
             }
           } catch (err) {
@@ -439,8 +430,8 @@ export function CreatePRModal({
           ? `PR #${prNumber} created with default content`
           : `Pull request #${prNumber} created`,
         description: usedFallbackContent
-          ? generationFailureReason ??
-            'AI content generation failed — you may want to edit the title and description'
+          ? (generationFailureReason ??
+            'AI content generation failed — you may want to edit the title and description')
           : undefined,
         prUrl,
         prNumber,
@@ -481,8 +472,8 @@ export function CreatePRModal({
     <>
       {/* Info text */}
       <p className="text-sm text-muted-foreground">
-        You have uncommitted changes. Commit them before creating a pull request,
-        or skip to create a PR with what&apos;s already committed.
+        You have uncommitted changes. Commit them before creating a pull request, or skip to create
+        a PR with what&apos;s already committed.
       </p>
 
       {/* File list */}
@@ -543,8 +534,7 @@ export function CreatePRModal({
             placeholder="Commit summary"
             className={cn(
               'pr-12',
-              commitSummary.length > 72 &&
-                'border-red-500 focus-visible:ring-red-500',
+              commitSummary.length > 72 && 'border-red-500 focus-visible:ring-red-500',
               commitSummary.length > 50 &&
                 commitSummary.length <= 72 &&
                 'border-yellow-500 focus-visible:ring-yellow-500'
@@ -555,9 +545,7 @@ export function CreatePRModal({
             className={cn(
               'absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono',
               commitSummary.length > 72 && 'text-red-500',
-              commitSummary.length > 50 &&
-                commitSummary.length <= 72 &&
-                'text-yellow-500',
+              commitSummary.length > 50 && commitSummary.length <= 72 && 'text-yellow-500',
               commitSummary.length <= 50 && 'text-muted-foreground'
             )}
           >
@@ -609,7 +597,9 @@ export function CreatePRModal({
 
       {/* Base branch dropdown */}
       <div className="space-y-1.5">
-        <label htmlFor="pr-base-branch" className="text-sm font-medium text-foreground">Base branch</label>
+        <label htmlFor="pr-base-branch" className="text-sm font-medium text-foreground">
+          Base branch
+        </label>
         <Popover open={branchDropdownOpen} onOpenChange={setBranchDropdownOpen}>
           <PopoverTrigger asChild>
             <button
@@ -672,7 +662,9 @@ export function CreatePRModal({
 
       {/* Title */}
       <div className="space-y-1.5">
-        <label htmlFor="pr-title" className="text-sm font-medium text-foreground">Title</label>
+        <label htmlFor="pr-title" className="text-sm font-medium text-foreground">
+          Title
+        </label>
         <Input
           id="pr-title"
           value={title}
@@ -683,7 +675,9 @@ export function CreatePRModal({
 
       {/* Description */}
       <div className="space-y-1.5">
-        <label htmlFor="pr-description" className="text-sm font-medium text-foreground">Description</label>
+        <label htmlFor="pr-description" className="text-sm font-medium text-foreground">
+          Description
+        </label>
         <Textarea
           id="pr-description"
           value={body}
@@ -753,9 +747,7 @@ export function CreatePRModal({
             </DialogDescription>
           )}
           {phase === 'form' && (
-            <DialogDescription>
-              Create a new pull request for this workspace.
-            </DialogDescription>
+            <DialogDescription>Create a new pull request for this workspace.</DialogDescription>
           )}
         </DialogHeader>
 

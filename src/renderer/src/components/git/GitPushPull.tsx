@@ -16,6 +16,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { cn } from '@/lib/utils'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
 import { MergeConfirmDialog } from '@/components/worktrees/MergeConfirmDialog'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface BranchInfo {
   name: string
@@ -142,6 +143,7 @@ export function GitPushPull({
     setBranchesLoading(true)
     window.gitOps
       .listBranchesWithStatus(worktreePath)
+      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setBranches(result.branches)
@@ -183,8 +185,7 @@ export function GitPushPull({
     const lowerFilter = branchFilter.toLowerCase()
     return branches
       .filter(
-        (b) =>
-          !b.isRemote && b.name.toLowerCase().includes(lowerFilter) && b.name !== currentBranch
+        (b) => !b.isRemote && b.name.toLowerCase().includes(lowerFilter) && b.name !== currentBranch
       )
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [branches, branchFilter, branchInfo?.name])
@@ -286,7 +287,6 @@ export function GitPushPull({
     setArchiveConfirmFiles([])
   }, [])
 
-
   const doMerge = useCallback(async () => {
     if (!worktreePath || !mergeBranch.trim()) return
     setIsMerging(true)
@@ -297,7 +297,9 @@ export function GitPushPull({
         // Refresh file statuses and branch info after merge
         await refreshStatuses(worktreePath)
         // Refresh branch list so Archive/Delete decision has current isCheckedOut data
-        const branchResult = await window.gitOps.listBranchesWithStatus(worktreePath)
+        const branchResult = unwrapEnvelope(
+          await window.gitOps.listBranchesWithStatus(worktreePath)
+        )
         if (branchResult.success) {
           setBranches(branchResult.branches)
         }
@@ -499,9 +501,7 @@ export function GitPushPull({
             <Archive className="h-3 w-3 mr-1" />
             Archive
           </Button>
-        ) : isBranchMerged && !selectedBranchInfo?.isRemote ? (
-          null
-        ) : (
+        ) : isBranchMerged && !selectedBranchInfo?.isRemote ? null : (
           <Button
             variant="outline"
             size="sm"

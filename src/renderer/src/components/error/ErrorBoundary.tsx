@@ -1,6 +1,7 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react'
+import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { AlertTriangle, RefreshCw, Bug, Copy, Check } from 'lucide-react'
 import { Button } from '../ui/button'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface Props {
   children: ReactNode
@@ -71,7 +72,7 @@ ${errorInfo?.componentStack || 'No component stack'}
     } catch {
       // Fallback to window.projectOps if available
       try {
-        await window.projectOps.copyToClipboard(errorText)
+        unwrapEnvelope(await window.projectOps.copyToClipboard(errorText))
         this.setState({ copied: true })
         setTimeout(() => this.setState({ copied: false }), 2000)
       } catch {

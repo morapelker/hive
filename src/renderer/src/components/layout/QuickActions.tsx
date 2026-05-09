@@ -362,6 +362,7 @@ export function QuickActions(): React.JSX.Element | null {
     }
     window.projectOps
       .findXcworkspace(searchPath)
+      .then(unwrapEnvelope)
       .then(setXcworkspacePath)
       .catch(() => setXcworkspacePath(null))
   }, [isSwiftProject, activePath, selectedProject?.path, isConnectionMode])
@@ -378,6 +379,7 @@ export function QuickActions(): React.JSX.Element | null {
     }
     window.projectOps
       .isAndroidProject(searchPath)
+      .then(unwrapEnvelope)
       .then(setIsAndroidProject)
       .catch(() => setIsAndroidProject(false))
   }, [isKotlinOrJava, activePath, selectedProject?.path, isConnectionMode])
@@ -389,9 +391,9 @@ export function QuickActions(): React.JSX.Element | null {
     if (!activePath) return
     try {
       if (isConnectionMode) {
-        await window.connectionOps.openInEditor(activePath)
+        unwrapEnvelope(await window.connectionOps.openInEditor(activePath))
       } else {
-        await window.worktreeOps.openInEditor(activePath)
+        unwrapEnvelope(await window.worktreeOps.openInEditor(activePath))
       }
     } catch (error) {
       console.error('Open in editor failed:', error)
@@ -405,16 +407,16 @@ export function QuickActions(): React.JSX.Element | null {
         if (actionId === 'editor') {
           await handleOpenInEditor()
         } else if (actionId === 'copy-path') {
-          await window.projectOps.copyToClipboard(activePath)
+          unwrapEnvelope(await window.projectOps.copyToClipboard(activePath))
           setCopied(true)
           setTimeout(() => setCopied(false), 1500)
         } else if (actionId === 'copy-branch') {
           if (!branchName) return
-          await window.projectOps.copyToClipboard(branchName)
+          unwrapEnvelope(await window.projectOps.copyToClipboard(branchName))
           setBranchCopied(true)
           setTimeout(() => setBranchCopied(false), 1500)
         } else if (actionId === 'finder') {
-          await window.projectOps.showInFolder(activePath)
+          unwrapEnvelope(await window.projectOps.showInFolder(activePath))
         } else if (actionId === 'terminal') {
           const result = unwrapEnvelope(
             await window.settingsOps.openWithTerminal(
@@ -442,7 +444,9 @@ export function QuickActions(): React.JSX.Element | null {
           size="sm"
           className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
           disabled={disabled}
-          onClick={() => window.projectOps.openPath(xcworkspacePath)}
+          onClick={() => {
+            window.projectOps.openPath(xcworkspacePath).then(unwrapEnvelope).catch(console.error)
+          }}
           title="Open in Xcode"
           data-testid="quick-action-xcode"
         >

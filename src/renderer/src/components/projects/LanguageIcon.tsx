@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FolderGit2 } from 'lucide-react'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // Bundled language icons (Vite resolves these to hashed asset URLs at build time)
 import typescriptIcon from '@/assets/language-icons/typescript.svg'
@@ -71,6 +72,7 @@ function loadCustomIcons(): void {
   customIconsLoading = true
   window.projectOps
     .loadLanguageIcons()
+    .then(unwrapEnvelope)
     .then((icons) => {
       customIconsCache = icons
       customIconsLoading = false
@@ -124,6 +126,7 @@ function useProjectIconUrl(customIcon: string | null | undefined): string | null
     let cancelled = false
     window.projectOps
       .getProjectIconPath(customIcon)
+      .then(unwrapEnvelope)
       .then((dataUrl) => {
         if (cancelled) return
         if (dataUrl) {
@@ -148,9 +151,7 @@ const detectedIconCache = new Map<string, string>()
 
 function useDetectedIconUrl(detectedIcon: string | null | undefined): string | null {
   const [url, setUrl] = useState<string | null>(
-    detectedIcon && detectedIcon !== 'none'
-      ? (detectedIconCache.get(detectedIcon) ?? null)
-      : null
+    detectedIcon && detectedIcon !== 'none' ? (detectedIconCache.get(detectedIcon) ?? null) : null
   )
 
   useEffect(() => {
@@ -170,6 +171,7 @@ function useDetectedIconUrl(detectedIcon: string | null | undefined): string | n
     let cancelled = false
     window.projectOps
       .getAbsoluteIconDataUrl(detectedIcon)
+      .then(unwrapEnvelope)
       .then((dataUrl) => {
         if (cancelled) return
         if (dataUrl) {

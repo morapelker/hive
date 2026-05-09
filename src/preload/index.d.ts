@@ -1,9 +1,4 @@
-import type {
-  PetManifest,
-  PetPosition,
-  PetSettings,
-  PetStatusPayload
-} from '../shared/types/pet'
+import type { PetManifest, PetPosition, PetSettings, PetStatusPayload } from '../shared/types/pet'
 import type {
   TelegramConfig,
   TelegramDiscoveredChat,
@@ -51,6 +46,7 @@ interface Project {
   tags: string | null
   language: string | null
   custom_icon: string | null
+  detected_icon: string | null
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
@@ -293,9 +289,22 @@ declare global {
 
   // Bash stream event (sent from main process via 'bash:stream' channel)
   type BashStreamEvent =
-    | { type: 'start'; sessionId: string; runId: string; command: string; cwd: string; startedAt: number }
+    | {
+        type: 'start'
+        sessionId: string
+        runId: string
+        command: string
+        cwd: string
+        startedAt: number
+      }
     | { type: 'output'; sessionId: string; runId: string; data: string }
-    | { type: 'end'; sessionId: string; runId: string; status: 'exited' | 'killed' | 'truncated' | 'error'; exitCode?: number }
+    | {
+        type: 'end'
+        sessionId: string
+        runId: string
+        status: 'exited' | 'killed' | 'truncated' | 'error'
+        exitCode?: number
+      }
 
   interface DiffComment {
     id: string
@@ -311,7 +320,6 @@ declare global {
     created_at: string
     updated_at: string
   }
-
 
   interface Window {
     db: {
@@ -339,6 +347,7 @@ declare global {
             tags?: string[] | null
             language?: string | null
             custom_icon?: string | null
+            detected_icon?: string | null
             setup_script?: string | null
             run_script?: string | null
             archive_script?: string | null
@@ -397,9 +406,7 @@ declare global {
           prNumber: number,
           prUrl: string
         ) => Promise<{ success: boolean; error?: string }>
-        detachPR: (
-          worktreeId: string
-        ) => Promise<{ success: boolean; error?: string }>
+        detachPR: (worktreeId: string) => Promise<{ success: boolean; error?: string }>
         setPinned: (
           worktreeId: string,
           pinned: boolean
@@ -485,15 +492,18 @@ declare global {
           body: string
         }) => Promise<DiffComment>
         list: (worktreeId: string) => Promise<DiffComment[]>
-        update: (id: string, data: {
-          body?: string
-          line_start?: number
-          line_end?: number | null
-          anchor_text?: string | null
-          anchor_context_before?: string | null
-          anchor_context_after?: string | null
-          is_outdated?: boolean
-        }) => Promise<DiffComment | null>
+        update: (
+          id: string,
+          data: {
+            body?: string
+            line_start?: number
+            line_end?: number | null
+            anchor_text?: string | null
+            anchor_context_before?: string | null
+            anchor_context_after?: string | null
+            is_outdated?: boolean
+          }
+        ) => Promise<DiffComment | null>
         setOutdated: (id: string, isOutdated: boolean) => Promise<DiffComment | null>
         delete: (id: string) => Promise<boolean>
         clearAll: (worktreeId: string) => Promise<number>
@@ -503,77 +513,95 @@ declare global {
       getIndexes: () => Promise<{ name: string; tbl_name: string }[]>
     }
     projectOps: {
-      openDirectoryDialog: () => Promise<string | null>
-      isGitRepository: (path: string) => Promise<boolean>
-      validateProject: (path: string) => Promise<{
-        success: boolean
-        path?: string
-        name?: string
-        error?: string
-      }>
-      showInFolder: (path: string) => Promise<void>
-      openPath: (path: string) => Promise<string>
-      copyToClipboard: (text: string) => Promise<void>
-      readFromClipboard: () => Promise<string>
-      detectLanguage: (projectPath: string) => Promise<string | null>
-      findXcworkspace: (projectPath: string) => Promise<string | null>
-      isAndroidProject: (projectPath: string) => Promise<boolean>
-      loadLanguageIcons: () => Promise<Record<string, string>>
-      initRepository: (path: string) => Promise<{ success: boolean; error?: string }>
-      pickProjectIcon: (projectId: string) => Promise<{
-        success: boolean
-        filename?: string
-        error?: string
-      }>
-      removeProjectIcon: (projectId: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      getProjectIconPath: (filename: string) => Promise<string | null>
-      detectFavicon: (projectPath: string) => Promise<string | null>
-      getAbsoluteIconDataUrl: (absolutePath: string) => Promise<string | null>
+      openDirectoryDialog: () => Promise<Envelope<string | null>>
+      isGitRepository: (path: string) => Promise<Envelope<boolean>>
+      validateProject: (path: string) => Promise<
+        Envelope<{
+          success: boolean
+          path?: string
+          name?: string
+          error?: string
+        }>
+      >
+      showInFolder: (path: string) => Promise<Envelope<void>>
+      openPath: (path: string) => Promise<Envelope<string>>
+      copyToClipboard: (text: string) => Promise<Envelope<void>>
+      readFromClipboard: () => Promise<Envelope<string>>
+      detectLanguage: (projectPath: string) => Promise<Envelope<string | null>>
+      findXcworkspace: (projectPath: string) => Promise<Envelope<string | null>>
+      isAndroidProject: (projectPath: string) => Promise<Envelope<boolean>>
+      loadLanguageIcons: () => Promise<Envelope<Record<string, string>>>
+      initRepository: (path: string) => Promise<Envelope<{ success: boolean; error?: string }>>
+      pickProjectIcon: (projectId: string) => Promise<
+        Envelope<{
+          success: boolean
+          filename?: string
+          error?: string
+        }>
+      >
+      removeProjectIcon: (projectId: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      getProjectIconPath: (filename: string) => Promise<Envelope<string | null>>
+      detectFavicon: (projectPath: string) => Promise<Envelope<string | null>>
+      getAbsoluteIconDataUrl: (absolutePath: string) => Promise<Envelope<string | null>>
     }
     worktreeOps: {
-      hasCommits: (projectPath: string) => Promise<boolean>
-      create: (params: { projectId: string; projectPath: string; projectName: string }) => Promise<{
-        success: boolean
-        worktree?: Worktree
-        error?: string
-        pullInfo?: {
-          pulled: boolean
-          updated: boolean
-        }
-      }>
+      hasCommits: (projectPath: string) => Promise<Envelope<boolean>>
+      create: (params: { projectId: string; projectPath: string; projectName: string }) => Promise<
+        Envelope<{
+          success: boolean
+          worktree?: Worktree
+          error?: string
+          pullInfo?: {
+            pulled: boolean
+            updated: boolean
+          }
+        }>
+      >
       delete: (params: {
         worktreeId: string
         worktreePath: string
         branchName: string
         projectPath: string
         archive: boolean
-      }) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      sync: (params: { projectId: string; projectPath: string }) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      exists: (worktreePath: string) => Promise<boolean>
-      openInTerminal: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      openInEditor: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      getBranches: (projectPath: string) => Promise<{
-        success: boolean
-        branches?: string[]
-        currentBranch?: string
-        error?: string
-      }>
-      branchExists: (projectPath: string, branchName: string) => Promise<boolean>
+      }) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      sync: (params: { projectId: string; projectPath: string }) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      exists: (worktreePath: string) => Promise<Envelope<boolean>>
+      openInTerminal: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      openInEditor: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      getBranches: (projectPath: string) => Promise<
+        Envelope<{
+          success: boolean
+          branches?: string[]
+          currentBranch?: string
+          error?: string
+        }>
+      >
+      branchExists: (projectPath: string, branchName: string) => Promise<Envelope<boolean>>
       duplicate: (params: {
         projectId: string
         projectPath: string
@@ -581,17 +609,19 @@ declare global {
         sourceBranch: string
         sourceWorktreePath: string
         nameHint?: string
-      }) => Promise<{
-        success: boolean
-        worktree?: Worktree
-        error?: string
-      }>
+      }) => Promise<
+        Envelope<{
+          success: boolean
+          worktree?: Worktree
+          error?: string
+        }>
+      >
       renameBranch: (
         worktreeId: string,
         worktreePath: string,
         oldBranch: string,
         newBranch: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       createFromBranch: (
         projectId: string,
         projectPath: string,
@@ -599,28 +629,32 @@ declare global {
         branchName: string,
         prNumber?: number,
         nameHint?: string
-      ) => Promise<{
-        success: boolean
-        worktree?: Worktree
-        error?: string
-        pullInfo?: {
-          pulled: boolean
-          updated: boolean
-        }
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          worktree?: Worktree
+          error?: string
+          pullInfo?: {
+            pulled: boolean
+            updated: boolean
+          }
+        }>
+      >
       // Subscribe to branch-renamed events (auto-rename from main process)
       onBranchRenamed: (
         callback: (data: { worktreeId: string; newBranch: string }) => void
       ) => () => void
-      getContext: (worktreeId: string) => Promise<{
-        success: boolean
-        context?: string | null
-        error?: string
-      }>
+      getContext: (worktreeId: string) => Promise<
+        Envelope<{
+          success: boolean
+          context?: string | null
+          error?: string
+        }>
+      >
       updateContext: (
         worktreeId: string,
         context: string | null
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
     }
     systemOps: {
       getLogDir: () => Promise<string>
@@ -877,21 +911,23 @@ declare global {
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
     }
     telegramOps: {
-      getConfig: () => Promise<TelegramConfig | null>
-      setConfig: (config: TelegramConfig | null) => Promise<{ ok: boolean; error?: string }>
+      getConfig: () => Promise<Envelope<TelegramConfig | null>>
+      setConfig: (
+        config: TelegramConfig | null
+      ) => Promise<Envelope<{ ok: boolean; error?: string }>>
       verifyToken: (
         botToken: string
-      ) => Promise<{ ok: boolean; botUsername?: string; error?: string }>
-      discoverChats: (config?: TelegramConfig | null) => Promise<TelegramDiscoveredChat[]>
-      sendTestMessage: () => Promise<{ ok: boolean; error?: string }>
+      ) => Promise<Envelope<{ ok: boolean; botUsername?: string; error?: string }>>
+      discoverChats: (config?: TelegramConfig | null) => Promise<Envelope<TelegramDiscoveredChat[]>>
+      sendTestMessage: () => Promise<Envelope<{ ok: boolean; error?: string }>>
       startForwarding: (params: {
         sessionId: string
         worktreeId: string | null
         connectionId: string | null
         mode: TelegramMode
-      }) => Promise<{ ok: boolean; status: TelegramForwardingStatus; error?: string }>
-      stopForwarding: () => Promise<{ status: TelegramForwardingStatus }>
-      getStatus: () => Promise<TelegramForwardingStatus>
+      }) => Promise<Envelope<{ ok: boolean; status: TelegramForwardingStatus; error?: string }>>
+      stopForwarding: () => Promise<Envelope<{ status: TelegramForwardingStatus }>>
+      getStatus: () => Promise<Envelope<TelegramForwardingStatus>>
       onStatusChanged: (callback: (status: TelegramForwardingStatus) => void) => () => void
       onPlanImplementRequested: (
         callback: (payload: {
@@ -1121,10 +1157,7 @@ declare global {
         error?: string
       }>
       // Discard changes in a file
-      discardChanges: (
-        worktreePath: string,
-        filePath: string
-      ) => Promise<Envelope<null>>
+      discardChanges: (worktreePath: string, filePath: string) => Promise<Envelope<null>>
       // Add to .gitignore
       addToGitignore: (
         worktreePath: string,
@@ -1228,16 +1261,18 @@ declare global {
         error?: string
       }>
       // List all branches with their worktree checkout status
-      listBranchesWithStatus: (projectPath: string) => Promise<{
-        success: boolean
-        branches: Array<{
-          name: string
-          isRemote: boolean
-          isCheckedOut: boolean
-          worktreePath?: string
+      listBranchesWithStatus: (projectPath: string) => Promise<
+        Envelope<{
+          success: boolean
+          branches: Array<{
+            name: string
+            isRemote: boolean
+            isCheckedOut: boolean
+            worktreePath?: string
+          }>
+          error?: string
         }>
-        error?: string
-      }>
+      >
       // Merge a branch into the current branch
       merge: (
         worktreePath: string,
@@ -1525,36 +1560,50 @@ declare global {
     connectionOps: {
       create: (
         worktreeIds: string[]
-      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
-      delete: (connectionId: string) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<
+        Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      >
+      delete: (connectionId: string) => Promise<Envelope<{ success: boolean; error?: string }>>
       addMember: (
         connectionId: string,
         worktreeId: string
-      ) => Promise<{ success: boolean; member?: ConnectionMember; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; member?: ConnectionMember; error?: string }>>
       removeMember: (
         connectionId: string,
         worktreeId: string
-      ) => Promise<{ success: boolean; connectionDeleted?: boolean; error?: string }>
-      getAll: () => Promise<{
-        success: boolean
-        connections?: ConnectionWithMembers[]
-        error?: string
-      }>
+      ) => Promise<Envelope<{ success: boolean; connectionDeleted?: boolean; error?: string }>>
+      getAll: () => Promise<
+        Envelope<{
+          success: boolean
+          connections?: ConnectionWithMembers[]
+          error?: string
+        }>
+      >
       get: (
         connectionId: string
-      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
-      openInTerminal: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
-      openInEditor: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
-      removeWorktreeFromAll: (worktreeId: string) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<
+        Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      >
+      openInTerminal: (
+        connectionPath: string
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
+      openInEditor: (
+        connectionPath: string
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
+      removeWorktreeFromAll: (
+        worktreeId: string
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       rename: (
         connectionId: string,
         customName: string | null
-      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      ) => Promise<
+        Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      >
       setPinned: (
         connectionId: string,
         pinned: boolean
-      ) => Promise<{ success: boolean; error?: string }>
-      getPinned: () => Promise<ConnectionWithMembers[]>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
+      getPinned: () => Promise<Envelope<ConnectionWithMembers[]>>
     }
     usageOps: {
       fetch: () => Promise<Envelope<import('../shared/types/usage').UsageResult>>
@@ -1575,8 +1624,19 @@ declare global {
         timestamp: string
         uptimeMs: number
         cpu: { userMs: number; systemMs: number; percentSinceLastSample: number }
-        memory: { rss: number; heapUsed: number; heapTotal: number; external: number; arrayBuffers: number }
-        processes: { ptyActive: number; scriptsActive: number; scriptsTotalOpened: number; scriptsTotalClosed: number }
+        memory: {
+          rss: number
+          heapUsed: number
+          heapTotal: number
+          external: number
+          arrayBuffers: number
+        }
+        processes: {
+          ptyActive: number
+          scriptsActive: number
+          scriptsTotalOpened: number
+          scriptsTotalClosed: number
+        }
         watchers: { fileTree: number; worktree: number; branch: number }
         sessions: { active: number }
         handles: { active: number; requests: number }
@@ -1589,7 +1649,9 @@ declare global {
     kanban: {
       ticket: {
         create: (data: KanbanTicketCreate) => Promise<KanbanTicket>
-        createBatch: (data: { drafts: KanbanTicketBatchCreateItem[] }) => Promise<KanbanTicketBatchCreateResult>
+        createBatch: (data: {
+          drafts: KanbanTicketBatchCreateItem[]
+        }) => Promise<KanbanTicketBatchCreateResult>
         get: (id: string) => Promise<KanbanTicket | null>
         getByProject: (projectId: string) => Promise<KanbanTicket[]>
         update: (id: string, data: KanbanTicketUpdate) => Promise<KanbanTicket | null>
@@ -1607,7 +1669,12 @@ declare global {
         addTokens: (id: string, tokens: number) => Promise<KanbanTicket | null>
         syncPR: (worktreeId: string, prNumber: number, prUrl: string) => Promise<void>
         clearPR: (worktreeId: string) => Promise<void>
-        attachPR: (ticketId: string, projectId: string, prNumber: number, prUrl: string) => Promise<void>
+        attachPR: (
+          ticketId: string,
+          projectId: string,
+          prNumber: number,
+          prUrl: string
+        ) => Promise<void>
         detachPR: (ticketId: string, projectId: string) => Promise<void>
         detachWorktree: (worktreeId: string) => Promise<number>
       }
@@ -1615,15 +1682,23 @@ declare global {
         toggle: (projectId: string, enabled: boolean) => Promise<void>
       }
       dependency: {
-        add: (dependentId: string, blockerId: string) => Promise<{ success: boolean; error?: string }>
+        add: (
+          dependentId: string,
+          blockerId: string
+        ) => Promise<{ success: boolean; error?: string }>
         remove: (dependentId: string, blockerId: string) => Promise<boolean>
         getBlockers: (ticketId: string) => Promise<KanbanTicket[]>
         getDependents: (ticketId: string) => Promise<KanbanTicket[]>
-        getForProject: (projectId: string) => Promise<Array<{ dependent_id: string; blocker_id: string; created_at: string }>>
+        getForProject: (
+          projectId: string
+        ) => Promise<Array<{ dependent_id: string; blocker_id: string; created_at: string }>>
         removeAll: (ticketId: string) => Promise<number>
       }
       board: {
-        export: (projectId: string, projectName: string) => Promise<{ success: boolean; ticketCount: number; path?: string }>
+        export: (
+          projectId: string,
+          projectName: string
+        ) => Promise<{ success: boolean; ticketCount: number; path?: string }>
         openImportFile: () => Promise<{
           tickets: Array<{
             id: string
@@ -1651,60 +1726,89 @@ declare global {
             dependentId: string
             blockerId: string
           }>
-        ) => Promise<{ created: number; updated: number; dependencyCount: number; ignoredDependencyCount: number }>
+        ) => Promise<{
+          created: number
+          updated: number
+          dependencyCount: number
+          ignoredDependencyCount: number
+        }>
       }
     }
     ticketImport: {
-      listProviders: () => Promise<Array<{ id: string; name: string; icon: string }>>
+      listProviders: () => Promise<Envelope<Array<{ id: string; name: string; icon: string }>>>
       getSettingsSchema: (
         providerId: string
-      ) => Promise<Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>>
+      ) => Promise<
+        Envelope<
+          Array<{
+            key: string
+            label: string
+            type: string
+            required: boolean
+            placeholder?: string
+          }>
+        >
+      >
       authenticate: (
         providerId: string,
         settings: Record<string, string>
-      ) => Promise<{ success: boolean; error: string | null }>
+      ) => Promise<Envelope<{ success: boolean; error: string | null }>>
       detectRepo: (
         providerId: string,
         projectPath: string
-      ) => Promise<{ repo: string | null }>
+      ) => Promise<Envelope<{ repo: string | null }>>
       listIssues: (
         providerId: string,
         repo: string,
-        options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
+        options: {
+          page: number
+          perPage: number
+          state: 'open' | 'closed' | 'all'
+          search?: string
+          nextPageToken?: string
+        },
         settings: Record<string, string>
-      ) => Promise<{
-        issues: Array<{
-          externalId: string
-          title: string
-          body: string | null
-          state: 'open' | 'closed' | 'in_progress'
-          url: string
-          createdAt: string
-          updatedAt: string
+      ) => Promise<
+        Envelope<{
+          issues: Array<{
+            externalId: string
+            title: string
+            body: string | null
+            state: 'open' | 'closed' | 'in_progress'
+            url: string
+            createdAt: string
+            updatedAt: string
+          }>
+          hasNextPage: boolean
+          totalCount: number
+          nextPageToken?: string
         }>
-        hasNextPage: boolean
-        totalCount: number
-        nextPageToken?: string
-      }>
+      >
       importIssues: (
         providerId: string,
         projectId: string,
         repo: string,
-        issues: Array<{ externalId: string; title: string; body: string | null; state: string; url: string }>
-      ) => Promise<{ imported: string[]; skipped: string[] }>
+        issues: Array<{
+          externalId: string
+          title: string
+          body: string | null
+          state: string
+          url: string
+        }>
+      ) => Promise<Envelope<{ imported: string[]; skipped: string[] }>>
       getAvailableStatuses: (
         providerId: string,
         repo: string,
         externalId: string,
         settings: Record<string, string>
-      ) => Promise<Array<{ id: string; label: string }>>
+      ) => Promise<Envelope<Array<{ id: string; label: string }>>>
       updateRemoteStatus: (
         providerId: string,
         repo: string,
         externalId: string,
         statusId: string,
         settings: Record<string, string>
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
     }
     bash: {
       run: (sessionId: string, command: string, cwd: string) => Promise<Envelope<{ runId: string }>>

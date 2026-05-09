@@ -10,6 +10,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getTelegramForwardingTarget } from '@/lib/telegramForwardingTarget'
 import { cn } from '@/lib/utils'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -56,16 +57,20 @@ export function HeaderTelegramToggle(): React.JSX.Element {
 
   const startForwarding = async (mode: TelegramMode): Promise<void> => {
     if (!activeSessionId || (!activeWorktreeId && !activeConnectionId)) return
-    const result = await window.telegramOps.startForwarding({
-      sessionId: activeSessionId,
-      worktreeId: activeWorktreeId,
-      connectionId: activeConnectionId,
-      mode
-    })
+    const result = unwrapEnvelope(
+      await window.telegramOps.startForwarding({
+        sessionId: activeSessionId,
+        worktreeId: activeWorktreeId,
+        connectionId: activeConnectionId,
+        mode
+      })
+    )
     useTelegramStore.getState().setStatus(result.status)
     if (result.ok) {
       toast.success(
-        isElsewhere ? 'Telegram forwarding moved to this session' : `Telegram forwarding started (${mode} mode)`
+        isElsewhere
+          ? 'Telegram forwarding moved to this session'
+          : `Telegram forwarding started (${mode} mode)`
       )
     } else {
       toast.error(result.error ?? 'Failed to start Telegram forwarding')
@@ -73,7 +78,7 @@ export function HeaderTelegramToggle(): React.JSX.Element {
   }
 
   const stopForwarding = async (): Promise<void> => {
-    const result = await window.telegramOps.stopForwarding()
+    const result = unwrapEnvelope(await window.telegramOps.stopForwarding())
     useTelegramStore.getState().setStatus(result.status)
     toast.success('Telegram forwarding stopped')
   }
@@ -86,12 +91,16 @@ export function HeaderTelegramToggle(): React.JSX.Element {
       onClick={() => {
         if (!configured) openSettings('telegram')
       }}
-      className={cn(isHere && 'bg-[#229ED9]/10 text-[#229ED9] hover:bg-[#229ED9]/15 hover:text-[#229ED9]')}
-      title={!configured
-        ? 'Configure in Settings'
-        : forwardingTarget.source === 'board-ticket'
-          ? 'Telegram forwarding: selected ticket session'
-          : 'Telegram forwarding'}
+      className={cn(
+        isHere && 'bg-[#229ED9]/10 text-[#229ED9] hover:bg-[#229ED9]/15 hover:text-[#229ED9]'
+      )}
+      title={
+        !configured
+          ? 'Configure in Settings'
+          : forwardingTarget.source === 'board-ticket'
+            ? 'Telegram forwarding: selected ticket session'
+            : 'Telegram forwarding'
+      }
       data-testid="telegram-forwarding-toggle"
     >
       <span className="relative inline-flex">
@@ -101,8 +110,12 @@ export function HeaderTelegramToggle(): React.JSX.Element {
             {activeForwardingMode === 'questions' ? 'Q' : 'A'}
           </span>
         )}
-        {isElsewhere && <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-amber-500" />}
-        {health === 'error' && <span className="absolute -right-1 -bottom-1 h-2 w-2 rounded-full bg-red-500" />}
+        {isElsewhere && (
+          <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-amber-500" />
+        )}
+        {health === 'error' && (
+          <span className="absolute -right-1 -bottom-1 h-2 w-2 rounded-full bg-red-500" />
+        )}
       </span>
     </Button>
   )

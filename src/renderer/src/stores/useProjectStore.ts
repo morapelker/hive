@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { useKanbanStore } from './useKanbanStore'
 import { LANGUAGE_MAP } from '@/components/projects/LanguageIcon'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // Project type matching the database schema
 interface Project {
@@ -99,15 +100,15 @@ export const useProjectStore = create<ProjectState>()(
             ;(async () => {
               for (const project of unscanned) {
                 try {
-                  const detectedIcon = await window.projectOps.detectFavicon(project.path)
+                  const detectedIcon = unwrapEnvelope(
+                    await window.projectOps.detectFavicon(project.path)
+                  )
                   await window.db.project.update(project.id, {
                     detected_icon: detectedIcon ?? 'none'
                   })
                   set((state) => ({
                     projects: state.projects.map((p) =>
-                      p.id === project.id
-                        ? { ...p, detected_icon: detectedIcon ?? 'none' }
-                        : p
+                      p.id === project.id ? { ...p, detected_icon: detectedIcon ?? 'none' } : p
                     )
                   }))
                 } catch {
@@ -128,7 +129,7 @@ export const useProjectStore = create<ProjectState>()(
       addProject: async (path: string) => {
         try {
           // Validate the project path
-          const validation = await window.projectOps.validateProject(path)
+          const validation = unwrapEnvelope(await window.projectOps.validateProject(path))
           if (!validation.success) {
             return { success: false, error: validation.error }
           }
@@ -148,6 +149,7 @@ export const useProjectStore = create<ProjectState>()(
           // Auto-detect language (fire and forget for speed)
           window.projectOps
             .detectLanguage(validation.path!)
+            .then(unwrapEnvelope)
             .then(async (language) => {
               if (language) {
                 await window.db.project.update(project.id, { language })
@@ -165,15 +167,14 @@ export const useProjectStore = create<ProjectState>()(
           // Auto-detect favicon (fire and forget for speed)
           window.projectOps
             .detectFavicon(validation.path!)
+            .then(unwrapEnvelope)
             .then(async (detectedIcon) => {
               await window.db.project.update(project.id, {
                 detected_icon: detectedIcon ?? 'none'
               })
               set((state) => ({
                 projects: state.projects.map((p) =>
-                  p.id === project.id
-                    ? { ...p, detected_icon: detectedIcon ?? 'none' }
-                    : p
+                  p.id === project.id ? { ...p, detected_icon: detectedIcon ?? 'none' } : p
                 )
               }))
             })
@@ -331,7 +332,7 @@ export const useProjectStore = create<ProjectState>()(
         if (!project) return
         try {
           const path = detectionPath ?? project.path
-          const language = await window.projectOps.detectLanguage(path)
+          const language = unwrapEnvelope(await window.projectOps.detectLanguage(path))
           await window.db.project.update(projectId, { language })
           set((state) => ({
             projects: state.projects.map((p) => (p.id === projectId ? { ...p, language } : p))
@@ -340,15 +341,14 @@ export const useProjectStore = create<ProjectState>()(
           // Also refresh favicon detection
           window.projectOps
             .detectFavicon(path)
+            .then(unwrapEnvelope)
             .then(async (detectedIcon) => {
               await window.db.project.update(projectId, {
                 detected_icon: detectedIcon ?? 'none'
               })
               set((state) => ({
                 projects: state.projects.map((p) =>
-                  p.id === projectId
-                    ? { ...p, detected_icon: detectedIcon ?? 'none' }
-                    : p
+                  p.id === projectId ? { ...p, detected_icon: detectedIcon ?? 'none' } : p
                 )
               }))
             })

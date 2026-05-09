@@ -16,6 +16,7 @@ import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { computeTokenDelta } from '@/lib/token-baselines'
 import { lastSendMode, messageSendTimes } from '@/lib/message-send-times'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
@@ -99,7 +100,9 @@ async function resolvePromptDispatchContext(
     }
 
     if (dbSession?.connection_id && window.connectionOps?.get) {
-      const connectionResult = await window.connectionOps.get(dbSession.connection_id)
+      const connectionResult = unwrapEnvelope(
+        await window.connectionOps.get(dbSession.connection_id)
+      )
       if (connectionResult.success && connectionResult.connection?.path) {
         return {
           worktreePath: connectionResult.connection.path,
@@ -123,7 +126,9 @@ function markBackgroundSessionCompleted(sessionId: string): void {
   const durationMs = sendTime ? Date.now() - sendTime : 0
   const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
   const tokenDelta = computeTokenDelta(sessionId)
-  useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
+  useWorktreeStatusStore
+    .getState()
+    .setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
 
   const now = Date.now()
   const sessions = useSessionStore.getState().sessionsByWorktree
@@ -160,10 +165,7 @@ function hasOutstandingBlockingInteraction(sessionId: string): boolean {
   return false
 }
 
-function restoreSessionRunningStatus(
-  sessionId: string,
-  modeOverride?: 'build' | 'plan'
-): void {
+function restoreSessionRunningStatus(sessionId: string, modeOverride?: 'build' | 'plan'): void {
   if (hasOutstandingBlockingInteraction(sessionId)) return
   const mode = modeOverride ?? useSessionStore.getState().getSessionMode(sessionId)
   useWorktreeStatusStore
@@ -209,8 +211,9 @@ export function useOpenCodeGlobalListener(): void {
           // are never mounted) keep their placeholder `pending::UUID` ID forever,
           // and reconnect / getMessages fail because the backend uses the real ID.
           if (event.type === 'session.materialized') {
-            const newId = (event.data as Record<string, unknown> | undefined)
-              ?.newSessionId as string | undefined
+            const newId = (event.data as Record<string, unknown> | undefined)?.newSessionId as
+              | string
+              | undefined
             if (newId) {
               useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
             }
@@ -320,7 +323,10 @@ export function useOpenCodeGlobalListener(): void {
               sessionTitle || ''
             )
             if (sessionTitle && !isOpenCodeDefault) {
-              console.log('[TITLE_DEBUG] globalListener calling updateSessionName', { sessionId, sessionTitle })
+              console.log('[TITLE_DEBUG] globalListener calling updateSessionName', {
+                sessionId,
+                sessionTitle
+              })
               useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
             }
             return

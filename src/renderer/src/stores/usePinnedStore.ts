@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { toast } from '@/lib/toast'
 import { useWorktreeStore } from './useWorktreeStore'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface PinnedState {
   pinnedWorktreeIds: Set<string>
@@ -47,7 +48,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
     try {
       const [pinnedWorktrees, pinnedConnections] = await Promise.all([
         window.db.worktree.getPinned(),
-        window.connectionOps.getPinned()
+        window.connectionOps.getPinned().then(unwrapEnvelope)
       ])
 
       const worktreeIds = new Set(pinnedWorktrees.map((wt) => wt.id))
@@ -118,7 +119,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   },
 
   pinConnection: async (id: string) => {
-    const result = await window.connectionOps.setPinned(id, true)
+    const result = unwrapEnvelope(await window.connectionOps.setPinned(id, true))
     if (result.success) {
       set((state) => {
         const next = new Set(state.pinnedConnectionIds)
@@ -131,7 +132,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   },
 
   unpinConnection: async (id: string) => {
-    const result = await window.connectionOps.setPinned(id, false)
+    const result = unwrapEnvelope(await window.connectionOps.setPinned(id, false))
     if (result.success) {
       set((state) => {
         const next = new Set(state.pinnedConnectionIds)

@@ -1,10 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
-import type {
-  PetManifest,
-  PetPosition,
-  PetSettings,
-  PetStatusPayload
-} from '../shared/types/pet'
+import type { PetManifest, PetPosition, PetSettings, PetStatusPayload } from '../shared/types/pet'
 import type {
   TelegramConfig,
   TelegramDiscoveredChat,
@@ -12,6 +7,7 @@ import type {
   TelegramMode
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
+import type { ConnectionWithMembers } from '../main/db/types'
 import type { BashRunSnapshot, BashStreamEvent } from '../main/effect/bash/types'
 
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
@@ -49,6 +45,7 @@ const db = {
         tags?: string[] | null
         language?: string | null
         custom_icon?: string | null
+        detected_icon?: string | null
         setup_script?: string | null
         run_script?: string | null
         archive_script?: string | null
@@ -95,8 +92,7 @@ const db = {
       ipcRenderer.invoke('db:worktree:removeAttachment', { worktreeId, attachmentId }),
     attachPR: (worktreeId: string, prNumber: number, prUrl: string) =>
       ipcRenderer.invoke('db:worktree:attachPR', { worktreeId, prNumber, prUrl }),
-    detachPR: (worktreeId: string) =>
-      ipcRenderer.invoke('db:worktree:detachPR', { worktreeId }),
+    detachPR: (worktreeId: string) => ipcRenderer.invoke('db:worktree:detachPR', { worktreeId }),
     setPinned: (worktreeId: string, pinned: boolean) =>
       ipcRenderer.invoke('db:worktree:setPinned', { worktreeId, pinned }),
     getPinned: () => ipcRenderer.invoke('db:worktree:getPinned')
@@ -202,15 +198,18 @@ const db = {
       body: string
     }) => ipcRenderer.invoke('db:diffComment:create', data),
     list: (worktreeId: string) => ipcRenderer.invoke('db:diffComment:list', worktreeId),
-    update: (id: string, data: {
-      body?: string
-      line_start?: number
-      line_end?: number | null
-      anchor_text?: string | null
-      anchor_context_before?: string | null
-      anchor_context_after?: string | null
-      is_outdated?: boolean
-    }) => ipcRenderer.invoke('db:diffComment:update', id, data),
+    update: (
+      id: string,
+      data: {
+        body?: string
+        line_start?: number
+        line_end?: number | null
+        anchor_text?: string | null
+        anchor_context_before?: string | null
+        anchor_context_after?: string | null
+        is_outdated?: boolean
+      }
+    ) => ipcRenderer.invoke('db:diffComment:update', id, data),
     setOutdated: (id: string, isOutdated: boolean) =>
       ipcRenderer.invoke('db:diffComment:setOutdated', id, isOutdated),
     delete: (id: string) => ipcRenderer.invoke('db:diffComment:delete', id),
@@ -226,78 +225,84 @@ const db = {
 // Project operations API (dialog, shell, clipboard)
 const projectOps = {
   // Open native folder picker dialog
-  openDirectoryDialog: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory'),
+  openDirectoryDialog: (): Promise<Envelope<string | null>> =>
+    ipcRenderer.invoke('dialog:openDirectory'),
 
   // Check if a path is a git repository
-  isGitRepository: (path: string): Promise<boolean> => ipcRenderer.invoke('git:isRepository', path),
+  isGitRepository: (path: string): Promise<Envelope<boolean>> =>
+    ipcRenderer.invoke('git:isRepository', path),
 
   // Validate a project path (checks if directory and git repo)
   validateProject: (
     path: string
-  ): Promise<{
-    success: boolean
-    path?: string
-    name?: string
-    error?: string
-  }> => ipcRenderer.invoke('project:validate', path),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      path?: string
+      name?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('project:validate', path),
 
   // Open path in Finder/Explorer
-  showInFolder: (path: string): Promise<void> => ipcRenderer.invoke('shell:showItemInFolder', path),
+  showInFolder: (path: string): Promise<Envelope<void>> =>
+    ipcRenderer.invoke('shell:showItemInFolder', path),
 
   // Open path with default application
-  openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path),
+  openPath: (path: string): Promise<Envelope<string>> => ipcRenderer.invoke('shell:openPath', path),
 
   // Clipboard operations
-  copyToClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:writeText', text),
-  readFromClipboard: (): Promise<string> => ipcRenderer.invoke('clipboard:readText'),
+  copyToClipboard: (text: string): Promise<Envelope<void>> =>
+    ipcRenderer.invoke('clipboard:writeText', text),
+  readFromClipboard: (): Promise<Envelope<string>> => ipcRenderer.invoke('clipboard:readText'),
 
   // Detect the primary programming language of a project
-  detectLanguage: (projectPath: string): Promise<string | null> =>
+  detectLanguage: (projectPath: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:detectLanguage', projectPath),
 
   // Find .xcworkspace file for Swift projects
-  findXcworkspace: (projectPath: string): Promise<string | null> =>
+  findXcworkspace: (projectPath: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:findXcworkspace', projectPath),
 
   // Detect whether a project is an Android project
-  isAndroidProject: (projectPath: string): Promise<boolean> =>
+  isAndroidProject: (projectPath: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('project:isAndroidProject', projectPath),
 
   // Load custom language icons as data URLs
-  loadLanguageIcons: (): Promise<Record<string, string>> =>
+  loadLanguageIcons: (): Promise<Envelope<Record<string, string>>> =>
     ipcRenderer.invoke('project:loadLanguageIcons'),
 
   // Initialize a new git repository in a directory
-  initRepository: (path: string): Promise<{ success: boolean; error?: string }> =>
+  initRepository: (path: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('git:init', path),
 
   // Pick a custom project icon via native file dialog
   pickProjectIcon: (
     projectId: string
-  ): Promise<{ success: boolean; filename?: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; filename?: string; error?: string }>> =>
     ipcRenderer.invoke('project:pickIcon', projectId),
 
   // Remove a custom project icon
-  removeProjectIcon: (projectId: string): Promise<{ success: boolean; error?: string }> =>
+  removeProjectIcon: (projectId: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('project:removeIcon', projectId),
 
   // Resolve an icon filename to a full file path
-  getProjectIconPath: (filename: string): Promise<string | null> =>
+  getProjectIconPath: (filename: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:getIconPath', filename),
 
   // Detect project favicon from well-known paths
-  detectFavicon: (projectPath: string): Promise<string | null> =>
+  detectFavicon: (projectPath: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:detectFavicon', projectPath),
 
   // Resolve an absolute icon path to a data URL
-  getAbsoluteIconDataUrl: (absolutePath: string): Promise<string | null> =>
+  getAbsoluteIconDataUrl: (absolutePath: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:getAbsoluteIconDataUrl', absolutePath)
 }
 
 // Worktree operations API
 const worktreeOps = {
   // Check if a repository has any commits
-  hasCommits: (projectPath: string): Promise<boolean> =>
+  hasCommits: (projectPath: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('worktree:hasCommits', projectPath),
 
   // Create a new worktree
@@ -305,20 +310,22 @@ const worktreeOps = {
     projectId: string
     projectPath: string
     projectName: string
-  }): Promise<{
-    success: boolean
-    worktree?: {
-      id: string
-      project_id: string
-      name: string
-      branch_name: string
-      path: string
-      status: string
-      created_at: string
-      last_accessed_at: string
-    }
-    error?: string
-  }> => ipcRenderer.invoke('worktree:create', params),
+  }): Promise<
+    Envelope<{
+      success: boolean
+      worktree?: {
+        id: string
+        project_id: string
+        name: string
+        branch_name: string
+        path: string
+        status: string
+        created_at: string
+        last_accessed_at: string
+      }
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:create', params),
 
   // Delete/Archive a worktree
   delete: (params: {
@@ -327,52 +334,62 @@ const worktreeOps = {
     branchName: string
     projectPath: string
     archive: boolean
-  }): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('worktree:delete', params),
+  }): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:delete', params),
 
   // Sync worktrees with actual git state
   sync: (params: {
     projectId: string
     projectPath: string
-  }): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('worktree:sync', params),
+  }): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:sync', params),
 
   // Check if worktree path exists on disk
-  exists: (worktreePath: string): Promise<boolean> =>
+  exists: (worktreePath: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('worktree:exists', worktreePath),
 
   // Open worktree in terminal
   openInTerminal: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('worktree:openInTerminal', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:openInTerminal', worktreePath),
 
   // Open worktree in editor (VS Code)
   openInEditor: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('worktree:openInEditor', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:openInEditor', worktreePath),
 
   // Get git branches for a project
   getBranches: (
     projectPath: string
-  ): Promise<{
-    success: boolean
-    branches?: string[]
-    currentBranch?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:branches', projectPath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      branches?: string[]
+      currentBranch?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:branches', projectPath),
 
   // Check if a branch exists
-  branchExists: (projectPath: string, branchName: string): Promise<boolean> =>
+  branchExists: (projectPath: string, branchName: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('git:branchExists', projectPath, branchName),
 
   // Duplicate a worktree (clone branch with uncommitted state)
@@ -383,20 +400,22 @@ const worktreeOps = {
     sourceBranch: string
     sourceWorktreePath: string
     nameHint?: string
-  }): Promise<{
-    success: boolean
-    worktree?: {
-      id: string
-      project_id: string
-      name: string
-      branch_name: string
-      path: string
-      status: string
-      created_at: string
-      last_accessed_at: string
-    }
-    error?: string
-  }> => ipcRenderer.invoke('worktree:duplicate', params),
+  }): Promise<
+    Envelope<{
+      success: boolean
+      worktree?: {
+        id: string
+        project_id: string
+        name: string
+        branch_name: string
+        path: string
+        status: string
+        created_at: string
+        last_accessed_at: string
+      }
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:duplicate', params),
 
   // Rename a branch in a worktree
   renameBranch: (
@@ -404,7 +423,7 @@ const worktreeOps = {
     worktreePath: string,
     oldBranch: string,
     newBranch: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('worktree:renameBranch', { worktreeId, worktreePath, oldBranch, newBranch }),
 
   // Create a worktree from a specific existing branch
@@ -415,20 +434,22 @@ const worktreeOps = {
     branchName: string,
     prNumber?: number,
     nameHint?: string
-  ): Promise<{
-    success: boolean
-    worktree?: {
-      id: string
-      project_id: string
-      name: string
-      branch_name: string
-      path: string
-      status: string
-      created_at: string
-      last_accessed_at: string
-    }
-    error?: string
-  }> =>
+  ): Promise<
+    Envelope<{
+      success: boolean
+      worktree?: {
+        id: string
+        project_id: string
+        name: string
+        branch_name: string
+        path: string
+        status: string
+        created_at: string
+        last_accessed_at: string
+      }
+      error?: string
+    }>
+  > =>
     ipcRenderer.invoke('worktree:createFromBranch', {
       projectId,
       projectPath,
@@ -455,10 +476,16 @@ const worktreeOps = {
   },
 
   // Get worktree context
-  getContext: (worktreeId: string) => ipcRenderer.invoke('worktree:getContext', worktreeId),
+  getContext: (
+    worktreeId: string
+  ): Promise<Envelope<{ success: boolean; context?: string | null; error?: string }>> =>
+    ipcRenderer.invoke('worktree:getContext', worktreeId),
 
   // Update worktree context
-  updateContext: (worktreeId: string, context: string | null) =>
+  updateContext: (
+    worktreeId: string,
+    context: string | null
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('worktree:updateContext', worktreeId, context)
 }
 
@@ -659,10 +686,7 @@ const petOps = {
     }
   },
   onJumpToWorktree: (callback: (payload: { worktreeId: string }) => void): (() => void) => {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      payload: { worktreeId: string }
-    ): void => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { worktreeId: string }): void => {
       callback(payload)
     }
     ipcRenderer.on('pet:jump-to-worktree', handler)
@@ -851,10 +875,8 @@ const gitOps = {
   }> => ipcRenderer.invoke('git:unstageFile', worktreePath, filePath),
 
   // Discard changes in a file
-  discardChanges: (
-    worktreePath: string,
-    filePath: string
-  ): Promise<Envelope<null>> => ipcRenderer.invoke('git:discardChanges', worktreePath, filePath),
+  discardChanges: (worktreePath: string, filePath: string): Promise<Envelope<null>> =>
+    ipcRenderer.invoke('git:discardChanges', worktreePath, filePath),
 
   // Add to .gitignore
   addToGitignore: (
@@ -1011,16 +1033,18 @@ const gitOps = {
   // List all branches with their worktree checkout status
   listBranchesWithStatus: (
     projectPath: string
-  ): Promise<{
-    success: boolean
-    branches: Array<{
-      name: string
-      isRemote: boolean
-      isCheckedOut: boolean
-      worktreePath?: string
+  ): Promise<
+    Envelope<{
+      success: boolean
+      branches: Array<{
+        name: string
+        isRemote: boolean
+        isCheckedOut: boolean
+        worktreePath?: string
+      }>
+      error?: string
     }>
-    error?: string
-  }> => ipcRenderer.invoke('git:listBranchesWithStatus', { projectPath }),
+  > => ipcRenderer.invoke('git:listBranchesWithStatus', { projectPath }),
 
   // Merge a branch into the current branch
   merge: (
@@ -1041,9 +1065,8 @@ const gitOps = {
   }> => ipcRenderer.invoke('git:mergeAbort', worktreePath),
 
   // Check if a worktree has uncommitted changes
-  hasUncommittedChanges: (
-    worktreePath: string
-  ): Promise<boolean> => ipcRenderer.invoke('git:hasUncommittedChanges', worktreePath),
+  hasUncommittedChanges: (worktreePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('git:hasUncommittedChanges', worktreePath),
 
   // Get branch divergence stats vs base branch
   branchDiffShortStat: (
@@ -1284,9 +1307,8 @@ const gitOps = {
   }> => ipcRenderer.invoke('git:getRangeDiff', worktreePath, baseBranch),
 
   // Check if the worktree has unpushed commits
-  needsPush: (
-    worktreePath: string
-  ): Promise<boolean> => ipcRenderer.invoke('git:needsPush', worktreePath),
+  needsPush: (worktreePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('git:needsPush', worktreePath),
 
   // Create a pull request on GitHub
   createPR: (
@@ -1617,27 +1639,29 @@ const opencodeOps = {
 }
 
 const telegramOps = {
-  getConfig: (): Promise<TelegramConfig | null> => ipcRenderer.invoke('telegram:getConfig'),
-  setConfig: (config: TelegramConfig | null): Promise<{ ok: boolean; error?: string }> =>
+  getConfig: (): Promise<Envelope<TelegramConfig | null>> =>
+    ipcRenderer.invoke('telegram:getConfig'),
+  setConfig: (config: TelegramConfig | null): Promise<Envelope<{ ok: boolean; error?: string }>> =>
     ipcRenderer.invoke('telegram:setConfig', config),
   verifyToken: (
     botToken: string
-  ): Promise<{ ok: boolean; botUsername?: string; error?: string }> =>
+  ): Promise<Envelope<{ ok: boolean; botUsername?: string; error?: string }>> =>
     ipcRenderer.invoke('telegram:verifyToken', botToken),
-  discoverChats: (config?: TelegramConfig | null): Promise<TelegramDiscoveredChat[]> =>
+  discoverChats: (config?: TelegramConfig | null): Promise<Envelope<TelegramDiscoveredChat[]>> =>
     ipcRenderer.invoke('telegram:discoverChats', config),
-  sendTestMessage: (): Promise<{ ok: boolean; error?: string }> =>
+  sendTestMessage: (): Promise<Envelope<{ ok: boolean; error?: string }>> =>
     ipcRenderer.invoke('telegram:sendTestMessage'),
   startForwarding: (params: {
     sessionId: string
     worktreeId: string | null
     connectionId: string | null
     mode: TelegramMode
-  }): Promise<{ ok: boolean; status: TelegramForwardingStatus; error?: string }> =>
+  }): Promise<Envelope<{ ok: boolean; status: TelegramForwardingStatus; error?: string }>> =>
     ipcRenderer.invoke('telegram:startForwarding', params),
-  stopForwarding: (): Promise<{ status: TelegramForwardingStatus }> =>
+  stopForwarding: (): Promise<Envelope<{ status: TelegramForwardingStatus }>> =>
     ipcRenderer.invoke('telegram:stopForwarding'),
-  getStatus: (): Promise<TelegramForwardingStatus> => ipcRenderer.invoke('telegram:getStatus'),
+  getStatus: (): Promise<Envelope<TelegramForwardingStatus>> =>
+    ipcRenderer.invoke('telegram:getStatus'),
   onStatusChanged: (callback: (status: TelegramForwardingStatus) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, status: TelegramForwardingStatus): void => {
       callback(status)
@@ -2040,25 +2064,49 @@ const updaterOps = {
 
 // Connection operations API
 const connectionOps = {
-  create: (worktreeIds: string[]) => ipcRenderer.invoke('connection:create', { worktreeIds }),
-  delete: (connectionId: string) => ipcRenderer.invoke('connection:delete', { connectionId }),
+  create: (
+    worktreeIds: string[]
+  ): Promise<Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>> =>
+    ipcRenderer.invoke('connection:create', { worktreeIds }),
+  delete: (connectionId: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
+    ipcRenderer.invoke('connection:delete', { connectionId }),
   addMember: (connectionId: string, worktreeId: string) =>
-    ipcRenderer.invoke('connection:addMember', { connectionId, worktreeId }),
+    ipcRenderer.invoke('connection:addMember', { connectionId, worktreeId }) as Promise<
+      Envelope<{ success: boolean; member?: ConnectionWithMembers['members'][0]; error?: string }>
+    >,
   removeMember: (connectionId: string, worktreeId: string) =>
-    ipcRenderer.invoke('connection:removeMember', { connectionId, worktreeId }),
-  getAll: () => ipcRenderer.invoke('connection:getAll'),
-  get: (connectionId: string) => ipcRenderer.invoke('connection:get', { connectionId }),
+    ipcRenderer.invoke('connection:removeMember', { connectionId, worktreeId }) as Promise<
+      Envelope<{ success: boolean; connectionDeleted?: boolean; error?: string }>
+    >,
+  getAll: (): Promise<
+    Envelope<{ success: boolean; connections?: ConnectionWithMembers[]; error?: string }>
+  > => ipcRenderer.invoke('connection:getAll'),
+  get: (
+    connectionId: string
+  ): Promise<Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>> =>
+    ipcRenderer.invoke('connection:get', { connectionId }),
   openInTerminal: (connectionPath: string) =>
-    ipcRenderer.invoke('connection:openInTerminal', { connectionPath }),
+    ipcRenderer.invoke('connection:openInTerminal', { connectionPath }) as Promise<
+      Envelope<{ success: boolean; error?: string }>
+    >,
   openInEditor: (connectionPath: string) =>
-    ipcRenderer.invoke('connection:openInEditor', { connectionPath }),
+    ipcRenderer.invoke('connection:openInEditor', { connectionPath }) as Promise<
+      Envelope<{ success: boolean; error?: string }>
+    >,
   removeWorktreeFromAll: (worktreeId: string) =>
-    ipcRenderer.invoke('connection:removeWorktreeFromAll', { worktreeId }),
+    ipcRenderer.invoke('connection:removeWorktreeFromAll', { worktreeId }) as Promise<
+      Envelope<{ success: boolean; error?: string }>
+    >,
   rename: (connectionId: string, customName: string | null) =>
-    ipcRenderer.invoke('connection:rename', { connectionId, customName }),
+    ipcRenderer.invoke('connection:rename', { connectionId, customName }) as Promise<
+      Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+    >,
   setPinned: (connectionId: string, pinned: boolean) =>
-    ipcRenderer.invoke('connection:setPinned', { connectionId, pinned }),
-  getPinned: () => ipcRenderer.invoke('connection:getPinned')
+    ipcRenderer.invoke('connection:setPinned', { connectionId, pinned }) as Promise<
+      Envelope<{ success: boolean; error?: string }>
+    >,
+  getPinned: (): Promise<Envelope<ConnectionWithMembers[]>> =>
+    ipcRenderer.invoke('connection:getPinned')
 }
 
 const usageOps = {
@@ -2153,7 +2201,8 @@ const kanban = {
     ) => ipcRenderer.invoke('kanban:ticket:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('kanban:ticket:delete', id),
     archive: (id: string) => ipcRenderer.invoke('kanban:ticket:archive', id),
-    archiveAllDone: (projectId: string) => ipcRenderer.invoke('kanban:ticket:archiveAllDone', projectId),
+    archiveAllDone: (projectId: string) =>
+      ipcRenderer.invoke('kanban:ticket:archiveAllDone', projectId),
     unarchive: (id: string) => ipcRenderer.invoke('kanban:ticket:unarchive', id),
     move: (id: string, column: 'todo' | 'in_progress' | 'review' | 'done', sortOrder: number) =>
       ipcRenderer.invoke('kanban:ticket:move', id, column, sortOrder),
@@ -2165,14 +2214,13 @@ const kanban = {
       ipcRenderer.invoke('kanban:ticket:addTokens', id, tokens),
     syncPR: (worktreeId: string, prNumber: number, prUrl: string) =>
       ipcRenderer.invoke('kanban:ticket:syncPR', worktreeId, prNumber, prUrl),
-    clearPR: (worktreeId: string) =>
-      ipcRenderer.invoke('kanban:ticket:clearPR', worktreeId),
+    clearPR: (worktreeId: string) => ipcRenderer.invoke('kanban:ticket:clearPR', worktreeId),
     attachPR: (ticketId: string, projectId: string, prNumber: number, prUrl: string) =>
       ipcRenderer.invoke('kanban:ticket:attachPR', ticketId, projectId, prNumber, prUrl),
     detachPR: (ticketId: string, projectId: string) =>
       ipcRenderer.invoke('kanban:ticket:detachPR', ticketId, projectId),
     detachWorktree: (worktreeId: string) =>
-      ipcRenderer.invoke('kanban:ticket:detachWorktree', worktreeId),
+      ipcRenderer.invoke('kanban:ticket:detachWorktree', worktreeId)
   },
   simpleMode: {
     toggle: (projectId: string, enabled: boolean) =>
@@ -2190,10 +2238,13 @@ const kanban = {
     getForProject: (projectId: string) =>
       ipcRenderer.invoke('kanban:dependency:getForProject', projectId),
     removeAll: (ticketId: string): Promise<number> =>
-      ipcRenderer.invoke('kanban:dependency:removeAll', ticketId),
+      ipcRenderer.invoke('kanban:dependency:removeAll', ticketId)
   },
   board: {
-    export: (projectId: string, projectName: string): Promise<{ success: boolean; ticketCount: number; path?: string }> =>
+    export: (
+      projectId: string,
+      projectName: string
+    ): Promise<{ success: boolean; ticketCount: number; path?: string }> =>
       ipcRenderer.invoke('kanban:board:export', projectId, projectName),
     openImportFile: (): Promise<{
       tickets: Array<{
@@ -2222,60 +2273,81 @@ const kanban = {
         dependentId: string
         blockerId: string
       }>
-    ): Promise<{ created: number; updated: number; dependencyCount: number; ignoredDependencyCount: number }> =>
-      ipcRenderer.invoke('kanban:board:importTickets', projectId, tickets, dependencies)
+    ): Promise<{
+      created: number
+      updated: number
+      dependencyCount: number
+      ignoredDependencyCount: number
+    }> => ipcRenderer.invoke('kanban:board:importTickets', projectId, tickets, dependencies)
   }
 }
 
 const ticketImport = {
-  listProviders: (): Promise<Array<{ id: string; name: string; icon: string }>> =>
+  listProviders: (): Promise<Envelope<Array<{ id: string; name: string; icon: string }>>> =>
     ipcRenderer.invoke('ticketImport:listProviders'),
   getSettingsSchema: (
     providerId: string
-  ): Promise<Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>> =>
-    ipcRenderer.invoke('ticketImport:getSettingsSchema', providerId),
+  ): Promise<
+    Envelope<
+      Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>
+    >
+  > => ipcRenderer.invoke('ticketImport:getSettingsSchema', providerId),
   authenticate: (
     providerId: string,
     settings: Record<string, string>
-  ): Promise<{ success: boolean; error: string | null }> =>
+  ): Promise<Envelope<{ success: boolean; error: string | null }>> =>
     ipcRenderer.invoke('ticketImport:authenticate', providerId, settings),
   detectRepo: (
     providerId: string,
     projectPath: string
-  ): Promise<{ repo: string | null }> =>
+  ): Promise<Envelope<{ repo: string | null }>> =>
     ipcRenderer.invoke('ticketImport:detectRepo', providerId, projectPath),
   listIssues: (
     providerId: string,
     repo: string,
-    options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
+    options: {
+      page: number
+      perPage: number
+      state: 'open' | 'closed' | 'all'
+      search?: string
+      nextPageToken?: string
+    },
     settings: Record<string, string>
-  ): Promise<{
-    issues: Array<{
-      externalId: string
-      title: string
-      body: string | null
-      state: 'open' | 'closed' | 'in_progress'
-      url: string
-      createdAt: string
-      updatedAt: string
+  ): Promise<
+    Envelope<{
+      issues: Array<{
+        externalId: string
+        title: string
+        body: string | null
+        state: 'open' | 'closed' | 'in_progress'
+        url: string
+        createdAt: string
+        updatedAt: string
+      }>
+      hasNextPage: boolean
+      totalCount: number
+      nextPageToken?: string
     }>
-    hasNextPage: boolean
-    totalCount: number
-    nextPageToken?: string
-  }> => ipcRenderer.invoke('ticketImport:listIssues', providerId, repo, options, settings),
+  > => ipcRenderer.invoke('ticketImport:listIssues', providerId, repo, options, settings),
   importIssues: (
     providerId: string,
     projectId: string,
     repo: string,
-    issues: Array<{ externalId: string; title: string; body: string | null; state: string; url: string }>
-  ): Promise<{ imported: string[]; skipped: string[] }> =>
+    issues: Array<{
+      externalId: string
+      title: string
+      body: string | null
+      state: string
+      url: string
+    }>
+  ): Promise<Envelope<{ imported: string[]; skipped: string[] }>> =>
     ipcRenderer.invoke('ticketImport:importIssues', providerId, projectId, repo, issues),
   getAvailableStatuses: (
     providerId: string,
     repo: string,
     externalId: string,
     settings: Record<string, string>
-  ): Promise<Array<{ id: string; label: string }>> =>
+  ): Promise<Envelope<Array<{ id: string; label: string }>>> =>
     ipcRenderer.invoke('ticketImport:getAvailableStatuses', providerId, repo, externalId, settings),
   updateRemoteStatus: (
     providerId: string,
@@ -2283,8 +2355,15 @@ const ticketImport = {
     externalId: string,
     statusId: string,
     settings: Record<string, string>
-  ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('ticketImport:updateRemoteStatus', providerId, repo, externalId, statusId, settings)
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
+    ipcRenderer.invoke(
+      'ticketImport:updateRemoteStatus',
+      providerId,
+      repo,
+      externalId,
+      statusId,
+      settings
+    )
 }
 
 const bash = {

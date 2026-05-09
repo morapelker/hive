@@ -1,5 +1,6 @@
 import { useCallback, useState, useRef, useEffect } from 'react'
 import { revealLabel } from '@/lib/platform'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
   AlertCircle,
   GitBranch,
@@ -309,11 +310,13 @@ export function WorktreeItem({
       return
     }
 
-    const result = await window.worktreeOps.renameBranch(
-      worktree.id,
-      worktree.path,
-      worktree.branch_name,
-      newBranch
+    const result = unwrapEnvelope(
+      await window.worktreeOps.renameBranch(
+        worktree.id,
+        worktree.path,
+        worktree.branch_name,
+        newBranch
+      )
     )
 
     if (result.success) {
@@ -336,7 +339,7 @@ export function WorktreeItem({
   }
 
   const handleOpenInTerminal = useCallback(async (): Promise<void> => {
-    const result = await window.worktreeOps.openInTerminal(worktree.path)
+    const result = unwrapEnvelope(await window.worktreeOps.openInTerminal(worktree.path))
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
@@ -348,7 +351,7 @@ export function WorktreeItem({
   }, [worktree.path])
 
   const handleOpenInEditor = useCallback(async (): Promise<void> => {
-    const result = await window.worktreeOps.openInEditor(worktree.path)
+    const result = unwrapEnvelope(await window.worktreeOps.openInEditor(worktree.path))
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
@@ -360,11 +363,11 @@ export function WorktreeItem({
   }, [worktree.path])
 
   const handleOpenInFinder = async (): Promise<void> => {
-    await window.projectOps.showInFolder(worktree.path)
+    unwrapEnvelope(await window.projectOps.showInFolder(worktree.path))
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    await window.projectOps.copyToClipboard(worktree.path)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(worktree.path))
     clipboardToast.copied('Path')
   }
 

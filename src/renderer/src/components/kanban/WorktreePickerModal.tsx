@@ -1,15 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import {
-  Hammer,
-  Map,
-  Sparkles,
-  Plus,
-  GitBranch,
-  Send,
-  ChevronDown,
-  Loader2,
-  Search
-} from 'lucide-react'
+import { Hammer, Map, Plus, GitBranch, Send, ChevronDown, Loader2, Search } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -23,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -227,6 +218,7 @@ export function WorktreePickerModal({
     setBranchesLoading(true)
     window.gitOps
       .listBranchesWithStatus(project.path)
+      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setBranches(result.branches)
@@ -388,9 +380,10 @@ export function WorktreePickerModal({
 
   // ── Send flow ───────────────────────────────────────────────────
   const goalCriteriaValid = !goalMode || goalCriteria.trim().length > 0
-  const canSend = (isConnectionMode
-    ? !isSending
-    : (selectedWorktreeId !== null || isNewWorktree) && !isSending) && goalCriteriaValid
+  const canSend =
+    (isConnectionMode
+      ? !isSending
+      : (selectedWorktreeId !== null || isNewWorktree) && !isSending) && goalCriteriaValid
 
   const handleSend = useCallback(async () => {
     if (!canSend) return

@@ -6,6 +6,7 @@ import { notifyKanbanSessionSync, notifyKanbanNewSession } from './store-coordin
 import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /**
  * Push the follow-up-message queue state for a session into the main process
@@ -326,9 +327,8 @@ export const useSessionStore = create<SessionState>()(
             const existingInStore = (newSessionsMap.get(worktreeId) || []).filter(isVisibleSession)
             const dbSessionIds = new Set(sortedSessions.map((s) => s.id))
             const missingFromDb = existingInStore.filter((s) => !dbSessionIds.has(s.id))
-            const merged = missingFromDb.length > 0
-              ? [...sortedSessions, ...missingFromDb]
-              : sortedSessions
+            const merged =
+              missingFromDb.length > 0 ? [...sortedSessions, ...missingFromDb] : sortedSessions
             newSessionsMap.set(worktreeId, merged)
 
             // Initialize tab order if not exists - use session IDs in sorted order
@@ -345,9 +345,7 @@ export const useSessionStore = create<SessionState>()(
               // Sync tab order with actual sessions (remove deleted, add new)
               const existingOrder = newTabOrderMap.get(worktreeId)!
               const validOrder = existingOrder.filter((id) => allSessionIds.has(id))
-              const newIds = merged
-                .map((s) => s.id)
-                .filter((id) => !validOrder.includes(id))
+              const newIds = merged.map((s) => s.id).filter((id) => !validOrder.includes(id))
               newTabOrderMap.set(worktreeId, [...validOrder, ...newIds])
             }
 
@@ -361,10 +359,7 @@ export const useSessionStore = create<SessionState>()(
 
             // Set active session if none selected and sessions exist
             let activeSessionId = state.activeSessionId
-            if (
-              state.activeWorktreeId === worktreeId &&
-              !activeSessionId
-            ) {
+            if (state.activeWorktreeId === worktreeId && !activeSessionId) {
               // Try to restore persisted active session
               const persistedSessionId = state.activeSessionByWorktree[worktreeId]
               const boardMode = useSettingsStore.getState().boardMode
@@ -424,12 +419,13 @@ export const useSessionStore = create<SessionState>()(
       ) => {
         try {
           const autoFocus = options?.autoFocus !== false
-          const { agentSdk: defaultAgentSdk, model: defaultModel } = resolveSessionCreationSelection({
-            worktreeId,
-            agentSdkOverride,
-            initialMode,
-            modelOverride: options?.modelOverride
-          })
+          const { agentSdk: defaultAgentSdk, model: defaultModel } =
+            resolveSessionCreationSelection({
+              worktreeId,
+              agentSdkOverride,
+              initialMode,
+              modelOverride: options?.modelOverride
+            })
           const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
           if (unavailableProviderError) {
             return { success: false, error: unavailableProviderError }
@@ -744,7 +740,12 @@ export const useSessionStore = create<SessionState>()(
           }
 
           // 2. Clear all prompt stores BEFORE activating session to prevent stale/malformed data
-          const [{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }] = await Promise.all([
+          const [
+            { useQuestionStore },
+            { usePermissionStore },
+            { useCommandApprovalStore },
+            { useFileViewerStore }
+          ] = await Promise.all([
             import('./useQuestionStore'),
             import('./usePermissionStore'),
             import('./useCommandApprovalStore'),
@@ -816,7 +817,12 @@ export const useSessionStore = create<SessionState>()(
           }
 
           // 2. Clear all prompt stores BEFORE activating session
-          const [{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }] = await Promise.all([
+          const [
+            { useQuestionStore },
+            { usePermissionStore },
+            { useCommandApprovalStore },
+            { useFileViewerStore }
+          ] = await Promise.all([
             import('./useQuestionStore'),
             import('./usePermissionStore'),
             import('./useCommandApprovalStore'),
@@ -1701,7 +1707,6 @@ export const useSessionStore = create<SessionState>()(
                 // Best-effort cleanup
               }
             }
-
           }
           useBoardChatStore.getState().clearProjectSnapshot(projectId)
 
@@ -1864,10 +1869,7 @@ export const useSessionStore = create<SessionState>()(
 
             // Set active session if in connection context
             let activeSessionId = state.activeSessionId
-            if (
-              state.activeConnectionId === connectionId &&
-              !activeSessionId
-            ) {
+            if (state.activeConnectionId === connectionId && !activeSessionId) {
               const persistedSessionId = state.activeSessionByConnection[connectionId]
               const boardMode = useSettingsStore.getState().boardMode
 
@@ -1921,18 +1923,19 @@ export const useSessionStore = create<SessionState>()(
         try {
           const autoFocus = opts?.autoFocus ?? true
           // Look up the connection to get the first member's project_id
-          const result = await window.connectionOps.get(connectionId)
+          const result = unwrapEnvelope(await window.connectionOps.get(connectionId))
           if (!result.success || !result.connection || result.connection.members.length === 0) {
             return { success: false, error: result.error || 'Connection has no members' }
           }
 
           const projectId = result.connection.members[0].project_id
 
-          const { agentSdk: defaultAgentSdk, model: defaultModel } = resolveSessionCreationSelection({
-            agentSdkOverride,
-            initialMode,
-            modelOverride: opts?.modelOverride
-          })
+          const { agentSdk: defaultAgentSdk, model: defaultModel } =
+            resolveSessionCreationSelection({
+              agentSdkOverride,
+              initialMode,
+              modelOverride: opts?.modelOverride
+            })
           const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
           if (unavailableProviderError) {
             return { success: false, error: unavailableProviderError }
@@ -2073,7 +2076,9 @@ export const useSessionStore = create<SessionState>()(
             .filter(isVisibleSession)
             .map((session) => session.id)
         )
-        return (get().tabOrderByConnection.get(connectionId) || []).filter((id) => visibleIds.has(id))
+        return (get().tabOrderByConnection.get(connectionId) || []).filter((id) =>
+          visibleIds.has(id)
+        )
       },
 
       // Reorder connection tabs
@@ -2141,13 +2146,20 @@ export const useSessionStore = create<SessionState>()(
           import('./usePermissionStore'),
           import('./useCommandApprovalStore'),
           import('./useFileViewerStore')
-        ]).then(([{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }]) => {
-          useQuestionStore.getState().clearSession(session.id)
-          usePermissionStore.getState().clearSession(session.id)
-          useCommandApprovalStore.getState().clearSession(session.id)
-          useFileViewerStore.getState().setActiveFile(null)
-          useFileViewerStore.getState().clearActiveDiff()
-        })
+        ]).then(
+          ([
+            { useQuestionStore },
+            { usePermissionStore },
+            { useCommandApprovalStore },
+            { useFileViewerStore }
+          ]) => {
+            useQuestionStore.getState().clearSession(session.id)
+            usePermissionStore.getState().clearSession(session.id)
+            useCommandApprovalStore.getState().clearSession(session.id)
+            useFileViewerStore.getState().setActiveFile(null)
+            useFileViewerStore.getState().clearActiveDiff()
+          }
+        )
       },
 
       // Pinned session actions
@@ -2206,7 +2218,8 @@ export const useSessionStore = create<SessionState>()(
       // Close all orphaned sessions (called when navigating away)
       closeOrphanedSessions: () => {
         set((state) => {
-          const hasOrphanedActive = state.activeSessionId && state.orphanedSessions.has(state.activeSessionId)
+          const hasOrphanedActive =
+            state.activeSessionId && state.orphanedSessions.has(state.activeSessionId)
 
           return {
             orphanedSessions: new Map(),

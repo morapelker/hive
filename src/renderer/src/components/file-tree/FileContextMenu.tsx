@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { revealLabel } from '@/lib/platform'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -95,13 +96,13 @@ export function FileContextMenu({
 
   // Handle copy absolute path
   const handleCopyPath = useCallback(async () => {
-    await window.projectOps.copyToClipboard(node.path)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(node.path))
     onClose?.()
   }, [node.path, onClose])
 
   // Handle copy relative path
   const handleCopyRelativePath = useCallback(async () => {
-    await window.projectOps.copyToClipboard(node.relativePath)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(node.relativePath))
     onClose?.()
   }, [node.relativePath, onClose])
 

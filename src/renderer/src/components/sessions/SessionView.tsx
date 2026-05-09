@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
 import { ModeToggle } from './ModeToggle'
@@ -3090,7 +3091,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Connection session: resolve the connection folder path
           setConnectionId(session.connection_id)
           try {
-            const connResult = await window.connectionOps.get(session.connection_id)
+            const connResult = unwrapEnvelope(await window.connectionOps.get(session.connection_id))
             if (shouldAbortInit()) return
             if (connResult.success && connResult.connection) {
               wtPath = connResult.connection.path

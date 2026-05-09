@@ -607,7 +607,10 @@ export const useSettingsStore = create<SettingsState>()(
 
       loadFromDatabase: async () => {
         const dbSettings = await loadSettingsFromDatabase()
-        const telegramConfig = await window.telegramOps?.getConfig?.().catch(() => null)
+        const telegramConfig = await window.telegramOps
+          ?.getConfig?.()
+          .then(unwrapEnvelope)
+          .catch(() => null)
         if (dbSettings) {
           set({
             ...dbSettings,

@@ -13,6 +13,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { DiffViewer, type DiffViewMode } from './DiffViewer'
 import { cn } from '@/lib/utils'
 import { getPrismLanguage } from '@/lib/language-map'
@@ -128,7 +129,7 @@ export function InlineDiffViewer({
   const handleCopyDiff = useCallback(async () => {
     const content = isNewFile ? fileContent : diff
     if (content) {
-      await window.projectOps.copyToClipboard(content)
+      unwrapEnvelope(await window.projectOps.copyToClipboard(content))
       toast.success(isNewFile ? 'File content copied to clipboard' : 'Diff copied to clipboard')
     }
   }, [diff, fileContent, isNewFile])

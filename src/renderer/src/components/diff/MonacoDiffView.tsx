@@ -18,6 +18,7 @@ import { PrCommentGutter } from './PrCommentGutter'
 import { DiffCommentGutter } from './DiffCommentGutter'
 import { DiffCommentToolbar } from './DiffCommentToolbar'
 import { DiffCommentSidePanel } from './DiffCommentSidePanel'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { usePRReviewStore } from '@/stores/usePRReviewStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useDiffCommentStore } from '@/stores/useDiffCommentStore'
@@ -480,13 +481,13 @@ export default function MonacoDiffView({
     if (compareBranch) {
       const result = await window.gitOps.getBranchFileDiff(worktreePath, compareBranch, filePath)
       if (result.success && result.diff) {
-        await window.projectOps.copyToClipboard(result.diff)
+        unwrapEnvelope(await window.projectOps.copyToClipboard(result.diff))
       }
     } else {
       // Get the unified diff via existing IPC
       const result = await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
       if (result.success && result.diff) {
-        await window.projectOps.copyToClipboard(result.diff)
+        unwrapEnvelope(await window.projectOps.copyToClipboard(result.diff))
       }
     }
   }, [worktreePath, filePath, staged, isUntracked, compareBranch])

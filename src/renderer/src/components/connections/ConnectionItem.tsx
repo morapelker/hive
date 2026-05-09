@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
 import { revealLabel } from '@/lib/platform'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
   AlertCircle,
   Code,
@@ -32,11 +33,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger
-} from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   useConnectionStore,
   usePinnedStore,
@@ -231,7 +228,7 @@ export function ConnectionItem({
   }
 
   const handleOpenInTerminal = useCallback(async (): Promise<void> => {
-    const result = await window.connectionOps.openInTerminal(connection.path)
+    const result = unwrapEnvelope(await window.connectionOps.openInTerminal(connection.path))
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
@@ -240,7 +237,7 @@ export function ConnectionItem({
   }, [connection.path])
 
   const handleOpenInEditor = useCallback(async (): Promise<void> => {
-    const result = await window.connectionOps.openInEditor(connection.path)
+    const result = unwrapEnvelope(await window.connectionOps.openInEditor(connection.path))
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
@@ -249,11 +246,11 @@ export function ConnectionItem({
   }, [connection.path])
 
   const handleOpenInFinder = async (): Promise<void> => {
-    await window.projectOps.showInFolder(connection.path)
+    unwrapEnvelope(await window.projectOps.showInFolder(connection.path))
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    await window.projectOps.copyToClipboard(connection.path)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(connection.path))
     clipboardToast.copied('Path')
   }
 
@@ -271,10 +268,11 @@ export function ConnectionItem({
   )
 
   // Build detailed project info for tooltip (project name + branch)
-  const projectDetails = connection.members?.map((m) => ({
-    project: m.project_name,
-    branch: m.worktree_branch
-  })) || []
+  const projectDetails =
+    connection.members?.map((m) => ({
+      project: m.project_name,
+      branch: m.worktree_branch
+    })) || []
 
   // Display logic: custom name takes priority over project names
   const hasCustomName = !!connection.custom_name
@@ -333,179 +331,171 @@ export function ConnectionItem({
       onClick={handleClick}
       data-testid={`connection-item-${connection.id}`}
     >
-          {/* Connection color indicator — always visible */}
-          {connection.color ? (
-            <span
-              className="h-2.5 w-2.5 rounded-full flex-shrink-0"
-              style={{ backgroundColor: parseColorQuad(connection.color)[1] }}
-              aria-hidden="true"
-            />
-          ) : (
-            <Link className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          )}
+      {/* Connection color indicator — always visible */}
+      {connection.color ? (
+        <span
+          className="h-2.5 w-2.5 rounded-full flex-shrink-0"
+          style={{ backgroundColor: parseColorQuad(connection.color)[1] }}
+          aria-hidden="true"
+        />
+      ) : (
+        <Link className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+      )}
 
-          {/* Status icon (shown alongside color) */}
-          {(connectionStatus === 'working' || connectionStatus === 'planning') && (
-            <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
-          )}
-          {(connectionStatus === 'answering' || connectionStatus === 'permission') && (
-            <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-          )}
-          {connectionStatus === 'plan_ready' && (
-            <Map className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-          )}
+      {/* Status icon (shown alongside color) */}
+      {(connectionStatus === 'working' || connectionStatus === 'planning') && (
+        <Loader2 className="h-3.5 w-3.5 text-primary shrink-0 animate-spin" />
+      )}
+      {(connectionStatus === 'answering' || connectionStatus === 'permission') && (
+        <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+      )}
+      {connectionStatus === 'plan_ready' && <Map className="h-3.5 w-3.5 text-blue-400 shrink-0" />}
 
-          {/* Name and status */}
-          <div className="flex-1 min-w-0">
-            {isRenaming ? (
-              <input
-                ref={renameInputRef}
-                autoFocus
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                onKeyDown={handleRenameKeyDown}
-                onBlur={() => {
-                  // Skip scheduling timer if we're intentionally closing via Escape/Enter
-                  if (intentionalCloseRef.current) {
-                    intentionalCloseRef.current = false
-                    return
+      {/* Name and status */}
+      <div className="flex-1 min-w-0">
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            autoFocus
+            value={nameInput}
+            onChange={(e) => setNameInput(e.target.value)}
+            onKeyDown={handleRenameKeyDown}
+            onBlur={() => {
+              // Skip scheduling timer if we're intentionally closing via Escape/Enter
+              if (intentionalCloseRef.current) {
+                intentionalCloseRef.current = false
+                return
+              }
+              // Ignore blur events that happen too soon after starting rename (menu closing)
+              const timeSinceStart = Date.now() - renameStartTimeRef.current
+              if (timeSinceStart < 500) {
+                // Always refocus during the first 500ms (menu closing period)
+                // User can press Escape to cancel if needed
+                setTimeout(() => {
+                  if (renameInputRef.current && document.activeElement !== renameInputRef.current) {
+                    renameInputRef.current.focus()
+                    renameInputRef.current.select()
                   }
-                  // Ignore blur events that happen too soon after starting rename (menu closing)
-                  const timeSinceStart = Date.now() - renameStartTimeRef.current
-                  if (timeSinceStart < 500) {
-                    // Always refocus during the first 500ms (menu closing period)
-                    // User can press Escape to cancel if needed
-                    setTimeout(() => {
-                      if (
-                        renameInputRef.current &&
-                        document.activeElement !== renameInputRef.current
-                      ) {
-                        renameInputRef.current.focus()
-                        renameInputRef.current.select()
-                      }
-                    }, 0)
-                    return
-                  }
+                }, 0)
+                return
+              }
 
-                  // Delay blur to allow for normal focus changes
-                  if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
-                  blurTimerRef.current = setTimeout(() => {
-                    blurTimerRef.current = null
-                    // Only close if the input is still not focused
-                    if (document.activeElement !== renameInputRef.current) {
-                      setIsRenaming(false)
-                    }
-                  }, 100)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                className="bg-background border border-border rounded px-1.5 py-0.5 text-sm w-full focus:outline-none focus:ring-1 focus:ring-ring"
-                placeholder={projectNames || 'Connection name'}
-              />
-            ) : (
-              <>
-                <div
-                  className="overflow-hidden"
-                  ref={containerRef}
-                  onMouseEnter={handleMouseEnter}
-                  onMouseLeave={handleMouseLeave}
-                >
-                  <span
-                    ref={textRef}
-                    className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
-                    style={
-                      isAnimating
-                        ? ({
-                            '--scroll-distance': `${scrollDistance}px`,
-                            animation: `marquee-scroll ${animationDuration}s linear infinite`
-                          } as React.CSSProperties)
-                        : undefined
-                    }
-                    title={displayName}
-                  >
-                    {displayName}
-                  </span>
-                </div>
-                <span
-                  className={cn('text-[11px]', statusClass)}
-                  data-testid="connection-status-text"
-                >
-                  {displayStatus}
-                </span>
-              </>
+              // Delay blur to allow for normal focus changes
+              if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+              blurTimerRef.current = setTimeout(() => {
+                blurTimerRef.current = null
+                // Only close if the input is still not focused
+                if (document.activeElement !== renameInputRef.current) {
+                  setIsRenaming(false)
+                }
+              }, 100)
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-background border border-border rounded px-1.5 py-0.5 text-sm w-full focus:outline-none focus:ring-1 focus:ring-ring"
+            placeholder={projectNames || 'Connection name'}
+          />
+        ) : (
+          <>
+            <div
+              className="overflow-hidden"
+              ref={containerRef}
+              onMouseEnter={handleMouseEnter}
+              onMouseLeave={handleMouseLeave}
+            >
+              <span
+                ref={textRef}
+                className={cn('text-sm whitespace-nowrap block', !isAnimating && 'truncate')}
+                style={
+                  isAnimating
+                    ? ({
+                        '--scroll-distance': `${scrollDistance}px`,
+                        animation: `marquee-scroll ${animationDuration}s linear infinite`
+                      } as React.CSSProperties)
+                    : undefined
+                }
+                title={displayName}
+              >
+                {displayName}
+              </span>
+            </div>
+            <span className={cn('text-[11px]', statusClass)} data-testid="connection-status-text">
+              {displayStatus}
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* Hint badge */}
+      {hint && vimModeEnabled && vimMode === 'normal' && (
+        <HintBadge
+          code={hint}
+          mode={hintMode}
+          pendingChar={hintPendingChar}
+          actionMode={hintActionMode}
+        />
+      )}
+
+      {/* Unread dot badge */}
+      {connectionStatus === 'unread' && (
+        <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
+      )}
+
+      {/* More Options Dropdown (visible on hover) */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn(
+              'h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity',
+              'hover:bg-accent'
             )}
-          </div>
-
-          {/* Hint badge */}
-          {hint && vimModeEnabled && vimMode === 'normal' && (
-            <HintBadge
-              code={hint}
-              mode={hintMode}
-              pendingChar={hintPendingChar}
-              actionMode={hintActionMode}
-            />
-          )}
-
-          {/* Unread dot badge */}
-          {connectionStatus === 'unread' && (
-            <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
-          )}
-
-          {/* More Options Dropdown (visible on hover) */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  'h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity',
-                  'hover:bg-accent'
-                )}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-52" align="end">
-              <DropdownMenuItem onClick={handleManageWorktrees}>
-                <Settings2 className="h-4 w-4 mr-2" />
-                Connection Worktrees
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleStartRename}>
-                <Pencil className="h-4 w-4 mr-2" />
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleTogglePin}>
-                {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
-                {isPinned ? 'Unpin' : 'Pin'}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleOpenInTerminal}>
-                <Terminal className="h-4 w-4 mr-2" />
-                Open in Terminal
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleOpenInEditor}>
-                <Code className="h-4 w-4 mr-2" />
-                Open in Editor
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleOpenInFinder}>
-                <ExternalLink className="h-4 w-4 mr-2" />
-                {revealLabel(true)}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleCopyPath}>
-                <Copy className="h-4 w-4 mr-2" />
-                Copy Path
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={handleDelete}
-                className="text-destructive focus:text-destructive focus:bg-destructive/10"
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+            onClick={(e) => e.stopPropagation()}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-52" align="end">
+          <DropdownMenuItem onClick={handleManageWorktrees}>
+            <Settings2 className="h-4 w-4 mr-2" />
+            Connection Worktrees
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleStartRename}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleTogglePin}>
+            {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
+            {isPinned ? 'Unpin' : 'Pin'}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleOpenInTerminal}>
+            <Terminal className="h-4 w-4 mr-2" />
+            Open in Terminal
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleOpenInEditor}>
+            <Code className="h-4 w-4 mr-2" />
+            Open in Editor
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleOpenInFinder}>
+            <ExternalLink className="h-4 w-4 mr-2" />
+            {revealLabel(true)}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleCopyPath}>
+            <Copy className="h-4 w-4 mr-2" />
+            Copy Path
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={handleDelete}
+            className="text-destructive focus:text-destructive focus:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 
   return (

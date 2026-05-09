@@ -83,6 +83,7 @@ interface Worktree {
   last_model_provider_id: string | null
   last_model_id: string | null
   last_model_variant: string | null
+  attachments: string
   created_at: string
   last_accessed_at: string
   github_pr_number: number | null
@@ -111,7 +112,12 @@ interface WorktreeState {
     projectId: string,
     projectPath: string,
     projectName: string
-  ) => Promise<{ success: boolean; worktree?: Worktree; error?: string; pullInfo?: unknown }>
+  ) => Promise<{
+    success: boolean
+    worktree?: Worktree
+    error?: string
+    pullInfo?: { pulled: boolean; updated: boolean }
+  }>
   archiveWorktree: (
     worktreeId: string,
     worktreePath: string,
@@ -323,11 +329,13 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   createWorktree: async (projectId: string, projectPath: string, projectName: string) => {
     set({ creatingForProjectId: projectId })
     try {
-      const result = await window.worktreeOps.create({
-        projectId,
-        projectPath,
-        projectName
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.create({
+          projectId,
+          projectPath,
+          projectName
+        })
+      )
 
       if (!result.success || !result.worktree) {
         set({ creatingForProjectId: null })
@@ -376,13 +384,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   ) => {
     set({ creatingForProjectId: projectId })
     try {
-      const result = await window.worktreeOps.createFromBranch(
-        projectId,
-        projectPath,
-        projectName,
-        branchName,
-        undefined, // prNumber — not used from store
-        nameHint
+      const result = unwrapEnvelope(
+        await window.worktreeOps.createFromBranch(
+          projectId,
+          projectPath,
+          projectName,
+          branchName,
+          undefined, // prNumber — not used from store
+          nameHint
+        )
       )
 
       if (!result.success || !result.worktree) {
@@ -469,13 +479,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       }
 
       // 4. Proceed with archive
-      const result = await window.worktreeOps.delete({
-        worktreeId,
-        worktreePath,
-        branchName,
-        projectPath,
-        archive: true
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.delete({
+          worktreeId,
+          worktreePath,
+          branchName,
+          projectPath,
+          archive: true
+        })
+      )
 
       if (!result.success) {
         return { success: false, error: result.error || 'Failed to archive worktree' }
@@ -483,7 +495,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       // 5. Clean up any connections referencing this worktree
       try {
-        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        unwrapEnvelope(await window.connectionOps.removeWorktreeFromAll(worktreeId))
         // Reload connections to reflect the change
         const { useConnectionStore } = await import('./useConnectionStore')
         await useConnectionStore.getState().loadConnections()
@@ -573,13 +585,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     }))
 
     try {
-      const result = await window.worktreeOps.delete({
-        worktreeId,
-        worktreePath,
-        branchName,
-        projectPath,
-        archive: false
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.delete({
+          worktreeId,
+          worktreePath,
+          branchName,
+          projectPath,
+          archive: false
+        })
+      )
 
       if (!result.success) {
         return { success: false, error: result.error || 'Failed to unbranch worktree' }
@@ -587,7 +601,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       // Clean up any connections referencing this worktree
       try {
-        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        unwrapEnvelope(await window.connectionOps.removeWorktreeFromAll(worktreeId))
         const { useConnectionStore } = await import('./useConnectionStore')
         await useConnectionStore.getState().loadConnections()
       } catch {
@@ -682,7 +696,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Sync worktrees with actual git state
   syncWorktrees: async (projectId: string, projectPath: string) => {
     try {
-      await window.worktreeOps.sync({ projectId, projectPath })
+      unwrapEnvelope(await window.worktreeOps.sync({ projectId, projectPath }))
       // Reload worktrees after sync
       await get().loadWorktrees(projectId)
     } catch {
@@ -720,14 +734,16 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     nameHint?: string
   ) => {
     try {
-      const result = await window.worktreeOps.duplicate({
-        projectId,
-        projectPath,
-        projectName,
-        sourceBranch,
-        sourceWorktreePath,
-        nameHint
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.duplicate({
+          projectId,
+          projectPath,
+          projectName,
+          sourceBranch,
+          sourceWorktreePath,
+          nameHint
+        })
+      )
       if (result.success && result.worktree) {
         // Reload worktrees for the project
         get().loadWorktrees(projectId)

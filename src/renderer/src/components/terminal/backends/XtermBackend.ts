@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /** Default Catppuccin Mocha theme used when no Ghostty config is found */
 const DEFAULT_TERMINAL_THEME: ITheme = {
@@ -204,7 +205,7 @@ export class XtermBackend implements TerminalBackend {
       if (e.metaKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
         navigator.clipboard
           .readText()
-          .catch(() => window.projectOps.readFromClipboard())
+          .catch(() => window.projectOps.readFromClipboard().then(unwrapEnvelope))
           .then((text) => {
             if (text) window.terminalOps.write(this.terminalId, text)
           })
@@ -223,7 +224,7 @@ export class XtermBackend implements TerminalBackend {
     this.searchAddon = searchAddon
 
     const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      window.projectOps.openPath(uri)
+      window.projectOps.openPath(uri).then(unwrapEnvelope).catch(console.error)
     })
     terminal.loadAddon(webLinksAddon)
 

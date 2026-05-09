@@ -10,6 +10,7 @@ import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { messageSendTimes, userExplicitSendTimes, lastSendMode } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface AttachedPR {
   number: number
@@ -145,29 +146,32 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
       setRemoteBranches([])
       return
     }
-    window.gitOps.listBranchesWithStatus(worktree.path).then((result) => {
-      if (result.success) {
-        const filtered = result.branches.filter((b: { isRemote: boolean }) => b.isRemote)
+    window.gitOps
+      .listBranchesWithStatus(worktree.path)
+      .then(unwrapEnvelope)
+      .then((result) => {
+        if (result.success) {
+          const filtered = result.branches.filter((b: { isRemote: boolean }) => b.isRemote)
 
-        // Pin the default branch (e.g. origin/main) to the top
-        if (worktreeId) {
-          const projectId = resolveProjectId(worktreeId)
-          if (projectId) {
-            const defaultWt = useWorktreeStore.getState().getDefaultWorktree(projectId)
-            if (defaultWt?.branch_name) {
-              const defaultRemoteName = `origin/${defaultWt.branch_name}`
-              filtered.sort((a, b) => {
-                if (a.name === defaultRemoteName) return -1
-                if (b.name === defaultRemoteName) return 1
-                return 0
-              })
+          // Pin the default branch (e.g. origin/main) to the top
+          if (worktreeId) {
+            const projectId = resolveProjectId(worktreeId)
+            if (projectId) {
+              const defaultWt = useWorktreeStore.getState().getDefaultWorktree(projectId)
+              if (defaultWt?.branch_name) {
+                const defaultRemoteName = `origin/${defaultWt.branch_name}`
+                filtered.sort((a, b) => {
+                  if (a.name === defaultRemoteName) return -1
+                  if (b.name === defaultRemoteName) return 1
+                  return 0
+                })
+              }
             }
           }
-        }
 
-        setRemoteBranches(filtered)
-      }
-    })
+          setRemoteBranches(filtered)
+        }
+      })
   }, [worktree?.path, worktreeId])
 
   // --- Clear live state when attached PR changes ---

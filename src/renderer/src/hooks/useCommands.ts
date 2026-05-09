@@ -306,9 +306,9 @@ export function useCommands() {
         action: async () => {
           closeCommandPalette()
           // Trigger the add project dialog
-          const result = await window.projectOps.openDialog()
-          if (result.success && result.path) {
-            const addResult = await useProjectStore.getState().addProject(result.path)
+          const selectedPath = unwrapEnvelope(await window.projectOps.openDirectoryDialog())
+          if (selectedPath) {
+            const addResult = await useProjectStore.getState().addProject(selectedPath)
             if (addResult.success) {
               toast.success('Project added successfully')
             } else {
@@ -331,7 +331,7 @@ export function useCommands() {
             return
           }
           try {
-            await window.worktreeOps.openInEditor(worktreePath)
+            unwrapEnvelope(await window.worktreeOps.openInEditor(worktreePath))
             toast.success('Opened in editor')
           } catch {
             toast.error('Failed to open in editor')
@@ -385,7 +385,7 @@ export function useCommands() {
             return
           }
           try {
-            await window.projectOps.showInFolder(worktreePath)
+            unwrapEnvelope(await window.projectOps.showInFolder(worktreePath))
           } catch {
             toast.error(`Failed to reveal in ${fileManagerName()}`)
           }

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { DiffViewer, type DiffViewMode } from './DiffViewer'
 import { Columns2, AlignJustify, Copy, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface DiffModalProps {
   isOpen: boolean
@@ -67,7 +68,7 @@ export function DiffModal({
   // Copy diff content to clipboard
   const handleCopyDiff = useCallback(async () => {
     if (diff) {
-      await window.projectOps.copyToClipboard(diff)
+      unwrapEnvelope(await window.projectOps.copyToClipboard(diff))
     }
   }, [diff])
 
