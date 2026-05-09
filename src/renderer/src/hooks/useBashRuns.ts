@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { Effect, Either } from 'effect'
 import { toast } from '@/lib/toast'
+import { runIpcEffect } from '@/lib/effect'
+import type { Envelope } from '@shared/types/ipc-envelope'
 
 export interface BashRunView {
   id: string
@@ -22,8 +25,18 @@ export function useBashRuns(sessionId: string): {
   // Seed state from any existing run on mount
   useEffect(() => {
     let cancelled = false
-    window.bash.getRun(sessionId).then((snapshot) => {
-      if (cancelled || !snapshot) return
+    Effect.runPromise(
+      Effect.either(
+        runIpcEffect(
+          () => window.bash.getRun(sessionId) as unknown as Promise<Envelope<BashRunSnapshot | null>>
+        )
+      )
+    ).then((result) => {
+      if (cancelled || Either.isLeft(result)) return
+
+      const snapshot = result.right
+      if (!snapshot) return
+
       // Avoid duplicates if a stream event already added this run
       setRuns((prev) => {
         if (prev.some((r) => r.id === snapshot.id)) return prev
@@ -82,16 +95,29 @@ export function useBashRuns(sessionId: string): {
 
   const runCommand = useCallback(
     async (command: string, cwd: string) => {
-      const result = await window.bash.run(sessionId, command, cwd)
-      if (!result.success) {
-        toast.error(result.error ?? 'Failed to run command')
+      const result = await Effect.runPromise(
+        Effect.either(
+          runIpcEffect(
+            () =>
+              window.bash.run(sessionId, command, cwd) as unknown as Promise<
+                Envelope<{ runId?: string }>
+              >
+          )
+        )
+      )
+      if (Either.isLeft(result)) {
+        toast.error(result.left.error)
       }
     },
     [sessionId]
   )
 
   const abort = useCallback(async () => {
-    await window.bash.abort(sessionId)
+    await Effect.runPromise(
+      Effect.either(
+        runIpcEffect(() => window.bash.abort(sessionId) as unknown as Promise<Envelope<void>>)
+      )
+    )
   }, [sessionId])
 
   return { runs, isRunning, runCommand, abort }
