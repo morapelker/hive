@@ -6,12 +6,14 @@ import type { KanbanTicket } from '../../../main/db/types'
 export interface TelegramForwardingTarget {
   sessionId: string | null
   worktreeId: string | null
+  connectionId: string | null
   source: 'board-ticket' | 'active-session'
 }
 
 export interface TelegramForwardingTargetSnapshot {
   activeSessionId: string | null
   activeWorktreeId: string | null
+  activeConnectionId: string | null
   activePinnedSessionId: string | null
   sessionsByWorktree: Map<string, Array<{ id: string }>>
   sessionsByConnection: Map<string, Array<{ id: string }>>
@@ -28,6 +30,7 @@ function getSnapshot(): TelegramForwardingTargetSnapshot {
   return {
     activeSessionId: sessionState.activeSessionId,
     activeWorktreeId: sessionState.activeWorktreeId,
+    activeConnectionId: sessionState.activeConnectionId,
     activePinnedSessionId: sessionState.activePinnedSessionId,
     sessionsByWorktree: sessionState.sessionsByWorktree,
     sessionsByConnection: sessionState.sessionsByConnection,
@@ -72,6 +75,7 @@ function getValidBoardTarget(snapshot: TelegramForwardingTargetSnapshot): Telegr
   return {
     sessionId: target.sessionId,
     worktreeId: target.worktreeId,
+    connectionId: null,
     source: 'board-ticket'
   }
 }
@@ -83,12 +87,13 @@ export function getTelegramForwardingTarget(
   if (boardTarget) return boardTarget
 
   if (!snapshot.activeSessionId || snapshot.activeSessionId === BOARD_TAB_ID) {
-    return { sessionId: null, worktreeId: null, source: 'active-session' }
+    return { sessionId: null, worktreeId: null, connectionId: null, source: 'active-session' }
   }
 
   return {
     sessionId: snapshot.activeSessionId,
     worktreeId: snapshot.activeWorktreeId,
+    connectionId: snapshot.activeConnectionId,
     source: 'active-session'
   }
 }

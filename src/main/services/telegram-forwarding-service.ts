@@ -23,7 +23,8 @@ type TrackedKind = 'question' | 'permission' | 'command' | 'plan'
 
 interface ForwardingState {
   sessionId: string
-  worktreeId: string
+  worktreeId: string | null
+  connectionId: string | null
   mode: TelegramMode
   contextSize: number
   recentAssistantTurns: string[]
@@ -251,6 +252,7 @@ export class TelegramForwardingService {
       active: !!this.state,
       sessionId: this.state?.sessionId ?? null,
       worktreeId: this.state?.worktreeId ?? null,
+      connectionId: this.state?.connectionId ?? null,
       mode: this.state?.mode ?? null,
       health: this.state?.firstFailureSurfaced ? 'error' : 'ok',
       lastError: this.state?.firstFailureSurfaced ? 'Telegram delivery failed' : null
@@ -296,12 +298,16 @@ export class TelegramForwardingService {
 
   async startForwarding(params: {
     sessionId: string
-    worktreeId: string
+    worktreeId: string | null
+    connectionId: string | null
     mode: TelegramMode
   }): Promise<TelegramForwardingStatus> {
     const cfg = this.getConfig()
     if (!cfg?.botToken || !cfg.chatId) {
       throw new Error('Telegram is not configured')
+    }
+    if (!!params.worktreeId === !!params.connectionId) {
+      throw new Error('Telegram forwarding requires exactly one target')
     }
 
     const previous = this.state
@@ -312,6 +318,7 @@ export class TelegramForwardingService {
     this.state = {
       sessionId: params.sessionId,
       worktreeId: params.worktreeId,
+      connectionId: params.connectionId,
       mode: params.mode,
       contextSize: Math.min(10, Math.max(1, cfg.contextSize || 3)),
       recentAssistantTurns: [],
@@ -328,7 +335,7 @@ export class TelegramForwardingService {
       firstFailureSurfaced: false
     }
 
-    const label = this.getSessionLabel(params.sessionId, params.worktreeId)
+    const label = this.getSessionLabel(params.sessionId)
     const verb = previous && previous.sessionId !== params.sessionId ? 'Forwarding moved to' : 'Forwarding started'
     this.state.lastUpdateId = await this.discardPendingUpdates(cfg)
     await this.sendMessage(cfg, `${verb}: ${label}. Mode: ${params.mode}.`)
@@ -462,7 +469,7 @@ export class TelegramForwardingService {
     const batch: QuestionBatch = {
       total: telegramQuestions.length,
       answers: Array.from({ length: telegramQuestions.length }, () => []),
-      worktreePath: this.getWorktreePath(),
+      worktreePath: this.getSessionWorkspacePath(),
       questions: telegramQuestions,
       currentIndex: 0
     }
@@ -505,7 +512,7 @@ export class TelegramForwardingService {
       kind: 'permission',
       requestId,
       messageId: sent.message_id,
-      worktreePath: this.getWorktreePath(),
+      worktreePath: this.getSessionWorkspacePath(),
       promptTitle: 'Permission'
     })
   }
@@ -539,7 +546,7 @@ export class TelegramForwardingService {
       kind: 'command',
       requestId,
       messageId: sent.message_id,
-      worktreePath: this.getWorktreePath(),
+      worktreePath: this.getSessionWorkspacePath(),
       promptTitle: 'Command approval',
       patternSuggestions
     })
@@ -583,7 +590,7 @@ export class TelegramForwardingService {
       kind: 'plan',
       requestId,
       messageId,
-      worktreePath: this.getWorktreePath(),
+      worktreePath: this.getSessionWorkspacePath(),
       promptTitle: 'Plan',
       plan
     }
@@ -825,7 +832,8 @@ export class TelegramForwardingService {
     if (!this.mainWindow || !this.state) return
     this.mainWindow.webContents.send('telegram:planImplementRequested', {
       sessionId: this.state.sessionId,
-      worktreeId: this.state.worktreeId,
+      worktreeId: this.state.worktreeId ?? null,
+      connectionId: this.state.connectionId ?? null,
       requestId: interaction.requestId,
       plan: interaction.plan
     })
@@ -910,15 +918,15 @@ export class TelegramForwardingService {
     const state = this.state
     if (!state) return
     const session = this.db?.getSession(state.sessionId)
-    const worktreePath = this.getWorktreePath()
-    if (!session || !worktreePath) throw new Error('Active session not found')
+    const workspacePath = this.getSessionWorkspacePath()
+    if (!session || !workspacePath) throw new Error('Active session not found')
     const agentSessionId = session.opencode_session_id ?? state.sessionId
     const parts = [{ type: 'text' as const, text }]
 
     if (session.agent_sdk !== 'opencode' && session.agent_sdk !== 'terminal' && this.sdkManager) {
-      await this.sdkManager.getImplementer(session.agent_sdk).prompt(worktreePath, agentSessionId, parts)
+      await this.sdkManager.getImplementer(session.agent_sdk).prompt(workspacePath, agentSessionId, parts)
     } else {
-      await openCodeService.prompt(worktreePath, agentSessionId, parts)
+      await openCodeService.prompt(workspacePath, agentSessionId, parts)
     }
   }
 
@@ -1038,13 +1046,20 @@ export class TelegramForwardingService {
     const state = this.state
     if (!cfg || !state) return
     this.cancelAssistantFlush()
-    await this.sendMessage(cfg, `Session ended: ${this.getSessionLabel(state.sessionId, state.worktreeId)}.`)
+    await this.sendMessage(cfg, `Session ended: ${this.getSessionLabel(state.sessionId)}.`)
     await this.stopForwarding('session-ended')
   }
 
-  private getSessionLabel(sessionId: string, worktreeId: string): string {
+  private getSessionLabel(sessionId: string): string {
+    const state = this.state
     const session = this.db?.getSession(sessionId)
-    const worktree = this.db?.getWorktree(worktreeId)
+    if (state?.connectionId) {
+      const connection = this.db?.getConnection(state.connectionId)
+      const connectionName = connection?.custom_name ?? connection?.name ?? 'Connection'
+      const sdk = session?.agent_sdk ?? 'agent'
+      return `${connectionName} (connection · ${sdk})`
+    }
+    const worktree = state?.worktreeId ? this.db?.getWorktree(state.worktreeId) : null
     const project = session?.project_id ? this.db?.getProject(session.project_id) : null
     const branch = worktree?.branch_name ?? worktree?.name ?? 'unknown'
     const projectName = project?.name ?? 'Project'
@@ -1055,14 +1070,24 @@ export class TelegramForwardingService {
   private getBranchLabel(): string {
     const state = this.state
     if (!state) return 'hive'
-    const worktree = this.db?.getWorktree(state.worktreeId)
-    return (worktree?.branch_name ?? worktree?.name ?? 'hive').replace(/[^a-zA-Z0-9._-]+/g, '-')
+    if (state.connectionId) {
+      const connection = this.db?.getConnection(state.connectionId)
+      return this.slugLabel(connection?.custom_name ?? connection?.name ?? 'hive')
+    }
+    const worktree = state.worktreeId ? this.db?.getWorktree(state.worktreeId) : null
+    return this.slugLabel(worktree?.branch_name ?? worktree?.name ?? 'hive')
   }
 
-  private getWorktreePath(): string | undefined {
+  private getSessionWorkspacePath(): string | undefined {
     const state = this.state
     if (!state) return undefined
-    return this.db?.getWorktree(state.worktreeId)?.path
+    if (state.connectionId) return this.db?.getConnection(state.connectionId)?.path
+    if (state.worktreeId) return this.db?.getWorktree(state.worktreeId)?.path
+    return undefined
+  }
+
+  private slugLabel(label: string): string {
+    return label.replace(/[^a-zA-Z0-9._-]+/g, '-')
   }
 
   private normalizeConfig(value: unknown): TelegramConfig {

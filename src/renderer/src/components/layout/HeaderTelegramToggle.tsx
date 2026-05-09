@@ -21,6 +21,7 @@ export function HeaderTelegramToggle(): React.JSX.Element {
   const openSettings = useSettingsStore((s) => s.openSettings)
   const activeSessionIdRaw = useSessionStore((s) => s.activeSessionId)
   const activeWorktreeIdRaw = useSessionStore((s) => s.activeWorktreeId)
+  const activeConnectionIdRaw = useSessionStore((s) => s.activeConnectionId)
   const activePinnedSessionId = useSessionStore((s) => s.activePinnedSessionId)
   const sessionsByWorktree = useSessionStore((s) => s.sessionsByWorktree)
   const sessionsByConnection = useSessionStore((s) => s.sessionsByConnection)
@@ -35,6 +36,7 @@ export function HeaderTelegramToggle(): React.JSX.Element {
   const forwardingTarget = getTelegramForwardingTarget({
     activeSessionId: activeSessionIdRaw,
     activeWorktreeId: activeWorktreeIdRaw,
+    activeConnectionId: activeConnectionIdRaw,
     activePinnedSessionId,
     sessionsByWorktree,
     sessionsByConnection,
@@ -46,16 +48,18 @@ export function HeaderTelegramToggle(): React.JSX.Element {
   })
   const activeSessionId = forwardingTarget.sessionId
   const activeWorktreeId = forwardingTarget.worktreeId
+  const activeConnectionId = forwardingTarget.connectionId
   const configured = !!telegramConfig?.botToken && !!telegramConfig.chatId
   const isHere = !!activeSessionId && activeForwardingSessionId === activeSessionId
   const isElsewhere = !!activeForwardingSessionId && !isHere
-  const disabled = !configured || !activeSessionId || !activeWorktreeId
+  const disabled = !configured || !activeSessionId || (!activeWorktreeId && !activeConnectionId)
 
   const startForwarding = async (mode: TelegramMode): Promise<void> => {
-    if (!activeSessionId || !activeWorktreeId) return
+    if (!activeSessionId || (!activeWorktreeId && !activeConnectionId)) return
     const result = await window.telegramOps.startForwarding({
       sessionId: activeSessionId,
       worktreeId: activeWorktreeId,
+      connectionId: activeConnectionId,
       mode
     })
     useTelegramStore.getState().setStatus(result.status)

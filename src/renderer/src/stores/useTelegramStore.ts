@@ -12,6 +12,7 @@ interface TelegramStore {
   lastError: string | null
   activeForwardingSessionId: string | null
   activeForwardingWorktreeId: string | null
+  activeForwardingConnectionId: string | null
   activeForwardingMode: TelegramMode | null
   discoveredChats: TelegramDiscoveredChat[]
   refreshing: boolean
@@ -27,6 +28,7 @@ export const useTelegramStore = create<TelegramStore>((set) => ({
   lastError: null,
   activeForwardingSessionId: null,
   activeForwardingWorktreeId: null,
+  activeForwardingConnectionId: null,
   activeForwardingMode: null,
   discoveredChats: [],
   refreshing: false,
@@ -36,6 +38,7 @@ export const useTelegramStore = create<TelegramStore>((set) => ({
     set({
       activeForwardingSessionId: status.sessionId,
       activeForwardingWorktreeId: status.worktreeId,
+      activeForwardingConnectionId: status.connectionId,
       activeForwardingMode: status.mode,
       health: status.health,
       lastError: status.lastError,
@@ -92,7 +95,68 @@ if (typeof window !== 'undefined' && window.telegramOps) {
             import('@/lib/backgroundSessionStart')
           ])
         const session = await window.db.session.get(payload.sessionId)
-        if (!session?.project_id || !payload.worktreeId) {
+        if (!session) {
+          toast.error('Could not start Telegram plan handoff')
+          return
+        }
+
+        if (payload.connectionId) {
+          const connectionResult = await window.connectionOps.get(payload.connectionId)
+          const connection = connectionResult.connection
+          if (!connectionResult.success || !connection?.path) {
+            toast.error('Could not start Telegram plan handoff')
+            return
+          }
+          const sessionStore = useSessionStore.getState()
+          sessionStore.setActiveConnection(payload.connectionId)
+          if (session.opencode_session_id) {
+            await window.opencodeOps.abort(connection.path, session.opencode_session_id).catch(() => {})
+          }
+          const selection = getEffectiveHandoffSelection({})
+          const result = await sessionStore.createConnectionSession(
+            payload.connectionId,
+            selection.agentSdk,
+            'build',
+            {
+              autoFocus: false,
+              modelOverride: selection.model
+            }
+          )
+          if (!result.success || !result.session) {
+            toast.error(result.error ?? 'Failed to create Telegram handoff session')
+            return
+          }
+          const handoffPrompt = `Implement the following plan\n${payload.plan}`
+          await useKanbanStore
+            .getState()
+            .relinkTicketsForHandoff(payload.sessionId, result.session.id)
+            .catch(() => {})
+          const mode = useTelegramStore.getState().activeForwardingMode ?? 'questions'
+          const forwarding = await window.telegramOps.startForwarding({
+            sessionId: result.session.id,
+            worktreeId: null,
+            connectionId: payload.connectionId,
+            mode
+          })
+          const forwardingMoved = forwarding.ok
+          if (forwarding.ok) {
+            useTelegramStore.getState().setStatus(forwarding.status)
+          } else {
+            toast.error(forwarding.error ?? 'Telegram handoff session created, but forwarding did not move')
+          }
+          sessionStore.setActiveConnection(payload.connectionId)
+          sessionStore.setActiveConnectionSession(result.session.id)
+          await startBackgroundSessionPrompt({
+            worktreePath: connection.path,
+            sessionId: result.session.id,
+            prompt: handoffPrompt,
+            bumpTarget: { connectionId: payload.connectionId }
+          })
+          toast.success(forwardingMoved ? 'Telegram plan handoff started' : 'Handoff session started')
+          return
+        }
+
+        if (!session.project_id || !payload.worktreeId) {
           toast.error('Could not start Telegram plan handoff')
           return
         }
@@ -101,6 +165,7 @@ if (typeof window !== 'undefined' && window.telegramOps) {
           toast.error('Could not start Telegram plan handoff')
           return
         }
+        useSessionStore.getState().setActiveWorktree(payload.worktreeId)
         if (session.opencode_session_id) {
           await window.opencodeOps.abort(worktree.path, session.opencode_session_id).catch(() => {})
         }
@@ -124,6 +189,7 @@ if (typeof window !== 'undefined' && window.telegramOps) {
         const forwarding = await window.telegramOps.startForwarding({
           sessionId: result.session.id,
           worktreeId: payload.worktreeId,
+          connectionId: null,
           mode
         })
         const forwardingMoved = forwarding.ok

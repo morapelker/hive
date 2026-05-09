@@ -43,13 +43,15 @@ export function registerTelegramHandlers(): void {
       {
         sessionId,
         worktreeId,
+        connectionId,
         mode
-      }: { sessionId: string; worktreeId: string; mode: TelegramMode }
+      }: { sessionId: string; worktreeId: string | null; connectionId: string | null; mode: TelegramMode }
     ) => {
       try {
         const status = await telegramForwardingService.startForwarding({
           sessionId,
           worktreeId,
+          connectionId,
           mode
         })
         return { ok: true, status }

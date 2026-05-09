@@ -255,6 +255,7 @@ describe('Telegram forwarding board target', () => {
           active: false,
           sessionId: null,
           worktreeId: null,
+          connectionId: null,
           mode: null,
           health: 'ok',
           lastError: null
@@ -290,6 +291,7 @@ describe('Telegram forwarding board target', () => {
         active: true,
         sessionId: 'session-1',
         worktreeId: 'wt-1',
+        connectionId: null,
         mode: 'questions',
         health: 'ok',
         lastError: null
@@ -325,6 +327,7 @@ describe('Telegram forwarding board target', () => {
     expect(getTelegramForwardingTarget()).toEqual({
       sessionId: 'session-1',
       worktreeId: 'wt-1',
+      connectionId: null,
       source: 'board-ticket'
     })
   })
@@ -335,7 +338,72 @@ describe('Telegram forwarding board target', () => {
     expect(getTelegramForwardingTarget()).toEqual({
       sessionId: null,
       worktreeId: null,
+      connectionId: null,
       source: 'active-session'
+    })
+  })
+
+  it('starts forwarding the active connection session from the header toggle', async () => {
+    const user = userEvent.setup()
+    seedStores()
+    useSessionStore.setState({
+      activeSessionId: 'conn-session-1',
+      activeWorktreeId: null,
+      activeConnectionId: 'conn-1',
+      sessionsByConnection: new Map([
+        [
+          'conn-1',
+          [
+            {
+              id: 'conn-session-1',
+              worktree_id: null,
+              project_id: 'proj-1',
+              connection_id: 'conn-1',
+              name: 'Session 1',
+              status: 'active',
+              opencode_session_id: null,
+              agent_sdk: 'opencode',
+              mode: 'build',
+              session_type: 'default',
+              model_provider_id: null,
+              model_id: null,
+              model_variant: null,
+              created_at: '2026-05-08T00:00:00.000Z',
+              updated_at: '2026-05-08T00:00:00.000Z',
+              completed_at: null,
+              pinned_to_board: false
+            }
+          ]
+        ]
+      ])
+    })
+
+    render(
+      <TooltipProvider>
+        <HeaderTelegramToggle />
+      </TooltipProvider>
+    )
+    act(() => {
+      useSettingsStore.getState().setTelegramConfig({
+        botToken: 'token',
+        chatId: 123,
+        chatName: 'me',
+        contextSize: 3
+      })
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('telegram-forwarding-toggle')).not.toBeDisabled()
+    })
+    await user.click(screen.getByTestId('telegram-forwarding-toggle'))
+    await user.click(await screen.findByText(/^Questions/))
+
+    await waitFor(() => {
+      expect(startForwarding).toHaveBeenCalledWith({
+        sessionId: 'conn-session-1',
+        worktreeId: null,
+        connectionId: 'conn-1',
+        mode: 'questions'
+      })
     })
   })
 
@@ -385,6 +453,7 @@ describe('Telegram forwarding board target', () => {
       expect(startForwarding).toHaveBeenCalledWith({
         sessionId: 'session-1',
         worktreeId: 'wt-1',
+        connectionId: null,
         mode: 'questions'
       })
     })

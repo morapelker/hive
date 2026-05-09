@@ -1618,7 +1618,8 @@ const telegramOps = {
     ipcRenderer.invoke('telegram:sendTestMessage'),
   startForwarding: (params: {
     sessionId: string
-    worktreeId: string
+    worktreeId: string | null
+    connectionId: string | null
     mode: TelegramMode
   }): Promise<{ ok: boolean; status: TelegramForwardingStatus; error?: string }> =>
     ipcRenderer.invoke('telegram:startForwarding', params),
@@ -1635,14 +1636,21 @@ const telegramOps = {
   onPlanImplementRequested: (
     callback: (payload: {
       sessionId: string
-      worktreeId: string
+      worktreeId: string | null
+      connectionId: string | null
       requestId: string
       plan: string
     }) => void
   ): (() => void) => {
     const handler = (
       _e: Electron.IpcRendererEvent,
-      payload: { sessionId: string; worktreeId: string; requestId: string; plan: string }
+      payload: {
+        sessionId: string
+        worktreeId: string | null
+        connectionId: string | null
+        requestId: string
+        plan: string
+      }
     ): void => {
       callback(payload)
     }
