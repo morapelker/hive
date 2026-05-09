@@ -1153,6 +1153,18 @@ declare global {
       ) => Promise<Envelope<void>>
       ghosttySetFocus: (terminalId: string, focused: boolean) => Promise<Envelope<void>>
       ghosttyPasteText: (terminalId: string, text: string) => Promise<Envelope<void>>
+      ghosttyFocusDiagnostics: () => Promise<
+        Envelope<
+          Array<{
+            surfaceId: number
+            subviewCount: number
+            firstResponderClass: string
+            isHostView: boolean
+            isDescendant: boolean
+            hasWindow: boolean
+          }>
+        >
+      >
       ghosttyDestroySurface: (terminalId: string) => Promise<Envelope<void>>
       ghosttyShutdown: () => Promise<Envelope<void>>
     }
