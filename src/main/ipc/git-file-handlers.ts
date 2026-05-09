@@ -1,4 +1,6 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { readFile } from 'fs/promises'
@@ -37,10 +39,17 @@ import {
   cleanupBranchWatchers,
   getBranchWatcherCount
 } from '../services/branch-watcher'
+import { defineHandler } from './_shared/define-handler'
 
 const execAsync = promisify(exec)
 
 const log = createLogger({ component: 'GitFileHandlers' })
+
+class GitDiscardFailed extends Data.TaggedError('GitDiscardFailed')<{
+  readonly worktreePath: string
+  readonly filePath: string
+  readonly reason: string
+}> {}
 
 // Main window reference for sending events
 let mainWindow: BrowserWindow | null = null
@@ -240,26 +249,36 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
     }
   )
 
-  // Discard changes in a file
-  ipcMain.handle(
+  // git:discardChanges - migrated to defineHandler (EFFECT_ADOPTION Session 3)
+  defineHandler(
     'git:discardChanges',
-    async (_event, worktreePath: string, filePath: string): Promise<GitOperationResult> => {
-      log.info('Discarding changes', { worktreePath, filePath })
-      try {
-        const gitService = createGitService(worktreePath)
-        const result = await gitService.discardChanges(filePath)
-
-        return result
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        log.error(
-          'Failed to discard changes',
-          error instanceof Error ? error : new Error(message),
-          { worktreePath, filePath }
-        )
-        return { success: false, error: message }
-      }
-    }
+    z.tuple([
+      z.string().min(1, 'worktreePath is required'),
+      z.string().min(1, 'filePath is required')
+    ]),
+    ([worktreePath, filePath]) =>
+      Effect.tryPromise({
+        try: async () => {
+          const gitService = createGitService(worktreePath)
+          const result = await gitService.discardChanges(filePath)
+          if (!result.success) {
+            throw new GitDiscardFailed({
+              worktreePath,
+              filePath,
+              reason: result.error ?? 'Unknown error'
+            })
+          }
+          return null
+        },
+        catch: (e) =>
+          e instanceof GitDiscardFailed
+            ? e
+            : new GitDiscardFailed({
+                worktreePath,
+                filePath,
+                reason: e instanceof Error ? e.message : String(e)
+              })
+      })
   )
 
   // Add to .gitignore
