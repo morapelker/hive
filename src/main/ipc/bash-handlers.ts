@@ -1,57 +1,86 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import type { BrowserWindow } from 'electron'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
+
 import { bashService } from '../effect/bash/facade'
 import { createLogger } from '../services/logger'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'BashHandlers' })
+
+class BashHandlerFailed extends Data.TaggedError('BashHandlerFailed')<{
+  readonly operation: string
+  readonly reason: string
+}> {}
+
+const toReason = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause)
 
 export function registerBashHandlers(mainWindow: BrowserWindow): void {
   bashService.setMainWindow(mainWindow)
 
-  ipcMain.handle(
+  defineHandler(
     'bash:run',
-    async (_event, payload: { sessionId: string; command: string; cwd: string }) => {
+    z.object({
+      sessionId: z.string().min(1),
+      command: z.string().min(1),
+      cwd: z.string().min(1)
+    }),
+    (payload) => {
       log.info('IPC: bash:run', {
         sessionId: payload.sessionId,
         command: payload.command,
         cwd: payload.cwd
       })
-      try {
-        return await bashService.run(payload.sessionId, payload.command, payload.cwd)
-      } catch (error) {
-        log.error(
-          'IPC: bash:run failed',
-          error instanceof Error ? error : new Error(String(error))
-        )
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
+
+      return Effect.tryPromise({
+        try: () => bashService.run(payload.sessionId, payload.command, payload.cwd),
+        catch: (cause) => {
+          log.error('IPC: bash:run failed', cause instanceof Error ? cause : new Error(String(cause)))
+          return new BashHandlerFailed({
+            operation: 'bash:run',
+            reason: toReason(cause)
+          })
         }
-      }
+      }).pipe(
+        Effect.flatMap((envelope) =>
+          envelope.success
+            ? Effect.succeed({ runId: envelope.runId })
+            : Effect.fail(
+                new BashHandlerFailed({
+                  operation: 'bash:run',
+                  reason: envelope.error
+                })
+              )
+        )
+      )
     }
   )
 
-  ipcMain.handle('bash:abort', async (_event, sessionId: string) => {
+  defineHandler('bash:abort', z.string().min(1), (sessionId) => {
     log.info('IPC: bash:abort', { sessionId })
-    try {
-      return await bashService.abort(sessionId)
-    } catch (error) {
-      log.error(
-        'IPC: bash:abort failed',
-        error instanceof Error ? error : new Error(String(error))
-      )
-      return false
-    }
+    return Effect.tryPromise({
+      try: () => bashService.abort(sessionId),
+      catch: (cause) => {
+        log.error('IPC: bash:abort failed', cause instanceof Error ? cause : new Error(String(cause)))
+        return new BashHandlerFailed({
+          operation: 'bash:abort',
+          reason: toReason(cause)
+        })
+      }
+    })
   })
 
-  ipcMain.handle('bash:getRun', async (_event, sessionId: string) => {
-    try {
-      return await bashService.getRun(sessionId)
-    } catch (error) {
-      log.error(
-        'IPC: bash:getRun failed',
-        error instanceof Error ? error : new Error(String(error))
-      )
-      return null
-    }
+  defineHandler('bash:getRun', z.string().min(1), (sessionId) => {
+    return Effect.tryPromise({
+      try: () => bashService.getRun(sessionId),
+      catch: (cause) => {
+        log.error('IPC: bash:getRun failed', cause instanceof Error ? cause : new Error(String(cause)))
+        return new BashHandlerFailed({
+          operation: 'bash:getRun',
+          reason: toReason(cause)
+        })
+      }
+    })
   })
 }

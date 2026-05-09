@@ -12,6 +12,7 @@ import type {
   TelegramMode
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
+import type { BashRunSnapshot, BashStreamEvent } from '../main/effect/bash/types'
 
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
 // point mapping. Any zoom level breaks coordinate sync and causes misaligned
@@ -2262,13 +2263,13 @@ const ticketImport = {
 }
 
 const bash = {
-  run: (sessionId: string, command: string, cwd: string): Promise<{ success: boolean; runId?: string; error?: string }> =>
+  run: (sessionId: string, command: string, cwd: string): Promise<Envelope<{ runId: string }>> =>
     ipcRenderer.invoke('bash:run', { sessionId, command, cwd }),
 
-  abort: (sessionId: string): Promise<boolean> =>
+  abort: (sessionId: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('bash:abort', sessionId),
 
-  getRun: (sessionId: string): Promise<BashRunSnapshot | null> =>
+  getRun: (sessionId: string): Promise<Envelope<BashRunSnapshot | null>> =>
     ipcRenderer.invoke('bash:getRun', sessionId),
 
   onStream: (callback: (event: BashStreamEvent) => void): (() => void) => {

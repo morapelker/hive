@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Effect, Either } from 'effect'
 import { toast } from '@/lib/toast'
 import { runIpcEffect } from '@/lib/effect'
-import type { Envelope } from '@shared/types/ipc-envelope'
 
 export interface BashRunView {
   id: string
@@ -27,9 +26,7 @@ export function useBashRuns(sessionId: string): {
     let cancelled = false
     Effect.runPromise(
       Effect.either(
-        runIpcEffect(
-          () => window.bash.getRun(sessionId) as unknown as Promise<Envelope<BashRunSnapshot | null>>
-        )
+        runIpcEffect(() => window.bash.getRun(sessionId))
       )
     ).then((result) => {
       if (cancelled || Either.isLeft(result)) return
@@ -97,12 +94,7 @@ export function useBashRuns(sessionId: string): {
     async (command: string, cwd: string) => {
       const result = await Effect.runPromise(
         Effect.either(
-          runIpcEffect(
-            () =>
-              window.bash.run(sessionId, command, cwd) as unknown as Promise<
-                Envelope<{ runId?: string }>
-              >
-          )
+          runIpcEffect(() => window.bash.run(sessionId, command, cwd))
         )
       )
       if (Either.isLeft(result)) {
@@ -114,9 +106,7 @@ export function useBashRuns(sessionId: string): {
 
   const abort = useCallback(async () => {
     await Effect.runPromise(
-      Effect.either(
-        runIpcEffect(() => window.bash.abort(sessionId) as unknown as Promise<Envelope<void>>)
-      )
+      Effect.either(runIpcEffect(() => window.bash.abort(sessionId)))
     )
   }, [sessionId])
 

@@ -1682,9 +1682,9 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>
     }
     bash: {
-      run: (sessionId: string, command: string, cwd: string) => Promise<{ success: boolean; runId?: string; error?: string }>
-      abort: (sessionId: string) => Promise<boolean>
-      getRun: (sessionId: string) => Promise<BashRunSnapshot | null>
+      run: (sessionId: string, command: string, cwd: string) => Promise<Envelope<{ runId: string }>>
+      abort: (sessionId: string) => Promise<Envelope<boolean>>
+      getRun: (sessionId: string) => Promise<Envelope<BashRunSnapshot | null>>
       onStream: (callback: (event: BashStreamEvent) => void) => () => void
     }
   }
