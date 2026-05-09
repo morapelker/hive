@@ -176,9 +176,10 @@ function AttachmentChip({
     if (attachment.type !== 'image') return
     let cancelled = false
 
-    window.fileOps.readImageAsBase64(attachment.url).then((result) => {
-      if (cancelled || !result.success || !result.data || !result.mimeType) return
-      setThumbnailSrc(`data:${result.mimeType};base64,${result.data}`)
+    window.fileOps.readImageAsBase64(attachment.url).then((envelope) => {
+      if (cancelled || !envelope.success) return
+      const { data, mimeType } = envelope.value
+      setThumbnailSrc(`data:${mimeType ?? 'image/png'};base64,${data}`)
     })
 
     return () => { cancelled = true }

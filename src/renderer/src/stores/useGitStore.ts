@@ -297,8 +297,12 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Discard changes in a file
   discardChanges: async (worktreePath: string, relativePath: string) => {
     try {
-      const result = await window.gitOps.discardChanges(worktreePath, relativePath)
-      return result.success
+      const envelope = await window.gitOps.discardChanges(worktreePath, relativePath)
+      if (!envelope.success) {
+        console.error('Failed to discard changes:', envelope.error)
+        return false
+      }
+      return true
     } catch (error) {
       console.error('Failed to discard changes:', error)
       return false
