@@ -72,12 +72,13 @@ describe('Spawn layer override example', () => {
 
     expect(Either.isLeft(result)).toBe(true)
     if (Either.isLeft(result)) {
-      expect(result.left).toBeInstanceOf(SpawnNonZeroExit)
       expect(result.left._tag).toBe('SpawnNonZeroExit')
-      expect(result.left.command).toBe('fake-cli')
-      expect(result.left.exitCode).toBe(42)
-      expect(result.left.stdoutPreview).toBe('partial output')
-      expect(result.left.stderrPreview).toBe('synthetic failure')
+      if (result.left._tag === 'SpawnNonZeroExit') {
+        expect(result.left.command).toBe('fake-cli')
+        expect(result.left.exitCode).toBe(42)
+        expect(result.left.stdoutPreview).toBe('partial output')
+        expect(result.left.stderrPreview).toBe('synthetic failure')
+      }
     }
   })
 })

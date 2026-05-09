@@ -26,6 +26,8 @@ const countSessionEvents = (input: SubscriptionParams) =>
     return yield* Stream.runCount(agent.sessionEvents(input))
   })
 
+const twoSessionNotifications = Stream.make(void 0, void 0)
+
 const expectFailure = <A>(exit: Exit.Exit<A, OpenCodeError>) => {
   if (Exit.isSuccess(exit)) throw new Error('expected Exit.Failure')
   const failure = Cause.failureOption(exit.cause)
@@ -36,7 +38,7 @@ const expectFailure = <A>(exit: Exit.Exit<A, OpenCodeError>) => {
 describe('OpenCodeAgent layer override example', () => {
   it('runs a unit against a fake OpenCodeAgent layer', async () => {
     const fakeAgent = Layer.succeed(OpenCodeAgent, {
-      sessionEvents: () => Stream.make(undefined, undefined)
+      sessionEvents: () => twoSessionNotifications
     })
 
     const result = await Effect.runPromise(
@@ -58,6 +60,9 @@ describe('OpenCodeAgent layer override example', () => {
 
     const error = expectFailure(exit)
     expect(error).toBeInstanceOf(OpenCodeSessionMissing)
-    expect(error.sessionId).toBe('hive-1')
+    expect(error._tag).toBe('OpenCodeSessionMissing')
+    if (error._tag === 'OpenCodeSessionMissing') {
+      expect(error.sessionId).toBe('hive-1')
+    }
   })
 })

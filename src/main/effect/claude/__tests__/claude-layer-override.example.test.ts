@@ -16,6 +16,8 @@ const countSessionEvents = (input: SubscriptionParams) =>
     return yield* Stream.runCount(agent.sessionEvents(input))
   })
 
+const twoSessionNotifications = Stream.make(void 0, void 0)
+
 const expectFailure = <A>(exit: Exit.Exit<A, ClaudeError>) => {
   if (Exit.isSuccess(exit)) throw new Error('expected Exit.Failure')
   const failure = Cause.failureOption(exit.cause)
@@ -26,7 +28,7 @@ const expectFailure = <A>(exit: Exit.Exit<A, ClaudeError>) => {
 describe('ClaudeAgent layer override example', () => {
   it('runs a unit against a fake ClaudeAgent layer', async () => {
     const fakeAgent = Layer.succeed(ClaudeAgent, {
-      sessionEvents: () => Stream.make(undefined, undefined)
+      sessionEvents: () => twoSessionNotifications
     })
 
     const result = await Effect.runPromise(
@@ -48,6 +50,9 @@ describe('ClaudeAgent layer override example', () => {
 
     const error = expectFailure(exit)
     expect(error).toBeInstanceOf(ClaudeSessionMissing)
-    expect(error.sessionId).toBe('hive-1')
+    expect(error._tag).toBe('ClaudeSessionMissing')
+    if (error._tag === 'ClaudeSessionMissing') {
+      expect(error.sessionId).toBe('hive-1')
+    }
   })
 })

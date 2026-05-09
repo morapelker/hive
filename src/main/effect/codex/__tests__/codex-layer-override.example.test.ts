@@ -20,6 +20,8 @@ const countSessionEvents = (input: SubscriptionParams) =>
     return yield* Stream.runCount(agent.sessionEvents(input))
   })
 
+const twoSessionNotifications = Stream.make(void 0, void 0)
+
 const expectFailure = <A>(exit: Exit.Exit<A, CodexError>) => {
   if (Exit.isSuccess(exit)) throw new Error('expected Exit.Failure')
   const failure = Cause.failureOption(exit.cause)
@@ -30,7 +32,7 @@ const expectFailure = <A>(exit: Exit.Exit<A, CodexError>) => {
 describe('CodexAgent layer override example', () => {
   it('runs a unit against a fake CodexAgent layer', async () => {
     const fakeAgent = Layer.succeed(CodexAgent, {
-      sessionEvents: () => Stream.make(undefined, undefined)
+      sessionEvents: () => twoSessionNotifications
     })
 
     const result = await Effect.runPromise(
@@ -51,6 +53,9 @@ describe('CodexAgent layer override example', () => {
 
     const error = expectFailure(exit)
     expect(error).toBeInstanceOf(CodexSessionMissing)
-    expect(error.threadId).toBe('thread-1')
+    expect(error._tag).toBe('CodexSessionMissing')
+    if (error._tag === 'CodexSessionMissing') {
+      expect(error.threadId).toBe('thread-1')
+    }
   })
 })
