@@ -10,6 +10,7 @@ import type {
   TelegramForwardingStatus,
   TelegramMode
 } from '../shared/types/telegram'
+import type { Envelope } from '@shared/types/ipc-envelope'
 
 // Database types for renderer
 interface Connection {
@@ -941,16 +942,10 @@ declare global {
         content?: string
         error?: string
       }>
-      writeFile: (filePath: string, content: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      readImageAsBase64: (filePath: string) => Promise<{
-        success: boolean
-        data?: string
-        mimeType?: string
-        error?: string
-      }>
+      writeFile: (filePath: string, content: string) => Promise<Envelope<null>>
+      readImageAsBase64: (
+        filePath: string
+      ) => Promise<Envelope<{ data: string; mimeType?: string }>>
       getPathForFile: (file: File) => string
     }
     attachmentOps: {
@@ -1104,10 +1099,7 @@ declare global {
       discardChanges: (
         worktreePath: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<Envelope<null>>
       // Add to .gitignore
       addToGitignore: (
         worktreePath: string,

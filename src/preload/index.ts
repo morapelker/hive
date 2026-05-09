@@ -11,6 +11,7 @@ import type {
   TelegramForwardingStatus,
   TelegramMode
 } from '../shared/types/telegram'
+import type { Envelope } from '@shared/types/ipc-envelope'
 
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
 // point mapping. Any zoom level breaks coordinate sync and causes misaligned
@@ -839,10 +840,7 @@ const gitOps = {
   discardChanges: (
     worktreePath: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:discardChanges', worktreePath, filePath),
+  ): Promise<Envelope<null>> => ipcRenderer.invoke('git:discardChanges', worktreePath, filePath),
 
   // Add to .gitignore
   addToGitignore: (
@@ -1720,11 +1718,11 @@ const scriptOps = {
 const fileOps = {
   readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
     ipcRenderer.invoke('file:read', filePath),
-  writeFile: (filePath: string, content: string): Promise<{ success: boolean; error?: string }> =>
+  writeFile: (filePath: string, content: string): Promise<Envelope<null>> =>
     ipcRenderer.invoke('file:write', filePath, content),
   readImageAsBase64: (
     filePath: string
-  ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> =>
+  ): Promise<Envelope<{ data: string; mimeType?: string }>> =>
     ipcRenderer.invoke('file:readImageAsBase64', filePath),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file)
 }
