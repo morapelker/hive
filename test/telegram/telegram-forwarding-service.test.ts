@@ -391,10 +391,95 @@ describe('telegram forwarding helpers', () => {
       expect.objectContaining({
         sessionId: 's1',
         worktreeId: 'w1',
+        connectionId: null,
         requestId: 'codex-plan:thread-1',
         plan: 'Do the work.'
       })
     )
+  })
+
+  it('starts forwarding for connection sessions and sends prompts from the connection path', async () => {
+    const service = new TelegramForwardingService()
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as SendMessageBody : {}
+      if (String(_url).endsWith('/sendMessage')) {
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+          })
+        } as Response
+      }
+      if (String(_url).endsWith('/getUpdates')) {
+        return {
+          ok: true,
+          json: async () => ({ ok: true, result: [] })
+        } as Response
+      }
+      return {
+        ok: true,
+        json: async () => ({ ok: true, result: true })
+      } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    prompt.mockResolvedValue(undefined)
+    Reflect.set(service, 'startPolling', vi.fn())
+    Reflect.set(service, 'db', {
+      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getWorktree: vi.fn(),
+      getConnection: (id: string) =>
+        id === 'c1'
+          ? {
+              id: 'c1',
+              name: 'cluster-a',
+              custom_name: null,
+              path: '/tmp/conn-a',
+              color: null,
+              status: 'active',
+              pinned: 0,
+              created_at: '2026-01-01T00:00:00.000Z',
+              updated_at: '2026-01-01T00:00:00.000Z',
+              members: []
+            }
+          : null,
+      getSession: () => ({
+        id: 's1',
+        project_id: 'p1',
+        worktree_id: null,
+        connection_id: 'c1',
+        agent_sdk: 'opencode',
+        opencode_session_id: 'agent-1'
+      }),
+      getProject: () => ({ name: 'Project' })
+    })
+
+    await service.startForwarding({
+      sessionId: 's1',
+      worktreeId: null,
+      connectionId: 'c1',
+      mode: 'questions'
+    })
+
+    expect(sentTelegramTexts(fetchMock)).toContain(
+      'Forwarding started: cluster-a (connection · opencode). Mode: questions.'
+    )
+
+    const handleTextMessage = Reflect.get(service, 'handleTextMessage') as (message: {
+      message_id: number
+      text: string
+      chat: { id: number; type: 'private' }
+    }) => Promise<void>
+
+    await handleTextMessage.call(service, {
+      message_id: 99,
+      text: 'continue',
+      chat: { id: 123, type: 'private' }
+    })
+
+    expect(prompt).toHaveBeenCalledWith('/tmp/conn-a', 'agent-1', [
+      { type: 'text', text: 'continue' }
+    ])
   })
 
   it('implements a pending plan and publishes plan.resolved for Hive', async () => {

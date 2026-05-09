@@ -883,7 +883,8 @@ declare global {
       sendTestMessage: () => Promise<{ ok: boolean; error?: string }>
       startForwarding: (params: {
         sessionId: string
-        worktreeId: string
+        worktreeId: string | null
+        connectionId: string | null
         mode: TelegramMode
       }) => Promise<{ ok: boolean; status: TelegramForwardingStatus; error?: string }>
       stopForwarding: () => Promise<{ status: TelegramForwardingStatus }>
@@ -892,7 +893,8 @@ declare global {
       onPlanImplementRequested: (
         callback: (payload: {
           sessionId: string
-          worktreeId: string
+          worktreeId: string | null
+          connectionId: string | null
           requestId: string
           plan: string
         }) => void

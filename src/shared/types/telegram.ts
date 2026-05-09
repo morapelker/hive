@@ -17,6 +17,7 @@ export interface TelegramForwardingStatus {
   active: boolean
   sessionId: string | null
   worktreeId: string | null
+  connectionId: string | null
   mode: TelegramMode | null
   health: 'ok' | 'error'
   lastError: string | null
@@ -24,7 +25,8 @@ export interface TelegramForwardingStatus {
 
 export interface TelegramStartForwardingRequest {
   sessionId: string
-  worktreeId: string
+  worktreeId: string | null
+  connectionId: string | null
   mode: TelegramMode
 }
 
