@@ -128,6 +128,9 @@ importers:
       diff2html:
         specifier: ^3.4.56
         version: 3.4.56
+      effect:
+        specifier: ^3.18.0
+        version: 3.21.2
       electron-updater:
         specifier: ^6.8.3
         version: 6.8.3
@@ -2085,6 +2088,9 @@ packages:
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
 
+  '@standard-schema/spec@1.1.0':
+    resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
   '@szmarczak/http-timer@4.0.6':
     resolution: {integrity: sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==}
     engines: {node: '>=10'}
@@ -3218,6 +3224,9 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
+  effect@3.21.2:
+    resolution: {integrity: sha512-rXd2FGDM8KdjSIrc+mqEELo7ScW7xTVxEf1iInmPSpIde9/nyGuFM710cjTo7/EreGXiUX2MOonPpprbz2XHCg==}
+
   ejs@3.1.10:
     resolution: {integrity: sha512-UeJmFfOrAQS8OJWPZ4qtgHyWExa088/MtK5UEyoJGFH67cDEXkZSviOiKRCZ4Xij0zxI3JECgYs3oKx+AizQBA==}
     engines: {node: '>=0.10.0'}
@@ -3489,6 +3498,10 @@ packages:
   extsprintf@1.4.1:
     resolution: {integrity: sha512-Wrk35e8ydCKDj/ArClo1VrPVmN8zph5V4AtHwIuHhvMXsKf73UT3BOD+azBIW+3wOJ4FhEH7zyaJCFvChjYvMA==}
     engines: {'0': node >=0.6.0}
+
+  fast-check@3.23.2:
+    resolution: {integrity: sha512-h5+1OzzfCC3Ef7VbtKdcv7zsstUQwUDlYpUTvjeUsJAssPgLn7QzbboPtL5ro04Mq0rPOsMzl7q5hIbRs2wD1A==}
+    engines: {node: '>=8.0.0'}
 
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
@@ -5176,6 +5189,9 @@ packages:
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
+
+  pure-rand@6.1.0:
+    resolution: {integrity: sha512-bVWawvoZoBYpp6yIoQtQXHZjmz35RSVHnUOTefl8Vcjr8snTPY1wnpSPMWekcFwbxI6gtmT7rSYPFvz71ldiOA==}
 
   qrcode-terminal@0.12.0:
     resolution: {integrity: sha512-EXtzRZmC+YGmGlDFbXKxQiMZNwCLEO6BANKXG4iCtSIM0yqc/pappSx3RIKr4r0uh5JsBckOXeKrB3Iz7mdQpQ==}
@@ -8363,6 +8379,8 @@ snapshots:
 
   '@sindresorhus/merge-streams@4.0.0': {}
 
+  '@standard-schema/spec@1.1.0': {}
+
   '@szmarczak/http-timer@4.0.6':
     dependencies:
       defer-to-connect: 2.0.1
@@ -9699,6 +9717,11 @@ snapshots:
 
   ee-first@1.1.1: {}
 
+  effect@3.21.2:
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      fast-check: 3.23.2
+
   ejs@3.1.10:
     dependencies:
       jake: 10.9.4
@@ -10172,6 +10195,10 @@ snapshots:
 
   extsprintf@1.4.1:
     optional: true
+
+  fast-check@3.23.2:
+    dependencies:
+      pure-rand: 6.1.0
 
   fast-deep-equal@3.1.3: {}
 
@@ -12091,6 +12118,8 @@ snapshots:
       once: 1.4.0
 
   punycode@2.3.1: {}
+
+  pure-rand@6.1.0: {}
 
   qrcode-terminal@0.12.0: {}
 

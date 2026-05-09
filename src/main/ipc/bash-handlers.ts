@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { bashService } from '../services/bash-service'
+import { bashService } from '../effect-island/bash/facade'
 import { createLogger } from '../services/logger'
 
 const log = createLogger({ component: 'BashHandlers' })
@@ -16,10 +16,12 @@ export function registerBashHandlers(mainWindow: BrowserWindow): void {
         cwd: payload.cwd
       })
       try {
-        const result = await bashService.run(payload.sessionId, payload.command, payload.cwd)
-        return { success: true, ...result }
+        return await bashService.run(payload.sessionId, payload.command, payload.cwd)
       } catch (error) {
-        log.error('IPC: bash:run failed', { error })
+        log.error(
+          'IPC: bash:run failed',
+          error instanceof Error ? error : new Error(String(error))
+        )
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
@@ -33,16 +35,22 @@ export function registerBashHandlers(mainWindow: BrowserWindow): void {
     try {
       return await bashService.abort(sessionId)
     } catch (error) {
-      log.error('IPC: bash:abort failed', { error })
+      log.error(
+        'IPC: bash:abort failed',
+        error instanceof Error ? error : new Error(String(error))
+      )
       return false
     }
   })
 
   ipcMain.handle('bash:getRun', async (_event, sessionId: string) => {
     try {
-      return bashService.getRun(sessionId)
+      return await bashService.getRun(sessionId)
     } catch (error) {
-      log.error('IPC: bash:getRun failed', { error })
+      log.error(
+        'IPC: bash:getRun failed',
+        error instanceof Error ? error : new Error(String(error))
+      )
       return null
     }
   })
