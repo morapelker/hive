@@ -26,6 +26,8 @@ const mainInclude = [
 const overrideMainInclude: Plugin = {
   name: 'override-main-test-include',
   configResolved(config): void {
+    // Vitest/Vite concatenates array fields from `extends`; keep the main
+    // project scoped to its node-only include list after inheriting coverage.
     ;(config as VitestResolvedConfig).test.include = mainInclude
   }
 }
