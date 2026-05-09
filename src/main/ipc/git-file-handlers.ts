@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
-import { Data, Effect } from 'effect'
+import { Effect } from 'effect'
 import { z } from 'zod'
 import { exec } from 'child_process'
 import { promisify } from 'util'
@@ -40,16 +40,12 @@ import {
   getBranchWatcherCount
 } from '../services/branch-watcher'
 import { defineHandler } from './_shared/define-handler'
+import { GitLive } from '../effect/git/layers'
+import { Git } from '../effect/git/service'
 
 const execAsync = promisify(exec)
 
 const log = createLogger({ component: 'GitFileHandlers' })
-
-class GitDiscardFailed extends Data.TaggedError('GitDiscardFailed')<{
-  readonly worktreePath: string
-  readonly filePath: string
-  readonly reason: string
-}> {}
 
 // Main window reference for sending events
 let mainWindow: BrowserWindow | null = null
@@ -257,28 +253,10 @@ export function registerGitFileHandlers(window: BrowserWindow): void {
       z.string().min(1, 'filePath is required')
     ]),
     ([worktreePath, filePath]) =>
-      Effect.tryPromise({
-        try: async () => {
-          const gitService = createGitService(worktreePath)
-          const result = await gitService.discardChanges(filePath)
-          if (!result.success) {
-            throw new GitDiscardFailed({
-              worktreePath,
-              filePath,
-              reason: result.error ?? 'Unknown error'
-            })
-          }
-          return null
-        },
-        catch: (e) =>
-          e instanceof GitDiscardFailed
-            ? e
-            : new GitDiscardFailed({
-                worktreePath,
-                filePath,
-                reason: e instanceof Error ? e.message : String(e)
-              })
-      })
+      Effect.flatMap(Git, (git) => git.file.discard(worktreePath, filePath)).pipe(
+        Effect.as(null),
+        Effect.provide(GitLive)
+      )
   )
 
   // Add to .gitignore
