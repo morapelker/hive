@@ -18,6 +18,11 @@ import { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import { CommandFilterService, type CommandFilterSettings } from './command-filter-service'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
+import { Cause, Exit } from 'effect'
+import {
+  claudeAgentFacade,
+  type SubscriptionHandle as ClaudeSubscriptionHandle
+} from '../effect/claude/facade'
 
 const log = createLogger({ component: 'ClaudeCodeImplementer' })
 
@@ -93,6 +98,7 @@ export interface ClaudeSessionState {
   hiveSessionId: string
   worktreePath: string
   abortController: AbortController | null
+  subscription: ClaudeSubscriptionHandle | null
   checkpointCounter: number
   checkpoints: Map<string, number>
   query: ClaudeQuery | null
@@ -194,6 +200,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       hiveSessionId,
       worktreePath,
       abortController: new AbortController(),
+      subscription: null,
       checkpointCounter: 0,
       checkpoints: new Map(),
       query: null,
@@ -246,6 +253,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       hiveSessionId,
       worktreePath,
       abortController: new AbortController(),
+      subscription: null,
       checkpointCounter: 0,
       checkpoints: new Map(),
       query: null,
@@ -287,6 +295,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       session.query = null
     }
 
+    if (session.subscription) {
+      await session.subscription.abort()
+      session.subscription = null
+    }
+
     if (session.abortController) {
       session.abortController.abort()
     }
@@ -312,6 +325,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       if (session.abortController) {
         log.debug('Aborting session', { key })
         session.abortController.abort()
+      }
+      if (session.subscription) {
+        await session.subscription.abort()
+        session.subscription = null
       }
     }
     this.sessions.clear()
@@ -548,7 +565,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         ? this.createUserMessageIterable(contentBlocks, session.claudeSessionId)
         : prompt
 
-      const queryData = sdk.query({ prompt: sdkPrompt, options }) as AsyncIterable<
+      const queryData = sdk.query({ prompt: sdkPrompt as never, options }) as AsyncIterable<
         Record<string, unknown>
       >
       session.pendingFork = false
@@ -564,11 +581,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       let messageIndex = 0
       let hasStreamedContent = false
 
-      for await (const sdkMessage of queryData) {
+      const subscription = claudeAgentFacade.startSessionEvents({
+        hiveSessionId: session.hiveSessionId,
+        queryIterator: queryData as unknown as AsyncIterable<unknown>,
+        onMessage: async (sdkMessage) => {
         // Break if aborted
         if (session.abortController?.signal.aborted) {
           log.info('Prompt: aborted, breaking loop')
-          break
+          return
         }
 
         const msgType = sdkMessage.type as string
@@ -577,7 +597,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         if (msgType === 'stream_event') {
           hasStreamedContent = true
           this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex, session.toolNames)
-          continue // No materialization/accumulation needed for partials
+          return // No materialization/accumulation needed for partials
         }
 
         if (msgType === 'rate_limit_event') {
@@ -664,7 +684,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             }
           })
 
-          continue
+          return
         }
 
         // Materialize pending:: to real SDK session ID from first message,
@@ -903,6 +923,13 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         if (msgType === 'result') {
           hasStreamedContent = false
         }
+        }
+      })
+      session.subscription = subscription
+      const subscriptionExit = await subscription.awaitDone()
+      session.subscription = null
+      if (Exit.isFailure(subscriptionExit) && !Cause.isInterruptedOnly(subscriptionExit.cause)) {
+        throw new Error(Cause.pretty(subscriptionExit.cause))
       }
 
       log.info('Prompt: async iteration loop finished', {
@@ -977,6 +1004,11 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
     if (session.abortController) {
       session.abortController.abort()
+    }
+
+    if (session.subscription) {
+      await session.subscription.abort()
+      session.subscription = null
     }
 
     if (session.query) {
