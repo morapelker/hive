@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { bashService } from '../effect-island/bash/facade'
+import { bashService } from '../effect/bash/facade'
 import { createLogger } from '../services/logger'
 
 const log = createLogger({ component: 'BashHandlers' })
