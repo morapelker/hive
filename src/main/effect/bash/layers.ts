@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 import type { BrowserWindow } from 'electron'
 import { Cause, Chunk, Deferred, Effect, Fiber, Layer, Ref, Stream } from 'effect'
@@ -6,6 +6,7 @@ import { Cause, Chunk, Deferred, Effect, Fiber, Layer, Ref, Stream } from 'effec
 import { BashAlreadyRunning, BashSpawnFailed, BashWindowMissing } from './errors'
 import { Bash, EventSink, Spawner } from './service'
 import type { BashRunSnapshot, BashRunStatus, BashStreamEvent } from './types'
+import { LowLevelSpawn } from '../spawn/service'
 
 const OUTPUT_BYTES_LIMIT = 1 * 1024 * 1024
 const TRUNCATION_SENTINEL = '\n\n[output truncated at 1 MB — process killed]\n'
@@ -423,65 +424,34 @@ export const EventSinkLive = (windowRef: { current: BrowserWindow | null }) =>
       })
   })
 
-export const SpawnerLive = Layer.succeed(Spawner, {
-  spawn: (sessionId: string, command: string, cwd: string) =>
-    Effect.try({
-      try: () => {
-        const proc = spawn('sh', ['-c', command], {
-          cwd,
-          env: getColorEnv(),
-          stdio: ['pipe', 'pipe', 'pipe'],
-          detached: process.platform !== 'win32'
-        })
-        proc.stdin?.end()
-        return proc
-      },
-      catch: (cause) => new BashSpawnFailed({ sessionId, command, cause })
-    }),
-  signalTree: (proc: ChildProcess, signal: NodeJS.Signals) =>
-    Effect.gen(function* () {
-      const pid = proc.pid
-      if (!pid) {
-        try {
-          proc.kill(signal)
-        } catch {
-          // already dead
-        }
-        return
-      }
-
-      if (process.platform === 'win32') {
-        const args = ['/pid', String(pid), '/t']
-        if (signal === 'SIGKILL') args.push('/f')
-        const taskkill = spawn('taskkill', args, { stdio: 'ignore' })
-        taskkill.on('error', () => {
-          try {
-            proc.kill(signal)
-          } catch {
-            // already dead
-          }
-        })
-        return
-      }
-
-      try {
-        process.kill(-pid, signal)
-      } catch {
-        yield* Effect.logWarning(
-          'Failed to signal process group; falling back to direct process kill',
-          {
-            pid,
-            signal
-          }
-        )
-        try {
-          proc.kill(signal)
-        } catch {
-          // already dead
-        }
-      }
-    })
-})
+export const SpawnerLive = Layer.effect(
+  Spawner,
+  Effect.gen(function* () {
+    const lowLevel = yield* LowLevelSpawn
+    return {
+      spawn: (sessionId: string, command: string, cwd: string) =>
+        lowLevel
+          .spawn({
+            command: 'sh',
+            args: ['-c', command],
+            cwd,
+            env: getColorEnv(),
+            detached: process.platform !== 'win32'
+          })
+          .pipe(
+            Effect.tap((proc) =>
+              Effect.sync(() => {
+                proc.stdin?.end()
+              })
+            ),
+            Effect.mapError((error) =>
+              new BashSpawnFailed({ sessionId, command, cause: error.cause })
+            )
+          ),
+      signalTree: lowLevel.signalTree
+    }
+  })
+)
 
 export const AppLive = (windowRef: { current: BrowserWindow | null }) =>
   Layer.provide(BashLive, Layer.mergeAll(EventSinkLive(windowRef), SpawnerLive))

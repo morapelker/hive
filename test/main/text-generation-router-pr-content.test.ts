@@ -1,9 +1,8 @@
 // @vitest-environment node
-import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
-  mockSpawn,
+  mockRunOnceOptions,
   mockReadFile,
   mockUnlink,
   mockWriteFile,
@@ -11,7 +10,7 @@ const {
   mockResolveCodexBinaryPath,
   mockGetCodexCliEnv
 } = vi.hoisted(() => ({
-  mockSpawn: vi.fn(),
+  mockRunOnceOptions: vi.fn(),
   mockReadFile: vi.fn(),
   mockUnlink: vi.fn(),
   mockWriteFile: vi.fn(),
@@ -22,10 +21,6 @@ const {
 
 vi.mock('../../src/main/services/logger', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() })
-}))
-
-vi.mock('node:child_process', () => ({
-  spawn: mockSpawn
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -50,24 +45,29 @@ vi.mock('../../src/main/services/codex-cli-env', () => ({
   getCodexCliEnv: mockGetCodexCliEnv
 }))
 
-function createMockProcess(exitCode = 0): EventEmitter & {
-  stdout: EventEmitter
-  stderr: EventEmitter
-  stdin: { end: ReturnType<typeof vi.fn> }
-  kill: ReturnType<typeof vi.fn>
-} {
-  const proc = new EventEmitter() as EventEmitter & {
-    stdout: EventEmitter
-    stderr: EventEmitter
-    stdin: { end: ReturnType<typeof vi.fn> }
-    kill: ReturnType<typeof vi.fn>
+vi.mock('../../src/main/effect/spawn/runtime', async () => {
+  const { Effect, Layer, Stream } = await import('effect')
+  const { Spawn } = await import('../../src/main/effect/spawn/service')
+
+  return {
+    getRuntime: () => ({
+      runPromise: (effect: import('effect').Effect.Effect<unknown, unknown, unknown>) =>
+        Effect.runPromise(
+          effect.pipe(
+            Effect.provide(
+              Layer.succeed(Spawn, {
+                runOnce: (options) => {
+                  mockRunOnceOptions(options)
+                  return Effect.succeed({ stdout: '', stderr: '', exitCode: 0 })
+                },
+                stream: () => Stream.empty
+              })
+            )
+          )
+        )
+    })
   }
-  proc.stdout = new EventEmitter()
-  proc.stderr = new EventEmitter()
-  proc.stdin = { end: vi.fn(() => setImmediate(() => proc.emit('close', exitCode))) }
-  proc.kill = vi.fn()
-  return proc
-}
+})
 
 describe('text-generation-router codex structured output', () => {
   beforeEach(() => {
@@ -77,7 +77,6 @@ describe('text-generation-router codex structured output', () => {
     mockReadFile.mockResolvedValue('{"title":"Refine PR flow","body":"## Summary\\n- Added tests\\n## Testing\\n- Not run"}')
     mockWriteFile.mockResolvedValue(undefined)
     mockUnlink.mockResolvedValue(undefined)
-    mockSpawn.mockImplementation(() => createMockProcess())
   })
 
   it('uses output schema for codex when structured output is requested', async () => {
@@ -95,15 +94,15 @@ describe('text-generation-router codex structured output', () => {
     )
 
     expect(result).toContain('"title":"Refine PR flow"')
-    expect(mockSpawn).toHaveBeenCalledOnce()
+    expect(mockRunOnceOptions).toHaveBeenCalledOnce()
 
-    const [command, args, options] = mockSpawn.mock.calls[0] as [string, string[], { cwd?: string; env?: Record<string, string> }]
-    expect(command).toBe('codex')
-    expect(args).toContain('exec')
-    expect(args).toContain('--output-schema')
-    expect(args).toContain('--output-last-message')
-    expect(args).toContain('--config')
-    expect(args).toContain('model_reasoning_effort="low"')
+    const options = mockRunOnceOptions.mock.calls[0][0]
+    expect(options.command).toBe('codex')
+    expect(options.args).toContain('exec')
+    expect(options.args).toContain('--output-schema')
+    expect(options.args).toContain('--output-last-message')
+    expect(options.args).toContain('--config')
+    expect(options.args).toContain('model_reasoning_effort="low"')
     expect(options.cwd).toBe('/tmp/worktree')
     expect(options.env).toEqual({ PATH: '/mock/bin' })
     expect(mockWriteFile).toHaveBeenCalledTimes(2)
@@ -116,10 +115,13 @@ describe('text-generation-router codex structured output', () => {
 
     await generateText('Prompt', 'System', 'codex', { cwd: '/tmp/worktree' })
 
-    expect(mockSpawn).toHaveBeenCalledWith(
-      '/resolved/codex',
-      expect.any(Array),
-      expect.objectContaining({ cwd: '/tmp/worktree', env: { PATH: '/mock/bin' } })
+    expect(mockRunOnceOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: '/resolved/codex',
+        args: expect.any(Array),
+        cwd: '/tmp/worktree',
+        env: { PATH: '/mock/bin' }
+      })
     )
   })
 
@@ -130,10 +132,13 @@ describe('text-generation-router codex structured output', () => {
 
     await generateText('Prompt', 'System', 'codex', { cwd: '/tmp/worktree' })
 
-    expect(mockSpawn).toHaveBeenCalledWith(
-      '/usr/local/bin/codex',
-      expect.any(Array),
-      expect.objectContaining({ cwd: '/tmp/worktree', env: { PATH: '/mock/bin' } })
+    expect(mockRunOnceOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: '/usr/local/bin/codex',
+        args: expect.any(Array),
+        cwd: '/tmp/worktree',
+        env: { PATH: '/mock/bin' }
+      })
     )
   })
 })

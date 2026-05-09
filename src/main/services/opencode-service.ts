@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
-import { spawn, type ChildProcess } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
+import { Effect } from 'effect'
 import { createLogger } from './logger'
 import { notificationService } from './notification-service'
 import { getDatabase } from '../db'
@@ -9,6 +10,8 @@ import { maybeExtractJsonTitle } from '@shared/title-utils'
 import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
 import { toError } from './error-utils'
 import { agentEventBus } from './agent-event-bus'
+import { LowLevelSpawn } from '../effect/spawn/service'
+import { getRuntime } from '../effect/spawn/runtime'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -120,7 +123,7 @@ async function loadOpenCodeSDK(): Promise<{ createOpencode: any; createOpencodeC
  * Spawn `opencode serve` without forcing a port, letting it auto-assign one.
  * Parses the listening URL from stdout.
  */
-function spawnOpenCodeServer(
+async function spawnOpenCodeServer(
   options: {
     hostname?: string
     timeout?: number
@@ -133,35 +136,33 @@ function spawnOpenCodeServer(
   const launchSpec = options.launchSpec
 
   const args = ['serve', `--hostname=${hostname}`]
-  const proc: ChildProcess = spawn(launchSpec.command, args, {
-    signal: options.signal,
-    env: { ...process.env, ...getUserEnvironmentVariables(getDatabase()) },
-    shell: launchSpec.shell
-  })
+  const proc: ChildProcess = await getRuntime().runPromise(
+    Effect.flatMap(LowLevelSpawn, (spawn) =>
+      spawn.spawn({
+        command: launchSpec.command,
+        args,
+        signal: options.signal,
+        env: { ...process.env, ...getUserEnvironmentVariables(getDatabase()) },
+        shell: launchSpec.shell
+      })
+    )
+  )
 
   // Hoisted to function scope so close() can use it. On Windows with shell:true,
   // proc is cmd.exe — proc.kill() only kills the shell wrapper. terminateProcess
   // uses taskkill /t to kill the entire process tree including the opencode child.
   const terminateProcess = (force: boolean = false): void => {
-    if (process.platform === 'win32' && proc.pid !== undefined) {
-      const taskkillArgs = ['/pid', String(proc.pid), '/t']
-      if (force) taskkillArgs.push('/f')
-      const taskkill = spawn('taskkill', taskkillArgs, { stdio: 'ignore' })
-      taskkill.on('error', () => {
-        try {
-          proc.kill(force ? 'SIGKILL' : 'SIGTERM')
-        } catch {
-          // Process already exited
-        }
+    void getRuntime()
+      .runPromise(
+        Effect.flatMap(LowLevelSpawn, (spawn) =>
+          spawn.signalTree(proc, force ? 'SIGKILL' : 'SIGTERM')
+        )
+      )
+      .catch((error) => {
+        log.warn('Failed to terminate opencode process tree', {
+          error: error instanceof Error ? error.message : String(error)
+        })
       })
-      return
-    }
-
-    try {
-      proc.kill(force ? 'SIGKILL' : 'SIGTERM')
-    } catch {
-      // Process already exited
-    }
   }
 
   const url = new Promise<string>((resolve, reject) => {
@@ -228,12 +229,13 @@ function spawnOpenCodeServer(
     }
   })
 
-  return url.then((resolvedUrl) => ({
+  const resolvedUrl = await url
+  return {
     url: resolvedUrl,
     close() {
       terminateProcess()
     }
-  }))
+  }
 }
 
 /**

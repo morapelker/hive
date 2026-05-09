@@ -63,6 +63,7 @@ import { ptyService } from './services/pty-service'
 import { scriptRunner } from './services/script-runner'
 import { bashService } from './effect/bash/facade'
 import { disposeAllRuntimes } from './effect/_shared/runtime'
+import { getRuntime as getSpawnRuntime } from './effect/spawn/runtime'
 import { registerBashHandlers } from './ipc/bash-handlers'
 import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
 import { initTicketProviderManager, GitHubProvider, JiraProvider } from './services/ticket-providers'
@@ -624,6 +625,7 @@ app.whenReady().then(async () => {
     const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
     sdkManager.setMainWindow(mainWindow)
     agentEventBus.setMainWindow(mainWindow)
+    getSpawnRuntime()
 
     const databaseService = getDatabase()
     telegramForwardingService.initialize({ mainWindow, db: databaseService, sdkManager })

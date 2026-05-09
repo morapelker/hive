@@ -1,18 +1,19 @@
 // @vitest-environment node
 import { EventEmitter } from 'events'
 import type { ChildProcess } from 'child_process'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Effect, Either, Layer, Ref, TestClock, TestContext } from 'effect'
 
 import { BashAlreadyRunning } from '../errors'
 import { Bash, EventSink, Spawner } from '../service'
-import { BashLive } from '../layers'
+import { BashLive, SpawnerLive } from '../layers'
 import type { BashStreamEvent } from '../types'
+import { LowLevelSpawn } from '../../spawn/service'
 
 class FakeProc extends EventEmitter {
   stdout = new EventEmitter()
   stderr = new EventEmitter()
-  stdin = { end: () => undefined }
+  stdin = { end: vi.fn() }
   pid = 12345
   exitCode: number | null = null
   signalCode: NodeJS.Signals | null = null
@@ -144,5 +145,41 @@ describe('Bash Effect island', () => {
     expect(result.recordedSignals).toContain('SIGKILL')
     expect(result.snapshot?.status).toBe('truncated')
     expect(result.snapshot?.outputBuffer).toContain('[output truncated at 1 MB')
+  })
+
+  it('delegates the real SpawnerLive implementation to LowLevelSpawn', async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const proc = new FakeProc()
+        const calls = yield* Ref.make<
+          ReadonlyArray<{ readonly command: string; readonly args: readonly string[] }>
+        >([])
+        const signals = yield* Ref.make<ReadonlyArray<NodeJS.Signals>>([])
+        const lowLevel = Layer.succeed(LowLevelSpawn, {
+          spawn: (options) =>
+            Ref.update(calls, (xs) => [
+              ...xs,
+              { command: options.command, args: options.args }
+            ]).pipe(Effect.as(proc as unknown as ChildProcess)),
+          signalTree: (_proc: ChildProcess, signal: NodeJS.Signals) =>
+            Ref.update(signals, (xs) => [...xs, signal])
+        })
+
+        return yield* Effect.gen(function* () {
+          const spawner = yield* Spawner
+          const child = yield* spawner.spawn('session-low-level', 'echo delegated', '/tmp')
+          yield* spawner.signalTree(child, 'SIGTERM')
+          return {
+            calls: yield* Ref.get(calls),
+            signals: yield* Ref.get(signals),
+            stdinClosed: proc.stdin.end
+          }
+        }).pipe(Effect.provide(Layer.provide(SpawnerLive, lowLevel)))
+      })
+    )
+
+    expect(result.calls).toEqual([{ command: 'sh', args: ['-c', 'echo delegated'] }])
+    expect(result.signals).toEqual(['SIGTERM'])
+    expect(result.stdinClosed).toHaveBeenCalled()
   })
 })

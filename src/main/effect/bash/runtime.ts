@@ -5,6 +5,7 @@ import { Bash } from './service'
 import { AppLive } from './layers'
 import { getOrCreateRuntime, disposeRuntime as disposeRuntimeShared } from '../_shared/runtime'
 import { LoggerLive } from '../_shared/logger'
+import { LowLevelSpawnLive } from '../spawn/layers'
 
 const ISLAND_NAME = 'bash'
 
@@ -19,7 +20,7 @@ const windowRef: { current: BrowserWindow | null } = { current: null }
 
 export const getRuntime = (): ManagedRuntime.ManagedRuntime<Bash, never> =>
   getOrCreateRuntime(ISLAND_NAME, () =>
-    ManagedRuntime.make(Layer.merge(AppLive(windowRef), LoggerLive))
+    ManagedRuntime.make(Layer.merge(Layer.provide(AppLive(windowRef), LowLevelSpawnLive), LoggerLive))
   )
 
 export const setMainWindow = (win: BrowserWindow): void => {
