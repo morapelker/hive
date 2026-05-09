@@ -33,7 +33,9 @@ const petFailed = (operation: string, cause: unknown): PetHandlerFailed => {
 export function registerPetHandlers(): void {
   defineHandler('pet:show', z.tuple([]), () =>
     Effect.try({
-      try: () => createPetWindow(),
+      try: () => {
+        createPetWindow()
+      },
       catch: (cause) => petFailed('pet:show', cause)
     })
   )
