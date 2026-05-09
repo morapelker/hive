@@ -54,6 +54,7 @@
     "codex:generate-schemas": "rm -rf src/shared/codex-schemas && codex app-server generate-ts --out src/shared/codex-schemas",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "build:native": "cd src/native && npx node-gyp rebuild",
     "release": "bash scripts/release.sh",
