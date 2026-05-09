@@ -105,6 +105,7 @@
     "cmdk": "0.2.1",
     "codemirror": "^6.0.2",
     "diff2html": "^3.4.56",
+    "effect": "^3.18.0",
     "electron-updater": "^6.8.3",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.468.0",

@@ -61,7 +61,8 @@ import { perfDiagnostics } from './services/perf-diagnostics'
 import { configure as configureCodexDebugLogger } from './services/codex-debug-logger'
 import { ptyService } from './services/pty-service'
 import { scriptRunner } from './services/script-runner'
-import { bashService } from './services/bash-service'
+import { bashService } from './effect-island/bash/facade'
+import { disposeRuntime } from './effect-island/bash/runtime'
 import { registerBashHandlers } from './ipc/bash-handlers'
 import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
 import { initTicketProviderManager, GitHubProvider, JiraProvider } from './services/ticket-providers'
@@ -763,6 +764,7 @@ app.on('will-quit', async () => {
   cleanupScripts()
   // Cleanup running bash runs (best-effort, no await)
   bashService.killAll()
+  await disposeRuntime()
   // Release any held power save blocker so the display can sleep again
   cleanupPowerSaveBlocker()
   // Cleanup file tree watchers
