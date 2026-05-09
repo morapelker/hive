@@ -27,7 +27,7 @@ const installBashMock = (overrides: Partial<BashApi> = {}): BashApi => {
   const bash = {
     getRun: vi.fn().mockResolvedValue({ success: true, value: null }),
     run: vi.fn().mockResolvedValue({ success: true, value: { runId: 'run-2' } }),
-    abort: vi.fn().mockResolvedValue({ success: true, value: undefined }),
+    abort: vi.fn().mockResolvedValue({ success: true, value: true }),
     onStream: vi.fn().mockReturnValue(vi.fn()),
     ...overrides
   } as unknown as BashApi
