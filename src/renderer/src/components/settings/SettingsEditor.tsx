@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useSettingsStore, type EditorOption } from '@/stores/useSettingsStore'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { Check, Loader2 } from 'lucide-react'
 import { isMac, isLinux } from '@/lib/platform'
 
@@ -31,7 +32,7 @@ export function SettingsEditor(): React.JSX.Element {
     async function detect(): Promise<void> {
       try {
         if (window.settingsOps?.detectEditors) {
-          const editors = await window.settingsOps.detectEditors()
+          const editors = unwrapEnvelope(await window.settingsOps.detectEditors())
           if (!cancelled) {
             setDetectedEditors(editors)
           }
@@ -106,7 +107,13 @@ export function SettingsEditor(): React.JSX.Element {
           <Input
             value={customEditorCommand}
             onChange={(e) => updateSetting('customEditorCommand', e.target.value)}
-            placeholder={isMac() ? 'e.g., /usr/local/bin/code' : isLinux() ? 'e.g., /usr/bin/code' : 'e.g., C:\\Program Files\\Microsoft VS Code\\code.exe'}
+            placeholder={
+              isMac()
+                ? 'e.g., /usr/local/bin/code'
+                : isLinux()
+                  ? 'e.g., /usr/bin/code'
+                  : 'e.g., C:\\Program Files\\Microsoft VS Code\\code.exe'
+            }
             className="font-mono text-sm"
             data-testid="custom-editor-command"
           />

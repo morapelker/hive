@@ -6,6 +6,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useSettingsStore, type EditorOption, type TerminalOption } from '@/stores/useSettingsStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 function CursorIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -415,11 +416,14 @@ export function QuickActions(): React.JSX.Element | null {
         } else if (actionId === 'finder') {
           await window.projectOps.showInFolder(activePath)
         } else if (actionId === 'terminal') {
-          await window.settingsOps.openWithTerminal(
-            activePath,
-            defaultTerminal,
-            defaultTerminal === 'custom' ? customTerminalCommand : undefined
+          const result = unwrapEnvelope(
+            await window.settingsOps.openWithTerminal(
+              activePath,
+              defaultTerminal,
+              defaultTerminal === 'custom' ? customTerminalCommand : undefined
+            )
           )
+          if (!result.success) throw new Error(result.error ?? 'Failed to open in terminal')
         } else {
           await window.systemOps.openInApp(actionId, activePath)
         }

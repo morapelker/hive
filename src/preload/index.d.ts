@@ -659,20 +659,22 @@ declare global {
       setSessionQueuedState: (sessionId: string, hasQueued: boolean) => Promise<void>
     }
     petOps: {
-      show: () => Promise<void>
-      hide: () => Promise<void>
+      show: () => Promise<Envelope<void>>
+      hide: () => Promise<Envelope<void>>
       publishStatus: (payload: PetStatusPayload) => void
       setIgnoreMouse: (ignore: boolean) => void
       beginPointerInteraction: () => void
       endPointerInteraction: () => void
       move: (position: PetPosition) => void
-      focusMain: (payload: { worktreeId: string | null }) => Promise<void>
-      getConfig: () => Promise<{
-        settings: PetSettings
-        position: PetPosition
-        manifest: PetManifest
-      }>
-      getCurrentStatus: () => Promise<PetStatusPayload>
+      focusMain: (payload: { worktreeId: string | null }) => Promise<Envelope<void>>
+      getConfig: () => Promise<
+        Envelope<{
+          settings: PetSettings
+          position: PetPosition
+          manifest: PetManifest
+        }>
+      >
+      getCurrentStatus: () => Promise<Envelope<PetStatusPayload>>
       updateSettings: (partial: Partial<PetSettings>) => void
       markHatched: () => void
       onStatus: (callback: (payload: PetStatusPayload) => void) => () => void
@@ -903,45 +905,57 @@ declare global {
     }
     fileTreeOps: {
       // Scan a directory and return the file tree
-      scan: (dirPath: string) => Promise<{
-        success: boolean
-        tree?: FileTreeNode[]
-        error?: string
-      }>
+      scan: (dirPath: string) => Promise<
+        Envelope<{
+          success: boolean
+          tree?: FileTreeNode[]
+          error?: string
+        }>
+      >
       // Scan a directory and return a flat list of all files (via git ls-files)
-      scanFlat: (dirPath: string) => Promise<{
-        success: boolean
-        files?: FlatFile[]
-        error?: string
-      }>
+      scanFlat: (dirPath: string) => Promise<
+        Envelope<{
+          success: boolean
+          files?: FlatFile[]
+          error?: string
+        }>
+      >
       // Lazy load children for a directory
       loadChildren: (
         dirPath: string,
         rootPath: string
-      ) => Promise<{
-        success: boolean
-        children?: FileTreeNode[]
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          children?: FileTreeNode[]
+          error?: string
+        }>
+      >
       // Start watching a directory for changes
-      watch: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      watch: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Stop watching a directory
-      unwatch: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      unwatch: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Subscribe to file tree change events
       onChange: (callback: (event: FileTreeChangeEvent) => void) => () => void
     }
     fileOps: {
-      readFile: (filePath: string) => Promise<{
-        success: boolean
-        content?: string
-        error?: string
-      }>
+      readFile: (filePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          content?: string
+          error?: string
+        }>
+      >
       writeFile: (filePath: string, content: string) => Promise<Envelope<null>>
       readImageAsBase64: (
         filePath: string
@@ -952,30 +966,33 @@ declare global {
       saveImage: (
         buffer: ArrayBuffer,
         originalName: string
-      ) => Promise<{ success: boolean; filePath?: string; error?: string }>
-      deleteImage: (
-        filePath: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; filePath?: string; error?: string }>>
+      deleteImage: (filePath: string) => Promise<Envelope<{ success: boolean; error?: string }>>
     }
     settingsOps: {
-      detectEditors: () => Promise<DetectedApp[]>
-      detectTerminals: () => Promise<DetectedApp[]>
+      detectEditors: () => Promise<Envelope<DetectedApp[]>>
+      detectTerminals: () => Promise<Envelope<DetectedApp[]>>
       openWithEditor: (
         worktreePath: string,
         editorId: string,
         customCommand?: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       openWithTerminal: (
         worktreePath: string,
         terminalId: string,
         customCommand?: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      getAll: () => Promise<Envelope<Record<string, string>>>
       onSettingsUpdated: (callback: (data: unknown) => void) => () => void
     }
     scriptOps: {
@@ -983,34 +1000,42 @@ declare global {
         commands: string[],
         cwd: string,
         worktreeId: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       runProject: (
         commands: string[],
         cwd: string,
         worktreeId: string
-      ) => Promise<{
-        success: boolean
-        pid?: number
-        error?: string
-      }>
-      kill: (worktreeId: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          pid?: number
+          error?: string
+        }>
+      >
+      kill: (worktreeId: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       runArchive: (
         commands: string[],
         cwd: string
-      ) => Promise<{
-        success: boolean
-        output: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          output: string
+          error?: string
+        }>
+      >
       onOutput: (channel: string, callback: (event: ScriptOutputEvent) => void) => () => void
       offOutput: (channel: string) => void
-      getPort: (cwd: string) => Promise<{ port: number | null }>
+      getPort: (cwd: string) => Promise<Envelope<{ port: number | null }>>
     }
     terminalOps: {
       create: (
@@ -1465,11 +1490,11 @@ declare global {
       }>
     }
     updaterOps: {
-      checkForUpdate: (options?: { manual?: boolean }) => Promise<void>
-      downloadUpdate: () => Promise<void>
-      installUpdate: () => Promise<void>
-      setChannel: (channel: string) => Promise<void>
-      getVersion: () => Promise<string>
+      checkForUpdate: (options?: { manual?: boolean }) => Promise<Envelope<void>>
+      downloadUpdate: () => Promise<Envelope<void>>
+      installUpdate: () => Promise<Envelope<void>>
+      setChannel: (channel: string) => Promise<Envelope<void>>
+      getVersion: () => Promise<Envelope<string>>
       onChecking: (callback: () => void) => () => void
       onUpdateAvailable: (
         callback: (data: {
@@ -1532,12 +1557,12 @@ declare global {
       getPinned: () => Promise<ConnectionWithMembers[]>
     }
     usageOps: {
-      fetch: () => Promise<import('../shared/types/usage').UsageResult>
-      fetchOpenai: () => Promise<import('../shared/types/usage').OpenAIUsageResult>
+      fetch: () => Promise<Envelope<import('../shared/types/usage').UsageResult>>
+      fetchOpenai: () => Promise<Envelope<import('../shared/types/usage').OpenAIUsageResult>>
     }
     accountOps: {
-      getClaudeEmail: () => Promise<string | null>
-      getOpenAIEmail: () => Promise<string | null>
+      getClaudeEmail: () => Promise<Envelope<string | null>>
+      getOpenAIEmail: () => Promise<Envelope<string | null>>
     }
     analyticsOps: {
       track: (event: string, properties?: Record<string, unknown>) => Promise<void>
@@ -1703,10 +1728,11 @@ declare global {
 
   // Script output event type
   interface ScriptOutputEvent {
-    type: 'command-start' | 'output' | 'error' | 'done'
+    type: 'command-start' | 'output' | 'error' | 'done' | 'long-running'
     command?: string
     data?: string
     exitCode?: number
+    elapsed?: number
   }
 
   // OpenCode command type (slash commands)

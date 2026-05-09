@@ -4,6 +4,7 @@ import { toast } from '@/lib/toast'
 import { UpdateProgressToast } from '@/components/toasts/UpdateProgressToast'
 import { UpdateAvailableToast } from '@/components/toasts/UpdateAvailableToast'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export function useAutoUpdate(): void {
   const progressToastId = useRef<string | number | null>(null)
@@ -45,7 +46,10 @@ export function useAutoUpdate(): void {
                   sonnerToast.dismiss(promptToastId.current)
                   promptToastId.current = null
                 }
-                window.updaterOps.downloadUpdate().catch(() => {})
+                window.updaterOps
+                  .downloadUpdate()
+                  .then(unwrapEnvelope)
+                  .catch(() => {})
                 progressToastId.current = sonnerToast.custom(
                   () =>
                     createElement(UpdateProgressToast, {
@@ -113,7 +117,10 @@ export function useAutoUpdate(): void {
           action: {
             label: 'Restart to Update',
             onClick: () => {
-              window.updaterOps.installUpdate()
+              window.updaterOps
+                .installUpdate()
+                .then(unwrapEnvelope)
+                .catch(() => {})
             }
           }
         })

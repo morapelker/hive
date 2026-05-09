@@ -9,6 +9,7 @@ import { useFileViewerStore } from './useFileViewerStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
 
 /** Fire-and-forget: run setup script for a worktree, subscribing to output events
@@ -58,10 +59,13 @@ export function fireSetupScript(projectId: string, worktreeId: string, cwd: stri
     }
   })
 
-  window.scriptOps.runSetup(commands, cwd, worktreeId).catch(() => {
-    useScriptStore.getState().setSetupRunning(worktreeId, false)
-    unsub()
-  })
+  window.scriptOps
+    .runSetup(commands, cwd, worktreeId)
+    .then(unwrapEnvelope)
+    .catch(() => {
+      useScriptStore.getState().setSetupRunning(worktreeId, false)
+      unsub()
+    })
 }
 
 // Worktree type matching the database schema

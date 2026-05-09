@@ -606,8 +606,8 @@ const systemOps = {
 }
 
 const petOps = {
-  show: (): Promise<void> => ipcRenderer.invoke('pet:show'),
-  hide: (): Promise<void> => ipcRenderer.invoke('pet:hide'),
+  show: (): Promise<Envelope<void>> => ipcRenderer.invoke('pet:show'),
+  hide: (): Promise<Envelope<void>> => ipcRenderer.invoke('pet:hide'),
   publishStatus: (payload: PetStatusPayload): void => {
     ipcRenderer.send('pet:publish-status', payload)
   },
@@ -623,14 +623,17 @@ const petOps = {
   move: (position: PetPosition): void => {
     ipcRenderer.send('pet:move', position)
   },
-  focusMain: (payload: { worktreeId: string | null }): Promise<void> =>
+  focusMain: (payload: { worktreeId: string | null }): Promise<Envelope<void>> =>
     ipcRenderer.invoke('pet:focus-main', payload),
-  getConfig: (): Promise<{
-    settings: PetSettings
-    position: PetPosition
-    manifest: PetManifest
-  }> => ipcRenderer.invoke('pet:get-config'),
-  getCurrentStatus: (): Promise<PetStatusPayload> => ipcRenderer.invoke('pet:get-current-status'),
+  getConfig: (): Promise<
+    Envelope<{
+      settings: PetSettings
+      position: PetPosition
+      manifest: PetManifest
+    }>
+  > => ipcRenderer.invoke('pet:get-config'),
+  getCurrentStatus: (): Promise<Envelope<PetStatusPayload>> =>
+    ipcRenderer.invoke('pet:get-current-status'),
   updateSettings: (partial: Partial<PetSettings>): void => {
     ipcRenderer.send('pet:update-settings', partial)
   },
@@ -755,46 +758,56 @@ const fileTreeOps = {
   // Scan a directory and return the file tree
   scan: (
     dirPath: string
-  ): Promise<{
-    success: boolean
-    tree?: FileTreeNode[]
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:scan', dirPath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      tree?: FileTreeNode[]
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:scan', dirPath),
 
   // Scan a directory and return a flat list of all files (via git ls-files)
   scanFlat: (
     dirPath: string
-  ): Promise<{
-    success: boolean
-    files?: FlatFile[]
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:scan-flat', dirPath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      files?: FlatFile[]
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:scan-flat', dirPath),
 
   // Lazy load children for a directory
   loadChildren: (
     dirPath: string,
     rootPath: string
-  ): Promise<{
-    success: boolean
-    children?: FileTreeNode[]
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:loadChildren', dirPath, rootPath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      children?: FileTreeNode[]
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:loadChildren', dirPath, rootPath),
 
   // Start watching a directory for changes
   watch: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:watch', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:watch', worktreePath),
 
   // Stop watching a directory
   unwatch: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:unwatch', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:unwatch', worktreePath),
 
   // Subscribe to file tree change events
   onChange: (callback: (event: FileTreeChangeEvent) => void): (() => void) => {
@@ -1660,10 +1673,11 @@ const telegramOps = {
 
 // Script operations API
 interface ScriptOutputEvent {
-  type: 'command-start' | 'output' | 'error' | 'done'
+  type: 'command-start' | 'output' | 'error' | 'done' | 'long-running'
   command?: string
   data?: string
   exitCode?: number
+  elapsed?: number
 }
 
 const scriptOps = {
@@ -1672,7 +1686,7 @@ const scriptOps = {
     commands: string[],
     cwd: string,
     worktreeId: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('script:runSetup', { commands, cwd, worktreeId }),
 
   // Run project script (persistent long-running process)
@@ -1680,18 +1694,18 @@ const scriptOps = {
     commands: string[],
     cwd: string,
     worktreeId: string
-  ): Promise<{ success: boolean; pid?: number; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; pid?: number; error?: string }>> =>
     ipcRenderer.invoke('script:runProject', { commands, cwd, worktreeId }),
 
   // Kill a running project script
-  kill: (worktreeId: string): Promise<{ success: boolean; error?: string }> =>
+  kill: (worktreeId: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('script:kill', { worktreeId }),
 
   // Run archive script (non-interactive, captures output)
   runArchive: (
     commands: string[],
     cwd: string
-  ): Promise<{ success: boolean; output: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; output: string; error?: string }>> =>
     ipcRenderer.invoke('script:runArchive', { commands, cwd }),
 
   // Subscribe to script output events for a channel
@@ -1711,19 +1725,19 @@ const scriptOps = {
   },
 
   // Get assigned port for a worktree path
-  getPort: (cwd: string): Promise<{ port: number | null }> =>
+  getPort: (cwd: string): Promise<Envelope<{ port: number | null }>> =>
     ipcRenderer.invoke('port:get', { cwd })
 }
 
 // File operations API
 const fileOps = {
-  readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
+  readFile: (
+    filePath: string
+  ): Promise<Envelope<{ success: boolean; content?: string; error?: string }>> =>
     ipcRenderer.invoke('file:read', filePath),
   writeFile: (filePath: string, content: string): Promise<Envelope<null>> =>
     ipcRenderer.invoke('file:write', filePath, content),
-  readImageAsBase64: (
-    filePath: string
-  ): Promise<Envelope<{ data: string; mimeType?: string }>> =>
+  readImageAsBase64: (filePath: string): Promise<Envelope<{ data: string; mimeType?: string }>> =>
     ipcRenderer.invoke('file:readImageAsBase64', filePath),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file)
 }
@@ -1733,11 +1747,9 @@ const attachmentOps = {
   saveImage: (
     buffer: ArrayBuffer,
     originalName: string
-  ): Promise<{ success: boolean; filePath?: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; filePath?: string; error?: string }>> =>
     ipcRenderer.invoke('attachment:save', Buffer.from(buffer), originalName),
-  deleteImage: (
-    filePath: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  deleteImage: (filePath: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('attachment:delete', filePath)
 }
 
@@ -1751,17 +1763,19 @@ export interface DetectedApp {
 
 const settingsOps = {
   // Detect installed editors
-  detectEditors: (): Promise<DetectedApp[]> => ipcRenderer.invoke('settings:detectEditors'),
+  detectEditors: (): Promise<Envelope<DetectedApp[]>> =>
+    ipcRenderer.invoke('settings:detectEditors'),
 
   // Detect installed terminals
-  detectTerminals: (): Promise<DetectedApp[]> => ipcRenderer.invoke('settings:detectTerminals'),
+  detectTerminals: (): Promise<Envelope<DetectedApp[]>> =>
+    ipcRenderer.invoke('settings:detectTerminals'),
 
   // Open a path with a specific editor
   openWithEditor: (
     worktreePath: string,
     editorId: string,
     customCommand?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('settings:openWithEditor', worktreePath, editorId, customCommand),
 
   // Open a path with a specific terminal
@@ -1769,8 +1783,10 @@ const settingsOps = {
     worktreePath: string,
     terminalId: string,
     customCommand?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('settings:openWithTerminal', worktreePath, terminalId, customCommand),
+
+  getAll: (): Promise<Envelope<Record<string, string>>> => ipcRenderer.invoke('settings:getAll'),
 
   // Listen for settings updates from main process
   onSettingsUpdated: (callback: (data: unknown) => void): (() => void) => {
@@ -1913,12 +1929,13 @@ const terminalOps = {
 }
 
 const updaterOps = {
-  checkForUpdate: (options?: { manual?: boolean }): Promise<void> =>
+  checkForUpdate: (options?: { manual?: boolean }): Promise<Envelope<void>> =>
     ipcRenderer.invoke('updater:check', options),
-  downloadUpdate: (): Promise<void> => ipcRenderer.invoke('updater:download'),
-  installUpdate: (): Promise<void> => ipcRenderer.invoke('updater:install'),
-  setChannel: (channel: string): Promise<void> => ipcRenderer.invoke('updater:setChannel', channel),
-  getVersion: (): Promise<string> => ipcRenderer.invoke('updater:getVersion'),
+  downloadUpdate: (): Promise<Envelope<void>> => ipcRenderer.invoke('updater:download'),
+  installUpdate: (): Promise<Envelope<void>> => ipcRenderer.invoke('updater:install'),
+  setChannel: (channel: string): Promise<Envelope<void>> =>
+    ipcRenderer.invoke('updater:setChannel', channel),
+  getVersion: (): Promise<Envelope<string>> => ipcRenderer.invoke('updater:getVersion'),
 
   onChecking: (callback: () => void): (() => void) => {
     const handler = (): void => {
@@ -2045,13 +2062,21 @@ const connectionOps = {
 }
 
 const usageOps = {
-  fetch: () => ipcRenderer.invoke('usage:fetch'),
-  fetchOpenai: () => ipcRenderer.invoke('usage:fetchOpenai')
+  fetch: () =>
+    ipcRenderer.invoke('usage:fetch') as Promise<
+      Envelope<import('../shared/types/usage').UsageResult>
+    >,
+  fetchOpenai: () =>
+    ipcRenderer.invoke('usage:fetchOpenai') as Promise<
+      Envelope<import('../shared/types/usage').OpenAIUsageResult>
+    >
 }
 
 const accountOps = {
-  getClaudeEmail: (): Promise<string | null> => ipcRenderer.invoke('account:getClaudeEmail'),
-  getOpenAIEmail: (): Promise<string | null> => ipcRenderer.invoke('account:getOpenAIEmail')
+  getClaudeEmail: (): Promise<Envelope<string | null>> =>
+    ipcRenderer.invoke('account:getClaudeEmail'),
+  getOpenAIEmail: (): Promise<Envelope<string | null>> =>
+    ipcRenderer.invoke('account:getOpenAIEmail')
 }
 
 const perfDiagnosticsOps = {

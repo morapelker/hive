@@ -1,11 +1,37 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
+
 import { scriptRunner } from '../services/script-runner'
 import { getAssignedPort, assignPort } from '../services/port-registry'
 import { getDatabase } from '../db'
 import { createLogger } from '../services/logger'
 import { telemetryService } from '../services/telemetry-service'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'ScriptHandlers' })
+
+class ScriptHandlerFailed extends Data.TaggedError('ScriptHandlerFailed')<{
+  readonly operation: string
+  readonly reason: string
+  readonly message: string
+}> {}
+
+const scriptFailed = (operation: string, cause: unknown): ScriptHandlerFailed => {
+  const reason = cause instanceof Error ? cause.message : String(cause)
+  return new ScriptHandlerFailed({ operation, reason, message: reason })
+}
+
+const runScriptSchema = z.object({
+  commands: z.array(z.string()),
+  cwd: z.string().min(1),
+  worktreeId: z.string().min(1)
+})
+
+const runArchiveSchema = z.object({
+  commands: z.array(z.string()),
+  cwd: z.string().min(1)
+})
 
 function resolvePortEnv(worktreeId: string, cwd: string): Record<string, string> {
   const env: Record<string, string> = {}
@@ -38,14 +64,10 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
   scriptRunner.setMainWindow(mainWindow)
 
   // Run setup script (sequential commands, streamed output)
-  ipcMain.handle(
-    'script:runSetup',
-    async (
-      _event,
-      { commands, cwd, worktreeId }: { commands: string[]; cwd: string; worktreeId: string }
-    ) => {
-      log.info('IPC: script:runSetup', { worktreeId, cwd, commandCount: commands.length })
-      try {
+  defineHandler('script:runSetup', runScriptSchema, ({ commands, cwd, worktreeId }) => {
+    log.info('IPC: script:runSetup', { worktreeId, cwd, commandCount: commands.length })
+    return Effect.tryPromise({
+      try: async () => {
         const portEnv = resolvePortEnv(worktreeId, cwd)
         const result = await scriptRunner.runSequential(
           commands,
@@ -57,25 +79,22 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
           telemetryService.track('script_run', { type: 'setup' })
         }
         return result
-      } catch (error) {
-        log.error('IPC: script:runSetup failed', { error })
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }
+      },
+      catch: (error) => {
+        log.error(
+          'IPC: script:runSetup failed',
+          error instanceof Error ? error : new Error(String(error))
+        )
+        return scriptFailed('script:runSetup', error)
       }
-    }
-  )
+    })
+  })
 
   // Run project script (persistent long-running process)
-  ipcMain.handle(
-    'script:runProject',
-    async (
-      _event,
-      { commands, cwd, worktreeId }: { commands: string[]; cwd: string; worktreeId: string }
-    ) => {
-      log.info('IPC: script:runProject', { worktreeId, cwd, commandCount: commands.length })
-      try {
+  defineHandler('script:runProject', runScriptSchema, ({ commands, cwd, worktreeId }) => {
+    log.info('IPC: script:runProject', { worktreeId, cwd, commandCount: commands.length })
+    return Effect.tryPromise({
+      try: async () => {
         const portEnv = resolvePortEnv(worktreeId, cwd)
         const handle = await scriptRunner.runPersistent(
           commands,
@@ -85,57 +104,65 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
         )
         telemetryService.track('script_run', { type: 'run' })
         return { success: true, pid: handle.pid }
-      } catch (error) {
-        log.error('IPC: script:runProject failed', { error })
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }
+      },
+      catch: (error) => {
+        log.error(
+          'IPC: script:runProject failed',
+          error instanceof Error ? error : new Error(String(error))
+        )
+        return scriptFailed('script:runProject', error)
       }
-    }
-  )
+    })
+  })
 
   // Kill a running project script
-  ipcMain.handle('script:kill', async (_event, { worktreeId }: { worktreeId: string }) => {
+  defineHandler('script:kill', z.object({ worktreeId: z.string().min(1) }), ({ worktreeId }) => {
     log.info('IPC: script:kill', { worktreeId })
-    try {
-      await scriptRunner.killProcess(`script:run:${worktreeId}`)
-      return { success: true }
-    } catch (error) {
-      log.error('IPC: script:kill failed', { error })
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+    return Effect.tryPromise({
+      try: async () => {
+        await scriptRunner.killProcess(`script:run:${worktreeId}`)
+        return { success: true }
+      },
+      catch: (error) => {
+        log.error(
+          'IPC: script:kill failed',
+          error instanceof Error ? error : new Error(String(error))
+        )
+        return scriptFailed('script:kill', error)
       }
-    }
+    })
   })
 
   // Run archive script (non-interactive, captures output)
-  ipcMain.handle(
-    'script:runArchive',
-    async (_event, { commands, cwd }: { commands: string[]; cwd: string }) => {
-      log.info('IPC: script:runArchive', { cwd, commandCount: commands.length })
-      try {
+  defineHandler('script:runArchive', runArchiveSchema, ({ commands, cwd }) => {
+    log.info('IPC: script:runArchive', { cwd, commandCount: commands.length })
+    return Effect.tryPromise({
+      try: async () => {
         const result = await scriptRunner.runAndWait(commands, cwd, 30000)
         if (result.success) {
           telemetryService.track('script_run', { type: 'archive' })
         }
         return result
-      } catch (error) {
-        log.error('IPC: script:runArchive failed', { error })
-        return {
-          success: false,
-          output: '',
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }
+      },
+      catch: (error) => {
+        log.error(
+          'IPC: script:runArchive failed',
+          error instanceof Error ? error : new Error(String(error))
+        )
+        return scriptFailed('script:runArchive', error)
       }
-    }
-  )
-
-  ipcMain.handle('port:get', async (_event, { cwd }: { cwd: string }) => {
-    const { getAssignedPort } = await import('../services/port-registry')
-    return { port: getAssignedPort(cwd) }
+    })
   })
+
+  defineHandler('port:get', z.object({ cwd: z.string().min(1) }), ({ cwd }) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { getAssignedPort } = await import('../services/port-registry')
+        return { port: getAssignedPort(cwd) }
+      },
+      catch: (error) => scriptFailed('port:get', error)
+    })
+  )
 
   log.info('Script IPC handlers registered')
 }

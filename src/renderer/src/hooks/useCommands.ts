@@ -19,6 +19,7 @@ import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { THEME_PRESETS, getThemeById } from '@/lib/themes'
 import { toast } from '@/lib/toast'
 import { revealLabel, fileManagerName } from '@/lib/platform'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /**
  * Hook that registers all available commands and returns filtered commands
@@ -354,11 +355,14 @@ export function useCommands() {
           }
           try {
             const { defaultTerminal, customTerminalCommand } = useSettingsStore.getState()
-            await window.settingsOps.openWithTerminal(
-              worktreePath,
-              defaultTerminal,
-              defaultTerminal === 'custom' ? customTerminalCommand : undefined
+            const result = unwrapEnvelope(
+              await window.settingsOps.openWithTerminal(
+                worktreePath,
+                defaultTerminal,
+                defaultTerminal === 'custom' ? customTerminalCommand : undefined
+              )
             )
+            if (!result.success) throw new Error(result.error ?? 'Failed to open in terminal')
             toast.success('Opened in terminal')
           } catch {
             toast.error('Failed to open in terminal')
@@ -590,15 +594,18 @@ export function useCommands() {
               closeCommandPalette()
             }
           }))
-          pushCommandLevel(children, {
-            id: 'settings:theme',
-            label: 'Switch Theme',
-            category: 'settings',
-            action: () => {}
-          }, () => cancelPreview())
+          pushCommandLevel(
+            children,
+            {
+              id: 'settings:theme',
+              label: 'Switch Theme',
+              category: 'settings',
+              action: () => {}
+            },
+            () => cancelPreview()
+          )
         }
-      },
-
+      }
     ]
 
     // Register all commands

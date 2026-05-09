@@ -1,12 +1,28 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
 import * as chokidar from 'chokidar'
 import simpleGit from 'simple-git'
 import { Dirent, promises as fs, existsSync, statSync } from 'fs'
 import { join, basename, extname, relative } from 'path'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
+
 import { createLogger } from '../services/logger'
 import type { FileEventType } from '../../shared/types/file-tree'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'FileTreeHandlers' })
+
+class FileTreeHandlerFailed extends Data.TaggedError('FileTreeHandlerFailed')<{
+  readonly operation: string
+  readonly path: string
+  readonly reason: string
+  readonly message: string
+}> {}
+
+const fileTreeFailed = (operation: string, path: string, cause: unknown): FileTreeHandlerFailed => {
+  const reason = cause instanceof Error ? cause.message : String(cause)
+  return new FileTreeHandlerFailed({ operation, path, reason, message: reason })
+}
 
 // File tree node structure
 export interface FileTreeNode {
@@ -381,18 +397,10 @@ export function registerFileTreeHandlers(window: BrowserWindow): void {
   log.info('Registering file tree handlers')
 
   // Scan a directory and return the file tree
-  ipcMain.handle(
-    'file-tree:scan',
-    async (
-      _event,
-      dirPath: string
-    ): Promise<{
-      success: boolean
-      tree?: FileTreeNode[]
-      error?: string
-    }> => {
-      log.info('Scanning directory', { dirPath })
-      try {
+  defineHandler('file-tree:scan', z.string().min(1, 'dirPath is required'), (dirPath) =>
+    Effect.tryPromise({
+      try: async () => {
+        log.info('Scanning directory', { dirPath })
         if (!existsSync(dirPath)) {
           return {
             success: false,
@@ -413,32 +421,22 @@ export function registerFileTreeHandlers(window: BrowserWindow): void {
           success: true,
           tree
         }
-      } catch (error) {
+      },
+      catch: (error) => {
         const message = error instanceof Error ? error.message : 'Unknown error'
         log.error('Failed to scan directory', error instanceof Error ? error : new Error(message), {
           dirPath
         })
-        return {
-          success: false,
-          error: message
-        }
+        return fileTreeFailed('file-tree:scan', dirPath, error)
       }
-    }
+    })
   )
 
   // Scan a directory and return a flat list of all files via git ls-files
-  ipcMain.handle(
-    'file-tree:scan-flat',
-    async (
-      _event,
-      dirPath: string
-    ): Promise<{
-      success: boolean
-      files?: FlatFileEntry[]
-      error?: string
-    }> => {
-      log.info('Scanning directory flat', { dirPath })
-      try {
+  defineHandler('file-tree:scan-flat', z.string().min(1, 'dirPath is required'), (dirPath) =>
+    Effect.tryPromise({
+      try: async () => {
+        log.info('Scanning directory flat', { dirPath })
         if (!existsSync(dirPath)) {
           return {
             success: false,
@@ -459,68 +457,50 @@ export function registerFileTreeHandlers(window: BrowserWindow): void {
           success: true,
           files
         }
-      } catch (error) {
+      },
+      catch: (error) => {
         const message = error instanceof Error ? error.message : 'Unknown error'
         log.error(
           'Failed to scan directory flat',
           error instanceof Error ? error : new Error(message),
           { dirPath }
         )
-        return {
-          success: false,
-          error: message
-        }
+        return fileTreeFailed('file-tree:scan-flat', dirPath, error)
       }
-    }
+    })
   )
 
   // Lazy load children for a directory
-  ipcMain.handle(
+  defineHandler(
     'file-tree:loadChildren',
-    async (
-      _event,
-      dirPath: string,
-      rootPath: string
-    ): Promise<{
-      success: boolean
-      children?: FileTreeNode[]
-      error?: string
-    }> => {
-      try {
-        if (!existsSync(dirPath)) {
-          return {
-            success: false,
-            error: 'Directory does not exist'
+    z.tuple([z.string().min(1, 'dirPath is required'), z.string().min(1, 'rootPath is required')]),
+    ([dirPath, rootPath]) =>
+      Effect.tryPromise({
+        try: async () => {
+          if (!existsSync(dirPath)) {
+            return {
+              success: false,
+              error: 'Directory does not exist'
+            }
           }
-        }
 
-        const children = await scanSingleDirectory(dirPath, rootPath)
-        return {
-          success: true,
-          children
+          const children = await scanSingleDirectory(dirPath, rootPath)
+          return {
+            success: true,
+            children
+          }
+        },
+        catch: (error) => {
+          return fileTreeFailed('file-tree:loadChildren', dirPath, error)
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        return {
-          success: false,
-          error: message
-        }
-      }
-    }
+      })
   )
 
   // Start watching a directory for changes
-  ipcMain.handle(
-    'file-tree:watch',
-    async (
-      _event,
-      worktreePath: string
-    ): Promise<{
-      success: boolean
-      error?: string
-    }> => {
-      log.info('Starting file watcher', { worktreePath })
-      try {
+  defineHandler('file-tree:watch', z.string().min(1, 'worktreePath is required'), (worktreePath) =>
+    Effect.try({
+      try: () => {
+        log.info('Starting file watcher', { worktreePath })
         // If already watching, return success
         if (watchers.has(worktreePath)) {
           return { success: true }
@@ -560,56 +540,47 @@ export function registerFileTreeHandlers(window: BrowserWindow): void {
 
         watchers.set(worktreePath, watcher)
         return { success: true }
-      } catch (error) {
+      },
+      catch: (error) => {
         const message = error instanceof Error ? error.message : 'Unknown error'
         log.error(
           'Failed to start file watcher',
           error instanceof Error ? error : new Error(message),
           { worktreePath }
         )
-        return {
-          success: false,
-          error: message
-        }
+        return fileTreeFailed('file-tree:watch', worktreePath, error)
       }
-    }
+    })
   )
 
   // Stop watching a directory
-  ipcMain.handle(
+  defineHandler(
     'file-tree:unwatch',
-    async (
-      _event,
-      worktreePath: string
-    ): Promise<{
-      success: boolean
-      error?: string
-    }> => {
-      log.info('Stopping file watcher', { worktreePath })
-      try {
-        const watcher = watchers.get(worktreePath)
-        if (watcher) {
-          await watcher.close()
-          watchers.delete(worktreePath)
-        }
+    z.string().min(1, 'worktreePath is required'),
+    (worktreePath) =>
+      Effect.tryPromise({
+        try: async () => {
+          log.info('Stopping file watcher', { worktreePath })
+          const watcher = watchers.get(worktreePath)
+          if (watcher) {
+            await watcher.close()
+            watchers.delete(worktreePath)
+          }
 
-        // Clear any pending debounce timer and accumulated events
-        const timer = debounceTimers.get(worktreePath)
-        if (timer) {
-          clearTimeout(timer)
-          debounceTimers.delete(worktreePath)
-        }
-        pendingEvents.delete(worktreePath)
+          // Clear any pending debounce timer and accumulated events
+          const timer = debounceTimers.get(worktreePath)
+          if (timer) {
+            clearTimeout(timer)
+            debounceTimers.delete(worktreePath)
+          }
+          pendingEvents.delete(worktreePath)
 
-        return { success: true }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        return {
-          success: false,
-          error: message
+          return { success: true }
+        },
+        catch: (error) => {
+          return fileTreeFailed('file-tree:unwatch', worktreePath, error)
         }
-      }
-    }
+      })
   )
 }
 

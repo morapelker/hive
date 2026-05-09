@@ -5,6 +5,7 @@ import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // ==========================================
 // Types
@@ -430,15 +431,24 @@ export const useSettingsStore = create<SettingsState>()(
         saveToDatabase(settings)
         // Notify main process of channel change
         if (key === 'updateChannel' && window.updaterOps?.setChannel) {
-          window.updaterOps.setChannel(value as string)
+          window.updaterOps
+            .setChannel(value as string)
+            .then(unwrapEnvelope)
+            .catch(() => {})
         }
         if (key === 'pet' && window.petOps) {
           const pet = value as PetSettings
           window.petOps.updateSettings(pet)
           if (pet.enabled) {
-            window.petOps.show().catch(() => {})
+            window.petOps
+              .show()
+              .then(unwrapEnvelope)
+              .catch(() => {})
           } else {
-            window.petOps.hide().catch(() => {})
+            window.petOps
+              .hide()
+              .then(unwrapEnvelope)
+              .catch(() => {})
           }
         }
         // Handle board mode switching side effects
@@ -589,7 +599,10 @@ export const useSettingsStore = create<SettingsState>()(
         set({ ...DEFAULT_SETTINGS })
         saveToDatabase(DEFAULT_SETTINGS)
         window.petOps?.updateSettings(DEFAULT_SETTINGS.pet)
-        window.petOps?.hide().catch(() => {})
+        window.petOps
+          ?.hide()
+          .then(unwrapEnvelope)
+          .catch(() => {})
       },
 
       loadFromDatabase: async () => {
@@ -605,7 +618,10 @@ export const useSettingsStore = create<SettingsState>()(
           })
           window.petOps?.updateSettings(dbSettings.pet)
           if (dbSettings.pet.enabled) {
-            window.petOps?.show().catch(() => {})
+            window.petOps
+              ?.show()
+              .then(unwrapEnvelope)
+              .catch(() => {})
           }
         } else {
           set({ isLoading: false, telegramConfig: telegramConfig ?? null })

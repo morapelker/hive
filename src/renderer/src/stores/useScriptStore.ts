@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // Module-level: active IPC subscriptions for run scripts, keyed by worktreeId.
 // Keeps listeners alive regardless of which worktree the UI is showing.
@@ -246,7 +247,10 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
         break
       case 'long-running':
         // Show notification in output as a special marker (not mixed with actual output)
-        s.appendRunOutput(worktreeId, `\x00NOTICE:Command is taking longer than expected (${event.elapsed}ms): ${event.command}`)
+        s.appendRunOutput(
+          worktreeId,
+          `\x00NOTICE:Command is taking longer than expected (${event.elapsed}ms): ${event.command}`
+        )
         break
       case 'error':
         s.appendRunOutput(worktreeId, `\x00ERR:Process exited with code ${event.exitCode}`)
@@ -266,24 +270,35 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
 
   runSubscriptions.set(worktreeId, unsub)
 
-  window.scriptOps.runProject(commands, cwd, worktreeId).then((result) => {
-    if (result.success && result.pid) {
-      useScriptStore.getState().setRunPid(worktreeId, result.pid)
-    } else {
+  window.scriptOps
+    .runProject(commands, cwd, worktreeId)
+    .then((envelope) => unwrapEnvelope(envelope))
+    .then((result) => {
+      if (result.success && result.pid) {
+        useScriptStore.getState().setRunPid(worktreeId, result.pid)
+      } else {
+        useScriptStore.getState().setRunRunning(worktreeId, false)
+        // Clean up subscription if start failed
+        const sub = runSubscriptions.get(worktreeId)
+        if (sub) {
+          sub()
+          runSubscriptions.delete(worktreeId)
+        }
+      }
+    })
+    .catch(() => {
       useScriptStore.getState().setRunRunning(worktreeId, false)
-      // Clean up subscription if start failed
       const sub = runSubscriptions.get(worktreeId)
       if (sub) {
         sub()
         runSubscriptions.delete(worktreeId)
       }
-    }
-  })
+    })
 }
 
 /** Kill a running project script and clean up its IPC subscription. */
 export async function killRunScript(worktreeId: string): Promise<void> {
-  await window.scriptOps.kill(worktreeId)
+  unwrapEnvelope(await window.scriptOps.kill(worktreeId))
   useScriptStore.getState().setRunRunning(worktreeId, false)
   useScriptStore.getState().setRunPid(worktreeId, null)
   // The 'done'/'error' event callback will also try to clean up,
