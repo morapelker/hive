@@ -1,9 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { Context, Data, Effect, Layer } from 'effect'
+import { Context, Data, Effect, Fiber, Layer, TestClock } from 'effect'
 
 import {
   runEffect,
+  runEffectWithTestClock,
+  adjustClock,
   expectExitSuccess,
   expectExitFailure,
   withTestLayers
@@ -19,6 +21,34 @@ class Greeter extends Context.Tag('test/Greeter')<
 describe('effect-test-utils', () => {
   it('runEffect + expectExitSuccess returns the success value', async () => {
     const exit = await runEffect(Effect.succeed(42))
+    expect(expectExitSuccess(exit)).toBe(42)
+  })
+
+  it('runEffectWithTestClock advances virtual time without real wait', async () => {
+    const program = Effect.gen(function* () {
+      const fiber = yield* Effect.sleep('30 seconds').pipe(
+        Effect.as('done'),
+        Effect.fork
+      )
+      yield* TestClock.adjust('30 seconds')
+      return yield* Fiber.join(fiber)
+    })
+
+    const exit = await runEffectWithTestClock(program)
+    expect(expectExitSuccess(exit)).toBe('done')
+  })
+
+  it('adjustClock returns an Effect usable inside Effect.gen', async () => {
+    const program = Effect.gen(function* () {
+      const fiber = yield* Effect.sleep('5 seconds').pipe(
+        Effect.as(42),
+        Effect.fork
+      )
+      yield* adjustClock('5 seconds')
+      return yield* Fiber.join(fiber)
+    })
+
+    const exit = await runEffectWithTestClock(program)
     expect(expectExitSuccess(exit)).toBe(42)
   })
 

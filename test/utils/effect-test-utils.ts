@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Layer } from 'effect'
+import { Cause, Duration, Effect, Exit, Layer, TestClock, TestContext } from 'effect'
 
 /**
  * Run an Effect to an Exit. Use this instead of `Effect.runPromise` in tests
@@ -7,6 +7,21 @@ import { Cause, Effect, Exit, Layer } from 'effect'
 export const runEffect = <A, E>(
   effect: Effect.Effect<A, E, never>
 ): Promise<Exit.Exit<A, E>> => Effect.runPromiseExit(effect)
+
+/**
+ * Run an Effect with Effect's TestContext so TestClock controls time.
+ */
+export const runEffectWithTestClock = <A, E>(
+  effect: Effect.Effect<A, E, never>
+): Promise<Exit.Exit<A, E>> =>
+  Effect.runPromiseExit(effect.pipe(Effect.provide(TestContext.TestContext)))
+
+/**
+ * Advance TestClock virtual time from inside an Effect test program.
+ */
+export const adjustClock = (
+  duration: Duration.DurationInput
+): Effect.Effect<void> => TestClock.adjust(duration)
 
 /**
  * Assert an Exit succeeded and return its value. Throws a readable message
