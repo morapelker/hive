@@ -10,6 +10,7 @@ export default defineWorkspace([
       include: ['test/**/*.test.{ts,tsx}', 'src/renderer/src/**/*.test.{ts,tsx}'],
       exclude: [
         'test/session-3/**/*.test.ts',
+        'test/session-7/**/*.test.ts',
         'test/phase-9/session-2/**/*.test.ts',
         'test/phase-9/session-5/**/*.test.ts',
         'test/phase-9/session-13/**/*.test.ts',
@@ -28,6 +29,7 @@ export default defineWorkspace([
       environment: 'node',
       include: [
         'test/session-3/**/*.test.ts',
+        'test/session-7/**/*.test.ts',
         'test/phase-9/session-2/**/*.test.ts',
         'test/phase-9/session-5/**/*.test.ts',
         'test/phase-9/session-13/**/*.test.ts',
