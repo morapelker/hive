@@ -7,19 +7,23 @@ import type {
   SyncWorktreesParams
 } from '../../services/worktree-ops'
 import {
-  createWorktreeFromBranchOp,
-  createWorktreeOp,
-  deleteWorktreeOp,
-  duplicateWorktreeOp,
-  renameWorktreeBranchOp,
-  syncWorktreesOp
+  createWorktreeFromBranchOpEffect,
+  createWorktreeOpEffect,
+  deleteWorktreeOpEffect,
+  duplicateWorktreeOpEffect,
+  renameWorktreeBranchOpEffect,
+  syncWorktreesOpEffect
 } from '../../services/worktree-ops'
+import { getRuntime } from './runtime'
 
 export const worktreeOpsFacade = {
-  create: (params: CreateWorktreeParams) => createWorktreeOp(params),
-  delete: (params: DeleteWorktreeParams) => deleteWorktreeOp(params),
-  sync: (params: SyncWorktreesParams) => syncWorktreesOp(params),
-  duplicate: (params: DuplicateWorktreeParams) => duplicateWorktreeOp(params),
-  renameBranch: (params: RenameBranchParams) => renameWorktreeBranchOp(params),
-  createFromBranch: (params: CreateFromBranchParams) => createWorktreeFromBranchOp(params)
+  create: (params: CreateWorktreeParams) => getRuntime().runPromise(createWorktreeOpEffect(params)),
+  delete: (params: DeleteWorktreeParams) => getRuntime().runPromise(deleteWorktreeOpEffect(params)),
+  sync: (params: SyncWorktreesParams) => getRuntime().runPromise(syncWorktreesOpEffect(params)),
+  duplicate: (params: DuplicateWorktreeParams) =>
+    getRuntime().runPromise(duplicateWorktreeOpEffect(params)),
+  renameBranch: (params: RenameBranchParams) =>
+    getRuntime().runPromise(renameWorktreeBranchOpEffect(params)),
+  createFromBranch: (params: CreateFromBranchParams) =>
+    getRuntime().runPromise(createWorktreeFromBranchOpEffect(params))
 }
