@@ -1,12 +1,10 @@
 import type { BrowserWindow } from 'electron'
-import { ManagedRuntime } from 'effect'
+import { Layer, ManagedRuntime } from 'effect'
 
 import { Bash } from './service'
 import { AppLive } from './layers'
-import {
-  getOrCreateRuntime,
-  disposeRuntime as disposeRuntimeShared
-} from '../_shared/runtime'
+import { getOrCreateRuntime, disposeRuntime as disposeRuntimeShared } from '../_shared/runtime'
+import { LoggerLive } from '../_shared/logger'
 
 const ISLAND_NAME = 'bash'
 
@@ -20,7 +18,9 @@ const ISLAND_NAME = 'bash'
 const windowRef: { current: BrowserWindow | null } = { current: null }
 
 export const getRuntime = (): ManagedRuntime.ManagedRuntime<Bash, never> =>
-  getOrCreateRuntime(ISLAND_NAME, () => ManagedRuntime.make(AppLive(windowRef)))
+  getOrCreateRuntime(ISLAND_NAME, () =>
+    ManagedRuntime.make(Layer.merge(AppLive(windowRef), LoggerLive))
+  )
 
 export const setMainWindow = (win: BrowserWindow): void => {
   windowRef.current = win

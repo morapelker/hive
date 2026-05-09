@@ -1,5 +1,9 @@
-import { Data, Effect } from 'effect'
+import { Effect } from 'effect'
 import type { z } from 'zod'
+
+import { ZodDecodeError } from './errors'
+
+export { ZodDecodeError } from './errors'
 
 /**
  * Tagged failure raised by `decodeWithZod` when input fails to parse.
@@ -12,11 +16,6 @@ import type { z } from 'zod'
  * the error in logs and tests (`expectExitFailure(exit, 'ZodDecodeError')`
  * doesn't disambiguate between two decoders).
  */
-export class ZodDecodeError extends Data.TaggedError('ZodDecodeError')<{
-  readonly issues: readonly z.ZodIssue[]
-  readonly schemaName?: string
-}> {}
-
 /**
  * Validate `input` against `schema`, returning a typed Effect.
  *
@@ -39,7 +38,5 @@ export const decodeWithZod = <T extends z.ZodTypeAny>(
 ): Effect.Effect<z.infer<T>, ZodDecodeError> => {
   const result = schema.safeParse(input)
   if (result.success) return Effect.succeed(result.data)
-  return Effect.fail(
-    new ZodDecodeError({ issues: result.error.issues, schemaName })
-  )
+  return Effect.fail(new ZodDecodeError({ issues: result.error.issues, schemaName }))
 }

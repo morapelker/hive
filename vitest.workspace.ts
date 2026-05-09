@@ -37,7 +37,8 @@ export default defineWorkspace([
         'test/kanban/session-3/**/*.test.ts',
         'test/codex-migration/**/*.test.ts',
         'test/utils/**/*.test.ts',
-        'src/main/effect/**/*.test.ts'
+        'src/main/effect/**/*.test.ts',
+        'src/main/services/**/*.test.ts'
       ],
       globals: true
     },

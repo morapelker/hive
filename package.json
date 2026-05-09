@@ -141,6 +141,7 @@
     "@types/react-dom": "^19.0.2",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^3.2.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "electron": "^41.0.0",
