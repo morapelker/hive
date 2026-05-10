@@ -692,6 +692,12 @@ export class TelegramForwardingService {
       }
     }
 
+    const pendingQuestion = this.getPendingQuestionInteraction()
+    if (pendingQuestion) {
+      await this.answerQuestionInteraction(pendingQuestion, text)
+      return
+    }
+
     const pendingPlan = this.getPendingPlanInteraction()
     if (pendingPlan) {
       await this.sendPlanFeedback(pendingPlan, text)
@@ -869,6 +875,10 @@ export class TelegramForwardingService {
 
   private getPendingPlanInteraction(): TrackedInteraction | null {
     return Array.from(this.messageIndex.values()).find((item) => item.kind === 'plan') ?? null
+  }
+
+  private getPendingQuestionInteraction(): TrackedInteraction | null {
+    return Array.from(this.messageIndex.values()).find((item) => item.kind === 'question') ?? null
   }
 
   private async sendPlanFeedback(interaction: TrackedInteraction, feedback: string): Promise<void> {
