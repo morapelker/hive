@@ -475,82 +475,84 @@ const make = Effect.gen(function* () {
       exists: (_repoPath, worktreePath) => Effect.sync(() => existsSync(worktreePath)),
       duplicate: duplicateWorktree,
       createFromBranch: (repoPath, projectName, branchName, breedType: BreedType = 'dogs', prNumber, options) =>
-        writeOp(repoPath, 'git worktree add from branch', async (git) => {
+        Effect.gen(function* () {
           if (prNumber == null) {
-            const worktreeList = await git.raw(['worktree', 'list', '--porcelain'])
-            for (const block of worktreeList.split('\n\n').filter(Boolean)) {
-              const lines = block.split('\n')
-              const branch = lines.find((l) => l.startsWith('branch '))?.replace('branch refs/heads/', '')
-              const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
-              if (branch === branchName && wtPath) {
-                const dup = await Effect.runPromise(
-                  duplicateWorktree(repoPath, branchName, wtPath, projectName, options?.nameHint)
-                )
-                return { ...dup, baseBranch: branchName }
-              }
-            }
-          }
-
-          const projectWorktreesDir = ensureWorktreesDir(projectName)
-          const MAX_ATTEMPTS = 3
-          const autoPull = options?.autoPull !== false
-          let pullResult = { success: true, updated: false }
-          if (prNumber != null) await git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
-          else if (autoPull) {
-            try {
-              const remotes = await git.getRemotes()
-              if (remotes.find((r) => r.name === 'origin')) {
-                const result = await git.pull('origin', branchName, { '--ff-only': null })
-                pullResult = {
-                  success: true,
-                  updated: (result.files?.length || 0) > 0 || result.summary.changes > 0
-                }
-              }
-            } catch {
-              pullResult = { success: false, updated: false }
-            }
-          }
-
-          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            const existingBranches = (await git.branch(['-a'])).all.map((b) =>
-              b.startsWith('remotes/origin/') ? b.replace('remotes/origin/', '') : b
-            )
-            const worktreeOutput = await git.raw(['worktree', 'list', '--porcelain'])
-            const existingWorktreeBranches = worktreeOutput
-              .split('\n')
-              .filter((line) => line.startsWith('branch '))
-              .map((line) => line.replace('branch refs/heads/', '').replace('branch ', ''))
-            let existingDirs: string[] = []
-            try {
-              existingDirs = readdirSync(projectWorktreesDir).map((d) =>
-                d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
+            const worktrees = yield* listWorktrees(repoPath)
+            const checkedOutWorktree = worktrees.find((worktree) => worktree.branch === branchName)
+            if (checkedOutWorktree) {
+              const dup = yield* duplicateWorktree(
+                repoPath,
+                branchName,
+                checkedOutWorktree.path,
+                projectName,
+                options?.nameHint
               )
-            } catch {}
-            const existingNames = new Set([...existingBranches, ...existingWorktreeBranches, ...existingDirs])
-            let worktreeName = options?.nameHint || selectUniqueBreedName(existingNames, breedType)
-            if (options?.nameHint && existingNames.has(worktreeName)) {
-              let suffix = 2
-              while (existingNames.has(`${options.nameHint}-${suffix}`) && suffix <= 9999) suffix += 1
-              worktreeName = `${options.nameHint}-${suffix}`
-            }
-            const worktreePath = join(projectWorktreesDir, `${projectName}--${worktreeName}`)
-            try {
-              await git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, prNumber != null ? 'FETCH_HEAD' : branchName])
-              return {
-                success: true as const,
-                path: worktreePath,
-                branchName: worktreeName,
-                name: worktreeName,
-                baseBranch: branchName,
-                pullInfo: { pulled: prNumber == null && pullResult.success && autoPull, updated: pullResult.updated || false }
-              }
-            } catch (error) {
-              const message = error instanceof Error ? error.message : 'Unknown error'
-              if (message.toLowerCase().includes('already exists') && attempt < MAX_ATTEMPTS) continue
-              throw error
+              return { ...dup, baseBranch: branchName }
             }
           }
-          return { success: false as const, error: 'Failed to create worktree from branch after 3 attempts due to name collisions' }
+
+          return yield* writeOp(repoPath, 'git worktree add from branch', async (git) => {
+            const projectWorktreesDir = ensureWorktreesDir(projectName)
+            const MAX_ATTEMPTS = 3
+            const autoPull = options?.autoPull !== false
+            let pullResult = { success: true, updated: false }
+            if (prNumber != null) await git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
+            else if (autoPull) {
+              try {
+                const remotes = await git.getRemotes()
+                if (remotes.find((r) => r.name === 'origin')) {
+                  const result = await git.pull('origin', branchName, { '--ff-only': null })
+                  pullResult = {
+                    success: true,
+                    updated: (result.files?.length || 0) > 0 || result.summary.changes > 0
+                  }
+                }
+              } catch {
+                pullResult = { success: false, updated: false }
+              }
+            }
+
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+              const existingBranches = (await git.branch(['-a'])).all.map((b) =>
+                b.startsWith('remotes/origin/') ? b.replace('remotes/origin/', '') : b
+              )
+              const worktreeOutput = await git.raw(['worktree', 'list', '--porcelain'])
+              const existingWorktreeBranches = worktreeOutput
+                .split('\n')
+                .filter((line) => line.startsWith('branch '))
+                .map((line) => line.replace('branch refs/heads/', '').replace('branch ', ''))
+              let existingDirs: string[] = []
+              try {
+                existingDirs = readdirSync(projectWorktreesDir).map((d) =>
+                  d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
+                )
+              } catch {}
+              const existingNames = new Set([...existingBranches, ...existingWorktreeBranches, ...existingDirs])
+              let worktreeName = options?.nameHint || selectUniqueBreedName(existingNames, breedType)
+              if (options?.nameHint && existingNames.has(worktreeName)) {
+                let suffix = 2
+                while (existingNames.has(`${options.nameHint}-${suffix}`) && suffix <= 9999) suffix += 1
+                worktreeName = `${options.nameHint}-${suffix}`
+              }
+              const worktreePath = join(projectWorktreesDir, `${projectName}--${worktreeName}`)
+              try {
+                await git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, prNumber != null ? 'FETCH_HEAD' : branchName])
+                return {
+                  success: true as const,
+                  path: worktreePath,
+                  branchName: worktreeName,
+                  name: worktreeName,
+                  baseBranch: branchName,
+                  pullInfo: { pulled: prNumber == null && pullResult.success && autoPull, updated: pullResult.updated || false }
+                }
+              } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error'
+                if (message.toLowerCase().includes('already exists') && attempt < MAX_ATTEMPTS) continue
+                throw error
+              }
+            }
+            return { success: false as const, error: 'Failed to create worktree from branch after 3 attempts due to name collisions' }
+          })
         })
     },
     branch: {
