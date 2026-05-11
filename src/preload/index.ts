@@ -7,6 +7,7 @@ import type {
   TelegramMode
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
+import type { SuggestionItem } from '../shared/types/setup-suggestions'
 import type { ConnectionWithMembers } from '../main/db/types'
 import type { BashRunSnapshot, BashStreamEvent } from '../main/effect/bash/types'
 
@@ -264,6 +265,10 @@ const projectOps = {
   // Detect the primary programming language of a project
   detectLanguage: (projectPath: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:detectLanguage', projectPath),
+
+  // Detect suggested setup script commands from project files
+  detectSetupSuggestions: (projectPath: string): Promise<Envelope<SuggestionItem[]>> =>
+    ipcRenderer.invoke('project:detectSetupSuggestions', projectPath),
 
   // Find .xcworkspace file for Swift projects
   findXcworkspace: (projectPath: string): Promise<Envelope<string | null>> =>
