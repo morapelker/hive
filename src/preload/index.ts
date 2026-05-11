@@ -1842,6 +1842,10 @@ const scriptOps = {
   kill: (worktreeId: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('script:kill', { worktreeId }),
 
+  // Kill a foreign PID suggested by run output guidance
+  killPid: (pid: number): Promise<Envelope<{ killed: boolean; reason?: string }>> =>
+    invokeEnvelope('script:killPid', { pid }),
+
   // Run archive script (non-interactive, captures output)
   runArchive: (
     commands: string[],

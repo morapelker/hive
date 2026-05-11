@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { detectSuggestion, type Suggestion } from '@/lib/run-suggestions/patterns'
 
 // Module-level: active IPC subscriptions for run scripts, keyed by worktreeId.
 // Keeps listeners alive regardless of which worktree the UI is showing.
@@ -20,6 +21,8 @@ interface ScriptState {
   runOutputVersion: number
   runRunning: boolean
   runPid: number | null
+  activeSuggestion: Suggestion | null
+  seenSignatures: Set<string>
 }
 
 function createDefaultScriptState(): ScriptState {
@@ -29,7 +32,9 @@ function createDefaultScriptState(): ScriptState {
     setupError: null,
     runOutputVersion: 0,
     runRunning: false,
-    runPid: null
+    runPid: null,
+    activeSuggestion: null,
+    seenSignatures: new Set()
   }
 }
 
@@ -48,6 +53,10 @@ interface ScriptStore {
   setRunPid: (worktreeId: string, pid: number | null) => void
   clearRunOutput: (worktreeId: string) => void
   getRunOutput: (worktreeId: string) => string[]
+  setActiveSuggestion: (worktreeId: string, suggestion: Suggestion | null) => void
+  markSuggestionSeen: (worktreeId: string, signature: string) => void
+  dismissSuggestion: (worktreeId: string) => void
+  clearSuggestions: (worktreeId: string) => void
 
   // Helpers
   getScriptState: (worktreeId: string) => ScriptState
@@ -203,7 +212,9 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
           ...state.scriptStates,
           [worktreeId]: {
             ...existing,
-            runOutputVersion: existing.runOutputVersion + 1
+            runOutputVersion: existing.runOutputVersion + 1,
+            activeSuggestion: null,
+            seenSignatures: new Set()
           }
         }
       }
@@ -213,6 +224,53 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
   getRunOutput: (worktreeId: string): string[] => {
     const buffer = getOrCreateBuffer(worktreeId)
     return buffer.toArray()
+  },
+
+  setActiveSuggestion: (worktreeId, suggestion) => {
+    set((state) => {
+      const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
+      return {
+        scriptStates: {
+          ...state.scriptStates,
+          [worktreeId]: { ...existing, activeSuggestion: suggestion }
+        }
+      }
+    })
+  },
+
+  markSuggestionSeen: (worktreeId, signature) => {
+    set((state) => {
+      const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
+      return {
+        scriptStates: {
+          ...state.scriptStates,
+          [worktreeId]: {
+            ...existing,
+            seenSignatures: new Set([...existing.seenSignatures, signature])
+          }
+        }
+      }
+    })
+  },
+
+  dismissSuggestion: (worktreeId) => {
+    get().setActiveSuggestion(worktreeId, null)
+  },
+
+  clearSuggestions: (worktreeId) => {
+    set((state) => {
+      const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
+      return {
+        scriptStates: {
+          ...state.scriptStates,
+          [worktreeId]: {
+            ...existing,
+            activeSuggestion: null,
+            seenSignatures: new Set()
+          }
+        }
+      }
+    })
   },
 
   getScriptState: (worktreeId) => {
@@ -241,7 +299,16 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
         if (event.data) {
           const lines = event.data.split('\n')
           for (const line of lines) {
-            if (line !== '') s.appendRunOutput(worktreeId, line)
+            if (line === '') continue
+            s.appendRunOutput(worktreeId, line)
+            const suggestion = detectSuggestion(line)
+            if (
+              suggestion &&
+              !s.getScriptState(worktreeId).seenSignatures.has(suggestion.signature)
+            ) {
+              s.markSuggestionSeen(worktreeId, suggestion.signature)
+              s.setActiveSuggestion(worktreeId, suggestion)
+            }
           }
         }
         break
