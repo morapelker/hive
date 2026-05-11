@@ -556,6 +556,26 @@ const systemOps = {
     }
   },
 
+  onQuitConfirmationShow: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on('shortcut:quit-confirmation-show', handler)
+    return () => {
+      ipcRenderer.removeListener('shortcut:quit-confirmation-show', handler)
+    }
+  },
+
+  onQuitConfirmationHide: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on('shortcut:quit-confirmation-hide', handler)
+    return () => {
+      ipcRenderer.removeListener('shortcut:quit-confirmation-hide', handler)
+    }
+  },
+
   // Subscribe to Edit > Paste from the application menu.
   // Used to route paste to the Ghostty terminal when it is the active backend,
   // since the menu accelerator intercepts Cmd+V before it reaches the native NSView.

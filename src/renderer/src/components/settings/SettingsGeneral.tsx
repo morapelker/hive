@@ -16,6 +16,7 @@ export function SettingsGeneral(): React.JSX.Element {
   const {
     autoStartSession,
     autoPullBeforeWorktree,
+    warnBeforeQuitting,
     boardMode,
     followUpTriggerColumn,
     vimModeEnabled,
@@ -59,6 +60,33 @@ export function SettingsGeneral(): React.JSX.Element {
       <div>
         <h3 className="text-base font-medium mb-1">General</h3>
         <p className="text-sm text-muted-foreground">Basic application settings</p>
+      </div>
+
+      {/* Warn before quitting */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <label className="text-sm font-medium">Warn before quitting (⌘Q)</label>
+          <p className="text-xs text-muted-foreground">
+            Show a confirmation when you press ⌘Q. Press ⌘Q a second time within 2 seconds to quit.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={warnBeforeQuitting}
+          onClick={() => updateSetting('warnBeforeQuitting', !warnBeforeQuitting)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            warnBeforeQuitting ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="warn-before-quitting-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
+              warnBeforeQuitting ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
       </div>
 
       {/* Auto-start session */}

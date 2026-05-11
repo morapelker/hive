@@ -38,6 +38,7 @@ import { toast } from '@/lib/toast'
 import { useDropAttachmentStore } from '@/stores'
 import { MAX_ATTACHMENTS, isImageMime } from '@/lib/file-attachment-utils'
 import type { Attachment } from '@/components/sessions/AttachmentPreview'
+import { QuitConfirmationOverlay } from './QuitConfirmationOverlay'
 
 function GlobalProjectSettings(): React.JSX.Element | null {
   const settingsProjectId = useProjectStore((s) => s.settingsProjectId)
@@ -297,6 +298,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
         )}
         <AgentSetupGuard />
         <HelpOverlay />
+        <QuitConfirmationOverlay />
       </div>
       <TerminalManagerPortal />
     </TerminalPortalProvider>
