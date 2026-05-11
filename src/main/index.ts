@@ -78,6 +78,11 @@ import {
   getPetWindow,
   shouldSuppressMainWindowActivationFromPet
 } from './services/pet-window'
+import {
+  getQuitConfirmationDecision,
+  QUIT_CONFIRM_WINDOW_MS,
+  readWarnBeforeQuitting
+} from './quit-confirmation'
 
 const log = createLogger({ component: 'Main' })
 
@@ -92,6 +97,7 @@ process.on('unhandledRejection', (reason) => {
 })
 
 const appStartTime = Date.now()
+let lastQuitConfirmAt: number | null = null
 
 // Parse CLI flags
 const cliArgs = process.argv.slice(2)
@@ -748,6 +754,39 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('before-quit', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+
+  const warnBeforeQuitting = readWarnBeforeQuitting(getDatabase().getSetting(APP_SETTINGS_DB_KEY))
+  const decision = getQuitConfirmationDecision({
+    now: Date.now(),
+    lastQuitConfirmAt,
+    warnBeforeQuitting
+  })
+
+  lastQuitConfirmAt = decision.lastQuitConfirmAt
+
+  if (!decision.shouldPreventQuit) return
+
+  event.preventDefault()
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+  mainWindow.show()
+  mainWindow.focus()
+  mainWindow.webContents.send('shortcut:quit-confirmation-show')
+
+  setTimeout(() => {
+    if (lastQuitConfirmAt && Date.now() - lastQuitConfirmAt >= QUIT_CONFIRM_WINDOW_MS) {
+      lastQuitConfirmAt = null
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('shortcut:quit-confirmation-hide')
+      }
+    }
+  }, QUIT_CONFIRM_WINDOW_MS + 50)
 })
 
 // Cleanup when app is about to quit

@@ -707,6 +707,8 @@ declare global {
       onNewSessionShortcut: (callback: () => void) => () => void
       onCloseSessionShortcut: (callback: () => void) => () => void
       onFileSearchShortcut: (callback: () => void) => () => void
+      onQuitConfirmationShow: (callback: () => void) => () => void
+      onQuitConfirmationHide: (callback: () => void) => () => void
       onEditPaste: (callback: (text: string) => void) => () => void
       onNotificationNavigate: (
         callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void
