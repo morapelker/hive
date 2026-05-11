@@ -6,6 +6,7 @@ import type {
   TelegramMode
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
+import type { SuggestionItem } from '../shared/types/setup-suggestions'
 
 type Enveloped<T> = {
   [K in keyof T]: T[K] extends (...args: infer Args) => Promise<infer Result>
@@ -560,6 +561,7 @@ declare global {
       copyToClipboard: (text: string) => Promise<Envelope<void>>
       readFromClipboard: () => Promise<Envelope<string>>
       detectLanguage: (projectPath: string) => Promise<Envelope<string | null>>
+      detectSetupSuggestions: (projectPath: string) => Promise<Envelope<SuggestionItem[]>>
       findXcworkspace: (projectPath: string) => Promise<Envelope<string | null>>
       isAndroidProject: (projectPath: string) => Promise<Envelope<boolean>>
       loadLanguageIcons: () => Promise<Envelope<Record<string, string>>>

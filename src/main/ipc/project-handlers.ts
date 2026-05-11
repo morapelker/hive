@@ -11,6 +11,7 @@ import {
   initRepository,
   detectProjectLanguage,
   detectProjectFavicon,
+  detectSetupSuggestions,
   loadLanguageIcons,
   getIconDataUrl,
   getAbsoluteIconDataUrl,
@@ -145,6 +146,17 @@ export function registerProjectHandlers(): void {
         return detectProjectFavicon(projectPath)
       },
       catch: (error) => projectFailed('project:detectFavicon', error)
+    })
+  )
+
+  // Detect suggested setup script commands from project files
+  defineHandler('project:detectSetupSuggestions', nonEmptyString, (projectPath) =>
+    Effect.try({
+      try: () => {
+        log.debug('Detecting setup script suggestions', { projectPath })
+        return detectSetupSuggestions(projectPath)
+      },
+      catch: (error) => projectFailed('project:detectSetupSuggestions', error)
     })
   )
 
