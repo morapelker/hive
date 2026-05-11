@@ -5,6 +5,9 @@ import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // ==========================================
 // Types
@@ -270,8 +273,8 @@ interface SettingsState extends AppSettings {
 
 async function saveToDatabase(settings: AppSettings): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && window.db?.setting) {
-      await window.db.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+    if (typeof window !== 'undefined' && db?.setting) {
+      await db.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
     }
   } catch (error) {
     console.error('Failed to save settings to database:', error)
@@ -280,8 +283,8 @@ async function saveToDatabase(settings: AppSettings): Promise<void> {
 
 async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
   try {
-    if (typeof window !== 'undefined' && window.db?.setting) {
-      const value = await window.db.setting.get(APP_SETTINGS_DB_KEY)
+    if (typeof window !== 'undefined' && db?.setting) {
+      const value = await db.setting.get(APP_SETTINGS_DB_KEY)
       if (value) {
         const parsed = JSON.parse(value)
         const result = {
@@ -430,15 +433,24 @@ export const useSettingsStore = create<SettingsState>()(
         saveToDatabase(settings)
         // Notify main process of channel change
         if (key === 'updateChannel' && window.updaterOps?.setChannel) {
-          window.updaterOps.setChannel(value as string)
+          window.updaterOps
+            .setChannel(value as string)
+            .then(unwrapEnvelope)
+            .catch(() => {})
         }
         if (key === 'pet' && window.petOps) {
           const pet = value as PetSettings
           window.petOps.updateSettings(pet)
           if (pet.enabled) {
-            window.petOps.show().catch(() => {})
+            window.petOps
+              .show()
+              .then(unwrapEnvelope)
+              .catch(() => {})
           } else {
-            window.petOps.hide().catch(() => {})
+            window.petOps
+              .hide()
+              .then(unwrapEnvelope)
+              .catch(() => {})
           }
         }
         // Handle board mode switching side effects
@@ -491,7 +503,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ selectedModel: model })
         // Persist to backend (settings DB + opencode service)
         try {
-          await window.opencodeOps.setModel(model)
+          unwrapEnvelope(await window.opencodeOps.setModel(model))
         } catch (error) {
           console.error('Failed to persist model selection:', error)
         }
@@ -516,7 +528,7 @@ export const useSettingsStore = create<SettingsState>()(
         // Push to backend (skip for terminal — no backend service, or when caller already pushed)
         if (agentSdk !== 'terminal' && !options?.skipBackendPush) {
           try {
-            await window.opencodeOps.setModel(model ? { ...model, agentSdk } : null)
+            unwrapEnvelope(await window.opencodeOps.setModel(model ? { ...model, agentSdk } : null))
           } catch (error) {
             console.error('Failed to persist model selection for SDK:', error)
           }
@@ -589,12 +601,18 @@ export const useSettingsStore = create<SettingsState>()(
         set({ ...DEFAULT_SETTINGS })
         saveToDatabase(DEFAULT_SETTINGS)
         window.petOps?.updateSettings(DEFAULT_SETTINGS.pet)
-        window.petOps?.hide().catch(() => {})
+        window.petOps
+          ?.hide()
+          .then(unwrapEnvelope)
+          .catch(() => {})
       },
 
       loadFromDatabase: async () => {
         const dbSettings = await loadSettingsFromDatabase()
-        const telegramConfig = await window.telegramOps?.getConfig?.().catch(() => null)
+        const telegramConfig = await window.telegramOps
+          ?.getConfig?.()
+          .then(unwrapEnvelope)
+          .catch(() => null)
         if (dbSettings) {
           set({
             ...dbSettings,
@@ -605,7 +623,10 @@ export const useSettingsStore = create<SettingsState>()(
           })
           window.petOps?.updateSettings(dbSettings.pet)
           if (dbSettings.pet.enabled) {
-            window.petOps?.show().catch(() => {})
+            window.petOps
+              ?.show()
+              .then(unwrapEnvelope)
+              .catch(() => {})
           }
         } else {
           set({ isLoading: false, telegramConfig: telegramConfig ?? null })

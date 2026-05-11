@@ -25,7 +25,6 @@ import {
   normalizeCodexToolName,
   normalizeCommandExecutionTool
 } from '@shared/codex-tool-normalizer'
-import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import type { UserInput } from '@shared/codex-schemas/v2/UserInput'
 import type { TurnStartParams } from '@shared/codex-schemas/v2/TurnStartParams'
 import type { ThreadNameUpdatedNotification } from '@shared/codex-schemas/v2/ThreadNameUpdatedNotification'

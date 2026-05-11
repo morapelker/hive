@@ -1,14 +1,10 @@
 import { useState, useEffect } from 'react'
 import { getProviderSettings } from '@/lib/provider-settings'
 import { Loader2, RefreshCw } from 'lucide-react'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface UpdateStatusModalProps {
   open: boolean
@@ -44,6 +40,7 @@ export function UpdateStatusModal({
     setLoading(true)
     window.ticketImport
       .getAvailableStatuses(externalProvider, repo, externalId, getProviderSettings())
+      .then(unwrapEnvelope)
       .then(setStatuses)
       .catch((err) => {
         toast.error(`Failed to fetch statuses: ${err instanceof Error ? err.message : String(err)}`)
@@ -58,15 +55,19 @@ export function UpdateStatusModal({
 
     setUpdating(true)
     try {
-      const result = await window.ticketImport.updateRemoteStatus(
-        externalProvider,
-        repo,
-        externalId,
-        statusId,
-        getProviderSettings()
+      const result = unwrapEnvelope(
+        await window.ticketImport.updateRemoteStatus(
+          externalProvider,
+          repo,
+          externalId,
+          statusId,
+          getProviderSettings()
+        )
       )
       if (result.success) {
-        toast.success(`Updated #${externalId} to "${statuses.find((s) => s.id === statusId)?.label}"`)
+        toast.success(
+          `Updated #${externalId} to "${statuses.find((s) => s.id === statusId)?.label}"`
+        )
         onOpenChange(false)
       } else {
         toast.error(result.error ?? 'Failed to update status')

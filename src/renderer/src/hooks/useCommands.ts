@@ -19,6 +19,7 @@ import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { THEME_PRESETS, getThemeById } from '@/lib/themes'
 import { toast } from '@/lib/toast'
 import { revealLabel, fileManagerName } from '@/lib/platform'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /**
  * Hook that registers all available commands and returns filtered commands
@@ -305,9 +306,9 @@ export function useCommands() {
         action: async () => {
           closeCommandPalette()
           // Trigger the add project dialog
-          const result = await window.projectOps.openDialog()
-          if (result.success && result.path) {
-            const addResult = await useProjectStore.getState().addProject(result.path)
+          const selectedPath = unwrapEnvelope(await window.projectOps.openDirectoryDialog())
+          if (selectedPath) {
+            const addResult = await useProjectStore.getState().addProject(selectedPath)
             if (addResult.success) {
               toast.success('Project added successfully')
             } else {
@@ -330,7 +331,7 @@ export function useCommands() {
             return
           }
           try {
-            await window.worktreeOps.openInEditor(worktreePath)
+            unwrapEnvelope(await window.worktreeOps.openInEditor(worktreePath))
             toast.success('Opened in editor')
           } catch {
             toast.error('Failed to open in editor')
@@ -354,11 +355,14 @@ export function useCommands() {
           }
           try {
             const { defaultTerminal, customTerminalCommand } = useSettingsStore.getState()
-            await window.settingsOps.openWithTerminal(
-              worktreePath,
-              defaultTerminal,
-              defaultTerminal === 'custom' ? customTerminalCommand : undefined
+            const result = unwrapEnvelope(
+              await window.settingsOps.openWithTerminal(
+                worktreePath,
+                defaultTerminal,
+                defaultTerminal === 'custom' ? customTerminalCommand : undefined
+              )
             )
+            if (!result.success) throw new Error(result.error ?? 'Failed to open in terminal')
             toast.success('Opened in terminal')
           } catch {
             toast.error('Failed to open in terminal')
@@ -381,7 +385,7 @@ export function useCommands() {
             return
           }
           try {
-            await window.projectOps.showInFolder(worktreePath)
+            unwrapEnvelope(await window.projectOps.showInFolder(worktreePath))
           } catch {
             toast.error(`Failed to reveal in ${fileManagerName()}`)
           }
@@ -590,15 +594,18 @@ export function useCommands() {
               closeCommandPalette()
             }
           }))
-          pushCommandLevel(children, {
-            id: 'settings:theme',
-            label: 'Switch Theme',
-            category: 'settings',
-            action: () => {}
-          }, () => cancelPreview())
+          pushCommandLevel(
+            children,
+            {
+              id: 'settings:theme',
+              label: 'Switch Theme',
+              category: 'settings',
+              action: () => {}
+            },
+            () => cancelPreview()
+          )
         }
-      },
-
+      }
     ]
 
     // Register all commands

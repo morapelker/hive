@@ -9,7 +9,10 @@ import { useFileViewerStore } from './useFileViewerStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 /** Fire-and-forget: run setup script for a worktree, subscribing to output events
  *  so output is captured even when SetupTab is not mounted. */
@@ -58,10 +61,13 @@ export function fireSetupScript(projectId: string, worktreeId: string, cwd: stri
     }
   })
 
-  window.scriptOps.runSetup(commands, cwd, worktreeId).catch(() => {
-    useScriptStore.getState().setSetupRunning(worktreeId, false)
-    unsub()
-  })
+  window.scriptOps
+    .runSetup(commands, cwd, worktreeId)
+    .then(unwrapEnvelope)
+    .catch(() => {
+      useScriptStore.getState().setSetupRunning(worktreeId, false)
+      unsub()
+    })
 }
 
 // Worktree type matching the database schema
@@ -79,6 +85,7 @@ interface Worktree {
   last_model_provider_id: string | null
   last_model_id: string | null
   last_model_variant: string | null
+  attachments: string
   created_at: string
   last_accessed_at: string
   github_pr_number: number | null
@@ -107,7 +114,12 @@ interface WorktreeState {
     projectId: string,
     projectPath: string,
     projectName: string
-  ) => Promise<{ success: boolean; worktree?: Worktree; error?: string; pullInfo?: unknown }>
+  ) => Promise<{
+    success: boolean
+    worktree?: Worktree
+    error?: string
+    pullInfo?: { pulled: boolean; updated: boolean }
+  }>
   archiveWorktree: (
     worktreeId: string,
     worktreePath: string,
@@ -276,7 +288,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   loadWorktrees: async (projectId: string) => {
     set({ isLoading: true, error: null })
     try {
-      const worktrees = await window.db.worktree.getActiveByProject(projectId)
+      const worktrees = await db.worktree.getActiveByProject(projectId)
       // Sort: non-default worktrees by last_accessed_at descending, default worktree last
       const sortedWorktrees = worktrees.sort((a, b) => {
         if (a.is_default && !b.is_default) return 1
@@ -319,11 +331,13 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   createWorktree: async (projectId: string, projectPath: string, projectName: string) => {
     set({ creatingForProjectId: projectId })
     try {
-      const result = await window.worktreeOps.create({
-        projectId,
-        projectPath,
-        projectName
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.create({
+          projectId,
+          projectPath,
+          projectName
+        })
+      )
 
       if (!result.success || !result.worktree) {
         set({ creatingForProjectId: null })
@@ -372,13 +386,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   ) => {
     set({ creatingForProjectId: projectId })
     try {
-      const result = await window.worktreeOps.createFromBranch(
-        projectId,
-        projectPath,
-        projectName,
-        branchName,
-        undefined, // prNumber — not used from store
-        nameHint
+      const result = unwrapEnvelope(
+        await window.worktreeOps.createFromBranch(
+          projectId,
+          projectPath,
+          projectName,
+          branchName,
+          undefined, // prNumber — not used from store
+          nameHint
+        )
       )
 
       if (!result.success || !result.worktree) {
@@ -456,7 +472,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         if (status?.status === 'working' || status?.status === 'planning') {
           if (session.opencode_session_id) {
             try {
-              await window.opencodeOps.abort(worktreePath, session.opencode_session_id)
+              unwrapEnvelope(
+                await window.opencodeOps.abort(worktreePath, session.opencode_session_id)
+              )
             } catch {
               // Non-critical — session may already be idle
             }
@@ -465,13 +483,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       }
 
       // 4. Proceed with archive
-      const result = await window.worktreeOps.delete({
-        worktreeId,
-        worktreePath,
-        branchName,
-        projectPath,
-        archive: true
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.delete({
+          worktreeId,
+          worktreePath,
+          branchName,
+          projectPath,
+          archive: true
+        })
+      )
 
       if (!result.success) {
         return { success: false, error: result.error || 'Failed to archive worktree' }
@@ -479,7 +499,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       // 5. Clean up any connections referencing this worktree
       try {
-        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        unwrapEnvelope(await window.connectionOps.removeWorktreeFromAll(worktreeId))
         // Reload connections to reflect the change
         const { useConnectionStore } = await import('./useConnectionStore')
         await useConnectionStore.getState().loadConnections()
@@ -569,13 +589,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     }))
 
     try {
-      const result = await window.worktreeOps.delete({
-        worktreeId,
-        worktreePath,
-        branchName,
-        projectPath,
-        archive: false
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.delete({
+          worktreeId,
+          worktreePath,
+          branchName,
+          projectPath,
+          archive: false
+        })
+      )
 
       if (!result.success) {
         return { success: false, error: result.error || 'Failed to unbranch worktree' }
@@ -583,7 +605,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       // Clean up any connections referencing this worktree
       try {
-        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        unwrapEnvelope(await window.connectionOps.removeWorktreeFromAll(worktreeId))
         const { useConnectionStore } = await import('./useConnectionStore')
         await useConnectionStore.getState().loadConnections()
       } catch {
@@ -656,7 +678,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Touch worktree (update last_accessed_at)
   touchWorktree: async (id: string) => {
     try {
-      await window.db.worktree.touch(id)
+      await db.worktree.touch(id)
       // Update local state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -678,7 +700,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Sync worktrees with actual git state
   syncWorktrees: async (projectId: string, projectPath: string) => {
     try {
-      await window.worktreeOps.sync({ projectId, projectPath })
+      unwrapEnvelope(await window.worktreeOps.sync({ projectId, projectPath }))
       // Reload worktrees after sync
       await get().loadWorktrees(projectId)
     } catch {
@@ -716,14 +738,16 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     nameHint?: string
   ) => {
     try {
-      const result = await window.worktreeOps.duplicate({
-        projectId,
-        projectPath,
-        projectName,
-        sourceBranch,
-        sourceWorktreePath,
-        nameHint
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.duplicate({
+          projectId,
+          projectPath,
+          projectName,
+          sourceBranch,
+          sourceWorktreePath,
+          nameHint
+        })
+      )
       if (result.success && result.worktree) {
         // Reload worktrees for the project
         get().loadWorktrees(projectId)
@@ -854,7 +878,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     })
 
     // Persist to database (fire-and-forget)
-    window.db.worktree.appendSessionTitle?.(worktreeId, title)
+    db.worktree.appendSessionTitle?.(worktreeId, title)
   }
 }))
 

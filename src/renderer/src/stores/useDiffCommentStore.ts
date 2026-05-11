@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { useWorktreeStore } from './useWorktreeStore'
 import { type ReanchorResult } from '@/lib/diff-comment-anchor'
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // ---------------------------------------------------------------------------
 // Local type aliases — DiffComment is global (preload/index.d.ts),
@@ -128,7 +131,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
       return { loadingByWorktree, errorByWorktree }
     })
     try {
-      const result = await window.db.diffComment.list(worktreeId)
+      const result = await db.diffComment.list(worktreeId)
       set((s) => {
         const comments = new Map(s.comments)
         comments.set(worktreeId, result)
@@ -152,7 +155,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
 
   create: async (data) => {
     try {
-      const created = await window.db.diffComment.create(data)
+      const created = await db.diffComment.create(data)
       set((s) => {
         const comments = new Map(s.comments)
         const bucket = comments.get(data.worktree_id) ?? []
@@ -178,7 +181,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
     if (!found) return null
 
     try {
-      const updated = await window.db.diffComment.update(id, data)
+      const updated = await db.diffComment.update(id, data)
       if (!updated) return null
 
       set((s) => {
@@ -209,7 +212,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
     if (!found) return false
 
     try {
-      const deleted = await window.db.diffComment.delete(id)
+      const deleted = await db.diffComment.delete(id)
       if (!deleted) return false
 
       set((s) => {
@@ -242,7 +245,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
     const idsToStrip = (get().comments.get(worktreeId) ?? []).map((c) => c.id)
 
     try {
-      await window.db.diffComment.clearAll(worktreeId)
+      await db.diffComment.clearAll(worktreeId)
 
       set((s) => {
         const comments = new Map(s.comments)
@@ -290,7 +293,12 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
         )
           return c
         changed = true
-        return { ...c, line_start: upd.line_start, line_end: upd.line_end, is_outdated: upd.is_outdated }
+        return {
+          ...c,
+          line_start: upd.line_start,
+          line_end: upd.line_end,
+          is_outdated: upd.is_outdated
+        }
       })
 
       if (!changed) return s // critical: prevents unnecessary re-renders
@@ -336,9 +344,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
   // ---------------------------------------------------------------------------
 
   getCommentsForFile: (worktreeId, filePath) => {
-    return (get().comments.get(worktreeId) ?? []).filter(
-      (c) => c.file_path === filePath
-    )
+    return (get().comments.get(worktreeId) ?? []).filter((c) => c.file_path === filePath)
   },
 
   getGroupedByFile: (worktreeId) => {

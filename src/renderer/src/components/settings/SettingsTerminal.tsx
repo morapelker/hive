@@ -8,6 +8,7 @@ import {
 } from '@/stores/useSettingsStore'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { Check, Loader2, Info } from 'lucide-react'
 
 interface DetectedTerminal {
@@ -102,7 +103,7 @@ export function SettingsTerminal(): React.JSX.Element {
     async function detect(): Promise<void> {
       try {
         if (window.settingsOps?.detectTerminals) {
-          const terminals = await window.settingsOps.detectTerminals()
+          const terminals = unwrapEnvelope(await window.settingsOps.detectTerminals())
           if (!cancelled) {
             setDetectedTerminals(terminals)
           }
@@ -124,7 +125,7 @@ export function SettingsTerminal(): React.JSX.Element {
     let cancelled = false
     async function checkGhostty(): Promise<void> {
       try {
-        const result = await window.terminalOps.ghosttyIsAvailable()
+        const result = unwrapEnvelope(await window.terminalOps.ghosttyIsAvailable())
         if (!cancelled) {
           setGhosttyAvailable(result.available)
           setIsMac(result.platform === 'darwin')
@@ -328,7 +329,11 @@ export function SettingsTerminal(): React.JSX.Element {
             <Input
               value={customTerminalCommand}
               onChange={(e) => updateSetting('customTerminalCommand', e.target.value)}
-              placeholder={isMacPlatform() ? 'e.g., /usr/local/bin/alacritty' : 'e.g., C:\\Program Files\\Alacritty\\alacritty.exe'}
+              placeholder={
+                isMacPlatform()
+                  ? 'e.g., /usr/local/bin/alacritty'
+                  : 'e.g., C:\\Program Files\\Alacritty\\alacritty.exe'
+              }
               className="font-mono text-sm"
               data-testid="custom-terminal-command"
             />

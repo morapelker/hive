@@ -16,12 +16,15 @@ import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { computeTokenDelta } from '@/lib/token-baselines'
 import { lastSendMode, messageSendTimes } from '@/lib/message-send-times'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 interface PromptDispatchContext {
   worktreePath: string
@@ -70,12 +73,12 @@ async function resolvePromptDispatchContext(
 ): Promise<PromptDispatchContext | null> {
   const storeContext = resolvePromptDispatchContextFromStores(sessionId)
 
-  if (!window.db?.session?.get) {
+  if (!db?.session?.get) {
     return storeContext
   }
 
   try {
-    const dbSession = (await window.db.session.get(sessionId)) as {
+    const dbSession = (await db.session.get(sessionId)) as {
       worktree_id?: string | null
       connection_id?: string | null
       opencode_session_id?: string | null
@@ -86,8 +89,8 @@ async function resolvePromptDispatchContext(
       return storeContext
     }
 
-    if (dbSession?.worktree_id && window.db?.worktree?.get) {
-      const dbWorktree = (await window.db.worktree.get(dbSession.worktree_id)) as {
+    if (dbSession?.worktree_id && db?.worktree?.get) {
+      const dbWorktree = (await db.worktree.get(dbSession.worktree_id)) as {
         path?: string | null
       } | null
       if (dbWorktree?.path) {
@@ -99,7 +102,9 @@ async function resolvePromptDispatchContext(
     }
 
     if (dbSession?.connection_id && window.connectionOps?.get) {
-      const connectionResult = await window.connectionOps.get(dbSession.connection_id)
+      const connectionResult = unwrapEnvelope(
+        await window.connectionOps.get(dbSession.connection_id)
+      )
       if (connectionResult.success && connectionResult.connection?.path) {
         return {
           worktreePath: connectionResult.connection.path,
@@ -123,7 +128,9 @@ function markBackgroundSessionCompleted(sessionId: string): void {
   const durationMs = sendTime ? Date.now() - sendTime : 0
   const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
   const tokenDelta = computeTokenDelta(sessionId)
-  useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
+  useWorktreeStatusStore
+    .getState()
+    .setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
 
   const now = Date.now()
   const sessions = useSessionStore.getState().sessionsByWorktree
@@ -160,10 +167,7 @@ function hasOutstandingBlockingInteraction(sessionId: string): boolean {
   return false
 }
 
-function restoreSessionRunningStatus(
-  sessionId: string,
-  modeOverride?: 'build' | 'plan'
-): void {
+function restoreSessionRunningStatus(sessionId: string, modeOverride?: 'build' | 'plan'): void {
   if (hasOutstandingBlockingInteraction(sessionId)) return
   const mode = modeOverride ?? useSessionStore.getState().getSessionMode(sessionId)
   useWorktreeStatusStore
@@ -209,8 +213,9 @@ export function useOpenCodeGlobalListener(): void {
           // are never mounted) keep their placeholder `pending::UUID` ID forever,
           // and reconnect / getMessages fail because the backend uses the real ID.
           if (event.type === 'session.materialized') {
-            const newId = (event.data as Record<string, unknown> | undefined)
-              ?.newSessionId as string | undefined
+            const newId = (event.data as Record<string, unknown> | undefined)?.newSessionId as
+              | string
+              | undefined
             if (newId) {
               useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
             }
@@ -320,7 +325,10 @@ export function useOpenCodeGlobalListener(): void {
               sessionTitle || ''
             )
             if (sessionTitle && !isOpenCodeDefault) {
-              console.log('[TITLE_DEBUG] globalListener calling updateSessionName', { sessionId, sessionTitle })
+              console.log('[TITLE_DEBUG] globalListener calling updateSessionName', {
+                sessionId,
+                sessionTitle
+              })
               useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
             }
             return
@@ -612,10 +620,10 @@ export function useOpenCodeGlobalListener(): void {
               if (!context || !window.opencodeOps?.prompt) return false
               if (context.opencodeSessionId.startsWith('pending::')) return false
 
-              const result = await window.opencodeOps.prompt(
-                context.worktreePath,
-                context.opencodeSessionId,
-                [{ type: 'text', text: message }]
+              const result = unwrapEnvelope(
+                await window.opencodeOps.prompt(context.worktreePath, context.opencodeSessionId, [
+                  { type: 'text', text: message }
+                ])
               )
 
               return result.success

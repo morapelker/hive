@@ -6,6 +6,9 @@ import { notifyKanbanSessionSync, notifyKanbanNewSession } from './store-coordin
 import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 /**
  * Push the follow-up-message queue state for a session into the main process
@@ -305,10 +308,10 @@ export const useSessionStore = create<SessionState>()(
         set({ isLoading: !hasCached, error: null })
         try {
           // Only load active sessions - completed sessions appear in history only
-          const sessions = await window.db.session.getActiveByWorktree(worktreeId)
+          const sessions = await db.session.getActiveByWorktree(worktreeId)
 
           // Also load pinned sessions for this worktree
-          const pinnedSessions = await window.db.session.getPinnedSessions(worktreeId)
+          const pinnedSessions = await db.session.getPinnedSessions(worktreeId)
           const pinnedIds = new Set(pinnedSessions.map((s: { id: string }) => s.id))
 
           // Sort by updated_at descending (most recent first)
@@ -326,9 +329,8 @@ export const useSessionStore = create<SessionState>()(
             const existingInStore = (newSessionsMap.get(worktreeId) || []).filter(isVisibleSession)
             const dbSessionIds = new Set(sortedSessions.map((s) => s.id))
             const missingFromDb = existingInStore.filter((s) => !dbSessionIds.has(s.id))
-            const merged = missingFromDb.length > 0
-              ? [...sortedSessions, ...missingFromDb]
-              : sortedSessions
+            const merged =
+              missingFromDb.length > 0 ? [...sortedSessions, ...missingFromDb] : sortedSessions
             newSessionsMap.set(worktreeId, merged)
 
             // Initialize tab order if not exists - use session IDs in sorted order
@@ -345,9 +347,7 @@ export const useSessionStore = create<SessionState>()(
               // Sync tab order with actual sessions (remove deleted, add new)
               const existingOrder = newTabOrderMap.get(worktreeId)!
               const validOrder = existingOrder.filter((id) => allSessionIds.has(id))
-              const newIds = merged
-                .map((s) => s.id)
-                .filter((id) => !validOrder.includes(id))
+              const newIds = merged.map((s) => s.id).filter((id) => !validOrder.includes(id))
               newTabOrderMap.set(worktreeId, [...validOrder, ...newIds])
             }
 
@@ -361,10 +361,7 @@ export const useSessionStore = create<SessionState>()(
 
             // Set active session if none selected and sessions exist
             let activeSessionId = state.activeSessionId
-            if (
-              state.activeWorktreeId === worktreeId &&
-              !activeSessionId
-            ) {
+            if (state.activeWorktreeId === worktreeId && !activeSessionId) {
               // Try to restore persisted active session
               const persistedSessionId = state.activeSessionByWorktree[worktreeId]
               const boardMode = useSettingsStore.getState().boardMode
@@ -424,12 +421,13 @@ export const useSessionStore = create<SessionState>()(
       ) => {
         try {
           const autoFocus = options?.autoFocus !== false
-          const { agentSdk: defaultAgentSdk, model: defaultModel } = resolveSessionCreationSelection({
-            worktreeId,
-            agentSdkOverride,
-            initialMode,
-            modelOverride: options?.modelOverride
-          })
+          const { agentSdk: defaultAgentSdk, model: defaultModel } =
+            resolveSessionCreationSelection({
+              worktreeId,
+              agentSdkOverride,
+              initialMode,
+              modelOverride: options?.modelOverride
+            })
           const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
           if (unavailableProviderError) {
             return { success: false, error: unavailableProviderError }
@@ -440,7 +438,7 @@ export const useSessionStore = create<SessionState>()(
           const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
           const sessionNumber = existingSessions.length + 1
 
-          const session = await window.db.session.create({
+          const session = await db.session.create({
             worktree_id: worktreeId,
             project_id: projectId,
             name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
@@ -555,7 +553,7 @@ export const useSessionStore = create<SessionState>()(
 
           // Mark session as completed instead of deleting
           // This preserves it in session history
-          await window.db.session.update(sessionId, {
+          await db.session.update(sessionId, {
             status: 'completed',
             completed_at: new Date().toISOString()
           })
@@ -563,7 +561,7 @@ export const useSessionStore = create<SessionState>()(
           // Destroy PTY for terminal sessions
           if (isTerminalSession) {
             try {
-              await window.terminalOps.destroy(sessionId)
+              unwrapEnvelope(await window.terminalOps.destroy(sessionId))
             } catch {
               // Best-effort cleanup — PTY may already be gone
             }
@@ -584,7 +582,7 @@ export const useSessionStore = create<SessionState>()(
                 }
               }
               if (worktreePath) {
-                await window.opencodeOps.disconnect(worktreePath, opencodeSessionId)
+                unwrapEnvelope(await window.opencodeOps.disconnect(worktreePath, opencodeSessionId))
               }
             } catch {
               // Best-effort cleanup — session may already be disconnected
@@ -734,7 +732,7 @@ export const useSessionStore = create<SessionState>()(
       reopenSession: async (sessionId: string, worktreeId: string) => {
         try {
           // 1. Update database status first - this ensures persistence
-          const updatedSession = await window.db.session.update(sessionId, {
+          const updatedSession = await db.session.update(sessionId, {
             status: 'active',
             completed_at: null
           })
@@ -744,7 +742,12 @@ export const useSessionStore = create<SessionState>()(
           }
 
           // 2. Clear all prompt stores BEFORE activating session to prevent stale/malformed data
-          const [{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }] = await Promise.all([
+          const [
+            { useQuestionStore },
+            { usePermissionStore },
+            { useCommandApprovalStore },
+            { useFileViewerStore }
+          ] = await Promise.all([
             import('./useQuestionStore'),
             import('./usePermissionStore'),
             import('./useCommandApprovalStore'),
@@ -806,7 +809,7 @@ export const useSessionStore = create<SessionState>()(
       reopenConnectionSession: async (sessionId: string, connectionId: string) => {
         try {
           // 1. Update database status first - this ensures persistence
-          const updatedSession = await window.db.session.update(sessionId, {
+          const updatedSession = await db.session.update(sessionId, {
             status: 'active',
             completed_at: null
           })
@@ -816,7 +819,12 @@ export const useSessionStore = create<SessionState>()(
           }
 
           // 2. Clear all prompt stores BEFORE activating session
-          const [{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }] = await Promise.all([
+          const [
+            { useQuestionStore },
+            { usePermissionStore },
+            { useCommandApprovalStore },
+            { useFileViewerStore }
+          ] = await Promise.all([
             import('./useQuestionStore'),
             import('./usePermissionStore'),
             import('./useCommandApprovalStore'),
@@ -969,7 +977,7 @@ export const useSessionStore = create<SessionState>()(
       // Update session name (scope-agnostic)
       updateSessionName: async (sessionId: string, name: string) => {
         try {
-          const updatedSession = await window.db.session.update(sessionId, { name })
+          const updatedSession = await db.session.update(sessionId, { name })
           if (updatedSession) {
             const scope = findSessionScope(get(), sessionId)
 
@@ -1144,7 +1152,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Persist to database
         try {
-          await window.db.session.update(sessionId, { mode: newMode })
+          await db.session.update(sessionId, { mode: newMode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1186,7 +1194,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Persist to database
         try {
-          await window.db.session.update(sessionId, { mode: newMode })
+          await db.session.update(sessionId, { mode: newMode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1211,7 +1219,7 @@ export const useSessionStore = create<SessionState>()(
         })
 
         try {
-          await window.db.session.update(sessionId, { mode: newMode })
+          await db.session.update(sessionId, { mode: newMode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1229,7 +1237,7 @@ export const useSessionStore = create<SessionState>()(
         })
 
         try {
-          await window.db.session.update(sessionId, { mode })
+          await db.session.update(sessionId, { mode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1291,7 +1299,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Persist to database
         try {
-          await window.db.session.update(sessionId, {
+          await db.session.update(sessionId, {
             model_provider_id: model.providerID,
             model_id: model.modelID,
             model_variant: model.variant ?? null
@@ -1330,7 +1338,7 @@ export const useSessionStore = create<SessionState>()(
         // Push to agent backend (SDK-aware) — skip for terminal sessions
         try {
           if (agentSdk !== 'terminal') {
-            await window.opencodeOps.setModel({ ...model, agentSdk })
+            unwrapEnvelope(await window.opencodeOps.setModel({ ...model, agentSdk }))
           }
         } catch (error) {
           console.error('Failed to push model to agent backend:', error)
@@ -1353,7 +1361,7 @@ export const useSessionStore = create<SessionState>()(
         const scope = findSessionScope(get(), sessionId)
         if (scope?.type === 'worktree') {
           try {
-            await window.db.worktree.updateModel({
+            await db.worktree.updateModel({
               worktreeId: scope.scopeId,
               modelProviderId: model.providerID,
               modelId: model.modelID,
@@ -1590,7 +1598,7 @@ export const useSessionStore = create<SessionState>()(
 
       loadBoardAssistantSession: async (projectId: string) => {
         try {
-          const session = await window.db.session.getActiveBoardAssistant(projectId)
+          const session = await db.session.getActiveBoardAssistant(projectId)
           set((state) => {
             const map = new Map(state.boardAssistantByProject)
             const newModeMap = new Map(state.modeBySession)
@@ -1616,7 +1624,7 @@ export const useSessionStore = create<SessionState>()(
             return { success: true, session: existing }
           }
 
-          const session = await window.db.session.create({
+          const session = await db.session.create({
             worktree_id: null,
             project_id: projectId,
             name: 'Board Assistant',
@@ -1685,27 +1693,30 @@ export const useSessionStore = create<SessionState>()(
 
             if (chatSession.snapshot.runtimePath && chatSession.snapshot.opencodeSessionId) {
               try {
-                await window.opencodeOps.abort(
-                  chatSession.snapshot.runtimePath,
-                  chatSession.snapshot.opencodeSessionId
+                unwrapEnvelope(
+                  await window.opencodeOps.abort(
+                    chatSession.snapshot.runtimePath,
+                    chatSession.snapshot.opencodeSessionId
+                  )
                 )
               } catch {
                 // Best-effort cleanup
               }
               try {
-                await window.opencodeOps.disconnect(
-                  chatSession.snapshot.runtimePath,
-                  chatSession.snapshot.opencodeSessionId
+                unwrapEnvelope(
+                  await window.opencodeOps.disconnect(
+                    chatSession.snapshot.runtimePath,
+                    chatSession.snapshot.opencodeSessionId
+                  )
                 )
               } catch {
                 // Best-effort cleanup
               }
             }
-
           }
           useBoardChatStore.getState().clearProjectSnapshot(projectId)
 
-          await window.db.session.update(session.id, {
+          await db.session.update(session.id, {
             status: 'completed',
             completed_at: new Date().toISOString()
           })
@@ -1776,7 +1787,7 @@ export const useSessionStore = create<SessionState>()(
       // Used by sticky tabs in worktree mode to pre-load connection sessions.
       loadConnectionSessionsBackground: async (connectionId: string) => {
         try {
-          const sessions = await window.db.session.getActiveByConnection(connectionId)
+          const sessions = await db.session.getActiveByConnection(connectionId)
           const sortedSessions = sessions
             .filter(isVisibleSession)
             .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
@@ -1828,7 +1839,7 @@ export const useSessionStore = create<SessionState>()(
       loadConnectionSessions: async (connectionId: string) => {
         set({ isLoading: true, error: null })
         try {
-          const sessions = await window.db.session.getActiveByConnection(connectionId)
+          const sessions = await db.session.getActiveByConnection(connectionId)
           const sortedSessions = sessions
             .filter(isVisibleSession)
             .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
@@ -1864,10 +1875,7 @@ export const useSessionStore = create<SessionState>()(
 
             // Set active session if in connection context
             let activeSessionId = state.activeSessionId
-            if (
-              state.activeConnectionId === connectionId &&
-              !activeSessionId
-            ) {
+            if (state.activeConnectionId === connectionId && !activeSessionId) {
               const persistedSessionId = state.activeSessionByConnection[connectionId]
               const boardMode = useSettingsStore.getState().boardMode
 
@@ -1921,18 +1929,19 @@ export const useSessionStore = create<SessionState>()(
         try {
           const autoFocus = opts?.autoFocus ?? true
           // Look up the connection to get the first member's project_id
-          const result = await window.connectionOps.get(connectionId)
+          const result = unwrapEnvelope(await window.connectionOps.get(connectionId))
           if (!result.success || !result.connection || result.connection.members.length === 0) {
             return { success: false, error: result.error || 'Connection has no members' }
           }
 
           const projectId = result.connection.members[0].project_id
 
-          const { agentSdk: defaultAgentSdk, model: defaultModel } = resolveSessionCreationSelection({
-            agentSdkOverride,
-            initialMode,
-            modelOverride: opts?.modelOverride
-          })
+          const { agentSdk: defaultAgentSdk, model: defaultModel } =
+            resolveSessionCreationSelection({
+              agentSdkOverride,
+              initialMode,
+              modelOverride: opts?.modelOverride
+            })
           const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
           if (unavailableProviderError) {
             return { success: false, error: unavailableProviderError }
@@ -1942,7 +1951,7 @@ export const useSessionStore = create<SessionState>()(
           const existingSessions = get().sessionsByConnection.get(connectionId) || []
           const sessionNumber = existingSessions.length + 1
 
-          const session = await window.db.session.create({
+          const session = await db.session.create({
             worktree_id: null,
             project_id: projectId,
             connection_id: connectionId,
@@ -2073,7 +2082,9 @@ export const useSessionStore = create<SessionState>()(
             .filter(isVisibleSession)
             .map((session) => session.id)
         )
-        return (get().tabOrderByConnection.get(connectionId) || []).filter((id) => visibleIds.has(id))
+        return (get().tabOrderByConnection.get(connectionId) || []).filter((id) =>
+          visibleIds.has(id)
+        )
       },
 
       // Reorder connection tabs
@@ -2141,13 +2152,20 @@ export const useSessionStore = create<SessionState>()(
           import('./usePermissionStore'),
           import('./useCommandApprovalStore'),
           import('./useFileViewerStore')
-        ]).then(([{ useQuestionStore }, { usePermissionStore }, { useCommandApprovalStore }, { useFileViewerStore }]) => {
-          useQuestionStore.getState().clearSession(session.id)
-          usePermissionStore.getState().clearSession(session.id)
-          useCommandApprovalStore.getState().clearSession(session.id)
-          useFileViewerStore.getState().setActiveFile(null)
-          useFileViewerStore.getState().clearActiveDiff()
-        })
+        ]).then(
+          ([
+            { useQuestionStore },
+            { usePermissionStore },
+            { useCommandApprovalStore },
+            { useFileViewerStore }
+          ]) => {
+            useQuestionStore.getState().clearSession(session.id)
+            usePermissionStore.getState().clearSession(session.id)
+            useCommandApprovalStore.getState().clearSession(session.id)
+            useFileViewerStore.getState().setActiveFile(null)
+            useFileViewerStore.getState().clearActiveDiff()
+          }
+        )
       },
 
       // Pinned session actions
@@ -2159,7 +2177,7 @@ export const useSessionStore = create<SessionState>()(
           return { pinnedSessionIds: newPinnedIds }
         })
         try {
-          await window.db.session.setPinnedToBoard(sessionId, true)
+          await db.session.setPinnedToBoard(sessionId, true)
         } catch {
           // Rollback on failure
           set((state) => {
@@ -2185,7 +2203,7 @@ export const useSessionStore = create<SessionState>()(
           }
         })
         // Fire-and-forget DB update
-        window.db.session.setPinnedToBoard(sessionId, false).catch(() => {})
+        db.session.setPinnedToBoard(sessionId, false).catch(() => {})
       },
 
       setActivePinnedSession: (sessionId: string | null) => {
@@ -2194,7 +2212,7 @@ export const useSessionStore = create<SessionState>()(
 
       loadPinnedSessions: async (worktreeId: string) => {
         try {
-          const pinnedSessions = await window.db.session.getPinnedSessions(worktreeId)
+          const pinnedSessions = await db.session.getPinnedSessions(worktreeId)
           set({
             pinnedSessionIds: new Set(pinnedSessions.map((s) => s.id))
           })
@@ -2206,7 +2224,8 @@ export const useSessionStore = create<SessionState>()(
       // Close all orphaned sessions (called when navigating away)
       closeOrphanedSessions: () => {
         set((state) => {
-          const hasOrphanedActive = state.activeSessionId && state.orphanedSessions.has(state.activeSessionId)
+          const hasOrphanedActive =
+            state.activeSessionId && state.orphanedSessions.has(state.activeSessionId)
 
           return {
             orphanedSessions: new Map(),

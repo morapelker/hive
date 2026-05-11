@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { UsageProvider } from '@shared/types/usage'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface AccountState {
   anthropicEmail: string | null
@@ -13,10 +14,10 @@ export const useAccountStore = create<AccountState>()((set) => ({
   fetchEmail: async (provider: UsageProvider) => {
     try {
       if (provider === 'anthropic') {
-        const email = await window.accountOps.getClaudeEmail()
+        const email = unwrapEnvelope(await window.accountOps.getClaudeEmail())
         set({ anthropicEmail: email })
       } else {
-        const email = await window.accountOps.getOpenAIEmail()
+        const email = unwrapEnvelope(await window.accountOps.getOpenAIEmail())
         set({ openaiEmail: email })
       }
     } catch {

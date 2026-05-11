@@ -54,6 +54,7 @@
     "codex:generate-schemas": "rm -rf src/shared/codex-schemas && codex app-server generate-ts --out src/shared/codex-schemas",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "build:native": "cd src/native && npx node-gyp rebuild",
     "release": "bash scripts/release.sh",
@@ -65,7 +66,7 @@
     "install:mac": "bash scripts/install.sh"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.126",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.138",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
@@ -123,7 +124,7 @@
     "remark-gfm": "^4.0.1",
     "simple-git": "^3.30.0",
     "sonner": "^1.7.1",
-    "zod": "3.25.76",
+    "zod": "^4.0.0",
     "zustand": "^5.0.2"
   },
   "devDependencies": {
@@ -141,6 +142,7 @@
     "@types/react-dom": "^19.0.2",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^3.2.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "electron": "^41.0.0",

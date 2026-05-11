@@ -1,4 +1,6 @@
-import { describe, it, expect, vi } from 'vitest'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
+
+const runPromiseMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../src/main/services/logger', () => ({
   createLogger: () => ({
@@ -9,7 +11,27 @@ vi.mock('../src/main/services/logger', () => ({
   })
 }))
 
-import { sanitizeTitle, extractTitleFromJSON } from '../src/main/services/title-generation-shared'
+vi.mock('../src/main/effect/spawn/runtime', () => ({
+  getRuntime: () => ({ runPromise: runPromiseMock })
+}))
+
+import {
+  sanitizeTitle,
+  extractTitleFromJSON,
+  spawnCLI,
+  SpawnCliError
+} from '../src/main/services/title-generation-shared'
+import {
+  SpawnFailed,
+  SpawnNonZeroExit,
+  SpawnOutputCapExceeded,
+  SpawnSignalled,
+  SpawnTimeout
+} from '../src/main/effect/spawn/errors'
+
+beforeEach(() => {
+  runPromiseMock.mockReset()
+})
 
 // ── sanitizeTitle ────────────────────────────────────────────────────
 
@@ -118,5 +140,77 @@ describe('extractTitleFromJSON', () => {
 
   it('returns null for whitespace-only input', () => {
     expect(extractTitleFromJSON('   \t\n  ')).toBeNull()
+  })
+})
+
+// ── spawnCLI compatibility shim ─────────────────────────────────────
+
+describe('spawnCLI', () => {
+  it('returns stdout from Spawn.runOnce', async () => {
+    runPromiseMock.mockResolvedValue({ stdout: 'Generated title\n', stderr: '', exitCode: 0 })
+
+    await expect(spawnCLI('tool', ['arg'], 'input', 123, '/tmp', { A: 'B' })).resolves.toBe(
+      'Generated title\n'
+    )
+
+    expect(runPromiseMock).toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      new SpawnTimeout({
+        command: 'tool',
+        durationMs: 123,
+        stdoutPreview: 'partial out',
+        stderrPreview: 'partial err'
+      }),
+      'timeout',
+      { timeoutMs: 123 }
+    ],
+    [
+      new SpawnFailed({ command: 'tool', cause: new Error('ENOENT') }),
+      'spawn_error',
+      {}
+    ],
+    [
+      new SpawnNonZeroExit({
+        command: 'tool',
+        exitCode: 7,
+        stdoutPreview: 'partial out',
+        stderrPreview: 'partial err'
+      }),
+      'non_zero_exit',
+      { code: 7 }
+    ],
+    [
+      new SpawnOutputCapExceeded({ command: 'tool', stream: 'stdout', bytes: 4, limit: 3 }),
+      'stdout_too_large',
+      { maxOutputBytes: 3 }
+    ],
+    [
+      new SpawnOutputCapExceeded({ command: 'tool', stream: 'stderr', bytes: 4, limit: 3 }),
+      'stderr_too_large',
+      { maxOutputBytes: 3 }
+    ],
+    [
+      new SpawnSignalled({
+        command: 'tool',
+        signal: 'SIGTERM',
+        stdoutPreview: 'partial out',
+        stderrPreview: 'partial err'
+      }),
+      'spawn_error',
+      {}
+    ]
+  ] as const)('maps %s to SpawnCliError kind %s', async (taggedError, kind, details) => {
+    runPromiseMock.mockRejectedValue(taggedError)
+
+    await expect(spawnCLI('tool', ['arg'], 'input', 999, '/tmp')).rejects.toMatchObject({
+      name: 'SpawnCliError',
+      kind,
+      command: 'tool',
+      cwd: '/tmp',
+      ...details
+    } satisfies Partial<SpawnCliError>)
   })
 })

@@ -19,6 +19,7 @@ import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
 import { useTerminalStore } from '@/stores/useTerminalStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { toast } from '@/lib/toast'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /**
  * Check if the terminal panel is currently focused.
@@ -205,7 +206,12 @@ export function useKeyboardShortcuts(): void {
         if (!binding) continue
         if (isInputFocused && !allowInInput) continue
         if (isXtermFocused && binding.modifiers.length === 0) continue
-        if (isXtermFocused && binding.key?.toLowerCase() === 'tab' && !binding.modifiers.includes('ctrl')) continue
+        if (
+          isXtermFocused &&
+          binding.key?.toLowerCase() === 'tab' &&
+          !binding.modifiers.includes('ctrl')
+        )
+          continue
 
         if (eventMatchesBinding(event, binding)) {
           event.preventDefault()
@@ -827,13 +833,13 @@ function useMenuActionListeners(): void {
     on('menu:open-in-editor', () => {
       const worktreePath = getActiveWorktreePath()
       if (!worktreePath) return
-      window.worktreeOps.openInEditor(worktreePath)
+      window.worktreeOps.openInEditor(worktreePath).then(unwrapEnvelope).catch(console.error)
     })
 
     on('menu:open-in-terminal', () => {
       const worktreePath = getActiveWorktreePath()
       if (!worktreePath) return
-      window.worktreeOps.openInTerminal(worktreePath)
+      window.worktreeOps.openInTerminal(worktreePath).then(unwrapEnvelope).catch(console.error)
     })
 
     on('menu:command-palette', () => {
@@ -914,6 +920,7 @@ function useMenuStateUpdater(): void {
 
     window.opencodeOps
       ?.capabilities?.(opencodeSessionId)
+      .then(unwrapEnvelope)
       ?.then((result) => {
         window.systemOps.updateMenuState({
           ...baseState,

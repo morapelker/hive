@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { UsageData, OpenAIUsageData, UsageProvider } from '@shared/types/usage'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export type { UsageData, UsageProvider }
 
@@ -43,7 +44,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
       set({ anthropicIsLoading: true })
       try {
-        const result = await window.usageOps.fetch()
+        const result = unwrapEnvelope(await window.usageOps.fetch())
         if (result.success) {
           set({ anthropicUsage: result.data ?? null })
         }
@@ -56,7 +57,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
       set({ openaiIsLoading: true })
       try {
-        const result = await window.usageOps.fetchOpenai()
+        const result = unwrapEnvelope(await window.usageOps.fetchOpenai())
         if (result.success) {
           set({ openaiUsage: result.data ?? null })
         }
@@ -74,7 +75,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
       set({ anthropicIsLoading: true })
       try {
-        const result = await window.usageOps.fetch()
+        const result = unwrapEnvelope(await window.usageOps.fetch())
         if (result.success) {
           set({ anthropicUsage: result.data ?? null })
         }
@@ -86,7 +87,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
       set({ openaiIsLoading: true })
       try {
-        const result = await window.usageOps.fetchOpenai()
+        const result = unwrapEnvelope(await window.usageOps.fetchOpenai())
         if (result.success) {
           set({ openaiUsage: result.data ?? null })
         }

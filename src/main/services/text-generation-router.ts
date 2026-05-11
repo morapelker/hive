@@ -1,8 +1,8 @@
 import { homedir, tmpdir } from 'node:os'
-import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readFile, unlink, writeFile } from 'node:fs/promises'
+import { Effect } from 'effect'
 
 import { loadClaudeSDK } from './claude-sdk-loader'
 import { resolveCodexBinaryPath } from './codex-binary-resolver'
@@ -12,6 +12,15 @@ import type { AgentSdkDetection } from './system-info'
 import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
 import { createLogger } from './logger'
 import type { AgentSdkId } from './agent-sdk-types'
+import {
+  SpawnFailed,
+  SpawnNonZeroExit,
+  SpawnOutputCapExceeded,
+  SpawnSignalled,
+  SpawnTimeout
+} from '../effect/spawn/errors'
+import { getRuntime } from '../effect/spawn/runtime'
+import { Spawn } from '../effect/spawn/service'
 
 const log = createLogger({ component: 'TextGenerationRouter' })
 
@@ -382,60 +391,43 @@ function spawnWithStdin(
   cwd?: string,
   env?: NodeJS.ProcessEnv
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(command, args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: env ?? process.env,
-      cwd
+  return getRuntime()
+    .runPromise(
+      Effect.flatMap(Spawn, (spawn) =>
+        spawn.runOnce({
+          command,
+          args,
+          stdin: input,
+          timeout: TIMEOUT_MS,
+          maxOutputBytes: MAX_OUTPUT_SIZE,
+          collectStderr: true,
+          env: env ?? process.env,
+          cwd
+        })
+      )
+    )
+    .then((result) => result.stdout)
+    .catch((error: unknown) => {
+      throw spawnErrorToError(error, command)
     })
+}
 
-    let stdout = ''
-    let stderr = ''
-    let killed = false
-
-    const timeout = setTimeout(() => {
-      if (!killed) {
-        killed = true
-        proc.kill('SIGKILL')
-        reject(new Error(`${command} timed out after ${TIMEOUT_MS}ms`))
-      }
-    }, TIMEOUT_MS)
-
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString()
-      if (stdout.length > MAX_OUTPUT_SIZE) {
-        killed = true
-        proc.kill('SIGKILL')
-        clearTimeout(timeout)
-        reject(new Error(`${command} stdout exceeded ${MAX_OUTPUT_SIZE} bytes`))
-      }
-    })
-
-    proc.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString()
-      if (stderr.length > MAX_OUTPUT_SIZE) {
-        killed = true
-        proc.kill('SIGKILL')
-        clearTimeout(timeout)
-        reject(new Error(`${command} stderr exceeded ${MAX_OUTPUT_SIZE} bytes`))
-      }
-    })
-
-    proc.on('error', (err) => {
-      clearTimeout(timeout)
-      reject(new Error(`Failed to spawn ${command}: ${err.message}`))
-    })
-
-    proc.on('close', (code) => {
-      clearTimeout(timeout)
-      if (killed) return
-      if (code === 0) {
-        resolve(stdout)
-      } else {
-        reject(new Error(`${command} exited with code ${code}: ${stderr.slice(0, 500)}`))
-      }
-    })
-
-    proc.stdin?.end(input)
-  })
+function spawnErrorToError(error: unknown, command: string): Error {
+  if (error instanceof SpawnTimeout) {
+    return new Error(`${command} timed out after ${error.durationMs}ms`)
+  }
+  if (error instanceof SpawnOutputCapExceeded) {
+    return new Error(`${command} ${error.stream} exceeded ${error.limit} bytes`)
+  }
+  if (error instanceof SpawnNonZeroExit) {
+    return new Error(`${command} exited with code ${error.exitCode}: ${error.stderrPreview}`)
+  }
+  if (error instanceof SpawnFailed) {
+    const cause = error.cause instanceof Error ? error.cause.message : String(error.cause)
+    return new Error(`Failed to spawn ${command}: ${cause}`)
+  }
+  if (error instanceof SpawnSignalled) {
+    return new Error(`${command} exited from signal ${error.signal ?? 'unknown'}`)
+  }
+  return error instanceof Error ? error : new Error(String(error))
 }

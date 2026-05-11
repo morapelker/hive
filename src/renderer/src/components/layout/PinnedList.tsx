@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
 import { revealLabel } from '@/lib/platform'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import {
   AlertCircle,
   Archive,
@@ -72,6 +73,8 @@ import { AddAttachmentDialog } from '@/components/worktrees/AddAttachmentDialog'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
 import { useSiblingAggregate, type SiblingBucket } from '@/hooks/useSiblingAggregate'
 import { useGhosttySuppression } from '@/hooks'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 type PinnedItem = { kind: 'worktree'; id: string } | { kind: 'connection'; id: string }
 
@@ -253,7 +256,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
 
   const handleDetachAttachment = useCallback(
     async (attachmentId: string): Promise<void> => {
-      const result = await window.db.worktree.removeAttachment(worktreeId, attachmentId)
+      const result = await db.worktree.removeAttachment(worktreeId, attachmentId)
       if (result.success) {
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
         toast.success('Attachment removed')
@@ -265,7 +268,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   )
 
   const handleAttachmentAdded = useCallback((): void => {
-    window.db.worktree.get(worktreeId).then((w) => {
+    db.worktree.get(worktreeId).then((w) => {
       if (w) {
         try {
           setAttachments(JSON.parse(w.attachments || '[]'))
@@ -315,11 +318,13 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       return
     }
 
-    const result = await window.worktreeOps.renameBranch(
-      worktree.id,
-      worktree.path,
-      worktree.branch_name,
-      newBranch
+    const result = unwrapEnvelope(
+      await window.worktreeOps.renameBranch(
+        worktree.id,
+        worktree.path,
+        worktree.branch_name,
+        newBranch
+      )
     )
 
     if (result.success) {
@@ -372,7 +377,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const handleArchive = useCallback(async (): Promise<void> => {
     if (!worktree) return
     try {
-      const result = await window.gitOps.getDiffStat(worktree.path)
+      const result = unwrapEnvelope(await window.gitOps.getDiffStat(worktree.path))
       if (result.success && result.files && result.files.length > 0) {
         setArchiveConfirmFiles(result.files)
         setArchiveConfirmOpen(true)
@@ -446,7 +451,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   }
 
   const handleOpenInTerminal = async (): Promise<void> => {
-    const result = await window.worktreeOps.openInTerminal(worktree.path)
+    const result = unwrapEnvelope(await window.worktreeOps.openInTerminal(worktree.path))
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
@@ -457,7 +462,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   }
 
   const handleOpenInEditor = async (): Promise<void> => {
-    const result = await window.worktreeOps.openInEditor(worktree.path)
+    const result = unwrapEnvelope(await window.worktreeOps.openInEditor(worktree.path))
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
@@ -468,11 +473,11 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   }
 
   const handleOpenInFinder = async (): Promise<void> => {
-    await window.projectOps.showInFolder(worktree.path)
+    unwrapEnvelope(await window.projectOps.showInFolder(worktree.path))
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    await window.projectOps.copyToClipboard(worktree.path)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(worktree.path))
     clipboardToast.copied('Path')
   }
 
@@ -607,7 +612,11 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
           onClick={handleClick}
           data-testid={`pinned-worktree-${worktreeId}`}
         >
-          <LanguageIcon language={project.language} customIcon={project.custom_icon} detectedIcon={project.detected_icon} />
+          <LanguageIcon
+            language={project.language}
+            customIcon={project.custom_icon}
+            detectedIcon={project.detected_icon}
+          />
 
           {isRunProcessAlive && <PulseAnimation className="h-3.5 w-3.5 text-green-500 shrink-0" />}
           {(worktreeStatus === 'working' || worktreeStatus === 'planning') && (
@@ -937,7 +946,7 @@ function PinnedConnectionItem({
 
   const handleOpenInTerminal = useCallback(async (): Promise<void> => {
     if (!connection) return
-    const result = await window.connectionOps.openInTerminal(connection.path)
+    const result = unwrapEnvelope(await window.connectionOps.openInTerminal(connection.path))
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
@@ -947,7 +956,7 @@ function PinnedConnectionItem({
 
   const handleOpenInEditor = useCallback(async (): Promise<void> => {
     if (!connection) return
-    const result = await window.connectionOps.openInEditor(connection.path)
+    const result = unwrapEnvelope(await window.connectionOps.openInEditor(connection.path))
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
@@ -957,12 +966,12 @@ function PinnedConnectionItem({
 
   const handleOpenInFinder = useCallback(async (): Promise<void> => {
     if (!connection) return
-    await window.projectOps.showInFolder(connection.path)
+    unwrapEnvelope(await window.projectOps.showInFolder(connection.path))
   }, [connection])
 
   const handleCopyPath = useCallback(async (): Promise<void> => {
     if (!connection) return
-    await window.projectOps.copyToClipboard(connection.path)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(connection.path))
     clipboardToast.copied('Path')
   }, [connection])
 

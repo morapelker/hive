@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { toast } from '@/lib/toast'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface WorktreeContextEditorProps {
   worktreeId: string
@@ -27,7 +28,7 @@ export function WorktreeContextEditor({
     void (async () => {
       setIsLoading(true)
       try {
-        const result = await window.worktreeOps.getContext(worktreeId)
+        const result = unwrapEnvelope(await window.worktreeOps.getContext(worktreeId))
         if (cancelled) return
         const ctx = result.success ? (result.context ?? '') : ''
         setContent(ctx)
@@ -55,7 +56,9 @@ export function WorktreeContextEditor({
   const handleSave = useCallback(async () => {
     setIsSaving(true)
     try {
-      const result = await window.worktreeOps.updateContext(worktreeId, content || null)
+      const result = unwrapEnvelope(
+        await window.worktreeOps.updateContext(worktreeId, content || null)
+      )
       if (result.success) {
         setSavedContent(content)
         toast.success('Context saved')

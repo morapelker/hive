@@ -1,6 +1,15 @@
-import { spawn } from 'node:child_process'
+import { Effect } from 'effect'
 import { createLogger } from './logger'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
+import {
+  SpawnFailed,
+  SpawnNonZeroExit,
+  SpawnOutputCapExceeded,
+  SpawnSignalled,
+  SpawnTimeout
+} from '../effect/spawn/errors'
+import { getRuntime } from '../effect/spawn/runtime'
+import { Spawn } from '../effect/spawn/service'
 
 const log = createLogger({ component: 'TitleGenerationShared' })
 
@@ -32,8 +41,6 @@ export const MAX_MESSAGE_LENGTH = 2000
 const MAX_OUTPUT_SIZE = 1024 * 1024 // 1 MB
 
 const MAX_SANITIZED_LENGTH = 50
-const MAX_LOG_PREVIEW = 500
-
 export type SpawnCliFailureKind =
   | 'timeout'
   | 'stdout_too_large'
@@ -75,11 +82,6 @@ export class SpawnCliError extends Error {
     this.maxOutputBytes = detail.maxOutputBytes
     this.cwd = detail.cwd
   }
-}
-
-function previewText(value: string, maxLength: number = MAX_LOG_PREVIEW): string {
-  if (value.length <= maxLength) return value
-  return value.slice(0, maxLength) + '...'
 }
 
 // ── sanitizeTitle ─────────────────────────────────────────────────────
@@ -188,109 +190,93 @@ export function spawnCLI(
     timeoutMs,
     cwd
   })
-  return new Promise((resolve, reject) => {
-    const proc = spawn(command, args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: env ?? process.env,
-      cwd
-    })
-
-    let stdout = ''
-    let stderr = ''
-    let killed = false
-
-    const timeout = setTimeout(() => {
-      if (!killed) {
-        killed = true
-        proc.kill('SIGKILL')
-        reject(
-          new SpawnCliError(`${command} timed out after ${timeoutMs}ms`, {
-            kind: 'timeout',
-            command,
-            stdoutPreview: previewText(stdout),
-            stderrPreview: previewText(stderr),
-            timeoutMs,
-            cwd
-          })
-        )
-      }
-    }, timeoutMs)
-
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString()
-      if (stdout.length > MAX_OUTPUT_SIZE) {
-        killed = true
-        proc.kill('SIGKILL')
-        clearTimeout(timeout)
-        reject(
-          new SpawnCliError(`${command} stdout exceeded ${MAX_OUTPUT_SIZE} bytes`, {
-            kind: 'stdout_too_large',
-            command,
-            stdoutPreview: previewText(stdout),
-            stderrPreview: previewText(stderr),
-            maxOutputBytes: MAX_OUTPUT_SIZE,
-            cwd
-          })
-        )
-      }
-    })
-
-    proc.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString()
-      if (stderr.length > MAX_OUTPUT_SIZE) {
-        killed = true
-        proc.kill('SIGKILL')
-        clearTimeout(timeout)
-        reject(
-          new SpawnCliError(`${command} stderr exceeded ${MAX_OUTPUT_SIZE} bytes`, {
-            kind: 'stderr_too_large',
-            command,
-            stdoutPreview: previewText(stdout),
-            stderrPreview: previewText(stderr),
-            maxOutputBytes: MAX_OUTPUT_SIZE,
-            cwd
-          })
-        )
-      }
-    })
-
-    proc.on('error', (err) => {
-      clearTimeout(timeout)
-      log.warn('spawnCLI: spawn error', { command, error: err.message })
-      reject(
-        new SpawnCliError(`Failed to spawn ${command}: ${err.message}`, {
-          kind: 'spawn_error',
+  return getRuntime()
+    .runPromise(
+      Effect.flatMap(Spawn, (spawn) =>
+        spawn.runOnce({
           command,
-          stdoutPreview: previewText(stdout),
-          stderrPreview: previewText(stderr),
+          args,
+          stdin: input,
+          timeout: timeoutMs,
+          maxOutputBytes: MAX_OUTPUT_SIZE,
+          collectStderr: true,
+          env: env ?? process.env,
           cwd
         })
       )
+    )
+    .then((result) => {
+      log.info('spawnCLI: success', { command, stdoutLength: result.stdout.length })
+      return result.stdout
     })
-
-    proc.on('close', (code) => {
-      clearTimeout(timeout)
-      if (killed) return
-      if (code === 0) {
-        log.info('spawnCLI: success', { command, stdoutLength: stdout.length })
-        resolve(stdout)
-      } else {
-        const stdoutPreview = previewText(stdout)
-        const stderrPreview = previewText(stderr)
-        log.warn('spawnCLI: non-zero exit', { command, code, stdoutPreview, stderrPreview })
-        reject(
-          new SpawnCliError(`${command} exited with code ${code}: ${stderrPreview}`, {
-            kind: 'non_zero_exit',
-            command,
-            code,
-            stdoutPreview,
-            stderrPreview,
-            cwd
-          })
-        )
-      }
+    .catch((error: unknown) => {
+      throw toSpawnCliError(error, command, cwd)
     })
+}
 
-    proc.stdin?.end(input)
+function toSpawnCliError(error: unknown, command: string, cwd?: string): SpawnCliError {
+  if (error instanceof SpawnTimeout) {
+    return new SpawnCliError(`${command} timed out after ${error.durationMs}ms`, {
+      kind: 'timeout',
+      command,
+      stdoutPreview: error.stdoutPreview,
+      stderrPreview: error.stderrPreview,
+      timeoutMs: error.durationMs,
+      cwd
+    })
+  }
+
+  if (error instanceof SpawnOutputCapExceeded) {
+    const kind = error.stream === 'stdout' ? 'stdout_too_large' : 'stderr_too_large'
+    return new SpawnCliError(`${command} ${error.stream} exceeded ${error.limit} bytes`, {
+      kind,
+      command,
+      maxOutputBytes: error.limit,
+      cwd
+    })
+  }
+
+  if (error instanceof SpawnNonZeroExit) {
+    log.warn('spawnCLI: non-zero exit', {
+      command,
+      code: error.exitCode,
+      stdoutPreview: error.stdoutPreview,
+      stderrPreview: error.stderrPreview
+    })
+    return new SpawnCliError(`${command} exited with code ${error.exitCode}: ${error.stderrPreview}`, {
+      kind: 'non_zero_exit',
+      command,
+      code: error.exitCode,
+      stdoutPreview: error.stdoutPreview,
+      stderrPreview: error.stderrPreview,
+      cwd
+    })
+  }
+
+  if (error instanceof SpawnFailed) {
+    const cause = error.cause instanceof Error ? error.cause.message : String(error.cause)
+    log.warn('spawnCLI: spawn error', { command, error: cause })
+    return new SpawnCliError(`Failed to spawn ${command}: ${cause}`, {
+      kind: 'spawn_error',
+      command,
+      cwd
+    })
+  }
+
+  if (error instanceof SpawnSignalled) {
+    return new SpawnCliError(`${command} exited from signal ${error.signal ?? 'unknown'}`, {
+      kind: 'spawn_error',
+      command,
+      stdoutPreview: error.stdoutPreview,
+      stderrPreview: error.stderrPreview,
+      cwd
+    })
+  }
+
+  const message = error instanceof Error ? error.message : String(error)
+  return new SpawnCliError(`Failed to spawn ${command}: ${message}`, {
+    kind: 'spawn_error',
+    command,
+    cwd
   })
 }

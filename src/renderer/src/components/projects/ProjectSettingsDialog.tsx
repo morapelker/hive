@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { useProjectStore } from '@/stores'
 import { LanguageIcon } from './LanguageIcon'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface Project {
   id: string
@@ -70,7 +71,7 @@ export function ProjectSettingsDialog({
   const handlePickIcon = async (): Promise<void> => {
     setPickingIcon(true)
     try {
-      const result = await window.projectOps.pickProjectIcon(project.id)
+      const result = unwrapEnvelope(await window.projectOps.pickProjectIcon(project.id))
       if (result.success && result.filename) {
         setCustomIcon(result.filename)
       }
@@ -84,7 +85,7 @@ export function ProjectSettingsDialog({
 
   const handleClearIcon = async (): Promise<void> => {
     try {
-      await window.projectOps.removeProjectIcon(project.id)
+      unwrapEnvelope(await window.projectOps.removeProjectIcon(project.id))
       setCustomIcon(null)
     } catch {
       toast.error('Failed to remove icon')

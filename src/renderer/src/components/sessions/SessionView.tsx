@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
 import { ModeToggle } from './ModeToggle'
@@ -91,6 +92,8 @@ import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // Stable empty array to avoid creating new references in selectors
 const EMPTY_FILE_INDEX: FlatFile[] = []
@@ -429,12 +432,12 @@ function insertSteeredMessageAtBoundary(
 async function loadCodexDurableState(
   sessionId: string
 ): Promise<{ messages: OpenCodeMessage[]; activities: SessionActivity[] }> {
-  if (!window.db.sessionMessage?.list || !window.db.sessionActivity?.list) {
+  if (!db.sessionMessage?.list || !db.sessionActivity?.list) {
     return { messages: [], activities: [] }
   }
   const [messageRows, activityRows] = await Promise.all([
-    window.db.sessionMessage.list(sessionId),
-    window.db.sessionActivity.list(sessionId)
+    db.sessionMessage.list(sessionId),
+    db.sessionActivity.list(sessionId)
   ])
   return {
     messages: deriveCodexTimelineMessages(messageRows, activityRows, true),
@@ -694,6 +697,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
     window.opencodeOps
       ?.capabilities?.(opencodeSessionId)
+      .then(unwrapEnvelope)
       ?.then((result) => {
         if (result.success && result.capabilities) {
           setSessionCapabilities(result.capabilities)
@@ -1268,6 +1272,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     const timerId = setInterval(() => {
       window.opencodeOps
         ?.permissionList(worktreePath)
+        .then(unwrapEnvelope)
         .then((result) => {
           if (result.success && result.permissions) {
             for (const req of result.permissions) {
@@ -1478,7 +1483,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     childToSubtaskIndexRef.current.clear()
 
     // Load saved draft for this session
-    window.db.session.getDraft(sessionId).then((draft) => {
+    db.session.getDraft(sessionId).then((draft) => {
       if (draft) {
         setInputValue(draft)
         inputValueRef.current = draft
@@ -1551,9 +1556,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         (!isCodexSession || loadedMessages.length === 0 || preferLiveCodexSource) &&
         canUseOpenCodeSource
       ) {
-        const result = await window.opencodeOps.getMessages(
-          sourceWorktreePath,
-          sourceOpencodeSessionId
+        const result = unwrapEnvelope(
+          await window.opencodeOps.getMessages(sourceWorktreePath, sourceOpencodeSessionId)
         )
         if (result.success) {
           loadedFromOpenCode = true
@@ -1990,6 +1994,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             if (wtPath) {
               window.opencodeOps
                 .commands(wtPath, sessionId)
+                .then(unwrapEnvelope)
                 .then((result) => {
                   if (result.success && result.commands) {
                     setSlashCommands(result.commands)
@@ -2966,11 +2971,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                     return false
                   }
 
-                  const result = await window.opencodeOps.prompt(
-                    wtPath,
-                    opcSid,
-                    [{ type: 'text', text: message }],
-                    getModelForRequests()
+                  const result = unwrapEnvelope(
+                    await window.opencodeOps.prompt(
+                      wtPath,
+                      opcSid,
+                      [{ type: 'text', text: message }],
+                      getModelForRequests()
+                    )
                   )
 
                   if (!result.success) {
@@ -3057,7 +3064,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       try {
         // 1. Resolve session/worktree metadata so transcript loading can prefer OpenCode
-        const session = (await window.db.session.get(sessionId)) as DbSession | null
+        const session = (await db.session.get(sessionId)) as DbSession | null
         if (shouldAbortInit()) return
         if (!session) {
           throw new Error('Session not found')
@@ -3079,7 +3086,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         let wtPath: string | null = null
         if (session.worktree_id) {
           setWorktreeId(session.worktree_id)
-          const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
+          const worktree = (await db.worktree.get(session.worktree_id)) as DbWorktree | null
           if (shouldAbortInit()) return
           if (worktree) {
             wtPath = worktree.path
@@ -3090,7 +3097,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Connection session: resolve the connection folder path
           setConnectionId(session.connection_id)
           try {
-            const connResult = await window.connectionOps.get(session.connection_id)
+            const connResult = unwrapEnvelope(await window.connectionOps.get(session.connection_id))
             if (shouldAbortInit()) return
             if (connResult.success && connResult.connection) {
               wtPath = connResult.connection.path
@@ -3112,7 +3119,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         // is applied to the very first render that includes transcript data.
         if (wtPath && existingOpcSessionId && window.opencodeOps?.sessionInfo) {
           try {
-            const sessionInfo = await window.opencodeOps.sessionInfo(wtPath, existingOpcSessionId)
+            const sessionInfo = unwrapEnvelope(
+              await window.opencodeOps.sessionInfo(wtPath, existingOpcSessionId)
+            )
             if (shouldAbortInit()) return
             if (sessionInfo.success) {
               setRevertMessageID(sessionInfo.revertMessageID ?? null)
@@ -3244,6 +3253,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const fetchModelLimits = (): void => {
           window.opencodeOps
             .listModels()
+            .then(unwrapEnvelope)
             .then((result) => {
               const providers = Array.isArray(result.providers)
                 ? result.providers
@@ -3287,6 +3297,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const fetchCommands = (path: string): void => {
           window.opencodeOps
             .commands(path, sessionId)
+            .then(unwrapEnvelope)
             .then((result) => {
               if (result.success && result.commands) {
                 setSlashCommands(result.commands)
@@ -3305,6 +3316,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         const hydratePermissions = (path: string): void => {
           window.opencodeOps
             .permissionList(path)
+            .then(unwrapEnvelope)
             .then((result) => {
               if (result.success && result.permissions) {
                 for (const req of result.permissions) {
@@ -3371,12 +3383,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             const parts: Array<{ type: 'text'; text: string }> = [
               { type: 'text' as const, text: promptMessage }
             ]
-            const result = await window.opencodeOps.prompt(
-              path,
-              opcId,
-              parts,
-              model,
-              codexPromptOptions
+            const result = unwrapEnvelope(
+              await window.opencodeOps.prompt(path, opcId, parts, model, codexPromptOptions)
             )
             if (shouldAbortInit()) {
               if (!result.success) {
@@ -3401,10 +3409,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
         if (existingOpcSessionId) {
           // Try to reconnect to existing session
-          const reconnectResult = await window.opencodeOps.reconnect(
-            wtPath,
-            existingOpcSessionId,
-            sessionId
+          const reconnectResult = unwrapEnvelope(
+            await window.opencodeOps.reconnect(wtPath, existingOpcSessionId, sessionId)
           )
           if (shouldAbortInit()) return
           if (reconnectResult.success) {
@@ -3488,7 +3494,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
 
         // Create new OpenCode session
-        const connectResult = await window.opencodeOps.connect(wtPath, sessionId)
+        const connectResult = unwrapEnvelope(await window.opencodeOps.connect(wtPath, sessionId))
         if (shouldAbortInit()) return
         if (connectResult.success && connectResult.sessionId) {
           setOpencodeSessionId(connectResult.sessionId)
@@ -3501,7 +3507,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // open a temporary replacement session, keep the original pointer in
           // DB to avoid losing historical transcript linkage.
           if (!existingOpcSessionId) {
-            await window.db.session.update(sessionId, {
+            await db.session.update(sessionId, {
               opencode_session_id: connectResult.sessionId
             })
           }
@@ -3556,7 +3562,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       const currentValue = inputValueRef.current
       if (currentValue) {
-        window.db.session.updateDraft(sessionId, currentValue)
+        db.session.updateDraft(sessionId, currentValue)
       }
     }
   }, [sessionId])
@@ -3576,7 +3582,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     }
 
     try {
-      const session = (await window.db.session.get(sessionId)) as DbSession | null
+      const session = (await db.session.get(sessionId)) as DbSession | null
       if (!session) {
         throw new Error('Session not found')
       }
@@ -3587,7 +3593,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const worktree = (await window.db.worktree.get(session.worktree_id)) as DbWorktree | null
+      const worktree = (await db.worktree.get(session.worktree_id)) as DbWorktree | null
       if (!worktree) {
         setMessages([])
         setViewState({ status: 'connected' })
@@ -3608,10 +3614,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       let activeOpcSessionId = existingOpcSessionId
 
       if (existingOpcSessionId) {
-        const reconnectResult = await window.opencodeOps.reconnect(
-          worktree.path,
-          existingOpcSessionId,
-          sessionId
+        const reconnectResult = unwrapEnvelope(
+          await window.opencodeOps.reconnect(worktree.path, existingOpcSessionId, sessionId)
         )
         if (reconnectResult.success) {
           setOpencodeSessionId(existingOpcSessionId)
@@ -3628,7 +3632,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
 
       if (!activeOpcSessionId) {
-        const connectResult = await window.opencodeOps.connect(worktree.path, sessionId)
+        const connectResult = unwrapEnvelope(
+          await window.opencodeOps.connect(worktree.path, sessionId)
+        )
         if (!connectResult.success || !connectResult.sessionId) {
           throw new Error(connectResult.error || 'Failed to connect')
         }
@@ -3639,15 +3645,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
         setRevertMessageID(null)
         if (!existingOpcSessionId) {
-          await window.db.session.update(sessionId, {
+          await db.session.update(sessionId, {
             opencode_session_id: connectResult.sessionId
           })
         }
       }
 
-      const transcriptResult = await window.opencodeOps.getMessages(
-        worktree.path,
-        activeOpcSessionId
+      const transcriptResult = unwrapEnvelope(
+        await window.opencodeOps.getMessages(worktree.path, activeOpcSessionId)
       )
       if (!transcriptResult.success) {
         console.warn('Retry transcript load from OpenCode failed:', transcriptResult.error)
@@ -3682,7 +3687,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const handleQuestionReply = useCallback(
     async (requestId: string, answers: string[][]) => {
       try {
-        await window.opencodeOps.questionReply(requestId, answers, worktreePath || undefined)
+        unwrapEnvelope(
+          await window.opencodeOps.questionReply(requestId, answers, worktreePath || undefined)
+        )
       } catch (err) {
         console.error('Failed to reply to question:', err)
         toast.error('Failed to send answer')
@@ -3695,7 +3702,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const handleQuestionReject = useCallback(
     async (requestId: string) => {
       try {
-        await window.opencodeOps.questionReject(requestId, worktreePath || undefined)
+        unwrapEnvelope(
+          await window.opencodeOps.questionReject(requestId, worktreePath || undefined)
+        )
       } catch (err) {
         console.error('Failed to reject question:', err)
         toast.error('Failed to dismiss question')
@@ -3708,11 +3717,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
   const handlePermissionReply = useCallback(
     async (requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => {
       try {
-        await window.opencodeOps.permissionReply(
-          requestId,
-          reply,
-          worktreePath || undefined,
-          message
+        unwrapEnvelope(
+          await window.opencodeOps.permissionReply(
+            requestId,
+            reply,
+            worktreePath || undefined,
+            message
+          )
         )
       } catch (err) {
         console.error('Failed to reply to permission:', err)
@@ -3732,13 +3743,15 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       patterns?: string[]
     ) => {
       try {
-        await window.opencodeOps.commandApprovalReply(
-          requestId,
-          approved,
-          remember,
-          pattern,
-          worktreePath || undefined,
-          patterns
+        unwrapEnvelope(
+          await window.opencodeOps.commandApprovalReply(
+            requestId,
+            approved,
+            remember,
+            pattern,
+            worktreePath || undefined,
+            patterns
+          )
         )
         // Remove from store after sending reply
         useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
@@ -3754,9 +3767,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     if (sessionRecord?.agent_sdk === 'codex') {
       const durableState = await loadCodexDurableState(sessionId)
       if (worktreePath && opencodeSessionId) {
-        const transcriptResult = await window.opencodeOps.getMessages(
-          worktreePath,
-          opencodeSessionId
+        const transcriptResult = unwrapEnvelope(
+          await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
         )
         if (transcriptResult.success) {
           const isIdle = !isStreamingRef.current
@@ -3781,7 +3793,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
     if (!worktreePath || !opencodeSessionId) return false
 
-    const transcriptResult = await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+    const transcriptResult = unwrapEnvelope(
+      await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+    )
     if (!transcriptResult.success) {
       console.warn('Failed to refresh OpenCode transcript:', transcriptResult.error)
       return false
@@ -3799,7 +3813,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     if (!worktreePath || !opencodeSessionId) return
 
     const durableState = await loadCodexDurableState(sessionId)
-    const transcriptResult = await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+    const transcriptResult = unwrapEnvelope(
+      await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+    )
     if (!transcriptResult.success) return
 
     const liveMessages = mergeCodexLiveAndDurableMessages(
@@ -4128,7 +4144,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       steeringGuardRef.current = true
       setSteeringMessageId(messageId)
       try {
-        const result = await window.opencodeOps?.steer?.(worktreePath, opencodeSessionId, content)
+        const result = unwrapEnvelope(
+          await window.opencodeOps?.steer?.(worktreePath, opencodeSessionId, content)
+        )
         if (result?.success) {
           setQueuedMessages((prev) => prev.filter((msg) => msg.id !== messageId))
           const anchorAssistantMessageId = codexStreamingMessageIdRef.current
@@ -4185,7 +4203,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const sourceSession = sessionRecord ?? (await window.db.session.get(sessionId))
+      const sourceSession = sessionRecord ?? (await db.session.get(sessionId))
       if (!sourceSession) {
         toast.error('Session is not ready to fork yet')
         return
@@ -4210,10 +4228,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       setForkingMessageId(message.id)
 
       try {
-        const forkResult = await window.opencodeOps.fork(
-          worktreePath,
-          opencodeSessionId,
-          cutoffMessage?.id
+        const forkResult = unwrapEnvelope(
+          await window.opencodeOps.fork(worktreePath, opencodeSessionId, cutoffMessage?.id)
         )
 
         if (!forkResult.success || !forkResult.sessionId) {
@@ -4221,7 +4237,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
 
         const fallbackForkName = sourceSession.name ? `${sourceSession.name} (fork)` : null
-        const forkedSession = await window.db.session.create({
+        const forkedSession = await db.session.create({
           worktree_id: targetWorktreeId,
           project_id: sourceSession.project_id,
           name: fallbackForkName,
@@ -4252,7 +4268,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         setInputValue('')
         inputValueRef.current = ''
         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-        window.db.session.updateDraft(sessionId, null)
+        db.session.updateDraft(sessionId, null)
         await runBashCommand(command, worktreePath)
         return
       }
@@ -4281,11 +4297,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           setHistoryIndex(null)
           savedDraftRef.current = ''
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          window.db.session.updateDraft(sessionId, null)
+          db.session.updateDraft(sessionId, null)
 
           try {
             if (commandName === 'undo') {
-              const result = await window.opencodeOps.undo(worktreePath, opencodeSessionId)
+              const result = unwrapEnvelope(
+                await window.opencodeOps.undo(worktreePath, opencodeSessionId)
+              )
               if (!result.success) {
                 toast.error(result.error || 'Nothing to undo')
                 return
@@ -4305,7 +4323,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                 toast.error('Redo is not supported for this session type')
                 return
               }
-              const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
+              const result = unwrapEnvelope(
+                await window.opencodeOps.redo(worktreePath, opencodeSessionId)
+              )
               if (!result.success) {
                 toast.error(result.error || 'Nothing to redo')
                 return
@@ -4376,7 +4396,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           inputValueRef.current = ''
           fileMentions.clearMentions()
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          window.db.session.updateDraft(sessionId, null)
+          db.session.updateDraft(sessionId, null)
 
           // Set sending state
           hasFinalizedCurrentResponseRef.current = false
@@ -4443,12 +4463,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           useDiffCommentStore.getState().clearAttached()
 
           try {
-            const result = await window.opencodeOps.prompt(
-              worktreePath,
-              opencodeSessionId,
-              parts,
-              selectedModel,
-              codexPromptOptions
+            const result = unwrapEnvelope(
+              await window.opencodeOps.prompt(
+                worktreePath,
+                opencodeSessionId,
+                parts,
+                selectedModel,
+                codexPromptOptions
+              )
             )
 
             if (!result.success) {
@@ -4484,14 +4506,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         inputValueRef.current = ''
         fileMentions.clearMentions()
         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-        window.db.session.updateDraft(sessionId, null)
+        db.session.updateDraft(sessionId, null)
         return
       }
       setInputValue('')
       inputValueRef.current = ''
       fileMentions.clearMentions()
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-      window.db.session.updateDraft(sessionId, null)
+      db.session.updateDraft(sessionId, null)
 
       resetAutoScrollState()
 
@@ -4606,7 +4628,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           // Track which model is being used on this worktree
           if (requestModel && worktreeId) {
             useWorktreeStore.getState().updateWorktreeModel(worktreeId, requestModel)
-            window.db?.worktree
+            db?.worktree
               ?.updateModel({
                 worktreeId,
                 modelProviderId: requestModel.providerID,
@@ -4639,12 +4661,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setAttachments([])
               usePRReviewStore.getState().clearAttachments()
               useDiffCommentStore.getState().clearAttached()
-              const result = await window.opencodeOps.command(
-                worktreePath,
-                opencodeSessionId,
-                commandName,
-                commandArgs,
-                requestModel
+              const result = unwrapEnvelope(
+                await window.opencodeOps.command(
+                  worktreePath,
+                  opencodeSessionId,
+                  commandName,
+                  commandArgs,
+                  requestModel
+                )
               )
               if (!result.success) {
                 console.error('Failed to send command:', result.error)
@@ -4677,12 +4701,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
               setAttachments([])
               usePRReviewStore.getState().clearAttachments()
               useDiffCommentStore.getState().clearAttached()
-              const result = await window.opencodeOps.prompt(
-                worktreePath,
-                opencodeSessionId,
-                parts,
-                requestModel,
-                codexPromptOptions
+              const result = unwrapEnvelope(
+                await window.opencodeOps.prompt(
+                  worktreePath,
+                  opencodeSessionId,
+                  parts,
+                  requestModel,
+                  codexPromptOptions
+                )
               )
               if (!result.success) {
                 console.error('Failed to send prompt to OpenCode:', result.error)
@@ -4719,12 +4745,14 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
             setAttachments([])
             usePRReviewStore.getState().clearAttachments()
             useDiffCommentStore.getState().clearAttached()
-            const result = await window.opencodeOps.prompt(
-              worktreePath,
-              opencodeSessionId,
-              parts,
-              requestModel,
-              codexPromptOptions
+            const result = unwrapEnvelope(
+              await window.opencodeOps.prompt(
+                worktreePath,
+                opencodeSessionId,
+                parts,
+                requestModel,
+                codexPromptOptions
+              )
             )
             if (!result.success) {
               console.error('Failed to send prompt to OpenCode:', result.error)
@@ -4816,10 +4844,12 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       try {
         // Approve first (unblocks the SDK), then update frontend state.
-        const result = await window.opencodeOps.planApprove(
-          worktreePath,
-          sessionId,
-          pendingBeforeAction.requestId
+        const result = unwrapEnvelope(
+          await window.opencodeOps.planApprove(
+            worktreePath,
+            sessionId,
+            pendingBeforeAction.requestId
+          )
         )
         if (!result.success) {
           toast.error(`Plan approve failed: ${result.error ?? 'unknown'}`)
@@ -4910,11 +4940,13 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       try {
         // Reject first (unblocks the SDK with feedback), then clear frontend state
-        const result = await window.opencodeOps.planReject(
-          worktreePath,
-          sessionId,
-          feedback,
-          pendingBeforeAction.requestId
+        const result = unwrapEnvelope(
+          await window.opencodeOps.planReject(
+            worktreePath,
+            sessionId,
+            feedback,
+            pendingBeforeAction.requestId
+          )
         )
         if (!result.success) {
           toast.error(`Plan reject failed: ${result.error ?? 'unknown'}`)
@@ -4976,7 +5008,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       // Abort the original backend session so it stops spinning
       if (worktreePath && opencodeSessionId) {
         useCommandApprovalStore.getState().clearSession(sessionId)
-        await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+        unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opencodeSessionId))
       }
 
       if (connectionId) {
@@ -5076,7 +5108,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // Abort the original backend session so it stops spinning
     if (worktreePath && opencodeSessionId) {
       useCommandApprovalStore.getState().clearSession(sessionId)
-      await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+      unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opencodeSessionId))
     }
 
     if (connectionId) {
@@ -5183,7 +5215,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     // Abort the original backend session so it stops spinning
     if (worktreePath && opencodeSessionId) {
       useCommandApprovalStore.getState().clearSession(sessionId)
-      await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+      unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opencodeSessionId))
     }
 
     // 2. Create session in the same worktree (no duplication)
@@ -5271,7 +5303,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     if (!worktreePath || !opencodeSessionId) return
     // Clear any pending command approvals — the abort will auto-deny them on the main process side
     useCommandApprovalStore.getState().clearSession(sessionId)
-    await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+    unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opencodeSessionId))
   }, [isBashRunning, abortBash, worktreePath, opencodeSessionId, sessionId])
 
   // Handle keyboard shortcuts
@@ -5309,7 +5341,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
           setInputValue('')
           inputValueRef.current = ''
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          window.db.session.updateDraft(sessionId, null)
+          db.session.updateDraft(sessionId, null)
           return
         }
         handleSend()
@@ -5471,7 +5503,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       // Debounce draft persistence (3 seconds)
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       draftTimerRef.current = setTimeout(() => {
-        window.db.session.updateDraft(sessionId, value || null)
+        db.session.updateDraft(sessionId, value || null)
       }, 3000)
     },
     [sessionId, slashDismissed, fileMentionsOpen, fileMentionCount, updateFileMentions]
@@ -5575,7 +5607,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       if (useSessionStore.getState().activeSessionId !== sessionId) return
       if (!worktreePath || !opencodeSessionId) return
       try {
-        const result = await window.opencodeOps.undo(worktreePath, opencodeSessionId)
+        const result = unwrapEnvelope(
+          await window.opencodeOps.undo(worktreePath, opencodeSessionId)
+        )
         if (!result.success) {
           toast.error(result.error || 'Nothing to undo')
           return
@@ -5602,7 +5636,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
       try {
-        const result = await window.opencodeOps.redo(worktreePath, opencodeSessionId)
+        const result = unwrapEnvelope(
+          await window.opencodeOps.redo(worktreePath, opencodeSessionId)
+        )
         if (!result.success) {
           toast.error(result.error || 'Nothing to redo')
           return
@@ -6220,7 +6256,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
                         setInputValue('')
                         inputValueRef.current = ''
                         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-                        window.db.session.updateDraft(sessionId, null)
+                        db.session.updateDraft(sessionId, null)
                         return
                       }
                       void handleSend()

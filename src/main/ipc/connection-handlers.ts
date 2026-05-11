@@ -1,4 +1,6 @@
-import { ipcMain } from 'electron'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
+
 import { openPathWithPreferredEditor, openPathWithPreferredTerminal } from './settings-handlers'
 import { createLogger } from '../services'
 import { telemetryService } from '../services/telemetry-service'
@@ -12,111 +14,157 @@ import {
 } from '../services/connection-ops'
 import { getDatabase } from '../db'
 import type { ConnectionWithMembers } from '../db/types'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'ConnectionHandlers' })
+
+class ConnectionHandlerFailed extends Data.TaggedError('ConnectionHandlerFailed')<{
+  readonly operation: string
+  readonly reason: string
+  readonly message: string
+}> {}
+
+const connectionFailed = (operation: string, cause: unknown): ConnectionHandlerFailed => {
+  const reason = cause instanceof Error ? cause.message : String(cause)
+  return new ConnectionHandlerFailed({ operation, reason, message: reason })
+}
+
+const connectionIdSchema = z.object({ connectionId: z.string().min(1) })
+const connectionPathSchema = z.object({ connectionPath: z.string().min(1) })
+const connectionMemberSchema = z.object({
+  connectionId: z.string().min(1),
+  worktreeId: z.string().min(1)
+})
 
 export function registerConnectionHandlers(): void {
   log.info('Registering connection handlers')
 
   // Create a new connection from a set of worktree IDs
-  ipcMain.handle(
+  defineHandler(
     'connection:create',
-    async (
-      _event,
-      { worktreeIds }: { worktreeIds: string[] }
-    ): Promise<{
-      success: boolean
-      connection?: ConnectionWithMembers
-      error?: string
-    }> => {
-      const db = getDatabase()
-      const result = createConnectionOp(db, worktreeIds)
-      if (result.success) {
-        telemetryService.track('connection_created')
-      }
-      return result
-    }
+    z.object({ worktreeIds: z.array(z.string().min(1)) }),
+    ({
+      worktreeIds
+    }): Effect.Effect<
+      {
+        success: boolean
+        connection?: ConnectionWithMembers
+        error?: string
+      },
+      ConnectionHandlerFailed
+    > =>
+      Effect.tryPromise({
+        try: async () => {
+          const db = getDatabase()
+          return createConnectionOp(db, worktreeIds)
+        },
+        catch: (error) => {
+          log.error(
+            'Create connection failed',
+            error instanceof Error ? error : new Error(String(error))
+          )
+          return connectionFailed('connection:create', error)
+        }
+      }).pipe(
+        Effect.tap((result) =>
+          result.success
+            ? Effect.sync(() => telemetryService.track('connection_created'))
+            : Effect.void
+        )
+      )
   )
 
   // Rename a connection (set or clear custom_name)
-  ipcMain.handle(
+  defineHandler(
     'connection:rename',
-    async (
-      _event,
-      { connectionId, customName }: { connectionId: string; customName: string | null }
-    ): Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }> => {
-      const db = getDatabase()
-      return renameConnectionOp(db, connectionId, customName)
-    }
+    z.object({ connectionId: z.string().min(1), customName: z.string().nullable() }),
+    ({ connectionId, customName }) =>
+      Effect.tryPromise({
+        try: async () => {
+          const db = getDatabase()
+          return renameConnectionOp(db, connectionId, customName)
+        },
+        catch: (error) => connectionFailed('connection:rename', error)
+      })
   )
 
   // Delete a connection (filesystem + DB)
-  ipcMain.handle(
-    'connection:delete',
-    async (
-      _event,
-      { connectionId }: { connectionId: string }
-    ): Promise<{ success: boolean; error?: string }> => {
-      const db = getDatabase()
-      return deleteConnectionOp(db, connectionId)
-    }
+  defineHandler('connection:delete', connectionIdSchema, ({ connectionId }) =>
+    Effect.tryPromise({
+      try: async () => {
+        const db = getDatabase()
+        return deleteConnectionOp(db, connectionId)
+      },
+      catch: (error) => connectionFailed('connection:delete', error)
+    })
   )
 
   // Add a member (worktree) to an existing connection
-  ipcMain.handle(
+  defineHandler(
     'connection:addMember',
-    async (
-      _event,
-      { connectionId, worktreeId }: { connectionId: string; worktreeId: string }
-    ): Promise<{
-      success: boolean
-      member?: ConnectionWithMembers['members'][0]
-      error?: string
-    }> => {
-      const db = getDatabase()
-      return addConnectionMemberOp(db, connectionId, worktreeId)
-    }
+    connectionMemberSchema,
+    ({
+      connectionId,
+      worktreeId
+    }): Effect.Effect<
+      {
+        success: boolean
+        member?: ConnectionWithMembers['members'][0]
+        error?: string
+      },
+      ConnectionHandlerFailed
+    > =>
+      Effect.tryPromise({
+        try: async () => {
+          const db = getDatabase()
+          return addConnectionMemberOp(db, connectionId, worktreeId)
+        },
+        catch: (error) => connectionFailed('connection:addMember', error)
+      })
   )
 
   // Remove a member from a connection. If last member, delete the entire connection.
-  ipcMain.handle(
-    'connection:removeMember',
-    async (
-      _event,
-      { connectionId, worktreeId }: { connectionId: string; worktreeId: string }
-    ): Promise<{ success: boolean; connectionDeleted?: boolean; error?: string }> => {
-      const db = getDatabase()
-      return removeConnectionMemberOp(db, connectionId, worktreeId)
-    }
+  defineHandler('connection:removeMember', connectionMemberSchema, ({ connectionId, worktreeId }) =>
+    Effect.tryPromise({
+      try: async () => {
+        const db = getDatabase()
+        return removeConnectionMemberOp(db, connectionId, worktreeId)
+      },
+      catch: (error) => connectionFailed('connection:removeMember', error)
+    })
   )
 
   // Get all active connections with enriched member data
-  ipcMain.handle(
+  defineHandler(
     'connection:getAll',
-    async (): Promise<{
-      success: boolean
-      connections?: ConnectionWithMembers[]
-      error?: string
-    }> => {
-      try {
-        const db = getDatabase()
-        const connections = db.getAllConnections()
-        return { success: true, connections }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        log.error('Get all connections failed', error instanceof Error ? error : new Error(message))
-        return { success: false, error: message }
-      }
-    }
+    z.tuple([]),
+    (): Effect.Effect<
+      {
+        success: boolean
+        connections?: ConnectionWithMembers[]
+        error?: string
+      },
+      never
+    > =>
+      Effect.sync(() => {
+        try {
+          const db = getDatabase()
+          const connections = db.getAllConnections()
+          return { success: true, connections }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          log.error(
+            'Get all connections failed',
+            error instanceof Error ? error : new Error(message)
+          )
+          return { success: false, error: message }
+        }
+      })
   )
 
   // Get a single connection with enriched member data
-  ipcMain.handle(
-    'connection:get',
-    async (
-      _event,
-      { connectionId }: { connectionId: string }
-    ): Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }> => {
+  defineHandler('connection:get', connectionIdSchema, ({ connectionId }) =>
+    Effect.sync(() => {
       try {
         const db = getDatabase()
         const connection = db.getConnection(connectionId)
@@ -129,60 +177,63 @@ export function registerConnectionHandlers(): void {
         log.error('Get connection failed', error instanceof Error ? error : new Error(message))
         return { success: false, error: message }
       }
-    }
+    })
   )
 
   // Open connection directory in user's preferred terminal (from Settings)
-  ipcMain.handle(
-    'connection:openInTerminal',
-    async (
-      _event,
-      { connectionPath }: { connectionPath: string }
-    ): Promise<{ success: boolean; error?: string }> =>
-      openPathWithPreferredTerminal(connectionPath)
+  defineHandler('connection:openInTerminal', connectionPathSchema, ({ connectionPath }) =>
+    Effect.tryPromise({
+      try: () => openPathWithPreferredTerminal(connectionPath),
+      catch: (error) => connectionFailed('connection:openInTerminal', error)
+    })
   )
 
   // Open connection directory in user's preferred editor (from Settings)
-  ipcMain.handle(
-    'connection:openInEditor',
-    async (
-      _event,
-      { connectionPath }: { connectionPath: string }
-    ): Promise<{ success: boolean; error?: string }> => openPathWithPreferredEditor(connectionPath)
+  defineHandler('connection:openInEditor', connectionPathSchema, ({ connectionPath }) =>
+    Effect.tryPromise({
+      try: () => openPathWithPreferredEditor(connectionPath),
+      catch: (error) => connectionFailed('connection:openInEditor', error)
+    })
   )
 
   // Pin / unpin a connection
-  ipcMain.handle(
+  defineHandler(
     'connection:setPinned',
-    (
-      _event,
-      { connectionId, pinned }: { connectionId: string; pinned: boolean }
-    ): { success: boolean; error?: string } => {
-      try {
-        getDatabase().updateConnection(connectionId, { pinned: pinned ? 1 : 0 })
-        return { success: true }
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
+    z.object({ connectionId: z.string().min(1), pinned: z.boolean() }),
+    ({ connectionId, pinned }) =>
+      Effect.sync(() => {
+        try {
+          getDatabase().updateConnection(connectionId, { pinned: pinned ? 1 : 0 })
+          return { success: true }
+        } catch (error) {
+          return { success: false, error: error instanceof Error ? error.message : String(error) }
+        }
+      })
   )
 
   // Get all pinned connections with enriched member data
-  ipcMain.handle('connection:getPinned', () => {
-    const db = getDatabase()
-    return db.getPinnedConnections()
-  })
+  defineHandler('connection:getPinned', z.tuple([]), () =>
+    Effect.try({
+      try: () => {
+        const db = getDatabase()
+        return db.getPinnedConnections()
+      },
+      catch: (error) => connectionFailed('connection:getPinned', error)
+    })
+  )
 
   // Remove a worktree from ALL connections it belongs to.
   // Used by the archive cascade -- when a worktree is archived, clean up its connections.
-  ipcMain.handle(
+  defineHandler(
     'connection:removeWorktreeFromAll',
-    async (
-      _event,
-      { worktreeId }: { worktreeId: string }
-    ): Promise<{ success: boolean; error?: string }> => {
-      const db = getDatabase()
-      return removeWorktreeFromAllConnectionsOp(db, worktreeId)
-    }
+    z.object({ worktreeId: z.string().min(1) }),
+    ({ worktreeId }) =>
+      Effect.tryPromise({
+        try: async () => {
+          const db = getDatabase()
+          return removeWorktreeFromAllConnectionsOp(db, worktreeId)
+        },
+        catch: (error) => connectionFailed('connection:removeWorktreeFromAll', error)
+      })
   )
 }

@@ -6,6 +6,9 @@ import {
   detectConflicts,
   formatBinding
 } from '@/lib/keyboard-shortcuts'
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 const SHORTCUTS_SETTING_KEY = 'keyboard_shortcuts'
 
@@ -96,8 +99,8 @@ export const useShortcutStore = create<ShortcutState>()(
 
       loadFromDatabase: async () => {
         try {
-          if (typeof window !== 'undefined' && window.db?.setting) {
-            const value = await window.db.setting.get(SHORTCUTS_SETTING_KEY)
+          if (typeof window !== 'undefined' && db?.setting) {
+            const value = await db.setting.get(SHORTCUTS_SETTING_KEY)
             if (value) {
               const parsed = JSON.parse(value) as Record<string, KeyBinding>
               set({ customBindings: parsed })
@@ -121,8 +124,8 @@ export const useShortcutStore = create<ShortcutState>()(
 // Save to SQLite database (async, non-blocking)
 async function saveToDatabase(bindings: Record<string, KeyBinding>): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && window.db?.setting) {
-      await window.db.setting.set(SHORTCUTS_SETTING_KEY, JSON.stringify(bindings))
+    if (typeof window !== 'undefined' && db?.setting) {
+      await db.setting.set(SHORTCUTS_SETTING_KEY, JSON.stringify(bindings))
     }
   } catch (error) {
     console.error('Failed to save shortcuts to database:', error)

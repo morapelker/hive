@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { revealLabel } from '@/lib/platform'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
   ChevronRight,
   Plus,
@@ -202,11 +203,11 @@ export function ProjectItem({
   }
 
   const handleOpenInFinder = async (): Promise<void> => {
-    await window.projectOps.showInFolder(project.path)
+    unwrapEnvelope(await window.projectOps.showInFolder(project.path))
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    await window.projectOps.copyToClipboard(project.path)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(project.path))
     toast.success('Path copied to clipboard')
   }
 
@@ -219,7 +220,7 @@ export function ProjectItem({
     if (isCreatingWorktree) return
 
     // Check if repo has any commits before attempting worktree creation
-    const hasCommits = await window.worktreeOps.hasCommits(project.path)
+    const hasCommits = unwrapEnvelope(await window.worktreeOps.hasCommits(project.path))
     if (!hasCommits) {
       setNoCommitsDialogOpen(true)
       return
@@ -287,17 +288,20 @@ export function ProjectItem({
       setBranchPickerOpen(false)
 
       // Show loading toast with appropriate progress message based on auto-pull setting
-      const loadingToastId = autoPullBeforeWorktree && !prNumber
-        ? toast.loading('Pulling latest changes from origin...')
-        : toast.loading('Creating worktree...')
+      const loadingToastId =
+        autoPullBeforeWorktree && !prNumber
+          ? toast.loading('Pulling latest changes from origin...')
+          : toast.loading('Creating worktree...')
 
       try {
-        const result = await window.worktreeOps.createFromBranch(
-          project.id,
-          project.path,
-          project.name,
-          branchName,
-          prNumber
+        const result = unwrapEnvelope(
+          await window.worktreeOps.createFromBranch(
+            project.id,
+            project.path,
+            project.name,
+            branchName,
+            prNumber
+          )
         )
 
         // Dismiss loading toast
@@ -382,7 +386,11 @@ export function ProjectItem({
             </Button>
 
             {/* Language Icon */}
-            <LanguageIcon language={project.language} customIcon={project.custom_icon} detectedIcon={project.detected_icon} />
+            <LanguageIcon
+              language={project.language}
+              customIcon={project.custom_icon}
+              detectedIcon={project.detected_icon}
+            />
 
             {/* Project Name */}
             {isEditing ? (

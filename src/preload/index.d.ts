@@ -1,15 +1,19 @@
-import type {
-  PetManifest,
-  PetPosition,
-  PetSettings,
-  PetStatusPayload
-} from '../shared/types/pet'
+import type { PetManifest, PetPosition, PetSettings, PetStatusPayload } from '../shared/types/pet'
 import type {
   TelegramConfig,
   TelegramDiscoveredChat,
   TelegramForwardingStatus,
   TelegramMode
 } from '../shared/types/telegram'
+import type { Envelope } from '@shared/types/ipc-envelope'
+
+type Enveloped<T> = {
+  [K in keyof T]: T[K] extends (...args: infer Args) => Promise<infer Result>
+    ? (...args: Args) => Promise<Envelope<Result>>
+    : T[K] extends (...args: infer Args) => infer Result
+      ? (...args: Args) => Result
+      : Enveloped<T[K]>
+}
 
 // Database types for renderer
 interface Connection {
@@ -50,6 +54,7 @@ interface Project {
   tags: string | null
   language: string | null
   custom_icon: string | null
+  detected_icon: string | null
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
@@ -92,7 +97,8 @@ interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-  mode: 'build' | 'plan'
+  mode: 'build' | 'plan' | 'super-plan'
+  session_type: 'default' | 'board-assistant'
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -171,6 +177,8 @@ interface SessionSearchOptions {
 }
 
 type KanbanTicketColumn = 'todo' | 'in_progress' | 'review' | 'done'
+type KanbanTicketMode = 'build' | 'plan' | 'super-plan'
+type TicketMark = 'common' | 'rare' | 'epic' | 'legendary'
 
 interface KanbanTicket {
   id: string
@@ -182,17 +190,26 @@ interface KanbanTicket {
   sort_order: number
   current_session_id: string | null
   worktree_id: string | null
-  mode: 'build' | 'plan' | null
+  mode: KanbanTicketMode | null
   plan_ready: boolean
   created_at: string
   updated_at: string
   archived_at: string | null
+  external_provider: string | null
+  external_id: string | null
+  external_url: string | null
   github_pr_number: number | null
   github_pr_url: string | null
-  mark: string | null
+  mark: TicketMark | null
+  total_tokens: number
+  pending_launch_config: string | null
+  goal_mode: boolean
+  goal_success_criteria: string | null
+  note: string | null
 }
 
 interface KanbanTicketCreate {
+  id?: string
   project_id: string
   title: string
   description?: string | null
@@ -201,10 +218,14 @@ interface KanbanTicketCreate {
   sort_order?: number
   current_session_id?: string | null
   worktree_id?: string | null
-  mode?: 'build' | 'plan' | null
+  mode?: KanbanTicketMode | null
   plan_ready?: boolean
+  external_provider?: string | null
+  external_id?: string | null
+  external_url?: string | null
   github_pr_number?: number | null
   github_pr_url?: string | null
+  mark?: TicketMark | null
 }
 
 interface KanbanTicketUpdate {
@@ -215,11 +236,15 @@ interface KanbanTicketUpdate {
   sort_order?: number
   current_session_id?: string | null
   worktree_id?: string | null
-  mode?: 'build' | 'plan' | null
+  mode?: KanbanTicketMode | null
   plan_ready?: boolean
   github_pr_number?: number | null
   github_pr_url?: string | null
-  mark?: string | null
+  mark?: TicketMark | null
+  pending_launch_config?: string | null
+  goal_mode?: boolean
+  goal_success_criteria?: string | null
+  note?: string | null
 }
 
 interface KanbanTicketBatchCreateItem {
@@ -232,14 +257,14 @@ interface KanbanTicketBatchCreateItem {
   sort_order?: number
   current_session_id?: string | null
   worktree_id?: string | null
-  mode?: 'build' | 'plan' | 'super-plan' | null
+  mode?: KanbanTicketMode | null
   plan_ready?: boolean
   external_provider?: string | null
   external_id?: string | null
   external_url?: string | null
   github_pr_number?: number | null
   github_pr_url?: string | null
-  mark?: string | null
+  mark?: TicketMark | null
   depends_on?: string[]
 }
 
@@ -292,9 +317,22 @@ declare global {
 
   // Bash stream event (sent from main process via 'bash:stream' channel)
   type BashStreamEvent =
-    | { type: 'start'; sessionId: string; runId: string; command: string; cwd: string; startedAt: number }
+    | {
+        type: 'start'
+        sessionId: string
+        runId: string
+        command: string
+        cwd: string
+        startedAt: number
+      }
     | { type: 'output'; sessionId: string; runId: string; data: string }
-    | { type: 'end'; sessionId: string; runId: string; status: 'exited' | 'killed' | 'truncated' | 'error'; exitCode?: number }
+    | {
+        type: 'end'
+        sessionId: string
+        runId: string
+        status: 'exited' | 'killed' | 'truncated' | 'error'
+        exitCode?: number
+      }
 
   interface DiffComment {
     id: string
@@ -311,9 +349,8 @@ declare global {
     updated_at: string
   }
 
-
   interface Window {
-    db: {
+    db: Enveloped<{
       setting: {
         get: (key: string) => Promise<string | null>
         set: (key: string, value: string) => Promise<boolean>
@@ -338,6 +375,7 @@ declare global {
             tags?: string[] | null
             language?: string | null
             custom_icon?: string | null
+            detected_icon?: string | null
             setup_script?: string | null
             run_script?: string | null
             archive_script?: string | null
@@ -396,9 +434,7 @@ declare global {
           prNumber: number,
           prUrl: string
         ) => Promise<{ success: boolean; error?: string }>
-        detachPR: (
-          worktreeId: string
-        ) => Promise<{ success: boolean; error?: string }>
+        detachPR: (worktreeId: string) => Promise<{ success: boolean; error?: string }>
         setPinned: (
           worktreeId: string,
           pinned: boolean
@@ -413,10 +449,12 @@ declare global {
           name?: string | null
           opencode_session_id?: string | null
           agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+          mode?: 'build' | 'plan' | 'super-plan'
           session_type?: 'default' | 'board-assistant'
           model_provider_id?: string | null
           model_id?: string | null
           model_variant?: string | null
+          pinned_to_board?: boolean
         }) => Promise<Session>
         get: (id: string) => Promise<Session | null>
         getByWorktree: (worktreeId: string) => Promise<Session[]>
@@ -429,12 +467,14 @@ declare global {
             status?: 'active' | 'completed' | 'error'
             opencode_session_id?: string | null
             agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-            mode?: 'build' | 'plan'
+            mode?: 'build' | 'plan' | 'super-plan'
+            session_type?: 'default' | 'board-assistant'
             model_provider_id?: string | null
             model_id?: string | null
             model_variant?: string | null
             updated_at?: string
             completed_at?: string | null
+            pinned_to_board?: boolean
           }
         ) => Promise<Session | null>
         delete: (id: string) => Promise<boolean>
@@ -484,15 +524,18 @@ declare global {
           body: string
         }) => Promise<DiffComment>
         list: (worktreeId: string) => Promise<DiffComment[]>
-        update: (id: string, data: {
-          body?: string
-          line_start?: number
-          line_end?: number | null
-          anchor_text?: string | null
-          anchor_context_before?: string | null
-          anchor_context_after?: string | null
-          is_outdated?: boolean
-        }) => Promise<DiffComment | null>
+        update: (
+          id: string,
+          data: {
+            body?: string
+            line_start?: number
+            line_end?: number | null
+            anchor_text?: string | null
+            anchor_context_before?: string | null
+            anchor_context_after?: string | null
+            is_outdated?: boolean
+          }
+        ) => Promise<DiffComment | null>
         setOutdated: (id: string, isOutdated: boolean) => Promise<DiffComment | null>
         delete: (id: string) => Promise<boolean>
         clearAll: (worktreeId: string) => Promise<number>
@@ -500,79 +543,97 @@ declare global {
       schemaVersion: () => Promise<number>
       tableExists: (tableName: string) => Promise<boolean>
       getIndexes: () => Promise<{ name: string; tbl_name: string }[]>
-    }
+    }>
     projectOps: {
-      openDirectoryDialog: () => Promise<string | null>
-      isGitRepository: (path: string) => Promise<boolean>
-      validateProject: (path: string) => Promise<{
-        success: boolean
-        path?: string
-        name?: string
-        error?: string
-      }>
-      showInFolder: (path: string) => Promise<void>
-      openPath: (path: string) => Promise<string>
-      copyToClipboard: (text: string) => Promise<void>
-      readFromClipboard: () => Promise<string>
-      detectLanguage: (projectPath: string) => Promise<string | null>
-      findXcworkspace: (projectPath: string) => Promise<string | null>
-      isAndroidProject: (projectPath: string) => Promise<boolean>
-      loadLanguageIcons: () => Promise<Record<string, string>>
-      initRepository: (path: string) => Promise<{ success: boolean; error?: string }>
-      pickProjectIcon: (projectId: string) => Promise<{
-        success: boolean
-        filename?: string
-        error?: string
-      }>
-      removeProjectIcon: (projectId: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      getProjectIconPath: (filename: string) => Promise<string | null>
-      detectFavicon: (projectPath: string) => Promise<string | null>
-      getAbsoluteIconDataUrl: (absolutePath: string) => Promise<string | null>
+      openDirectoryDialog: () => Promise<Envelope<string | null>>
+      isGitRepository: (path: string) => Promise<Envelope<boolean>>
+      validateProject: (path: string) => Promise<
+        Envelope<{
+          success: boolean
+          path?: string
+          name?: string
+          error?: string
+        }>
+      >
+      showInFolder: (path: string) => Promise<Envelope<void>>
+      openPath: (path: string) => Promise<Envelope<string>>
+      copyToClipboard: (text: string) => Promise<Envelope<void>>
+      readFromClipboard: () => Promise<Envelope<string>>
+      detectLanguage: (projectPath: string) => Promise<Envelope<string | null>>
+      findXcworkspace: (projectPath: string) => Promise<Envelope<string | null>>
+      isAndroidProject: (projectPath: string) => Promise<Envelope<boolean>>
+      loadLanguageIcons: () => Promise<Envelope<Record<string, string>>>
+      initRepository: (path: string) => Promise<Envelope<{ success: boolean; error?: string }>>
+      pickProjectIcon: (projectId: string) => Promise<
+        Envelope<{
+          success: boolean
+          filename?: string
+          error?: string
+        }>
+      >
+      removeProjectIcon: (projectId: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      getProjectIconPath: (filename: string) => Promise<Envelope<string | null>>
+      detectFavicon: (projectPath: string) => Promise<Envelope<string | null>>
+      getAbsoluteIconDataUrl: (absolutePath: string) => Promise<Envelope<string | null>>
     }
     worktreeOps: {
-      hasCommits: (projectPath: string) => Promise<boolean>
-      create: (params: { projectId: string; projectPath: string; projectName: string }) => Promise<{
-        success: boolean
-        worktree?: Worktree
-        error?: string
-        pullInfo?: {
-          pulled: boolean
-          updated: boolean
-        }
-      }>
+      hasCommits: (projectPath: string) => Promise<Envelope<boolean>>
+      create: (params: { projectId: string; projectPath: string; projectName: string }) => Promise<
+        Envelope<{
+          success: boolean
+          worktree?: Worktree
+          error?: string
+          pullInfo?: {
+            pulled: boolean
+            updated: boolean
+          }
+        }>
+      >
       delete: (params: {
         worktreeId: string
         worktreePath: string
         branchName: string
         projectPath: string
         archive: boolean
-      }) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      sync: (params: { projectId: string; projectPath: string }) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      exists: (worktreePath: string) => Promise<boolean>
-      openInTerminal: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      openInEditor: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      getBranches: (projectPath: string) => Promise<{
-        success: boolean
-        branches?: string[]
-        currentBranch?: string
-        error?: string
-      }>
-      branchExists: (projectPath: string, branchName: string) => Promise<boolean>
+      }) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      sync: (params: { projectId: string; projectPath: string }) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      exists: (worktreePath: string) => Promise<Envelope<boolean>>
+      openInTerminal: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      openInEditor: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      getBranches: (projectPath: string) => Promise<
+        Envelope<{
+          success: boolean
+          branches?: string[]
+          currentBranch?: string
+          error?: string
+        }>
+      >
+      branchExists: (projectPath: string, branchName: string) => Promise<Envelope<boolean>>
       duplicate: (params: {
         projectId: string
         projectPath: string
@@ -580,17 +641,19 @@ declare global {
         sourceBranch: string
         sourceWorktreePath: string
         nameHint?: string
-      }) => Promise<{
-        success: boolean
-        worktree?: Worktree
-        error?: string
-      }>
+      }) => Promise<
+        Envelope<{
+          success: boolean
+          worktree?: Worktree
+          error?: string
+        }>
+      >
       renameBranch: (
         worktreeId: string,
         worktreePath: string,
         oldBranch: string,
         newBranch: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       createFromBranch: (
         projectId: string,
         projectPath: string,
@@ -598,28 +661,32 @@ declare global {
         branchName: string,
         prNumber?: number,
         nameHint?: string
-      ) => Promise<{
-        success: boolean
-        worktree?: Worktree
-        error?: string
-        pullInfo?: {
-          pulled: boolean
-          updated: boolean
-        }
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          worktree?: Worktree
+          error?: string
+          pullInfo?: {
+            pulled: boolean
+            updated: boolean
+          }
+        }>
+      >
       // Subscribe to branch-renamed events (auto-rename from main process)
       onBranchRenamed: (
         callback: (data: { worktreeId: string; newBranch: string }) => void
       ) => () => void
-      getContext: (worktreeId: string) => Promise<{
-        success: boolean
-        context?: string | null
-        error?: string
-      }>
+      getContext: (worktreeId: string) => Promise<
+        Envelope<{
+          success: boolean
+          context?: string | null
+          error?: string
+        }>
+      >
       updateContext: (
         worktreeId: string,
         context: string | null
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
     }
     systemOps: {
       getLogDir: () => Promise<string>
@@ -658,20 +725,22 @@ declare global {
       setSessionQueuedState: (sessionId: string, hasQueued: boolean) => Promise<void>
     }
     petOps: {
-      show: () => Promise<void>
-      hide: () => Promise<void>
+      show: () => Promise<Envelope<void>>
+      hide: () => Promise<Envelope<void>>
       publishStatus: (payload: PetStatusPayload) => void
       setIgnoreMouse: (ignore: boolean) => void
       beginPointerInteraction: () => void
       endPointerInteraction: () => void
       move: (position: PetPosition) => void
-      focusMain: (payload: { worktreeId: string | null }) => Promise<void>
-      getConfig: () => Promise<{
-        settings: PetSettings
-        position: PetPosition
-        manifest: PetManifest
-      }>
-      getCurrentStatus: () => Promise<PetStatusPayload>
+      focusMain: (payload: { worktreeId: string | null }) => Promise<Envelope<void>>
+      getConfig: () => Promise<
+        Envelope<{
+          settings: PetSettings
+          position: PetPosition
+          manifest: PetManifest
+        }>
+      >
+      getCurrentStatus: () => Promise<Envelope<PetStatusPayload>>
       updateSettings: (partial: Partial<PetSettings>) => void
       markHatched: () => void
       onStatus: (callback: (payload: PetStatusPayload) => void) => () => void
@@ -687,17 +756,19 @@ declare global {
       connect: (
         worktreePath: string,
         hiveSessionId: string
-      ) => Promise<{ success: boolean; sessionId?: string; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; sessionId?: string; error?: string }>>
       // Reconnect to existing OpenCode session
       reconnect: (
         worktreePath: string,
         opencodeSessionId: string,
         hiveSessionId: string
-      ) => Promise<{
-        success: boolean
-        sessionStatus?: 'idle' | 'busy' | 'retry'
-        revertMessageID?: string | null
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          sessionStatus?: 'idle' | 'busy' | 'retry'
+          revertMessageID?: string | null
+        }>
+      >
       // Send a prompt (response streams via onStream)
       // Accepts either a string message or a MessagePart[] array for rich content (text + file attachments)
       prompt: (
@@ -706,94 +777,102 @@ declare global {
         messageOrParts: string | MessagePart[],
         model?: { providerID: string; modelID: string; variant?: string },
         options?: { codexFastMode?: boolean }
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Abort a streaming session
       abort: (
         worktreePath: string,
         opencodeSessionId: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Steer a running Codex turn and return the inserted boundary metadata
       steer: (
         worktreePath: string,
         opencodeSessionId: string,
         message: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-        insertedMessageId?: string
-        nextAssistantMessageId?: string
-        turnId?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+          insertedMessageId?: string
+          nextAssistantMessageId?: string
+          turnId?: string
+        }>
+      >
       // Disconnect session (may kill server if last session for worktree)
       disconnect: (
         worktreePath: string,
         opencodeSessionId: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Get messages from an OpenCode session
       getMessages: (
         worktreePath: string,
         opencodeSessionId: string
-      ) => Promise<{ success: boolean; messages: unknown[]; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; messages: unknown[]; error?: string }>>
       // List available models from all configured providers
       listModels: (opts?: {
         agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-      }) => Promise<{
-        success: boolean
-        providers: Record<string, unknown>
-        error?: string
-      }>
+      }) => Promise<
+        Envelope<{
+          success: boolean
+          providers: Record<string, unknown>
+          error?: string
+        }>
+      >
       // Set the selected model for prompts
-      setModel: (model: {
-        providerID: string
-        modelID: string
-        variant?: string
-        agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-      }) => Promise<{ success: boolean; error?: string }>
+      setModel: (
+        model: {
+          providerID: string
+          modelID: string
+          variant?: string
+          agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+        } | null
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Get model info (name, context limit)
       modelInfo: (
         worktreePath: string,
         modelId: string,
         agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-      ) => Promise<{
-        success: boolean
-        model?: { id: string; name: string; limit: { context: number } }
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          model?: { id: string; name: string; limit: { context: number } }
+          error?: string
+        }>
+      >
       // Reply to a pending question from the AI
       questionReply: (
         requestId: string,
         answers: string[][],
         worktreePath?: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Reject/dismiss a pending question from the AI
       questionReject: (
         requestId: string,
         worktreePath?: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Approve a pending plan (ExitPlanMode) — unblocks the SDK to implement
       planApprove: (
         worktreePath: string,
         hiveSessionId: string,
         requestId?: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Reject a pending plan with user feedback — Claude will revise
       planReject: (
         worktreePath: string,
         hiveSessionId: string,
         feedback: string,
         requestId?: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Reply to a pending permission request (allow once, allow always, or reject)
       permissionReply: (
         requestId: string,
         reply: 'once' | 'always' | 'reject',
         worktreePath?: string,
         message?: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // List all pending permission requests
       permissionList: (
         worktreePath?: string
-      ) => Promise<{ success: boolean; permissions: PermissionRequest[]; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; permissions: PermissionRequest[]; error?: string }>>
       // Reply to a pending command approval request (approve or deny, optionally add to allowlist/blocklist)
       commandApprovalReply: (
         requestId: string,
@@ -802,33 +881,37 @@ declare global {
         pattern?: string,
         worktreePath?: string,
         patterns?: string[]
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Get session info (revert state)
       sessionInfo: (
         worktreePath: string,
         opencodeSessionId: string
-      ) => Promise<{
-        success: boolean
-        revertMessageID?: string | null
-        revertDiff?: string | null
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          revertMessageID?: string | null
+          revertDiff?: string | null
+          error?: string
+        }>
+      >
       // Undo the last assistant turn/message range
       undo: (
         worktreePath: string,
         opencodeSessionId: string
-      ) => Promise<{
-        success: boolean
-        revertMessageID?: string
-        restoredPrompt?: string
-        revertDiff?: string | null
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          revertMessageID?: string
+          restoredPrompt?: string
+          revertDiff?: string | null
+          error?: string
+        }>
+      >
       // Redo the last undone message range
       redo: (
         worktreePath: string,
         opencodeSessionId: string
-      ) => Promise<{ success: boolean; revertMessageID?: string | null; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; revertMessageID?: string | null; error?: string }>>
       // Send a slash command to a session via the SDK command endpoint
       command: (
         worktreePath: string,
@@ -836,59 +919,63 @@ declare global {
         command: string,
         args: string,
         model?: { providerID: string; modelID: string; variant?: string }
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // List available slash commands from the SDK
       commands: (
         worktreePath: string,
         sessionId?: string
-      ) => Promise<{ success: boolean; commands: OpenCodeCommand[]; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; commands: OpenCodeCommand[]; error?: string }>>
       // Rename a session's title via the OpenCode PATCH API
       renameSession: (
         opencodeSessionId: string,
         title: string,
         worktreePath?: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Get SDK capabilities for the current session
-      capabilities: (opencodeSessionId?: string) => Promise<{
-        success: boolean
-        capabilities?: {
-          supportsUndo: boolean
-          supportsRedo: boolean
-          supportsCommands: boolean
-          supportsPermissionRequests: boolean
-          supportsQuestionPrompts: boolean
-          supportsModelSelection: boolean
-          supportsReconnect: boolean
-          supportsPartialStreaming: boolean
-          supportsSteer: boolean
-        }
-        error?: string
-      }>
+      capabilities: (opencodeSessionId?: string) => Promise<
+        Envelope<{
+          success: boolean
+          capabilities?: {
+            supportsUndo: boolean
+            supportsRedo: boolean
+            supportsCommands: boolean
+            supportsPermissionRequests: boolean
+            supportsQuestionPrompts: boolean
+            supportsModelSelection: boolean
+            supportsReconnect: boolean
+            supportsPartialStreaming: boolean
+            supportsSteer: boolean
+          }
+          error?: string
+        }>
+      >
       // Fork an existing session at an optional message boundary
       fork: (
         worktreePath: string,
         opencodeSessionId: string,
         messageId?: string
-      ) => Promise<{ success: boolean; sessionId?: string; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; sessionId?: string; error?: string }>>
       // Subscribe to streaming events
       onStream: (callback: (event: OpenCodeStreamEvent) => void) => () => void
     }
     telegramOps: {
-      getConfig: () => Promise<TelegramConfig | null>
-      setConfig: (config: TelegramConfig | null) => Promise<{ ok: boolean; error?: string }>
+      getConfig: () => Promise<Envelope<TelegramConfig | null>>
+      setConfig: (
+        config: TelegramConfig | null
+      ) => Promise<Envelope<{ ok: boolean; error?: string }>>
       verifyToken: (
         botToken: string
-      ) => Promise<{ ok: boolean; botUsername?: string; error?: string }>
-      discoverChats: (config?: TelegramConfig | null) => Promise<TelegramDiscoveredChat[]>
-      sendTestMessage: () => Promise<{ ok: boolean; error?: string }>
+      ) => Promise<Envelope<{ ok: boolean; botUsername?: string; error?: string }>>
+      discoverChats: (config?: TelegramConfig | null) => Promise<Envelope<TelegramDiscoveredChat[]>>
+      sendTestMessage: () => Promise<Envelope<{ ok: boolean; error?: string }>>
       startForwarding: (params: {
         sessionId: string
         worktreeId: string | null
         connectionId: string | null
         mode: TelegramMode
-      }) => Promise<{ ok: boolean; status: TelegramForwardingStatus; error?: string }>
-      stopForwarding: () => Promise<{ status: TelegramForwardingStatus }>
-      getStatus: () => Promise<TelegramForwardingStatus>
+      }) => Promise<Envelope<{ ok: boolean; status: TelegramForwardingStatus; error?: string }>>
+      stopForwarding: () => Promise<Envelope<{ status: TelegramForwardingStatus }>>
+      getStatus: () => Promise<Envelope<TelegramForwardingStatus>>
       onStatusChanged: (callback: (status: TelegramForwardingStatus) => void) => () => void
       onPlanImplementRequested: (
         callback: (payload: {
@@ -902,85 +989,94 @@ declare global {
     }
     fileTreeOps: {
       // Scan a directory and return the file tree
-      scan: (dirPath: string) => Promise<{
-        success: boolean
-        tree?: FileTreeNode[]
-        error?: string
-      }>
+      scan: (dirPath: string) => Promise<
+        Envelope<{
+          success: boolean
+          tree?: FileTreeNode[]
+          error?: string
+        }>
+      >
       // Scan a directory and return a flat list of all files (via git ls-files)
-      scanFlat: (dirPath: string) => Promise<{
-        success: boolean
-        files?: FlatFile[]
-        error?: string
-      }>
+      scanFlat: (dirPath: string) => Promise<
+        Envelope<{
+          success: boolean
+          files?: FlatFile[]
+          error?: string
+        }>
+      >
       // Lazy load children for a directory
       loadChildren: (
         dirPath: string,
         rootPath: string
-      ) => Promise<{
-        success: boolean
-        children?: FileTreeNode[]
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          children?: FileTreeNode[]
+          error?: string
+        }>
+      >
       // Start watching a directory for changes
-      watch: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      watch: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Stop watching a directory
-      unwatch: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      unwatch: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Subscribe to file tree change events
       onChange: (callback: (event: FileTreeChangeEvent) => void) => () => void
     }
     fileOps: {
-      readFile: (filePath: string) => Promise<{
-        success: boolean
-        content?: string
-        error?: string
-      }>
-      writeFile: (filePath: string, content: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
-      readImageAsBase64: (filePath: string) => Promise<{
-        success: boolean
-        data?: string
-        mimeType?: string
-        error?: string
-      }>
+      readFile: (filePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          content?: string
+          error?: string
+        }>
+      >
+      writeFile: (filePath: string, content: string) => Promise<Envelope<null>>
+      readImageAsBase64: (
+        filePath: string
+      ) => Promise<Envelope<{ data: string; mimeType?: string }>>
       getPathForFile: (file: File) => string
     }
     attachmentOps: {
       saveImage: (
         buffer: ArrayBuffer,
         originalName: string
-      ) => Promise<{ success: boolean; filePath?: string; error?: string }>
-      deleteImage: (
-        filePath: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; filePath?: string; error?: string }>>
+      deleteImage: (filePath: string) => Promise<Envelope<{ success: boolean; error?: string }>>
     }
     settingsOps: {
-      detectEditors: () => Promise<DetectedApp[]>
-      detectTerminals: () => Promise<DetectedApp[]>
+      detectEditors: () => Promise<Envelope<DetectedApp[]>>
+      detectTerminals: () => Promise<Envelope<DetectedApp[]>>
       openWithEditor: (
         worktreePath: string,
         editorId: string,
         customCommand?: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       openWithTerminal: (
         worktreePath: string,
         terminalId: string,
         customCommand?: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
+      getAll: () => Promise<Envelope<Record<string, string>>>
       onSettingsUpdated: (callback: (data: unknown) => void) => () => void
     }
     scriptOps: {
@@ -988,65 +1084,75 @@ declare global {
         commands: string[],
         cwd: string,
         worktreeId: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       runProject: (
         commands: string[],
         cwd: string,
         worktreeId: string
-      ) => Promise<{
-        success: boolean
-        pid?: number
-        error?: string
-      }>
-      kill: (worktreeId: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          pid?: number
+          error?: string
+        }>
+      >
+      kill: (worktreeId: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       runArchive: (
         commands: string[],
         cwd: string
-      ) => Promise<{
-        success: boolean
-        output: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          output: string
+          error?: string
+        }>
+      >
       onOutput: (channel: string, callback: (event: ScriptOutputEvent) => void) => () => void
       offOutput: (channel: string) => void
-      getPort: (cwd: string) => Promise<{ port: number | null }>
+      getPort: (cwd: string) => Promise<Envelope<{ port: number | null }>>
     }
     terminalOps: {
       create: (
         terminalId: string,
         cwd: string,
         shell?: string
-      ) => Promise<{ success: boolean; cols?: number; rows?: number; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>>
       write: (terminalId: string, data: string) => void
-      resize: (terminalId: string, cols: number, rows: number) => Promise<void>
-      destroy: (terminalId: string) => Promise<void>
+      resize: (terminalId: string, cols: number, rows: number) => Promise<Envelope<void>>
+      destroy: (terminalId: string) => Promise<Envelope<void>>
       onData: (terminalId: string, callback: (data: string) => void) => () => void
       onExit: (terminalId: string, callback: (code: number) => void) => () => void
-      getConfig: () => Promise<GhosttyTerminalConfig>
+      getConfig: () => Promise<Envelope<GhosttyTerminalConfig>>
 
       // Native Ghostty backend methods
-      ghosttyInit: () => Promise<{ success: boolean; version?: string; error?: string }>
-      ghosttyIsAvailable: () => Promise<{
-        available: boolean
-        initialized: boolean
-        platform: string
-      }>
+      ghosttyInit: () => Promise<Envelope<{ success: boolean; version?: string; error?: string }>>
+      ghosttyIsAvailable: () => Promise<
+        Envelope<{
+          available: boolean
+          initialized: boolean
+          platform: string
+        }>
+      >
       ghosttyCreateSurface: (
         terminalId: string,
         rect: { x: number; y: number; w: number; h: number },
         opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
-      ) => Promise<{ success: boolean; surfaceId?: number; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; surfaceId?: number; error?: string }>>
       ghosttySetFrame: (
         terminalId: string,
         rect: { x: number; y: number; w: number; h: number }
-      ) => Promise<void>
-      ghosttySetSize: (terminalId: string, width: number, height: number) => Promise<void>
+      ) => Promise<Envelope<void>>
+      ghosttySetSize: (terminalId: string, width: number, height: number) => Promise<Envelope<void>>
       ghosttyKeyEvent: (
         terminalId: string,
         event: {
@@ -1058,145 +1164,188 @@ declare global {
           unshiftedCodepoint?: number
           composing?: boolean
         }
-      ) => Promise<boolean>
+      ) => Promise<Envelope<boolean>>
       ghosttyMouseButton: (
         terminalId: string,
         state: number,
         button: number,
         mods: number
-      ) => Promise<void>
-      ghosttyMousePos: (terminalId: string, x: number, y: number, mods: number) => Promise<void>
+      ) => Promise<Envelope<void>>
+      ghosttyMousePos: (
+        terminalId: string,
+        x: number,
+        y: number,
+        mods: number
+      ) => Promise<Envelope<void>>
       ghosttyMouseScroll: (
         terminalId: string,
         dx: number,
         dy: number,
         mods: number
-      ) => Promise<void>
-      ghosttySetFocus: (terminalId: string, focused: boolean) => Promise<void>
-      ghosttyPasteText: (terminalId: string, text: string) => Promise<void>
-      ghosttyDestroySurface: (terminalId: string) => Promise<void>
-      ghosttyShutdown: () => Promise<void>
+      ) => Promise<Envelope<void>>
+      ghosttySetFocus: (terminalId: string, focused: boolean) => Promise<Envelope<void>>
+      ghosttyPasteText: (terminalId: string, text: string) => Promise<Envelope<void>>
+      ghosttyFocusDiagnostics: () => Promise<
+        Envelope<
+          Array<{
+            surfaceId: number
+            subviewCount: number
+            firstResponderClass: string
+            isHostView: boolean
+            isDescendant: boolean
+            hasWindow: boolean
+          }>
+        >
+      >
+      ghosttyDestroySurface: (terminalId: string) => Promise<Envelope<void>>
+      ghosttyShutdown: () => Promise<Envelope<void>>
     }
     gitOps: {
       // Get file statuses for a worktree
-      getFileStatuses: (worktreePath: string) => Promise<{
-        success: boolean
-        files?: GitFileStatus[]
-        error?: string
-      }>
+      getFileStatuses: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          files?: GitFileStatus[]
+          error?: string
+        }>
+      >
       // Stage a file
       stageFile: (
         worktreePath: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Unstage a file
       unstageFile: (
         worktreePath: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Discard changes in a file
-      discardChanges: (
-        worktreePath: string,
-        filePath: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      discardChanges: (worktreePath: string, filePath: string) => Promise<Envelope<null>>
       // Add to .gitignore
       addToGitignore: (
         worktreePath: string,
         pattern: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Open file in default editor
-      openInEditor: (filePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      openInEditor: (filePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Show file in Finder
-      showInFinder: (filePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      showInFinder: (filePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Subscribe to git status change events
       onStatusChanged: (callback: (event: GitStatusChangedEvent) => void) => () => void
       // Start watching a worktree for git changes (filesystem + .git metadata)
-      watchWorktree: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      watchWorktree: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Stop watching a worktree
-      unwatchWorktree: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      unwatchWorktree: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Start watching a worktree's .git/HEAD for branch changes (lightweight, sidebar use)
-      watchBranch: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      watchBranch: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Stop watching a worktree's branch
-      unwatchBranch: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      unwatchBranch: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Subscribe to branch change events (lightweight, from branch-watcher)
       onBranchChanged: (callback: (event: { worktreePath: string }) => void) => () => void
       // Get branch info (name, tracking, ahead/behind)
-      getBranchInfo: (worktreePath: string) => Promise<{
-        success: boolean
-        branch?: GitBranchInfo
-        error?: string
-      }>
+      getBranchInfo: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          branch?: GitBranchInfo
+          error?: string
+        }>
+      >
       // Stage all modified and untracked files
-      stageAll: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      stageAll: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Unstage all staged files
-      unstageAll: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      unstageAll: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Commit staged changes
       commit: (
         worktreePath: string,
         message: string
-      ) => Promise<{
-        success: boolean
-        commitHash?: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          commitHash?: string
+          error?: string
+        }>
+      >
       // Push to remote
       push: (
         worktreePath: string,
         remote?: string,
         branch?: string,
         force?: boolean
-      ) => Promise<{
-        success: boolean
-        pushed?: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          pushed?: boolean
+          error?: string
+        }>
+      >
       // Pull from remote
       pull: (
         worktreePath: string,
         remote?: string,
         branch?: string,
         rebase?: boolean
-      ) => Promise<{
-        success: boolean
-        updated?: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          updated?: boolean
+          error?: string
+        }>
+      >
       // Get diff for a file
       getDiff: (
         worktreePath: string,
@@ -1204,280 +1353,328 @@ declare global {
         staged: boolean,
         isUntracked: boolean,
         contextLines?: number
-      ) => Promise<{
-        success: boolean
-        diff?: string
-        fileName?: string
-        error?: string
-      }>
-      // List all branches with their worktree checkout status
-      listBranchesWithStatus: (projectPath: string) => Promise<{
-        success: boolean
-        branches: Array<{
-          name: string
-          isRemote: boolean
-          isCheckedOut: boolean
-          worktreePath?: string
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          diff?: string
+          fileName?: string
+          error?: string
         }>
-        error?: string
-      }>
+      >
+      // List all branches with their worktree checkout status
+      listBranchesWithStatus: (projectPath: string) => Promise<
+        Envelope<{
+          success: boolean
+          branches: Array<{
+            name: string
+            isRemote: boolean
+            isCheckedOut: boolean
+            worktreePath?: string
+          }>
+          error?: string
+        }>
+      >
       // Merge a branch into the current branch
       merge: (
         worktreePath: string,
         sourceBranch: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-        conflicts?: string[]
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+          conflicts?: string[]
+        }>
+      >
       // Abort an in-progress merge
-      mergeAbort: (worktreePath: string) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      mergeAbort: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Check if a worktree has uncommitted changes
-      hasUncommittedChanges: (worktreePath: string) => Promise<boolean>
+      hasUncommittedChanges: (worktreePath: string) => Promise<Envelope<boolean>>
       // Get branch divergence stats vs base branch
       branchDiffShortStat: (
         worktreePath: string,
         baseBranch: string
-      ) => Promise<{
-        success: boolean
-        filesChanged: number
-        insertions: number
-        deletions: number
-        commitsAhead: number
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          filesChanged: number
+          insertions: number
+          deletions: number
+          commitsAhead: number
+          error?: string
+        }>
+      >
       // Get raw file content from disk
       getFileContent: (
         worktreePath: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        content: string | null
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          content: string | null
+          error?: string
+        }>
+      >
       // Get raw file content as base64 from disk (for binary/image files)
       getFileContentBase64: (
         worktreePath: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        data?: string
-        mimeType?: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          data?: string
+          mimeType?: string
+          error?: string
+        }>
+      >
       // Get remote URL for a worktree
       getRemoteUrl: (
         worktreePath: string,
         remote?: string
-      ) => Promise<{
-        success: boolean
-        url: string | null
-        remote: string | null
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          url: string | null
+          remote: string | null
+          error?: string
+        }>
+      >
       // Get diff stat (additions/deletions per file) for all uncommitted changes
-      getDiffStat: (worktreePath: string) => Promise<{
-        success: boolean
-        files?: GitDiffStatFile[]
-        error?: string
-      }>
+      getDiffStat: (worktreePath: string) => Promise<
+        Envelope<{
+          success: boolean
+          files?: GitDiffStatFile[]
+          error?: string
+        }>
+      >
       // Merge a PR on GitHub via gh CLI and sync the local target branch
       prMerge: (
         worktreePath: string,
         prNumber: number
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Check if a branch has been fully merged into HEAD
       isBranchMerged: (
         worktreePath: string,
         branch: string
-      ) => Promise<{ success: boolean; isMerged: boolean }>
+      ) => Promise<Envelope<{ success: boolean; isMerged: boolean }>>
       // Delete a local branch
       deleteBranch: (
         worktreePath: string,
         branchName: string
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // List open pull requests from GitHub via gh CLI
-      listPRs: (projectPath: string) => Promise<{
-        success: boolean
-        prs: Array<{
-          number: number
-          title: string
-          author: string
-          headRefName: string
+      listPRs: (projectPath: string) => Promise<
+        Envelope<{
+          success: boolean
+          prs: Array<{
+            number: number
+            title: string
+            author: string
+            headRefName: string
+          }>
+          error?: string
         }>
-        error?: string
-      }>
+      >
       // Get the state of a specific PR via gh CLI
       getPRState: (
         projectPath: string,
         prNumber: number
-      ) => Promise<{
-        success: boolean
-        state?: string
-        title?: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          state?: string
+          title?: string
+          error?: string
+        }>
+      >
       // Fetch inline review comments for a PR
       getPRReviewComments: (
         projectPath: string,
         prNumber: number
-      ) => Promise<{
-        success: boolean
-        comments?: Array<{
-          id: number
-          body: string
-          bodyHTML: string
-          path: string
-          line: number | null
-          originalLine: number | null
-          side: 'LEFT' | 'RIGHT'
-          diffHunk: string
-          user: { login: string; avatarUrl: string }
-          createdAt: string
-          updatedAt: string
-          inReplyToId: number | null
-          pullRequestReviewId: number | null
-          subjectType: 'line' | 'file'
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          comments?: Array<{
+            id: number
+            body: string
+            bodyHTML: string
+            path: string
+            line: number | null
+            originalLine: number | null
+            side: 'LEFT' | 'RIGHT'
+            diffHunk: string
+            user: { login: string; avatarUrl: string }
+            createdAt: string
+            updatedAt: string
+            inReplyToId: number | null
+            pullRequestReviewId: number | null
+            subjectType: 'line' | 'file'
+          }>
+          baseBranch?: string
+          error?: string
         }>
-        baseBranch?: string
-        error?: string
-      }>
+      >
       // Get file content from a specific git ref (HEAD, index)
       getRefContent: (
         worktreePath: string,
         ref: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        content?: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          content?: string
+          error?: string
+        }>
+      >
       // Get file content as base64 from a specific git ref (for binary/image files)
       getRefContentBase64: (
         worktreePath: string,
         ref: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        data?: string
-        mimeType?: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          data?: string
+          mimeType?: string
+          error?: string
+        }>
+      >
       // Stage a single hunk by applying a patch to the index
       stageHunk: (
         worktreePath: string,
         patch: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Unstage a single hunk by reverse-applying a patch from the index
       unstageHunk: (
         worktreePath: string,
         patch: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Revert a single hunk in the working tree
       revertHunk: (
         worktreePath: string,
         patch: string
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          error?: string
+        }>
+      >
       // Create a pull request via gh CLI
       createPR: (
         worktreePath: string,
         baseBranch: string,
         title: string,
         body: string
-      ) => Promise<{
-        success: boolean
-        url?: string
-        number?: number
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          url?: string
+          number?: number
+          error?: string
+        }>
+      >
       // Generate PR content (title + body) using AI
       generatePRContent: (
         worktreePath: string,
         baseBranch: string,
         provider: string
-      ) => Promise<{
-        success: boolean
-        title?: string
-        body?: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          title?: string
+          body?: string
+          error?: string
+        }>
+      >
       // Get range diff between base branch and HEAD
       getRangeDiff: (
         worktreePath: string,
         baseBranch: string
-      ) => Promise<{
-        commitSummary: string
-        diffSummary: string
-        diffPatch: string
-        commitCount: number
-      }>
+      ) => Promise<
+        Envelope<{
+          commitSummary: string
+          diffSummary: string
+          diffPatch: string
+          commitCount: number
+        }>
+      >
       // Check if current branch needs push
-      needsPush: (worktreePath: string) => Promise<boolean>
+      needsPush: (worktreePath: string) => Promise<Envelope<boolean>>
       // Get list of files changed between current worktree and a branch
       getBranchDiffFiles: (
         worktreePath: string,
         branch: string
-      ) => Promise<{
-        success: boolean
-        files?: Array<{
-          relativePath: string
-          status: string
-          additions: number
-          deletions: number
-          binary: boolean
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          files?: Array<{
+            relativePath: string
+            status: string
+            additions: number
+            deletions: number
+            binary: boolean
+          }>
+          error?: string
         }>
-        error?: string
-      }>
+      >
       // Get file content at the merge-base between a branch and HEAD
       getBranchBaseContent: (
         worktreePath: string,
         branch: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        content?: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          content?: string
+          error?: string
+        }>
+      >
       // Get file content as base64 at the merge-base between a branch and HEAD (for binary files)
       getBranchBaseContentBase64: (
         worktreePath: string,
         branch: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        data?: string
-        mimeType?: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          data?: string
+          mimeType?: string
+          error?: string
+        }>
+      >
       // Get unified diff between current worktree and a branch for a specific file
       getBranchFileDiff: (
         worktreePath: string,
         branch: string,
         filePath: string
-      ) => Promise<{
-        success: boolean
-        diff?: string
-        error?: string
-      }>
+      ) => Promise<
+        Envelope<{
+          success: boolean
+          diff?: string
+          error?: string
+        }>
+      >
     }
     updaterOps: {
-      checkForUpdate: (options?: { manual?: boolean }) => Promise<void>
-      downloadUpdate: () => Promise<void>
-      installUpdate: () => Promise<void>
-      setChannel: (channel: string) => Promise<void>
-      getVersion: () => Promise<string>
+      checkForUpdate: (options?: { manual?: boolean }) => Promise<Envelope<void>>
+      downloadUpdate: () => Promise<Envelope<void>>
+      installUpdate: () => Promise<Envelope<void>>
+      setChannel: (channel: string) => Promise<Envelope<void>>
+      getVersion: () => Promise<Envelope<string>>
       onChecking: (callback: () => void) => () => void
       onUpdateAvailable: (
         callback: (data: {
@@ -1508,44 +1705,58 @@ declare global {
     connectionOps: {
       create: (
         worktreeIds: string[]
-      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
-      delete: (connectionId: string) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<
+        Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      >
+      delete: (connectionId: string) => Promise<Envelope<{ success: boolean; error?: string }>>
       addMember: (
         connectionId: string,
         worktreeId: string
-      ) => Promise<{ success: boolean; member?: ConnectionMember; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; member?: ConnectionMember; error?: string }>>
       removeMember: (
         connectionId: string,
         worktreeId: string
-      ) => Promise<{ success: boolean; connectionDeleted?: boolean; error?: string }>
-      getAll: () => Promise<{
-        success: boolean
-        connections?: ConnectionWithMembers[]
-        error?: string
-      }>
+      ) => Promise<Envelope<{ success: boolean; connectionDeleted?: boolean; error?: string }>>
+      getAll: () => Promise<
+        Envelope<{
+          success: boolean
+          connections?: ConnectionWithMembers[]
+          error?: string
+        }>
+      >
       get: (
         connectionId: string
-      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
-      openInTerminal: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
-      openInEditor: (connectionPath: string) => Promise<{ success: boolean; error?: string }>
-      removeWorktreeFromAll: (worktreeId: string) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<
+        Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      >
+      openInTerminal: (
+        connectionPath: string
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
+      openInEditor: (
+        connectionPath: string
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
+      removeWorktreeFromAll: (
+        worktreeId: string
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
       rename: (
         connectionId: string,
         customName: string | null
-      ) => Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      ) => Promise<
+        Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+      >
       setPinned: (
         connectionId: string,
         pinned: boolean
-      ) => Promise<{ success: boolean; error?: string }>
-      getPinned: () => Promise<ConnectionWithMembers[]>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
+      getPinned: () => Promise<Envelope<ConnectionWithMembers[]>>
     }
     usageOps: {
-      fetch: () => Promise<import('../shared/types/usage').UsageResult>
-      fetchOpenai: () => Promise<import('../shared/types/usage').OpenAIUsageResult>
+      fetch: () => Promise<Envelope<import('../shared/types/usage').UsageResult>>
+      fetchOpenai: () => Promise<Envelope<import('../shared/types/usage').OpenAIUsageResult>>
     }
     accountOps: {
-      getClaudeEmail: () => Promise<string | null>
-      getOpenAIEmail: () => Promise<string | null>
+      getClaudeEmail: () => Promise<Envelope<string | null>>
+      getOpenAIEmail: () => Promise<Envelope<string | null>>
     }
     analyticsOps: {
       track: (event: string, properties?: Record<string, unknown>) => Promise<void>
@@ -1558,8 +1769,19 @@ declare global {
         timestamp: string
         uptimeMs: number
         cpu: { userMs: number; systemMs: number; percentSinceLastSample: number }
-        memory: { rss: number; heapUsed: number; heapTotal: number; external: number; arrayBuffers: number }
-        processes: { ptyActive: number; scriptsActive: number; scriptsTotalOpened: number; scriptsTotalClosed: number }
+        memory: {
+          rss: number
+          heapUsed: number
+          heapTotal: number
+          external: number
+          arrayBuffers: number
+        }
+        processes: {
+          ptyActive: number
+          scriptsActive: number
+          scriptsTotalOpened: number
+          scriptsTotalClosed: number
+        }
         watchers: { fileTree: number; worktree: number; branch: number }
         sessions: { active: number }
         handles: { active: number; requests: number }
@@ -1569,12 +1791,14 @@ declare global {
     codexDebugLoggerOps: {
       configure: (enabled: boolean, resetPerSession: boolean) => Promise<void>
     }
-    kanban: {
+    kanban: Enveloped<{
       ticket: {
         create: (data: KanbanTicketCreate) => Promise<KanbanTicket>
-        createBatch: (data: { drafts: KanbanTicketBatchCreateItem[] }) => Promise<KanbanTicketBatchCreateResult>
+        createBatch: (data: {
+          drafts: KanbanTicketBatchCreateItem[]
+        }) => Promise<KanbanTicketBatchCreateResult>
         get: (id: string) => Promise<KanbanTicket | null>
-        getByProject: (projectId: string) => Promise<KanbanTicket[]>
+        getByProject: (projectId: string, includeArchived?: boolean) => Promise<KanbanTicket[]>
         update: (id: string, data: KanbanTicketUpdate) => Promise<KanbanTicket | null>
         delete: (id: string) => Promise<boolean>
         archive: (id: string) => Promise<KanbanTicket | null>
@@ -1590,7 +1814,12 @@ declare global {
         addTokens: (id: string, tokens: number) => Promise<KanbanTicket | null>
         syncPR: (worktreeId: string, prNumber: number, prUrl: string) => Promise<void>
         clearPR: (worktreeId: string) => Promise<void>
-        attachPR: (ticketId: string, projectId: string, prNumber: number, prUrl: string) => Promise<void>
+        attachPR: (
+          ticketId: string,
+          projectId: string,
+          prNumber: number,
+          prUrl: string
+        ) => Promise<void>
         detachPR: (ticketId: string, projectId: string) => Promise<void>
         detachWorktree: (worktreeId: string) => Promise<number>
       }
@@ -1598,21 +1827,29 @@ declare global {
         toggle: (projectId: string, enabled: boolean) => Promise<void>
       }
       dependency: {
-        add: (dependentId: string, blockerId: string) => Promise<{ success: boolean; error?: string }>
+        add: (
+          dependentId: string,
+          blockerId: string
+        ) => Promise<{ success: boolean; error?: string }>
         remove: (dependentId: string, blockerId: string) => Promise<boolean>
         getBlockers: (ticketId: string) => Promise<KanbanTicket[]>
         getDependents: (ticketId: string) => Promise<KanbanTicket[]>
-        getForProject: (projectId: string) => Promise<Array<{ dependent_id: string; blocker_id: string; created_at: string }>>
+        getForProject: (
+          projectId: string
+        ) => Promise<Array<{ dependent_id: string; blocker_id: string; created_at: string }>>
         removeAll: (ticketId: string) => Promise<number>
       }
       board: {
-        export: (projectId: string, projectName: string) => Promise<{ success: boolean; ticketCount: number; path?: string }>
+        export: (
+          projectId: string,
+          projectName: string
+        ) => Promise<{ success: boolean; ticketCount: number; path?: string; error?: string }>
         openImportFile: () => Promise<{
           tickets: Array<{
             id: string
             title: string
             description?: string | null
-            attachments?: unknown[]
+            attachments?: unknown[] | null
             column?: string
           }>
           dependencies?: Array<{
@@ -1627,72 +1864,99 @@ declare global {
             id: string
             title: string
             description?: string | null
-            attachments?: unknown[]
+            attachments?: unknown[] | null
             column?: string
           }>,
           dependencies?: Array<{
             dependentId: string
             blockerId: string
           }>
-        ) => Promise<{ created: number; updated: number; dependencyCount: number; ignoredDependencyCount: number }>
+        ) => Promise<{
+          created: number
+          updated: number
+          dependencyCount: number
+          ignoredDependencyCount: number
+        }>
       }
-    }
+    }>
     ticketImport: {
-      listProviders: () => Promise<Array<{ id: string; name: string; icon: string }>>
-      getSettingsSchema: (
-        providerId: string
-      ) => Promise<Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>>
+      listProviders: () => Promise<Envelope<Array<{ id: string; name: string; icon: string }>>>
+      getSettingsSchema: (providerId: string) => Promise<
+        Envelope<
+          Array<{
+            key: string
+            label: string
+            type: string
+            required: boolean
+            placeholder?: string
+          }>
+        >
+      >
       authenticate: (
         providerId: string,
         settings: Record<string, string>
-      ) => Promise<{ success: boolean; error: string | null }>
+      ) => Promise<Envelope<{ success: boolean; error: string | null }>>
       detectRepo: (
         providerId: string,
         projectPath: string
-      ) => Promise<{ repo: string | null }>
+      ) => Promise<Envelope<{ repo: string | null }>>
       listIssues: (
         providerId: string,
         repo: string,
-        options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
+        options: {
+          page: number
+          perPage: number
+          state: 'open' | 'closed' | 'all'
+          search?: string
+          nextPageToken?: string
+        },
         settings: Record<string, string>
-      ) => Promise<{
-        issues: Array<{
-          externalId: string
-          title: string
-          body: string | null
-          state: 'open' | 'closed' | 'in_progress'
-          url: string
-          createdAt: string
-          updatedAt: string
+      ) => Promise<
+        Envelope<{
+          issues: Array<{
+            externalId: string
+            title: string
+            body: string | null
+            state: 'open' | 'closed' | 'in_progress'
+            url: string
+            createdAt: string
+            updatedAt: string
+          }>
+          hasNextPage: boolean
+          totalCount: number
+          nextPageToken?: string
         }>
-        hasNextPage: boolean
-        totalCount: number
-        nextPageToken?: string
-      }>
+      >
       importIssues: (
         providerId: string,
         projectId: string,
         repo: string,
-        issues: Array<{ externalId: string; title: string; body: string | null; state: string; url: string }>
-      ) => Promise<{ imported: string[]; skipped: string[] }>
+        issues: Array<{
+          externalId: string
+          title: string
+          body: string | null
+          state: string
+          url: string
+        }>
+      ) => Promise<Envelope<{ imported: string[]; skipped: string[] }>>
       getAvailableStatuses: (
         providerId: string,
         repo: string,
         externalId: string,
         settings: Record<string, string>
-      ) => Promise<Array<{ id: string; label: string }>>
+      ) => Promise<Envelope<Array<{ id: string; label: string }>>>
       updateRemoteStatus: (
         providerId: string,
         repo: string,
         externalId: string,
         statusId: string,
         settings: Record<string, string>
-      ) => Promise<{ success: boolean; error?: string }>
+      ) => Promise<Envelope<{ success: boolean; error?: string }>>
     }
     bash: {
-      run: (sessionId: string, command: string, cwd: string) => Promise<{ success: boolean; runId?: string; error?: string }>
-      abort: (sessionId: string) => Promise<boolean>
-      getRun: (sessionId: string) => Promise<BashRunSnapshot | null>
+      run: (sessionId: string, command: string, cwd: string) => Promise<Envelope<{ runId: string }>>
+      abort: (sessionId: string) => Promise<Envelope<boolean>>
+      getRun: (sessionId: string) => Promise<Envelope<BashRunSnapshot | null>>
       onStream: (callback: (event: BashStreamEvent) => void) => () => void
     }
   }
@@ -1711,10 +1975,11 @@ declare global {
 
   // Script output event type
   interface ScriptOutputEvent {
-    type: 'command-start' | 'output' | 'error' | 'done'
+    type: 'command-start' | 'output' | 'error' | 'done' | 'long-running'
     command?: string
     data?: string
     exitCode?: number
+    elapsed?: number
   }
 
   // OpenCode command type (slash commands)

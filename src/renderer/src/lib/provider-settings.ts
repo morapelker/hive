@@ -1,3 +1,6 @@
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 /**
  * Read ticket-import provider settings from localStorage.
  * Provider credentials are stored in a dedicated 'hive-provider-settings' key
@@ -20,10 +23,12 @@ export function getProviderSettings(): Record<string, string> {
   return {}
 }
 
-export async function saveProviderSettingsToDatabase(settings: Record<string, string>): Promise<void> {
+export async function saveProviderSettingsToDatabase(
+  settings: Record<string, string>
+): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && window.db?.setting) {
-      await window.db.setting.set(PROVIDER_SETTINGS_KEY, JSON.stringify(settings))
+    if (typeof window !== 'undefined' && db?.setting) {
+      await db.setting.set(PROVIDER_SETTINGS_KEY, JSON.stringify(settings))
     }
   } catch (error) {
     console.error('Failed to save provider settings to database:', error)
@@ -32,8 +37,8 @@ export async function saveProviderSettingsToDatabase(settings: Record<string, st
 
 export async function loadProviderSettingsFromDatabase(): Promise<Record<string, string> | null> {
   try {
-    if (typeof window !== 'undefined' && window.db?.setting) {
-      const value = await window.db.setting.get(PROVIDER_SETTINGS_KEY)
+    if (typeof window !== 'undefined' && db?.setting) {
+      const value = await db.setting.get(PROVIDER_SETTINGS_KEY)
       if (value) {
         return JSON.parse(value) as Record<string, string>
       }
@@ -43,4 +48,3 @@ export async function loadProviderSettingsFromDatabase(): Promise<Record<string,
   }
   return null
 }
-

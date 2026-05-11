@@ -1,5 +1,13 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Download, Search, ExternalLink, Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import {
+  Download,
+  Search,
+  ExternalLink,
+  Loader2,
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight
+} from 'lucide-react'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import {
   Dialog,
@@ -15,6 +23,7 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useConnectionStore } from '@/stores'
 import { getProviderSettings } from '@/lib/provider-settings'
 import { toast } from 'sonner'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface RemoteIssue {
   externalId: string
@@ -65,7 +74,7 @@ export function ImportTicketsModal({
 
   const effectiveProjectId = isConnectionMode ? selectedProjectId : projectId
   const effectiveProjectPath = isConnectionMode
-    ? connectionProjects.find((p) => p.id === selectedProjectId)?.path ?? projectPath
+    ? (connectionProjects.find((p) => p.id === selectedProjectId)?.path ?? projectPath)
     : projectPath
 
   const [repo, setRepo] = useState<string | null>(null)
@@ -83,7 +92,9 @@ export function ImportTicketsModal({
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [importing, setImporting] = useState(false)
-  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null)
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(
+    null
+  )
 
   const effectiveRepo = repo ?? (manualRepo.includes('/') ? manualRepo.trim() : null)
 
@@ -112,6 +123,7 @@ export function ImportTicketsModal({
 
     window.ticketImport
       .detectRepo('github', effectiveProjectPath)
+      .then(unwrapEnvelope)
       .then(({ repo: detected }) => {
         if (detected) {
           setRepo(detected)
@@ -130,7 +142,13 @@ export function ImportTicketsModal({
     const state = showClosed ? 'all' : 'open'
 
     window.ticketImport
-      .listIssues('github', effectiveRepo, { page, perPage: PER_PAGE, state, search: search || undefined }, getProviderSettings())
+      .listIssues(
+        'github',
+        effectiveRepo,
+        { page, perPage: PER_PAGE, state, search: search || undefined },
+        getProviderSettings()
+      )
+      .then(unwrapEnvelope)
       .then((result) => {
         setIssues(result.issues)
         setHasNextPage(result.hasNextPage)
@@ -177,24 +195,32 @@ export function ImportTicketsModal({
     setImportProgress({ current: 0, total: toImport.length })
 
     try {
-      const result = await window.ticketImport.importIssues(
-        'github',
-        effectiveProjectId,
-        effectiveRepo,
-        toImport.map((i) => ({
-          externalId: i.externalId,
-          title: i.title,
-          body: i.body,
-          state: i.state,
-          url: i.url
-        }))
+      const result = unwrapEnvelope(
+        await window.ticketImport.importIssues(
+          'github',
+          effectiveProjectId,
+          effectiveRepo,
+          toImport.map((i) => ({
+            externalId: i.externalId,
+            title: i.title,
+            body: i.body,
+            state: i.state,
+            url: i.url
+          }))
+        )
       )
 
       setImportProgress({ current: toImport.length, total: toImport.length })
 
       const msgs: string[] = []
-      if (result.imported.length > 0) msgs.push(`Imported ${result.imported.length} issue${result.imported.length > 1 ? 's' : ''}`)
-      if (result.skipped.length > 0) msgs.push(`Skipped ${result.skipped.length} duplicate${result.skipped.length > 1 ? 's' : ''}`)
+      if (result.imported.length > 0)
+        msgs.push(
+          `Imported ${result.imported.length} issue${result.imported.length > 1 ? 's' : ''}`
+        )
+      if (result.skipped.length > 0)
+        msgs.push(
+          `Skipped ${result.skipped.length} duplicate${result.skipped.length > 1 ? 's' : ''}`
+        )
       toast.success(msgs.join('. '))
 
       await loadTickets(effectiveProjectId)
@@ -235,7 +261,9 @@ export function ImportTicketsModal({
                 className="w-full mt-1 rounded-md border border-border/60 bg-background px-3 py-2 text-sm"
               >
                 {connectionProjects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
                 ))}
               </select>
             </div>
@@ -319,10 +347,7 @@ export function ImportTicketsModal({
                         className="flex items-start gap-3 px-4 py-2.5 hover:bg-muted/20 cursor-pointer transition-colors"
                         onClick={() => toggleSelect(issue.externalId)}
                       >
-                        <Checkbox
-                          checked={selected.has(issue.externalId)}
-                          className="mt-0.5"
-                        />
+                        <Checkbox checked={selected.has(issue.externalId)} className="mt-0.5" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-muted-foreground font-mono">
@@ -338,9 +363,7 @@ export function ImportTicketsModal({
                               {issue.state}
                             </span>
                           </div>
-                          <p className="text-sm font-medium truncate mt-0.5">
-                            {issue.title}
-                          </p>
+                          <p className="text-sm font-medium truncate mt-0.5">{issue.title}</p>
                         </div>
                         <a
                           href={issue.url}

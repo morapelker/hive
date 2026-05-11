@@ -5,6 +5,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { FileIcon } from './FileIcon'
 import { GitStatusIndicator, type GitStatusCode } from './GitStatusIndicator'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface BranchDiffViewProps {
   worktreePath: string | null
@@ -49,7 +50,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
     if (!worktreePath) return
     setIsLoadingBranches(true)
     try {
-      const result = await window.gitOps.listBranchesWithStatus(worktreePath)
+      const result = unwrapEnvelope(await window.gitOps.listBranchesWithStatus(worktreePath))
       if (result.success && result.branches) {
         setBranches(result.branches)
       }
@@ -68,7 +69,9 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
     }
     setIsLoadingFiles(true)
     try {
-      const result = await window.gitOps.getBranchDiffFiles(worktreePath, selectedBranch)
+      const result = unwrapEnvelope(
+        await window.gitOps.getBranchDiffFiles(worktreePath, selectedBranch)
+      )
       if (result.success && result.files) {
         setFiles(result.files)
         setDiffError(null)

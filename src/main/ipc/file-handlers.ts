@@ -1,67 +1,65 @@
-import { ipcMain } from 'electron'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
 import { createLogger } from '../services/logger'
 import { readFile, readFileAsBase64, writeFile } from '../services/file-ops'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'FileHandlers' })
+
+class FileReadFailed extends Data.TaggedError('FileReadFailed')<{
+  readonly filePath: string
+  readonly reason: string
+  readonly message: string
+}> {}
+
+class FileWriteFailed extends Data.TaggedError('FileWriteFailed')<{
+  readonly filePath: string
+  readonly reason: string
+  readonly message: string
+}> {}
+
+const fileReadFailed = (filePath: string, reason: string): FileReadFailed =>
+  new FileReadFailed({ filePath, reason, message: reason })
+
+const fileWriteFailed = (filePath: string, reason: string): FileWriteFailed =>
+  new FileWriteFailed({ filePath, reason, message: reason })
 
 export function registerFileHandlers(): void {
   log.info('Registering file handlers')
 
-  ipcMain.handle(
-    'file:read',
-    async (
-      _event,
-      filePath: string
-    ): Promise<{
-      success: boolean
-      content?: string
-      error?: string
-    }> => {
+  defineHandler('file:read', z.string().min(1, 'filePath is required'), (filePath) =>
+    Effect.sync(() => {
       const result = readFile(filePath)
       if (!result.success) {
         log.error('Failed to read file', new Error(result.error ?? 'Unknown error'), { filePath })
       }
       return result
-    }
+    })
   )
 
-  ipcMain.handle(
-    'file:readImageAsBase64',
-    async (
-      _event,
-      filePath: string
-    ): Promise<{
-      success: boolean
-      data?: string
-      mimeType?: string
-      error?: string
-    }> => {
+  // file:readImageAsBase64 - migrated to defineHandler (EFFECT_ADOPTION Session 3)
+  defineHandler('file:readImageAsBase64', z.string().min(1, 'filePath is required'), (filePath) =>
+    Effect.suspend(() => {
       const result = readFileAsBase64(filePath)
-      if (!result.success) {
-        log.error('Failed to read image as base64', new Error(result.error ?? 'Unknown error'), {
-          filePath
+      if (result.success) {
+        return Effect.succeed({
+          data: result.data!,
+          mimeType: result.mimeType
         })
       }
-      return result
-    }
+      return Effect.fail(fileReadFailed(filePath, result.error ?? 'Unknown error'))
+    })
   )
 
-  ipcMain.handle(
+  // file:write - migrated to defineHandler (EFFECT_ADOPTION Session 3)
+  defineHandler(
     'file:write',
-    async (
-      _event,
-      filePath: string,
-      content: string
-    ): Promise<{
-      success: boolean
-      error?: string
-    }> => {
-      const result = writeFile(filePath, content)
-      if (!result.success) {
-        log.error('Failed to write file', new Error(result.error ?? 'Unknown error'), { filePath })
-      }
-      return result
-    }
+    z.tuple([z.string().min(1, 'filePath is required'), z.string()]),
+    ([filePath, content]) =>
+      Effect.suspend(() => {
+        const result = writeFile(filePath, content)
+        if (result.success) return Effect.succeed(null)
+        return Effect.fail(fileWriteFailed(filePath, result.error ?? 'Unknown error'))
+      })
   )
-
 }

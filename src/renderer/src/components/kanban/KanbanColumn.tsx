@@ -25,19 +25,28 @@ import {
   ContextMenuContent,
   ContextMenuItem
 } from '@/components/ui/context-menu'
-import { useKanbanStore, getKanbanDragData, setKanbanDragData, suppressLayoutAnimation, isLayoutAnimationSuppressed } from '@/stores/useKanbanStore'
+import {
+  useKanbanStore,
+  getKanbanDragData,
+  setKanbanDragData,
+  suppressLayoutAnimation,
+  isLayoutAnimationSuppressed
+} from '@/stores/useKanbanStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
 import type { KanbanTicket, KanbanTicketColumn as ColumnType } from '../../../../main/db/types'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // ── Layout animation spring ─────────────────────────────────────────
 const CARD_LAYOUT_SPRING = {
   type: 'spring' as const,
   stiffness: 350,
   damping: 30,
-  mass: 0.8,
+  mass: 0.8
 }
 
 // ── Column display names ────────────────────────────────────────────
@@ -57,7 +66,14 @@ interface KanbanColumnProps {
   isPinnedMode?: boolean
 }
 
-export function KanbanColumn({ column, tickets, archivedTickets, projectId, connectionId, isPinnedMode }: KanbanColumnProps) {
+export function KanbanColumn({
+  column,
+  tickets,
+  archivedTickets,
+  projectId,
+  connectionId,
+  isPinnedMode
+}: KanbanColumnProps) {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -129,10 +145,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
   // ── Simple mode toggle (In Progress column only) ───────────────
   // In connection mode, projectId is '' — acts as a single toggle for the connection board
   const isSimpleMode = useKanbanStore(
-    useCallback(
-      (state) => state.simpleModeByProject[projectId] ?? false,
-      [projectId]
-    )
+    useCallback((state) => state.simpleModeByProject[projectId] ?? false, [projectId])
   )
 
   const handleSimpleModeToggle = useCallback(
@@ -145,10 +158,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
   // ── Archive toggle (Done column only) ───────────────────────────
   // In connection mode, projectId is '' — acts as a single toggle for the connection board
   const showArchived = useKanbanStore(
-    useCallback(
-      (state) => state.showArchivedByProject[projectId] ?? false,
-      [projectId]
-    )
+    useCallback((state) => state.showArchivedByProject[projectId] ?? false, [projectId])
   )
 
   // ── Measure header and pick title fit mode (In Progress column only) ─────
@@ -161,16 +171,14 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
     if (!header || !badge || !toggle || !fullMeasure) return
 
     const LEFT_SPACER_PX = 50
-    const TITLE_BADGE_GAP_PX = 8   // gap-2 in title group
-    const TITLE_TOGGLE_GAP_PX = 8  // ml-2 between title group and toggle
+    const TITLE_BADGE_GAP_PX = 8 // gap-2 in title group
+    const TITLE_TOGGLE_GAP_PX = 8 // ml-2 between title group and toggle
     const RIGHT_MIN_PADDING_PX = 8 // min gap in 'right' mode
 
     const compute = (): void => {
       const cs = window.getComputedStyle(header)
       const innerWidth =
-        header.clientWidth -
-        parseFloat(cs.paddingLeft || '0') -
-        parseFloat(cs.paddingRight || '0')
+        header.clientWidth - parseFloat(cs.paddingLeft || '0') - parseFloat(cs.paddingRight || '0')
 
       const fullTextW = fullMeasure.offsetWidth
       const badgeW = badge.offsetWidth
@@ -178,8 +186,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
 
       // Mode 1: centered with full text (needs left spacer)
       const centeredNeeded =
-        LEFT_SPACER_PX + fullTextW + TITLE_BADGE_GAP_PX + badgeW +
-        TITLE_TOGGLE_GAP_PX + toggleW
+        LEFT_SPACER_PX + fullTextW + TITLE_BADGE_GAP_PX + badgeW + TITLE_TOGGLE_GAP_PX + toggleW
       if (centeredNeeded <= innerWidth) {
         setTitleMode('centered')
         return
@@ -187,8 +194,12 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
 
       // Mode 2: right-aligned full text (no spacer, 8px min padding on left of title)
       const rightNeeded =
-        RIGHT_MIN_PADDING_PX + fullTextW + TITLE_BADGE_GAP_PX + badgeW +
-        TITLE_TOGGLE_GAP_PX + toggleW
+        RIGHT_MIN_PADDING_PX +
+        fullTextW +
+        TITLE_BADGE_GAP_PX +
+        badgeW +
+        TITLE_TOGGLE_GAP_PX +
+        toggleW
       if (rightNeeded <= innerWidth) {
         setTitleMode('right')
         return
@@ -207,8 +218,15 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
 
     // Re-measure after web fonts finish loading (fallback-metric guard)
     let cancelled = false
-    document.fonts?.ready?.then(() => { if (!cancelled) compute() }).catch(() => {})
-    return () => { cancelled = true; ro.disconnect() }
+    document.fonts?.ready
+      ?.then(() => {
+        if (!cancelled) compute()
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+      ro.disconnect()
+    }
   }, [isInProgressColumn, tickets.length, showArchived, archivedTickets?.length])
 
   const handleToggleShowArchived = useCallback(
@@ -327,7 +345,10 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
             if (blockerIds?.size) {
               for (const [, projTickets] of store.tickets) {
                 for (const t of projTickets) {
-                  if (blockerIds.has(t.id) && !isBlockerSatisfied(t.column, t.mode, triggerColumn)) {
+                  if (
+                    blockerIds.has(t.id) &&
+                    !isBlockerSatisfied(t.column, t.mode, triggerColumn)
+                  ) {
                     isBlocked = true
                     break
                   }
@@ -362,10 +383,10 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
           const draggedTicket = findTicket(ticketId)
           if (draggedTicket?.worktree_id) {
             try {
-              const worktree = await window.db.worktree.get(draggedTicket.worktree_id)
+              const worktree = await db.worktree.get(draggedTicket.worktree_id)
               if (worktree) {
                 // Resolve the effective base branch
-                const defaultWorktrees = await window.db.worktree.getActiveByProject(ticketProjectId)
+                const defaultWorktrees = await db.worktree.getActiveByProject(ticketProjectId)
                 const defaultWt = defaultWorktrees.find((w) => w.is_default)
                 const resolvedBaseBranch = worktree.base_branch ?? defaultWt?.branch_name
 
@@ -378,8 +399,10 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
                   if (baseWorktree) {
                     // Pre-check: does the feature branch actually have work to merge?
                     const [hasUncommitted, branchStatResult] = await Promise.all([
-                      window.gitOps.hasUncommittedChanges(worktree.path),
-                      window.gitOps.branchDiffShortStat(worktree.path, resolvedBaseBranch)
+                      window.gitOps.hasUncommittedChanges(worktree.path).then(unwrapEnvelope),
+                      window.gitOps
+                        .branchDiffShortStat(worktree.path, resolvedBaseBranch)
+                        .then(unwrapEnvelope)
                     ])
 
                     const commitsAhead = branchStatResult.success
@@ -424,8 +447,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
         // ── Same-column reorder ───────────────────────────────
         const ticketProjectId = findTicketProjectId(ticketId)
         const filteredTickets = tickets.filter((t) => t.id !== ticketId)
-        const adjustedIndex =
-          targetIndex > sourceIndex ? targetIndex - 1 : targetIndex
+        const adjustedIndex = targetIndex > sourceIndex ? targetIndex - 1 : targetIndex
         const sortOrder = store.computeSortOrder(filteredTickets, adjustedIndex)
         store.reorderTicket(ticketId, ticketProjectId, sortOrder)
       }
@@ -448,19 +470,21 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
       const draggedTicket = findTicket(ticketId)
       if (draggedTicket?.current_session_id) {
         // Abort the running agent process (not just the DB status)
-        const session = await window.db.session.get(draggedTicket.current_session_id)
+        const session = await db.session.get(draggedTicket.current_session_id)
         if (session?.opencode_session_id && session.worktree_id) {
-          const worktree = await window.db.worktree.get(session.worktree_id)
+          const worktree = await db.worktree.get(session.worktree_id)
           if (worktree?.path) {
             try {
-              await window.opencodeOps.abort(worktree.path, session.opencode_session_id)
+              unwrapEnvelope(
+                await window.opencodeOps.abort(worktree.path, session.opencode_session_id)
+              )
             } catch {
               // Non-critical — session may already be idle
             }
           }
         }
 
-        await window.db.session.update(draggedTicket.current_session_id, {
+        await db.session.update(draggedTicket.current_session_id, {
           status: 'completed',
           completed_at: new Date().toISOString()
         })
@@ -533,9 +557,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
             <div
               className={cn(
                 'flex flex-1 items-center gap-2',
-                isInProgressColumn && titleMode !== 'centered'
-                  ? 'justify-end'
-                  : 'justify-center'
+                isInProgressColumn && titleMode !== 'centered' ? 'justify-end' : 'justify-center'
               )}
             >
               {/* Collapse toggle for Done column */}
@@ -563,9 +585,13 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
                 ref={badgeRef}
                 className="inline-flex h-5 min-w-[20px] items-center justify-center gap-0.5 rounded-full bg-muted/40 px-1.5 text-[11px] font-medium text-muted-foreground"
               >
-                {showArchived && archivedTickets && archivedTickets.length > 0
-                  ? <>{tickets.length}+<span className="italic">{archivedTickets.length}</span></>
-                  : tickets.length}
+                {showArchived && archivedTickets && archivedTickets.length > 0 ? (
+                  <>
+                    {tickets.length}+<span className="italic">{archivedTickets.length}</span>
+                  </>
+                ) : (
+                  tickets.length
+                )}
               </span>
             </div>
 
@@ -576,7 +602,12 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div ref={toggleRef} className="ml-2 flex shrink-0 items-center gap-1.5">
-                    <Zap className={cn('h-3 w-3', !isSimpleMode ? 'text-amber-500' : 'text-muted-foreground/50')} />
+                    <Zap
+                      className={cn(
+                        'h-3 w-3',
+                        !isSimpleMode ? 'text-amber-500' : 'text-muted-foreground/50'
+                      )}
+                    />
                     <Switch
                       data-testid="simple-mode-toggle"
                       size="sm"
@@ -594,7 +625,12 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
             {/* Archive toggle — right of title, vertically centered */}
             {isDoneColumn && (
               <div className="ml-2 flex shrink-0 items-center gap-1.5">
-                <Archive className={cn('h-3 w-3', showArchived ? 'text-muted-foreground' : 'text-muted-foreground/50')} />
+                <Archive
+                  className={cn(
+                    'h-3 w-3',
+                    showArchived ? 'text-muted-foreground' : 'text-muted-foreground/50'
+                  )}
+                />
                 <Switch
                   data-testid="archive-toggle"
                   size="sm"
@@ -650,25 +686,22 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
           data-testid={`kanban-drop-area-${column}`}
           className="flex flex-1 flex-col gap-2 overflow-y-auto px-1 pb-2 rounded-md min-h-[60px]"
         >
-          {tickets.length === 0 && !(isDoneColumn && showArchived && archivedTickets && archivedTickets.length > 0) ? (
+          {tickets.length === 0 &&
+          !(isDoneColumn && showArchived && archivedTickets && archivedTickets.length > 0) ? (
             isDragOver ? (
               dropIndicator
+            ) : /* Empty state: show the add-ticket card as the only item */
+            isTodoColumn ? (
+              <button
+                data-testid="kanban-add-ticket-card"
+                onClick={() => setIsCreateModalOpen(true)}
+                className="flex items-center justify-center gap-1.5 rounded-md border border-dashed border-border/60 p-2 text-sm text-muted-foreground/60 hover:border-primary/40 hover:text-muted-foreground hover:bg-muted/20 transition-colors cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+                <span>New ticket</span>
+              </button>
             ) : (
-              /* Empty state: show the add-ticket card as the only item */
-              isTodoColumn ? (
-                <button
-                  data-testid="kanban-add-ticket-card"
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="flex items-center justify-center gap-1.5 rounded-md border border-dashed border-border/60 p-2 text-sm text-muted-foreground/60 hover:border-primary/40 hover:text-muted-foreground hover:bg-muted/20 transition-colors cursor-pointer"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>New ticket</span>
-                </button>
-              ) : (
-                <p className="px-2 py-4 text-center text-xs text-muted-foreground/60">
-                  No tickets
-                </p>
-              )
+              <p className="px-2 py-4 text-center text-xs text-muted-foreground/60">No tickets</p>
             )
           ) : (
             <>
@@ -681,8 +714,18 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
                   transition={isLayoutAnimationSuppressed() ? { duration: 0 } : CARD_LAYOUT_SPRING}
                 >
                   {isDragOver && dropIndex === index && dropIndicator}
-                  <div data-card-index={index} className={draggingTicketId === ticket.id ? 'h-0 min-h-0 overflow-hidden' : undefined}>
-                    <KanbanTicketCard ticket={ticket} index={index} connectionId={connectionId} isPinnedMode={isPinnedMode} />
+                  <div
+                    data-card-index={index}
+                    className={
+                      draggingTicketId === ticket.id ? 'h-0 min-h-0 overflow-hidden' : undefined
+                    }
+                  >
+                    <KanbanTicketCard
+                      ticket={ticket}
+                      index={index}
+                      connectionId={connectionId}
+                      isPinnedMode={isPinnedMode}
+                    />
                   </div>
                 </motion.div>
               ))}
@@ -693,12 +736,20 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
                 <>
                   <div className="flex items-center gap-2 px-2 py-1">
                     <div className="flex-1 border-t border-border/40" />
-                    <span className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider">Archived</span>
+                    <span className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider">
+                      Archived
+                    </span>
                     <div className="flex-1 border-t border-border/40" />
                   </div>
                   {archivedTickets.map((ticket) => (
                     <div key={ticket.id}>
-                      <KanbanTicketCard ticket={ticket} index={-1} isArchived connectionId={connectionId} isPinnedMode={isPinnedMode} />
+                      <KanbanTicketCard
+                        ticket={ticket}
+                        index={-1}
+                        isArchived
+                        connectionId={connectionId}
+                        isPinnedMode={isPinnedMode}
+                      />
                     </div>
                   ))}
                 </>
@@ -750,7 +801,9 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
           ticket={saveConfigTicket}
           projectId={saveConfigTicket.project_id}
           open={!!saveConfigTicket}
-          onOpenChange={(open) => { if (!open) setSaveConfigTicket(null) }}
+          onOpenChange={(open) => {
+            if (!open) setSaveConfigTicket(null)
+          }}
           saveConfigOnly
         />
       )}
@@ -785,10 +838,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
 
       {/* Archive All confirmation dialog — Done column */}
       {isDoneColumn && (
-        <AlertDialog
-          open={showArchiveAllConfirm}
-          onOpenChange={setShowArchiveAllConfirm}
-        >
+        <AlertDialog open={showArchiveAllConfirm} onOpenChange={setShowArchiveAllConfirm}>
           <AlertDialogContent data-testid="archive-all-confirm-dialog">
             <AlertDialogHeader>
               <AlertDialogTitle>Archive all done tickets?</AlertDialogTitle>
@@ -798,10 +848,7 @@ export function KanbanColumn({ column, tickets, archivedTickets, projectId, conn
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel data-testid="archive-all-cancel-btn">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                data-testid="archive-all-confirm-btn"
-                onClick={handleArchiveAll}
-              >
+              <AlertDialogAction data-testid="archive-all-confirm-btn" onClick={handleArchiveAll}>
                 Archive all
               </AlertDialogAction>
             </AlertDialogFooter>

@@ -6,6 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { Loader2, GitMerge, GitCommit, Archive } from 'lucide-react'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 type Step = 'loading' | 'commit_base' | 'commit' | 'merge' | 'archive'
 
@@ -70,7 +73,7 @@ export function MergeOnDoneDialog() {
         }
 
         // Fetch feature worktree
-        const featureWorktree = await window.db.worktree.get(ticket.worktree_id)
+        const featureWorktree = await db.worktree.get(ticket.worktree_id)
         if (!featureWorktree || featureWorktree.status !== 'active') {
           toast.warning('Cannot merge — feature worktree is not active')
           clearPendingDoneMove()
@@ -78,7 +81,7 @@ export function MergeOnDoneDialog() {
         }
 
         // Resolve base branch
-        const activeWorktrees = await window.db.worktree.getActiveByProject(pending.projectId)
+        const activeWorktrees = await db.worktree.getActiveByProject(pending.projectId)
         const defaultWt = activeWorktrees.find((w) => w.is_default)
         const resolvedBaseBranch = featureWorktree.base_branch ?? defaultWt?.branch_name
 
@@ -101,9 +104,11 @@ export function MergeOnDoneDialog() {
 
         // Check both worktrees for dirty state in parallel
         const [baseDirty, hasUncommitted, branchStatResult] = await Promise.all([
-          window.gitOps.hasUncommittedChanges(baseWorktree.path),
-          window.gitOps.hasUncommittedChanges(featureWorktree.path),
-          window.gitOps.branchDiffShortStat(featureWorktree.path, resolvedBaseBranch)
+          window.gitOps.hasUncommittedChanges(baseWorktree.path).then(unwrapEnvelope),
+          window.gitOps.hasUncommittedChanges(featureWorktree.path).then(unwrapEnvelope),
+          window.gitOps
+            .branchDiffShortStat(featureWorktree.path, resolvedBaseBranch)
+            .then(unwrapEnvelope)
         ])
 
         if (cancelled) return
@@ -111,10 +116,10 @@ export function MergeOnDoneDialog() {
         // Get uncommitted diff stats for both worktrees if needed
         const [featureDiffResult, baseDiffResult] = await Promise.all([
           hasUncommitted
-            ? window.gitOps.getDiffStat(featureWorktree.path)
+            ? window.gitOps.getDiffStat(featureWorktree.path).then(unwrapEnvelope)
             : Promise.resolve(null),
           baseDirty
-            ? window.gitOps.getDiffStat(baseWorktree.path)
+            ? window.gitOps.getDiffStat(baseWorktree.path).then(unwrapEnvelope)
             : Promise.resolve(null)
         ])
 
@@ -158,7 +163,7 @@ export function MergeOnDoneDialog() {
         }
 
         // Get project path for archive step
-        const project = await window.db.project.get(featureWorktree.project_id)
+        const project = await db.project.get(featureWorktree.project_id)
         if (cancelled) return
 
         setResolved({
@@ -195,15 +200,14 @@ export function MergeOnDoneDialog() {
     if (!resolved || !commitMessage.trim()) return
     setCommitting(true)
     try {
-      const stageResult = await window.gitOps.stageAll(resolved.featureWorktreePath)
+      const stageResult = unwrapEnvelope(await window.gitOps.stageAll(resolved.featureWorktreePath))
       if (!stageResult.success) {
         toast.error(`Failed to stage: ${stageResult.error}`)
         return
       }
 
-      const commitResult = await window.gitOps.commit(
-        resolved.featureWorktreePath,
-        commitMessage.trim()
+      const commitResult = unwrapEnvelope(
+        await window.gitOps.commit(resolved.featureWorktreePath, commitMessage.trim())
       )
       if (!commitResult.success) {
         toast.error(`Failed to commit: ${commitResult.error}`)
@@ -213,9 +217,8 @@ export function MergeOnDoneDialog() {
       toast.success('Changes committed')
 
       // Re-check branch divergence after commit
-      const statResult = await window.gitOps.branchDiffShortStat(
-        resolved.featureWorktreePath,
-        resolved.baseBranch
+      const statResult = unwrapEnvelope(
+        await window.gitOps.branchDiffShortStat(resolved.featureWorktreePath, resolved.baseBranch)
       )
 
       if (!statResult.success) {
@@ -254,15 +257,14 @@ export function MergeOnDoneDialog() {
     if (!resolved || !baseCommitMessage.trim()) return
     setCommittingBase(true)
     try {
-      const stageResult = await window.gitOps.stageAll(resolved.baseWorktreePath)
+      const stageResult = unwrapEnvelope(await window.gitOps.stageAll(resolved.baseWorktreePath))
       if (!stageResult.success) {
         toast.error(`Failed to stage on ${resolved.baseBranch}: ${stageResult.error}`)
         return
       }
 
-      const commitResult = await window.gitOps.commit(
-        resolved.baseWorktreePath,
-        baseCommitMessage.trim()
+      const commitResult = unwrapEnvelope(
+        await window.gitOps.commit(resolved.baseWorktreePath, baseCommitMessage.trim())
       )
       if (!commitResult.success) {
         toast.error(`Failed to commit on ${resolved.baseBranch}: ${commitResult.error}`)
@@ -272,17 +274,16 @@ export function MergeOnDoneDialog() {
       toast.success(`Changes committed on ${resolved.baseBranch}`)
 
       // Check if feature branch still has uncommitted changes
-      const featureHasUncommitted = await window.gitOps.hasUncommittedChanges(
-        resolved.featureWorktreePath
+      const featureHasUncommitted = unwrapEnvelope(
+        await window.gitOps.hasUncommittedChanges(resolved.featureWorktreePath)
       )
 
       if (featureHasUncommitted) {
         setStep('commit')
       } else {
         // Re-check branch divergence
-        const statResult = await window.gitOps.branchDiffShortStat(
-          resolved.featureWorktreePath,
-          resolved.baseBranch
+        const statResult = unwrapEnvelope(
+          await window.gitOps.branchDiffShortStat(resolved.featureWorktreePath, resolved.baseBranch)
         )
         if (!statResult.success) {
           toast.warning(`Cannot verify merge status: ${statResult.error ?? 'unknown error'}`)
@@ -321,24 +322,25 @@ export function MergeOnDoneDialog() {
     setMerging(true)
     try {
       // Pull latest on base branch first (only if remote exists)
-      const remoteResult = await window.gitOps.getRemoteUrl(resolved.baseWorktreePath)
+      const remoteResult = unwrapEnvelope(
+        await window.gitOps.getRemoteUrl(resolved.baseWorktreePath)
+      )
       if (remoteResult.url) {
-        const pullResult = await window.gitOps.pull(resolved.baseWorktreePath)
+        const pullResult = unwrapEnvelope(await window.gitOps.pull(resolved.baseWorktreePath))
         if (!pullResult.success) {
           toast.warning(`Pull failed on ${resolved.baseBranch} — continuing with local merge`)
         }
       }
 
       // Merge feature into base
-      const mergeResult = await window.gitOps.merge(
-        resolved.baseWorktreePath,
-        resolved.featureBranch
+      const mergeResult = unwrapEnvelope(
+        await window.gitOps.merge(resolved.baseWorktreePath, resolved.featureBranch)
       )
 
       if (!mergeResult.success) {
         // Conflicts or error — abort and let user handle manually
         if (mergeResult.conflicts && mergeResult.conflicts.length > 0) {
-          await window.gitOps.mergeAbort(resolved.baseWorktreePath)
+          unwrapEnvelope(await window.gitOps.mergeAbort(resolved.baseWorktreePath))
           toast.error(
             `Merge conflicts in ${mergeResult.conflicts.length} file${mergeResult.conflicts.length !== 1 ? 's' : ''} — merge manually`
           )
@@ -442,8 +444,7 @@ export function MergeOnDoneDialog() {
           <div className="flex flex-col gap-3 py-2">
             <p className="text-xs text-muted-foreground">
               <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code> has uncommitted
-              changes:{' '}
-              {resolved.baseUncommittedStats.filesChanged} files changed,{' '}
+              changes: {resolved.baseUncommittedStats.filesChanged} files changed,{' '}
               <span className="text-green-500">+{resolved.baseUncommittedStats.insertions}</span>{' '}
               <span className="text-red-500">-{resolved.baseUncommittedStats.deletions}</span>
             </p>

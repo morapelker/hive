@@ -6,6 +6,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import type { Hunk } from '@/lib/diff-utils'
 import { createHunkPatch } from '@/lib/diff-utils'
 import type { editor } from 'monaco-editor'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface HunkActionGutterProps {
   hunks: Hunk[]
@@ -87,7 +88,7 @@ export function HunkActionGutter({
       setLoading(hunk.index)
       try {
         const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
-        const result = await window.gitOps.stageHunk(worktreePath, patch)
+        const result = unwrapEnvelope(await window.gitOps.stageHunk(worktreePath, patch))
         if (result.success) {
           toast.success('Hunk staged')
           useGitStore.getState().refreshStatuses(worktreePath)
@@ -109,7 +110,7 @@ export function HunkActionGutter({
       setLoading(hunk.index)
       try {
         const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
-        const result = await window.gitOps.unstageHunk(worktreePath, patch)
+        const result = unwrapEnvelope(await window.gitOps.unstageHunk(worktreePath, patch))
         if (result.success) {
           toast.success('Hunk unstaged')
           useGitStore.getState().refreshStatuses(worktreePath)
@@ -131,7 +132,7 @@ export function HunkActionGutter({
       setLoading(hunk.index)
       try {
         const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
-        const result = await window.gitOps.revertHunk(worktreePath, patch)
+        const result = unwrapEnvelope(await window.gitOps.revertHunk(worktreePath, patch))
         if (result.success) {
           toast.success('Hunk reverted')
           useGitStore.getState().refreshStatuses(worktreePath)

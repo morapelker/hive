@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /** Default Catppuccin Mocha theme used when no Ghostty config is found */
 const DEFAULT_TERMINAL_THEME: ITheme = {
@@ -204,7 +205,7 @@ export class XtermBackend implements TerminalBackend {
       if (e.metaKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
         navigator.clipboard
           .readText()
-          .catch(() => window.projectOps.readFromClipboard())
+          .catch(() => window.projectOps.readFromClipboard().then(unwrapEnvelope))
           .then((text) => {
             if (text) window.terminalOps.write(this.terminalId, text)
           })
@@ -223,7 +224,7 @@ export class XtermBackend implements TerminalBackend {
     this.searchAddon = searchAddon
 
     const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      window.projectOps.openPath(uri)
+      window.projectOps.openPath(uri).then(unwrapEnvelope).catch(console.error)
     })
     terminal.loadAddon(webLinksAddon)
 
@@ -267,33 +268,38 @@ export class XtermBackend implements TerminalBackend {
 
     // Create the PTY
     callbacks.onStatusChange('creating')
-    window.terminalOps.create(this.terminalId, opts.cwd, opts.shell).then((result) => {
-      if (result.success) {
-        callbacks.onStatusChange('running')
+    window.terminalOps
+      .create(this.terminalId, opts.cwd, opts.shell)
+      .then(unwrapEnvelope)
+      .then((result) => {
+        if (result.success) {
+          callbacks.onStatusChange('running')
 
-        // Immediately sync PTY size with xterm.js's actual dimensions.
-        // The PTY is created with default 80×24, but xterm.js was already fit
-        // to the container (which may be much wider/taller). The ResizeObserver
-        // initial callback likely fired BEFORE the PTY existed, so its resize
-        // was silently dropped. Without this, zsh uses 80-col cursor positioning
-        // while xterm.js renders at the actual width, causing visual mismatches
-        // (e.g. auto-suggest redraws writing text at wrong positions).
-        try {
-          if (this.fitAddon) {
-            this.fitAddon.fit()
-            const dims = this.fitAddon.proposeDimensions()
-            if (dims) {
-              window.terminalOps.resize(this.terminalId, dims.cols, dims.rows)
+          // Immediately sync PTY size with xterm.js's actual dimensions.
+          // The PTY is created with default 80×24, but xterm.js was already fit
+          // to the container (which may be much wider/taller). The ResizeObserver
+          // initial callback likely fired BEFORE the PTY existed, so its resize
+          // was silently dropped. Without this, zsh uses 80-col cursor positioning
+          // while xterm.js renders at the actual width, causing visual mismatches
+          // (e.g. auto-suggest redraws writing text at wrong positions).
+          try {
+            if (this.fitAddon) {
+              this.fitAddon.fit()
+              const dims = this.fitAddon.proposeDimensions()
+              if (dims) {
+                window.terminalOps
+                  .resize(this.terminalId, dims.cols, dims.rows)
+                  .then(unwrapEnvelope)
+              }
             }
+          } catch {
+            // Ignore fit errors during setup
           }
-        } catch {
-          // Ignore fit errors during setup
+        } else {
+          terminal.write(`\x1b[31mFailed to create terminal: ${result.error}\x1b[0m\r\n`)
+          callbacks.onStatusChange('exited')
         }
-      } else {
-        terminal.write(`\x1b[31mFailed to create terminal: ${result.error}\x1b[0m\r\n`)
-        callbacks.onStatusChange('exited')
-      }
-    })
+      })
 
     // ResizeObserver for auto-fit
     this.resizeObserver = new ResizeObserver(() => {
@@ -302,7 +308,7 @@ export class XtermBackend implements TerminalBackend {
           this.fitAddon.fit()
           const dims = this.fitAddon.proposeDimensions()
           if (dims) {
-            window.terminalOps.resize(this.terminalId, dims.cols, dims.rows)
+            window.terminalOps.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
           }
         }
       } catch {
@@ -317,7 +323,7 @@ export class XtermBackend implements TerminalBackend {
   }
 
   resize(cols: number, rows: number): void {
-    window.terminalOps.resize(this.terminalId, cols, rows)
+    window.terminalOps.resize(this.terminalId, cols, rows).then(unwrapEnvelope)
   }
 
   focus(): void {
@@ -340,7 +346,7 @@ export class XtermBackend implements TerminalBackend {
       this.fitAddon?.fit()
       const dims = this.fitAddon?.proposeDimensions()
       if (dims) {
-        window.terminalOps.resize(this.terminalId, dims.cols, dims.rows)
+        window.terminalOps.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
       }
     } catch {
       // Ignore fit errors

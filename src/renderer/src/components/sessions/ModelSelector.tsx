@@ -22,6 +22,7 @@ import {
 } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { toast } from '@/lib/toast'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -121,7 +122,7 @@ export const ModelSelector = memo(function ModelSelector({
         setIsLoading(true)
         const catalogs = await Promise.all(
           catalogAgentSdks.map(async (sdk) => {
-            const result = await window.opencodeOps.listModels({ agentSdk: sdk })
+            const result = unwrapEnvelope(await window.opencodeOps.listModels({ agentSdk: sdk }))
             if (!result.success || !result.providers) return []
             const parsed = parseProviders(result.providers)
             cacheHandoffModelCatalog(sdk, result.providers)

@@ -1,6 +1,7 @@
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { hasFocusedEditableElement } from '@/lib/focus-utils'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /**
  * Native Ghostty terminal backend (macOS only).
@@ -86,7 +87,7 @@ export class GhosttyBackend implements TerminalBackend {
 
     this.runtimeInitPromise = (async () => {
       try {
-        const initResult = await window.terminalOps.ghosttyInit()
+        const initResult = unwrapEnvelope(await window.terminalOps.ghosttyInit())
         if (!initResult.success) {
           console.error('Failed to initialize Ghostty:', initResult.error)
           return false
@@ -152,12 +153,15 @@ export class GhosttyBackend implements TerminalBackend {
           }
 
       try {
-        const result = await window.terminalOps.ghosttyCreateSurface(this.terminalId, createRect, {
-          cwd: this.opts.cwd,
-          shell: this.opts.shell,
-          scaleFactor: window.devicePixelRatio || 2.0,
-          fontSize: useSettingsStore.getState().ghosttyFontSize || GhosttyBackend.FALLBACK_FONT_SIZE
-        })
+        const result = unwrapEnvelope(
+          await window.terminalOps.ghosttyCreateSurface(this.terminalId, createRect, {
+            cwd: this.opts.cwd,
+            shell: this.opts.shell,
+            scaleFactor: window.devicePixelRatio || 2.0,
+            fontSize:
+              useSettingsStore.getState().ghosttyFontSize || GhosttyBackend.FALLBACK_FONT_SIZE
+          })
+        )
 
         if (!result.success) {
           console.error('Failed to create Ghostty surface:', result.error)
@@ -181,7 +185,7 @@ export class GhosttyBackend implements TerminalBackend {
         if (this.visible) {
           this.syncFrame()
           if (!hasFocusedEditableElement()) {
-            await window.terminalOps.ghosttySetFocus(this.terminalId, true)
+            unwrapEnvelope(await window.terminalOps.ghosttySetFocus(this.terminalId, true))
           }
         } else {
           this.hideSurface()
@@ -418,7 +422,7 @@ export class GhosttyBackend implements TerminalBackend {
  */
 export async function isGhosttyAvailable(): Promise<boolean> {
   try {
-    const result = await window.terminalOps.ghosttyIsAvailable()
+    const result = unwrapEnvelope(await window.terminalOps.ghosttyIsAvailable())
     return result.available
   } catch {
     return false
