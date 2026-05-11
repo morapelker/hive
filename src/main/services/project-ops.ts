@@ -14,6 +14,7 @@ import { createLogger } from './logger'
 import { getDatabase } from '../db'
 
 export { detectProjectLanguage, detectProjectFavicon } from './language-detector'
+export { detectSetupSuggestions } from './setup-script-suggester'
 
 const log = createLogger({ component: 'ProjectOps' })
 
