@@ -20,6 +20,11 @@ interface RunAndWaitResult {
   error?: string
 }
 
+interface KillPidResult {
+  killed: boolean
+  reason?: string
+}
+
 interface ScriptEvent {
   type: 'command-start' | 'output' | 'error' | 'done' | 'long-running'
   command?: string
@@ -508,6 +513,48 @@ export class ScriptRunner {
     }
 
     return true
+  }
+
+  private isAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (err) {
+      const error = err as NodeJS.ErrnoException
+      return error.code === 'EPERM'
+    }
+  }
+
+  async killPid(pid: number): Promise<KillPidResult> {
+    if (!Number.isFinite(pid) || pid <= 1 || pid === process.pid) {
+      return { killed: false, reason: 'EINVAL' }
+    }
+
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch (err) {
+      const error = err as NodeJS.ErrnoException
+      return { killed: false, reason: error.code ?? String(err) }
+    }
+
+    for (let i = 0; i < 8; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      if (!this.isAlive(pid)) return { killed: true }
+    }
+
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch (err) {
+      const error = err as NodeJS.ErrnoException
+      return { killed: false, reason: error.code ?? String(err) }
+    }
+
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      if (!this.isAlive(pid)) return { killed: true }
+    }
+
+    return { killed: false, reason: 'still alive after SIGKILL' }
   }
 
   getStats(): { active: number; totalOpened: number; totalClosed: number } {

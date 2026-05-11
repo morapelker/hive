@@ -1107,6 +1107,7 @@ declare global {
           error?: string
         }>
       >
+      killPid: (pid: number) => Promise<Envelope<{ killed: boolean; reason?: string }>>
       runArchive: (
         commands: string[],
         cwd: string

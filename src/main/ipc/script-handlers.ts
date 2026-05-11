@@ -133,6 +133,14 @@ export function registerScriptHandlers(mainWindow: BrowserWindow): void {
     })
   })
 
+  defineHandler('script:killPid', z.object({ pid: z.number().int() }), ({ pid }) => {
+    log.info('IPC: script:killPid', { pid })
+    return Effect.tryPromise({
+      try: () => scriptRunner.killPid(pid),
+      catch: (error) => scriptFailed('script:killPid', error)
+    })
+  })
+
   // Run archive script (non-interactive, captures output)
   defineHandler('script:runArchive', runArchiveSchema, ({ commands, cwd }) => {
     log.info('IPC: script:runArchive', { cwd, commandCount: commands.length })
