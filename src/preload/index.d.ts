@@ -1758,10 +1758,20 @@ declare global {
     usageOps: {
       fetch: () => Promise<Envelope<import('../shared/types/usage').UsageResult>>
       fetchOpenai: () => Promise<Envelope<import('../shared/types/usage').OpenAIUsageResult>>
+      fetchForAccount: (
+        accountId: string
+      ) => Promise<Envelope<import('../shared/types/usage').FetchForAccountResult>>
+      refreshAllForProvider: (
+        provider: import('../shared/types/usage').UsageProvider
+      ) => Promise<Envelope<import('../shared/types/usage').RefreshAllResultItem[]>>
     }
     accountOps: {
       getClaudeEmail: () => Promise<Envelope<string | null>>
       getOpenAIEmail: () => Promise<Envelope<string | null>>
+      listSaved: (
+        provider?: import('../shared/types/usage').UsageProvider
+      ) => Promise<Envelope<import('../shared/types/usage').SavedAccountDTO[]>>
+      removeSaved: (accountId: string) => Promise<Envelope<boolean>>
     }
     analyticsOps: {
       track: (event: string, properties?: Record<string, unknown>) => Promise<void>

@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import type { UsageData, OpenAIUsageData, UsageProvider } from '@shared/types/usage'
+import type {
+  UsageData,
+  OpenAIUsageData,
+  UsageProvider,
+  SavedAccountDTO
+} from '@shared/types/usage'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export type { UsageData, UsageProvider }
@@ -16,7 +21,15 @@ interface UsageState {
   openaiLastError: string | null
 
   activeProvider: UsageProvider
+  savedAccounts: Record<UsageProvider, SavedAccountDTO[]>
+  savedAccountLoadErrors: Record<UsageProvider, string | null>
+  refreshingProviders: Record<UsageProvider, boolean>
+  refreshingAccountIds: Set<string>
 
+  loadSavedAccounts: (provider?: UsageProvider) => Promise<void>
+  refreshAllForProvider: (provider: UsageProvider) => Promise<void>
+  refreshSavedAccount: (id: string) => Promise<void>
+  removeSavedAccount: (id: string) => Promise<void>
   fetchUsageForProvider: (provider: UsageProvider) => Promise<void>
   forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
@@ -41,6 +54,94 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   openaiLastError: null,
 
   activeProvider: 'anthropic',
+  savedAccounts: { anthropic: [], openai: [] },
+  savedAccountLoadErrors: { anthropic: null, openai: null },
+  refreshingProviders: { anthropic: false, openai: false },
+  refreshingAccountIds: new Set<string>(),
+
+  loadSavedAccounts: async (provider?: UsageProvider) => {
+    try {
+      const accounts = unwrapEnvelope(await window.accountOps.listSaved(provider))
+      if (provider) {
+        set((state) => ({
+          savedAccounts: { ...state.savedAccounts, [provider]: accounts },
+          savedAccountLoadErrors: { ...state.savedAccountLoadErrors, [provider]: null }
+        }))
+        return
+      }
+
+      set({
+        savedAccounts: {
+          anthropic: accounts.filter((account) => account.provider === 'anthropic'),
+          openai: accounts.filter((account) => account.provider === 'openai')
+        },
+        savedAccountLoadErrors: { anthropic: null, openai: null }
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (provider) {
+        set((state) => ({
+          savedAccountLoadErrors: { ...state.savedAccountLoadErrors, [provider]: message }
+        }))
+      } else {
+        set({
+          savedAccountLoadErrors: { anthropic: message, openai: message }
+        })
+      }
+      throw error
+    }
+  },
+
+  refreshAllForProvider: async (provider: UsageProvider) => {
+    const state = get()
+    if (state.refreshingProviders[provider]) return
+
+    const accountIds = state.savedAccounts[provider].map((account) => account.id)
+    set((current) => ({
+      refreshingProviders: { ...current.refreshingProviders, [provider]: true },
+      refreshingAccountIds: new Set([...current.refreshingAccountIds, ...accountIds])
+    }))
+
+    try {
+      unwrapEnvelope(await window.usageOps.refreshAllForProvider(provider))
+      await get().loadSavedAccounts(provider)
+    } finally {
+      set((current) => {
+        const nextIds = new Set(current.refreshingAccountIds)
+        accountIds.forEach((id) => nextIds.delete(id))
+        return {
+          refreshingProviders: { ...current.refreshingProviders, [provider]: false },
+          refreshingAccountIds: nextIds
+        }
+      })
+    }
+  },
+
+  refreshSavedAccount: async (id: string) => {
+    const state = get()
+    const provider = (['anthropic', 'openai'] as UsageProvider[]).find((p) =>
+      state.savedAccounts[p].some((account) => account.id === id)
+    )
+
+    set((current) => ({
+      refreshingAccountIds: new Set([...current.refreshingAccountIds, id])
+    }))
+    try {
+      unwrapEnvelope(await window.usageOps.fetchForAccount(id))
+      await get().loadSavedAccounts(provider)
+    } finally {
+      set((current) => {
+        const nextIds = new Set(current.refreshingAccountIds)
+        nextIds.delete(id)
+        return { refreshingAccountIds: nextIds }
+      })
+    }
+  },
+
+  removeSavedAccount: async (id: string) => {
+    unwrapEnvelope(await window.accountOps.removeSaved(id))
+    await get().loadSavedAccounts()
+  },
 
   fetchUsageForProvider: async (provider: UsageProvider) => {
     const state = get()
@@ -57,6 +158,9 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         if (result.success) {
           set({ anthropicUsage: result.data ?? null, anthropicLastError: null })
           succeeded = true
+          get()
+            .loadSavedAccounts(provider)
+            .catch(() => {})
         } else {
           set({ anthropicLastError: result.error ?? 'Unknown error' })
         }
@@ -79,6 +183,9 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         if (result.success) {
           set({ openaiUsage: result.data ?? null, openaiLastError: null })
           succeeded = true
+          get()
+            .loadSavedAccounts(provider)
+            .catch(() => {})
         } else {
           set({ openaiLastError: result.error ?? 'Unknown error' })
         }
@@ -106,6 +213,9 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         if (result.success) {
           set({ anthropicUsage: result.data ?? null, anthropicLastError: null })
           succeeded = true
+          get()
+            .loadSavedAccounts(provider)
+            .catch(() => {})
         } else {
           set({ anthropicLastError: result.error ?? 'Unknown error' })
         }
@@ -127,6 +237,9 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         if (result.success) {
           set({ openaiUsage: result.data ?? null, openaiLastError: null })
           succeeded = true
+          get()
+            .loadSavedAccounts(provider)
+            .catch(() => {})
         } else {
           set({ openaiLastError: result.error ?? 'Unknown error' })
         }

@@ -1,11 +1,24 @@
 import React, { useEffect } from 'react'
-import { useUsageStore, useAccountStore, useSessionStore, resolveUsageProvider, resolveDefaultUsageProvider, normalizeUsage } from '@/stores'
+import {
+  useUsageStore,
+  useAccountStore,
+  useSessionStore,
+  resolveUsageProvider,
+  resolveDefaultUsageProvider,
+  normalizeUsage
+} from '@/stores'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { Loader2 } from 'lucide-react'
 import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
-import type { UsageProvider } from '@shared/types/usage'
+import type {
+  OpenAIUsageData,
+  SavedAccountDTO,
+  UsageData,
+  UsageProvider
+} from '@shared/types/usage'
 
 function getBarColor(percent: number): string {
   if (percent >= 90) return 'bg-red-500'
@@ -72,9 +85,77 @@ function UsageRow({ label, percent, resetTime }: UsageRowProps): React.JSX.Eleme
   )
 }
 
-function findSessionById(
-  sessionId: string
-): {
+interface TooltipAccountRow {
+  id: string
+  email: string | null
+  usage: UsageData | null
+  status: 'ok' | 'stale' | 'error'
+  lastError: string | null
+  isActive: boolean
+  isRefreshing: boolean
+}
+
+function usageFromSavedAccount(
+  provider: UsageProvider,
+  account: SavedAccountDTO
+): UsageData | null {
+  if (!account.last_usage) return null
+  if (provider === 'anthropic') {
+    return normalizeUsage(provider, account.last_usage as UsageData, null)
+  }
+  return normalizeUsage(provider, null, account.last_usage as OpenAIUsageData)
+}
+
+function UsageTooltipAccountRow({ row }: { row: TooltipAccountRow }): React.JSX.Element {
+  const fiveHourPercent = row.usage ? Math.round(row.usage.five_hour.utilization) : 0
+  const sevenDayPercent = row.usage ? Math.round(row.usage.seven_day.utilization) : 0
+  const fiveHourReset = row.usage
+    ? formatResetTime(row.usage.five_hour.resets_at, 'five_hour')
+    : 'N/A'
+  const sevenDayReset = row.usage
+    ? formatResetTime(row.usage.seven_day.resets_at, 'seven_day')
+    : 'N/A'
+
+  return (
+    <div className="relative rounded-md border border-border/50 bg-background/40 px-2 py-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div
+          className={cn(
+            'min-w-0 truncate text-[11px] text-foreground',
+            row.isActive && 'font-semibold'
+          )}
+        >
+          {row.email ?? 'Active account'}
+        </div>
+        {row.isActive && (
+          <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
+            Active
+          </span>
+        )}
+      </div>
+
+      {row.status === 'stale' && (
+        <div className="mt-1 text-[10px] text-destructive">expired - sign in again</div>
+      )}
+      {row.status === 'error' && row.lastError && (
+        <div className="mt-1 truncate text-[10px] text-destructive/90">{row.lastError}</div>
+      )}
+
+      <div className={cn('mt-1 space-y-0.5', row.status === 'stale' && 'opacity-50')}>
+        <UsageRow label="5h" percent={fiveHourPercent} resetTime={fiveHourReset} />
+        <UsageRow label="7d" percent={sevenDayPercent} resetTime={sevenDayReset} />
+      </div>
+
+      {row.isRefreshing && (
+        <div className="absolute inset-0 flex items-center justify-center rounded-md bg-background/60">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function findSessionById(sessionId: string): {
   agent_sdk?: string | null
   model_provider_id?: string | null
   model_id?: string | null
@@ -112,13 +193,21 @@ function ProviderUsageBlock({
   const anthropicUsage = useUsageStore((s) => s.anthropicUsage)
   const openaiUsage = useUsageStore((s) => s.openaiUsage)
   const forceRefreshProvider = useUsageStore((s) => s.forceRefreshProvider)
+  const refreshAllForProvider = useUsageStore((s) => s.refreshAllForProvider)
+  const loadSavedAccounts = useUsageStore((s) => s.loadSavedAccounts)
+  const savedAccounts = useUsageStore((s) => s.savedAccounts[provider])
+  const savedAccountLoadError = useUsageStore((s) => s.savedAccountLoadErrors[provider])
+  const refreshingProvider = useUsageStore((s) => s.refreshingProviders[provider])
+  const refreshingAccountIds = useUsageStore((s) => s.refreshingAccountIds)
   const isLoading = useUsageStore((s) =>
     provider === 'anthropic' ? s.anthropicIsLoading : s.openaiIsLoading
   )
   const lastError = useUsageStore((s) =>
     provider === 'anthropic' ? s.anthropicLastError : s.openaiLastError
   )
-  const email = useAccountStore((s) => provider === 'anthropic' ? s.anthropicEmail : s.openaiEmail)
+  const email = useAccountStore((s) =>
+    provider === 'anthropic' ? s.anthropicEmail : s.openaiEmail
+  )
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
 
   const usage = normalizeUsage(provider, anthropicUsage, openaiUsage)
@@ -126,6 +215,48 @@ function ProviderUsageBlock({
   const providerIcon = provider === 'anthropic' ? claudeIcon : openaiIcon
   const providerLabel = provider === 'anthropic' ? 'Claude' : 'OpenAI'
   const tooltipTitle = provider === 'anthropic' ? 'Claude API Usage' : 'OpenAI API Usage'
+  const iconIsRefreshing = isLoading || refreshingProvider
+
+  const tooltipRows: TooltipAccountRow[] =
+    savedAccounts.length > 0
+      ? savedAccounts.map((account) => ({
+          id: account.id,
+          email: account.email,
+          usage: usageFromSavedAccount(provider, account),
+          status: account.status,
+          lastError: account.last_error,
+          isActive: email !== null && account.email === email,
+          isRefreshing: refreshingAccountIds.has(account.id)
+        }))
+      : [
+          {
+            id: `${provider}-active`,
+            email,
+            usage,
+            status: 'ok',
+            lastError: null,
+            isActive: !!email,
+            isRefreshing: false
+          }
+        ]
+
+  const handleRefreshActive = (): void => {
+    forceRefreshProvider(provider)
+    fetchEmail(provider)
+  }
+
+  const handleRefreshAll = (event: React.MouseEvent): void => {
+    event.preventDefault()
+    refreshAllForProvider(provider)
+  }
+
+  const handleLoadSavedAccounts = (): void => {
+    loadSavedAccounts(provider).catch(() => {})
+  }
+
+  useEffect(() => {
+    loadSavedAccounts(provider).catch(() => {})
+  }, [loadSavedAccounts, provider])
 
   // No credentials state — show muted N/A bars when explicitly selected
   if (!usage) {
@@ -133,14 +264,17 @@ function ProviderUsageBlock({
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="px-3 py-1.5 space-y-0.5 cursor-default opacity-40">
+          <div
+            className="px-3 py-1.5 space-y-0.5 cursor-default opacity-40"
+            onMouseEnter={handleLoadSavedAccounts}
+            onFocus={handleLoadSavedAccounts}
+          >
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 className="shrink-0 cursor-pointer bg-transparent border-none p-0"
-                onClick={() => {
-                  void Promise.allSettled([forceRefreshProvider(provider), fetchEmail(provider)])
-                }}
+                onClick={handleRefreshActive}
+                onContextMenu={handleRefreshAll}
                 aria-label={`Refresh ${providerLabel} usage`}
               >
                 <img
@@ -148,7 +282,7 @@ function ProviderUsageBlock({
                   alt={providerLabel}
                   className={cn(
                     'h-3 w-3 opacity-50 hover:opacity-80 transition-opacity',
-                    isLoading && 'animate-spin'
+                    iconIsRefreshing && 'animate-spin'
                   )}
                 />
               </button>
@@ -159,10 +293,23 @@ function ProviderUsageBlock({
             </div>
           </div>
         </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={8}>
-          <div className="space-y-1">
+        <TooltipContent
+          side="top"
+          sideOffset={8}
+          className="w-72 max-w-[min(18rem,calc(100vw-2rem))]"
+        >
+          <div className="space-y-2">
             <div className="font-medium">{tooltipTitle}</div>
-            <div className="text-[10px]">No credentials configured</div>
+            {savedAccountLoadError && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[10px] text-destructive">
+                Saved accounts unavailable: {savedAccountLoadError}
+              </div>
+            )}
+            {tooltipRows.some((row) => row.email || row.usage) ? (
+              tooltipRows.map((row) => <UsageTooltipAccountRow key={row.id} row={row} />)
+            ) : (
+              <div className="text-[10px]">No credentials configured</div>
+            )}
             {lastError && (
               <div className="text-[10px] text-red-400 border-t border-background/20 pt-1">
                 Refresh failed: {lastError}
@@ -183,14 +330,17 @@ function ProviderUsageBlock({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="px-3 py-1.5 space-y-0.5 cursor-default">
+        <div
+          className="px-3 py-1.5 space-y-0.5 cursor-default"
+          onMouseEnter={handleLoadSavedAccounts}
+          onFocus={handleLoadSavedAccounts}
+        >
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               className="shrink-0 cursor-pointer bg-transparent border-none p-0"
-              onClick={() => {
-                void Promise.allSettled([forceRefreshProvider(provider), fetchEmail(provider)])
-              }}
+              onClick={handleRefreshActive}
+              onContextMenu={handleRefreshAll}
               aria-label={`Refresh ${providerLabel} usage`}
             >
               <img
@@ -198,7 +348,7 @@ function ProviderUsageBlock({
                 alt={providerLabel}
                 className={cn(
                   'h-3 w-3 opacity-50 hover:opacity-80 transition-opacity',
-                  isLoading && 'animate-spin'
+                  iconIsRefreshing && 'animate-spin'
                 )}
               />
             </button>
@@ -209,20 +359,25 @@ function ProviderUsageBlock({
           </div>
         </div>
       </TooltipTrigger>
-      <TooltipContent side="top" sideOffset={8}>
-        <div className="space-y-1">
+      <TooltipContent
+        side="top"
+        sideOffset={8}
+        className="w-72 max-w-[min(18rem,calc(100vw-2rem))]"
+      >
+        <div className="space-y-2">
           <div className="font-medium">{tooltipTitle}</div>
-          {email && <div className="text-[10px] text-muted-foreground">{email}</div>}
-          <div className="text-[10px]">
-            5-hour: {Math.round(fiveHourPercent)}% (resets {fiveHourReset})
-          </div>
-          <div className="text-[10px]">
-            7-day: {Math.round(sevenDayPercent)}% (resets {sevenDayReset})
-          </div>
+          {savedAccountLoadError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[10px] text-destructive">
+              Saved accounts unavailable: {savedAccountLoadError}
+            </div>
+          )}
+          {tooltipRows.map((row) => (
+            <UsageTooltipAccountRow key={row.id} row={row} />
+          ))}
           {provider === 'anthropic' && extra?.is_enabled && (
             <div className="border-t border-background/20 pt-1 text-[10px]">
-              Extra: ${(extra.used_credits ?? 0).toFixed(2)} / ${(extra.monthly_limit ?? 0).toFixed(2)} used (
-              {Math.round(extra.utilization ?? 0)}%)
+              Extra: ${(extra.used_credits ?? 0).toFixed(2)} / $
+              {(extra.monthly_limit ?? 0).toFixed(2)} used ({Math.round(extra.utilization ?? 0)}%)
             </div>
           )}
           {lastError && (
@@ -242,6 +397,7 @@ export function UsageIndicator(): React.JSX.Element | null {
 
   const activeProvider = useUsageStore((s) => s.activeProvider)
   const fetchUsageForProvider = useUsageStore((s) => s.fetchUsageForProvider)
+  const loadSavedAccounts = useUsageStore((s) => s.loadSavedAccounts)
   const setActiveProvider = useUsageStore((s) => s.setActiveProvider)
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
 
@@ -273,9 +429,11 @@ export function UsageIndicator(): React.JSX.Element | null {
       useSettingsStore.getState()
     const current = useUsageStore.getState().activeProvider
     getVisibleProviders(mode, selected, current).forEach((p) => {
-      void Promise.allSettled([fetchUsageForProvider(p), fetchEmail(p)])
+      loadSavedAccounts(p).catch(() => {})
+      fetchUsageForProvider(p)
+      fetchEmail(p)
     })
-  }, [activeSessionId, setActiveProvider, fetchUsageForProvider, fetchEmail])
+  }, [activeSessionId, setActiveProvider, fetchUsageForProvider, fetchEmail, loadSavedAccounts])
 
   const visibleProviders = getVisibleProviders(
     usageIndicatorMode,
