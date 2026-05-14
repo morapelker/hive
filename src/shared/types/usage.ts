@@ -16,6 +16,7 @@ export interface UsageResult {
 }
 
 export type UsageProvider = 'anthropic' | 'openai'
+export type SavedUsageStatus = 'ok' | 'stale' | 'error'
 
 export interface OpenAIUsageData {
   plan_type: string
@@ -39,5 +40,34 @@ export interface OpenAIUsageData {
 export interface OpenAIUsageResult {
   success: boolean
   data?: OpenAIUsageData
+  error?: string
+  rotated?: {
+    accessToken: string
+    refreshToken: string
+    idToken?: string
+  }
+}
+
+export interface SavedAccountDTO {
+  id: string
+  provider: UsageProvider
+  email: string
+  last_usage: UsageData | OpenAIUsageData | null
+  last_fetched_at: string | null
+  status: SavedUsageStatus
+  last_error: string | null
+  created_at: string
+}
+
+export interface FetchForAccountResult {
+  success: boolean
+  data?: UsageData | OpenAIUsageData
+  error?: string
+  status: SavedUsageStatus
+}
+
+export interface RefreshAllResultItem {
+  accountId: string
+  success: boolean
   error?: string
 }

@@ -2260,6 +2260,14 @@ const usageOps = {
   fetchOpenai: () =>
     ipcRenderer.invoke('usage:fetchOpenai') as Promise<
       Envelope<import('../shared/types/usage').OpenAIUsageResult>
+    >,
+  fetchForAccount: (accountId: string) =>
+    ipcRenderer.invoke('usage:fetchForAccount', accountId) as Promise<
+      Envelope<import('../shared/types/usage').FetchForAccountResult>
+    >,
+  refreshAllForProvider: (provider: import('../shared/types/usage').UsageProvider) =>
+    ipcRenderer.invoke('usage:refreshAllForProvider', provider) as Promise<
+      Envelope<import('../shared/types/usage').RefreshAllResultItem[]>
     >
 }
 
@@ -2267,7 +2275,13 @@ const accountOps = {
   getClaudeEmail: (): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('account:getClaudeEmail'),
   getOpenAIEmail: (): Promise<Envelope<string | null>> =>
-    ipcRenderer.invoke('account:getOpenAIEmail')
+    ipcRenderer.invoke('account:getOpenAIEmail'),
+  listSaved: (provider?: import('../shared/types/usage').UsageProvider) =>
+    ipcRenderer.invoke('account:listSaved', provider) as Promise<
+      Envelope<import('../shared/types/usage').SavedAccountDTO[]>
+    >,
+  removeSaved: (accountId: string): Promise<Envelope<boolean>> =>
+    ipcRenderer.invoke('account:removeSaved', accountId)
 }
 
 const perfDiagnosticsOps = {

@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 26
+export const CURRENT_SCHEMA_VERSION = 27
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -487,5 +487,32 @@ DROP TABLE IF EXISTS diff_comments;`
       ALTER TABLE kanban_tickets ADD COLUMN goal_success_criteria TEXT DEFAULT NULL;
     `,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 27,
+    name: 'add_saved_usage_accounts',
+    up: `
+      CREATE TABLE IF NOT EXISTS saved_usage_accounts (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL CHECK (provider IN ('anthropic','openai')),
+        email TEXT NOT NULL,
+        credentials_json TEXT NOT NULL,
+        last_usage_json TEXT DEFAULT NULL,
+        last_fetched_at TEXT DEFAULT NULL,
+        status TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok','stale','error')),
+        last_error TEXT DEFAULT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_usage_accounts_provider_email
+        ON saved_usage_accounts(provider, email);
+      CREATE INDEX IF NOT EXISTS idx_saved_usage_accounts_provider_created
+        ON saved_usage_accounts(provider, created_at);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_saved_usage_accounts_provider_created;
+      DROP INDEX IF EXISTS idx_saved_usage_accounts_provider_email;
+      DROP TABLE IF EXISTS saved_usage_accounts;
+    `
   }
 ]

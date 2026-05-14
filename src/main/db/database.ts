@@ -46,7 +46,11 @@ import type {
   TicketDependency,
   DiffComment,
   DiffCommentCreate,
-  DiffCommentUpdate
+  DiffCommentUpdate,
+  SavedUsageAccount,
+  SavedUsageAccountUpsert,
+  SavedUsageAccountUsageUpdate,
+  SavedUsageProvider
 } from './types'
 
 export class DatabaseService {
@@ -194,7 +198,14 @@ export class DatabaseService {
 
   private normalizeBatchDrafts(
     drafts: KanbanTicketBatchCreateItem[]
-  ): Array<KanbanTicketBatchCreateItem & { draft_key: string; title: string; project_id: string; depends_on: string[] }> {
+  ): Array<
+    KanbanTicketBatchCreateItem & {
+      draft_key: string
+      title: string
+      project_id: string
+      depends_on: string[]
+    }
+  > {
     if (drafts.length === 0) {
       throw new Error('Batch ticket creation requires at least one draft')
     }
@@ -403,6 +414,25 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_connection_members_worktree ON connection_members(worktree_id);
     `)
 
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS saved_usage_accounts (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL CHECK (provider IN ('anthropic','openai')),
+        email TEXT NOT NULL,
+        credentials_json TEXT NOT NULL,
+        last_usage_json TEXT DEFAULT NULL,
+        last_fetched_at TEXT DEFAULT NULL,
+        status TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok','stale','error')),
+        last_error TEXT DEFAULT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_usage_accounts_provider_email
+        ON saved_usage_accounts(provider, email);
+      CREATE INDEX IF NOT EXISTS idx_saved_usage_accounts_provider_created
+        ON saved_usage_accounts(provider, created_at);
+    `)
+
     this.safeAddColumn(
       'sessions',
       'connection_id',
@@ -519,6 +549,127 @@ export class DatabaseService {
   getAllSettings(): Setting[] {
     const db = this.getDb()
     return db.prepare('SELECT key, value FROM settings').all() as Setting[]
+  }
+
+  // Saved usage account operations
+  upsertSavedUsageAccount(data: SavedUsageAccountUpsert): SavedUsageAccount {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    const hasLastUsage = data.last_usage_json !== undefined
+    const hasStatus = data.status !== undefined
+    const hasLastError = data.last_error !== undefined
+
+    db.prepare(
+      `INSERT INTO saved_usage_accounts (
+         id, provider, email, credentials_json, last_usage_json, last_fetched_at,
+         status, last_error, created_at, updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(provider, email) DO UPDATE SET
+         credentials_json = excluded.credentials_json,
+         last_usage_json = CASE
+           WHEN ? THEN excluded.last_usage_json
+           ELSE saved_usage_accounts.last_usage_json
+         END,
+         last_fetched_at = CASE
+           WHEN ? THEN excluded.last_fetched_at
+           ELSE saved_usage_accounts.last_fetched_at
+         END,
+         status = CASE
+           WHEN ? THEN excluded.status
+           ELSE saved_usage_accounts.status
+         END,
+         last_error = CASE
+           WHEN ? THEN excluded.last_error
+           ELSE saved_usage_accounts.last_error
+         END,
+         updated_at = excluded.updated_at`
+    ).run(
+      randomUUID(),
+      data.provider,
+      data.email,
+      data.credentials_json,
+      data.last_usage_json ?? null,
+      hasLastUsage ? now : null,
+      data.status ?? 'ok',
+      data.last_error ?? null,
+      now,
+      now,
+      hasLastUsage ? 1 : 0,
+      hasLastUsage ? 1 : 0,
+      hasStatus ? 1 : 0,
+      hasLastError ? 1 : 0
+    )
+
+    const saved = this.getSavedUsageAccountByProviderEmail(data.provider, data.email)
+    if (!saved) {
+      throw new Error('Failed to upsert saved usage account')
+    }
+    return saved
+  }
+
+  updateSavedUsageAccountUsage(
+    id: string,
+    data: SavedUsageAccountUsageUpdate
+  ): SavedUsageAccount | null {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      `UPDATE saved_usage_accounts
+       SET last_usage_json = ?,
+           last_fetched_at = ?,
+           status = ?,
+           last_error = ?,
+           updated_at = ?
+       WHERE id = ?`
+    ).run(data.last_usage_json, now, data.status, data.last_error ?? null, now, id)
+    return this.getSavedUsageAccountById(id)
+  }
+
+  updateSavedUsageAccountCredentials(
+    id: string,
+    credentialsJson: string
+  ): SavedUsageAccount | null {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      `UPDATE saved_usage_accounts
+       SET credentials_json = ?, updated_at = ?
+       WHERE id = ?`
+    ).run(credentialsJson, now, id)
+    return this.getSavedUsageAccountById(id)
+  }
+
+  getSavedUsageAccountById(id: string): SavedUsageAccount | null {
+    const db = this.getDb()
+    const row = db.prepare('SELECT * FROM saved_usage_accounts WHERE id = ?').get(id) as
+      | SavedUsageAccount
+      | undefined
+    return row ?? null
+  }
+
+  getSavedUsageAccountByProviderEmail(
+    provider: SavedUsageProvider,
+    email: string
+  ): SavedUsageAccount | null {
+    const db = this.getDb()
+    const row = db
+      .prepare('SELECT * FROM saved_usage_accounts WHERE provider = ? AND email = ?')
+      .get(provider, email) as SavedUsageAccount | undefined
+    return row ?? null
+  }
+
+  getSavedUsageAccountsByProvider(provider: SavedUsageProvider): SavedUsageAccount[] {
+    const db = this.getDb()
+    return db
+      .prepare('SELECT * FROM saved_usage_accounts WHERE provider = ? ORDER BY created_at ASC')
+      .all(provider) as SavedUsageAccount[]
+  }
+
+  deleteSavedUsageAccount(id: string): boolean {
+    const db = this.getDb()
+    const result = db.prepare('DELETE FROM saved_usage_accounts WHERE id = ?').run(id)
+    return result.changes > 0
   }
 
   // Project operations
@@ -983,9 +1134,11 @@ export class DatabaseService {
     const db = this.getDb()
     const row = db.prepare('SELECT id FROM worktrees WHERE id = ?').get(worktreeId)
     if (!row) return { success: false, error: 'Worktree not found' }
-    db.prepare(
-      'UPDATE worktrees SET github_pr_number = ?, github_pr_url = ? WHERE id = ?'
-    ).run(prNumber, prUrl, worktreeId)
+    db.prepare('UPDATE worktrees SET github_pr_number = ?, github_pr_url = ? WHERE id = ?').run(
+      prNumber,
+      prUrl,
+      worktreeId
+    )
     return { success: true }
   }
 
@@ -1144,7 +1297,9 @@ export class DatabaseService {
 
   countActiveSessions(): number {
     const db = this.getDb()
-    const row = db.prepare("SELECT COUNT(*) as count FROM sessions WHERE status = 'active'").get() as { count: number } | undefined
+    const row = db
+      .prepare("SELECT COUNT(*) as count FROM sessions WHERE status = 'active'")
+      .get() as { count: number } | undefined
     return row?.count ?? 0
   }
 
@@ -1868,9 +2023,11 @@ export class DatabaseService {
     if (data.sort_order != null) {
       sortOrder = data.sort_order
     } else {
-      const maxRow = db.prepare(
-        'SELECT MAX(sort_order) as max_sort FROM kanban_tickets WHERE project_id = ? AND "column" = ? AND archived_at IS NULL'
-      ).get(data.project_id, column) as { max_sort: number | null } | undefined
+      const maxRow = db
+        .prepare(
+          'SELECT MAX(sort_order) as max_sort FROM kanban_tickets WHERE project_id = ? AND "column" = ? AND archived_at IS NULL'
+        )
+        .get(data.project_id, column) as { max_sort: number | null } | undefined
       sortOrder = (maxRow?.max_sort ?? -1) + 1
     }
     const description = data.description ?? null
@@ -2128,17 +2285,22 @@ export class DatabaseService {
     const existing = this.getKanbanTicket(id)
     if (!existing) return null
     const now = new Date().toISOString()
-    db.prepare('UPDATE kanban_tickets SET archived_at = ?, updated_at = ? WHERE id = ?')
-      .run(now, now, id)
+    db.prepare('UPDATE kanban_tickets SET archived_at = ?, updated_at = ? WHERE id = ?').run(
+      now,
+      now,
+      id
+    )
     return this.getKanbanTicket(id)
   }
 
   archiveAllDoneKanbanTickets(projectId: string): number {
     const db = this.getDb()
     const now = new Date().toISOString()
-    const result = db.prepare(
-      'UPDATE kanban_tickets SET archived_at = ?, updated_at = ? WHERE project_id = ? AND "column" = ? AND archived_at IS NULL'
-    ).run(now, now, projectId, 'done')
+    const result = db
+      .prepare(
+        'UPDATE kanban_tickets SET archived_at = ?, updated_at = ? WHERE project_id = ? AND "column" = ? AND archived_at IS NULL'
+      )
+      .run(now, now, projectId, 'done')
     return result.changes
   }
 
@@ -2147,8 +2309,10 @@ export class DatabaseService {
     const existing = this.getKanbanTicket(id)
     if (!existing) return null
     const now = new Date().toISOString()
-    db.prepare('UPDATE kanban_tickets SET archived_at = NULL, updated_at = ? WHERE id = ?')
-      .run(now, id)
+    db.prepare('UPDATE kanban_tickets SET archived_at = NULL, updated_at = ? WHERE id = ?').run(
+      now,
+      id
+    )
     return this.getKanbanTicket(id)
   }
 
@@ -2186,9 +2350,7 @@ export class DatabaseService {
   getKanbanTicketsBySession(sessionId: string): KanbanTicket[] {
     const db = this.getDb()
     const rows = db
-      .prepare(
-        'SELECT * FROM kanban_tickets WHERE current_session_id = ? ORDER BY sort_order ASC'
-      )
+      .prepare('SELECT * FROM kanban_tickets WHERE current_session_id = ? ORDER BY sort_order ASC')
       .all(sessionId) as Record<string, unknown>[]
     return rows.map((row) => this.mapKanbanTicketRow(row))
   }
@@ -2228,9 +2390,9 @@ export class DatabaseService {
   detachWorktreeFromTickets(worktreeId: string): number {
     const db = this.getDb()
     const now = new Date().toISOString()
-    const result = db.prepare(
-      'UPDATE kanban_tickets SET worktree_id = NULL, updated_at = ? WHERE worktree_id = ?'
-    ).run(now, worktreeId)
+    const result = db
+      .prepare('UPDATE kanban_tickets SET worktree_id = NULL, updated_at = ? WHERE worktree_id = ?')
+      .run(now, worktreeId)
     return result.changes
   }
 
@@ -2270,9 +2432,9 @@ export class DatabaseService {
       }
 
       // Fix 2: Check for existing dependency
-      const existing = db.prepare(
-        'SELECT 1 FROM ticket_dependencies WHERE dependent_id = ? AND blocker_id = ?'
-      ).get(dependentId, blockerId)
+      const existing = db
+        .prepare('SELECT 1 FROM ticket_dependencies WHERE dependent_id = ? AND blocker_id = ?')
+        .get(dependentId, blockerId)
       if (existing) {
         return { success: true } // Idempotent - already exists
       }
@@ -2376,9 +2538,9 @@ export class DatabaseService {
 
   getTicketFollowupMessages(ticketId: string): TicketFollowupMessage[] {
     const db = this.getDb()
-    const rows = db.prepare(
-      'SELECT * FROM ticket_followup_messages WHERE ticket_id = ? ORDER BY created_at ASC'
-    ).all(ticketId) as TicketFollowupMessage[]
+    const rows = db
+      .prepare('SELECT * FROM ticket_followup_messages WHERE ticket_id = ? ORDER BY created_at ASC')
+      .all(ticketId) as TicketFollowupMessage[]
     return rows
   }
 
@@ -2396,7 +2558,19 @@ export class DatabaseService {
     db.prepare(
       `INSERT INTO diff_comments (id, worktree_id, file_path, line_start, line_end, anchor_text, anchor_context_before, anchor_context_after, body, is_outdated, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
-    ).run(id, data.worktree_id, data.file_path, data.line_start, lineEnd, anchorText, anchorContextBefore, anchorContextAfter, data.body, now, now)
+    ).run(
+      id,
+      data.worktree_id,
+      data.file_path,
+      data.line_start,
+      lineEnd,
+      anchorText,
+      anchorContextBefore,
+      anchorContextAfter,
+      data.body,
+      now,
+      now
+    )
 
     return {
       id,
@@ -2416,16 +2590,18 @@ export class DatabaseService {
 
   getDiffComment(id: string): DiffComment | null {
     const db = this.getDb()
-    const row = db.prepare('SELECT * FROM diff_comments WHERE id = ?').get(id) as Record<string, unknown> | undefined
+    const row = db.prepare('SELECT * FROM diff_comments WHERE id = ?').get(id) as
+      | Record<string, unknown>
+      | undefined
     if (!row) return null
     return this.mapDiffCommentRow(row)
   }
 
   getDiffCommentsByWorktree(worktreeId: string): DiffComment[] {
     const db = this.getDb()
-    const rows = db.prepare(
-      'SELECT * FROM diff_comments WHERE worktree_id = ? ORDER BY file_path, line_start'
-    ).all(worktreeId) as Record<string, unknown>[]
+    const rows = db
+      .prepare('SELECT * FROM diff_comments WHERE worktree_id = ? ORDER BY file_path, line_start')
+      .all(worktreeId) as Record<string, unknown>[]
     return rows.map((row) => this.mapDiffCommentRow(row))
   }
 

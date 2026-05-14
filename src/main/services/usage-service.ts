@@ -57,14 +57,14 @@ async function readFromFile(): Promise<string | null> {
  * Read the Claude OAuth access token.
  * Tries macOS Keychain first (v2.x), then falls back to credentials file.
  */
-async function readAccessToken(): Promise<string | null> {
+export async function readAccessToken(): Promise<string | null> {
   const token = await readFromKeychain()
   if (token) return token
   return readFromFile()
 }
 
-export async function fetchClaudeUsage(): Promise<UsageResult> {
-  const token = await readAccessToken()
+export async function fetchClaudeUsage(overrideToken?: string): Promise<UsageResult> {
+  const token = overrideToken ?? (await readAccessToken())
   if (!token) {
     log.warn('No Claude OAuth access token found (checked keychain and credentials file)')
     return { success: false, error: 'No access token found' }
