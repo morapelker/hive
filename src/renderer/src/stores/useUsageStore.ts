@@ -8,10 +8,12 @@ interface UsageState {
   anthropicUsage: UsageData | null
   anthropicLastFetchedAt: number | null
   anthropicIsLoading: boolean
+  anthropicLastError: string | null
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
   openaiIsLoading: boolean
+  openaiLastError: string | null
 
   activeProvider: UsageProvider
 
@@ -23,14 +25,20 @@ interface UsageState {
 
 const DEBOUNCE_MS = 180_000 // 3 minutes
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicUsage: null,
   anthropicLastFetchedAt: null,
   anthropicIsLoading: false,
+  anthropicLastError: null,
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
   openaiIsLoading: false,
+  openaiLastError: null,
 
   activeProvider: 'anthropic',
 
@@ -42,27 +50,45 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       if (state.anthropicLastFetchedAt && Date.now() - state.anthropicLastFetchedAt < DEBOUNCE_MS)
         return
 
-      set({ anthropicIsLoading: true })
+      set({ anthropicIsLoading: true, anthropicLastError: null })
+      let succeeded = false
       try {
         const result = unwrapEnvelope(await window.usageOps.fetch())
         if (result.success) {
-          set({ anthropicUsage: result.data ?? null })
+          set({ anthropicUsage: result.data ?? null, anthropicLastError: null })
+          succeeded = true
+        } else {
+          set({ anthropicLastError: result.error ?? 'Unknown error' })
         }
+      } catch (err) {
+        set({ anthropicLastError: errorMessage(err) })
       } finally {
-        set({ anthropicIsLoading: false, anthropicLastFetchedAt: Date.now() })
+        set({
+          anthropicIsLoading: false,
+          ...(succeeded ? { anthropicLastFetchedAt: Date.now() } : {})
+        })
       }
     } else {
       if (state.openaiIsLoading) return
       if (state.openaiLastFetchedAt && Date.now() - state.openaiLastFetchedAt < DEBOUNCE_MS) return
 
-      set({ openaiIsLoading: true })
+      set({ openaiIsLoading: true, openaiLastError: null })
+      let succeeded = false
       try {
         const result = unwrapEnvelope(await window.usageOps.fetchOpenai())
         if (result.success) {
-          set({ openaiUsage: result.data ?? null })
+          set({ openaiUsage: result.data ?? null, openaiLastError: null })
+          succeeded = true
+        } else {
+          set({ openaiLastError: result.error ?? 'Unknown error' })
         }
+      } catch (err) {
+        set({ openaiLastError: errorMessage(err) })
       } finally {
-        set({ openaiIsLoading: false, openaiLastFetchedAt: Date.now() })
+        set({
+          openaiIsLoading: false,
+          ...(succeeded ? { openaiLastFetchedAt: Date.now() } : {})
+        })
       }
     }
   },
@@ -73,26 +99,44 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     if (provider === 'anthropic') {
       if (state.anthropicIsLoading) return
 
-      set({ anthropicIsLoading: true })
+      set({ anthropicIsLoading: true, anthropicLastError: null })
+      let succeeded = false
       try {
         const result = unwrapEnvelope(await window.usageOps.fetch())
         if (result.success) {
-          set({ anthropicUsage: result.data ?? null })
+          set({ anthropicUsage: result.data ?? null, anthropicLastError: null })
+          succeeded = true
+        } else {
+          set({ anthropicLastError: result.error ?? 'Unknown error' })
         }
+      } catch (err) {
+        set({ anthropicLastError: errorMessage(err) })
       } finally {
-        set({ anthropicIsLoading: false, anthropicLastFetchedAt: Date.now() })
+        set({
+          anthropicIsLoading: false,
+          ...(succeeded ? { anthropicLastFetchedAt: Date.now() } : {})
+        })
       }
     } else {
       if (state.openaiIsLoading) return
 
-      set({ openaiIsLoading: true })
+      set({ openaiIsLoading: true, openaiLastError: null })
+      let succeeded = false
       try {
         const result = unwrapEnvelope(await window.usageOps.fetchOpenai())
         if (result.success) {
-          set({ openaiUsage: result.data ?? null })
+          set({ openaiUsage: result.data ?? null, openaiLastError: null })
+          succeeded = true
+        } else {
+          set({ openaiLastError: result.error ?? 'Unknown error' })
         }
+      } catch (err) {
+        set({ openaiLastError: errorMessage(err) })
       } finally {
-        set({ openaiIsLoading: false, openaiLastFetchedAt: Date.now() })
+        set({
+          openaiIsLoading: false,
+          ...(succeeded ? { openaiLastFetchedAt: Date.now() } : {})
+        })
       }
     }
   },
