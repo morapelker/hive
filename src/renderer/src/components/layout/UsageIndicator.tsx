@@ -115,6 +115,9 @@ function ProviderUsageBlock({
   const isLoading = useUsageStore((s) =>
     provider === 'anthropic' ? s.anthropicIsLoading : s.openaiIsLoading
   )
+  const lastError = useUsageStore((s) =>
+    provider === 'anthropic' ? s.anthropicLastError : s.openaiLastError
+  )
   const email = useAccountStore((s) => provider === 'anthropic' ? s.anthropicEmail : s.openaiEmail)
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
 
@@ -135,7 +138,9 @@ function ProviderUsageBlock({
               <button
                 type="button"
                 className="shrink-0 cursor-pointer bg-transparent border-none p-0"
-                onClick={() => { forceRefreshProvider(provider); fetchEmail(provider) }}
+                onClick={() => {
+                  void Promise.allSettled([forceRefreshProvider(provider), fetchEmail(provider)])
+                }}
                 aria-label={`Refresh ${providerLabel} usage`}
               >
                 <img
@@ -158,6 +163,11 @@ function ProviderUsageBlock({
           <div className="space-y-1">
             <div className="font-medium">{tooltipTitle}</div>
             <div className="text-[10px]">No credentials configured</div>
+            {lastError && (
+              <div className="text-[10px] text-red-400 border-t border-background/20 pt-1">
+                Refresh failed: {lastError}
+              </div>
+            )}
           </div>
         </TooltipContent>
       </Tooltip>
@@ -178,7 +188,9 @@ function ProviderUsageBlock({
             <button
               type="button"
               className="shrink-0 cursor-pointer bg-transparent border-none p-0"
-              onClick={() => { forceRefreshProvider(provider); fetchEmail(provider) }}
+              onClick={() => {
+                void Promise.allSettled([forceRefreshProvider(provider), fetchEmail(provider)])
+              }}
               aria-label={`Refresh ${providerLabel} usage`}
             >
               <img
@@ -211,6 +223,11 @@ function ProviderUsageBlock({
             <div className="border-t border-background/20 pt-1 text-[10px]">
               Extra: ${(extra.used_credits ?? 0).toFixed(2)} / ${(extra.monthly_limit ?? 0).toFixed(2)} used (
               {Math.round(extra.utilization ?? 0)}%)
+            </div>
+          )}
+          {lastError && (
+            <div className="text-[10px] text-red-400 border-t border-background/20 pt-1">
+              Refresh failed: {lastError}
             </div>
           )}
         </div>
@@ -256,8 +273,7 @@ export function UsageIndicator(): React.JSX.Element | null {
       useSettingsStore.getState()
     const current = useUsageStore.getState().activeProvider
     getVisibleProviders(mode, selected, current).forEach((p) => {
-      fetchUsageForProvider(p)
-      fetchEmail(p)
+      void Promise.allSettled([fetchUsageForProvider(p), fetchEmail(p)])
     })
   }, [activeSessionId, setActiveProvider, fetchUsageForProvider, fetchEmail])
 
