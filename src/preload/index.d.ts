@@ -97,7 +97,8 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  claude_session_id: string | null
+  agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   mode: 'build' | 'plan' | 'super-plan'
   session_type: 'default' | 'board-assistant'
   model_provider_id: string | null
@@ -449,7 +450,8 @@ declare global {
           connection_id?: string | null
           name?: string | null
           opencode_session_id?: string | null
-          agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+          claude_session_id?: string | null
+          agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
           mode?: 'build' | 'plan' | 'super-plan'
           session_type?: 'default' | 'board-assistant'
           model_provider_id?: string | null
@@ -467,7 +469,8 @@ declare global {
             name?: string | null
             status?: 'active' | 'completed' | 'error'
             opencode_session_id?: string | null
-            agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+            claude_session_id?: string | null
+            agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
             mode?: 'build' | 'plan' | 'super-plan'
             session_type?: 'default' | 'board-assistant'
             model_provider_id?: string | null
@@ -813,7 +816,7 @@ declare global {
       ) => Promise<Envelope<{ success: boolean; messages: unknown[]; error?: string }>>
       // List available models from all configured providers
       listModels: (opts?: {
-        agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+        agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
       }) => Promise<
         Envelope<{
           success: boolean
@@ -827,14 +830,14 @@ declare global {
           providerID: string
           modelID: string
           variant?: string
-          agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+          agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
         } | null
       ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Get model info (name, context limit)
       modelInfo: (
         worktreePath: string,
         modelId: string,
-        agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+        agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
       ) => Promise<
         Envelope<{
           success: boolean
@@ -1132,11 +1135,19 @@ declare global {
         cwd: string,
         shell?: string
       ) => Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>>
+      createClaudeCli: (
+        sessionId: string,
+        opts?: { pendingPrompt?: string | null }
+      ) => Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>>
       write: (terminalId: string, data: string) => void
       resize: (terminalId: string, cols: number, rows: number) => Promise<Envelope<void>>
       destroy: (terminalId: string) => Promise<Envelope<void>>
       onData: (terminalId: string, callback: (data: string) => void) => () => void
       onExit: (terminalId: string, callback: (code: number) => void) => () => void
+      onClaudeSessionId: (
+        sessionId: string,
+        callback: (claudeSessionId: string) => void
+      ) => () => void
       getConfig: () => Promise<Envelope<GhosttyTerminalConfig>>
 
       // Native Ghostty backend methods

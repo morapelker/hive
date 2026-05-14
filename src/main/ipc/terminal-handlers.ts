@@ -6,6 +6,10 @@ import { ghosttyService } from '../services/ghostty-service'
 import { parseGhosttyConfig } from '../services/ghostty-config'
 import { createLogger } from '../services/logger'
 import { defineHandler } from './_shared/define-handler'
+import { getDatabase } from '../db'
+import { resolveClaudeBinaryPath } from '../services/claude-binary-resolver'
+import { buildClaudeCliPtySpawn } from '../services/claude-cli-spawner'
+import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from '../services/claude-session-watcher'
 
 const log = createLogger({ component: 'TerminalHandlers' })
 
@@ -55,6 +59,49 @@ const listenerCleanups = new Map<string, { removeData: () => void; removeExit: (
 // Batching with setImmediate collects all data from the current I/O phase into one IPC message.
 const dataBuffers = new Map<string, string>()
 const flushScheduled = new Set<string>()
+const claudeWatchers = new Map<string, ClaudeSessionWatchHandle>()
+
+function attachNodePtyListeners(mainWindow: BrowserWindow, terminalId: string): void {
+  // Clean up any stale listeners for this terminalId (shouldn't happen, but defensive)
+  const existing = listenerCleanups.get(terminalId)
+  if (existing) {
+    existing.removeData()
+    existing.removeExit()
+    listenerCleanups.delete(terminalId)
+  }
+
+  const removeData = ptyService.onData(terminalId, (data) => {
+    if (mainWindow.isDestroyed()) return
+
+    const existing = dataBuffers.get(terminalId)
+    dataBuffers.set(terminalId, existing ? existing + data : data)
+
+    if (!flushScheduled.has(terminalId)) {
+      flushScheduled.add(terminalId)
+      setImmediate(() => {
+        flushScheduled.delete(terminalId)
+        const buffered = dataBuffers.get(terminalId)
+        dataBuffers.delete(terminalId)
+        if (buffered && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(`terminal:data:${terminalId}`, buffered)
+        }
+      })
+    }
+  })
+
+  const removeExit = ptyService.onExit(terminalId, (code) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`terminal:exit:${terminalId}`, code)
+    }
+    listenerCleanups.delete(terminalId)
+    dataBuffers.delete(terminalId)
+    flushScheduled.delete(terminalId)
+    claudeWatchers.get(terminalId)?.close()
+    claudeWatchers.delete(terminalId)
+  })
+
+  listenerCleanups.set(terminalId, { removeData, removeExit })
+}
 
 export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
   // Set main window reference on the Ghostty service
@@ -72,7 +119,6 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
       asyncEffect(async () => {
         log.info('IPC: terminal:create', { terminalId, cwd, shell })
         try {
-          // Check if PTY already exists before creating — if it does, skip listener registration
           const alreadyExists = ptyService.has(terminalId)
           const { cols, rows } = ptyService.create(terminalId, { cwd, shell: shell || undefined })
 
@@ -81,46 +127,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
             return { success: true, cols, rows }
           }
 
-          // Clean up any stale listeners for this terminalId (shouldn't happen, but defensive)
-          const existing = listenerCleanups.get(terminalId)
-          if (existing) {
-            existing.removeData()
-            existing.removeExit()
-            listenerCleanups.delete(terminalId)
-          }
-
-          // Wire PTY output to renderer (batched via setImmediate)
-          const removeData = ptyService.onData(terminalId, (data) => {
-            if (mainWindow.isDestroyed()) return
-
-            // Accumulate into buffer
-            const existing = dataBuffers.get(terminalId)
-            dataBuffers.set(terminalId, existing ? existing + data : data)
-
-            // Schedule a flush if one isn't already pending
-            if (!flushScheduled.has(terminalId)) {
-              flushScheduled.add(terminalId)
-              setImmediate(() => {
-                flushScheduled.delete(terminalId)
-                const buffered = dataBuffers.get(terminalId)
-                dataBuffers.delete(terminalId)
-                if (buffered && !mainWindow.isDestroyed()) {
-                  mainWindow.webContents.send(`terminal:data:${terminalId}`, buffered)
-                }
-              })
-            }
-          })
-
-          // Wire PTY exit to renderer
-          const removeExit = ptyService.onExit(terminalId, (code) => {
-            if (!mainWindow.isDestroyed()) {
-              mainWindow.webContents.send(`terminal:exit:${terminalId}`, code)
-            }
-            // Clean up listener tracking on exit
-            listenerCleanups.delete(terminalId)
-          })
-
-          listenerCleanups.set(terminalId, { removeData, removeExit })
+          attachNodePtyListeners(mainWindow, terminalId)
 
           return { success: true, cols, rows }
         } catch (error) {
@@ -128,6 +135,109 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
             'IPC: terminal:create failed',
             error instanceof Error ? error : new Error(String(error)),
             { terminalId }
+          )
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }
+        }
+      })
+  )
+
+  defineHandler(
+    'terminal:createClaudeCli',
+    z.tuple([
+      z.string().min(1),
+      z.object({
+        pendingPrompt: z.string().nullable().optional()
+      }).optional()
+    ]),
+    ([sessionId, opts]) =>
+      asyncEffect(async () => {
+        log.info('IPC: terminal:createClaudeCli', { sessionId, hasPrompt: !!opts?.pendingPrompt })
+        try {
+          const db = getDatabase()
+          const session = db.getSession(sessionId)
+          if (!session) {
+            return { success: false, error: 'Session not found' }
+          }
+          if (session.agent_sdk !== 'claude-code-cli') {
+            return { success: false, error: 'Session is not a Claude Code CLI session' }
+          }
+
+          let worktreePath: string | null = null
+          if (session.worktree_id) {
+            worktreePath = db.getWorktree(session.worktree_id)?.path ?? null
+          } else if (session.connection_id) {
+            worktreePath = db.getConnection(session.connection_id)?.path ?? null
+          }
+          if (!worktreePath) {
+            return { success: false, error: 'Could not resolve session working directory' }
+          }
+
+          const claudeBinary = resolveClaudeBinaryPath()
+          if (!claudeBinary) {
+            return { success: false, error: 'Claude binary not found on PATH' }
+          }
+
+          const alreadyExists = ptyService.has(sessionId)
+          const spawn = buildClaudeCliPtySpawn({
+            session,
+            worktreePath,
+            pendingPrompt: opts?.pendingPrompt ?? null,
+            claudeBinary,
+            db
+          })
+
+          log.info('Creating Claude CLI PTY', {
+            sessionId,
+            command: spawn.command,
+            args: spawn.args.map((arg, index) =>
+              index === spawn.args.length - 1 && opts?.pendingPrompt ? '<prompt>' : arg
+            )
+          })
+
+          if (!session.claude_session_id) {
+            claudeWatchers.get(sessionId)?.close()
+            claudeWatchers.set(
+              sessionId,
+              watchForClaudeSessionId(worktreePath, (claudeSessionId) => {
+                try {
+                  db.updateSession(sessionId, { claude_session_id: claudeSessionId })
+                } catch (error) {
+                  log.warn('Failed to persist Claude CLI session id', {
+                    sessionId,
+                    error: error instanceof Error ? error.message : String(error)
+                  })
+                }
+                if (!mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send(
+                    `terminal:claude-session-id:${sessionId}`,
+                    claudeSessionId
+                  )
+                }
+                claudeWatchers.delete(sessionId)
+              })
+            )
+          }
+
+          const { cols, rows } = ptyService.create(sessionId, {
+            cwd: spawn.cwd,
+            command: spawn.command,
+            args: spawn.args,
+            env: spawn.env
+          })
+
+          if (!alreadyExists) {
+            attachNodePtyListeners(mainWindow, sessionId)
+          }
+
+          return { success: true, cols, rows }
+        } catch (error) {
+          log.error(
+            'IPC: terminal:createClaudeCli failed',
+            error instanceof Error ? error : new Error(String(error)),
+            { sessionId }
           )
           return {
             success: false,
@@ -163,6 +273,8 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
       // Discard any pending buffered data
       dataBuffers.delete(terminalId)
       flushScheduled.delete(terminalId)
+      claudeWatchers.get(terminalId)?.close()
+      claudeWatchers.delete(terminalId)
       ptyService.destroy(terminalId)
     })
   )

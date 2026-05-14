@@ -29,7 +29,7 @@ export type TerminalPosition = 'sidebar' | 'bottom'
 export type MergeConflictMode = 'build' | 'plan' | 'always-ask'
 export type FollowUpTriggerColumn = 'review' | 'done'
 
-export type AgentSdk = 'opencode' | 'claude-code' | 'codex' | 'terminal'
+export type AgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
 export type HandoffAgentSdk = Exclude<AgentSdk, 'terminal'>
 
 export interface SelectedModel {
@@ -528,8 +528,8 @@ export const useSettingsStore = create<SettingsState>()(
           delete current[agentSdk]
         }
         set({ selectedModelByProvider: current })
-        // Push to backend (skip for terminal — no backend service, or when caller already pushed)
-        if (agentSdk !== 'terminal' && !options?.skipBackendPush) {
+        // Push to backend only for SDKs with a structured implementer.
+        if (agentSdk !== 'terminal' && agentSdk !== 'claude-code-cli' && !options?.skipBackendPush) {
           try {
             unwrapEnvelope(await window.opencodeOps.setModel(model ? { ...model, agentSdk } : null))
           } catch (error) {

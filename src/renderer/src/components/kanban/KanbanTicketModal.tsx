@@ -1765,7 +1765,9 @@ function PlanReviewModeContent({
           const result = await sessionStore.createConnectionSession(
             sessionRecord.connection_id,
             override?.agentSdk,
-            undefined,
+            override?.agentSdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
+              ? 'super-plan'
+              : undefined,
             { autoFocus: false, modelOverride: override?.model }
           )
           if (!result.success || !result.session) {
@@ -1773,11 +1775,20 @@ function PlanReviewModeContent({
             return
           }
 
-          const handoffPrompt = buildHandoffPrompt(planContent, override)
+          const handoffPrompt = buildHandoffPrompt(planContent, {
+            ...override,
+            superPlan: sessionRecord?.mode === 'super-plan'
+          })
           const newSessionId = result.session.id
-          const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+          const setModePromise =
+            result.session.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
+              ? Promise.resolve()
+              : sessionStore.setSessionMode(newSessionId, 'build')
 
           prepareTicketBuildSession(newSessionId)
+          if (result.session.agent_sdk === 'claude-code-cli') {
+            sessionStore.setPendingMessage(newSessionId, handoffPrompt)
+          }
 
           // In sticky-tab mode, stay on the board; otherwise navigate to the new session.
           // setActiveConnectionSession requires activeConnectionId to be set — which
@@ -1794,9 +1805,11 @@ function PlanReviewModeContent({
           onClose()
           void (async () => {
             await setModePromise
-            await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
-              connectionId: sessionRecord.connection_id
-            })
+            if (result.session.agent_sdk !== 'claude-code-cli') {
+              await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
+                connectionId: sessionRecord.connection_id
+              })
+            }
             toast.success('Handoff session started')
           })().catch((error) => {
             console.error(
@@ -1820,7 +1833,9 @@ function PlanReviewModeContent({
           worktreeId,
           ticket.project_id,
           override?.agentSdk,
-          undefined,
+          override?.agentSdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
+            ? 'super-plan'
+            : undefined,
           { autoFocus: false, modelOverride: override?.model }
         )
         if (!result.success || !result.session) {
@@ -1828,9 +1843,15 @@ function PlanReviewModeContent({
           return
         }
 
-        const handoffPrompt = buildHandoffPrompt(planContent, override)
+        const handoffPrompt = buildHandoffPrompt(planContent, {
+          ...override,
+          superPlan: sessionRecord?.mode === 'super-plan'
+        })
         const newSessionId = result.session.id
-        const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+        const setModePromise =
+          result.session.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
+            ? Promise.resolve()
+            : sessionStore.setSessionMode(newSessionId, 'build')
         const localWorktreePath = findWorktreePathById(worktreeId)
         if (!localWorktreePath) {
           toast.error('Could not find worktree path')
@@ -1838,6 +1859,9 @@ function PlanReviewModeContent({
         }
 
         prepareTicketBuildSession(newSessionId)
+        if (result.session.agent_sdk === 'claude-code-cli') {
+          sessionStore.setPendingMessage(newSessionId, handoffPrompt)
+        }
 
         // In sticky-tab mode, stay on the board; otherwise navigate to the new session
         const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
@@ -1852,7 +1876,9 @@ function PlanReviewModeContent({
         onClose()
         void (async () => {
           await setModePromise
-          await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
+          if (result.session.agent_sdk !== 'claude-code-cli') {
+            await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
+          }
           toast.success('Handoff session started')
         })().catch((error) => {
           console.error('[KanbanTicketModal] handoff background start failed:', error)

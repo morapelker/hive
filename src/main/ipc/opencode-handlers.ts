@@ -15,7 +15,7 @@ import { defineHandler } from './_shared/define-handler'
 const log = createLogger({ component: 'OpenCodeHandlers' })
 const opencodeEffect = <A>(operation: () => Promise<A>): Effect.Effect<A> =>
   Effect.promise(operation)
-const agentSdkSchema = z.enum(['opencode', 'claude-code', 'codex', 'terminal'])
+const agentSdkSchema = z.enum(['opencode', 'claude-code', 'claude-code-cli', 'codex', 'terminal'])
 const modelSchema = z
   .object({
     providerID: z.string(),
@@ -46,7 +46,7 @@ const injectedWorktrees = new Set<string>()
 function resolveSdkId(
   dbService: DatabaseService,
   sessionId: string
-): 'opencode' | 'claude-code' | 'codex' | 'terminal' | null {
+): 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null {
   return (
     dbService.getAgentSdkForSession(sessionId) ?? dbService.getSession(sessionId)?.agent_sdk ?? null
   )
@@ -327,8 +327,9 @@ export function registerOpenCodeHandlers(
       opencodeEffect(async () => {
         log.info('IPC: opencode:models', { agentSdk: opts?.agentSdk })
         try {
-          if (opts?.agentSdk && opts.agentSdk !== 'opencode' && sdkManager) {
-            const impl = sdkManager.getImplementer(opts.agentSdk)
+          const requestedSdk = opts?.agentSdk === 'claude-code-cli' ? 'claude-code' : opts?.agentSdk
+          if (requestedSdk && requestedSdk !== 'opencode' && requestedSdk !== 'terminal' && sdkManager) {
+            const impl = sdkManager.getImplementer(requestedSdk)
             if (impl) {
               const providers = await impl.getAvailableModels()
               return { success: true, providers }
@@ -395,8 +396,9 @@ export function registerOpenCodeHandlers(
       opencodeEffect(async () => {
         log.info('IPC: opencode:modelInfo', { worktreePath, modelId, agentSdk })
         try {
-          if (agentSdk && agentSdk !== 'opencode' && sdkManager) {
-            const impl = sdkManager.getImplementer(agentSdk)
+          const requestedSdk = agentSdk === 'claude-code-cli' ? 'claude-code' : agentSdk
+          if (requestedSdk && requestedSdk !== 'opencode' && requestedSdk !== 'terminal' && sdkManager) {
+            const impl = sdkManager.getImplementer(requestedSdk)
             if (impl) {
               const model = await impl.getModelInfo(worktreePath, modelId)
               if (!model) {

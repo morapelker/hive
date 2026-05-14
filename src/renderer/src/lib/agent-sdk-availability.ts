@@ -4,14 +4,16 @@ export interface AvailableAgentSdks {
   codex: boolean
 }
 
-export type SelectableAgentSdk = 'opencode' | 'claude-code' | 'codex' | 'terminal'
+export type SelectableAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
 
 function getAgentSdkLabel(sdk: Exclude<SelectableAgentSdk, 'terminal'>): string {
   switch (sdk) {
     case 'opencode':
       return 'OpenCode'
     case 'claude-code':
-      return 'Claude Code'
+      return 'Claude Code (legacy SDK)'
+    case 'claude-code-cli':
+      return 'Claude Code (CLI)'
     case 'codex':
       return 'Codex'
   }
@@ -27,6 +29,7 @@ export function isAgentSdkAvailable(
     case 'opencode':
       return availableAgentSdks.opencode
     case 'claude-code':
+    case 'claude-code-cli':
       return availableAgentSdks.claude
     case 'codex':
       return availableAgentSdks.codex

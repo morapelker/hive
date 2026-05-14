@@ -1,3 +1,5 @@
+import type { Envelope } from '@shared/types/ipc-envelope'
+
 /**
  * Terminal backend abstraction layer.
  * Allows switching between xterm.js (cross-platform) and native Ghostty (macOS).
@@ -8,6 +10,11 @@ export type TerminalBackendType = 'xterm' | 'ghostty'
 export interface TerminalOpts {
   terminalId: string
   cwd: string
+  createTerminal?: (
+    terminalId: string,
+    cwd: string,
+    shell?: string
+  ) => Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>>
   fontFamily?: string
   fontSize?: number
   cursorStyle?: 'block' | 'bar' | 'underline'

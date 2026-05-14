@@ -45,7 +45,7 @@ const stringBooleanPairSchema = z.tuple([z.string(), z.boolean()])
 const stringArraySchema = z.array(z.string())
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
 const sessionTypeSchema = z.enum(['default', 'board-assistant'])
-const agentSdkSchema = z.enum(['opencode', 'claude-code', 'codex', 'terminal'])
+const agentSdkSchema = z.enum(['opencode', 'claude-code', 'claude-code-cli', 'codex', 'terminal'])
 
 const projectCreateSchema = z.object({
   name: z.string(),
@@ -101,6 +101,7 @@ const sessionCreateSchema = z.object({
   connection_id: z.string().nullable().optional(),
   name: z.string().nullable().optional(),
   opencode_session_id: z.string().nullable().optional(),
+  claude_session_id: z.string().nullable().optional(),
   agent_sdk: agentSdkSchema.optional(),
   mode: sessionModeSchema.optional(),
   session_type: sessionTypeSchema.optional(),
@@ -114,6 +115,7 @@ const sessionUpdateSchema = z.object({
   name: z.string().nullable().optional(),
   status: z.enum(['active', 'completed', 'error']).optional(),
   opencode_session_id: z.string().nullable().optional(),
+  claude_session_id: z.string().nullable().optional(),
   agent_sdk: agentSdkSchema.optional(),
   mode: sessionModeSchema.optional(),
   session_type: sessionTypeSchema.optional(),

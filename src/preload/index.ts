@@ -110,7 +110,8 @@ const db = {
       connection_id?: string | null
       name?: string | null
       opencode_session_id?: string | null
-      agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+      claude_session_id?: string | null
+      agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
       mode?: 'build' | 'plan' | 'super-plan'
       session_type?: 'default' | 'board-assistant'
       model_provider_id?: string | null
@@ -129,7 +130,8 @@ const db = {
         name?: string | null
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
-        agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+        claude_session_id?: string | null
+        agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
         mode?: 'build' | 'plan' | 'super-plan'
         session_type?: 'default' | 'board-assistant'
         model_provider_id?: string | null
@@ -1533,7 +1535,7 @@ const opencodeOps = {
 
   // List available models from all configured providers
   listModels: (opts?: {
-    agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   }): Promise<
     Envelope<{
       success: boolean
@@ -1548,7 +1550,7 @@ const opencodeOps = {
       providerID: string
       modelID: string
       variant?: string
-      agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+      agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
     } | null
   ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:setModel', model),
@@ -1557,7 +1559,7 @@ const opencodeOps = {
   modelInfo: (
     worktreePath: string,
     modelId: string,
-    agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   ): Promise<
     Envelope<{
       success: boolean
@@ -1957,6 +1959,12 @@ const terminalOps = {
   ): Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>> =>
     ipcRenderer.invoke('terminal:create', terminalId, cwd, shell),
 
+  createClaudeCli: (
+    sessionId: string,
+    opts?: { pendingPrompt?: string | null }
+  ): Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>> =>
+    ipcRenderer.invoke('terminal:createClaudeCli', sessionId, opts),
+
   write: (terminalId: string, data: string): void =>
     ipcRenderer.send('terminal:write', terminalId, data),
 
@@ -1981,6 +1989,17 @@ const terminalOps = {
     const channel = `terminal:exit:${terminalId}`
     const handler = (_event: Electron.IpcRendererEvent, code: number): void => {
       callback(code)
+    }
+    ipcRenderer.on(channel, handler)
+    return () => {
+      ipcRenderer.removeListener(channel, handler)
+    }
+  },
+
+  onClaudeSessionId: (sessionId: string, callback: (claudeSessionId: string) => void): (() => void) => {
+    const channel = `terminal:claude-session-id:${sessionId}`
+    const handler = (_event: Electron.IpcRendererEvent, claudeSessionId: string): void => {
+      callback(claudeSessionId)
     }
     ipcRenderer.on(channel, handler)
     return () => {

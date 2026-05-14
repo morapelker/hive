@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 26
+export const CURRENT_SCHEMA_VERSION = 27
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   name TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   opencode_session_id TEXT,
+  claude_session_id TEXT,
   mode TEXT NOT NULL DEFAULT 'build',
   draft_input TEXT DEFAULT NULL,
   pinned_to_board INTEGER NOT NULL DEFAULT 0,
@@ -486,6 +487,12 @@ DROP TABLE IF EXISTS diff_comments;`
       ALTER TABLE kanban_tickets ADD COLUMN goal_mode INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE kanban_tickets ADD COLUMN goal_success_criteria TEXT DEFAULT NULL;
     `,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 27,
+    name: 'add_claude_session_id',
+    up: `ALTER TABLE sessions ADD COLUMN claude_session_id TEXT DEFAULT NULL`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

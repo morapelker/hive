@@ -38,7 +38,7 @@ interface ModelSelectorProps {
   value?: SelectedModel | null
   onChange?: (model: SelectedModel) => void
   // Override the SDK used for model listing (e.g. force 'opencode' in settings when defaultAgentSdk is 'terminal')
-  agentSdkOverride?: 'opencode' | 'claude-code' | 'codex'
+  agentSdkOverride?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex'
   disableTitleTooltip?: boolean
   hideProviderPrefix?: boolean
   allowAgentSdkSelection?: boolean
@@ -122,7 +122,10 @@ export const ModelSelector = memo(function ModelSelector({
         setIsLoading(true)
         const catalogs = await Promise.all(
           catalogAgentSdks.map(async (sdk) => {
-            const result = unwrapEnvelope(await window.opencodeOps.listModels({ agentSdk: sdk }))
+            const listModelsSdk = sdk === 'claude-code-cli' ? 'claude-code' : sdk
+            const result = unwrapEnvelope(
+              await window.opencodeOps.listModels({ agentSdk: listModelsSdk })
+            )
             if (!result.success || !result.providers) return []
             const parsed = parseProviders(result.providers)
             cacheHandoffModelCatalog(sdk, result.providers)

@@ -11,7 +11,7 @@ const db = unwrapEnvelopeApi(() => window.db)
 
 type SessionModelSource = {
   id: string
-  agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -53,6 +53,12 @@ export async function startBackgroundSessionPrompt(opts: {
   prompt: string
   bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
 }): Promise<void> {
+  const session = findSessionModelSource(opts.sessionId)
+  if (session?.agent_sdk === 'claude-code-cli') {
+    useSessionStore.getState().setPendingMessage(opts.sessionId, opts.prompt)
+    return
+  }
+
   const connectResult = unwrapEnvelope(
     await window.opencodeOps.connect(opts.worktreePath, opts.sessionId)
   )

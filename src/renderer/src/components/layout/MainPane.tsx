@@ -30,6 +30,10 @@ interface MainPaneProps {
   children?: React.ReactNode
 }
 
+function isStatefulTerminalSession(agentSdk: string | null): boolean {
+  return agentSdk === 'terminal' || agentSdk === 'claude-code-cli'
+}
+
 export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const selectedWorktreeId = useWorktreeStore((state) => state.selectedWorktreeId)
   const selectedConnectionId = useConnectionStore((state) => state.selectedConnectionId)
@@ -80,14 +84,14 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     if (selectedWorktreeId) {
       const sessions = sessionsByWorktree.get(selectedWorktreeId) || []
       for (const s of sessions) {
-        if (s.agent_sdk === 'terminal') terminals.push(s.id)
+        if (isStatefulTerminalSession(s.agent_sdk)) terminals.push(s.id)
       }
     }
 
     if (selectedConnectionId) {
       const sessions = sessionsByConnection.get(selectedConnectionId) || []
       for (const s of sessions) {
-        if (s.agent_sdk === 'terminal') terminals.push(s.id)
+        if (isStatefulTerminalSession(s.agent_sdk)) terminals.push(s.id)
       }
     }
 
@@ -138,14 +142,17 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     }
 
     // Inline connection terminal takes priority
-    if (inlineConnectionSessionId && getAgentSdk(inlineConnectionSessionId) === 'terminal') {
+    if (
+      inlineConnectionSessionId &&
+      isStatefulTerminalSession(getAgentSdk(inlineConnectionSessionId))
+    ) {
       if (!activeDiff && !(activeFilePath && !activeFilePath.startsWith('diff:'))) {
         return inlineConnectionSessionId
       }
     }
 
     // Regular active session
-    if (activeSessionId && getAgentSdk(activeSessionId) === 'terminal') {
+    if (activeSessionId && isStatefulTerminalSession(getAgentSdk(activeSessionId))) {
       if (!activeDiff && !(activeFilePath && !activeFilePath.startsWith('diff:'))) {
         if (!inlineConnectionSessionId) {
           return activeSessionId
@@ -334,7 +341,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     // Inline connection session view (sticky tab clicked in worktree mode)
     if (inlineConnectionSessionId) {
       // Terminal sessions are handled by the always-mounted section below
-      if (getAgentSdk(inlineConnectionSessionId) === 'terminal') {
+      if (isStatefulTerminalSession(getAgentSdk(inlineConnectionSessionId))) {
         return null
       }
       return <SessionView key={inlineConnectionSessionId} sessionId={inlineConnectionSessionId} />
@@ -354,7 +361,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
 
     // Session is active - dispatch based on agent SDK
     // Terminal sessions are handled by the always-mounted section below
-    if (getAgentSdk(activeSessionId) === 'terminal') {
+    if (isStatefulTerminalSession(getAgentSdk(activeSessionId))) {
       return null
     }
     return <SessionView key={activeSessionId} sessionId={activeSessionId} />
@@ -372,9 +379,14 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
         {/* Always-mounted terminal sessions — kept alive to preserve PTY state across tab switches */}
         {mountedTerminalSessionIds.map((sessionId) => {
           const isActive = visibleTerminalId === sessionId
+          const agentSdk = getAgentSdk(sessionId)
           return (
             <div key={sessionId} className={isActive ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
-              <SessionTerminalView sessionId={sessionId} isVisible={isActive} />
+              {agentSdk === 'terminal' ? (
+                <SessionTerminalView sessionId={sessionId} isVisible={isActive} />
+              ) : (
+                <SessionView sessionId={sessionId} isVisible={isActive} />
+              )}
             </div>
           )
         })}

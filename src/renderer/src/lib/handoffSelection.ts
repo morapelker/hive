@@ -15,6 +15,7 @@ import {
 } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { SUPER_PLAN_MODE_PREFIX } from '@/lib/constants'
 
 export interface EffectiveHandoffSelection {
   agentSdk: HandoffAgentSdk
@@ -30,6 +31,7 @@ export interface HandoffSelectionOverride {
   agentSdk: HandoffAgentSdk
   model: SelectedModel
   goalMode?: boolean
+  superPlan?: boolean
 }
 
 export function buildHandoffPrompt(
@@ -37,18 +39,22 @@ export function buildHandoffPrompt(
   override?: HandoffSelectionOverride
 ): string {
   const goalPrefix = override?.goalMode && override.agentSdk === 'codex' ? '/goal ' : ''
-  return `${goalPrefix}Implement the following plan\n${planContent}`
+  const superPrefix =
+    override?.superPlan && override.agentSdk === 'claude-code-cli' ? SUPER_PLAN_MODE_PREFIX : ''
+  return `${superPrefix}${goalPrefix}Implement the following plan\n${planContent}`
 }
 
 const SDK_DISPLAY_NAMES: Record<HandoffAgentSdk, string> = {
   opencode: 'OpenCode',
-  'claude-code': 'Claude Code',
+  'claude-code': 'Claude Code (legacy SDK)',
+  'claude-code-cli': 'Claude Code (CLI)',
   codex: 'Codex'
 }
 
 const FALLBACK_MODELS: Record<HandoffAgentSdk, SelectedModel> = {
   opencode: { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code': { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
+  'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
   codex: { providerID: 'codex', modelID: 'gpt-5.5' }
 }
 
@@ -56,9 +62,16 @@ const modelCatalogCache = new Map<HandoffAgentSdk, ProviderModels[]>()
 const inflightModelCatalogRequests = new Map<HandoffAgentSdk, Promise<ProviderModels[]>>()
 
 function normalizeHandoffSdk(
-  sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal' | null | undefined
+  sdk:
+    | 'opencode'
+    | 'claude-code'
+    | 'claude-code-cli'
+    | 'codex'
+    | 'terminal'
+    | null
+    | undefined
 ): HandoffAgentSdk {
-  if (sdk === 'claude-code' || sdk === 'codex') return sdk
+  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex') return sdk
   return 'opencode'
 }
 
@@ -105,7 +118,7 @@ function getWorktreeFallbackModel(worktreeId?: string): SelectedModel | null {
 
 function resolveSessionSelection(opts: {
   worktreeId?: string
-  agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   mode?: 'build' | 'plan' | 'super-plan'
 }): EffectiveHandoffSelection {
   const settings = useSettingsStore.getState()
@@ -159,7 +172,7 @@ export function getHandoffSdkDisplayName(agentSdk: HandoffAgentSdk): string {
 export function getAvailableHandoffAgentSdks(
   availableAgentSdks?: AvailableAgentSdks | null
 ): HandoffAgentSdk[] {
-  const orderedSdks: HandoffAgentSdk[] = ['opencode', 'claude-code', 'codex']
+  const orderedSdks: HandoffAgentSdk[] = ['opencode', 'claude-code-cli', 'claude-code', 'codex']
   return orderedSdks.filter((sdk) => isAgentSdkAvailable(sdk, availableAgentSdks))
 }
 
@@ -191,8 +204,9 @@ export async function loadHandoffModelCatalog(
   if (inflight) return inflight
   if (typeof window.opencodeOps?.listModels !== 'function') return []
 
+  const listModelsSdk = agentSdk === 'claude-code-cli' ? 'claude-code' : agentSdk
   const request = window.opencodeOps
-    .listModels({ agentSdk })
+    .listModels({ agentSdk: listModelsSdk })
     .then(unwrapEnvelope)
     .then((result) => {
       const parsed = result.success ? cacheHandoffModelCatalog(agentSdk, result.providers) : []
@@ -253,11 +267,11 @@ export function getEffectiveHandoffSelection(opts: {
 
 export function resolveSessionCreationSelection(opts: {
   worktreeId?: string
-  agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  agentSdkOverride?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   initialMode?: 'build' | 'plan' | 'super-plan'
   modelOverride?: SelectedModel
 }): {
-  agentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  agentSdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   model: SelectedModel | null
 } {
   const settings = useSettingsStore.getState()

@@ -8,7 +8,8 @@ export interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  claude_session_id: string | null
+  agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   mode: 'build' | 'plan'
   session_type: SessionType
   model_provider_id: string | null

@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron'
 
-export type AgentSdkId = 'opencode' | 'claude-code' | 'codex' | 'terminal'
+export type AgentSdkId = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
 
 export interface AgentSdkCapabilities {
   supportsUndo: boolean

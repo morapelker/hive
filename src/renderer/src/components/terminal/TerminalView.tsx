@@ -17,6 +17,10 @@ interface TerminalViewProps {
   terminalId: string
   cwd: string
   isVisible?: boolean
+  showToolbar?: boolean
+  backendTypeOverride?: TerminalBackendType
+  createTerminal?: Parameters<ITerminalBackend['mount']>[1]['createTerminal']
+  onStatusChange?: (status: 'creating' | 'running' | 'exited', exitCode?: number) => void
 }
 
 /** Imperative handle exposed to parent (TerminalManager) */
@@ -37,7 +41,15 @@ function createBackend(type: TerminalBackendType): ITerminalBackend {
 }
 
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView(
-  { terminalId, cwd, isVisible = true },
+  {
+    terminalId,
+    cwd,
+    isVisible = true,
+    showToolbar = true,
+    backendTypeOverride,
+    createTerminal,
+    onStatusChange
+  },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -73,6 +85,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   const embeddedTerminalBackend = useSettingsStore(
     (s) => s.embeddedTerminalBackend
   ) as EmbeddedTerminalBackend
+  const effectiveBackendType = backendTypeOverride ?? embeddedTerminalBackend
   const ghosttyFontSize = useSettingsStore((s) => s.ghosttyFontSize)
   const ghosttyOverlaySuppressed = useLayoutStore((s) => s.ghosttyOverlaySuppressed)
 
@@ -170,7 +183,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     return cleanup
     // embeddedTerminalBackend in deps ensures re-evaluation when the user switches backends,
     // since activeBackendTypeRef is a ref and doesn't trigger re-renders on its own.
-  }, [effectiveVisible, terminalId, embeddedTerminalBackend])
+  }, [effectiveVisible, terminalId, effectiveBackendType])
 
   // Search helpers (only for xterm backend)
   const handleSearch = useCallback((query: string) => {
@@ -276,6 +289,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
           cursorStyle: config.cursorStyle,
           scrollback: config.scrollbackLimit,
           shell: config.shell,
+          createTerminal,
           // Seed visibility from the current UI state. Critical when the
           // backend is recreated (e.g. fontSize change, cwd change, StrictMode
           // double-mount) while the bottom panel is collapsed: defaulting to
@@ -289,13 +303,14 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
             setTerminalStatus(status)
             if (code !== undefined) setExitCode(code)
             useTerminalTabStore.getState().setTabStatus(terminalId, status, code)
+            onStatusChange?.(status, code)
           }
         }
       )
 
       backendRef.current = backend
     },
-    [terminalId, cwd, destroyTerminal]
+    [terminalId, cwd, destroyTerminal, createTerminal, onStatusChange]
   )
 
   // Handle restart — destroy old PTY and re-create terminal
@@ -319,12 +334,12 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     }
 
     await restartTerminal(terminalId, cwd, shell)
-    setupTerminal(embeddedTerminalBackend || 'xterm')
-  }, [terminalId, cwd, restartTerminal, setupTerminal, embeddedTerminalBackend])
+    setupTerminal(effectiveBackendType || 'xterm')
+  }, [terminalId, cwd, restartTerminal, setupTerminal, effectiveBackendType])
 
   // Initialize terminal on mount, and re-create when backend setting changes
   useEffect(() => {
-    setupTerminal(embeddedTerminalBackend || 'xterm')
+    setupTerminal(effectiveBackendType || 'xterm')
 
     return () => {
       // Invalidate the in-flight setupTerminal so its post-await continuation
@@ -341,7 +356,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       initializedRef.current = null
       activeBackendTypeRef.current = null
     }
-  }, [setupTerminal, embeddedTerminalBackend])
+  }, [setupTerminal, effectiveBackendType])
 
   // Restart the Ghostty terminal when font size changes so the new size takes effect.
   // We track the previous value so the effect only fires on actual changes, not on mount.
@@ -379,20 +394,22 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
 
   return (
     <div className="flex flex-col h-full w-full" data-testid="terminal-view">
-      <TerminalToolbar
-        status={terminalStatus}
-        exitCode={exitCode}
-        searchVisible={searchVisible && !isGhostty}
-        searchQuery={searchQuery}
-        onToggleSearch={handleToggleSearch}
-        onSearchChange={handleSearch}
-        onSearchNext={handleSearchNext}
-        onSearchPrev={handleSearchPrev}
-        onSearchClose={handleSearchClose}
-        onRestart={handleRestart}
-        onClear={() => backendRef.current?.clear()}
-        backendType={activeBackendTypeRef.current || 'xterm'}
-      />
+      {showToolbar && (
+        <TerminalToolbar
+          status={terminalStatus}
+          exitCode={exitCode}
+          searchVisible={searchVisible && !isGhostty}
+          searchQuery={searchQuery}
+          onToggleSearch={handleToggleSearch}
+          onSearchChange={handleSearch}
+          onSearchNext={handleSearchNext}
+          onSearchPrev={handleSearchPrev}
+          onSearchClose={handleSearchClose}
+          onRestart={handleRestart}
+          onClear={() => backendRef.current?.clear()}
+          backendType={activeBackendTypeRef.current || 'xterm'}
+        />
+      )}
       <div
         ref={containerRef}
         className="terminal-view-container flex-1 min-h-0"

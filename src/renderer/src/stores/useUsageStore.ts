@@ -125,14 +125,16 @@ interface SessionLike {
 }
 
 export function resolveUsageProvider(session: SessionLike): UsageProvider {
-  if (session.agent_sdk === 'claude-code') return 'anthropic'
+  if (session.agent_sdk === 'claude-code' || session.agent_sdk === 'claude-code-cli') {
+    return 'anthropic'
+  }
   if (session.model_provider_id === 'openai') return 'openai'
   if (session.model_id?.startsWith('gpt')) return 'openai'
   return 'anthropic'
 }
 
 export function resolveDefaultUsageProvider(
-  agentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  agentSdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
 ): UsageProvider {
   if (agentSdk === 'codex') return 'openai'
   return 'anthropic'

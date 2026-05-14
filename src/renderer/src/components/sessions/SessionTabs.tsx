@@ -80,7 +80,7 @@ interface SessionTabProps {
   sessionId: string
   name: string
   isActive: boolean
-  agentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  agentSdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   onClick: () => void
   onClose: (e: React.MouseEvent) => void
   onMiddleClick: (e: React.MouseEvent) => void
@@ -840,7 +840,7 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Handle creating a new session with a specific agent SDK (from context menu)
   const handleCreateSessionWithSdk = async (
-    sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+    sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   ) => {
     if (isConnectionMode && selectedConnectionId) {
       const result = await createConnectionSession(selectedConnectionId, sdk)
@@ -1241,8 +1241,13 @@ export function SessionTabs(): React.JSX.Element | null {
                   </ContextMenuItem>
                 )}
                 {availableAgentSdks?.claude && (
+                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code-cli')}>
+                    New Claude Code CLI Session
+                  </ContextMenuItem>
+                )}
+                {availableAgentSdks?.claude && (
                   <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
-                    New Claude Code Session
+                    New Claude Code Legacy Session
                   </ContextMenuItem>
                 )}
                 {availableAgentSdks?.codex && (
