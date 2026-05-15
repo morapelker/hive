@@ -1694,6 +1694,12 @@ export class DatabaseService {
       .all(sessionId) as SessionActivity[]
   }
 
+  deleteSessionActivities(sessionId: string): number {
+    const db = this.getDb()
+    const result = db.prepare('DELETE FROM session_activities WHERE session_id = ?').run(sessionId)
+    return result.changes
+  }
+
   // Connection operations
   createConnection(data: ConnectionCreate): Connection {
     const db = this.getDb()
