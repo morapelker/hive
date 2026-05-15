@@ -1531,6 +1531,12 @@ const opencodeOps = {
   ): Promise<Envelope<{ success: boolean; messages: unknown[]; error?: string }>> =>
     ipcRenderer.invoke('opencode:messages', worktreePath, opencodeSessionId),
 
+  refreshFromThread: (
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<Envelope<{ success: boolean; count?: number; error?: string }>> =>
+    ipcRenderer.invoke('opencode:refresh-from-thread', worktreePath, opencodeSessionId),
+
   // List available models from all configured providers
   listModels: (opts?: {
     agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'

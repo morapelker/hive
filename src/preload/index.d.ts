@@ -811,6 +811,10 @@ declare global {
         worktreePath: string,
         opencodeSessionId: string
       ) => Promise<Envelope<{ success: boolean; messages: unknown[]; error?: string }>>
+      refreshFromThread: (
+        worktreePath: string,
+        opencodeSessionId: string
+      ) => Promise<Envelope<{ success: boolean; count?: number; error?: string }>>
       // List available models from all configured providers
       listModels: (opts?: {
         agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'

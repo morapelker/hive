@@ -67,11 +67,13 @@ const projectId = 'proj-test'
 function setupStores({
   sessionCount = 3,
   fileTabs = false,
-  diffTabs = false
+  diffTabs = false,
+  agentSdk = 'opencode'
 }: {
   sessionCount?: number
   fileTabs?: boolean
   diffTabs?: boolean
+  agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
 } = {}) {
   const sessions = Array.from({ length: sessionCount }, (_, i) => ({
     id: `s${i + 1}`,
@@ -80,6 +82,7 @@ function setupStores({
     name: `Session ${i + 1}`,
     status: 'active' as const,
     opencode_session_id: null,
+    agent_sdk: agentSdk,
     mode: 'build' as const,
     model_provider_id: null,
     model_id: null,
@@ -219,6 +222,29 @@ describe('Session 8: Tab Context Menus UI', () => {
 
       expect(screen.queryByText('Copy Relative Path')).not.toBeInTheDocument()
       expect(screen.queryByText('Copy Absolute Path')).not.toBeInTheDocument()
+    })
+
+    test('Refresh from file is shown only for codex session tabs', async () => {
+      setupStores({ agentSdk: 'opencode' })
+      render(<SessionTabs />)
+
+      fireEvent.contextMenu(screen.getByTestId('session-tab-s1'))
+
+      await waitFor(() => {
+        expect(screen.getByText('Close')).toBeInTheDocument()
+      })
+      expect(screen.queryByText('Refresh from file')).not.toBeInTheDocument()
+    })
+
+    test('codex Refresh from file item is disabled while working', async () => {
+      setupStores({ agentSdk: 'codex' })
+      useWorktreeStatusStore.getState().setSessionStatus('s1', 'working')
+      render(<SessionTabs />)
+
+      fireEvent.contextMenu(screen.getByTestId('session-tab-s1'))
+
+      const item = await screen.findByText('Refresh from file')
+      expect(item.closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
     })
   })
 
