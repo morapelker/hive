@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  consumeQuitViaShortcut,
   getQuitConfirmationDecision,
+  markQuitViaShortcut,
   readWarnBeforeQuitting
 } from '../../src/main/quit-confirmation'
 
@@ -59,5 +61,16 @@ describe('quit confirmation decision', () => {
         confirmationWindowMs: 2000
       })
     ).toEqual({ shouldPreventQuit: false, lastQuitConfirmAt: null })
+  })
+})
+
+describe('quit shortcut marker', () => {
+  it('returns true exactly once after being marked', () => {
+    expect(consumeQuitViaShortcut()).toBe(false)
+
+    markQuitViaShortcut()
+
+    expect(consumeQuitViaShortcut()).toBe(true)
+    expect(consumeQuitViaShortcut()).toBe(false)
   })
 })

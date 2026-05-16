@@ -1,5 +1,19 @@
 export const QUIT_CONFIRM_WINDOW_MS = 2000
 
+let quitViaShortcut = false
+
+/** Mark that the next quit was initiated by the Cmd+Q accelerator. */
+export function markQuitViaShortcut(): void {
+  quitViaShortcut = true
+}
+
+/** Read and reset the flag. Returns true only once per mark. */
+export function consumeQuitViaShortcut(): boolean {
+  const value = quitViaShortcut
+  quitViaShortcut = false
+  return value
+}
+
 export function readWarnBeforeQuitting(rawSettings: string | null): boolean {
   if (!rawSettings) return true
 
