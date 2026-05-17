@@ -11,35 +11,40 @@ vi.mock('@/lib/toast', () => ({
 
 const mockKanban = {
   ticket: {
-    update: vi.fn().mockResolvedValue(undefined)
+    update: vi.fn().mockResolvedValue({ success: true, value: undefined })
   }
 }
 
 const mockDbSession = {
   create: vi.fn().mockImplementation(async (input: Record<string, unknown>) => ({
-    id: 'session-1',
-    worktree_id: input.worktree_id,
-    project_id: input.project_id,
-    connection_id: null,
-    name: 'Session 1',
-    status: 'active',
-    opencode_session_id: null,
-    agent_sdk: input.agent_sdk,
-    mode: input.mode,
-    session_type: 'default',
-    model_provider_id: null,
-    model_id: null,
-    model_variant: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    completed_at: null
+    success: true,
+    value: {
+      id: 'session-1',
+      worktree_id: input.worktree_id,
+      project_id: input.project_id,
+      connection_id: null,
+      name: 'Session 1',
+      status: 'active',
+      opencode_session_id: null,
+      agent_sdk: input.agent_sdk,
+      mode: input.mode,
+      session_type: 'default',
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      completed_at: null
+    }
   })),
-  update: vi.fn().mockResolvedValue(undefined)
+  update: vi.fn().mockResolvedValue({ success: true, value: undefined })
 }
 
 const mockOpencodeOps = {
-  connect: vi.fn().mockResolvedValue({ success: true, sessionId: 'oc-session-1' }),
-  prompt: vi.fn().mockResolvedValue({ success: true })
+  connect: vi
+    .fn()
+    .mockResolvedValue({ success: true, value: { success: true, sessionId: 'oc-session-1' } }),
+  prompt: vi.fn().mockResolvedValue({ success: true, value: { success: true } })
 }
 
 Object.defineProperty(window, 'kanban', {
@@ -66,8 +71,8 @@ Object.defineProperty(window, 'usageOps', {
   writable: true,
   configurable: true,
   value: {
-    fetch: vi.fn().mockResolvedValue({ success: true, data: null }),
-    fetchOpenai: vi.fn().mockResolvedValue({ success: true, data: null })
+    fetch: vi.fn().mockResolvedValue({ success: true, value: { success: true, data: null } }),
+    fetchOpenai: vi.fn().mockResolvedValue({ success: true, value: { success: true, data: null } })
   }
 })
 
@@ -209,6 +214,8 @@ describe('autoLaunchTicket goal mode', () => {
       type: string
       text: string
     }>
-    expect(promptParts[0]?.text).toBe('/goal Build auth. Goal success criteria: Auth works end to end')
+    expect(promptParts[0]?.text).toBe(
+      '/goal Build auth. Goal success criteria: Auth works end to end'
+    )
   })
 })
