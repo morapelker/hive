@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import { getDatabase } from '../db'
 import { getClaudeAccountEmail, getOpenAIAccountEmail } from './account-service'
 import { createLogger } from './logger'
@@ -6,7 +7,7 @@ import {
   readCodexCredentials,
   type OpenAIUsageOverride
 } from './openai-usage-service'
-import { fetchClaudeUsage, readAccessToken } from './usage-service'
+import { fetchClaudeUsage, readAccessToken, type ClaudeUsageFetchContext } from './usage-service'
 import type {
   FetchForAccountResult,
   OpenAIUsageData,
@@ -131,7 +132,8 @@ function accountError(
   accountId: string,
   message: string,
   status: SavedUsageStatus = 'error',
-  lastUsageJson: string | null = null
+  lastUsageJson: string | null = null,
+  retryAfter?: number
 ): FetchForAccountResult {
   const db = getDatabase()
   db.updateSavedUsageAccountUsage(accountId, {
@@ -139,7 +141,7 @@ function accountError(
     status,
     last_error: message
   })
-  return { success: false, error: message, status }
+  return { success: false, error: message, status, retryAfter }
 }
 
 function parseClaudeCredentials(row: SavedUsageAccount): ClaudeSavedCredentials | null {
@@ -170,7 +172,15 @@ function parseOpenAICredentials(row: SavedUsageAccount): OpenAISavedCredentials 
   }
 }
 
-export async function fetchForSavedAccount(accountId: string): Promise<FetchForAccountResult> {
+interface FetchForSavedAccountOptions {
+  caller?: ClaudeUsageFetchContext['caller']
+  batchId?: string
+}
+
+export async function fetchForSavedAccount(
+  accountId: string,
+  options: FetchForSavedAccountOptions = {}
+): Promise<FetchForAccountResult> {
   const db = getDatabase()
   const row = db.getSavedUsageAccountById(accountId)
   if (!row) return { success: false, error: 'not found', status: 'error' }
@@ -181,7 +191,11 @@ export async function fetchForSavedAccount(accountId: string): Promise<FetchForA
       if (!credentials)
         return accountError(accountId, 'Invalid Claude credentials', 'error', row.last_usage_json)
 
-      const result = await fetchClaudeUsage(credentials.accessToken)
+      const result = await fetchClaudeUsage(credentials.accessToken, {
+        caller: options.caller ?? 'usage:fetchForAccount',
+        accountId,
+        batchId: options.batchId
+      })
       if (!result.success || !result.data) {
         const message = result.error ?? 'Claude usage fetch failed'
         const status: SavedUsageStatus = isAuthStatusError(message) ? 'stale' : 'error'
@@ -190,7 +204,7 @@ export async function fetchForSavedAccount(accountId: string): Promise<FetchForA
           status,
           last_error: message
         })
-        return { success: false, error: message, status }
+        return { success: false, error: message, status, retryAfter: result.retryAfter }
       }
 
       db.updateSavedUsageAccountUsage(accountId, {
@@ -244,19 +258,77 @@ export async function refreshAllForProvider(
   provider: UsageProvider
 ): Promise<RefreshAllResultItem[]> {
   const rows = getDatabase().getSavedUsageAccountsByProvider(provider)
-  return Promise.all(
-    rows.map(async (row) => {
-      try {
-        const result = await fetchForSavedAccount(row.id)
-        return {
-          accountId: row.id,
-          success: result.success,
-          error: result.error
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return { accountId: row.id, success: false, error: message }
+  const batchId = randomUUID()
+  const startedAt = Date.now()
+  const results: RefreshAllResultItem[] = []
+
+  log.info('refreshAllForProvider start', {
+    provider,
+    batchId,
+    accountCount: rows.length,
+    accountIds: rows.map((row) => row.id)
+  })
+
+  for (const row of rows) {
+    log.info('refreshAllForProvider account start', { provider, batchId, accountId: row.id })
+    try {
+      const result = await fetchForSavedAccount(row.id, {
+        caller: 'refreshAllForProvider',
+        batchId
+      })
+      const item = {
+        accountId: row.id,
+        success: result.success,
+        error: result.error,
+        retryAfter: result.retryAfter
       }
-    })
+      results.push(item)
+
+      if (result.success) {
+        log.info('refreshAllForProvider account success', { provider, batchId, accountId: row.id })
+      } else {
+        log.warn('refreshAllForProvider account failure', {
+          provider,
+          batchId,
+          accountId: row.id,
+          error: result.error,
+          retryAfter: result.retryAfter
+        })
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      results.push({ accountId: row.id, success: false, error: message })
+      log.warn('refreshAllForProvider account failure', {
+        provider,
+        batchId,
+        accountId: row.id,
+        error: message
+      })
+    }
+  }
+
+  const summary = results.reduce(
+    (counts, result) => {
+      if (result.success) {
+        counts.success += 1
+        return counts
+      }
+
+      const status = result.error?.match(/\b([1-5]\d{2})\b/)?.[1]
+      if (status?.startsWith('4')) counts['4xx'] += 1
+      else if (status?.startsWith('5')) counts['5xx'] += 1
+      else counts.network += 1
+      return counts
+    },
+    { success: 0, '4xx': 0, '5xx': 0, network: 0 }
   )
+
+  log.info('refreshAllForProvider complete', {
+    provider,
+    batchId,
+    elapsedMs: Date.now() - startedAt,
+    ...summary
+  })
+
+  return results
 }

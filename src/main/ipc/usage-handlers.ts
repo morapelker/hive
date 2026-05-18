@@ -30,7 +30,7 @@ export function registerUsageHandlers(): void {
   defineHandler('usage:fetch', z.tuple([]), () =>
     Effect.tryPromise({
       try: async () => {
-        const result = await fetchClaudeUsage()
+        const result = await fetchClaudeUsage(undefined, { caller: 'usage:fetch' })
         if (result.success && result.data) {
           try {
             await captureLiveAccountFromFetch('anthropic', result.data)
@@ -67,7 +67,7 @@ export function registerUsageHandlers(): void {
 
   defineHandler('usage:fetchForAccount', z.string(), (accountId) =>
     Effect.tryPromise({
-      try: () => fetchForSavedAccount(accountId),
+      try: () => fetchForSavedAccount(accountId, { caller: 'usage:fetchForAccount' }),
       catch: (cause) => usageFailed('usage:fetchForAccount', cause)
     })
   )
