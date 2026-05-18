@@ -14,6 +14,7 @@ interface UsageState {
   anthropicLastFetchedAt: number | null
   anthropicIsLoading: boolean
   anthropicLastError: string | null
+  anthropicLastRetryAfter: number | null
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
@@ -37,9 +38,14 @@ interface UsageState {
 }
 
 const DEBOUNCE_MS = 180_000 // 3 minutes
+const FORCE_REFRESH_FLOOR_MS = 5_000
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+function retryAfterFetchedAt(retryAfter: number | undefined): number | null {
+  return retryAfter === undefined ? null : Date.now() - DEBOUNCE_MS + retryAfter * 1000
 }
 
 export const useUsageStore = create<UsageState>()((set, get) => ({
@@ -47,6 +53,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicLastFetchedAt: null,
   anthropicIsLoading: false,
   anthropicLastError: null,
+  anthropicLastRetryAfter: null,
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
@@ -156,16 +163,25 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       try {
         const result = unwrapEnvelope(await window.usageOps.fetch())
         if (result.success) {
-          set({ anthropicUsage: result.data ?? null, anthropicLastError: null })
+          set({
+            anthropicUsage: result.data ?? null,
+            anthropicLastError: null,
+            anthropicLastRetryAfter: null
+          })
           succeeded = true
           get()
             .loadSavedAccounts(provider)
             .catch(() => {})
         } else {
-          set({ anthropicLastError: result.error ?? 'Unknown error' })
+          const retryFetchedAt = retryAfterFetchedAt(result.retryAfter)
+          set({
+            anthropicLastError: result.error ?? 'Unknown error',
+            anthropicLastRetryAfter: result.retryAfter ?? null,
+            ...(retryFetchedAt !== null ? { anthropicLastFetchedAt: retryFetchedAt } : {})
+          })
         }
       } catch (err) {
-        set({ anthropicLastError: errorMessage(err) })
+        set({ anthropicLastError: errorMessage(err), anthropicLastRetryAfter: null })
       } finally {
         set({
           anthropicIsLoading: false,
@@ -205,22 +221,43 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
     if (provider === 'anthropic') {
       if (state.anthropicIsLoading) return
+      if (
+        state.anthropicLastRetryAfter !== null &&
+        state.anthropicLastFetchedAt &&
+        Date.now() - state.anthropicLastFetchedAt < DEBOUNCE_MS
+      )
+        return
+      if (
+        state.anthropicLastFetchedAt &&
+        state.anthropicLastError === null &&
+        Date.now() - state.anthropicLastFetchedAt < FORCE_REFRESH_FLOOR_MS
+      )
+        return
 
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
       try {
         const result = unwrapEnvelope(await window.usageOps.fetch())
         if (result.success) {
-          set({ anthropicUsage: result.data ?? null, anthropicLastError: null })
+          set({
+            anthropicUsage: result.data ?? null,
+            anthropicLastError: null,
+            anthropicLastRetryAfter: null
+          })
           succeeded = true
           get()
             .loadSavedAccounts(provider)
             .catch(() => {})
         } else {
-          set({ anthropicLastError: result.error ?? 'Unknown error' })
+          const retryFetchedAt = retryAfterFetchedAt(result.retryAfter)
+          set({
+            anthropicLastError: result.error ?? 'Unknown error',
+            anthropicLastRetryAfter: result.retryAfter ?? null,
+            ...(retryFetchedAt !== null ? { anthropicLastFetchedAt: retryFetchedAt } : {})
+          })
         }
       } catch (err) {
-        set({ anthropicLastError: errorMessage(err) })
+        set({ anthropicLastError: errorMessage(err), anthropicLastRetryAfter: null })
       } finally {
         set({
           anthropicIsLoading: false,

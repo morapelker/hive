@@ -205,6 +205,9 @@ function ProviderUsageBlock({
   const lastError = useUsageStore((s) =>
     provider === 'anthropic' ? s.anthropicLastError : s.openaiLastError
   )
+  const retryAfter = useUsageStore((s) =>
+    provider === 'anthropic' ? s.anthropicLastRetryAfter : null
+  )
   const email = useAccountStore((s) =>
     provider === 'anthropic' ? s.anthropicEmail : s.openaiEmail
   )
@@ -312,7 +315,9 @@ function ProviderUsageBlock({
             )}
             {lastError && (
               <div className="text-[10px] text-red-400 border-t border-background/20 pt-1">
-                Refresh failed: {lastError}
+                {retryAfter !== null
+                  ? `Rate limited - retry in ${retryAfter}s`
+                  : `Refresh failed: ${lastError}`}
               </div>
             )}
           </div>
@@ -382,7 +387,9 @@ function ProviderUsageBlock({
           )}
           {lastError && (
             <div className="text-[10px] text-red-400 border-t border-background/20 pt-1">
-              Refresh failed: {lastError}
+              {retryAfter !== null
+                ? `Rate limited - retry in ${retryAfter}s`
+                : `Refresh failed: ${lastError}`}
             </div>
           )}
         </div>

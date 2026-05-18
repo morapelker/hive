@@ -13,6 +13,7 @@ export interface UsageResult {
   success: boolean
   data?: UsageData
   error?: string
+  retryAfter?: number
 }
 
 export type UsageProvider = 'anthropic' | 'openai'
@@ -63,6 +64,7 @@ export interface FetchForAccountResult {
   success: boolean
   data?: UsageData | OpenAIUsageData
   error?: string
+  retryAfter?: number
   status: SavedUsageStatus
 }
 
@@ -70,4 +72,5 @@ export interface RefreshAllResultItem {
   accountId: string
   success: boolean
   error?: string
+  retryAfter?: number
 }
