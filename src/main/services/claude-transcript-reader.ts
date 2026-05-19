@@ -1,16 +1,69 @@
-import { readFile } from 'fs/promises'
+import { createHash } from 'crypto'
+import { readFile, readdir } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'ClaudeTranscriptReader' })
+const ENCODED_PATH_MAX_LEN = 200
 
 /**
- * Encode a worktree path the same way Claude CLI does:
- * replace every `/` and `.` with `-`.
+ * Encode a worktree path the same way the Claude Agent SDK stores project transcripts.
  */
 export function encodePath(worktreePath: string): string {
-  return worktreePath.replace(/[/.]/g, '-')
+  const normalizedPath = worktreePath.normalize('NFC')
+  const encoded = normalizedPath.replace(/[^a-zA-Z0-9]/g, '-')
+  if (encoded.length <= ENCODED_PATH_MAX_LEN) return encoded
+
+  const hashSuffix = createHash('sha256').update(normalizedPath).digest('hex').slice(0, 8)
+  return `${encoded.slice(0, ENCODED_PATH_MAX_LEN)}-${hashSuffix}`
+}
+
+function resolveProjectsDir(): string {
+  const configuredDir = process.env.CLAUDE_CONFIG_DIR
+  const configRoot =
+    typeof configuredDir === 'string' && configuredDir.trim().length > 0
+      ? configuredDir
+      : join(homedir(), '.claude')
+
+  return join(configRoot.normalize('NFC'), 'projects')
+}
+
+function isErrnoCode(err: unknown, code: string): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as NodeJS.ErrnoException).code === code
+  )
+}
+
+function logTranscriptReadFailure(
+  err: unknown,
+  fields: {
+    projectsRoot: string
+    encoded: string
+    primaryFilePath: string
+    claudeSessionId: string
+  }
+): void {
+  const errCode = isErrnoCode(err, 'ENOENT') ? 'ENOENT' : (err as NodeJS.ErrnoException)?.code
+  const logFields = { ...fields, errCode }
+
+  if (isErrnoCode(err, 'ENOENT')) {
+    if (fields.claudeSessionId.startsWith('pending::')) {
+      log.debug('Claude transcript file not found', logFields)
+    } else {
+      log.warn('Claude transcript file not found', logFields)
+    }
+    return
+  }
+
+  log.error(
+    'Claude transcript file unreadable',
+    err instanceof Error ? err : new Error(String(err)),
+    logFields
+  )
 }
 
 interface ClaudeContentBlock {
@@ -144,19 +197,53 @@ export async function readClaudeTranscript(
   worktreePath: string,
   claudeSessionId: string
 ): Promise<unknown[]> {
+  const projectsRoot = resolveProjectsDir()
   const encoded = encodePath(worktreePath)
-  const filePath = join(homedir(), '.claude', 'projects', encoded, `${claudeSessionId}.jsonl`)
+  const primaryFilePath = join(projectsRoot, encoded, `${claudeSessionId}.jsonl`)
+  const logFields = { projectsRoot, encoded, primaryFilePath, claudeSessionId }
 
-  let raw: string
+  let raw: string | undefined
+  let filePath = primaryFilePath
+  let matchedProjectDir = encoded
+  let readError: unknown
   try {
-    raw = await readFile(filePath, 'utf-8')
+    raw = await readFile(primaryFilePath, 'utf-8')
   } catch (err) {
-    log.debug('Transcript file not found or unreadable', {
-      filePath,
-      error: err instanceof Error ? err.message : String(err)
-    })
-    return []
+    readError = err
+    if (isErrnoCode(err, 'ENOENT')) {
+      const prefix = encoded.slice(0, ENCODED_PATH_MAX_LEN)
+      let candidates: string[] = []
+      try {
+        candidates = (await readdir(projectsRoot)).filter((entry) => entry.startsWith(prefix))
+      } catch (readdirErr) {
+        if (!isErrnoCode(readdirErr, 'ENOENT')) {
+          readError = readdirErr
+        }
+      }
+
+      for (const candidate of candidates) {
+        const candidateFilePath = join(projectsRoot, candidate, `${claudeSessionId}.jsonl`)
+        try {
+          raw = await readFile(candidateFilePath, 'utf-8')
+          filePath = candidateFilePath
+          matchedProjectDir = candidate
+          readError = undefined
+          break
+        } catch (candidateErr) {
+          readError = candidateErr
+          if (!isErrnoCode(candidateErr, 'ENOENT')) {
+            break
+          }
+        }
+      }
+    }
+
+    if (readError !== undefined) {
+      logTranscriptReadFailure(readError, logFields)
+      return []
+    }
   }
+  if (raw === undefined) return []
 
   const lines = raw.split('\n')
 
@@ -239,6 +326,7 @@ export async function readClaudeTranscript(
 
   log.info('Read Claude transcript', {
     filePath,
+    matchedProjectDir,
     totalLines: lines.length,
     parsedEntries: entries.length,
     messageCount: messages.length
