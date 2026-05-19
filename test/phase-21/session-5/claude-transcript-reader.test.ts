@@ -1,17 +1,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { join } from 'path'
+import { homedir } from 'os'
 
 vi.mock('fs/promises')
-vi.mock('../../../src/main/services/logger', () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn()
-  })
+const mockLog = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn()
 }))
 
-import { readFile } from 'fs/promises'
+vi.mock('../../../src/main/services/logger', () => ({
+  createLogger: () => mockLog
+}))
+
+import { readFile, readdir } from 'fs/promises'
 import {
   readClaudeTranscript,
   encodePath,
@@ -24,6 +28,7 @@ import type {
 } from '../../../src/main/services/claude-transcript-reader'
 
 const mockReadFile = vi.mocked(readFile)
+const mockReaddir = vi.mocked(readdir)
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -59,11 +64,31 @@ function buildJsonl(...entries: object[]): string {
   return entries.map((e) => JSON.stringify(e)).join('\n')
 }
 
+function makeEnoent(path = 'missing.jsonl'): NodeJS.ErrnoException {
+  const err = new Error(`ENOENT: no such file or directory, open '${path}'`) as NodeJS.ErrnoException
+  err.code = 'ENOENT'
+  return err
+}
+
 // ── Tests ──────────────────────────────────────────────────────────
 
 describe('claude-transcript-reader', () => {
+  const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR
+  const restoreClaudeConfigDir = () => {
+    if (originalClaudeConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir
+    }
+  }
+
   beforeEach(() => {
     vi.resetAllMocks()
+    restoreClaudeConfigDir()
+  })
+
+  afterEach(() => {
+    restoreClaudeConfigDir()
   })
 
   // 1. Path encoding
@@ -86,6 +111,123 @@ describe('claude-transcript-reader', () => {
 
     it('replaces dots with dashes (dotfiles like .hive-worktrees)', () => {
       expect(encodePath('/Users/mor/.hive-worktrees/proj')).toBe('-Users-mor--hive-worktrees-proj')
+    })
+
+    it('replaces underscores with dashes', () => {
+      expect(encodePath('/Users/mor/my_project')).toBe('-Users-mor-my-project')
+    })
+
+    it('replaces spaces with dashes', () => {
+      expect(encodePath('/Users/mor/My Project')).toBe('-Users-mor-My-Project')
+    })
+
+    it('replaces Windows drive separators and backslashes with dashes', () => {
+      expect(encodePath('C:\\Users\\mor\\proj')).toBe('C--Users-mor-proj')
+    })
+
+    it('replaces parentheses with dashes', () => {
+      expect(encodePath('/Users/mor/work(1)')).toBe('-Users-mor-work-1-')
+    })
+
+    it('replaces at signs with dashes', () => {
+      expect(encodePath('/Users/mor/proj@v2')).toBe('-Users-mor-proj-v2')
+    })
+
+    it('keeps existing hyphens as hyphens', () => {
+      expect(encodePath('/Users/mor/already-hyphen')).toBe('-Users-mor-already-hyphen')
+    })
+
+    it('normalizes accented paths to NFC before encoding', () => {
+      const decomposed = '/Users/mor/cafe\u0301'
+      const expected = decomposed.normalize('NFC').replace(/[^a-zA-Z0-9]/g, '-')
+
+      expect(encodePath(decomposed)).toBe(expected)
+    })
+
+    it('truncates long encodings to 200 chars plus an 8-char hash suffix', () => {
+      const path = `/tmp/${'a'.repeat(260)}`
+      const naiveEncoding = path.normalize('NFC').replace(/[^a-zA-Z0-9]/g, '-')
+      const result = encodePath(path)
+
+      expect(result).toHaveLength(209)
+      expect(result.slice(0, 200)).toBe(naiveEncoding.slice(0, 200))
+      expect(result.slice(200)).toMatch(/^-[a-f0-9]{8}$/)
+    })
+  })
+
+  describe('resolveProjectsDir / CLAUDE_CONFIG_DIR', () => {
+    it('uses CLAUDE_CONFIG_DIR when it is set', async () => {
+      process.env.CLAUDE_CONFIG_DIR = '/tmp/custom-claude'
+      mockReadFile.mockResolvedValue(buildJsonl(makeAssistantEntry()))
+
+      await readClaudeTranscript('/Users/mor/project', 'session-123')
+
+      expect(mockReadFile).toHaveBeenCalledWith(
+        expect.stringMatching(/^\/tmp\/custom-claude\/projects\//),
+        'utf-8'
+      )
+    })
+
+    it('uses homedir .claude when CLAUDE_CONFIG_DIR is empty', async () => {
+      process.env.CLAUDE_CONFIG_DIR = ''
+      mockReadFile.mockResolvedValue(buildJsonl(makeAssistantEntry()))
+
+      await readClaudeTranscript('/Users/mor/project', 'session-123')
+
+      expect(mockReadFile).toHaveBeenCalledWith(
+        expect.stringMatching(new RegExp(`^${join(homedir(), '.claude', 'projects')}`)),
+        'utf-8'
+      )
+    })
+
+    it('uses homedir .claude when CLAUDE_CONFIG_DIR is unset', async () => {
+      delete process.env.CLAUDE_CONFIG_DIR
+      mockReadFile.mockResolvedValue(buildJsonl(makeAssistantEntry()))
+
+      await readClaudeTranscript('/Users/mor/project', 'session-123')
+
+      expect(mockReadFile).toHaveBeenCalledWith(
+        expect.stringMatching(new RegExp(`^${join(homedir(), '.claude', 'projects')}`)),
+        'utf-8'
+      )
+    })
+  })
+
+  describe('lookup fallback for truncated/aliased directories', () => {
+    it('reads the first matching aliased directory that contains the transcript', async () => {
+      const path = `/tmp/${'a'.repeat(260)}`
+      const encoded = encodePath(path)
+      const prefix = encoded.slice(0, 200)
+      const jsonl = buildJsonl(makeAssistantEntry({ uuid: 'from-fallback' }))
+
+      mockReadFile.mockRejectedValueOnce(makeEnoent())
+      mockReaddir.mockResolvedValue([
+        `${prefix}-aaaaaaaa`,
+        `${prefix}-bbbbbbbb`,
+        'other-dir'
+      ] as any)
+      mockReadFile.mockRejectedValueOnce(makeEnoent())
+      mockReadFile.mockResolvedValueOnce(jsonl)
+
+      const result = await readClaudeTranscript(path, 'session-123')
+
+      expect(result).toHaveLength(1)
+      expect((result[0] as any).id).toBe('from-fallback')
+      expect(mockReadFile).toHaveBeenLastCalledWith(
+        expect.stringContaining(`${prefix}-bbbbbbbb/session-123.jsonl`),
+        'utf-8'
+      )
+    })
+
+    it('returns [] without candidate reads when no directory matches the encoded prefix', async () => {
+      const path = `/tmp/${'a'.repeat(260)}`
+      mockReadFile.mockRejectedValueOnce(makeEnoent())
+      mockReaddir.mockResolvedValue(['other-dir'] as any)
+
+      const result = await readClaudeTranscript(path, 'session-123')
+
+      expect(result).toEqual([])
+      expect(mockReadFile).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -242,10 +384,55 @@ describe('claude-transcript-reader', () => {
   // 7. Missing file returns []
   describe('missing file', () => {
     it('returns empty array when file does not exist', async () => {
-      mockReadFile.mockRejectedValue(new Error('ENOENT: no such file or directory'))
+      mockReadFile.mockRejectedValue(makeEnoent())
+      mockReaddir.mockResolvedValue([] as any)
 
       const result = await readClaudeTranscript('/no/such/path', 'missing-session')
       expect(result).toEqual([])
+    })
+
+    it('logs a warning with transcript lookup fields for missing real sessions', async () => {
+      mockReadFile.mockRejectedValue(makeEnoent())
+      mockReaddir.mockResolvedValue([] as any)
+
+      await readClaudeTranscript('/no/such/path', 'real-uuid-123')
+
+      expect(mockLog.warn).toHaveBeenCalledOnce()
+      expect(mockLog.warn).toHaveBeenCalledWith('Claude transcript file not found', {
+        projectsRoot: join(homedir(), '.claude', 'projects').normalize('NFC'),
+        encoded: '-no-such-path',
+        primaryFilePath: join(
+          homedir(),
+          '.claude',
+          'projects',
+          '-no-such-path',
+          'real-uuid-123.jsonl'
+        ).normalize('NFC'),
+        claudeSessionId: 'real-uuid-123',
+        errCode: 'ENOENT'
+      })
+    })
+
+    it('keeps pending session missing-file logs at debug level', async () => {
+      mockReadFile.mockRejectedValue(makeEnoent())
+      mockReaddir.mockResolvedValue([] as any)
+
+      await readClaudeTranscript('/no/such/path', 'pending::abc')
+
+      expect(mockLog.warn).not.toHaveBeenCalled()
+      expect(mockLog.debug).toHaveBeenCalledWith('Claude transcript file not found', {
+        projectsRoot: join(homedir(), '.claude', 'projects').normalize('NFC'),
+        encoded: '-no-such-path',
+        primaryFilePath: join(
+          homedir(),
+          '.claude',
+          'projects',
+          '-no-such-path',
+          'pending::abc.jsonl'
+        ).normalize('NFC'),
+        claudeSessionId: 'pending::abc',
+        errCode: 'ENOENT'
+      })
     })
   })
 
