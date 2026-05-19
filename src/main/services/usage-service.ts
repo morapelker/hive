@@ -10,6 +10,9 @@ export type { UsageData, UsageResult }
 
 const log = createLogger({ component: 'UsageService' })
 
+const CLAUDE_CLIENT_USER_AGENT = 'claude-code/2.1.5'
+const ANTHROPIC_API_VERSION = '2023-06-01'
+
 type ClaudeTokenSource = 'keychain' | 'file' | 'override'
 
 export interface ClaudeUsageFetchContext {
@@ -140,7 +143,9 @@ export async function fetchClaudeUsage(
       : await readAccessTokenWithSource()
   const token = tokenWithSource?.token
   if (!token) {
-    log.warn('No Claude OAuth access token found (checked keychain and credentials file)', { ...ctx })
+    log.warn('No Claude OAuth access token found (checked keychain and credentials file)', {
+      ...ctx
+    })
     return { success: false, error: 'No access token found' }
   }
 
@@ -165,6 +170,8 @@ export async function fetchClaudeUsage(
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
+        'User-Agent': CLAUDE_CLIENT_USER_AGENT,
+        'anthropic-version': ANTHROPIC_API_VERSION,
         'anthropic-beta': 'oauth-2025-04-20',
         Accept: 'application/json',
         'Content-Type': 'application/json'

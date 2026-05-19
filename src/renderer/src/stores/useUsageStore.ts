@@ -1,13 +1,15 @@
 import { create } from 'zustand'
 import type {
   UsageData,
+  AnthropicRateLimitInfo,
+  AnthropicRateLimitState,
   OpenAIUsageData,
   UsageProvider,
   SavedAccountDTO
 } from '@shared/types/usage'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
-export type { UsageData, UsageProvider }
+export type { UsageData, UsageProvider, AnthropicRateLimitInfo, AnthropicRateLimitState }
 
 interface UsageState {
   anthropicUsage: UsageData | null
@@ -15,6 +17,7 @@ interface UsageState {
   anthropicIsLoading: boolean
   anthropicLastError: string | null
   anthropicLastRetryAfter: number | null
+  anthropicRateLimit: AnthropicRateLimitState | null
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
@@ -34,6 +37,7 @@ interface UsageState {
   fetchUsageForProvider: (provider: UsageProvider) => Promise<void>
   forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
+  setAnthropicRateLimit: (info: AnthropicRateLimitInfo) => void
   fetchUsage: () => Promise<void>
 }
 
@@ -54,6 +58,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicIsLoading: false,
   anthropicLastError: null,
   anthropicLastRetryAfter: null,
+  anthropicRateLimit: null,
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
@@ -302,6 +307,42 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     if (isStale) {
       state.fetchUsageForProvider(provider).catch(() => {})
     }
+  },
+
+  setAnthropicRateLimit: (info: AnthropicRateLimitInfo) => {
+    set((state) => {
+      const now = Date.now()
+      const nowSeconds = now / 1000
+      const current = state.anthropicRateLimit
+      const next: AnthropicRateLimitState = {
+        ...(current ?? { updatedAt: now }),
+        updatedAt: now
+      }
+
+      const windowKey = info.rateLimitType === 'five_hour' ? 'fiveHour' : 'sevenDay'
+      if (info.resetsAt >= nowSeconds) {
+        next[windowKey] = {
+          status: info.status,
+          resetsAt: info.resetsAt,
+          isUsingOverage: info.isUsingOverage,
+          overageStatus: info.overageStatus
+        }
+      } else {
+        delete next[windowKey]
+      }
+
+      if (next.fiveHour?.resetsAt !== undefined && next.fiveHour.resetsAt < nowSeconds) {
+        delete next.fiveHour
+      }
+      if (next.sevenDay?.resetsAt !== undefined && next.sevenDay.resetsAt < nowSeconds) {
+        delete next.sevenDay
+      }
+
+      return {
+        anthropicRateLimit: next.fiveHour || next.sevenDay ? next : null,
+        anthropicLastFetchedAt: now
+      }
+    })
   },
 
   fetchUsage: async () => {

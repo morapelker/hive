@@ -42,6 +42,7 @@ describe('useUsageStore', () => {
       anthropicLastFetchedAt: null,
       anthropicIsLoading: false,
       anthropicLastError: null,
+      anthropicRateLimit: null,
       openaiUsage: null,
       openaiLastFetchedAt: null,
       openaiIsLoading: false,
@@ -80,7 +81,9 @@ describe('useUsageStore', () => {
       error: 'Could not decode usage response'
     })
 
-    await expect(useUsageStore.getState().forceRefreshProvider('anthropic')).resolves.toBeUndefined()
+    await expect(
+      useUsageStore.getState().forceRefreshProvider('anthropic')
+    ).resolves.toBeUndefined()
 
     const state = usageState()
     expect(state.anthropicLastError).toBe('Could not decode usage response')
@@ -118,5 +121,45 @@ describe('useUsageStore', () => {
     expect(state.openaiLastError).toBe('OpenAI auth failed')
     expect(state.openaiLastFetchedAt).toBeNull()
     expect(state.openaiIsLoading).toBe(false)
+  })
+
+  it('merges Anthropic rate-limit windows and drops stale windows', () => {
+    useUsageStore.getState().setAnthropicRateLimit({
+      status: 'allowed_warning',
+      resetsAt: Math.floor(Date.now() / 1000) + 3_600,
+      rateLimitType: 'five_hour',
+      isUsingOverage: false,
+      overageStatus: 'rejected'
+    })
+    useUsageStore.getState().setAnthropicRateLimit({
+      status: 'allowed',
+      resetsAt: Math.floor(Date.now() / 1000) + 86_400,
+      rateLimitType: 'seven_day',
+      isUsingOverage: true,
+      overageStatus: 'allowed'
+    })
+
+    expect(useUsageStore.getState().anthropicRateLimit).toMatchObject({
+      fiveHour: {
+        status: 'allowed_warning',
+        isUsingOverage: false,
+        overageStatus: 'rejected'
+      },
+      sevenDay: {
+        status: 'allowed',
+        isUsingOverage: true,
+        overageStatus: 'allowed'
+      },
+      updatedAt: Date.now()
+    })
+
+    useUsageStore.getState().setAnthropicRateLimit({
+      status: 'rejected',
+      resetsAt: Math.floor(Date.now() / 1000) - 1,
+      rateLimitType: 'five_hour'
+    })
+
+    expect(useUsageStore.getState().anthropicRateLimit?.fiveHour).toBeUndefined()
+    expect(useUsageStore.getState().anthropicRateLimit?.sevenDay?.status).toBe('allowed')
   })
 })

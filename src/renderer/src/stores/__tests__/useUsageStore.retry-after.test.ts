@@ -8,6 +8,7 @@ const baseState = {
   anthropicIsLoading: false,
   anthropicLastError: null,
   anthropicLastRetryAfter: null,
+  anthropicRateLimit: null,
   openaiUsage: null,
   openaiLastFetchedAt: null,
   openaiIsLoading: false,

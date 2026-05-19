@@ -585,344 +585,357 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         hiveSessionId: session.hiveSessionId,
         queryIterator: queryData as unknown as AsyncIterable<unknown>,
         onMessage: async (sdkMessage) => {
-        // Break if aborted
-        if (session.abortController?.signal.aborted) {
-          log.info('Prompt: aborted, breaking loop')
-          return
-        }
+          // Break if aborted
+          if (session.abortController?.signal.aborted) {
+            log.info('Prompt: aborted, breaking loop')
+            return
+          }
 
-        const msgType = sdkMessage.type as string
+          const msgType = sdkMessage.type as string
 
-        // stream_event messages fire per-token — log at debug to avoid spam
-        if (msgType === 'stream_event') {
-          hasStreamedContent = true
-          this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex, session.toolNames)
-          return // No materialization/accumulation needed for partials
-        }
+          // stream_event messages fire per-token — log at debug to avoid spam
+          if (msgType === 'stream_event') {
+            hasStreamedContent = true
+            this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex, session.toolNames)
+            return // No materialization/accumulation needed for partials
+          }
 
-        if (msgType === 'rate_limit_event') {
-          log.info('Prompt: rate_limit_event received', {
-            fullMessage: sdkMessage
-          })
-        }
-
-        log.info('Prompt: received SDK message', {
-          type: msgType,
-          index: messageIndex,
-          hasSessionId: !!sdkMessage.session_id,
-          hasContent: !!sdkMessage.content,
-          keys: Object.keys(sdkMessage).join(',')
-        })
-
-        // Log init messages (includes MCP server connection status) and cache slash commands
-        // SDK sends init as { type: 'system', subtype: 'init' }
-        const msgSubtype = (sdkMessage as Record<string, unknown>).subtype as string | undefined
-        if (msgType === 'system' && msgSubtype === 'init') {
-          const initMsg = sdkMessage as Record<string, unknown>
-          log.info('Prompt: init message received', {
-            mcpServers: initMsg.mcp_servers,
-            model: initMsg.model,
-            slashCommands: initMsg.slash_commands
-          })
-
-          // Phase 1: Cache command names from init message as minimal entries
-          const initSlashCommandNames = initMsg.slash_commands as string[] | undefined
-          if (initSlashCommandNames && Array.isArray(initSlashCommandNames)) {
-            const minimal = initSlashCommandNames
-              .filter((name): name is string => typeof name === 'string')
-              .map((name) => ({
-                name,
-                description: '',
-                argumentHint: ''
-              }))
-            this.cachedSlashCommands.set(worktreePath, minimal)
-            this.persistCommandsToDb(worktreePath)
-            log.info('Prompt: cached slash command names from init', {
-              count: minimal.length,
-              names: minimal.map((c) => c.name)
+          if (msgType === 'rate_limit_event') {
+            const info = (sdkMessage as Record<string, unknown>).rate_limit_info
+            log.info('Prompt: rate_limit_event received', {
+              fullMessage: sdkMessage
             })
-          }
-
-          // Phase 2: Enrich with full metadata via supportedCommands() (fire-and-forget)
-          if (session.query?.supportedCommands) {
-            session.query
-              .supportedCommands()
-              .then((cmds) => {
-                if (cmds?.length) {
-                  this.cachedSlashCommands.set(worktreePath, cmds)
-                  this.persistCommandsToDb(worktreePath)
-                  log.info('Prompt: cached full slash commands from supportedCommands()', {
-                    count: cmds.length,
-                    names: cmds.map((c) => c.name)
-                  })
-                }
-              })
-              .catch((err) => {
-                log.warn('Prompt: supportedCommands() failed, using init names', {
-                  error: err instanceof Error ? err.message : String(err)
-                })
-              })
-          }
-
-          // Notify renderer that commands are now available for fetching
-          this.sendToRenderer('opencode:stream', {
-            type: 'session.commands_available',
-            sessionId: session.hiveSessionId,
-            data: {}
-          })
-
-          // Send Claude model limits so the renderer can populate contextStore
-          this.sendToRenderer('opencode:stream', {
-            type: 'session.model_limits',
-            sessionId: session.hiveSessionId,
-            data: {
-              models: CLAUDE_MODELS.map((m) => ({
-                modelID: m.id,
-                providerID: 'anthropic',
-                contextLimit: m.limit.context
-              }))
-            }
-          })
-
-          return
-        }
-
-        // Materialize pending:: to real SDK session ID from first message,
-        // or capture a new session ID after a fork (forkSession: true returns a new ID)
-        const sdkSessionId = sdkMessage.session_id as string | undefined
-        if (
-          sdkSessionId &&
-          (session.claudeSessionId.startsWith('pending::') ||
-            sdkSessionId !== session.claudeSessionId)
-        ) {
-          const wasPending = session.claudeSessionId.startsWith('pending::')
-          const oldKey = this.getSessionKey(worktreePath, session.claudeSessionId)
-          session.claudeSessionId = sdkSessionId
-          session.materialized = true
-          this.sessions.delete(oldKey)
-          const newKey = this.getSessionKey(worktreePath, sdkSessionId)
-          this.sessions.set(newKey, session)
-          log.info(wasPending ? 'Materialized session ID' : 'Forked session ID', {
-            oldKey,
-            newKey
-          })
-
-          // When forking (not initial materialization), reset checkpoints
-          // since the new fork starts with its own checkpoint space
-          if (!wasPending) {
-            session.checkpoints = new Map()
-            session.checkpointCounter = 0
-            log.info('Reset checkpoints for forked session', {
-              hiveSessionId: session.hiveSessionId,
-              newSessionId: sdkSessionId
+            this.sendToRenderer('opencode:stream', {
+              type: 'session.rate_limit',
+              sessionId: session.hiveSessionId,
+              data: info
             })
+            return
           }
 
-          // Update DB so future IPC calls with the new ID resolve correctly
-          if (this.dbService) {
-            try {
-              this.dbService.updateSession(session.hiveSessionId, {
-                opencode_session_id: sdkSessionId
-              })
-              log.info('Updated DB opencode_session_id', {
-                hiveSessionId: session.hiveSessionId,
-                newAgentSessionId: sdkSessionId
-              })
-            } catch (err) {
-              const error = err instanceof Error ? err : new Error(String(err))
-              log.error('Failed to update opencode_session_id in DB', error, {
-                hiveSessionId: session.hiveSessionId
+          log.info('Prompt: received SDK message', {
+            type: msgType,
+            index: messageIndex,
+            hasSessionId: !!sdkMessage.session_id,
+            hasContent: !!sdkMessage.content,
+            keys: Object.keys(sdkMessage).join(',')
+          })
+
+          // Log init messages (includes MCP server connection status) and cache slash commands
+          // SDK sends init as { type: 'system', subtype: 'init' }
+          const msgSubtype = (sdkMessage as Record<string, unknown>).subtype as string | undefined
+          if (msgType === 'system' && msgSubtype === 'init') {
+            const initMsg = sdkMessage as Record<string, unknown>
+            log.info('Prompt: init message received', {
+              mcpServers: initMsg.mcp_servers,
+              model: initMsg.model,
+              slashCommands: initMsg.slash_commands
+            })
+
+            // Phase 1: Cache command names from init message as minimal entries
+            const initSlashCommandNames = initMsg.slash_commands as string[] | undefined
+            if (initSlashCommandNames && Array.isArray(initSlashCommandNames)) {
+              const minimal = initSlashCommandNames
+                .filter((name): name is string => typeof name === 'string')
+                .map((name) => ({
+                  name,
+                  description: '',
+                  argumentHint: ''
+                }))
+              this.cachedSlashCommands.set(worktreePath, minimal)
+              this.persistCommandsToDb(worktreePath)
+              log.info('Prompt: cached slash command names from init', {
+                count: minimal.length,
+                names: minimal.map((c) => c.name)
               })
             }
-          }
 
-          // Notify renderer so it updates its opencodeSessionId state
-          // (otherwise loadMessages() after idle will use the stale pending:: ID).
-          // Include wasFork so the renderer knows whether to clear old messages.
-          // wasFork is true ONLY for explicit fork requests (undo+resend), not
-          // for normal SDK session ID changes during resume.
-          this.sendToRenderer('opencode:stream', {
-            type: 'session.materialized',
-            sessionId: session.hiveSessionId,
-            data: { newSessionId: sdkSessionId, wasFork: !wasPending && wasForkRequest }
-          })
-
-          // Fire-and-forget: generate a title for brand-new sessions only.
-          // wasPending is only true on initial materialization, not forks.
-          if (wasPending) {
-            if (prompt.trimStart().startsWith('/using-superpowers')) {
-              session.titleDeferred = true
-              log.info('Prompt: deferring title generation (superpowers hook)', {
-                hiveSessionId: session.hiveSessionId
-              })
-            } else {
-              this.handleTitleGeneration(session, prompt).catch(() => {
-                // Swallowed — handleTitleGeneration already logs internally
-              })
-            }
-          }
-        }
-
-        // Accumulate translated messages in-memory for getMessages()
-        if (msgType === 'user' || msgType === 'assistant') {
-          const sdkMsg = sdkMessage as Record<string, unknown>
-          const msgContent = (
-            sdkMsg.message as { content?: { type: string; [key: string]: unknown }[] } | undefined
-          )?.content
-          const contentBlockTypes = Array.isArray(msgContent) ? msgContent.map((b) => b.type) : []
-          const isToolResultOnly =
-            msgType === 'user' &&
-            contentBlockTypes.length > 0 &&
-            contentBlockTypes.every((t) => t === 'tool_result')
-
-          // Capture checkpoints only from actual user prompts on the
-          // main conversation thread (not subagent messages).
-          // tool_result-only user messages carry UUIDs but do not represent
-          // stable rewind points for file checkpointing.
-          // Subagent messages have parent_tool_use_id set — their UUIDs live
-          // in a separate JSONL file and are not valid fork/resume points.
-          const isSubagentMessage = !!(sdkMessage as Record<string, unknown>).parent_tool_use_id
-          if (msgType === 'user' && sdkMessage.uuid && !isToolResultOnly && !isSubagentMessage) {
-            const checkpointUuid = sdkMessage.uuid as string
-            const isFirstSeenCheckpoint = !session.checkpoints.has(checkpointUuid)
-            if (isFirstSeenCheckpoint) {
-              session.checkpointCounter += 1
-              session.checkpoints.set(checkpointUuid, session.checkpointCounter)
-              log.info('Checkpoint captured', {
-                uuid: checkpointUuid,
-                counter: session.checkpointCounter,
-                totalCheckpoints: session.checkpoints.size
-              })
-            }
-          } else if (msgType === 'user' && sdkMessage.uuid && isSubagentMessage) {
-            log.debug('Skipping subagent user message for checkpoint', {
-              uuid: (sdkMessage.uuid as string).slice(0, 12),
-              parentToolUseId: (sdkMessage as Record<string, unknown>).parent_tool_use_id
-            })
-          }
-
-          log.info('TOOL_LIFECYCLE: accumulate message', {
-            hiveSessionId: session.hiveSessionId,
-            msgType,
-            contentBlockTypes,
-            isToolResultOnly,
-            isSubagentMessage
-          })
-
-          // Skip subagent messages from accumulation — they belong to the child
-          // session's transcript and should not appear in the main conversation.
-          // The renderer routes subagent content into SubtaskCards via childSessionId
-          // on stream events; the in-memory cache must not include them either.
-          if (isSubagentMessage) {
-            log.debug('Skipping subagent message from session.messages accumulation', {
-              msgType,
-              parentToolUseId: (sdkMessage as Record<string, unknown>).parent_tool_use_id
-            })
-          } else if (isToolResultOnly) {
-            // Instead of creating an empty user message, merge tool_result
-            // output/error into the preceding assistant message's tool_use parts.
-            const toolResults = msgContent as {
-              type: string
-              tool_use_id?: string
-              is_error?: boolean
-              content?: string | { type: string; text?: string }[]
-            }[]
-            // Find the last assistant message
-            const lastAssistant = [...session.messages]
-              .reverse()
-              .find((m) => (m as Record<string, unknown>).role === 'assistant') as
-              | Record<string, unknown>
-              | undefined
-            if (lastAssistant) {
-              const parts = lastAssistant.parts as Record<string, unknown>[] | undefined
-              if (Array.isArray(parts)) {
-                for (const tr of toolResults) {
-                  if (tr.type !== 'tool_result' || !tr.tool_use_id) continue
-                  let output: string | undefined
-                  if (typeof tr.content === 'string') {
-                    output = tr.content
-                  } else if (Array.isArray(tr.content)) {
-                    output = tr.content
-                      .filter((c) => c.type === 'text')
-                      .map((c) => c.text ?? '')
-                      .join('\n')
-                  }
-                  const toolPart = parts.find(
-                    (p) =>
-                      p.type === 'tool_use' &&
-                      (p.toolUse as Record<string, unknown> | undefined)?.id === tr.tool_use_id
-                  )
-                  if (toolPart) {
-                    const tu = toolPart.toolUse as Record<string, unknown>
-                    tu.output = output
-                    tu.error = tr.is_error ? output : undefined
-                    tu.status = tr.is_error ? 'error' : 'success'
-                    log.info('TOOL_LIFECYCLE: merged tool_result into assistant tool_use', {
-                      toolId: tr.tool_use_id,
-                      isError: !!tr.is_error,
-                      hasOutput: !!output
+            // Phase 2: Enrich with full metadata via supportedCommands() (fire-and-forget)
+            if (session.query?.supportedCommands) {
+              session.query
+                .supportedCommands()
+                .then((cmds) => {
+                  if (cmds?.length) {
+                    this.cachedSlashCommands.set(worktreePath, cmds)
+                    this.persistCommandsToDb(worktreePath)
+                    log.info('Prompt: cached full slash commands from supportedCommands()', {
+                      count: cmds.length,
+                      names: cmds.map((c) => c.name)
                     })
                   }
-                }
+                })
+                .catch((err) => {
+                  log.warn('Prompt: supportedCommands() failed, using init names', {
+                    error: err instanceof Error ? err.message : String(err)
+                  })
+                })
+            }
+
+            // Notify renderer that commands are now available for fetching
+            this.sendToRenderer('opencode:stream', {
+              type: 'session.commands_available',
+              sessionId: session.hiveSessionId,
+              data: {}
+            })
+
+            // Send Claude model limits so the renderer can populate contextStore
+            this.sendToRenderer('opencode:stream', {
+              type: 'session.model_limits',
+              sessionId: session.hiveSessionId,
+              data: {
+                models: CLAUDE_MODELS.map((m) => ({
+                  modelID: m.id,
+                  providerID: 'anthropic',
+                  contextLimit: m.limit.context
+                }))
+              }
+            })
+
+            return
+          }
+
+          // Materialize pending:: to real SDK session ID from first message,
+          // or capture a new session ID after a fork (forkSession: true returns a new ID)
+          const sdkSessionId = sdkMessage.session_id as string | undefined
+          if (
+            sdkSessionId &&
+            (session.claudeSessionId.startsWith('pending::') ||
+              sdkSessionId !== session.claudeSessionId)
+          ) {
+            const wasPending = session.claudeSessionId.startsWith('pending::')
+            const oldKey = this.getSessionKey(worktreePath, session.claudeSessionId)
+            session.claudeSessionId = sdkSessionId
+            session.materialized = true
+            this.sessions.delete(oldKey)
+            const newKey = this.getSessionKey(worktreePath, sdkSessionId)
+            this.sessions.set(newKey, session)
+            log.info(wasPending ? 'Materialized session ID' : 'Forked session ID', {
+              oldKey,
+              newKey
+            })
+
+            // When forking (not initial materialization), reset checkpoints
+            // since the new fork starts with its own checkpoint space
+            if (!wasPending) {
+              session.checkpoints = new Map()
+              session.checkpointCounter = 0
+              log.info('Reset checkpoints for forked session', {
+                hiveSessionId: session.hiveSessionId,
+                newSessionId: sdkSessionId
+              })
+            }
+
+            // Update DB so future IPC calls with the new ID resolve correctly
+            if (this.dbService) {
+              try {
+                this.dbService.updateSession(session.hiveSessionId, {
+                  opencode_session_id: sdkSessionId
+                })
+                log.info('Updated DB opencode_session_id', {
+                  hiveSessionId: session.hiveSessionId,
+                  newAgentSessionId: sdkSessionId
+                })
+              } catch (err) {
+                const error = err instanceof Error ? err : new Error(String(err))
+                log.error('Failed to update opencode_session_id in DB', error, {
+                  hiveSessionId: session.hiveSessionId
+                })
               }
             }
-          } else {
-            const translated = translateEntry(
-              {
-                type: msgType,
-                uuid: sdkMsg.uuid as string | undefined,
-                timestamp: new Date().toISOString(),
-                message: sdkMsg.message as
-                  | {
-                      role?: string
-                      content?: { type: string; [key: string]: unknown }[] | string
-                    }
-                  | undefined,
-                isSidechain: false
-              },
-              session.messages.length
-            )
-            if (translated) {
-              const isUserMessage = msgType === 'user'
-              const translatedContent = (translated as Record<string, unknown>).content
-              let optimisticIndex = -1
 
-              if (isUserMessage && typeof translatedContent === 'string') {
-                for (let i = session.messages.length - 1; i >= 0; i--) {
-                  const candidate = session.messages[i] as Record<string, unknown>
-                  if (
-                    candidate.role === 'user' &&
-                    typeof candidate.id === 'string' &&
-                    candidate.id.startsWith('user-') &&
-                    typeof candidate.content === 'string' &&
-                    candidate.content === translatedContent
-                  ) {
-                    optimisticIndex = i
-                    break
-                  }
-                }
-              }
+            // Notify renderer so it updates its opencodeSessionId state
+            // (otherwise loadMessages() after idle will use the stale pending:: ID).
+            // Include wasFork so the renderer knows whether to clear old messages.
+            // wasFork is true ONLY for explicit fork requests (undo+resend), not
+            // for normal SDK session ID changes during resume.
+            this.sendToRenderer('opencode:stream', {
+              type: 'session.materialized',
+              sessionId: session.hiveSessionId,
+              data: { newSessionId: sdkSessionId, wasFork: !wasPending && wasForkRequest }
+            })
 
-              if (optimisticIndex >= 0) {
-                session.messages[optimisticIndex] = translated
+            // Fire-and-forget: generate a title for brand-new sessions only.
+            // wasPending is only true on initial materialization, not forks.
+            if (wasPending) {
+              if (prompt.trimStart().startsWith('/using-superpowers')) {
+                session.titleDeferred = true
+                log.info('Prompt: deferring title generation (superpowers hook)', {
+                  hiveSessionId: session.hiveSessionId
+                })
               } else {
-                session.messages.push(translated)
+                this.handleTitleGeneration(session, prompt).catch(() => {
+                  // Swallowed — handleTitleGeneration already logs internally
+                })
               }
             }
           }
-        }
 
-        // Emit normalized event
-        this.emitSdkMessage(session.hiveSessionId, sdkMessage, messageIndex, session.toolNames, hasStreamedContent)
-        messageIndex++
+          // Accumulate translated messages in-memory for getMessages()
+          if (msgType === 'user' || msgType === 'assistant') {
+            const sdkMsg = sdkMessage as Record<string, unknown>
+            const msgContent = (
+              sdkMsg.message as { content?: { type: string; [key: string]: unknown }[] } | undefined
+            )?.content
+            const contentBlockTypes = Array.isArray(msgContent) ? msgContent.map((b) => b.type) : []
+            const isToolResultOnly =
+              msgType === 'user' &&
+              contentBlockTypes.length > 0 &&
+              contentBlockTypes.every((t) => t === 'tool_result')
 
-        // Reset streaming flag after each result so the next message sequence
-        // (e.g. a tool result following a streamed LLM response) gets fresh tracking.
-        // Without this, a single stream_event early in the loop would suppress
-        // result-text emission for all subsequent non-streamed results.
-        if (msgType === 'result') {
-          hasStreamedContent = false
-        }
+            // Capture checkpoints only from actual user prompts on the
+            // main conversation thread (not subagent messages).
+            // tool_result-only user messages carry UUIDs but do not represent
+            // stable rewind points for file checkpointing.
+            // Subagent messages have parent_tool_use_id set — their UUIDs live
+            // in a separate JSONL file and are not valid fork/resume points.
+            const isSubagentMessage = !!(sdkMessage as Record<string, unknown>).parent_tool_use_id
+            if (msgType === 'user' && sdkMessage.uuid && !isToolResultOnly && !isSubagentMessage) {
+              const checkpointUuid = sdkMessage.uuid as string
+              const isFirstSeenCheckpoint = !session.checkpoints.has(checkpointUuid)
+              if (isFirstSeenCheckpoint) {
+                session.checkpointCounter += 1
+                session.checkpoints.set(checkpointUuid, session.checkpointCounter)
+                log.info('Checkpoint captured', {
+                  uuid: checkpointUuid,
+                  counter: session.checkpointCounter,
+                  totalCheckpoints: session.checkpoints.size
+                })
+              }
+            } else if (msgType === 'user' && sdkMessage.uuid && isSubagentMessage) {
+              log.debug('Skipping subagent user message for checkpoint', {
+                uuid: (sdkMessage.uuid as string).slice(0, 12),
+                parentToolUseId: (sdkMessage as Record<string, unknown>).parent_tool_use_id
+              })
+            }
+
+            log.info('TOOL_LIFECYCLE: accumulate message', {
+              hiveSessionId: session.hiveSessionId,
+              msgType,
+              contentBlockTypes,
+              isToolResultOnly,
+              isSubagentMessage
+            })
+
+            // Skip subagent messages from accumulation — they belong to the child
+            // session's transcript and should not appear in the main conversation.
+            // The renderer routes subagent content into SubtaskCards via childSessionId
+            // on stream events; the in-memory cache must not include them either.
+            if (isSubagentMessage) {
+              log.debug('Skipping subagent message from session.messages accumulation', {
+                msgType,
+                parentToolUseId: (sdkMessage as Record<string, unknown>).parent_tool_use_id
+              })
+            } else if (isToolResultOnly) {
+              // Instead of creating an empty user message, merge tool_result
+              // output/error into the preceding assistant message's tool_use parts.
+              const toolResults = msgContent as {
+                type: string
+                tool_use_id?: string
+                is_error?: boolean
+                content?: string | { type: string; text?: string }[]
+              }[]
+              // Find the last assistant message
+              const lastAssistant = [...session.messages]
+                .reverse()
+                .find((m) => (m as Record<string, unknown>).role === 'assistant') as
+                | Record<string, unknown>
+                | undefined
+              if (lastAssistant) {
+                const parts = lastAssistant.parts as Record<string, unknown>[] | undefined
+                if (Array.isArray(parts)) {
+                  for (const tr of toolResults) {
+                    if (tr.type !== 'tool_result' || !tr.tool_use_id) continue
+                    let output: string | undefined
+                    if (typeof tr.content === 'string') {
+                      output = tr.content
+                    } else if (Array.isArray(tr.content)) {
+                      output = tr.content
+                        .filter((c) => c.type === 'text')
+                        .map((c) => c.text ?? '')
+                        .join('\n')
+                    }
+                    const toolPart = parts.find(
+                      (p) =>
+                        p.type === 'tool_use' &&
+                        (p.toolUse as Record<string, unknown> | undefined)?.id === tr.tool_use_id
+                    )
+                    if (toolPart) {
+                      const tu = toolPart.toolUse as Record<string, unknown>
+                      tu.output = output
+                      tu.error = tr.is_error ? output : undefined
+                      tu.status = tr.is_error ? 'error' : 'success'
+                      log.info('TOOL_LIFECYCLE: merged tool_result into assistant tool_use', {
+                        toolId: tr.tool_use_id,
+                        isError: !!tr.is_error,
+                        hasOutput: !!output
+                      })
+                    }
+                  }
+                }
+              }
+            } else {
+              const translated = translateEntry(
+                {
+                  type: msgType,
+                  uuid: sdkMsg.uuid as string | undefined,
+                  timestamp: new Date().toISOString(),
+                  message: sdkMsg.message as
+                    | {
+                        role?: string
+                        content?: { type: string; [key: string]: unknown }[] | string
+                      }
+                    | undefined,
+                  isSidechain: false
+                },
+                session.messages.length
+              )
+              if (translated) {
+                const isUserMessage = msgType === 'user'
+                const translatedContent = (translated as Record<string, unknown>).content
+                let optimisticIndex = -1
+
+                if (isUserMessage && typeof translatedContent === 'string') {
+                  for (let i = session.messages.length - 1; i >= 0; i--) {
+                    const candidate = session.messages[i] as Record<string, unknown>
+                    if (
+                      candidate.role === 'user' &&
+                      typeof candidate.id === 'string' &&
+                      candidate.id.startsWith('user-') &&
+                      typeof candidate.content === 'string' &&
+                      candidate.content === translatedContent
+                    ) {
+                      optimisticIndex = i
+                      break
+                    }
+                  }
+                }
+
+                if (optimisticIndex >= 0) {
+                  session.messages[optimisticIndex] = translated
+                } else {
+                  session.messages.push(translated)
+                }
+              }
+            }
+          }
+
+          // Emit normalized event
+          this.emitSdkMessage(
+            session.hiveSessionId,
+            sdkMessage,
+            messageIndex,
+            session.toolNames,
+            hasStreamedContent
+          )
+          messageIndex++
+
+          // Reset streaming flag after each result so the next message sequence
+          // (e.g. a tool result following a streamed LLM response) gets fresh tracking.
+          // Without this, a single stream_event early in the loop would suppress
+          // result-text emission for all subsequent non-streamed results.
+          if (msgType === 'result') {
+            hasStreamedContent = false
+          }
         }
       })
       session.subscription = subscription
@@ -2100,7 +2113,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     // Git commands need special handling - be very specific
     if (command === 'git') {
       if (!subcommand) {
-        return commandStr  // Just "git" alone - use exact
+        return commandStr // Just "git" alone - use exact
       }
 
       // Safe git subcommands that can have broad patterns
@@ -2112,7 +2125,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       // For git commit, be very specific about the flags
       if (subcommand === 'commit') {
         if (flag === '-m' || flag === '--message') {
-          return `git commit -m *`  // Only allow commit with message flag
+          return `git commit -m *` // Only allow commit with message flag
         }
         // For other commit variations (--amend, --no-verify, etc), use exact command
         // This prevents dangerous operations
@@ -2122,14 +2135,14 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       // For git push/pull, include the operation but not force flags
       if (subcommand === 'push' || subcommand === 'pull') {
         if (flag === '--force' || flag === '-f') {
-          return commandStr  // Don't suggest pattern for force push
+          return commandStr // Don't suggest pattern for force push
         }
         return `git ${subcommand} *`
       }
 
       // For git checkout/reset, be very careful
       if (subcommand === 'checkout' || subcommand === 'reset') {
-        return commandStr  // Always use exact for these dangerous operations
+        return commandStr // Always use exact for these dangerous operations
       }
 
       // For other git subcommands, use subcommand + first flag if present
@@ -2144,13 +2157,13 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     if (dangerousCommands.includes(command)) {
       // For rm, never suggest patterns with -rf
       if (command === 'rm' && (parts.includes('-rf') || parts.includes('-fr'))) {
-        return commandStr  // Use exact command for dangerous rm operations
+        return commandStr // Use exact command for dangerous rm operations
       }
 
       if (subcommand) {
         return `${command} ${subcommand} *`
       }
-      return commandStr  // Use exact if no subcommand
+      return commandStr // Use exact if no subcommand
     }
 
     // For other commands, suggest the exact command
@@ -2199,7 +2212,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }
 
     // Emit command.approval_needed event to renderer
-    log.info('APPROVAL FLOW: Sending event to renderer', { requestId, sessionId: session.hiveSessionId })
+    log.info('APPROVAL FLOW: Sending event to renderer', {
+      requestId,
+      sessionId: session.hiveSessionId
+    })
     this.sendToRenderer('opencode:stream', {
       type: 'command.approval_needed',
       sessionId: session.hiveSessionId,
@@ -2224,7 +2240,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     }>((resolve) => {
       this.pendingApprovals.set(requestId, {
         resolve: (response) => {
-          log.info('APPROVAL FLOW: User response received', { requestId, approved: response.approved })
+          log.info('APPROVAL FLOW: User response received', {
+            requestId,
+            approved: response.approved
+          })
           resolve(response)
         },
         toolName,
