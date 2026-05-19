@@ -474,22 +474,7 @@ function registerLoggingHandlers(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
-  app.quit()
-} else {
-  app.on('second-instance', () => {
-    const win = BrowserWindow.getAllWindows()[0]
-    if (win) {
-      if (win.isMinimized()) win.restore()
-      win.focus()
-    }
-  })
-}
-
 app.whenReady().then(async () => {
-  if (!gotLock) return
-
   // Load full shell environment for macOS when launched from Finder/Dock/Spotlight.
   // Must run before any child process spawning (opencode, scripts, Claude Code SDK).
   loadShellEnv()
