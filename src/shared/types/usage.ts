@@ -16,6 +16,29 @@ export interface UsageResult {
   retryAfter?: number
 }
 
+export type AnthropicRateLimitType = 'five_hour' | 'seven_day'
+
+export interface AnthropicRateLimitInfo {
+  status: string
+  resetsAt: number
+  rateLimitType: AnthropicRateLimitType
+  isUsingOverage?: boolean
+  overageStatus?: string
+}
+
+export interface AnthropicRateLimitWindow {
+  status: string
+  resetsAt: number
+  isUsingOverage?: boolean
+  overageStatus?: string
+}
+
+export interface AnthropicRateLimitState {
+  fiveHour?: AnthropicRateLimitWindow
+  sevenDay?: AnthropicRateLimitWindow
+  updatedAt: number
+}
+
 export type UsageProvider = 'anthropic' | 'openai'
 export type SavedUsageStatus = 'ok' | 'stale' | 'error'
 

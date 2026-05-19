@@ -16,11 +16,15 @@ import openaiIcon from '@/assets/model-icons/openai.svg'
 import type {
   OpenAIUsageData,
   SavedAccountDTO,
+  AnthropicRateLimitState,
+  AnthropicRateLimitWindow,
   UsageData,
   UsageProvider
 } from '@shared/types/usage'
 
-function getBarColor(percent: number): string {
+function getBarColor(percent: number, rateLimitStatus?: string): string {
+  if (rateLimitStatus === 'rejected') return 'bg-red-500'
+  if (rateLimitStatus === 'allowed_warning') return 'bg-orange-500'
   if (percent >= 90) return 'bg-red-500'
   if (percent >= 80) return 'bg-orange-500'
   if (percent >= 60) return 'bg-yellow-500'
@@ -61,26 +65,75 @@ function formatResetTime(isoString: string, type: 'five_hour' | 'seven_day'): st
   return `${month} ${day}, ${timeStr}`
 }
 
+function formatRelativeReset(resetsAt: number): string {
+  const seconds = Math.max(0, Math.ceil(resetsAt - Date.now() / 1000))
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.ceil((seconds % 3600) / 60)
+
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m`
+  return '<1m'
+}
+
+function getStatusLabel(status?: string): string | null {
+  if (status === 'rejected') return 'blocked'
+  if (status === 'allowed_warning') return 'warning'
+  return null
+}
+
+function getRateLimitWindow(
+  rateLimit: AnthropicRateLimitState | null,
+  type: 'five_hour' | 'seven_day'
+): AnthropicRateLimitWindow | undefined {
+  if (!rateLimit) return undefined
+  return type === 'five_hour' ? rateLimit.fiveHour : rateLimit.sevenDay
+}
+
 interface UsageRowProps {
   label: string
   percent: number
   resetTime: string
+  rateLimit?: AnthropicRateLimitWindow
 }
 
-function UsageRow({ label, percent, resetTime }: UsageRowProps): React.JSX.Element {
+function UsageRow({ label, percent, resetTime, rateLimit }: UsageRowProps): React.JSX.Element {
+  const statusLabel = getStatusLabel(rateLimit?.status)
+  const displayedPercent = rateLimit?.status === 'rejected' ? 100 : percent
+  const percentLabel = rateLimit?.status === 'rejected' ? 'limit' : `${Math.round(percent)}%`
+  const statusTitle =
+    statusLabel && rateLimit
+      ? `${statusLabel} - resets in ${formatRelativeReset(rateLimit.resetsAt)}`
+      : undefined
+
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-[10px] text-muted-foreground w-5 shrink-0">{label}</span>
       <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
         <div
-          className={cn('h-full rounded-full transition-all duration-300', getBarColor(percent))}
-          style={{ width: `${Math.min(100, Math.max(0, percent))}%`, minWidth: 2 }}
+          className={cn(
+            'h-full rounded-full transition-all duration-300',
+            getBarColor(displayedPercent, rateLimit?.status)
+          )}
+          style={{ width: `${Math.min(100, Math.max(0, displayedPercent))}%`, minWidth: 2 }}
         />
       </div>
       <span className="text-[10px] font-mono text-muted-foreground w-7 text-right shrink-0">
-        {Math.round(percent)}%
+        {percentLabel}
       </span>
       <span className="text-[10px] text-muted-foreground/60 shrink-0">{resetTime}</span>
+      {statusLabel && (
+        <span
+          className={cn(
+            'rounded-sm px-1 py-0.5 text-[9px] leading-none shrink-0',
+            rateLimit?.status === 'rejected'
+              ? 'bg-red-500/15 text-red-400'
+              : 'bg-orange-500/15 text-orange-400'
+          )}
+          title={statusTitle}
+        >
+          {rateLimit?.status === 'rejected' ? 'limit' : 'warn'}
+        </span>
+      )}
     </div>
   )
 }
@@ -191,6 +244,7 @@ function ProviderUsageBlock({
   isExplicitlySelected: boolean
 }): React.JSX.Element | null {
   const anthropicUsage = useUsageStore((s) => s.anthropicUsage)
+  const anthropicRateLimit = useUsageStore((s) => s.anthropicRateLimit)
   const openaiUsage = useUsageStore((s) => s.openaiUsage)
   const forceRefreshProvider = useUsageStore((s) => s.forceRefreshProvider)
   const refreshAllForProvider = useUsageStore((s) => s.refreshAllForProvider)
@@ -331,6 +385,10 @@ function ProviderUsageBlock({
   const fiveHourReset = formatResetTime(usage.five_hour.resets_at, 'five_hour')
   const sevenDayReset = formatResetTime(usage.seven_day.resets_at, 'seven_day')
   const extra = usage.extra_usage
+  const fiveHourRateLimit =
+    provider === 'anthropic' ? getRateLimitWindow(anthropicRateLimit, 'five_hour') : undefined
+  const sevenDayRateLimit =
+    provider === 'anthropic' ? getRateLimitWindow(anthropicRateLimit, 'seven_day') : undefined
 
   return (
     <Tooltip>
@@ -358,8 +416,18 @@ function ProviderUsageBlock({
               />
             </button>
             <div className="flex-1 space-y-0.5">
-              <UsageRow label="5h" percent={fiveHourPercent} resetTime={fiveHourReset} />
-              <UsageRow label="7d" percent={sevenDayPercent} resetTime={sevenDayReset} />
+              <UsageRow
+                label="5h"
+                percent={fiveHourPercent}
+                resetTime={fiveHourReset}
+                rateLimit={fiveHourRateLimit}
+              />
+              <UsageRow
+                label="7d"
+                percent={sevenDayPercent}
+                resetTime={sevenDayReset}
+                rateLimit={sevenDayRateLimit}
+              />
             </div>
           </div>
         </div>
@@ -383,6 +451,22 @@ function ProviderUsageBlock({
             <div className="border-t border-background/20 pt-1 text-[10px]">
               Extra: ${(extra.used_credits ?? 0).toFixed(2)} / $
               {(extra.monthly_limit ?? 0).toFixed(2)} used ({Math.round(extra.utilization ?? 0)}%)
+            </div>
+          )}
+          {provider === 'anthropic' && (fiveHourRateLimit || sevenDayRateLimit) && (
+            <div className="border-t border-background/20 pt-1 text-[10px] text-muted-foreground">
+              {fiveHourRateLimit && (
+                <div>
+                  5h: {fiveHourRateLimit.status} - resets in{' '}
+                  {formatRelativeReset(fiveHourRateLimit.resetsAt)}
+                </div>
+              )}
+              {sevenDayRateLimit && (
+                <div>
+                  7d: {sevenDayRateLimit.status} - resets in{' '}
+                  {formatRelativeReset(sevenDayRateLimit.resetsAt)}
+                </div>
+              )}
             </div>
           )}
           {lastError && (
