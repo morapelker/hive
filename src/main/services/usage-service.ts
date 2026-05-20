@@ -4,7 +4,7 @@ import { execFile } from 'child_process'
 import { join } from 'path'
 import { homedir, platform } from 'os'
 import { createLogger } from './logger'
-import type { UsageData, UsageResult } from '@shared/types/usage'
+import type { ClaudeRefreshResult, UsageData, UsageResult } from '@shared/types/usage'
 
 export type { UsageData, UsageResult }
 
@@ -12,6 +12,8 @@ const log = createLogger({ component: 'UsageService' })
 
 const CLAUDE_CLIENT_USER_AGENT = 'claude-code/2.1.5'
 const ANTHROPIC_API_VERSION = '2023-06-01'
+const ANTHROPIC_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token'
+const ANTHROPIC_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 
 type ClaudeTokenSource = 'keychain' | 'file' | 'override'
 
@@ -19,6 +21,13 @@ export interface ClaudeUsageFetchContext {
   caller: 'usage:fetch' | 'usage:fetchForAccount' | 'refreshAllForProvider'
   accountId?: string
   batchId?: string
+}
+
+export interface ClaudeUsageOverride {
+  accessToken: string
+  refreshToken?: string
+  expiresAt?: number
+  accountId?: string
 }
 
 interface AccessTokenWithSource {
@@ -38,13 +47,53 @@ const RATE_LIMIT_HEADER_NAMES = [
 ] as const
 
 let inFlight = 0
+const inMemoryRefreshPromises = new Map<string, Promise<ClaudeRefreshResult>>()
+
+function normalizeExpiresAt(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value)
+    if (Number.isFinite(numeric)) return numeric
+
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+
+  return undefined
+}
+
+function parseClaudeCredentials(raw: string): ClaudeUsageOverride | null {
+  try {
+    const creds = JSON.parse(raw) as {
+      claudeAiOauth?: {
+        accessToken?: unknown
+        refreshToken?: unknown
+        expiresAt?: unknown
+      }
+    }
+    const oauth = creds?.claudeAiOauth
+    if (typeof oauth?.accessToken !== 'string' || oauth.accessToken.length === 0) return null
+
+    return {
+      accessToken: oauth.accessToken,
+      refreshToken:
+        typeof oauth.refreshToken === 'string' && oauth.refreshToken.length > 0
+          ? oauth.refreshToken
+          : undefined,
+      expiresAt: normalizeExpiresAt(oauth.expiresAt)
+    }
+  } catch {
+    return null
+  }
+}
 
 /**
  * Read the OAuth access token from macOS Keychain.
  * Claude Code v2.x stores credentials in the keychain under
  * service "Claude Code-credentials".
  */
-async function readFromKeychain(): Promise<string | null> {
+async function readFromKeychain(): Promise<ClaudeUsageOverride | null> {
   if (platform() !== 'darwin') return null
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
@@ -59,8 +108,7 @@ async function readFromKeychain(): Promise<string | null> {
       )
     })
     if (!stdout) return null
-    const creds = JSON.parse(stdout)
-    return creds?.claudeAiOauth?.accessToken || null
+    return parseClaudeCredentials(stdout)
   } catch {
     return null
   }
@@ -70,13 +118,12 @@ async function readFromKeychain(): Promise<string | null> {
  * Read the OAuth access token from the legacy credentials file.
  * Older Claude Code versions stored credentials at ~/.claude/.credentials.json.
  */
-async function readFromFile(): Promise<string | null> {
+async function readFromFile(): Promise<ClaudeUsageOverride | null> {
   const credsPath = join(homedir(), '.claude', '.credentials.json')
   if (!existsSync(credsPath)) return null
   try {
     const raw = await readFile(credsPath, 'utf-8')
-    const creds = JSON.parse(raw)
-    return creds?.claudeAiOauth?.accessToken || null
+    return parseClaudeCredentials(raw)
   } catch {
     return null
   }
@@ -87,15 +134,27 @@ async function readFromFile(): Promise<string | null> {
  * Tries macOS Keychain first (v2.x), then falls back to credentials file.
  */
 export async function readAccessToken(): Promise<string | null> {
-  return (await readAccessTokenWithSource())?.token ?? null
+  return (await readClaudeCredentialsBlob())?.accessToken ?? null
+}
+
+export async function readClaudeCredentialsBlob(): Promise<ClaudeUsageOverride | null> {
+  const keychainCredentials = await readFromKeychain()
+  if (keychainCredentials?.accessToken) return keychainCredentials
+
+  const fileCredentials = await readFromFile()
+  if (fileCredentials?.accessToken) return fileCredentials
+
+  return null
 }
 
 export async function readAccessTokenWithSource(): Promise<AccessTokenWithSource | null> {
-  const keychainToken = await readFromKeychain()
-  if (keychainToken) return { token: keychainToken, source: 'keychain' }
+  const keychainCredentials = await readFromKeychain()
+  if (keychainCredentials?.accessToken) {
+    return { token: keychainCredentials.accessToken, source: 'keychain' }
+  }
 
-  const fileToken = await readFromFile()
-  if (fileToken) return { token: fileToken, source: 'file' }
+  const fileCredentials = await readFromFile()
+  if (fileCredentials?.accessToken) return { token: fileCredentials.accessToken, source: 'file' }
 
   return null
 }
@@ -133,40 +192,117 @@ async function readCappedBody(response: Response): Promise<string> {
   }
 }
 
-export async function fetchClaudeUsage(
-  overrideToken?: string,
-  ctx?: ClaudeUsageFetchContext
-): Promise<UsageResult> {
-  const tokenWithSource =
-    overrideToken !== undefined
-      ? { token: overrideToken, source: 'override' as const }
-      : await readAccessTokenWithSource()
-  const token = tokenWithSource?.token
-  if (!token) {
-    log.warn('No Claude OAuth access token found (checked keychain and credentials file)', {
-      ...ctx
-    })
-    return { success: false, error: 'No access token found' }
-  }
-
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  let countedInFlight = false
+async function requestTokenRefresh(refreshToken: string): Promise<ClaudeRefreshResult> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
 
   try {
-    const controller = new AbortController()
-    timeout = setTimeout(() => controller.abort(), 10_000)
+    const response = await fetch(ANTHROPIC_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: ANTHROPIC_CLIENT_ID
+      }),
+      signal: controller.signal
+    })
 
-    inFlight += 1
-    countedInFlight = true
+    clearTimeout(timeout)
+
+    if (!response.ok) {
+      const body = await readCappedBody(response)
+      throw new Error(`Token refresh failed (${response.status}): ${body}`)
+    }
+
+    const data = (await response.json()) as {
+      access_token?: unknown
+      refresh_token?: unknown
+      expires_in?: unknown
+    }
+    if (
+      typeof data.access_token !== 'string' ||
+      data.access_token.length === 0 ||
+      typeof data.refresh_token !== 'string' ||
+      data.refresh_token.length === 0 ||
+      typeof data.expires_in !== 'number' ||
+      !Number.isFinite(data.expires_in)
+    ) {
+      throw new Error('Token refresh failed: invalid token response')
+    }
+
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt: Date.now() + data.expires_in * 1000
+    }
+  } catch (error) {
+    clearTimeout(timeout)
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Token refresh failed: request timed out')
+    }
+    throw error
+  }
+}
+
+export async function refreshClaudeAccessToken(
+  refreshToken: string | undefined,
+  key: string
+): Promise<ClaudeRefreshResult> {
+  if (!refreshToken) {
+    throw new Error('No refresh token available')
+  }
+
+  const existing = inMemoryRefreshPromises.get(key)
+  if (existing) return existing
+
+  const promise = (async () => {
+    log.info('Claude token refresh start', {
+      accountId: key,
+      tokenSuffix: tokenSuffix(refreshToken)
+    })
+
+    try {
+      const result = await requestTokenRefresh(refreshToken)
+      log.info('Claude token refresh success', {
+        accountId: key,
+        newTokenSuffix: tokenSuffix(result.accessToken)
+      })
+      return result
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log.warn('Claude token refresh failed', { accountId: key, error: message })
+      if (message.includes('Token refresh failed') || message.includes('No refresh token available')) {
+        throw error
+      }
+      throw new Error(`Token refresh failed: ${message}`)
+    }
+  })().finally(() => {
+    inMemoryRefreshPromises.delete(key)
+  })
+
+  inMemoryRefreshPromises.set(key, promise)
+  return promise
+}
+
+async function fetchClaudeUsageResponse(
+  token: string,
+  tokenSource: ClaudeTokenSource,
+  ctx: ClaudeUsageFetchContext | undefined
+): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+
+  try {
     log.info('Fetching Claude usage', {
       ...ctx,
-      tokenSource: tokenWithSource.source,
+      tokenSource,
       tokenSuffix: tokenSuffix(token),
       tokenLength: token.length,
       inFlight
     })
 
-    const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
+    return await fetch('https://api.anthropic.com/api/oauth/usage', {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -178,8 +314,65 @@ export async function fetchClaudeUsage(
       },
       signal: controller.signal
     })
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Usage API request timed out')
+    }
+    throw error
+  } finally {
     clearTimeout(timeout)
-    timeout = undefined
+  }
+}
+
+function claudeRefreshKey(override: ClaudeUsageOverride): string {
+  if (override.accountId) return override.accountId
+  if (override.refreshToken) return `refresh:${tokenSuffix(override.refreshToken)}`
+  return `access:${tokenSuffix(override.accessToken)}`
+}
+
+export async function fetchClaudeUsage(
+  override?: ClaudeUsageOverride,
+  ctx?: ClaudeUsageFetchContext
+): Promise<UsageResult> {
+  const tokenWithSource =
+    override !== undefined
+      ? { token: override.accessToken, source: 'override' as const }
+      : await readAccessTokenWithSource()
+  if (!tokenWithSource?.token) {
+    log.warn('No Claude OAuth access token found (checked keychain and credentials file)', {
+      ...ctx
+    })
+    return { success: false, error: 'No access token found' }
+  }
+  let token = tokenWithSource.token
+  const tokenSource = tokenWithSource.source
+
+  let countedInFlight = false
+  let rotated: ClaudeRefreshResult | undefined
+  let currentRefreshToken = override?.refreshToken
+
+  try {
+    inFlight += 1
+    countedInFlight = true
+
+    if (
+      override?.expiresAt !== undefined &&
+      Date.now() + 60_000 >= override.expiresAt &&
+      currentRefreshToken
+    ) {
+      rotated = await refreshClaudeAccessToken(currentRefreshToken, claudeRefreshKey(override))
+      token = rotated.accessToken
+      currentRefreshToken = rotated.refreshToken
+    }
+
+    let response = await fetchClaudeUsageResponse(token, tokenSource, ctx)
+
+    if (response.status === 401 && override && currentRefreshToken) {
+      rotated = await refreshClaudeAccessToken(currentRefreshToken, claudeRefreshKey(override))
+      token = rotated.accessToken
+      currentRefreshToken = rotated.refreshToken
+      response = await fetchClaudeUsageResponse(token, tokenSource, ctx)
+    }
 
     const retryAfter = parseRetryAfter(response.headers.get('retry-after'))
     const responseLogData: Record<string, unknown> = {
@@ -211,13 +404,12 @@ export async function fetchClaudeUsage(
       data.extra_usage.monthly_limit = (data.extra_usage.monthly_limit ?? 0) / 100
     }
 
-    return { success: true, data }
+    return { success: true, data, ...(rotated ? { rotated } : {}) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.warn('Failed to fetch Claude usage', { ...ctx, error: message, inFlight })
     return { success: false, error: message }
   } finally {
-    if (timeout) clearTimeout(timeout)
     if (countedInFlight) {
       inFlight = Math.max(0, inFlight - 1)
     }

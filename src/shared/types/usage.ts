@@ -14,6 +14,13 @@ export interface UsageResult {
   data?: UsageData
   error?: string
   retryAfter?: number
+  rotated?: ClaudeRefreshResult
+}
+
+export interface ClaudeRefreshResult {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number
 }
 
 export type AnthropicRateLimitType = 'five_hour' | 'seven_day'

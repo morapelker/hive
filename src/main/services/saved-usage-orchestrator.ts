@@ -7,7 +7,12 @@ import {
   readCodexCredentials,
   type OpenAIUsageOverride
 } from './openai-usage-service'
-import { fetchClaudeUsage, readAccessToken, type ClaudeUsageFetchContext } from './usage-service'
+import {
+  fetchClaudeUsage,
+  readClaudeCredentialsBlob,
+  type ClaudeUsageFetchContext,
+  type ClaudeUsageOverride
+} from './usage-service'
 import type {
   FetchForAccountResult,
   OpenAIUsageData,
@@ -20,7 +25,7 @@ import type { SavedUsageAccount, SavedUsageProvider, SavedUsageStatus } from '..
 
 const log = createLogger({ component: 'SavedUsageOrchestrator' })
 
-interface ClaudeSavedCredentials {
+interface ClaudeSavedCredentials extends ClaudeUsageOverride {
   accessToken: string
   email: string
 }
@@ -72,13 +77,21 @@ export async function captureLiveAccountFromFetch(
   const db = getDatabase()
 
   if (provider === 'anthropic') {
-    const [accessToken, email] = await Promise.all([readAccessToken(), getClaudeAccountEmail()])
-    if (!accessToken || !email) {
+    const [credentialsBlob, email] = await Promise.all([
+      readClaudeCredentialsBlob(),
+      getClaudeAccountEmail()
+    ])
+    if (!credentialsBlob?.accessToken || !email) {
       log.warn('Skipping Claude saved usage capture because token or email is unavailable')
       return
     }
 
-    const credentials: ClaudeSavedCredentials = { accessToken, email }
+    const credentials: ClaudeSavedCredentials = {
+      accessToken: credentialsBlob.accessToken,
+      refreshToken: credentialsBlob.refreshToken,
+      expiresAt: credentialsBlob.expiresAt,
+      email
+    }
     db.upsertSavedUsageAccount({
       provider,
       email,
@@ -128,6 +141,14 @@ function isOpenAIStaleError(message: string): boolean {
   )
 }
 
+function isClaudeStaleError(message: string): boolean {
+  return (
+    /\b401\b/.test(message) ||
+    message.includes('Token refresh failed') ||
+    message.includes('No refresh token available')
+  )
+}
+
 function accountError(
   accountId: string,
   message: string,
@@ -147,7 +168,15 @@ function accountError(
 function parseClaudeCredentials(row: SavedUsageAccount): ClaudeSavedCredentials | null {
   const parsed = safeParseJson(row.credentials_json) as Partial<ClaudeSavedCredentials>
   if (typeof parsed.accessToken !== 'string' || parsed.accessToken.length === 0) return null
-  return { accessToken: parsed.accessToken, email: row.email }
+  return {
+    accessToken: parsed.accessToken,
+    refreshToken:
+      typeof parsed.refreshToken === 'string' && parsed.refreshToken.length > 0
+        ? parsed.refreshToken
+        : undefined,
+    expiresAt: typeof parsed.expiresAt === 'number' ? parsed.expiresAt : undefined,
+    email: row.email
+  }
 }
 
 function parseOpenAICredentials(row: SavedUsageAccount): OpenAISavedCredentials | null {
@@ -191,20 +220,38 @@ export async function fetchForSavedAccount(
       if (!credentials)
         return accountError(accountId, 'Invalid Claude credentials', 'error', row.last_usage_json)
 
-      const result = await fetchClaudeUsage(credentials.accessToken, {
-        caller: options.caller ?? 'usage:fetchForAccount',
-        accountId,
-        batchId: options.batchId
-      })
+      const result = await fetchClaudeUsage(
+        {
+          accessToken: credentials.accessToken,
+          refreshToken: credentials.refreshToken,
+          expiresAt: credentials.expiresAt,
+          accountId
+        },
+        {
+          caller: options.caller ?? 'usage:fetchForAccount',
+          accountId,
+          batchId: options.batchId
+        }
+      )
       if (!result.success || !result.data) {
         const message = result.error ?? 'Claude usage fetch failed'
-        const status: SavedUsageStatus = isAuthStatusError(message) ? 'stale' : 'error'
+        const status: SavedUsageStatus = isClaudeStaleError(message) ? 'stale' : 'error'
         db.updateSavedUsageAccountUsage(accountId, {
           last_usage_json: row.last_usage_json,
           status,
           last_error: message
         })
         return { success: false, error: message, status, retryAfter: result.retryAfter }
+      }
+
+      if (result.rotated) {
+        const rotatedCredentials: ClaudeSavedCredentials = {
+          ...credentials,
+          accessToken: result.rotated.accessToken,
+          refreshToken: result.rotated.refreshToken,
+          expiresAt: result.rotated.expiresAt
+        }
+        db.updateSavedUsageAccountCredentials(accountId, JSON.stringify(rotatedCredentials))
       }
 
       db.updateSavedUsageAccountUsage(accountId, {

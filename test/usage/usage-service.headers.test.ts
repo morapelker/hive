@@ -25,7 +25,7 @@ describe('fetchClaudeUsage Claude client identification', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await fetchClaudeUsage('oauth-token', { caller: 'usage:fetch' })
+    await fetchClaudeUsage({ accessToken: 'oauth-token' }, { caller: 'usage:fetch' })
 
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.anthropic.com/api/oauth/usage',

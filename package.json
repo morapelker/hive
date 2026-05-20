@@ -51,6 +51,7 @@
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "probe:codex-app-server": "pnpm exec tsc -p tsconfig.scripts.json --outDir dist/scripts-probe && node dist/scripts-probe/scripts/codex-app-server-probe.js",
+    "probe:claude-token-refresh": "node scripts/check-claude-token-refresh.mjs",
     "codex:generate-schemas": "rm -rf src/shared/codex-schemas && codex app-server generate-ts --out src/shared/codex-schemas",
     "test": "vitest run",
     "test:watch": "vitest",
