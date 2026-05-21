@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { fireEvent, render, screen } from '../utils/render'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -81,6 +82,8 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     mark: null,
     total_tokens: 0,
     pending_launch_config: null,
+    goal_mode: false,
+    goal_success_criteria: null,
     ...overrides
   }
 }
@@ -218,6 +221,20 @@ describe('pinned board ticket navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
 
+    if (!globalThis.ResizeObserver) {
+      class MockResizeObserver {
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+
+      Object.defineProperty(globalThis, 'ResizeObserver', {
+        writable: true,
+        configurable: true,
+        value: MockResizeObserver
+      })
+    }
+
     Object.defineProperty(window, 'db', {
       writable: true,
       configurable: true,
@@ -258,5 +275,38 @@ describe('pinned board ticket navigation', () => {
     expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-1')
     expect(useProjectStore.getState().selectedProjectId).toBe('proj-1')
     expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeNull()
+  })
+
+  test('renders a goal mode badge and tooltip when the ticket is configured for goal mode', async () => {
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard
+          ticket={makeTicket({
+            worktree_id: null,
+            goal_mode: true,
+            goal_success_criteria: 'Acceptance criteria are met'
+          })}
+        />
+      </TooltipProvider>
+    )
+
+    const badge = screen.getByTestId('kanban-ticket-goal')
+    const icon = badge.querySelector('svg')
+
+    expect(badge).toBeInTheDocument()
+    expect(badge).toHaveClass('ml-auto')
+    expect(icon).toBeInTheDocument()
+    expect(icon?.querySelector('[fill="black"]')).toBeInTheDocument()
+    expect(icon?.querySelector('[fill="white"]')).toBeInTheDocument()
+
+    fireEvent.pointerMove(badge)
+
+    expect(await screen.findAllByText('Goal mode')).not.toHaveLength(0)
+  })
+
+  test('does not render a goal mode badge for non-goal tickets', () => {
+    render(<KanbanTicketCard ticket={makeTicket({ worktree_id: null })} />)
+
+    expect(screen.queryByTestId('kanban-ticket-goal')).not.toBeInTheDocument()
   })
 })

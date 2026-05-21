@@ -1,6 +1,7 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus, StickyNote, Send } from 'lucide-react'
+import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus, StickyNote, Send, Check, Pause } from 'lucide-react'
+import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { NoteEditorModal } from './NoteEditorModal'
@@ -254,6 +255,16 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  const goalStatus = useSessionStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id) return null
+        return state.codexGoalsBySession.get(ticket.current_session_id)?.status ?? null
+      },
+      [ticket.current_session_id]
+    )
+  )
+
   // ── Real-time "agent is busy" from worktree status store ────────
   const isBusy = useWorktreeStatusStore(
     useCallback(
@@ -297,6 +308,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       },
       [ticket.current_session_id]
     )
+  )
+  const hasRightAlignedStatus = Boolean(
+    ((isBusy || isAsking) && ticket.mode && !isBlocked) ||
+    (isBeingReviewed && !(isBusy || isAsking)) ||
+    (!isBeingReviewed && !(isBusy || isAsking) && completedReviewSessionId)
   )
 
   const timerText = useSessionTimer(
@@ -670,7 +686,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || completedReviewSessionId || isArchived || isBlocked || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram) && (
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || completedReviewSessionId || isArchived || isBlocked || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -824,6 +840,42 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     Go to review
                   </button>
                 )}
+
+                {/* Goal mode badge */}
+                {ticket.goal_mode && (() => {
+                  const isComplete = goalStatus === 'complete'
+                  const isPaused = goalStatus === 'paused' || goalStatus === 'budgetLimited'
+                  const tooltipText = isComplete ? 'Goal complete' : isPaused ? 'Goal paused' : 'Goal mode'
+
+                  return (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          data-testid="kanban-ticket-goal"
+                          className={cn(
+                            'inline-flex items-center rounded-full border border-black/20 bg-white px-1.5 py-0.5 text-black shadow-sm cursor-help',
+                            !hasRightAlignedStatus && 'ml-auto'
+                          )}
+                        >
+                          <span className="relative inline-flex h-3 w-3 items-center justify-center">
+                            <CheckeredFlagIcon className="h-3 w-3" />
+                            {isComplete && (
+                              <span className="absolute -right-1 -top-1 inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-emerald-500 text-white ring-1 ring-white">
+                                <Check className="h-2 w-2 stroke-[3]" />
+                              </span>
+                            )}
+                            {isPaused && (
+                              <span className="absolute -right-1 -top-1 inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-amber-500 text-white ring-1 ring-white">
+                                <Pause className="h-1.5 w-1.5 fill-current stroke-[3]" />
+                              </span>
+                            )}
+                          </span>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{tooltipText}</TooltipContent>
+                    </Tooltip>
+                  )
+                })()}
               </div>
             )}
               </div>
