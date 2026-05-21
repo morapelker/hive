@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { fireEvent, render, screen } from '../utils/render'
+import userEvent from '@testing-library/user-event'
+import { fireEvent, render, screen, waitFor } from '../utils/render'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -56,6 +57,10 @@ const mockDb = {
   worktree: {
     touch: vi.fn().mockResolvedValue(undefined)
   }
+}
+
+const mockOpencodeOps = {
+  command: vi.fn().mockResolvedValue({ success: true, value: { success: true } })
 }
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
@@ -241,6 +246,12 @@ describe('pinned board ticket navigation', () => {
       value: mockDb
     })
 
+    Object.defineProperty(window, 'opencodeOps', {
+      writable: true,
+      configurable: true,
+      value: mockOpencodeOps
+    })
+
     seedStores()
   })
 
@@ -302,6 +313,57 @@ describe('pinned board ticket navigation', () => {
     fireEvent.pointerMove(badge)
 
     expect(await screen.findAllByText('Goal mode')).not.toHaveLength(0)
+  })
+
+  test('resumes a paused goal from the goal badge context menu', async () => {
+    const user = userEvent.setup()
+    useSessionStore.setState({
+      codexGoalsBySession: new Map([
+        [
+          'session-1',
+          {
+            threadId: 'thread-1',
+            objective: 'Ship auth',
+            status: 'paused',
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: 0,
+            updatedAt: 0
+          }
+        ]
+      ])
+    })
+
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard
+          ticket={makeTicket({
+            current_session_id: 'session-1',
+            goal_mode: true,
+            goal_success_criteria: 'Acceptance criteria are met'
+          })}
+        />
+      </TooltipProvider>
+    )
+
+    fireEvent.contextMenu(screen.getByTestId('kanban-ticket-goal'))
+
+    const resumeItem = await screen.findByTestId('ctx-resume-goal')
+    expect(resumeItem).toHaveTextContent('Resume goal')
+    expect(screen.queryByTestId('ctx-edit-context')).not.toBeInTheDocument()
+
+    await user.click(resumeItem)
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.command).toHaveBeenCalledWith(
+        '/tmp/proj-1/feature-auth',
+        'session-1',
+        'goal',
+        'resume'
+      )
+    })
+    expect(useKanbanStore.getState().selectedTicketId).toBeNull()
   })
 
   test('does not render a goal mode badge for non-goal tickets', () => {
