@@ -193,7 +193,9 @@ function seedStores(): void {
       }
     },
     reviewSessionByWorktree: {},
-    completedReviewSessionByWorktree: {}
+    completedReviewSessionByWorktree: {},
+    mergeConflictSessionByWorktree: {},
+    mergeConflictFlowByWorktree: {}
   })
 
   useConnectionStore.setState({

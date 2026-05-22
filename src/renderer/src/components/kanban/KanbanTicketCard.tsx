@@ -1,9 +1,10 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Paperclip, AlertCircle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus, StickyNote, Send, Check, Pause, Play } from 'lucide-react'
+import { Paperclip, AlertCircle, AlertTriangle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus, StickyNote, Send, Check, Pause, Play, ChevronDown, Hammer, Map as MapIcon } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
 import { NoteEditorModal } from './NoteEditorModal'
 import { cn } from '@/lib/utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -21,6 +22,12 @@ import {
   ContextMenuRadioGroup,
   ContextMenuRadioItem
 } from '@/components/ui/context-menu'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem
+} from '@/components/ui/dropdown-menu'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -52,6 +59,7 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useTelegramStore } from '@/stores/useTelegramStore'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
+import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { formatTokenCount } from '@/lib/format-utils'
 import type { KanbanTicket, TicketMark } from '../../../../main/db/types'
 
@@ -171,6 +179,50 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       [ticket.worktree_id]
     )
   )
+
+  const conflictTargetWorktreeId = useWorktreeStatusStore(
+    useCallback(
+      (state) =>
+        ticket.worktree_id
+          ? (state.mergeConflictWorktreeByTicket[ticket.id] ?? ticket.worktree_id)
+          : null,
+      [ticket.id, ticket.worktree_id]
+    )
+  )
+
+  const worktreePath = useWorktreeStore(
+    useCallback(
+      (state) => {
+        if (!conflictTargetWorktreeId) return null
+        for (const worktrees of state.worktreesByProject.values()) {
+          const found = worktrees.find((w) => w.id === conflictTargetWorktreeId)
+          if (found) return found.path
+        }
+        return null
+      },
+      [conflictTargetWorktreeId]
+    )
+  )
+
+  const hasConflicts = useGitStore(
+    useCallback(
+      (state) => (worktreePath ? (state.conflictsByWorktree[worktreePath] ?? false) : false),
+      [worktreePath]
+    )
+  )
+
+  const conflictFlow = useWorktreeStatusStore(
+    useCallback(
+      (state) =>
+        conflictTargetWorktreeId
+          ? state.mergeConflictFlowByWorktree[conflictTargetWorktreeId]
+          : undefined,
+      [conflictTargetWorktreeId]
+    )
+  )
+
+  const mergeConflictMode = useSettingsStore((s) => s.mergeConflictMode)
+  const { startFixFlow, openAttachedSession } = useConflictFixFlow(conflictTargetWorktreeId)
 
   // ── Lookup project name + color for connection board ─────────────
   // Selector returns a primitive (string | null) to avoid Zustand infinite
@@ -310,11 +362,25 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       [ticket.current_session_id]
     )
   )
-  const hasRightAlignedStatus = Boolean(
-    ((isBusy || isAsking) && ticket.mode && !isBlocked) ||
-    (isBeingReviewed && !(isBusy || isAsking)) ||
-    (!isBeingReviewed && !(isBusy || isAsking) && completedReviewSessionId)
-  )
+  const rightAlignedSlot: 'conflicts' | 'busy' | 'reviewing' | 'completed-review' | null =
+    useMemo(() => {
+      if (!isArchived && hasConflicts && ticket.worktree_id) return 'conflicts'
+      if ((isBusy || isAsking) && ticket.mode && !isBlocked) return 'busy'
+      if (isBeingReviewed) return 'reviewing'
+      if (completedReviewSessionId) return 'completed-review'
+      return null
+    }, [
+      completedReviewSessionId,
+      hasConflicts,
+      isArchived,
+      isAsking,
+      isBeingReviewed,
+      isBlocked,
+      isBusy,
+      ticket.mode,
+      ticket.worktree_id
+    ])
+  const hasRightAlignedStatus = rightAlignedSlot !== null
 
   const timerText = useSessionTimer(
     ticket.current_session_id,
@@ -719,7 +785,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || isBusy || isAsking || isBeingReviewed || completedReviewSessionId || isArchived || isBlocked || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode) && (
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -833,46 +899,132 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </span>
                 )}
 
-                {(isBusy || isAsking) && ticket.mode && !isBlocked && (
-                  <span data-testid="kanban-ticket-progress" className="ml-auto flex items-center gap-1.5">
-                    {timerText && (
-                      <span className={cn(
-                        'text-[11px] tabular-nums font-semibold',
-                        isAsking
-                          ? 'text-amber-500'
-                          : ticket.mode === 'build'
-                            ? 'text-blue-500'
-                            : 'text-violet-500'
-                      )}>
-                        {timerText}
-                      </span>
-                    )}
-                    <IndeterminateProgressBar mode={ticket.mode} isAsking={isAsking} className="w-20" />
-                    {isAsking && (
-                      <span className="text-[11px] font-semibold text-amber-500">
-                        Question
-                      </span>
-                    )}
-                  </span>
-                )}
+                {(() => {
+                  switch (rightAlignedSlot) {
+                    case 'conflicts': {
+                      const isConflictFlowActive =
+                        conflictFlow?.phase === 'starting' ||
+                        conflictFlow?.phase === 'running' ||
+                        conflictFlow?.phase === 'refreshing'
+                      if (isConflictFlowActive) {
+                        return (
+                          <span
+                            data-testid="kanban-ticket-conflict-progress"
+                            className="ml-auto flex items-center gap-1.5"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (conflictFlow?.phase !== 'starting') openAttachedSession()
+                            }}
+                          >
+                            <IndeterminateProgressBar
+                              mode={ticket.mode || 'build'}
+                              isFixingConflicts
+                              className="w-20"
+                            />
+                          </span>
+                        )
+                      }
 
-                {/* Review active but ticket's own session is NOT busy — show green bar */}
-                {isBeingReviewed && !(isBusy || isAsking) && (
-                  <span data-testid="kanban-ticket-reviewing" className="ml-auto flex items-center gap-1.5">
-                    <IndeterminateProgressBar mode={ticket.mode || 'build'} isReviewing className="w-20" />
-                  </span>
-                )}
+                      if (mergeConflictMode === 'always-ask') {
+                        return (
+                          <span className="ml-auto" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="h-6 px-2 text-xs font-semibold"
+                                  data-testid="kanban-ticket-fix-conflicts"
+                                >
+                                  <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+                                  Fix conflicts
+                                  <ChevronDown className="h-3 w-3 ml-1" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void startFixFlow('build')
+                                  }}
+                                >
+                                  <Hammer className="h-4 w-4 mr-2" />
+                                  Fix in Build mode
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void startFixFlow('plan')
+                                  }}
+                                >
+                                  <MapIcon className="h-4 w-4 mr-2" />
+                                  Fix in Plan mode
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </span>
+                        )
+                      }
 
-                {/* Completed review — show "Go to review" link */}
-                {!isBeingReviewed && !(isBusy || isAsking) && completedReviewSessionId && (
-                  <button
-                    data-testid="kanban-ticket-go-to-review"
-                    onClick={(e) => { e.stopPropagation(); handleGoToReview() }}
-                    className="ml-auto text-green-500 hover:text-green-400 text-xs cursor-pointer"
-                  >
-                    Go to review
-                  </button>
-                )}
+                      return (
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="ml-auto h-6 px-2 text-xs font-semibold"
+                          data-testid="kanban-ticket-fix-conflicts"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void startFixFlow()
+                          }}
+                        >
+                          <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+                          Fix conflicts
+                        </Button>
+                      )
+                    }
+                    case 'busy':
+                      return (
+                        <span data-testid="kanban-ticket-progress" className="ml-auto flex items-center gap-1.5">
+                          {timerText && (
+                            <span className={cn(
+                              'text-[11px] tabular-nums font-semibold',
+                              isAsking
+                                ? 'text-amber-500'
+                                : ticket.mode === 'build'
+                                  ? 'text-blue-500'
+                                  : 'text-violet-500'
+                            )}>
+                              {timerText}
+                            </span>
+                          )}
+                          <IndeterminateProgressBar mode={ticket.mode!} isAsking={isAsking} className="w-20" />
+                          {isAsking && (
+                            <span className="text-[11px] font-semibold text-amber-500">
+                              Question
+                            </span>
+                          )}
+                        </span>
+                      )
+                    case 'reviewing':
+                      return (
+                        <span data-testid="kanban-ticket-reviewing" className="ml-auto flex items-center gap-1.5">
+                          <IndeterminateProgressBar mode={ticket.mode || 'build'} isReviewing className="w-20" />
+                        </span>
+                      )
+                    case 'completed-review':
+                      return (
+                        <button
+                          data-testid="kanban-ticket-go-to-review"
+                          onClick={(e) => { e.stopPropagation(); handleGoToReview() }}
+                          className="ml-auto text-green-500 hover:text-green-400 text-xs cursor-pointer"
+                        >
+                          Go to review
+                        </button>
+                      )
+                    default:
+                      return null
+                  }
+                })()}
 
                 {/* Goal mode badge */}
                 {ticket.goal_mode && (() => {
