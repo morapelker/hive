@@ -5019,6 +5019,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       useSessionStore.getState().clearPendingPlan(sessionId)
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       lastSendMode.delete(sessionId)
+      const handoffGoalMode = override?.goalMode === true && override?.agentSdk === 'codex'
 
       // Abort the original backend session so it stops spinning
       if (worktreePath && opencodeSessionId) {
@@ -5041,7 +5042,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         }
         const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-        await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+        await useKanbanStore
+          .getState()
+          .relinkTicketsForHandoff(sessionId, result.session.id, handoffGoalMode)
         sessionStore.setActiveConnectionSession(result.session.id)
         await setModePromise
         return
@@ -5071,7 +5074,9 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
 
       const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-      await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+      await useKanbanStore
+        .getState()
+        .relinkTicketsForHandoff(sessionId, result.session.id, handoffGoalMode)
       sessionStore.setActiveSession(result.session.id)
       await setModePromise
     },
@@ -5725,12 +5730,7 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
     return () => {
       window.removeEventListener('hive:refresh-codex-from-file', onRefreshFromFile)
     }
-  }, [
-    sessionId,
-    worktreePath,
-    opencodeSessionId,
-    refreshCodexMessagesFromDurableState
-  ])
+  }, [sessionId, worktreePath, opencodeSessionId, refreshCodexMessagesFromDurableState])
 
   // Determine if there's streaming content to show
   const visibleMessages = useMemo(() => {

@@ -1744,6 +1744,7 @@ function PlanReviewModeContent({
 
       try {
         const sessionId = ticket.current_session_id
+        const handoffGoalMode = override?.goalMode === true && override?.agentSdk === 'codex'
         useSessionStore.getState().clearPendingPlan(sessionId)
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
         lastSendMode.delete(sessionId)
@@ -1777,7 +1778,7 @@ function PlanReviewModeContent({
           const newSessionId = result.session.id
           const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-          prepareTicketBuildSession(newSessionId)
+          prepareTicketBuildSession(newSessionId, handoffGoalMode)
 
           // In sticky-tab mode, stay on the board; otherwise navigate to the new session.
           // setActiveConnectionSession requires activeConnectionId to be set — which
@@ -1837,7 +1838,7 @@ function PlanReviewModeContent({
           return
         }
 
-        prepareTicketBuildSession(newSessionId)
+        prepareTicketBuildSession(newSessionId, handoffGoalMode)
 
         // In sticky-tab mode, stay on the board; otherwise navigate to the new session
         const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
@@ -1879,13 +1880,15 @@ function PlanReviewModeContent({
   // Synchronously re-link the ticket to a new build session and (if needed) move it to
   // in_progress so the kanban board reflects the new work before the modal closes.
   const prepareTicketBuildSession = useCallback(
-    (newSessionId: string): void => {
+    (newSessionId: string, goalMode: boolean): void => {
       useKanbanStore
         .getState()
         .updateTicket(ticket.id, ticket.project_id, {
           current_session_id: newSessionId,
           plan_ready: false,
-          mode: 'build'
+          mode: 'build',
+          goal_mode: goalMode,
+          goal_success_criteria: goalMode ? (ticket.goal_success_criteria ?? null) : null
         })
         .catch((err) => {
           console.error('[KanbanTicketModal] failed to relink supercharge session:', err)
@@ -1905,7 +1908,7 @@ function PlanReviewModeContent({
           })
       }
     },
-    [ticket.id, ticket.project_id, ticket.column, ticket.sort_order]
+    [ticket.id, ticket.project_id, ticket.column, ticket.sort_order, ticket.goal_success_criteria]
   )
 
   // ── Shared: eagerly connect, send /using-superpowers, queue follow-up for global listener ──
@@ -2039,7 +2042,7 @@ function PlanReviewModeContent({
         const newSessionId = sessionResult.session.id
         const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-        prepareTicketBuildSession(newSessionId)
+        prepareTicketBuildSession(newSessionId, ticket.goal_mode === true)
         onClose()
 
         // NOTE: On IIFE failure, the ticket is left re-linked to the new session (via
@@ -2122,7 +2125,7 @@ function PlanReviewModeContent({
       const newWorktreeId = dupResult.worktree.id
       const newWorktreePath = dupResult.worktree.path
 
-      prepareTicketBuildSession(newSessionId)
+      prepareTicketBuildSession(newSessionId, ticket.goal_mode === true)
       onClose()
 
       // Finish session configuration and startup in the background so the modal can close
@@ -2193,7 +2196,7 @@ function PlanReviewModeContent({
       const newSessionId = sessionResult.session.id
       const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-      prepareTicketBuildSession(newSessionId)
+      prepareTicketBuildSession(newSessionId, ticket.goal_mode === true)
       onClose()
 
       // Finish session configuration and startup in the background so the modal can close
