@@ -7,6 +7,7 @@ interface IndeterminateProgressBarProps {
   isAsking?: boolean
   isCompacting?: boolean
   isReviewing?: boolean
+  isFixingConflicts?: boolean
   className?: string
 }
 
@@ -35,6 +36,7 @@ export function IndeterminateProgressBar({
   isAsking,
   isCompacting,
   isReviewing,
+  isFixingConflicts,
   className
 }: IndeterminateProgressBarProps) {
   const barRef = useRef<HTMLDivElement>(null)
@@ -55,9 +57,12 @@ export function IndeterminateProgressBar({
     } catch {
       // Animation failed — bar stays visible at CSS default position
     }
+    return undefined
   }, [])
 
-  const bgTrack = isCompacting
+  const bgTrack = isFixingConflicts
+    ? 'bg-fuchsia-500/15'
+    : isCompacting
     ? 'bg-red-500/15'
     : isAsking
       ? 'bg-amber-500/15'
@@ -68,7 +73,9 @@ export function IndeterminateProgressBar({
           : mode === 'super-plan'
             ? 'bg-orange-500/15'
             : 'bg-violet-500/15'
-  const bgBar = isCompacting
+  const bgBar = isFixingConflicts
+    ? 'bg-fuchsia-500'
+    : isCompacting
     ? 'bg-red-500'
     : isAsking
       ? 'bg-amber-500'
@@ -89,7 +96,15 @@ export function IndeterminateProgressBar({
       )}
       <div
         role="progressbar"
-        aria-label={isCompacting ? 'Compacting conversation' : isAsking ? 'Waiting for answer' : 'Agent is working'}
+        aria-label={
+          isFixingConflicts
+            ? 'Fixing merge conflicts'
+            : isCompacting
+              ? 'Compacting conversation'
+              : isAsking
+                ? 'Waiting for answer'
+                : 'Agent is working'
+        }
         className={cn('relative w-full h-4 rounded-full overflow-hidden', bgTrack)}
       >
         <div

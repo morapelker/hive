@@ -217,7 +217,9 @@ function seedStores(ticket = makeTicket()): void {
   useWorktreeStatusStore.setState({
     sessionStatuses: {},
     reviewSessionByWorktree: {},
-    completedReviewSessionByWorktree: {}
+    completedReviewSessionByWorktree: {},
+    mergeConflictSessionByWorktree: {},
+    mergeConflictFlowByWorktree: {}
   })
 }
 

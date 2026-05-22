@@ -7,6 +7,8 @@ import {
   Trash2,
   ExternalLink,
   Hammer,
+  AlertTriangle,
+  ChevronDown,
   Send,
   Zap,
   AlertCircle,
@@ -19,7 +21,8 @@ import {
   Github,
   Upload,
   Lock,
-  Plus
+  Plus,
+  Map as MapIcon
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -32,10 +35,17 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
 import { HandoffSplitButton } from '../sessions/HandoffSplitButton'
+import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -71,6 +81,7 @@ import { ReviewTicketDiffSummary, type ReviewTicketDiffFile } from './ReviewTick
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
+import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
@@ -409,6 +420,131 @@ export function KanbanTicketModal() {
   return <KanbanTicketModalContent ticket={ticket} onForceClose={() => setSelectedTicketId(null)} />
 }
 
+function MergeConflictBanner({ ticket }: { ticket: KanbanTicket }) {
+  const conflictTargetWorktreeId = useWorktreeStatusStore(
+    useCallback(
+      (state) =>
+        ticket.worktree_id
+          ? (state.mergeConflictWorktreeByTicket[ticket.id] ?? ticket.worktree_id)
+          : null,
+      [ticket.id, ticket.worktree_id]
+    )
+  )
+  const worktreePath = useWorktreeStore(
+    useCallback(
+      (state) => {
+        if (!conflictTargetWorktreeId) return null
+        for (const worktrees of state.worktreesByProject.values()) {
+          const found = worktrees.find((w) => w.id === conflictTargetWorktreeId)
+          if (found) return found.path
+        }
+        return null
+      },
+      [conflictTargetWorktreeId]
+    )
+  )
+  const hasConflicts = useGitStore(
+    useCallback(
+      (state) => (worktreePath ? (state.conflictsByWorktree[worktreePath] ?? false) : false),
+      [worktreePath]
+    )
+  )
+  const conflictFlow = useWorktreeStatusStore(
+    useCallback(
+      (state) =>
+        conflictTargetWorktreeId
+          ? state.mergeConflictFlowByWorktree[conflictTargetWorktreeId]
+          : undefined,
+      [conflictTargetWorktreeId]
+    )
+  )
+  const mergeConflictMode = useSettingsStore((s) => s.mergeConflictMode)
+  const { startFixFlow, openAttachedSession } = useConflictFixFlow(conflictTargetWorktreeId)
+
+  if (!ticket.worktree_id || ticket.archived_at || !hasConflicts) return null
+
+  const isConflictFlowActive =
+    conflictFlow?.phase === 'starting' ||
+    conflictFlow?.phase === 'running' ||
+    conflictFlow?.phase === 'refreshing'
+
+  return (
+    <div
+      data-testid="ticket-modal-fix-conflicts-banner"
+      className="flex items-center justify-between gap-3 border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center gap-2 font-medium text-destructive">
+        <AlertTriangle className="h-4 w-4" />
+        Merge conflicts detected
+      </div>
+      {isConflictFlowActive ? (
+        <button
+          type="button"
+          className="flex items-center"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (conflictFlow?.phase !== 'starting') openAttachedSession()
+          }}
+        >
+          <IndeterminateProgressBar
+            mode={ticket.mode || 'build'}
+            isFixingConflicts
+            className="w-24"
+          />
+        </button>
+      ) : mergeConflictMode === 'always-ask' ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 text-xs font-semibold"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+              Fix conflicts
+              <ChevronDown className="h-3 w-3 ml-1" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                void startFixFlow('build')
+              }}
+            >
+              <Hammer className="h-4 w-4 mr-2" />
+              Fix in Build mode
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                void startFixFlow('plan')
+              }}
+            >
+              <MapIcon className="h-4 w-4 mr-2" />
+              Fix in Plan mode
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <Button
+          size="sm"
+          variant="destructive"
+          className="h-7 text-xs font-semibold"
+          onClick={(e) => {
+            e.stopPropagation()
+            void startFixFlow()
+          }}
+        >
+          <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+          Fix conflicts
+        </Button>
+      )}
+    </div>
+  )
+}
+
 // ── Inner content (only rendered when ticket is non-null) ───────────
 function KanbanTicketModalContent({
   ticket,
@@ -698,6 +834,7 @@ function KanbanTicketModalContent({
     opcSessionId &&
     !opcSessionId.startsWith('pending::')
   )
+  const conflictBanner = <MergeConflictBanner ticket={ticket} />
 
   // Commit to dual-pane layout as soon as we know the ticket has a session,
   // even before the async DB lookups resolve.  This prevents the user from
@@ -853,12 +990,13 @@ function KanbanTicketModalContent({
     dialogBody = (
       <DialogContent
         data-testid="kanban-ticket-modal"
-        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden"
+        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{ticket.title}</DialogTitle>
         </DialogHeader>
-        <div className="flex h-full overflow-hidden">
+        {conflictBanner}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           {hasSession && sessionReady ? (
             <SessionStreamPanel
               sessionId={ticket.current_session_id!}
@@ -895,9 +1033,10 @@ function KanbanTicketModalContent({
     dialogBody = (
       <DialogContent
         data-testid="kanban-ticket-modal"
-        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden"
+        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
       >
-        <div className="flex h-full overflow-hidden">
+        {conflictBanner}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* Left: ticket content */}
           <div className="w-[480px] shrink-0 h-full flex flex-col overflow-y-auto p-6 gap-4">
             {/* Shared ticket context header for non-edit modes */}
@@ -935,6 +1074,7 @@ function KanbanTicketModalContent({
     // ── Standard layout (no session) ────────────────────────────────
     dialogBody = (
       <DialogContent data-testid="kanban-ticket-modal" className={MODE_DIALOG_CLASS[modalMode]}>
+        {conflictBanner}
         {modeContent}
       </DialogContent>
     )
