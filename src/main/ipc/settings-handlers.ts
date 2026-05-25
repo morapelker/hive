@@ -294,7 +294,15 @@ export function registerSettingsHandlers(): void {
 
   // Get custom commands file path
   ipcMain.handle('get-custom-commands-file-path', async (): Promise<string> => {
-    return getCustomCommandsFilePath()
+    try {
+      return getCustomCommandsFilePath()
+    } catch (error) {
+      log.error(
+        'Failed to get custom commands file path',
+        error instanceof Error ? error : new Error(String(error))
+      )
+      throw error
+    }
   })
 
   // Load custom commands from file
@@ -327,7 +335,7 @@ export function registerSettingsHandlers(): void {
         const db = getDatabase()
         const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
         const settings = existingSettings
-          ? JSON.parse(existingSettings.value)
+          ? JSON.parse(existingSettings)
           : {}
 
         settings.customProjectCommands = fileResult.commands
