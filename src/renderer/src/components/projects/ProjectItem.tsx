@@ -290,7 +290,7 @@ export function ProjectItem({
   useEffect(() => {
     const handleFileChange = async (): Promise<void> => {
       // Reload settings which will trigger re-render
-      await useSettingsStore.getState().loadSettings()
+      await useSettingsStore.getState().loadFromDatabase()
     }
 
     const cleanup = window.settingsOps.onCustomCommandsFileChanged(handleFileChange)
