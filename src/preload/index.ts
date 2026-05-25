@@ -1773,6 +1773,14 @@ const settingsOps = {
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:openWithTerminal', worktreePath, terminalId, customCommand),
 
+  // Load custom commands from file
+  loadCustomCommandsFile: (): Promise<{ success: boolean; commands?: unknown[]; mtime?: number; error?: string }> =>
+    ipcRenderer.invoke('load-custom-commands-file'),
+
+  // Reload custom commands from file
+  reloadCustomCommands: (): Promise<{ success: boolean; count?: number; mtime?: number; error?: string }> =>
+    ipcRenderer.invoke('reload-custom-commands'),
+
   // Listen for settings updates from main process
   onSettingsUpdated: (callback: (data: unknown) => void): (() => void) => {
     const handler = (_event: unknown, data: unknown): void => callback(data)

@@ -7,6 +7,7 @@ import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 import { validateCustomCommand } from '@/lib/custom-commands'
+import { toast } from '@/lib/toast'
 
 // ==========================================
 // Types
@@ -237,6 +238,7 @@ interface SettingsState extends AppSettings {
   isOpen: boolean
   activeSection: string
   isLoading: boolean
+  customCommandsFileMtime: number | null
 
   // Cached SDK availability (non-persisted, re-detected each launch)
   availableAgentSdks: { opencode: boolean; claude: boolean; codex: boolean } | null
@@ -270,6 +272,7 @@ interface SettingsState extends AppSettings {
   resetToDefaults: () => void
   loadFromDatabase: () => Promise<void>
   detectAvailableAgentSdks: () => Promise<void>
+  reloadCustomCommands: () => Promise<void>
 }
 
 async function saveToDatabase(settings: AppSettings): Promise<void> {
@@ -284,7 +287,20 @@ async function saveToDatabase(settings: AppSettings): Promise<void> {
 
 async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
   try {
-    if (typeof window !== 'undefined' && window.db?.setting) {
+    if (typeof window !== 'undefined' && window.db?.setting && window.settingsOps) {
+      // Step 1: Load from file if it exists
+      const fileResult = await window.settingsOps.loadCustomCommandsFile()
+
+      if (fileResult.success && fileResult.commands && fileResult.commands.length > 0) {
+        // Sync file commands to database (file is source of truth)
+        const dbValue = await window.db.setting.get(APP_SETTINGS_DB_KEY)
+        const settings = dbValue ? JSON.parse(dbValue) : {}
+        settings.customProjectCommands = fileResult.commands
+
+        await window.db.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+      }
+
+      // Step 2: Load all settings from database (now has latest file data)
       const value = await window.db.setting.get(APP_SETTINGS_DB_KEY)
       if (value) {
         const parsed = JSON.parse(value)
@@ -432,6 +448,7 @@ export const useSettingsStore = create<SettingsState>()(
       activeSection: 'appearance',
       isLoading: true,
       availableAgentSdks: null,
+      customCommandsFileMtime: null,
 
       openSettings: (section?: string) => {
         set({ isOpen: true, activeSection: section || get().activeSection })
@@ -643,6 +660,27 @@ export const useSettingsStore = create<SettingsState>()(
         } catch {
           // Fail gracefully — context menu just won't show
           set({ availableAgentSdks: null })
+        }
+      },
+
+      reloadCustomCommands: async () => {
+        try {
+          const result = await window.settingsOps.reloadCustomCommands()
+
+          if (result.success) {
+            // Reload all settings from database
+            await get().loadFromDatabase()
+
+            // Update mtime
+            set({ customCommandsFileMtime: result.mtime ?? null })
+
+            toast.success(`Loaded ${result.count ?? 0} custom commands`)
+          } else {
+            toast.error(`Failed to reload: ${result.error || 'Unknown error'}`)
+          }
+        } catch (error) {
+          console.error('Failed to reload custom commands:', error)
+          toast.error('Failed to reload custom commands')
         }
       }
     }),

@@ -981,6 +981,18 @@ declare global {
         success: boolean
         error?: string
       }>
+      loadCustomCommandsFile: () => Promise<{
+        success: boolean
+        commands?: unknown[]
+        mtime?: number
+        error?: string
+      }>
+      reloadCustomCommands: () => Promise<{
+        success: boolean
+        count?: number
+        mtime?: number
+        error?: string
+      }>
       onSettingsUpdated: (callback: (data: unknown) => void) => () => void
     }
     scriptOps: {
