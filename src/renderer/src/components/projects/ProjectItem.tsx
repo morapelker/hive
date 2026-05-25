@@ -11,7 +11,8 @@ import {
   RefreshCw,
   Settings,
   GitBranch,
-  FolderHeart
+  FolderHeart,
+  Zap
 } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -52,6 +53,7 @@ import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
 import { gitToast } from '@/lib/toast'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 interface Project {
   id: string
@@ -127,6 +129,7 @@ export function ProjectItem({
   const vimMode = useVimModeStore((s) => s.mode)
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const autoPullBeforeWorktree = useSettingsStore((s) => s.autoPullBeforeWorktree)
+  const customProjectCommands = useSettingsStore((s) => s.customProjectCommands)
   const projectHint = useHintStore((s) => s.hintMap.get('project:' + project.id))
 
   const [editName, setEditName] = useState(project.name)
@@ -337,6 +340,14 @@ export function ProjectItem({
     [project, autoPullBeforeWorktree]
   )
 
+  const handleCustomCommand = useCallback(
+    async (command: CustomProjectCommand): Promise<void> => {
+      console.log('Custom command clicked:', command.name)
+      // TODO: Implement prompt execution
+    },
+    []
+  )
+
   return (
     <div>
       <ContextMenu>
@@ -516,6 +527,21 @@ export function ProjectItem({
                     })}
                   </ContextMenuSubContent>
                 </ContextMenuSub>
+              </>
+            )}
+            {/* Custom Commands */}
+            {customProjectCommands && customProjectCommands.length > 0 && (
+              <>
+                <ContextMenuSeparator />
+                {customProjectCommands.map((cmd) => (
+                  <ContextMenuItem
+                    key={cmd.id}
+                    onClick={() => handleCustomCommand(cmd)}
+                  >
+                    <Zap className="h-4 w-4 mr-2" />
+                    {cmd.name}
+                  </ContextMenuItem>
+                ))}
               </>
             )}
             <ContextMenuSeparator />
