@@ -7,6 +7,10 @@ import { telemetryService } from '../services/telemetry-service'
 import { getDatabase } from '../db'
 import { detectEditors, detectTerminals, type DetectedApp } from '../services/settings-detection'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import {
+  getCustomCommandsFilePath,
+  loadCustomCommandsFromFile
+} from '../services/custom-commands-file-service'
 
 const log = createLogger({ component: 'SettingsHandlers' })
 
@@ -285,6 +289,67 @@ export function registerSettingsHandlers(): void {
         error instanceof Error ? error : new Error(String(error))
       )
       return {}
+    }
+  })
+
+  // Get custom commands file path
+  ipcMain.handle('get-custom-commands-file-path', async (): Promise<string> => {
+    return getCustomCommandsFilePath()
+  })
+
+  // Load custom commands from file
+  ipcMain.handle('load-custom-commands-file', async () => {
+    try {
+      return loadCustomCommandsFromFile()
+    } catch (error) {
+      log.error(
+        'Failed to load custom commands from file',
+        error instanceof Error ? error : new Error(String(error))
+      )
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
+  // Reload custom commands (manual trigger)
+  ipcMain.handle('reload-custom-commands', async () => {
+    try {
+      const fileResult = loadCustomCommandsFromFile()
+
+      if (!fileResult.success) {
+        return fileResult
+      }
+
+      if (fileResult.commands && fileResult.commands.length > 0) {
+        // Save to database
+        const db = getDatabase()
+        const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+        const settings = existingSettings
+          ? JSON.parse(existingSettings.value)
+          : {}
+
+        settings.customProjectCommands = fileResult.commands
+        db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+
+        return {
+          success: true,
+          count: fileResult.commands.length,
+          mtime: fileResult.mtime
+        }
+      }
+
+      return { success: true, count: 0, mtime: fileResult.mtime }
+    } catch (error) {
+      log.error(
+        'Failed to reload custom commands',
+        error instanceof Error ? error : new Error(String(error))
+      )
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
     }
   })
 }
