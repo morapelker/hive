@@ -994,6 +994,7 @@ declare global {
         error?: string
       }>
       onSettingsUpdated: (callback: (data: unknown) => void) => () => void
+      onCustomCommandsFileChanged: (callback: () => void) => () => void
     }
     scriptOps: {
       runSetup: (

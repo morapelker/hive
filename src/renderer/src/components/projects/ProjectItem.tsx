@@ -286,6 +286,18 @@ export function ProjectItem({
     return () => window.removeEventListener('hive:hint-plus', handler)
   }, [project.id, doCreateWorktree])
 
+  // Listen for custom commands file changes
+  useEffect(() => {
+    const handleFileChange = async (): Promise<void> => {
+      // Reload settings which will trigger re-render
+      await useSettingsStore.getState().loadSettings()
+    }
+
+    const cleanup = window.settingsOps.onCustomCommandsFileChanged(handleFileChange)
+
+    return cleanup
+  }, [])
+
   const handleBranchSelect = useCallback(
     async (branchName: string, prNumber?: number): Promise<void> => {
       setBranchPickerOpen(false)

@@ -1788,6 +1788,15 @@ const settingsOps = {
     return () => {
       ipcRenderer.removeListener('settings:updated', handler)
     }
+  },
+
+  // Listen for custom commands file changes
+  onCustomCommandsFileChanged: (callback: () => void): (() => void) => {
+    const handler = (): void => callback()
+    ipcRenderer.on('custom-commands-file-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('custom-commands-file-changed', handler)
+    }
   }
 }
 
