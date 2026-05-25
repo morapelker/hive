@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { replaceTemplateVariables } from '@/lib/custom-commands'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -342,10 +343,29 @@ export function ProjectItem({
 
   const handleCustomCommand = useCallback(
     async (command: CustomProjectCommand): Promise<void> => {
-      console.log('Custom command clicked:', command.name)
-      // TODO: Implement prompt execution
+      try {
+        // Replace template variables using the utility function
+        const renderedPrompt = replaceTemplateVariables(command.prompt, project)
+
+        // Dispatch custom event with command execution details
+        const event = new CustomEvent('hive:execute-custom-command', {
+          detail: {
+            projectId: project.id,
+            commandId: command.id,
+            commandName: command.name,
+            renderedPrompt
+          }
+        })
+        window.dispatchEvent(event)
+
+        // Show info toast
+        toast.info(`Executing: ${command.name}`)
+      } catch (error) {
+        // Show error toast if anything goes wrong
+        toast.error('Failed to execute command')
+      }
     },
-    []
+    [project]
   )
 
   return (

@@ -1,8 +1,8 @@
-// test/custom-commands/menu-integration.test.tsx
+// test/custom-commands/command-execution.test.tsx
 
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi, beforeEach } from 'vitest'
 import { ProjectItem } from '../../src/renderer/src/components/projects/ProjectItem'
 import { useProjectStore } from '../../src/renderer/src/stores/useProjectStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
@@ -36,25 +36,25 @@ if (!window.worktreeOps) {
   })
 }
 
-const mockProject = {
-  id: 'test-project-id',
-  name: 'Test Project',
-  path: '/path/to/project',
-  description: 'Test description',
-  tags: 'test,tags',
-  language: 'typescript',
-  custom_icon: null,
-  detected_icon: null,
-  setup_script: null,
-  run_script: null,
-  archive_script: null,
-  auto_assign_port: false,
-  sort_order: 0,
-  created_at: '2026-01-01T00:00:00Z',
-  last_accessed_at: '2026-01-01T00:00:00Z'
-}
+describe('Custom Command Execution', () => {
+  const mockProject = {
+    id: 'proj-1',
+    name: 'Test Project',
+    path: '/path/to/project',
+    description: 'Test description',
+    tags: 'test,tags',
+    language: 'typescript',
+    custom_icon: null,
+    detected_icon: null,
+    setup_script: null,
+    run_script: null,
+    archive_script: null,
+    auto_assign_port: false,
+    sort_order: 0,
+    created_at: '2024-01-01T00:00:00Z',
+    last_accessed_at: '2024-01-01T00:00:00Z'
+  }
 
-describe('ProjectItem - Custom Commands Menu Integration', () => {
   beforeEach(() => {
     // Reset all stores
     useProjectStore.setState({
@@ -103,71 +103,67 @@ describe('ProjectItem - Custom Commands Menu Integration', () => {
     useSettingsStore.setState({
       vimModeEnabled: false,
       autoPullBeforeWorktree: false,
-      customProjectCommands: []
-    } as any)
-  })
-
-  test('should not render custom commands section when no commands are configured', async () => {
-    const user = userEvent.setup()
-
-    render(<ProjectItem project={mockProject} />)
-
-    const projectItem = screen.getByTestId('project-item-test-project-id')
-    await user.pointer({ keys: '[MouseRight]', target: projectItem })
-
-    // Context menu should open
-    const menu = await screen.findByRole('menu')
-    expect(menu).toBeInTheDocument()
-
-    // Custom commands should not be present
-    const menuItems = screen.queryAllByRole('menuitem')
-    const customCommandItem = menuItems.find((item) => item.textContent?.includes('Test Command'))
-    expect(customCommandItem).toBeUndefined()
-  })
-
-  test('should render custom commands in context menu when configured', async () => {
-    const user = userEvent.setup()
-
-    // Create event spy to verify command execution
-    const eventSpy = vi.fn()
-    window.addEventListener('hive:execute-custom-command', eventSpy)
-
-    // Configure custom commands
-    useSettingsStore.setState({
       customProjectCommands: [
         {
           id: 'cmd-1',
-          name: 'Run Tests',
-          prompt: 'Run tests for {{project.name}}'
-        },
-        {
-          id: 'cmd-2',
-          name: 'Generate Docs',
-          prompt: 'Generate documentation for {{project.path}}'
+          name: 'Test Command',
+          prompt: 'Test {{project.name}} in {{project.path}}'
         }
       ]
     } as any)
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('should dispatch hive:execute-custom-command event when custom command is clicked', async () => {
+    const user = userEvent.setup()
+
+    // Create event spy
+    const eventSpy = vi.fn()
+    window.addEventListener('hive:execute-custom-command', eventSpy)
 
     render(<ProjectItem project={mockProject} />)
 
-    const projectItem = screen.getByTestId('project-item-test-project-id')
+    // Find and right-click the project item
+    const projectItem = screen.getByTestId('project-item-proj-1')
     await user.pointer({ keys: '[MouseRight]', target: projectItem })
 
-    // Context menu should open
-    const menu = await screen.findByRole('menu')
-    expect(menu).toBeInTheDocument()
+    // Find and click the custom command in context menu
+    const customCommand = await screen.findByText('Test Command')
+    await user.click(customCommand)
 
-    // Custom commands should be present
-    expect(screen.getByText('Run Tests')).toBeInTheDocument()
-    expect(screen.getByText('Generate Docs')).toBeInTheDocument()
-
-    // Click the custom command
-    await user.click(screen.getByText('Run Tests'))
-
-    // Verify event was dispatched
+    // Verify event was dispatched with correct detail
     expect(eventSpy).toHaveBeenCalledTimes(1)
     const event = eventSpy.mock.calls[0][0] as CustomEvent
-    expect(event.detail.commandName).toBe('Run Tests')
+    expect(event.type).toBe('hive:execute-custom-command')
+    expect(event.detail).toEqual({
+      projectId: 'proj-1',
+      commandId: 'cmd-1',
+      commandName: 'Test Command',
+      renderedPrompt: 'Test Test Project in /path/to/project'
+    })
+
+    window.removeEventListener('hive:execute-custom-command', eventSpy)
+  })
+
+  it('should replace template variables in prompt before dispatching', async () => {
+    const user = userEvent.setup()
+    const eventSpy = vi.fn()
+    window.addEventListener('hive:execute-custom-command', eventSpy)
+
+    render(<ProjectItem project={mockProject} />)
+
+    const projectItem = screen.getByTestId('project-item-proj-1')
+    await user.pointer({ keys: '[MouseRight]', target: projectItem })
+
+    const customCommand = await screen.findByText('Test Command')
+    await user.click(customCommand)
+
+    const event = eventSpy.mock.calls[0][0] as CustomEvent
+    expect(event.detail.renderedPrompt).toBe('Test Test Project in /path/to/project')
+    expect(event.detail.renderedPrompt).not.toContain('{{')
 
     window.removeEventListener('hive:execute-custom-command', eventSpy)
   })
