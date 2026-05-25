@@ -68,6 +68,11 @@ import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
 import { initTicketProviderManager, GitHubProvider, JiraProvider } from './services/ticket-providers'
 import { APP_SETTINGS_DB_KEY } from '../shared/types/settings'
 import { openCodeService } from './services/opencode-service'
+import {
+  createTemplateFile,
+  getFileModTime,
+  loadCustomCommandsFromFile
+} from './services/custom-commands-file-service'
 import { agentEventBus } from './services/agent-event-bus'
 import { telegramForwardingService } from './services/telegram-forwarding-service'
 import { setKeepAwake, cleanupPowerSaveBlocker } from './services/power-save-blocker'
@@ -79,6 +84,9 @@ import {
 } from './services/pet-window'
 
 const log = createLogger({ component: 'Main' })
+
+// Track custom commands file mtime for change detection
+let lastKnownMtime: number | null = null
 
 // Global error handlers — prevent uncaught errors from crashing the Electron process
 process.on('uncaughtException', (error) => {
@@ -707,6 +715,17 @@ app.whenReady().then(async () => {
     })
   }
 
+  // Create custom commands template file if first launch
+  const templateResult = createTemplateFile()
+  if (templateResult.created) {
+    log.info('Created custom commands template file')
+  } else if (!templateResult.success && templateResult.error) {
+    log.error('Failed to create custom commands template:', templateResult.error)
+  }
+
+  // Store initial file mtime for change detection
+  lastKnownMtime = getFileModTime()
+
   app.on('activate', function () {
     ensureDockVisible('activate')
 
@@ -732,6 +751,35 @@ app.whenReady().then(async () => {
       }
       mainWindow.show()
       mainWindow.focus()
+    }
+
+    // Check if custom commands file changed
+    const currentMtime = getFileModTime()
+    if (currentMtime !== null && currentMtime !== lastKnownMtime) {
+      lastKnownMtime = currentMtime
+      log.info('Custom commands file changed, reloading')
+
+      // Load file and sync to database
+      const fileResult = loadCustomCommandsFromFile()
+      if (fileResult.success && fileResult.commands) {
+        try {
+          const db = getDatabase()
+          const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+          const settings = existingSettings ? JSON.parse(existingSettings) : {}
+
+          settings.customProjectCommands = fileResult.commands
+          db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+
+          // Notify all windows to reload
+          BrowserWindow.getAllWindows().forEach(win => {
+            win.webContents.send('custom-commands-file-changed')
+          })
+        } catch (error) {
+          log.error('Failed to sync custom commands to database:', error)
+        }
+      } else if (!fileResult.success) {
+        log.error('Failed to load custom commands:', fileResult.error)
+      }
     }
   })
 }).catch((error) => {
