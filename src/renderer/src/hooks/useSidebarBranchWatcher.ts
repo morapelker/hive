@@ -47,10 +47,15 @@ export function useSidebarBranchWatcher(worktreePaths: string[]): void {
       }
     }
 
-    // Load initial branch info for all current paths
-    const { loadBranchInfo } = useGitStore.getState()
+    // Load initial branch info only for paths we don't already have. On remount
+    // (e.g. clearing the sidebar filter) the git store still holds prior results,
+    // so this avoids re-issuing a flood of `git status` calls that jam the main
+    // thread. Live updates still arrive via the onBranchChanged subscription below.
+    const { loadBranchInfo, branchInfoByWorktree } = useGitStore.getState()
     for (const path of worktreePaths) {
-      loadBranchInfo(path)
+      if (!branchInfoByWorktree.has(path)) {
+        loadBranchInfo(path)
+      }
     }
 
     previousPathsRef.current = worktreePaths

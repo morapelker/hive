@@ -13,16 +13,20 @@ interface IndeterminateProgressBarProps {
 
 const ANIMATION_DURATION_MS = 3000
 
-// Web Animations API keyframes — mirrors the CSS @keyframes progress-bounce
-// 6-phase bouncing worm: grow → slide → shrink → grow → slide back → shrink
+// Web Animations API keyframes — mirrors the CSS @keyframes progress-bounce.
+// 6-phase bouncing worm: grow → slide → shrink → grow → slide back → shrink.
+// Animates ONLY `transform` (translateX + scaleX) so the animation is GPU-composited
+// and keeps running smoothly even when the main thread is congested. The bar is 25%
+// of the track wide; translateX is in multiples of its own width (400% == full track),
+// scaleX grows/shrinks it from its left edge (transform-origin: left).
 const BOUNCE_KEYFRAMES: Keyframe[] = [
-  { left: '0%', right: '100%', offset: 0 },
-  { left: '0%', right: '75%', offset: 0.12 },
-  { left: '75%', right: '0%', offset: 0.38 },
-  { left: '100%', right: '0%', offset: 0.5 },
-  { left: '75%', right: '0%', offset: 0.62 },
-  { left: '0%', right: '75%', offset: 0.88 },
-  { left: '0%', right: '100%', offset: 1 }
+  { transform: 'translateX(0) scaleX(0)', offset: 0 },
+  { transform: 'translateX(0) scaleX(1)', offset: 0.12 },
+  { transform: 'translateX(300%) scaleX(1)', offset: 0.38 },
+  { transform: 'translateX(400%) scaleX(0)', offset: 0.5 },
+  { transform: 'translateX(300%) scaleX(1)', offset: 0.62 },
+  { transform: 'translateX(0) scaleX(1)', offset: 0.88 },
+  { transform: 'translateX(0) scaleX(0)', offset: 1 }
 ]
 
 const BOUNCE_TIMING: KeyframeAnimationOptions = {

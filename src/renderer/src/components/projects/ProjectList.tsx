@@ -290,12 +290,13 @@ export function ProjectList({
                 ? item.pathMatch.indices
                 : undefined
             }
+            isDraggable={isDraggable}
             isDragging={isDraggable && draggedProjectId === item.project.id}
             isDragOver={isDraggable && dragOverProjectId === item.project.id}
-            onDragStart={isDraggable ? (e) => handleDragStart(e, item.project.id) : undefined}
-            onDragOver={isDraggable ? (e) => handleDragOver(e, item.project.id) : undefined}
-            onDrop={isDraggable ? (e) => handleDrop(e, item.project.id) : undefined}
-            onDragEnd={isDraggable ? handleDragEnd : undefined}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
           />
         ))}
       </div>

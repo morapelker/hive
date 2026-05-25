@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef, useEffect } from 'react'
+import { memo, useCallback, useState, useRef, useEffect } from 'react'
 import { revealLabel } from '@/lib/platform'
 import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import {
@@ -93,13 +93,13 @@ interface WorktreeItemProps {
   isFirstItem?: boolean
   isDragging?: boolean
   isDragOver?: boolean
-  onDragStart?: (e: React.DragEvent) => void
-  onDragOver?: (e: React.DragEvent) => void
-  onDrop?: (e: React.DragEvent) => void
+  onDragStart?: (e: React.DragEvent, worktreeId: string) => void
+  onDragOver?: (e: React.DragEvent, worktreeId: string) => void
+  onDrop?: (e: React.DragEvent, worktreeId: string) => void
   onDragEnd?: () => void
 }
 
-export function WorktreeItem({
+export const WorktreeItem = memo(function WorktreeItem({
   worktree,
   projectPath,
   isFirstItem,
@@ -110,12 +110,13 @@ export function WorktreeItem({
   onDrop,
   onDragEnd
 }: WorktreeItemProps): React.JSX.Element {
-  const { selectedWorktreeId, selectWorktree, archiveWorktree, unbranchWorktree } =
-    useWorktreeStore()
+  const selectWorktree = useWorktreeStore((s) => s.selectWorktree)
+  const archiveWorktree = useWorktreeStore((s) => s.archiveWorktree)
+  const unbranchWorktree = useWorktreeStore((s) => s.unbranchWorktree)
+  const isSelected = useWorktreeStore((s) => s.selectedWorktreeId === worktree.id)
   const selectProject = useProjectStore((s) => s.selectProject)
 
-  const archivingWorktreeIds = useWorktreeStore((s) => s.archivingWorktreeIds)
-  const isArchiving = archivingWorktreeIds.has(worktree.id)
+  const isArchiving = useWorktreeStore((s) => s.archivingWorktreeIds.has(worktree.id))
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
   const lastMessageTime = useWorktreeStatusStore(
     (state) => state.lastMessageTimeByWorktree[worktree.id] ?? null
@@ -123,7 +124,6 @@ export function WorktreeItem({
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktree.id]?.runRunning ?? false)
   const liveBranch = useGitStore((s) => s.branchInfoByWorktree.get(worktree.path))
   const displayName = liveBranch?.name ?? worktree.name
-  const isSelected = selectedWorktreeId === worktree.id
 
   // Connection mode state
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
@@ -524,9 +524,9 @@ export function WorktreeItem({
             isDragOver && 'border-t-2 border-primary'
           )}
           draggable={!worktree.is_default && !isRenamingBranch}
-          onDragStart={onDragStart}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
+          onDragStart={onDragStart ? (e) => onDragStart(e, worktree.id) : undefined}
+          onDragOver={onDragOver ? (e) => onDragOver(e, worktree.id) : undefined}
+          onDrop={onDrop ? (e) => onDrop(e, worktree.id) : undefined}
           onDragEnd={onDragEnd}
           onClick={handleClick}
           data-testid={`worktree-item-${worktree.id}`}
@@ -918,4 +918,4 @@ export function WorktreeItem({
   }
 
   return tree
-}
+})
