@@ -256,7 +256,7 @@ export function WorktreePickerModal({
       setBranchPopoverOpen(false)
       // Refresh worktree list from git so the picker shows current state
       if (project?.path) {
-        syncWorktrees(projectId, project.path)
+        syncWorktrees(projectId, project.path, { force: true })
       }
     }
   }, [open, ticket, projectId, project?.path, syncWorktrees])

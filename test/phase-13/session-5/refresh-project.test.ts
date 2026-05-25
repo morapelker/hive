@@ -95,13 +95,13 @@ describe('Session 5: Refresh Project', () => {
       const project = { id: 'proj-1', path: '/path/to/project' }
 
       const handleRefreshProject = async () => {
-        await syncWorktrees(project.id, project.path)
+        await syncWorktrees(project.id, project.path, { force: true })
         toast.success('Project refreshed')
       }
 
       await handleRefreshProject()
 
-      expect(syncWorktrees).toHaveBeenCalledWith('proj-1', '/path/to/project')
+      expect(syncWorktrees).toHaveBeenCalledWith('proj-1', '/path/to/project', { force: true })
       expect(toast.success).toHaveBeenCalledWith('Project refreshed')
     })
 
@@ -110,13 +110,15 @@ describe('Session 5: Refresh Project', () => {
       const project = { id: 'proj-abc', path: '/Users/dev/my-cool-project' }
 
       const handleRefreshProject = async () => {
-        await syncWorktrees(project.id, project.path)
+        await syncWorktrees(project.id, project.path, { force: true })
         toast.success('Project refreshed')
       }
 
       await handleRefreshProject()
 
-      expect(syncWorktrees).toHaveBeenCalledWith('proj-abc', '/Users/dev/my-cool-project')
+      expect(syncWorktrees).toHaveBeenCalledWith('proj-abc', '/Users/dev/my-cool-project', {
+        force: true
+      })
     })
   })
 

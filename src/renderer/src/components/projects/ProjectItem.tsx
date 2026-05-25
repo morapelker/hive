@@ -212,7 +212,7 @@ export function ProjectItem({
   }
 
   const handleRefreshProject = async (): Promise<void> => {
-    await syncWorktrees(project.id, project.path)
+    await syncWorktrees(project.id, project.path, { force: true })
     toast.success('Project refreshed')
   }
 
@@ -308,7 +308,7 @@ export function ProjectItem({
         toast.dismiss(loadingToastId)
 
         if (result.success && result.worktree) {
-          useWorktreeStore.getState().loadWorktrees(project.id)
+          useWorktreeStore.getState().loadWorktrees(project.id, { force: true })
           useWorktreeStore.getState().selectWorktree(result.worktree.id)
 
           // Show warning if auto-pull was enabled but pull failed (not for PRs)
