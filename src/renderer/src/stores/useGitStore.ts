@@ -11,6 +11,11 @@ const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 // Pending promise resolvers — accumulated so ALL callers resolve when debounced work completes
 const pendingResolvers = new Map<string, Array<() => void>>()
 const REFRESH_DEBOUNCE_MS = 150
+const inflightFileStatuses = new Map<string, Promise<void>>()
+const inflightBranchInfo = new Map<string, Promise<void>>()
+const lastFileStatusLoad = new Map<string, number>()
+const lastBranchInfoLoad = new Map<string, number>()
+const LOAD_TTL_MS = 2500
 
 // Git status types matching main process
 type GitStatusCode = 'M' | 'A' | 'D' | '?' | 'C' | ''
@@ -79,8 +84,8 @@ interface GitStoreState {
   createPRWorktreePath: string | null
 
   // Actions
-  loadFileStatuses: (worktreePath: string) => Promise<void>
-  loadBranchInfo: (worktreePath: string) => Promise<void>
+  loadFileStatuses: (worktreePath: string, opts?: { force?: boolean }) => Promise<void>
+  loadBranchInfo: (worktreePath: string, opts?: { force?: boolean }) => Promise<void>
   getFileStatuses: (worktreePath: string) => GitFileStatus[]
   getBranchInfo: (worktreePath: string) => GitBranchInfo | undefined
   getFileStatus: (worktreePath: string, relativePath: string) => GitFileStatus | undefined
@@ -178,57 +183,87 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   createPRWorktreePath: null,
 
   // Load file statuses for a worktree
-  loadFileStatuses: async (worktreePath: string) => {
-    set({ isLoading: true, error: null })
-    try {
-      const result = unwrapEnvelope(await window.gitOps.getFileStatuses(worktreePath))
-      if (!result.success || !result.files) {
+  loadFileStatuses: async (worktreePath: string, opts?: { force?: boolean }) => {
+    const inflight = inflightFileStatuses.get(worktreePath)
+    if (inflight) return inflight
+
+    const lastLoad = lastFileStatusLoad.get(worktreePath)
+    if (!opts?.force && lastLoad !== undefined && Date.now() - lastLoad < LOAD_TTL_MS) {
+      return
+    }
+
+    const promise = (async () => {
+      set({ isLoading: true, error: null })
+      try {
+        const result = unwrapEnvelope(await window.gitOps.getFileStatuses(worktreePath))
+        if (!result.success || !result.files) {
+          set({
+            error: result.error || 'Failed to load file statuses',
+            isLoading: false
+          })
+          return
+        }
+
+        const files = result.files!
+        const hasConflicts = files.some((f) => f.status === 'C')
+
+        set((state) => {
+          const newMap = new Map(state.fileStatusesByWorktree)
+          newMap.set(worktreePath, files)
+          return {
+            fileStatusesByWorktree: newMap,
+            isLoading: false,
+            conflictsByWorktree: {
+              ...state.conflictsByWorktree,
+              [worktreePath]: hasConflicts
+            }
+          }
+        })
+        lastFileStatusLoad.set(worktreePath, Date.now())
+      } catch (error) {
         set({
-          error: result.error || 'Failed to load file statuses',
+          error: error instanceof Error ? error.message : 'Failed to load file statuses',
           isLoading: false
         })
-        return
+      } finally {
+        inflightFileStatuses.delete(worktreePath)
       }
-
-      const files = result.files!
-      const hasConflicts = files.some((f) => f.status === 'C')
-
-      set((state) => {
-        const newMap = new Map(state.fileStatusesByWorktree)
-        newMap.set(worktreePath, files)
-        return {
-          fileStatusesByWorktree: newMap,
-          isLoading: false,
-          conflictsByWorktree: {
-            ...state.conflictsByWorktree,
-            [worktreePath]: hasConflicts
-          }
-        }
-      })
-    } catch (error) {
-      set({
-        error: error instanceof Error ? error.message : 'Failed to load file statuses',
-        isLoading: false
-      })
-    }
+    })()
+    inflightFileStatuses.set(worktreePath, promise)
+    return promise
   },
 
   // Load branch info for a worktree
-  loadBranchInfo: async (worktreePath: string) => {
-    try {
-      const result = unwrapEnvelope(await window.gitOps.getBranchInfo(worktreePath))
-      if (!result.success || !result.branch) {
-        return
-      }
+  loadBranchInfo: async (worktreePath: string, opts?: { force?: boolean }) => {
+    const inflight = inflightBranchInfo.get(worktreePath)
+    if (inflight) return inflight
 
-      set((state) => {
-        const newMap = new Map(state.branchInfoByWorktree)
-        newMap.set(worktreePath, result.branch!)
-        return { branchInfoByWorktree: newMap }
-      })
-    } catch (error) {
-      console.error('Failed to load branch info:', error)
+    const lastLoad = lastBranchInfoLoad.get(worktreePath)
+    if (!opts?.force && lastLoad !== undefined && Date.now() - lastLoad < LOAD_TTL_MS) {
+      return
     }
+
+    const promise = (async () => {
+      try {
+        const result = unwrapEnvelope(await window.gitOps.getBranchInfo(worktreePath))
+        if (!result.success || !result.branch) {
+          return
+        }
+
+        set((state) => {
+          const newMap = new Map(state.branchInfoByWorktree)
+          newMap.set(worktreePath, result.branch!)
+          return { branchInfoByWorktree: newMap }
+        })
+        lastBranchInfoLoad.set(worktreePath, Date.now())
+      } catch (error) {
+        console.error('Failed to load branch info:', error)
+      } finally {
+        inflightBranchInfo.delete(worktreePath)
+      }
+    })()
+    inflightBranchInfo.set(worktreePath, promise)
+    return promise
   },
 
   // Get file statuses for a worktree
@@ -343,8 +378,8 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
           refreshTimers.delete(worktreePath)
           try {
             await Promise.all([
-              get().loadFileStatuses(worktreePath),
-              get().loadBranchInfo(worktreePath)
+              get().loadFileStatuses(worktreePath, { force: true }),
+              get().loadBranchInfo(worktreePath, { force: true })
             ])
           } finally {
             // Resolve ALL pending promises for this worktree
@@ -614,7 +649,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       if (result.success) {
         // Refresh branch info to update ahead/behind counts
         try {
-          await get().loadBranchInfo(worktreePath)
+          await get().loadBranchInfo(worktreePath, { force: true })
         } catch {
           // Non-critical — push already succeeded
         }
