@@ -5,6 +5,7 @@ import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 // ==========================================
 // Types
@@ -143,6 +144,7 @@ export interface AppSettings {
 
   // Advanced
   environmentVariables: Array<{ key: string; value: string }>
+  customProjectCommands: CustomProjectCommand[]
 
   // Diagnostics
   perfDiagnosticsEnabled: boolean
@@ -222,6 +224,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     hasHatched: false
   },
   environmentVariables: [],
+  customProjectCommands: [],
   perfDiagnosticsEnabled: false,
   codexJsonlLoggingEnabled: false,
   codexJsonlResetPerSession: true,
@@ -373,6 +376,7 @@ function extractSettings(state: SettingsState): AppSettings {
     telegramConfig: null,
     pet: state.pet,
     environmentVariables: state.environmentVariables,
+    customProjectCommands: state.customProjectCommands,
     perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
     codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
     codexJsonlResetPerSession: state.codexJsonlResetPerSession,
@@ -671,6 +675,7 @@ export const useSettingsStore = create<SettingsState>()(
         tipsEnabled: state.tipsEnabled,
         pet: state.pet,
         environmentVariables: state.environmentVariables,
+        customProjectCommands: state.customProjectCommands,
         perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
         codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
         codexJsonlResetPerSession: state.codexJsonlResetPerSession,
