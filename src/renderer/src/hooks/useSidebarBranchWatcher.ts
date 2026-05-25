@@ -64,7 +64,7 @@ export function useSidebarBranchWatcher(worktreePaths: string[]): void {
     const unsubscribe = window.gitOps.onBranchChanged((event) => {
       const currentPaths = previousPathsRef.current
       if (currentPaths.includes(event.worktreePath)) {
-        useGitStore.getState().loadBranchInfo(event.worktreePath)
+        useGitStore.getState().loadBranchInfo(event.worktreePath, { force: true })
       }
     })
 
