@@ -6,7 +6,7 @@ import { existsSync, statSync, readFileSync, writeFileSync, mkdirSync } from 'fs
 import {
   validateCustomCommand,
   type CustomProjectCommand
-} from '../../renderer/src/lib/custom-commands'
+} from '@shared/lib/custom-commands'
 
 /**
  * Gets the full path to custom commands file
