@@ -6,6 +6,7 @@ import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
+import { validateCustomCommand } from '@/lib/custom-commands'
 
 // ==========================================
 // Types
@@ -320,6 +321,23 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
             result.boardMode = 'sticky-tab'
           }
           result._boardModeMigratedToStickyTab = true
+        }
+
+        // Validate and filter custom project commands
+        if (Array.isArray(result.customProjectCommands)) {
+          const validCommands: CustomProjectCommand[] = []
+          result.customProjectCommands.forEach((cmd: unknown) => {
+            const validation = validateCustomCommand(cmd)
+            if (validation.valid) {
+              validCommands.push(cmd as CustomProjectCommand)
+            } else {
+              console.warn('Invalid custom command filtered during settings load:', validation.errors)
+            }
+          })
+          result.customProjectCommands = validCommands
+        } else {
+          console.warn('customProjectCommands is not an array, setting to empty array')
+          result.customProjectCommands = []
         }
 
         return result

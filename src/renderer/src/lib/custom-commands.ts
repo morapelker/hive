@@ -12,6 +12,51 @@ export interface CustomProjectCommand {
 }
 
 /**
+ * Validation result for custom command
+ */
+export interface ValidationResult {
+  valid: boolean
+  errors: string[]
+}
+
+/**
+ * Validates a custom command object
+ *
+ * @param command - Command object to validate
+ * @returns ValidationResult with valid flag and error messages
+ */
+export function validateCustomCommand(command: unknown): ValidationResult {
+  const errors: string[] = []
+
+  // Check if command is an object (not null)
+  if (typeof command !== 'object' || command === null) {
+    return { valid: false, errors: ['Command must be an object'] }
+  }
+
+  const cmd = command as Record<string, unknown>
+
+  // Validate id
+  if (typeof cmd.id !== 'string') {
+    errors.push('id must be a string')
+  }
+
+  // Validate name
+  if (typeof cmd.name !== 'string' || cmd.name.trim() === '') {
+    errors.push('name must be a non-empty string')
+  }
+
+  // Validate prompt
+  if (typeof cmd.prompt !== 'string' || cmd.prompt.trim() === '') {
+    errors.push('prompt must be a non-empty string')
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  }
+}
+
+/**
  * Replaces template variables in a prompt string with project data
  *
  * Supported variables:
