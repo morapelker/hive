@@ -24,7 +24,15 @@ describe('validateCustomCommand', () => {
       },
       {
         command: { id: 123, name: 'Test', prompt: 'Test prompt' },
-        expectedErrors: ['id must be a string']
+        expectedErrors: ['id must be a non-empty string']
+      },
+      {
+        command: { id: '', name: 'Test', prompt: 'Test prompt' },
+        expectedErrors: ['id must be a non-empty string']
+      },
+      {
+        command: { id: '   ', name: 'Test', prompt: 'Test prompt' },
+        expectedErrors: ['id must be a non-empty string']
       },
       {
         command: { id: 'cmd-1', name: '', prompt: 'Test prompt' },
@@ -44,7 +52,7 @@ describe('validateCustomCommand', () => {
       },
       {
         command: { name: 'Test', prompt: 'Test prompt' },
-        expectedErrors: ['id must be a string']
+        expectedErrors: ['id must be a non-empty string']
       },
       {
         command: { id: 'cmd-1', prompt: 'Test prompt' },
