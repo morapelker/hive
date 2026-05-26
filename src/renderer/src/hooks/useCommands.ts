@@ -19,7 +19,6 @@ import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { THEME_PRESETS, getThemeById } from '@/lib/themes'
 import { toast } from '@/lib/toast'
 import { revealLabel, fileManagerName } from '@/lib/platform'
-import type { CustomProjectCommand } from '@/lib/custom-commands'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /**
