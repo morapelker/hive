@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { FlatFile } from '@/lib/file-search-utils'
 import type { FileTreeChangeEventItem } from '@shared/types/file-tree'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // File tree node structure matching main process
 interface FileTreeNode {
@@ -89,7 +90,7 @@ export const useFileTreeStore = create<FileTreeState>()(
       loadFileTree: async (worktreePath: string) => {
         set({ isLoading: true, error: null })
         try {
-          const result = await window.fileTreeOps.scan(worktreePath)
+          const result = unwrapEnvelope(await window.fileTreeOps.scan(worktreePath))
           if (!result.success || !result.tree) {
             set({
               error: result.error || 'Failed to load file tree',
@@ -123,7 +124,7 @@ export const useFileTreeStore = create<FileTreeState>()(
         })
 
         try {
-          const result = await window.fileTreeOps.scanFlat(worktreePath)
+          const result = unwrapEnvelope(await window.fileTreeOps.scanFlat(worktreePath))
           set((state) => {
             const indexMap = new Map(state.fileIndexByWorktree)
             const loadingMap = new Map(state.fileIndexLoadingByWorktree)
@@ -150,7 +151,9 @@ export const useFileTreeStore = create<FileTreeState>()(
       // Lazy load children for a directory
       loadChildren: async (worktreePath: string, dirPath: string) => {
         try {
-          const result = await window.fileTreeOps.loadChildren(dirPath, worktreePath)
+          const result = unwrapEnvelope(
+            await window.fileTreeOps.loadChildren(dirPath, worktreePath)
+          )
           if (!result.success || !result.children) {
             return
           }
@@ -282,7 +285,7 @@ export const useFileTreeStore = create<FileTreeState>()(
             return
           }
 
-          await window.fileTreeOps.watch(worktreePath)
+          unwrapEnvelope(await window.fileTreeOps.watch(worktreePath))
 
           // Subscribe to change events and route to handleFileChange
           const unsubscribe = window.fileTreeOps.onChange((event) => {
@@ -304,7 +307,10 @@ export const useFileTreeStore = create<FileTreeState>()(
           if (!entry) return
 
           if (entry.refCount <= 0) {
-            console.warn(`[FileTreeStore] stopWatching called at refCount ${entry.refCount}`, worktreePath)
+            console.warn(
+              `[FileTreeStore] stopWatching called at refCount ${entry.refCount}`,
+              worktreePath
+            )
             return
           }
 
@@ -314,7 +320,7 @@ export const useFileTreeStore = create<FileTreeState>()(
           entry.unsubscribe()
           watchSubscriptions.delete(worktreePath)
 
-          await window.fileTreeOps.unwatch(worktreePath)
+          unwrapEnvelope(await window.fileTreeOps.unwatch(worktreePath))
         } catch (error) {
           console.error('Failed to stop file watching:', error)
         }

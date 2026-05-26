@@ -85,6 +85,10 @@ import { useSettingsStore } from '../../../src/renderer/src/stores/useSettingsSt
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '../../../src/renderer/src/stores/useWorktreeStatusStore'
 
+function envelope<T>(value: T): { success: true; value: T } {
+  return { success: true, value }
+}
+
 function createSessionRecord(
   overrides: Partial<{
     id: string
@@ -260,58 +264,67 @@ describe('SessionView handoff ticket relinking', () => {
       archivingWorktreeIds: new Set()
     })
 
-    mockKanban.ticket.getBySession.mockResolvedValue([
-      {
-        id: 'ticket-1',
-        project_id: 'proj-1',
-        current_session_id: 'session-plan-old',
-        plan_ready: true,
-        mode: 'plan'
-      }
-    ])
-    mockKanban.ticket.update.mockResolvedValue(undefined)
+    mockKanban.ticket.getBySession.mockResolvedValue(
+      envelope([
+        {
+          id: 'ticket-1',
+          project_id: 'proj-1',
+          current_session_id: 'session-plan-old',
+          plan_ready: true,
+          mode: 'plan'
+        }
+      ])
+    )
+    mockKanban.ticket.update.mockResolvedValue(envelope(undefined))
 
-    mockDbSession.get.mockResolvedValue(createSessionRecord())
-    mockDbSession.getDraft.mockResolvedValue(null)
-    mockDbSession.updateDraft.mockResolvedValue(undefined)
-    mockDbSession.update.mockImplementation(async (sessionId: string, data: Record<string, unknown>) => ({
-      ...createSessionRecord({ id: sessionId }),
-      ...data
-    }))
+    mockDbSession.get.mockResolvedValue(envelope(createSessionRecord()))
+    mockDbSession.getDraft.mockResolvedValue(envelope(null))
+    mockDbSession.updateDraft.mockResolvedValue(envelope(undefined))
+    mockDbSession.update.mockImplementation(
+      async (sessionId: string, data: Record<string, unknown>) =>
+        envelope({
+          ...createSessionRecord({ id: sessionId }),
+          ...data
+        })
+    )
     mockDbSession.create.mockResolvedValue(
-      createSessionRecord({
-        id: 'session-build-new',
-        mode: 'build',
-        opencode_session_id: null,
-        name: 'Session 2'
+      envelope(
+        createSessionRecord({
+          id: 'session-build-new',
+          mode: 'build',
+          opencode_session_id: null,
+          name: 'Session 2'
+        })
+      )
+    )
+    mockWorktreeOps.duplicate.mockResolvedValue(
+      envelope({
+        success: true,
+        worktree: {
+          id: 'wt-2',
+          project_id: 'proj-1',
+          name: 'add-user-authentication',
+          branch_name: 'add-user-authentication',
+          path: '/tmp/worktree-supercharged',
+          status: 'active',
+          is_default: false,
+          branch_renamed: 0,
+          last_message_at: null,
+          session_titles: '[]',
+          last_model_provider_id: null,
+          last_model_id: null,
+          last_model_variant: null,
+          attachments: '[]',
+          pinned: 0,
+          context: null,
+          github_pr_number: null,
+          github_pr_url: null,
+          base_branch: null,
+          created_at: new Date().toISOString(),
+          last_accessed_at: new Date().toISOString()
+        }
       })
     )
-    mockWorktreeOps.duplicate.mockResolvedValue({
-      success: true,
-      worktree: {
-        id: 'wt-2',
-        project_id: 'proj-1',
-        name: 'add-user-authentication',
-        branch_name: 'add-user-authentication',
-        path: '/tmp/worktree-supercharged',
-        status: 'active',
-        is_default: false,
-        branch_renamed: 0,
-        last_message_at: null,
-        session_titles: '[]',
-        last_model_provider_id: null,
-        last_model_id: null,
-        last_model_variant: null,
-        attachments: '[]',
-        pinned: 0,
-        context: null,
-        github_pr_number: null,
-        github_pr_url: null,
-        base_branch: null,
-        created_at: new Date().toISOString(),
-        last_accessed_at: new Date().toISOString()
-      }
-    })
 
     Object.defineProperty(window, 'kanban', {
       value: mockKanban,
@@ -323,18 +336,20 @@ describe('SessionView handoff ticket relinking', () => {
       value: {
         session: mockDbSession,
         worktree: {
-          get: vi.fn().mockResolvedValue({
-            id: 'wt-1',
-            project_id: 'proj-1',
-            name: 'WT',
-            branch_name: 'main',
-            path: '/tmp/worktree-handoff',
-            status: 'active',
-            is_default: true,
-            created_at: new Date().toISOString(),
-            last_accessed_at: new Date().toISOString()
-          }),
-          update: vi.fn().mockResolvedValue(null)
+          get: vi.fn().mockResolvedValue(
+            envelope({
+              id: 'wt-1',
+              project_id: 'proj-1',
+              name: 'WT',
+              branch_name: 'main',
+              path: '/tmp/worktree-handoff',
+              status: 'active',
+              is_default: true,
+              created_at: new Date().toISOString(),
+              last_accessed_at: new Date().toISOString()
+            })
+          ),
+          update: vi.fn().mockResolvedValue(envelope(null))
         }
       },
       writable: true,
@@ -343,61 +358,67 @@ describe('SessionView handoff ticket relinking', () => {
 
     Object.defineProperty(window, 'opencodeOps', {
       value: {
-        reconnect: vi.fn().mockResolvedValue({ success: true }),
-        connect: vi.fn().mockResolvedValue({ success: false }),
-        prompt: vi.fn().mockResolvedValue({ success: true }),
-        command: vi.fn().mockResolvedValue({ success: true }),
-        fork: vi.fn().mockResolvedValue({ success: true }),
+        reconnect: vi.fn().mockResolvedValue(envelope({ success: true })),
+        connect: vi.fn().mockResolvedValue(envelope({ success: false })),
+        prompt: vi.fn().mockResolvedValue(envelope({ success: true })),
+        command: vi.fn().mockResolvedValue(envelope({ success: true })),
+        fork: vi.fn().mockResolvedValue(envelope({ success: true })),
         sessionInfo: vi
           .fn()
-          .mockResolvedValue({ success: true, revertMessageID: null, revertDiff: null }),
-        undo: vi.fn().mockResolvedValue({ success: true }),
-        redo: vi.fn().mockResolvedValue({ success: true }),
-        disconnect: vi.fn().mockResolvedValue({ success: true }),
-        abort: vi.fn().mockResolvedValue({ success: true }),
-        getMessages: vi.fn().mockResolvedValue({
-          success: true,
-          messages: [
-            {
-              info: {
-                id: 'turn-1:user',
-                role: 'user',
-                time: { created: Date.now() - 2000 }
+          .mockResolvedValue(envelope({ success: true, revertMessageID: null, revertDiff: null })),
+        undo: vi.fn().mockResolvedValue(envelope({ success: true })),
+        redo: vi.fn().mockResolvedValue(envelope({ success: true })),
+        disconnect: vi.fn().mockResolvedValue(envelope({ success: true })),
+        abort: vi.fn().mockResolvedValue(envelope({ success: true })),
+        getMessages: vi.fn().mockResolvedValue(
+          envelope({
+            success: true,
+            messages: [
+              {
+                info: {
+                  id: 'turn-1:user',
+                  role: 'user',
+                  time: { created: Date.now() - 2000 }
+                },
+                parts: [{ type: 'text', text: 'Please draft a plan' }]
               },
-              parts: [{ type: 'text', text: 'Please draft a plan' }]
-            },
-            {
-              info: {
-                id: 'turn-1:assistant',
-                role: 'assistant',
-                time: { created: Date.now() - 1000 }
-              },
-              parts: [{ type: 'text', text: '1. Add the relink helper\n2. Use it during handoff' }]
+              {
+                info: {
+                  id: 'turn-1:assistant',
+                  role: 'assistant',
+                  time: { created: Date.now() - 1000 }
+                },
+                parts: [
+                  { type: 'text', text: '1. Add the relink helper\n2. Use it during handoff' }
+                ]
+              }
+            ]
+          })
+        ),
+        listModels: vi.fn().mockResolvedValue(envelope({ success: true, providers: [] })),
+        setModel: vi.fn().mockResolvedValue(envelope({ success: true })),
+        modelInfo: vi.fn().mockResolvedValue(envelope({ success: true })),
+        questionReply: vi.fn().mockResolvedValue(envelope({ success: true })),
+        questionReject: vi.fn().mockResolvedValue(envelope({ success: true })),
+        permissionReply: vi.fn().mockResolvedValue(envelope({ success: true })),
+        permissionList: vi.fn().mockResolvedValue(envelope({ success: true, permissions: [] })),
+        commands: vi.fn().mockResolvedValue(envelope({ success: true, commands: [] })),
+        capabilities: vi.fn().mockResolvedValue(
+          envelope({
+            success: true,
+            capabilities: {
+              supportsUndo: true,
+              supportsRedo: true,
+              supportsCommands: true,
+              supportsPermissionRequests: true,
+              supportsQuestionPrompts: true,
+              supportsModelSelection: true,
+              supportsReconnect: true,
+              supportsPartialStreaming: true,
+              supportsSteer: true
             }
-          ]
-        }),
-        listModels: vi.fn().mockResolvedValue({ success: true, providers: [] }),
-        setModel: vi.fn().mockResolvedValue({ success: true }),
-        modelInfo: vi.fn().mockResolvedValue({ success: true }),
-        questionReply: vi.fn().mockResolvedValue({ success: true }),
-        questionReject: vi.fn().mockResolvedValue({ success: true }),
-        permissionReply: vi.fn().mockResolvedValue({ success: true }),
-        permissionList: vi.fn().mockResolvedValue({ success: true, permissions: [] }),
-        commands: vi.fn().mockResolvedValue({ success: true, commands: [] }),
-        capabilities: vi.fn().mockResolvedValue({
-          success: true,
-          capabilities: {
-            supportsUndo: true,
-            supportsRedo: true,
-            supportsCommands: true,
-            supportsPermissionRequests: true,
-            supportsQuestionPrompts: true,
-            supportsModelSelection: true,
-            supportsReconnect: true,
-            supportsPartialStreaming: true,
-            supportsSteer: true
-          }
-        }),
+          })
+        ),
         onStream: vi.fn().mockImplementation(() => () => {})
       },
       writable: true,
@@ -409,7 +430,9 @@ describe('SessionView handoff ticket relinking', () => {
         isLogMode: vi.fn().mockResolvedValue(false),
         getLogDir: vi.fn().mockResolvedValue('/tmp/logs'),
         getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
-        getAppPaths: vi.fn().mockResolvedValue({ userData: '/tmp', home: '/tmp', logs: '/tmp/logs' }),
+        getAppPaths: vi
+          .fn()
+          .mockResolvedValue({ userData: '/tmp', home: '/tmp', logs: '/tmp/logs' }),
         setSessionQueuedState: vi.fn().mockResolvedValue(undefined)
       },
       writable: true,
@@ -427,7 +450,7 @@ describe('SessionView handoff ticket relinking', () => {
 
     Object.defineProperty(window, 'bash', {
       value: {
-        getRun: vi.fn().mockResolvedValue(null),
+        getRun: vi.fn().mockResolvedValue(envelope(null)),
         onStream: vi.fn().mockImplementation(() => () => {})
       },
       writable: true,
@@ -464,7 +487,9 @@ describe('SessionView handoff ticket relinking', () => {
       expect(mockKanban.ticket.update).toHaveBeenCalledWith('ticket-1', {
         current_session_id: 'session-build-new',
         plan_ready: false,
-        mode: 'build'
+        mode: 'build',
+        goal_mode: false,
+        goal_success_criteria: null
       })
     })
 

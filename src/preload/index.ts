@@ -1,16 +1,18 @@
 import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
-import type {
-  PetManifest,
-  PetPosition,
-  PetSettings,
-  PetStatusPayload
-} from '../shared/types/pet'
+import type { PetManifest, PetPosition, PetSettings, PetStatusPayload } from '../shared/types/pet'
 import type {
   TelegramConfig,
   TelegramDiscoveredChat,
   TelegramForwardingStatus,
   TelegramMode
 } from '../shared/types/telegram'
+import type { Envelope } from '@shared/types/ipc-envelope'
+import type { SuggestionItem } from '../shared/types/setup-suggestions'
+import type { ConnectionWithMembers } from '../main/db/types'
+import type { BashRunSnapshot, BashStreamEvent } from '../main/effect/bash/types'
+
+const invokeEnvelope = <A>(channel: string, ...args: unknown[]): Promise<Envelope<A>> =>
+  ipcRenderer.invoke(channel, ...args)
 
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
 // point mapping. Any zoom level breaks coordinate sync and causes misaligned
@@ -22,10 +24,10 @@ webFrame.setVisualZoomLevelLimits(1, 1)
 const db = {
   // Settings
   setting: {
-    get: (key: string) => ipcRenderer.invoke('db:setting:get', key),
-    set: (key: string, value: string) => ipcRenderer.invoke('db:setting:set', key, value),
-    delete: (key: string) => ipcRenderer.invoke('db:setting:delete', key),
-    getAll: () => ipcRenderer.invoke('db:setting:getAll')
+    get: (key: string) => invokeEnvelope('db:setting:get', key),
+    set: (key: string, value: string) => invokeEnvelope('db:setting:set', key, value),
+    delete: (key: string) => invokeEnvelope('db:setting:delete', key),
+    getAll: () => invokeEnvelope('db:setting:getAll')
   },
 
   // Projects
@@ -35,10 +37,10 @@ const db = {
       path: string
       description?: string | null
       tags?: string[] | null
-    }) => ipcRenderer.invoke('db:project:create', data),
-    get: (id: string) => ipcRenderer.invoke('db:project:get', id),
-    getByPath: (path: string) => ipcRenderer.invoke('db:project:getByPath', path),
-    getAll: () => ipcRenderer.invoke('db:project:getAll'),
+    }) => invokeEnvelope('db:project:create', data),
+    get: (id: string) => invokeEnvelope('db:project:get', id),
+    getByPath: (path: string) => invokeEnvelope('db:project:getByPath', path),
+    getAll: () => invokeEnvelope('db:project:getAll'),
     update: (
       id: string,
       data: {
@@ -47,57 +49,57 @@ const db = {
         tags?: string[] | null
         language?: string | null
         custom_icon?: string | null
+        detected_icon?: string | null
         setup_script?: string | null
         run_script?: string | null
         archive_script?: string | null
         auto_assign_port?: boolean
         last_accessed_at?: string
       }
-    ) => ipcRenderer.invoke('db:project:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('db:project:delete', id),
-    touch: (id: string) => ipcRenderer.invoke('db:project:touch', id),
-    reorder: (orderedIds: string[]) => ipcRenderer.invoke('db:project:reorder', orderedIds),
-    sortByLastMessage: () => ipcRenderer.invoke('db:project:sortByLastMessage')
+    ) => invokeEnvelope('db:project:update', id, data),
+    delete: (id: string) => invokeEnvelope('db:project:delete', id),
+    touch: (id: string) => invokeEnvelope('db:project:touch', id),
+    reorder: (orderedIds: string[]) => invokeEnvelope('db:project:reorder', orderedIds),
+    sortByLastMessage: () => invokeEnvelope('db:project:sortByLastMessage')
   },
 
   // Worktrees
   worktree: {
     create: (data: { project_id: string; name: string; branch_name: string; path: string }) =>
-      ipcRenderer.invoke('db:worktree:create', data),
-    get: (id: string) => ipcRenderer.invoke('db:worktree:get', id),
-    getByProject: (projectId: string) => ipcRenderer.invoke('db:worktree:getByProject', projectId),
+      invokeEnvelope('db:worktree:create', data),
+    get: (id: string) => invokeEnvelope('db:worktree:get', id),
+    getByProject: (projectId: string) => invokeEnvelope('db:worktree:getByProject', projectId),
     getActiveByProject: (projectId: string) =>
-      ipcRenderer.invoke('db:worktree:getActiveByProject', projectId),
+      invokeEnvelope('db:worktree:getActiveByProject', projectId),
     getRecentlyActive: (cutoffMs: number) =>
-      ipcRenderer.invoke('db:worktree:getRecentlyActive', cutoffMs),
+      invokeEnvelope('db:worktree:getRecentlyActive', cutoffMs),
     update: (
       id: string,
       data: { name?: string; status?: 'active' | 'archived'; last_accessed_at?: string }
-    ) => ipcRenderer.invoke('db:worktree:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('db:worktree:delete', id),
-    archive: (id: string) => ipcRenderer.invoke('db:worktree:archive', id),
-    touch: (id: string) => ipcRenderer.invoke('db:worktree:touch', id),
+    ) => invokeEnvelope('db:worktree:update', id, data),
+    delete: (id: string) => invokeEnvelope('db:worktree:delete', id),
+    archive: (id: string) => invokeEnvelope('db:worktree:archive', id),
+    touch: (id: string) => invokeEnvelope('db:worktree:touch', id),
     appendSessionTitle: (worktreeId: string, title: string) =>
-      ipcRenderer.invoke('db:worktree:appendSessionTitle', { worktreeId, title }),
+      invokeEnvelope('db:worktree:appendSessionTitle', { worktreeId, title }),
     updateModel: (params: {
       worktreeId: string
       modelProviderId: string
       modelId: string
       modelVariant: string | null
-    }) => ipcRenderer.invoke('db:worktree:updateModel', params),
+    }) => invokeEnvelope('db:worktree:updateModel', params),
     addAttachment: (
       worktreeId: string,
       attachment: { type: 'jira' | 'figma'; url: string; label: string }
-    ) => ipcRenderer.invoke('db:worktree:addAttachment', { worktreeId, attachment }),
+    ) => invokeEnvelope('db:worktree:addAttachment', { worktreeId, attachment }),
     removeAttachment: (worktreeId: string, attachmentId: string) =>
-      ipcRenderer.invoke('db:worktree:removeAttachment', { worktreeId, attachmentId }),
+      invokeEnvelope('db:worktree:removeAttachment', { worktreeId, attachmentId }),
     attachPR: (worktreeId: string, prNumber: number, prUrl: string) =>
-      ipcRenderer.invoke('db:worktree:attachPR', { worktreeId, prNumber, prUrl }),
-    detachPR: (worktreeId: string) =>
-      ipcRenderer.invoke('db:worktree:detachPR', { worktreeId }),
+      invokeEnvelope('db:worktree:attachPR', { worktreeId, prNumber, prUrl }),
+    detachPR: (worktreeId: string) => invokeEnvelope('db:worktree:detachPR', { worktreeId }),
     setPinned: (worktreeId: string, pinned: boolean) =>
-      ipcRenderer.invoke('db:worktree:setPinned', { worktreeId, pinned }),
-    getPinned: () => ipcRenderer.invoke('db:worktree:getPinned')
+      invokeEnvelope('db:worktree:setPinned', { worktreeId, pinned }),
+    getPinned: () => invokeEnvelope('db:worktree:getPinned')
   },
 
   // Sessions
@@ -109,18 +111,18 @@ const db = {
       name?: string | null
       opencode_session_id?: string | null
       agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-      mode?: 'build' | 'plan'
+      mode?: 'build' | 'plan' | 'super-plan'
       session_type?: 'default' | 'board-assistant'
       model_provider_id?: string | null
       model_id?: string | null
       model_variant?: string | null
-    }) => ipcRenderer.invoke('db:session:create', data),
-    get: (id: string) => ipcRenderer.invoke('db:session:get', id),
-    getByWorktree: (worktreeId: string) =>
-      ipcRenderer.invoke('db:session:getByWorktree', worktreeId),
-    getByProject: (projectId: string) => ipcRenderer.invoke('db:session:getByProject', projectId),
+      pinned_to_board?: boolean
+    }) => invokeEnvelope('db:session:create', data),
+    get: (id: string) => invokeEnvelope('db:session:get', id),
+    getByWorktree: (worktreeId: string) => invokeEnvelope('db:session:getByWorktree', worktreeId),
+    getByProject: (projectId: string) => invokeEnvelope('db:session:getByProject', projectId),
     getActiveByWorktree: (worktreeId: string) =>
-      ipcRenderer.invoke('db:session:getActiveByWorktree', worktreeId),
+      invokeEnvelope('db:session:getActiveByWorktree', worktreeId),
     update: (
       id: string,
       data: {
@@ -128,15 +130,17 @@ const db = {
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
         agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-        mode?: 'build' | 'plan'
+        mode?: 'build' | 'plan' | 'super-plan'
+        session_type?: 'default' | 'board-assistant'
         model_provider_id?: string | null
         model_id?: string | null
         model_variant?: string | null
         updated_at?: string
         completed_at?: string | null
+        pinned_to_board?: boolean
       }
-    ) => ipcRenderer.invoke('db:session:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('db:session:delete', id),
+    ) => invokeEnvelope('db:session:update', id, data),
+    delete: (id: string) => invokeEnvelope('db:session:delete', id),
     search: (options: {
       keyword?: string
       project_id?: string
@@ -144,47 +148,47 @@ const db = {
       dateFrom?: string
       dateTo?: string
       includeArchived?: boolean
-    }) => ipcRenderer.invoke('db:session:search', options),
-    getDraft: (sessionId: string) => ipcRenderer.invoke('db:session:getDraft', sessionId),
+    }) => invokeEnvelope('db:session:search', options),
+    getDraft: (sessionId: string) => invokeEnvelope('db:session:getDraft', sessionId),
     updateDraft: (sessionId: string, draft: string | null) =>
-      ipcRenderer.invoke('db:session:updateDraft', sessionId, draft),
+      invokeEnvelope('db:session:updateDraft', sessionId, draft),
     getByConnection: (connectionId: string) =>
-      ipcRenderer.invoke('db:session:getByConnection', connectionId),
+      invokeEnvelope('db:session:getByConnection', connectionId),
     getActiveByConnection: (connectionId: string) =>
-      ipcRenderer.invoke('db:session:getActiveByConnection', connectionId),
+      invokeEnvelope('db:session:getActiveByConnection', connectionId),
     setPinnedToBoard: (sessionId: string, pinned: boolean) =>
-      ipcRenderer.invoke('db:session:setPinnedToBoard', sessionId, pinned),
+      invokeEnvelope('db:session:setPinnedToBoard', sessionId, pinned),
     getPinnedSessions: (worktreeId: string) =>
-      ipcRenderer.invoke('db:session:getPinnedSessions', worktreeId),
+      invokeEnvelope('db:session:getPinnedSessions', worktreeId),
     getActiveBoardAssistant: (projectId: string) =>
-      ipcRenderer.invoke('db:session:getActiveBoardAssistant', projectId)
+      invokeEnvelope('db:session:getActiveBoardAssistant', projectId)
   },
 
   sessionMessage: {
-    list: (sessionId: string) => ipcRenderer.invoke('db:sessionMessage:list', sessionId)
+    list: (sessionId: string) => invokeEnvelope('db:sessionMessage:list', sessionId)
   },
 
   sessionActivity: {
-    list: (sessionId: string) => ipcRenderer.invoke('db:sessionActivity:list', sessionId)
+    list: (sessionId: string) => invokeEnvelope('db:sessionActivity:list', sessionId)
   },
 
   // Spaces
   space: {
-    list: () => ipcRenderer.invoke('db:space:list'),
+    list: () => invokeEnvelope('db:space:list'),
     create: (data: { name: string; icon_type?: string; icon_value?: string }) =>
-      ipcRenderer.invoke('db:space:create', data),
+      invokeEnvelope('db:space:create', data),
     update: (
       id: string,
       data: { name?: string; icon_type?: string; icon_value?: string; sort_order?: number }
-    ) => ipcRenderer.invoke('db:space:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('db:space:delete', id),
+    ) => invokeEnvelope('db:space:update', id, data),
+    delete: (id: string) => invokeEnvelope('db:space:delete', id),
     assignProject: (projectId: string, spaceId: string) =>
-      ipcRenderer.invoke('db:space:assignProject', projectId, spaceId),
+      invokeEnvelope('db:space:assignProject', projectId, spaceId),
     removeProject: (projectId: string, spaceId: string) =>
-      ipcRenderer.invoke('db:space:removeProject', projectId, spaceId),
-    getProjectIds: (spaceId: string) => ipcRenderer.invoke('db:space:getProjectIds', spaceId),
-    getAllAssignments: () => ipcRenderer.invoke('db:space:getAllAssignments'),
-    reorder: (orderedIds: string[]) => ipcRenderer.invoke('db:space:reorder', orderedIds)
+      invokeEnvelope('db:space:removeProject', projectId, spaceId),
+    getProjectIds: (spaceId: string) => invokeEnvelope('db:space:getProjectIds', spaceId),
+    getAllAssignments: () => invokeEnvelope('db:space:getAllAssignments'),
+    reorder: (orderedIds: string[]) => invokeEnvelope('db:space:reorder', orderedIds)
   },
 
   // Diff Comments
@@ -198,104 +202,117 @@ const db = {
       anchor_context_before?: string | null
       anchor_context_after?: string | null
       body: string
-    }) => ipcRenderer.invoke('db:diffComment:create', data),
-    list: (worktreeId: string) => ipcRenderer.invoke('db:diffComment:list', worktreeId),
-    update: (id: string, data: {
-      body?: string
-      line_start?: number
-      line_end?: number | null
-      anchor_text?: string | null
-      anchor_context_before?: string | null
-      anchor_context_after?: string | null
-      is_outdated?: boolean
-    }) => ipcRenderer.invoke('db:diffComment:update', id, data),
+    }) => invokeEnvelope('db:diffComment:create', data),
+    list: (worktreeId: string) => invokeEnvelope('db:diffComment:list', worktreeId),
+    update: (
+      id: string,
+      data: {
+        body?: string
+        line_start?: number
+        line_end?: number | null
+        anchor_text?: string | null
+        anchor_context_before?: string | null
+        anchor_context_after?: string | null
+        is_outdated?: boolean
+      }
+    ) => invokeEnvelope('db:diffComment:update', id, data),
     setOutdated: (id: string, isOutdated: boolean) =>
-      ipcRenderer.invoke('db:diffComment:setOutdated', id, isOutdated),
-    delete: (id: string) => ipcRenderer.invoke('db:diffComment:delete', id),
-    clearAll: (worktreeId: string) => ipcRenderer.invoke('db:diffComment:clearAll', worktreeId)
+      invokeEnvelope('db:diffComment:setOutdated', id, isOutdated),
+    delete: (id: string) => invokeEnvelope('db:diffComment:delete', id),
+    clearAll: (worktreeId: string) => invokeEnvelope('db:diffComment:clearAll', worktreeId)
   },
 
   // Utility
-  schemaVersion: () => ipcRenderer.invoke('db:schemaVersion'),
-  tableExists: (tableName: string) => ipcRenderer.invoke('db:tableExists', tableName),
-  getIndexes: () => ipcRenderer.invoke('db:getIndexes')
+  schemaVersion: () => invokeEnvelope('db:schemaVersion'),
+  tableExists: (tableName: string) => invokeEnvelope('db:tableExists', tableName),
+  getIndexes: () => invokeEnvelope('db:getIndexes')
 }
 
 // Project operations API (dialog, shell, clipboard)
 const projectOps = {
   // Open native folder picker dialog
-  openDirectoryDialog: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory'),
+  openDirectoryDialog: (): Promise<Envelope<string | null>> =>
+    ipcRenderer.invoke('dialog:openDirectory'),
 
   // Check if a path is a git repository
-  isGitRepository: (path: string): Promise<boolean> => ipcRenderer.invoke('git:isRepository', path),
+  isGitRepository: (path: string): Promise<Envelope<boolean>> =>
+    ipcRenderer.invoke('git:isRepository', path),
 
   // Validate a project path (checks if directory and git repo)
   validateProject: (
     path: string
-  ): Promise<{
-    success: boolean
-    path?: string
-    name?: string
-    error?: string
-  }> => ipcRenderer.invoke('project:validate', path),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      path?: string
+      name?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('project:validate', path),
 
   // Open path in Finder/Explorer
-  showInFolder: (path: string): Promise<void> => ipcRenderer.invoke('shell:showItemInFolder', path),
+  showInFolder: (path: string): Promise<Envelope<void>> =>
+    ipcRenderer.invoke('shell:showItemInFolder', path),
 
   // Open path with default application
-  openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path),
+  openPath: (path: string): Promise<Envelope<string>> => ipcRenderer.invoke('shell:openPath', path),
 
   // Clipboard operations
-  copyToClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:writeText', text),
-  readFromClipboard: (): Promise<string> => ipcRenderer.invoke('clipboard:readText'),
+  copyToClipboard: (text: string): Promise<Envelope<void>> =>
+    ipcRenderer.invoke('clipboard:writeText', text),
+  readFromClipboard: (): Promise<Envelope<string>> => ipcRenderer.invoke('clipboard:readText'),
 
   // Detect the primary programming language of a project
-  detectLanguage: (projectPath: string): Promise<string | null> =>
+  detectLanguage: (projectPath: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:detectLanguage', projectPath),
 
+  // Detect suggested setup script commands from project files
+  detectSetupSuggestions: (projectPath: string): Promise<Envelope<SuggestionItem[]>> =>
+    ipcRenderer.invoke('project:detectSetupSuggestions', projectPath),
+
   // Find .xcworkspace file for Swift projects
-  findXcworkspace: (projectPath: string): Promise<string | null> =>
+  findXcworkspace: (projectPath: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:findXcworkspace', projectPath),
 
   // Detect whether a project is an Android project
-  isAndroidProject: (projectPath: string): Promise<boolean> =>
+  isAndroidProject: (projectPath: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('project:isAndroidProject', projectPath),
 
   // Load custom language icons as data URLs
-  loadLanguageIcons: (): Promise<Record<string, string>> =>
+  loadLanguageIcons: (): Promise<Envelope<Record<string, string>>> =>
     ipcRenderer.invoke('project:loadLanguageIcons'),
 
   // Initialize a new git repository in a directory
-  initRepository: (path: string): Promise<{ success: boolean; error?: string }> =>
+  initRepository: (path: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('git:init', path),
 
   // Pick a custom project icon via native file dialog
   pickProjectIcon: (
     projectId: string
-  ): Promise<{ success: boolean; filename?: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; filename?: string; error?: string }>> =>
     ipcRenderer.invoke('project:pickIcon', projectId),
 
   // Remove a custom project icon
-  removeProjectIcon: (projectId: string): Promise<{ success: boolean; error?: string }> =>
+  removeProjectIcon: (projectId: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('project:removeIcon', projectId),
 
   // Resolve an icon filename to a full file path
-  getProjectIconPath: (filename: string): Promise<string | null> =>
+  getProjectIconPath: (filename: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:getIconPath', filename),
 
   // Detect project favicon from well-known paths
-  detectFavicon: (projectPath: string): Promise<string | null> =>
+  detectFavicon: (projectPath: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:detectFavicon', projectPath),
 
   // Resolve an absolute icon path to a data URL
-  getAbsoluteIconDataUrl: (absolutePath: string): Promise<string | null> =>
+  getAbsoluteIconDataUrl: (absolutePath: string): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('project:getAbsoluteIconDataUrl', absolutePath)
 }
 
 // Worktree operations API
 const worktreeOps = {
   // Check if a repository has any commits
-  hasCommits: (projectPath: string): Promise<boolean> =>
+  hasCommits: (projectPath: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('worktree:hasCommits', projectPath),
 
   // Create a new worktree
@@ -303,20 +320,22 @@ const worktreeOps = {
     projectId: string
     projectPath: string
     projectName: string
-  }): Promise<{
-    success: boolean
-    worktree?: {
-      id: string
-      project_id: string
-      name: string
-      branch_name: string
-      path: string
-      status: string
-      created_at: string
-      last_accessed_at: string
-    }
-    error?: string
-  }> => ipcRenderer.invoke('worktree:create', params),
+  }): Promise<
+    Envelope<{
+      success: boolean
+      worktree?: {
+        id: string
+        project_id: string
+        name: string
+        branch_name: string
+        path: string
+        status: string
+        created_at: string
+        last_accessed_at: string
+      }
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:create', params),
 
   // Delete/Archive a worktree
   delete: (params: {
@@ -325,52 +344,62 @@ const worktreeOps = {
     branchName: string
     projectPath: string
     archive: boolean
-  }): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('worktree:delete', params),
+  }): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:delete', params),
 
   // Sync worktrees with actual git state
   sync: (params: {
     projectId: string
     projectPath: string
-  }): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('worktree:sync', params),
+  }): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:sync', params),
 
   // Check if worktree path exists on disk
-  exists: (worktreePath: string): Promise<boolean> =>
+  exists: (worktreePath: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('worktree:exists', worktreePath),
 
   // Open worktree in terminal
   openInTerminal: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('worktree:openInTerminal', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:openInTerminal', worktreePath),
 
   // Open worktree in editor (VS Code)
   openInEditor: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('worktree:openInEditor', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:openInEditor', worktreePath),
 
   // Get git branches for a project
   getBranches: (
     projectPath: string
-  ): Promise<{
-    success: boolean
-    branches?: string[]
-    currentBranch?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:branches', projectPath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      branches?: string[]
+      currentBranch?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:branches', projectPath),
 
   // Check if a branch exists
-  branchExists: (projectPath: string, branchName: string): Promise<boolean> =>
+  branchExists: (projectPath: string, branchName: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('git:branchExists', projectPath, branchName),
 
   // Duplicate a worktree (clone branch with uncommitted state)
@@ -381,20 +410,22 @@ const worktreeOps = {
     sourceBranch: string
     sourceWorktreePath: string
     nameHint?: string
-  }): Promise<{
-    success: boolean
-    worktree?: {
-      id: string
-      project_id: string
-      name: string
-      branch_name: string
-      path: string
-      status: string
-      created_at: string
-      last_accessed_at: string
-    }
-    error?: string
-  }> => ipcRenderer.invoke('worktree:duplicate', params),
+  }): Promise<
+    Envelope<{
+      success: boolean
+      worktree?: {
+        id: string
+        project_id: string
+        name: string
+        branch_name: string
+        path: string
+        status: string
+        created_at: string
+        last_accessed_at: string
+      }
+      error?: string
+    }>
+  > => ipcRenderer.invoke('worktree:duplicate', params),
 
   // Rename a branch in a worktree
   renameBranch: (
@@ -402,7 +433,7 @@ const worktreeOps = {
     worktreePath: string,
     oldBranch: string,
     newBranch: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('worktree:renameBranch', { worktreeId, worktreePath, oldBranch, newBranch }),
 
   // Create a worktree from a specific existing branch
@@ -413,20 +444,22 @@ const worktreeOps = {
     branchName: string,
     prNumber?: number,
     nameHint?: string
-  ): Promise<{
-    success: boolean
-    worktree?: {
-      id: string
-      project_id: string
-      name: string
-      branch_name: string
-      path: string
-      status: string
-      created_at: string
-      last_accessed_at: string
-    }
-    error?: string
-  }> =>
+  ): Promise<
+    Envelope<{
+      success: boolean
+      worktree?: {
+        id: string
+        project_id: string
+        name: string
+        branch_name: string
+        path: string
+        status: string
+        created_at: string
+        last_accessed_at: string
+      }
+      error?: string
+    }>
+  > =>
     ipcRenderer.invoke('worktree:createFromBranch', {
       projectId,
       projectPath,
@@ -453,10 +486,16 @@ const worktreeOps = {
   },
 
   // Get worktree context
-  getContext: (worktreeId: string) => ipcRenderer.invoke('worktree:getContext', worktreeId),
+  getContext: (
+    worktreeId: string
+  ): Promise<Envelope<{ success: boolean; context?: string | null; error?: string }>> =>
+    ipcRenderer.invoke('worktree:getContext', worktreeId),
 
   // Update worktree context
-  updateContext: (worktreeId: string, context: string | null) =>
+  updateContext: (
+    worktreeId: string,
+    context: string | null
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('worktree:updateContext', worktreeId, context)
 }
 
@@ -519,6 +558,26 @@ const systemOps = {
     ipcRenderer.on('shortcut:file-search', handler)
     return () => {
       ipcRenderer.removeListener('shortcut:file-search', handler)
+    }
+  },
+
+  onQuitConfirmationShow: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on('shortcut:quit-confirmation-show', handler)
+    return () => {
+      ipcRenderer.removeListener('shortcut:quit-confirmation-show', handler)
+    }
+  },
+
+  onQuitConfirmationHide: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback()
+    }
+    ipcRenderer.on('shortcut:quit-confirmation-hide', handler)
+    return () => {
+      ipcRenderer.removeListener('shortcut:quit-confirmation-hide', handler)
     }
   },
 
@@ -604,8 +663,8 @@ const systemOps = {
 }
 
 const petOps = {
-  show: (): Promise<void> => ipcRenderer.invoke('pet:show'),
-  hide: (): Promise<void> => ipcRenderer.invoke('pet:hide'),
+  show: (): Promise<Envelope<void>> => ipcRenderer.invoke('pet:show'),
+  hide: (): Promise<Envelope<void>> => ipcRenderer.invoke('pet:hide'),
   publishStatus: (payload: PetStatusPayload): void => {
     ipcRenderer.send('pet:publish-status', payload)
   },
@@ -621,14 +680,17 @@ const petOps = {
   move: (position: PetPosition): void => {
     ipcRenderer.send('pet:move', position)
   },
-  focusMain: (payload: { worktreeId: string | null }): Promise<void> =>
+  focusMain: (payload: { worktreeId: string | null }): Promise<Envelope<void>> =>
     ipcRenderer.invoke('pet:focus-main', payload),
-  getConfig: (): Promise<{
-    settings: PetSettings
-    position: PetPosition
-    manifest: PetManifest
-  }> => ipcRenderer.invoke('pet:get-config'),
-  getCurrentStatus: (): Promise<PetStatusPayload> => ipcRenderer.invoke('pet:get-current-status'),
+  getConfig: (): Promise<
+    Envelope<{
+      settings: PetSettings
+      position: PetPosition
+      manifest: PetManifest
+    }>
+  > => ipcRenderer.invoke('pet:get-config'),
+  getCurrentStatus: (): Promise<Envelope<PetStatusPayload>> =>
+    ipcRenderer.invoke('pet:get-current-status'),
   updateSettings: (partial: Partial<PetSettings>): void => {
     ipcRenderer.send('pet:update-settings', partial)
   },
@@ -654,10 +716,7 @@ const petOps = {
     }
   },
   onJumpToWorktree: (callback: (payload: { worktreeId: string }) => void): (() => void) => {
-    const handler = (
-      _event: Electron.IpcRendererEvent,
-      payload: { worktreeId: string }
-    ): void => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { worktreeId: string }): void => {
       callback(payload)
     }
     ipcRenderer.on('pet:jump-to-worktree', handler)
@@ -753,46 +812,56 @@ const fileTreeOps = {
   // Scan a directory and return the file tree
   scan: (
     dirPath: string
-  ): Promise<{
-    success: boolean
-    tree?: FileTreeNode[]
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:scan', dirPath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      tree?: FileTreeNode[]
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:scan', dirPath),
 
   // Scan a directory and return a flat list of all files (via git ls-files)
   scanFlat: (
     dirPath: string
-  ): Promise<{
-    success: boolean
-    files?: FlatFile[]
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:scan-flat', dirPath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      files?: FlatFile[]
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:scan-flat', dirPath),
 
   // Lazy load children for a directory
   loadChildren: (
     dirPath: string,
     rootPath: string
-  ): Promise<{
-    success: boolean
-    children?: FileTreeNode[]
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:loadChildren', dirPath, rootPath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      children?: FileTreeNode[]
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:loadChildren', dirPath, rootPath),
 
   // Start watching a directory for changes
   watch: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:watch', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:watch', worktreePath),
 
   // Stop watching a directory
   unwatch: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('file-tree:unwatch', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('file-tree:unwatch', worktreePath),
 
   // Subscribe to file tree change events
   onChange: (callback: (event: FileTreeChangeEvent) => void): (() => void) => {
@@ -811,63 +880,70 @@ const gitOps = {
   // Get file statuses for a worktree
   getFileStatuses: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    files?: GitFileStatus[]
-    error?: string
-  }> => ipcRenderer.invoke('git:fileStatuses', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      files?: GitFileStatus[]
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:fileStatuses', worktreePath),
 
   // Stage a file
   stageFile: (
     worktreePath: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:stageFile', worktreePath, filePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:stageFile', worktreePath, filePath),
 
   // Unstage a file
   unstageFile: (
     worktreePath: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:unstageFile', worktreePath, filePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:unstageFile', worktreePath, filePath),
 
   // Discard changes in a file
-  discardChanges: (
-    worktreePath: string,
-    filePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:discardChanges', worktreePath, filePath),
+  discardChanges: (worktreePath: string, filePath: string): Promise<Envelope<null>> =>
+    ipcRenderer.invoke('git:discardChanges', worktreePath, filePath),
 
   // Add to .gitignore
   addToGitignore: (
     worktreePath: string,
     pattern: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:addToGitignore', worktreePath, pattern),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:addToGitignore', worktreePath, pattern),
 
   // Open file in default editor
   openInEditor: (
     filePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:openInEditor', filePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:openInEditor', filePath),
 
   // Show file in Finder
   showInFinder: (
     filePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:showInFinder', filePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:showInFinder', filePath),
 
   // Subscribe to git status change events
   onStatusChanged: (callback: (event: GitStatusChangedEvent) => void): (() => void) => {
@@ -883,34 +959,42 @@ const gitOps = {
   // Start watching a worktree for git changes (filesystem + .git metadata)
   watchWorktree: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:watchWorktree', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:watchWorktree', worktreePath),
 
   // Stop watching a worktree
   unwatchWorktree: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:unwatchWorktree', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:unwatchWorktree', worktreePath),
 
   // Start watching a worktree's .git/HEAD for branch changes (lightweight, sidebar use)
   watchBranch: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:watchBranch', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:watchBranch', worktreePath),
 
   // Stop watching a worktree's branch
   unwatchBranch: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:unwatchBranch', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:unwatchBranch', worktreePath),
 
   // Subscribe to branch change events (lightweight, from branch-watcher)
   onBranchChanged: (callback: (event: { worktreePath: string }) => void): (() => void) => {
@@ -926,37 +1010,45 @@ const gitOps = {
   // Get branch info (name, tracking, ahead/behind)
   getBranchInfo: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    branch?: GitBranchInfo
-    error?: string
-  }> => ipcRenderer.invoke('git:branchInfo', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      branch?: GitBranchInfo
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:branchInfo', worktreePath),
 
   // Stage all modified and untracked files
   stageAll: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:stageAll', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:stageAll', worktreePath),
 
   // Unstage all staged files
   unstageAll: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:unstageAll', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:unstageAll', worktreePath),
 
   // Commit staged changes
   commit: (
     worktreePath: string,
     message: string
-  ): Promise<{
-    success: boolean
-    commitHash?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:commit', worktreePath, message),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      commitHash?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:commit', worktreePath, message),
 
   // Push to remote
   push: (
@@ -964,11 +1056,13 @@ const gitOps = {
     remote?: string,
     branch?: string,
     force?: boolean
-  ): Promise<{
-    success: boolean
-    pushed?: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:push', worktreePath, remote, branch, force),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      pushed?: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:push', worktreePath, remote, branch, force),
 
   // Pull from remote
   pull: (
@@ -976,11 +1070,13 @@ const gitOps = {
     remote?: string,
     branch?: string,
     rebase?: boolean
-  ): Promise<{
-    success: boolean
-    updated?: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:pull', worktreePath, remote, branch, rebase),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      updated?: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:pull', worktreePath, remote, branch, rebase),
 
   // Get diff for a file
   getDiff: (
@@ -989,292 +1085,332 @@ const gitOps = {
     staged: boolean,
     isUntracked: boolean,
     contextLines?: number
-  ): Promise<{
-    success: boolean
-    diff?: string
-    fileName?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:diff', worktreePath, filePath, staged, isUntracked, contextLines),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      diff?: string
+      fileName?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:diff', worktreePath, filePath, staged, isUntracked, contextLines),
 
   // List all branches with their worktree checkout status
   listBranchesWithStatus: (
     projectPath: string
-  ): Promise<{
-    success: boolean
-    branches: Array<{
-      name: string
-      isRemote: boolean
-      isCheckedOut: boolean
-      worktreePath?: string
+  ): Promise<
+    Envelope<{
+      success: boolean
+      branches: Array<{
+        name: string
+        isRemote: boolean
+        isCheckedOut: boolean
+        worktreePath?: string
+      }>
+      error?: string
     }>
-    error?: string
-  }> => ipcRenderer.invoke('git:listBranchesWithStatus', { projectPath }),
+  > => ipcRenderer.invoke('git:listBranchesWithStatus', { projectPath }),
 
   // Merge a branch into the current branch
   merge: (
     worktreePath: string,
     sourceBranch: string
-  ): Promise<{
-    success: boolean
-    error?: string
-    conflicts?: string[]
-  }> => ipcRenderer.invoke('git:merge', worktreePath, sourceBranch),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+      conflicts?: string[]
+    }>
+  > => ipcRenderer.invoke('git:merge', worktreePath, sourceBranch),
 
   // Abort an in-progress merge
   mergeAbort: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:mergeAbort', worktreePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:mergeAbort', worktreePath),
 
   // Check if a worktree has uncommitted changes
-  hasUncommittedChanges: (
-    worktreePath: string
-  ): Promise<boolean> => ipcRenderer.invoke('git:hasUncommittedChanges', worktreePath),
+  hasUncommittedChanges: (worktreePath: string): Promise<Envelope<boolean>> =>
+    ipcRenderer.invoke('git:hasUncommittedChanges', worktreePath),
 
   // Get branch divergence stats vs base branch
   branchDiffShortStat: (
     worktreePath: string,
     baseBranch: string
-  ): Promise<{
-    success: boolean
-    filesChanged: number
-    insertions: number
-    deletions: number
-    commitsAhead: number
-    error?: string
-  }> => ipcRenderer.invoke('git:branchDiffShortStat', worktreePath, baseBranch),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      filesChanged: number
+      insertions: number
+      deletions: number
+      commitsAhead: number
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:branchDiffShortStat', worktreePath, baseBranch),
 
   // Get raw file content from disk
   getFileContent: (
     worktreePath: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    content: string | null
-    error?: string
-  }> => ipcRenderer.invoke('git:getFileContent', { worktreePath, filePath }),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      content: string | null
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:getFileContent', { worktreePath, filePath }),
 
   // Get raw file content as base64 from disk (for binary/image files)
   getFileContentBase64: (
     worktreePath: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    data?: string
-    mimeType?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:getFileContentBase64', { worktreePath, filePath }),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      data?: string
+      mimeType?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:getFileContentBase64', { worktreePath, filePath }),
 
   // Get remote URL for a worktree
   getRemoteUrl: (
     worktreePath: string,
     remote?: string
-  ): Promise<{
-    success: boolean
-    url: string | null
-    remote: string | null
-    error?: string
-  }> => ipcRenderer.invoke('git:getRemoteUrl', { worktreePath, remote }),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      url: string | null
+      remote: string | null
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:getRemoteUrl', { worktreePath, remote }),
 
   // Get diff stat (additions/deletions per file) for all uncommitted changes
   getDiffStat: (
     worktreePath: string
-  ): Promise<{
-    success: boolean
-    files?: Array<{
-      path: string
-      additions: number
-      deletions: number
-      binary: boolean
+  ): Promise<
+    Envelope<{
+      success: boolean
+      files?: Array<{
+        path: string
+        additions: number
+        deletions: number
+        binary: boolean
+      }>
+      error?: string
     }>
-    error?: string
-  }> => ipcRenderer.invoke('git:diffStat', worktreePath),
+  > => ipcRenderer.invoke('git:diffStat', worktreePath),
 
   // Merge a PR on GitHub via gh CLI and sync the local target branch
   prMerge: (
     worktreePath: string,
     prNumber: number
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('git:prMerge', worktreePath, prNumber),
 
   // Check if a branch has been fully merged into HEAD
   isBranchMerged: (
     worktreePath: string,
     branch: string
-  ): Promise<{ success: boolean; isMerged: boolean }> =>
+  ): Promise<Envelope<{ success: boolean; isMerged: boolean }>> =>
     ipcRenderer.invoke('git:isBranchMerged', worktreePath, branch),
 
   // Delete a local branch
   deleteBranch: (
     worktreePath: string,
     branchName: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('git:deleteBranch', worktreePath, branchName),
 
   // List open pull requests from GitHub via gh CLI
   listPRs: (
     projectPath: string
-  ): Promise<{
-    success: boolean
-    prs: Array<{
-      number: number
-      title: string
-      author: string
-      headRefName: string
+  ): Promise<
+    Envelope<{
+      success: boolean
+      prs: Array<{
+        number: number
+        title: string
+        author: string
+        headRefName: string
+      }>
+      error?: string
     }>
-    error?: string
-  }> => ipcRenderer.invoke('git:listPRs', { projectPath }),
+  > => ipcRenderer.invoke('git:listPRs', { projectPath }),
 
   // Get the state of a specific PR
   getPRState: (
     projectPath: string,
     prNumber: number
-  ): Promise<{ success: boolean; state?: string; title?: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; state?: string; title?: string; error?: string }>> =>
     ipcRenderer.invoke('git:getPRState', { projectPath, prNumber }),
 
   // Fetch inline review comments for a PR
   getPRReviewComments: (
     projectPath: string,
     prNumber: number
-  ): Promise<{
-    success: boolean
-    comments?: Array<{
-      id: number
-      body: string
-      bodyHTML: string
-      path: string
-      line: number | null
-      originalLine: number | null
-      side: 'LEFT' | 'RIGHT'
-      diffHunk: string
-      user: { login: string; avatarUrl: string }
-      createdAt: string
-      updatedAt: string
-      inReplyToId: number | null
-      pullRequestReviewId: number | null
-      subjectType: 'line' | 'file'
+  ): Promise<
+    Envelope<{
+      success: boolean
+      comments?: Array<{
+        id: number
+        body: string
+        bodyHTML: string
+        path: string
+        line: number | null
+        originalLine: number | null
+        side: 'LEFT' | 'RIGHT'
+        diffHunk: string
+        user: { login: string; avatarUrl: string }
+        createdAt: string
+        updatedAt: string
+        inReplyToId: number | null
+        pullRequestReviewId: number | null
+        subjectType: 'line' | 'file'
+      }>
+      baseBranch?: string
+      error?: string
     }>
-    baseBranch?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:getPRReviewComments', { projectPath, prNumber }),
+  > => ipcRenderer.invoke('git:getPRReviewComments', { projectPath, prNumber }),
 
   // Get file content from a specific git ref (HEAD, index)
   getRefContent: (
     worktreePath: string,
     ref: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    content?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:getRefContent', worktreePath, ref, filePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      content?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:getRefContent', worktreePath, ref, filePath),
 
   // Get file content as base64 from a specific git ref (for binary/image files)
   getRefContentBase64: (
     worktreePath: string,
     ref: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    data?: string
-    mimeType?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:getRefContentBase64', worktreePath, ref, filePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      data?: string
+      mimeType?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:getRefContentBase64', worktreePath, ref, filePath),
 
   // Stage a single hunk by applying a patch to the index
   stageHunk: (
     worktreePath: string,
     patch: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:stageHunk', worktreePath, patch),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:stageHunk', worktreePath, patch),
 
   // Unstage a single hunk by reverse-applying a patch from the index
   unstageHunk: (
     worktreePath: string,
     patch: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:unstageHunk', worktreePath, patch),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:unstageHunk', worktreePath, patch),
 
   // Revert a single hunk in the working tree
   revertHunk: (
     worktreePath: string,
     patch: string
-  ): Promise<{
-    success: boolean
-    error?: string
-  }> => ipcRenderer.invoke('git:revertHunk', worktreePath, patch),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:revertHunk', worktreePath, patch),
 
   // Get list of files changed between current worktree and a branch
   getBranchDiffFiles: (
     worktreePath: string,
     branch: string
-  ): Promise<{
-    success: boolean
-    files?: Array<{
-      relativePath: string
-      status: string
-      additions: number
-      deletions: number
-      binary: boolean
+  ): Promise<
+    Envelope<{
+      success: boolean
+      files?: Array<{
+        relativePath: string
+        status: string
+        additions: number
+        deletions: number
+        binary: boolean
+      }>
+      error?: string
     }>
-    error?: string
-  }> => ipcRenderer.invoke('git:branchDiffFiles', worktreePath, branch),
+  > => ipcRenderer.invoke('git:branchDiffFiles', worktreePath, branch),
 
   // Get file content at the merge-base between a branch and HEAD
   getBranchBaseContent: (
     worktreePath: string,
     branch: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    content?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:branchBaseContent', worktreePath, branch, filePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      content?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:branchBaseContent', worktreePath, branch, filePath),
 
   // Get file content as base64 at the merge-base between a branch and HEAD (for binary files)
   getBranchBaseContentBase64: (
     worktreePath: string,
     branch: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    data?: string
-    mimeType?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:branchBaseContentBase64', worktreePath, branch, filePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      data?: string
+      mimeType?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:branchBaseContentBase64', worktreePath, branch, filePath),
 
   // Get unified diff between current worktree and a branch for a specific file
   getBranchFileDiff: (
     worktreePath: string,
     branch: string,
     filePath: string
-  ): Promise<{
-    success: boolean
-    diff?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:branchFileDiff', worktreePath, branch, filePath),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      diff?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:branchFileDiff', worktreePath, branch, filePath),
 
   // Get range diff (commit summary, diff summary, diff patch) between worktree and base branch
   getRangeDiff: (
     worktreePath: string,
     baseBranch: string
-  ): Promise<{
-    commitSummary: string
-    diffSummary: string
-    diffPatch: string
-    commitCount: number
-  }> => ipcRenderer.invoke('git:getRangeDiff', worktreePath, baseBranch),
+  ): Promise<
+    Envelope<{
+      commitSummary: string
+      diffSummary: string
+      diffPatch: string
+      commitCount: number
+    }>
+  > => ipcRenderer.invoke('git:getRangeDiff', worktreePath, baseBranch),
 
   // Check if the worktree has unpushed commits
-  needsPush: (
-    worktreePath: string
-  ): Promise<boolean> => ipcRenderer.invoke('git:needsPush', worktreePath),
+  needsPush: (worktreePath: string): Promise<Envelope<boolean>> =>
+    ipcRenderer.invoke('git:needsPush', worktreePath),
 
   // Create a pull request on GitHub
   createPR: (
@@ -1282,24 +1418,28 @@ const gitOps = {
     baseBranch: string,
     title: string,
     body: string
-  ): Promise<{
-    success: boolean
-    prNumber?: number
-    prUrl?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:createPR', worktreePath, baseBranch, title, body),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      prNumber?: number
+      prUrl?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:createPR', worktreePath, baseBranch, title, body),
 
   // Generate PR title and body using AI
   generatePRContent: (
     worktreePath: string,
     baseBranch: string,
     provider: string
-  ): Promise<{
-    success: boolean
-    title?: string
-    body?: string
-    error?: string
-  }> => ipcRenderer.invoke('git:generatePRContent', worktreePath, baseBranch, provider)
+  ): Promise<
+    Envelope<{
+      success: boolean
+      title?: string
+      body?: string
+      error?: string
+    }>
+  > => ipcRenderer.invoke('git:generatePRContent', worktreePath, baseBranch, provider)
 }
 
 const opencodeOps = {
@@ -1307,7 +1447,7 @@ const opencodeOps = {
   connect: (
     worktreePath: string,
     hiveSessionId: string
-  ): Promise<{ success: boolean; sessionId?: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; sessionId?: string; error?: string }>> =>
     ipcRenderer.invoke('opencode:connect', worktreePath, hiveSessionId),
 
   // Reconnect to existing OpenCode session
@@ -1315,11 +1455,13 @@ const opencodeOps = {
     worktreePath: string,
     opencodeSessionId: string,
     hiveSessionId: string
-  ): Promise<{
-    success: boolean
-    sessionStatus?: 'idle' | 'busy' | 'retry'
-    revertMessageID?: string | null
-  }> => ipcRenderer.invoke('opencode:reconnect', worktreePath, opencodeSessionId, hiveSessionId),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      sessionStatus?: 'idle' | 'busy' | 'retry'
+      revertMessageID?: string | null
+    }>
+  > => ipcRenderer.invoke('opencode:reconnect', worktreePath, opencodeSessionId, hiveSessionId),
 
   // Send a prompt (response streams via onStream)
   // Accepts either a string message or a MessagePart[] array for rich content (text + file attachments)
@@ -1334,7 +1476,7 @@ const opencodeOps = {
         >,
     model?: { providerID: string; modelID: string; variant?: string },
     options?: { codexFastMode?: boolean }
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<Envelope<{ success: boolean; error?: string }>> => {
     const parts =
       typeof messageOrParts === 'string'
         ? [{ type: 'text' as const, text: messageOrParts }]
@@ -1352,7 +1494,7 @@ const opencodeOps = {
   abort: (
     worktreePath: string,
     opencodeSessionId: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:abort', worktreePath, opencodeSessionId),
 
   // Steer — inject input into a running Codex turn
@@ -1360,13 +1502,15 @@ const opencodeOps = {
     worktreePath: string,
     opencodeSessionId: string,
     message: string
-  ): Promise<{
-    success: boolean
-    error?: string
-    insertedMessageId?: string
-    nextAssistantMessageId?: string
-    turnId?: string
-  }> =>
+  ): Promise<
+    Envelope<{
+      success: boolean
+      error?: string
+      insertedMessageId?: string
+      nextAssistantMessageId?: string
+      turnId?: string
+    }>
+  > =>
     ipcRenderer.invoke('opencode:steer', {
       worktreePath,
       sessionId: opencodeSessionId,
@@ -1377,24 +1521,32 @@ const opencodeOps = {
   disconnect: (
     worktreePath: string,
     opencodeSessionId: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:disconnect', worktreePath, opencodeSessionId),
 
   // Get messages from an OpenCode session
   getMessages: (
     worktreePath: string,
     opencodeSessionId: string
-  ): Promise<{ success: boolean; messages: unknown[]; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; messages: unknown[]; error?: string }>> =>
     ipcRenderer.invoke('opencode:messages', worktreePath, opencodeSessionId),
+
+  refreshFromThread: (
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<Envelope<{ success: boolean; count?: number; error?: string }>> =>
+    ipcRenderer.invoke('opencode:refresh-from-thread', worktreePath, opencodeSessionId),
 
   // List available models from all configured providers
   listModels: (opts?: {
     agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-  }): Promise<{
-    success: boolean
-    providers: Record<string, unknown>
-    error?: string
-  }> => ipcRenderer.invoke('opencode:models', opts),
+  }): Promise<
+    Envelope<{
+      success: boolean
+      providers: Record<string, unknown>
+      error?: string
+    }>
+  > => ipcRenderer.invoke('opencode:models', opts),
 
   // Set the selected model for prompts
   setModel: (
@@ -1404,7 +1556,7 @@ const opencodeOps = {
       variant?: string
       agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
     } | null
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:setModel', model),
 
   // Get model info (name, context limit)
@@ -1412,25 +1564,27 @@ const opencodeOps = {
     worktreePath: string,
     modelId: string,
     agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-  ): Promise<{
-    success: boolean
-    model?: { id: string; name: string; limit: { context: number } }
-    error?: string
-  }> => ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId, agentSdk }),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      model?: { id: string; name: string; limit: { context: number } }
+      error?: string
+    }>
+  > => ipcRenderer.invoke('opencode:modelInfo', { worktreePath, modelId, agentSdk }),
 
   // Reply to a pending question from the AI
   questionReply: (
     requestId: string,
     answers: string[][],
     worktreePath?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:question:reply', { requestId, answers, worktreePath }),
 
   // Reject/dismiss a pending question from the AI
   questionReject: (
     requestId: string,
     worktreePath?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:question:reject', { requestId, worktreePath }),
 
   // Approve a pending plan (ExitPlanMode) — unblocks the SDK to implement
@@ -1438,7 +1592,7 @@ const opencodeOps = {
     worktreePath: string,
     hiveSessionId: string,
     requestId?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:plan:approve', { worktreePath, hiveSessionId, requestId }),
 
   // Reject a pending plan with user feedback — Claude will revise
@@ -1447,7 +1601,7 @@ const opencodeOps = {
     hiveSessionId: string,
     feedback: string,
     requestId?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:plan:reject', {
       worktreePath,
       hiveSessionId,
@@ -1461,13 +1615,13 @@ const opencodeOps = {
     reply: 'once' | 'always' | 'reject',
     worktreePath?: string,
     message?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:permission:reply', { requestId, reply, worktreePath, message }),
 
   // List all pending permission requests
   permissionList: (
     worktreePath?: string
-  ): Promise<{ success: boolean; permissions: unknown[]; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; permissions: unknown[]; error?: string }>> =>
     ipcRenderer.invoke('opencode:permission:list', { worktreePath }),
 
   // Reply to a pending command approval request (for command filter system)
@@ -1478,7 +1632,7 @@ const opencodeOps = {
     pattern?: string,
     worktreePath?: string,
     patterns?: string[]
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:commandApprovalReply', {
       requestId,
       approved,
@@ -1492,30 +1646,34 @@ const opencodeOps = {
   sessionInfo: (
     worktreePath: string,
     opencodeSessionId: string
-  ): Promise<{
-    success: boolean
-    revertMessageID?: string | null
-    revertDiff?: string | null
-    error?: string
-  }> => ipcRenderer.invoke('opencode:sessionInfo', { worktreePath, sessionId: opencodeSessionId }),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      revertMessageID?: string | null
+      revertDiff?: string | null
+      error?: string
+    }>
+  > => ipcRenderer.invoke('opencode:sessionInfo', { worktreePath, sessionId: opencodeSessionId }),
 
   // Undo the last assistant turn/message range
   undo: (
     worktreePath: string,
     opencodeSessionId: string
-  ): Promise<{
-    success: boolean
-    revertMessageID?: string
-    restoredPrompt?: string
-    revertDiff?: string | null
-    error?: string
-  }> => ipcRenderer.invoke('opencode:undo', { worktreePath, sessionId: opencodeSessionId }),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      revertMessageID?: string
+      restoredPrompt?: string
+      revertDiff?: string | null
+      error?: string
+    }>
+  > => ipcRenderer.invoke('opencode:undo', { worktreePath, sessionId: opencodeSessionId }),
 
   // Redo the previously undone message range
   redo: (
     worktreePath: string,
     opencodeSessionId: string
-  ): Promise<{ success: boolean; revertMessageID?: string | null; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; revertMessageID?: string | null; error?: string }>> =>
     ipcRenderer.invoke('opencode:redo', { worktreePath, sessionId: opencodeSessionId }),
 
   // Send a slash command to a session via the SDK command endpoint
@@ -1525,7 +1683,7 @@ const opencodeOps = {
     command: string,
     args: string,
     model?: { providerID: string; modelID: string; variant?: string }
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:command', {
       worktreePath,
       sessionId: opencodeSessionId,
@@ -1538,54 +1696,58 @@ const opencodeOps = {
   commands: (
     worktreePath: string,
     sessionId?: string
-  ): Promise<{
-    success: boolean
-    commands: Array<{
-      name: string
-      description?: string
-      template: string
-      agent?: string
-      model?: string
-      source?: string
-      subtask?: boolean
-      hints?: string[]
+  ): Promise<
+    Envelope<{
+      success: boolean
+      commands: Array<{
+        name: string
+        description?: string
+        template: string
+        agent?: string
+        model?: string
+        source?: string
+        subtask?: boolean
+        hints?: string[]
+      }>
+      error?: string
     }>
-    error?: string
-  }> => ipcRenderer.invoke('opencode:commands', { worktreePath, sessionId }),
+  > => ipcRenderer.invoke('opencode:commands', { worktreePath, sessionId }),
 
   // Rename a session's title via the OpenCode PATCH API
   renameSession: (
     opencodeSessionId: string,
     title: string,
     worktreePath?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:renameSession', { opencodeSessionId, title, worktreePath }),
 
   // Get SDK capabilities for the current session
   capabilities: (
     opencodeSessionId?: string
-  ): Promise<{
-    success: boolean
-    capabilities?: {
-      supportsUndo: boolean
-      supportsRedo: boolean
-      supportsCommands: boolean
-      supportsPermissionRequests: boolean
-      supportsQuestionPrompts: boolean
-      supportsModelSelection: boolean
-      supportsReconnect: boolean
-      supportsPartialStreaming: boolean
-      supportsSteer: boolean
-    }
-    error?: string
-  }> => ipcRenderer.invoke('opencode:capabilities', { sessionId: opencodeSessionId }),
+  ): Promise<
+    Envelope<{
+      success: boolean
+      capabilities?: {
+        supportsUndo: boolean
+        supportsRedo: boolean
+        supportsCommands: boolean
+        supportsPermissionRequests: boolean
+        supportsQuestionPrompts: boolean
+        supportsModelSelection: boolean
+        supportsReconnect: boolean
+        supportsPartialStreaming: boolean
+        supportsSteer: boolean
+      }
+      error?: string
+    }>
+  > => ipcRenderer.invoke('opencode:capabilities', { sessionId: opencodeSessionId }),
 
   // Fork an existing session at an optional message boundary
   fork: (
     worktreePath: string,
     opencodeSessionId: string,
     messageId?: string
-  ): Promise<{ success: boolean; sessionId?: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; sessionId?: string; error?: string }>> =>
     ipcRenderer.invoke('opencode:fork', {
       worktreePath,
       sessionId: opencodeSessionId,
@@ -1605,27 +1767,29 @@ const opencodeOps = {
 }
 
 const telegramOps = {
-  getConfig: (): Promise<TelegramConfig | null> => ipcRenderer.invoke('telegram:getConfig'),
-  setConfig: (config: TelegramConfig | null): Promise<{ ok: boolean; error?: string }> =>
+  getConfig: (): Promise<Envelope<TelegramConfig | null>> =>
+    ipcRenderer.invoke('telegram:getConfig'),
+  setConfig: (config: TelegramConfig | null): Promise<Envelope<{ ok: boolean; error?: string }>> =>
     ipcRenderer.invoke('telegram:setConfig', config),
   verifyToken: (
     botToken: string
-  ): Promise<{ ok: boolean; botUsername?: string; error?: string }> =>
+  ): Promise<Envelope<{ ok: boolean; botUsername?: string; error?: string }>> =>
     ipcRenderer.invoke('telegram:verifyToken', botToken),
-  discoverChats: (config?: TelegramConfig | null): Promise<TelegramDiscoveredChat[]> =>
+  discoverChats: (config?: TelegramConfig | null): Promise<Envelope<TelegramDiscoveredChat[]>> =>
     ipcRenderer.invoke('telegram:discoverChats', config),
-  sendTestMessage: (): Promise<{ ok: boolean; error?: string }> =>
+  sendTestMessage: (): Promise<Envelope<{ ok: boolean; error?: string }>> =>
     ipcRenderer.invoke('telegram:sendTestMessage'),
   startForwarding: (params: {
     sessionId: string
     worktreeId: string | null
     connectionId: string | null
     mode: TelegramMode
-  }): Promise<{ ok: boolean; status: TelegramForwardingStatus; error?: string }> =>
+  }): Promise<Envelope<{ ok: boolean; status: TelegramForwardingStatus; error?: string }>> =>
     ipcRenderer.invoke('telegram:startForwarding', params),
-  stopForwarding: (): Promise<{ status: TelegramForwardingStatus }> =>
+  stopForwarding: (): Promise<Envelope<{ status: TelegramForwardingStatus }>> =>
     ipcRenderer.invoke('telegram:stopForwarding'),
-  getStatus: (): Promise<TelegramForwardingStatus> => ipcRenderer.invoke('telegram:getStatus'),
+  getStatus: (): Promise<Envelope<TelegramForwardingStatus>> =>
+    ipcRenderer.invoke('telegram:getStatus'),
   onStatusChanged: (callback: (status: TelegramForwardingStatus) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, status: TelegramForwardingStatus): void => {
       callback(status)
@@ -1661,10 +1825,11 @@ const telegramOps = {
 
 // Script operations API
 interface ScriptOutputEvent {
-  type: 'command-start' | 'output' | 'error' | 'done'
+  type: 'command-start' | 'output' | 'error' | 'done' | 'long-running'
   command?: string
   data?: string
   exitCode?: number
+  elapsed?: number
 }
 
 const scriptOps = {
@@ -1673,7 +1838,7 @@ const scriptOps = {
     commands: string[],
     cwd: string,
     worktreeId: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('script:runSetup', { commands, cwd, worktreeId }),
 
   // Run project script (persistent long-running process)
@@ -1681,18 +1846,22 @@ const scriptOps = {
     commands: string[],
     cwd: string,
     worktreeId: string
-  ): Promise<{ success: boolean; pid?: number; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; pid?: number; error?: string }>> =>
     ipcRenderer.invoke('script:runProject', { commands, cwd, worktreeId }),
 
   // Kill a running project script
-  kill: (worktreeId: string): Promise<{ success: boolean; error?: string }> =>
+  kill: (worktreeId: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('script:kill', { worktreeId }),
+
+  // Kill a foreign PID suggested by run output guidance
+  killPid: (pid: number): Promise<Envelope<{ killed: boolean; reason?: string }>> =>
+    invokeEnvelope('script:killPid', { pid }),
 
   // Run archive script (non-interactive, captures output)
   runArchive: (
     commands: string[],
     cwd: string
-  ): Promise<{ success: boolean; output: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; output: string; error?: string }>> =>
     ipcRenderer.invoke('script:runArchive', { commands, cwd }),
 
   // Subscribe to script output events for a channel
@@ -1712,19 +1881,19 @@ const scriptOps = {
   },
 
   // Get assigned port for a worktree path
-  getPort: (cwd: string): Promise<{ port: number | null }> =>
+  getPort: (cwd: string): Promise<Envelope<{ port: number | null }>> =>
     ipcRenderer.invoke('port:get', { cwd })
 }
 
 // File operations API
 const fileOps = {
-  readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
-    ipcRenderer.invoke('file:read', filePath),
-  writeFile: (filePath: string, content: string): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('file:write', filePath, content),
-  readImageAsBase64: (
+  readFile: (
     filePath: string
-  ): Promise<{ success: boolean; data?: string; mimeType?: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; content?: string; error?: string }>> =>
+    ipcRenderer.invoke('file:read', filePath),
+  writeFile: (filePath: string, content: string): Promise<Envelope<null>> =>
+    ipcRenderer.invoke('file:write', filePath, content),
+  readImageAsBase64: (filePath: string): Promise<Envelope<{ data: string; mimeType?: string }>> =>
     ipcRenderer.invoke('file:readImageAsBase64', filePath),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file)
 }
@@ -1734,11 +1903,9 @@ const attachmentOps = {
   saveImage: (
     buffer: ArrayBuffer,
     originalName: string
-  ): Promise<{ success: boolean; filePath?: string; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; filePath?: string; error?: string }>> =>
     ipcRenderer.invoke('attachment:save', Buffer.from(buffer), originalName),
-  deleteImage: (
-    filePath: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  deleteImage: (filePath: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('attachment:delete', filePath)
 }
 
@@ -1752,17 +1919,19 @@ export interface DetectedApp {
 
 const settingsOps = {
   // Detect installed editors
-  detectEditors: (): Promise<DetectedApp[]> => ipcRenderer.invoke('settings:detectEditors'),
+  detectEditors: (): Promise<Envelope<DetectedApp[]>> =>
+    ipcRenderer.invoke('settings:detectEditors'),
 
   // Detect installed terminals
-  detectTerminals: (): Promise<DetectedApp[]> => ipcRenderer.invoke('settings:detectTerminals'),
+  detectTerminals: (): Promise<Envelope<DetectedApp[]>> =>
+    ipcRenderer.invoke('settings:detectTerminals'),
 
   // Open a path with a specific editor
   openWithEditor: (
     worktreePath: string,
     editorId: string,
     customCommand?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('settings:openWithEditor', worktreePath, editorId, customCommand),
 
   // Open a path with a specific terminal
@@ -1770,7 +1939,7 @@ const settingsOps = {
     worktreePath: string,
     terminalId: string,
     customCommand?: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('settings:openWithTerminal', worktreePath, terminalId, customCommand),
 
   // Load custom commands from file
@@ -1780,6 +1949,8 @@ const settingsOps = {
   // Reload custom commands from file
   reloadCustomCommands: (): Promise<{ success: boolean; count?: number; mtime?: number; error?: string }> =>
     ipcRenderer.invoke('reload-custom-commands'),
+
+  getAll: (): Promise<Envelope<Record<string, string>>> => ipcRenderer.invoke('settings:getAll'),
 
   // Listen for settings updates from main process
   onSettingsUpdated: (callback: (data: unknown) => void): (() => void) => {
@@ -1806,16 +1977,16 @@ const terminalOps = {
     terminalId: string,
     cwd: string,
     shell?: string
-  ): Promise<{ success: boolean; cols?: number; rows?: number; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>> =>
     ipcRenderer.invoke('terminal:create', terminalId, cwd, shell),
 
   write: (terminalId: string, data: string): void =>
     ipcRenderer.send('terminal:write', terminalId, data),
 
-  resize: (terminalId: string, cols: number, rows: number): Promise<void> =>
+  resize: (terminalId: string, cols: number, rows: number): Promise<Envelope<void>> =>
     ipcRenderer.invoke('terminal:resize', terminalId, cols, rows),
 
-  destroy: (terminalId: string): Promise<void> =>
+  destroy: (terminalId: string): Promise<Envelope<void>> =>
     ipcRenderer.invoke('terminal:destroy', terminalId),
 
   onData: (terminalId: string, callback: (data: string) => void): (() => void) => {
@@ -1840,44 +2011,48 @@ const terminalOps = {
     }
   },
 
-  getConfig: (): Promise<{
-    fontFamily?: string
-    fontSize?: number
-    background?: string
-    foreground?: string
-    cursorStyle?: 'block' | 'bar' | 'underline'
-    cursorColor?: string
-    shell?: string
-    scrollbackLimit?: number
-    palette?: Record<number, string>
-    selectionBackground?: string
-    selectionForeground?: string
-  }> => ipcRenderer.invoke('terminal:getConfig'),
+  getConfig: (): Promise<
+    Envelope<{
+      fontFamily?: string
+      fontSize?: number
+      background?: string
+      foreground?: string
+      cursorStyle?: 'block' | 'bar' | 'underline'
+      cursorColor?: string
+      shell?: string
+      scrollbackLimit?: number
+      palette?: Record<number, string>
+      selectionBackground?: string
+      selectionForeground?: string
+    }>
+  > => ipcRenderer.invoke('terminal:getConfig'),
 
   // --- Native Ghostty backend methods ---
 
-  ghosttyInit: (): Promise<{ success: boolean; version?: string; error?: string }> =>
+  ghosttyInit: (): Promise<Envelope<{ success: boolean; version?: string; error?: string }>> =>
     ipcRenderer.invoke('terminal:ghostty:init'),
 
-  ghosttyIsAvailable: (): Promise<{
-    available: boolean
-    initialized: boolean
-    platform: string
-  }> => ipcRenderer.invoke('terminal:ghostty:isAvailable'),
+  ghosttyIsAvailable: (): Promise<
+    Envelope<{
+      available: boolean
+      initialized: boolean
+      platform: string
+    }>
+  > => ipcRenderer.invoke('terminal:ghostty:isAvailable'),
 
   ghosttyCreateSurface: (
     terminalId: string,
     rect: { x: number; y: number; w: number; h: number },
     opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
-  ): Promise<{ success: boolean; surfaceId?: number; error?: string }> =>
+  ): Promise<Envelope<{ success: boolean; surfaceId?: number; error?: string }>> =>
     ipcRenderer.invoke('terminal:ghostty:createSurface', terminalId, rect, opts),
 
   ghosttySetFrame: (
     terminalId: string,
     rect: { x: number; y: number; w: number; h: number }
-  ): Promise<void> => ipcRenderer.invoke('terminal:ghostty:setFrame', terminalId, rect),
+  ): Promise<Envelope<void>> => ipcRenderer.invoke('terminal:ghostty:setFrame', terminalId, rect),
 
-  ghosttySetSize: (terminalId: string, width: number, height: number): Promise<void> =>
+  ghosttySetSize: (terminalId: string, width: number, height: number): Promise<Envelope<void>> =>
     ipcRenderer.invoke('terminal:ghostty:setSize', terminalId, width, height),
 
   ghosttyKeyEvent: (
@@ -1891,52 +2066,66 @@ const terminalOps = {
       unshiftedCodepoint?: number
       composing?: boolean
     }
-  ): Promise<boolean> => ipcRenderer.invoke('terminal:ghostty:keyEvent', terminalId, event),
+  ): Promise<Envelope<boolean>> =>
+    ipcRenderer.invoke('terminal:ghostty:keyEvent', terminalId, event),
 
   ghosttyMouseButton: (
     terminalId: string,
     state: number,
     button: number,
     mods: number
-  ): Promise<void> =>
+  ): Promise<Envelope<void>> =>
     ipcRenderer.invoke('terminal:ghostty:mouseButton', terminalId, state, button, mods),
 
-  ghosttyMousePos: (terminalId: string, x: number, y: number, mods: number): Promise<void> =>
+  ghosttyMousePos: (
+    terminalId: string,
+    x: number,
+    y: number,
+    mods: number
+  ): Promise<Envelope<void>> =>
     ipcRenderer.invoke('terminal:ghostty:mousePos', terminalId, x, y, mods),
 
-  ghosttyMouseScroll: (terminalId: string, dx: number, dy: number, mods: number): Promise<void> =>
+  ghosttyMouseScroll: (
+    terminalId: string,
+    dx: number,
+    dy: number,
+    mods: number
+  ): Promise<Envelope<void>> =>
     ipcRenderer.invoke('terminal:ghostty:mouseScroll', terminalId, dx, dy, mods),
 
-  ghosttySetFocus: (terminalId: string, focused: boolean): Promise<void> =>
+  ghosttySetFocus: (terminalId: string, focused: boolean): Promise<Envelope<void>> =>
     ipcRenderer.invoke('terminal:ghostty:setFocus', terminalId, focused),
 
-  ghosttyPasteText: (terminalId: string, text: string): Promise<void> =>
+  ghosttyPasteText: (terminalId: string, text: string): Promise<Envelope<void>> =>
     ipcRenderer.invoke('terminal:ghostty:pasteText', terminalId, text),
 
   ghosttyFocusDiagnostics: (): Promise<
-    Array<{
-      surfaceId: number
-      subviewCount: number
-      firstResponderClass: string
-      isHostView: boolean
-      isDescendant: boolean
-      hasWindow: boolean
-    }>
+    Envelope<
+      Array<{
+        surfaceId: number
+        subviewCount: number
+        firstResponderClass: string
+        isHostView: boolean
+        isDescendant: boolean
+        hasWindow: boolean
+      }>
+    >
   > => ipcRenderer.invoke('terminal:ghostty:focusDiagnostics'),
 
-  ghosttyDestroySurface: (terminalId: string): Promise<void> =>
+  ghosttyDestroySurface: (terminalId: string): Promise<Envelope<void>> =>
     ipcRenderer.invoke('terminal:ghostty:destroySurface', terminalId),
 
-  ghosttyShutdown: (): Promise<void> => ipcRenderer.invoke('terminal:ghostty:shutdown')
+  ghosttyShutdown: (): Promise<Envelope<void>> => ipcRenderer.invoke('terminal:ghostty:shutdown')
 }
 
 const updaterOps = {
-  checkForUpdate: (options?: { manual?: boolean }): Promise<void> =>
+  checkForUpdate: (options?: { manual?: boolean }): Promise<Envelope<void>> =>
     ipcRenderer.invoke('updater:check', options),
-  downloadUpdate: (): Promise<void> => ipcRenderer.invoke('updater:download'),
-  installUpdate: (): Promise<void> => ipcRenderer.invoke('updater:install'),
-  setChannel: (channel: string): Promise<void> => ipcRenderer.invoke('updater:setChannel', channel),
-  getVersion: (): Promise<string> => ipcRenderer.invoke('updater:getVersion'),
+  downloadUpdate: (): Promise<Envelope<void>> => ipcRenderer.invoke('updater:download'),
+  installUpdate: (): Promise<Envelope<void>> => ipcRenderer.invoke('updater:install'),
+  setChannel: (channel: string): Promise<Envelope<void>> =>
+    ipcRenderer.invoke('updater:setChannel', channel),
+  getVersion: (): Promise<Envelope<string>> => ipcRenderer.invoke('updater:getVersion'),
 
   onChecking: (callback: () => void): (() => void) => {
     const handler = (): void => {
@@ -2041,35 +2230,81 @@ const updaterOps = {
 
 // Connection operations API
 const connectionOps = {
-  create: (worktreeIds: string[]) => ipcRenderer.invoke('connection:create', { worktreeIds }),
-  delete: (connectionId: string) => ipcRenderer.invoke('connection:delete', { connectionId }),
+  create: (
+    worktreeIds: string[]
+  ): Promise<Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>> =>
+    ipcRenderer.invoke('connection:create', { worktreeIds }),
+  delete: (connectionId: string): Promise<Envelope<{ success: boolean; error?: string }>> =>
+    ipcRenderer.invoke('connection:delete', { connectionId }),
   addMember: (connectionId: string, worktreeId: string) =>
-    ipcRenderer.invoke('connection:addMember', { connectionId, worktreeId }),
+    ipcRenderer.invoke('connection:addMember', { connectionId, worktreeId }) as Promise<
+      Envelope<{ success: boolean; member?: ConnectionWithMembers['members'][0]; error?: string }>
+    >,
   removeMember: (connectionId: string, worktreeId: string) =>
-    ipcRenderer.invoke('connection:removeMember', { connectionId, worktreeId }),
-  getAll: () => ipcRenderer.invoke('connection:getAll'),
-  get: (connectionId: string) => ipcRenderer.invoke('connection:get', { connectionId }),
+    ipcRenderer.invoke('connection:removeMember', { connectionId, worktreeId }) as Promise<
+      Envelope<{ success: boolean; connectionDeleted?: boolean; error?: string }>
+    >,
+  getAll: (): Promise<
+    Envelope<{ success: boolean; connections?: ConnectionWithMembers[]; error?: string }>
+  > => ipcRenderer.invoke('connection:getAll'),
+  get: (
+    connectionId: string
+  ): Promise<Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>> =>
+    ipcRenderer.invoke('connection:get', { connectionId }),
   openInTerminal: (connectionPath: string) =>
-    ipcRenderer.invoke('connection:openInTerminal', { connectionPath }),
+    ipcRenderer.invoke('connection:openInTerminal', { connectionPath }) as Promise<
+      Envelope<{ success: boolean; error?: string }>
+    >,
   openInEditor: (connectionPath: string) =>
-    ipcRenderer.invoke('connection:openInEditor', { connectionPath }),
+    ipcRenderer.invoke('connection:openInEditor', { connectionPath }) as Promise<
+      Envelope<{ success: boolean; error?: string }>
+    >,
   removeWorktreeFromAll: (worktreeId: string) =>
-    ipcRenderer.invoke('connection:removeWorktreeFromAll', { worktreeId }),
+    ipcRenderer.invoke('connection:removeWorktreeFromAll', { worktreeId }) as Promise<
+      Envelope<{ success: boolean; error?: string }>
+    >,
   rename: (connectionId: string, customName: string | null) =>
-    ipcRenderer.invoke('connection:rename', { connectionId, customName }),
+    ipcRenderer.invoke('connection:rename', { connectionId, customName }) as Promise<
+      Envelope<{ success: boolean; connection?: ConnectionWithMembers; error?: string }>
+    >,
   setPinned: (connectionId: string, pinned: boolean) =>
-    ipcRenderer.invoke('connection:setPinned', { connectionId, pinned }),
-  getPinned: () => ipcRenderer.invoke('connection:getPinned')
+    ipcRenderer.invoke('connection:setPinned', { connectionId, pinned }) as Promise<
+      Envelope<{ success: boolean; error?: string }>
+    >,
+  getPinned: (): Promise<Envelope<ConnectionWithMembers[]>> =>
+    ipcRenderer.invoke('connection:getPinned')
 }
 
 const usageOps = {
-  fetch: () => ipcRenderer.invoke('usage:fetch'),
-  fetchOpenai: () => ipcRenderer.invoke('usage:fetchOpenai')
+  fetch: () =>
+    ipcRenderer.invoke('usage:fetch') as Promise<
+      Envelope<import('../shared/types/usage').UsageResult>
+    >,
+  fetchOpenai: () =>
+    ipcRenderer.invoke('usage:fetchOpenai') as Promise<
+      Envelope<import('../shared/types/usage').OpenAIUsageResult>
+    >,
+  fetchForAccount: (accountId: string) =>
+    ipcRenderer.invoke('usage:fetchForAccount', accountId) as Promise<
+      Envelope<import('../shared/types/usage').FetchForAccountResult>
+    >,
+  refreshAllForProvider: (provider: import('../shared/types/usage').UsageProvider) =>
+    ipcRenderer.invoke('usage:refreshAllForProvider', provider) as Promise<
+      Envelope<import('../shared/types/usage').RefreshAllResultItem[]>
+    >
 }
 
 const accountOps = {
-  getClaudeEmail: (): Promise<string | null> => ipcRenderer.invoke('account:getClaudeEmail'),
-  getOpenAIEmail: (): Promise<string | null> => ipcRenderer.invoke('account:getOpenAIEmail')
+  getClaudeEmail: (): Promise<Envelope<string | null>> =>
+    ipcRenderer.invoke('account:getClaudeEmail'),
+  getOpenAIEmail: (): Promise<Envelope<string | null>> =>
+    ipcRenderer.invoke('account:getOpenAIEmail'),
+  listSaved: (provider?: import('../shared/types/usage').UsageProvider) =>
+    ipcRenderer.invoke('account:listSaved', provider) as Promise<
+      Envelope<import('../shared/types/usage').SavedAccountDTO[]>
+    >,
+  removeSaved: (accountId: string): Promise<Envelope<boolean>> =>
+    ipcRenderer.invoke('account:removeSaved', accountId)
 }
 
 const perfDiagnosticsOps = {
@@ -2092,6 +2327,7 @@ const analyticsOps = {
 const kanban = {
   ticket: {
     create: (data: {
+      id?: string
       project_id: string
       title: string
       description?: string | null
@@ -2100,9 +2336,15 @@ const kanban = {
       sort_order?: number
       current_session_id?: string | null
       worktree_id?: string | null
-      mode?: 'build' | 'plan' | null
+      mode?: 'build' | 'plan' | 'super-plan' | null
       plan_ready?: boolean
-    }) => ipcRenderer.invoke('kanban:ticket:create', data),
+      external_provider?: string | null
+      external_id?: string | null
+      external_url?: string | null
+      github_pr_number?: number | null
+      github_pr_url?: string | null
+      mark?: 'common' | 'rare' | 'epic' | 'legendary' | null
+    }) => invokeEnvelope('kanban:ticket:create', data),
     createBatch: (data: {
       drafts: Array<{
         draft_key: string
@@ -2124,10 +2366,10 @@ const kanban = {
         mark?: string | null
         depends_on?: string[]
       }>
-    }) => ipcRenderer.invoke('kanban:ticket:createBatch', data),
-    get: (id: string) => ipcRenderer.invoke('kanban:ticket:get', id),
+    }) => invokeEnvelope('kanban:ticket:createBatch', data),
+    get: (id: string) => invokeEnvelope('kanban:ticket:get', id),
     getByProject: (projectId: string, includeArchived?: boolean) =>
-      ipcRenderer.invoke('kanban:ticket:getByProject', projectId, includeArchived),
+      invokeEnvelope('kanban:ticket:getByProject', projectId, includeArchived),
     update: (
       id: string,
       data: {
@@ -2138,137 +2380,181 @@ const kanban = {
         sort_order?: number
         current_session_id?: string | null
         worktree_id?: string | null
-        mode?: 'build' | 'plan' | null
+        mode?: 'build' | 'plan' | 'super-plan' | null
         plan_ready?: boolean
-        mark?: string | null
+        github_pr_number?: number | null
+        github_pr_url?: string | null
+        mark?: 'common' | 'rare' | 'epic' | 'legendary' | null
+        pending_launch_config?: string | null
+        goal_mode?: boolean
+        goal_success_criteria?: string | null
         note?: string | null
       }
-    ) => ipcRenderer.invoke('kanban:ticket:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('kanban:ticket:delete', id),
-    archive: (id: string) => ipcRenderer.invoke('kanban:ticket:archive', id),
-    archiveAllDone: (projectId: string) => ipcRenderer.invoke('kanban:ticket:archiveAllDone', projectId),
-    unarchive: (id: string) => ipcRenderer.invoke('kanban:ticket:unarchive', id),
+    ) => invokeEnvelope('kanban:ticket:update', id, data),
+    delete: (id: string) => invokeEnvelope('kanban:ticket:delete', id),
+    archive: (id: string) => invokeEnvelope('kanban:ticket:archive', id),
+    archiveAllDone: (projectId: string) =>
+      invokeEnvelope('kanban:ticket:archiveAllDone', projectId),
+    unarchive: (id: string) => invokeEnvelope('kanban:ticket:unarchive', id),
     move: (id: string, column: 'todo' | 'in_progress' | 'review' | 'done', sortOrder: number) =>
-      ipcRenderer.invoke('kanban:ticket:move', id, column, sortOrder),
+      invokeEnvelope('kanban:ticket:move', id, column, sortOrder),
     reorder: (id: string, sortOrder: number) =>
-      ipcRenderer.invoke('kanban:ticket:reorder', id, sortOrder),
-    getBySession: (sessionId: string) =>
-      ipcRenderer.invoke('kanban:ticket:getBySession', sessionId),
+      invokeEnvelope('kanban:ticket:reorder', id, sortOrder),
+    getBySession: (sessionId: string) => invokeEnvelope('kanban:ticket:getBySession', sessionId),
     addTokens: (id: string, tokens: number) =>
-      ipcRenderer.invoke('kanban:ticket:addTokens', id, tokens),
+      invokeEnvelope('kanban:ticket:addTokens', id, tokens),
     syncPR: (worktreeId: string, prNumber: number, prUrl: string) =>
-      ipcRenderer.invoke('kanban:ticket:syncPR', worktreeId, prNumber, prUrl),
-    clearPR: (worktreeId: string) =>
-      ipcRenderer.invoke('kanban:ticket:clearPR', worktreeId),
+      invokeEnvelope('kanban:ticket:syncPR', worktreeId, prNumber, prUrl),
+    clearPR: (worktreeId: string) => invokeEnvelope('kanban:ticket:clearPR', worktreeId),
     attachPR: (ticketId: string, projectId: string, prNumber: number, prUrl: string) =>
-      ipcRenderer.invoke('kanban:ticket:attachPR', ticketId, projectId, prNumber, prUrl),
+      invokeEnvelope('kanban:ticket:attachPR', ticketId, projectId, prNumber, prUrl),
     detachPR: (ticketId: string, projectId: string) =>
-      ipcRenderer.invoke('kanban:ticket:detachPR', ticketId, projectId),
+      invokeEnvelope('kanban:ticket:detachPR', ticketId, projectId),
     detachWorktree: (worktreeId: string) =>
-      ipcRenderer.invoke('kanban:ticket:detachWorktree', worktreeId),
+      invokeEnvelope('kanban:ticket:detachWorktree', worktreeId)
   },
   simpleMode: {
     toggle: (projectId: string, enabled: boolean) =>
-      ipcRenderer.invoke('kanban:simpleMode:toggle', projectId, enabled)
+      invokeEnvelope('kanban:simpleMode:toggle', projectId, enabled)
   },
   dependency: {
-    add: (dependentId: string, blockerId: string): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('kanban:dependency:add', dependentId, blockerId),
-    remove: (dependentId: string, blockerId: string): Promise<boolean> =>
-      ipcRenderer.invoke('kanban:dependency:remove', dependentId, blockerId),
-    getBlockers: (ticketId: string) =>
-      ipcRenderer.invoke('kanban:dependency:getBlockers', ticketId),
+    add: (
+      dependentId: string,
+      blockerId: string
+    ): Promise<Envelope<{ success: boolean; error?: string }>> =>
+      invokeEnvelope<{ success: boolean; error?: string }>(
+        'kanban:dependency:add',
+        dependentId,
+        blockerId
+      ),
+    remove: (dependentId: string, blockerId: string): Promise<Envelope<boolean>> =>
+      invokeEnvelope<boolean>('kanban:dependency:remove', dependentId, blockerId),
+    getBlockers: (ticketId: string) => invokeEnvelope('kanban:dependency:getBlockers', ticketId),
     getDependents: (ticketId: string) =>
-      ipcRenderer.invoke('kanban:dependency:getDependents', ticketId),
+      invokeEnvelope('kanban:dependency:getDependents', ticketId),
     getForProject: (projectId: string) =>
-      ipcRenderer.invoke('kanban:dependency:getForProject', projectId),
-    removeAll: (ticketId: string): Promise<number> =>
-      ipcRenderer.invoke('kanban:dependency:removeAll', ticketId),
+      invokeEnvelope('kanban:dependency:getForProject', projectId),
+    removeAll: (ticketId: string): Promise<Envelope<number>> =>
+      invokeEnvelope<number>('kanban:dependency:removeAll', ticketId)
   },
   board: {
-    export: (projectId: string, projectName: string): Promise<{ success: boolean; ticketCount: number; path?: string }> =>
-      ipcRenderer.invoke('kanban:board:export', projectId, projectName),
-    openImportFile: (): Promise<{
-      tickets: Array<{
-        id: string
-        title: string
-        description?: string | null
-        attachments?: unknown[]
-        column?: string
-      }>
-      dependencies?: Array<{
-        dependentId: string
-        blockerId: string
-      }>
-      projectName?: string
-    } | null> => ipcRenderer.invoke('kanban:board:openImportFile'),
+    export: (
+      projectId: string,
+      projectName: string
+    ): Promise<
+      Envelope<{ success: boolean; ticketCount: number; path?: string; error?: string }>
+    > =>
+      invokeEnvelope<{ success: boolean; ticketCount: number; path?: string; error?: string }>(
+        'kanban:board:export',
+        projectId,
+        projectName
+      ),
+    openImportFile: (): Promise<
+      Envelope<{
+        tickets: Array<{
+          id: string
+          title: string
+          description?: string | null
+          attachments?: unknown[] | null
+          column?: string
+        }>
+        dependencies?: Array<{
+          dependentId: string
+          blockerId: string
+        }>
+        projectName?: string
+      } | null>
+    > => invokeEnvelope('kanban:board:openImportFile'),
     importTickets: (
       projectId: string,
       tickets: Array<{
         id: string
         title: string
         description?: string | null
-        attachments?: unknown[]
+        attachments?: unknown[] | null
         column?: string
       }>,
       dependencies?: Array<{
         dependentId: string
         blockerId: string
       }>
-    ): Promise<{ created: number; updated: number; dependencyCount: number; ignoredDependencyCount: number }> =>
-      ipcRenderer.invoke('kanban:board:importTickets', projectId, tickets, dependencies)
+    ): Promise<
+      Envelope<{
+        created: number
+        updated: number
+        dependencyCount: number
+        ignoredDependencyCount: number
+      }>
+    > => invokeEnvelope('kanban:board:importTickets', projectId, tickets, dependencies)
   }
 }
 
 const ticketImport = {
-  listProviders: (): Promise<Array<{ id: string; name: string; icon: string }>> =>
+  listProviders: (): Promise<Envelope<Array<{ id: string; name: string; icon: string }>>> =>
     ipcRenderer.invoke('ticketImport:listProviders'),
   getSettingsSchema: (
     providerId: string
-  ): Promise<Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>> =>
-    ipcRenderer.invoke('ticketImport:getSettingsSchema', providerId),
+  ): Promise<
+    Envelope<
+      Array<{ key: string; label: string; type: string; required: boolean; placeholder?: string }>
+    >
+  > => ipcRenderer.invoke('ticketImport:getSettingsSchema', providerId),
   authenticate: (
     providerId: string,
     settings: Record<string, string>
-  ): Promise<{ success: boolean; error: string | null }> =>
+  ): Promise<Envelope<{ success: boolean; error: string | null }>> =>
     ipcRenderer.invoke('ticketImport:authenticate', providerId, settings),
   detectRepo: (
     providerId: string,
     projectPath: string
-  ): Promise<{ repo: string | null }> =>
+  ): Promise<Envelope<{ repo: string | null }>> =>
     ipcRenderer.invoke('ticketImport:detectRepo', providerId, projectPath),
   listIssues: (
     providerId: string,
     repo: string,
-    options: { page: number; perPage: number; state: 'open' | 'closed' | 'all'; search?: string; nextPageToken?: string },
+    options: {
+      page: number
+      perPage: number
+      state: 'open' | 'closed' | 'all'
+      search?: string
+      nextPageToken?: string
+    },
     settings: Record<string, string>
-  ): Promise<{
-    issues: Array<{
-      externalId: string
-      title: string
-      body: string | null
-      state: 'open' | 'closed' | 'in_progress'
-      url: string
-      createdAt: string
-      updatedAt: string
+  ): Promise<
+    Envelope<{
+      issues: Array<{
+        externalId: string
+        title: string
+        body: string | null
+        state: 'open' | 'closed' | 'in_progress'
+        url: string
+        createdAt: string
+        updatedAt: string
+      }>
+      hasNextPage: boolean
+      totalCount: number
+      nextPageToken?: string
     }>
-    hasNextPage: boolean
-    totalCount: number
-    nextPageToken?: string
-  }> => ipcRenderer.invoke('ticketImport:listIssues', providerId, repo, options, settings),
+  > => ipcRenderer.invoke('ticketImport:listIssues', providerId, repo, options, settings),
   importIssues: (
     providerId: string,
     projectId: string,
     repo: string,
-    issues: Array<{ externalId: string; title: string; body: string | null; state: string; url: string }>
-  ): Promise<{ imported: string[]; skipped: string[] }> =>
+    issues: Array<{
+      externalId: string
+      title: string
+      body: string | null
+      state: string
+      url: string
+    }>
+  ): Promise<Envelope<{ imported: string[]; skipped: string[] }>> =>
     ipcRenderer.invoke('ticketImport:importIssues', providerId, projectId, repo, issues),
   getAvailableStatuses: (
     providerId: string,
     repo: string,
     externalId: string,
     settings: Record<string, string>
-  ): Promise<Array<{ id: string; label: string }>> =>
+  ): Promise<Envelope<Array<{ id: string; label: string }>>> =>
     ipcRenderer.invoke('ticketImport:getAvailableStatuses', providerId, repo, externalId, settings),
   updateRemoteStatus: (
     providerId: string,
@@ -2276,18 +2562,25 @@ const ticketImport = {
     externalId: string,
     statusId: string,
     settings: Record<string, string>
-  ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke('ticketImport:updateRemoteStatus', providerId, repo, externalId, statusId, settings)
+  ): Promise<Envelope<{ success: boolean; error?: string }>> =>
+    ipcRenderer.invoke(
+      'ticketImport:updateRemoteStatus',
+      providerId,
+      repo,
+      externalId,
+      statusId,
+      settings
+    )
 }
 
 const bash = {
-  run: (sessionId: string, command: string, cwd: string): Promise<{ success: boolean; runId?: string; error?: string }> =>
+  run: (sessionId: string, command: string, cwd: string): Promise<Envelope<{ runId: string }>> =>
     ipcRenderer.invoke('bash:run', { sessionId, command, cwd }),
 
-  abort: (sessionId: string): Promise<boolean> =>
+  abort: (sessionId: string): Promise<Envelope<boolean>> =>
     ipcRenderer.invoke('bash:abort', sessionId),
 
-  getRun: (sessionId: string): Promise<BashRunSnapshot | null> =>
+  getRun: (sessionId: string): Promise<Envelope<BashRunSnapshot | null>> =>
     ipcRenderer.invoke('bash:getRun', sessionId),
 
   onStream: (callback: (event: BashStreamEvent) => void): (() => void) => {

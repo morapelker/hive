@@ -3,6 +3,7 @@ import { X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ImagePreview, SvgPreview } from '@/components/file-viewer/ImagePreview'
 import { isSvgFile, getImageMimeType } from '@shared/types/file-utils'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface ImageDiffViewProps {
   worktreePath: string
@@ -62,12 +63,16 @@ export function ImageDiffView({
       if (isNewFile || isUntracked) {
         // New/untracked: only show "After"
         if (isSvg) {
-          const modResult = await window.gitOps.getFileContent(worktreePath, filePath)
+          const modResult = unwrapEnvelope(
+            await window.gitOps.getFileContent(worktreePath, filePath)
+          )
           if (modResult.success && modResult.content) {
             setModifiedSvg(modResult.content)
           }
         } else {
-          const modResult = await window.gitOps.getFileContentBase64(worktreePath, filePath)
+          const modResult = unwrapEnvelope(
+            await window.gitOps.getFileContentBase64(worktreePath, filePath)
+          )
           if (modResult.success && modResult.data) {
             setModifiedUri(buildDataUri(modResult.data, modResult.mimeType))
           }
@@ -80,15 +85,19 @@ export function ImageDiffView({
         // Branch diff: original = merge-base content, modified = working tree.
         if (isSvg) {
           const [origResult, modResult] = await Promise.all([
-            window.gitOps.getBranchBaseContent(worktreePath, compareBranch, filePath),
-            window.gitOps.getFileContent(worktreePath, filePath)
+            window.gitOps
+              .getBranchBaseContent(worktreePath, compareBranch, filePath)
+              .then(unwrapEnvelope),
+            window.gitOps.getFileContent(worktreePath, filePath).then(unwrapEnvelope)
           ])
           setOriginalSvg(origResult.success && origResult.content ? origResult.content : null)
           setModifiedSvg(modResult.success && modResult.content ? modResult.content : null)
         } else {
           const [origResult, modResult] = await Promise.all([
-            window.gitOps.getBranchBaseContentBase64(worktreePath, compareBranch, filePath),
-            window.gitOps.getFileContentBase64(worktreePath, filePath)
+            window.gitOps
+              .getBranchBaseContentBase64(worktreePath, compareBranch, filePath)
+              .then(unwrapEnvelope),
+            window.gitOps.getFileContentBase64(worktreePath, filePath).then(unwrapEnvelope)
           ])
           setOriginalUri(
             origResult.success && origResult.data
@@ -105,15 +114,15 @@ export function ImageDiffView({
         // Staged diff: original = HEAD, modified = Index (staged)
         if (isSvg) {
           const [origResult, modResult] = await Promise.all([
-            window.gitOps.getRefContent(worktreePath, 'HEAD', filePath),
-            window.gitOps.getRefContent(worktreePath, '', filePath)
+            window.gitOps.getRefContent(worktreePath, 'HEAD', filePath).then(unwrapEnvelope),
+            window.gitOps.getRefContent(worktreePath, '', filePath).then(unwrapEnvelope)
           ])
           setOriginalSvg(origResult.success && origResult.content ? origResult.content : null)
           setModifiedSvg(modResult.success && modResult.content ? modResult.content : null)
         } else {
           const [origResult, modResult] = await Promise.all([
-            window.gitOps.getRefContentBase64(worktreePath, 'HEAD', filePath),
-            window.gitOps.getRefContentBase64(worktreePath, '', filePath)
+            window.gitOps.getRefContentBase64(worktreePath, 'HEAD', filePath).then(unwrapEnvelope),
+            window.gitOps.getRefContentBase64(worktreePath, '', filePath).then(unwrapEnvelope)
           ])
           setOriginalUri(
             origResult.success && origResult.data
@@ -130,15 +139,15 @@ export function ImageDiffView({
         // Unstaged diff: original = Index (or HEAD), modified = working tree
         if (isSvg) {
           const [origResult, modResult] = await Promise.all([
-            window.gitOps.getRefContent(worktreePath, '', filePath),
-            window.gitOps.getFileContent(worktreePath, filePath)
+            window.gitOps.getRefContent(worktreePath, '', filePath).then(unwrapEnvelope),
+            window.gitOps.getFileContent(worktreePath, filePath).then(unwrapEnvelope)
           ])
           setOriginalSvg(origResult.success && origResult.content ? origResult.content : null)
           setModifiedSvg(modResult.success && modResult.content ? modResult.content : null)
         } else {
           const [origResult, modResult] = await Promise.all([
-            window.gitOps.getRefContentBase64(worktreePath, '', filePath),
-            window.gitOps.getFileContentBase64(worktreePath, filePath)
+            window.gitOps.getRefContentBase64(worktreePath, '', filePath).then(unwrapEnvelope),
+            window.gitOps.getFileContentBase64(worktreePath, filePath).then(unwrapEnvelope)
           ])
           setOriginalUri(
             origResult.success && origResult.data
@@ -157,15 +166,7 @@ export function ImageDiffView({
     } finally {
       setIsLoading(false)
     }
-  }, [
-    worktreePath,
-    filePath,
-    staged,
-    isUntracked,
-    isNewFile,
-    compareBranch,
-    buildDataUri
-  ])
+  }, [worktreePath, filePath, staged, isUntracked, isNewFile, compareBranch, buildDataUri])
 
   useEffect(() => {
     fetchContent()

@@ -266,6 +266,37 @@ export interface ProjectSpaceAssignment {
   space_id: string
 }
 
+export type SavedUsageProvider = 'anthropic' | 'openai'
+export type SavedUsageStatus = 'ok' | 'stale' | 'error'
+
+export interface SavedUsageAccount {
+  id: string
+  provider: SavedUsageProvider
+  email: string
+  credentials_json: string
+  last_usage_json: string | null
+  last_fetched_at: string | null
+  status: SavedUsageStatus
+  last_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SavedUsageAccountUpsert {
+  provider: SavedUsageProvider
+  email: string
+  credentials_json: string
+  last_usage_json?: string | null
+  status?: SavedUsageStatus
+  last_error?: string | null
+}
+
+export interface SavedUsageAccountUsageUpdate {
+  last_usage_json: string | null
+  status: SavedUsageStatus
+  last_error?: string | null
+}
+
 // Connection color quad: [inactiveBg, activeBg, inactiveText, activeText] stored as JSON string
 export type ConnectionColorQuad = [string, string, string, string]
 
@@ -493,9 +524,7 @@ export interface KanbanTicketBatchCreateResult {
 }
 
 export interface PendingLaunchConfig {
-  worktree:
-    | { type: 'new'; sourceBranch: string }
-    | { type: 'existing'; worktreeId: string }
+  worktree: { type: 'new'; sourceBranch: string } | { type: 'existing'; worktreeId: string }
   prompt: string
   mode: 'build' | 'plan' | 'super-plan'
   model: { providerID: string; modelID: string; variant?: string } | null

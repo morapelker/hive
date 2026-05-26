@@ -25,7 +25,6 @@ import {
   normalizeCodexToolName,
   normalizeCommandExecutionTool
 } from '@shared/codex-tool-normalizer'
-import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import type { UserInput } from '@shared/codex-schemas/v2/UserInput'
 import type { TurnStartParams } from '@shared/codex-schemas/v2/TurnStartParams'
 import type { ThreadNameUpdatedNotification } from '@shared/codex-schemas/v2/ThreadNameUpdatedNotification'
@@ -1274,6 +1273,60 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
 
     return []
+  }
+
+  async refreshMessagesFromThread(
+    worktreePath: string,
+    agentSessionId: string
+  ): Promise<{ success: boolean; count?: number; error?: string }> {
+    const key = this.getSessionKey(worktreePath, agentSessionId)
+    let session = this.sessions.get(key)
+    if (!session) {
+      const recoveredSession = await this.recoverSessionForRead(worktreePath, agentSessionId)
+      session = recoveredSession ?? undefined
+    }
+
+    if (!session) {
+      return { success: false, error: 'Codex session not found' }
+    }
+
+    if (session.status === 'running') {
+      return { success: false, error: 'Cannot refresh a running Codex session' }
+    }
+
+    if (!session.threadId) {
+      return { success: false, error: 'Codex session has no thread ID' }
+    }
+
+    try {
+      const threadSnapshot = await this.manager.readThread(session.threadId)
+      const parsed = this.parseThreadSnapshot(threadSnapshot)
+      if (parsed.length === 0) {
+        return { success: false, error: 'thread/read snapshot was empty' }
+      }
+
+      session.messages = parsed
+      this.flushPendingPersist(session)
+      this.persistCanonicalMessages(session)
+      this.dbService?.deleteSessionActivities(session.hiveSessionId)
+
+      log.info('refreshMessagesFromThread: refreshed transcript from thread/read', {
+        agentSessionId,
+        hiveSessionId: session.hiveSessionId,
+        count: parsed.length
+      })
+
+      return { success: true, count: parsed.length }
+    } catch (error) {
+      log.warn('refreshMessagesFromThread: readThread failed', {
+        agentSessionId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to refresh from thread'
+      }
+    }
   }
 
   // ── Models ───────────────────────────────────────────────────────

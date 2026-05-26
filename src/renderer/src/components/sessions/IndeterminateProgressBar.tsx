@@ -7,21 +7,26 @@ interface IndeterminateProgressBarProps {
   isAsking?: boolean
   isCompacting?: boolean
   isReviewing?: boolean
+  isFixingConflicts?: boolean
   className?: string
 }
 
 const ANIMATION_DURATION_MS = 3000
 
-// Web Animations API keyframes — mirrors the CSS @keyframes progress-bounce
-// 6-phase bouncing worm: grow → slide → shrink → grow → slide back → shrink
+// Web Animations API keyframes — mirrors the CSS @keyframes progress-bounce.
+// 6-phase bouncing worm: grow → slide → shrink → grow → slide back → shrink.
+// Animates ONLY `transform` (translateX + scaleX) so the animation is GPU-composited
+// and keeps running smoothly even when the main thread is congested. The bar is 25%
+// of the track wide; translateX is in multiples of its own width (400% == full track),
+// scaleX grows/shrinks it from its left edge (transform-origin: left).
 const BOUNCE_KEYFRAMES: Keyframe[] = [
-  { left: '0%', right: '100%', offset: 0 },
-  { left: '0%', right: '75%', offset: 0.12 },
-  { left: '75%', right: '0%', offset: 0.38 },
-  { left: '100%', right: '0%', offset: 0.5 },
-  { left: '75%', right: '0%', offset: 0.62 },
-  { left: '0%', right: '75%', offset: 0.88 },
-  { left: '0%', right: '100%', offset: 1 }
+  { transform: 'translateX(0) scaleX(0)', offset: 0 },
+  { transform: 'translateX(0) scaleX(1)', offset: 0.12 },
+  { transform: 'translateX(300%) scaleX(1)', offset: 0.38 },
+  { transform: 'translateX(400%) scaleX(0)', offset: 0.5 },
+  { transform: 'translateX(300%) scaleX(1)', offset: 0.62 },
+  { transform: 'translateX(0) scaleX(1)', offset: 0.88 },
+  { transform: 'translateX(0) scaleX(0)', offset: 1 }
 ]
 
 const BOUNCE_TIMING: KeyframeAnimationOptions = {
@@ -35,6 +40,7 @@ export function IndeterminateProgressBar({
   isAsking,
   isCompacting,
   isReviewing,
+  isFixingConflicts,
   className
 }: IndeterminateProgressBarProps) {
   const barRef = useRef<HTMLDivElement>(null)
@@ -55,9 +61,12 @@ export function IndeterminateProgressBar({
     } catch {
       // Animation failed — bar stays visible at CSS default position
     }
+    return undefined
   }, [])
 
-  const bgTrack = isCompacting
+  const bgTrack = isFixingConflicts
+    ? 'bg-fuchsia-500/15'
+    : isCompacting
     ? 'bg-red-500/15'
     : isAsking
       ? 'bg-amber-500/15'
@@ -68,7 +77,9 @@ export function IndeterminateProgressBar({
           : mode === 'super-plan'
             ? 'bg-orange-500/15'
             : 'bg-violet-500/15'
-  const bgBar = isCompacting
+  const bgBar = isFixingConflicts
+    ? 'bg-fuchsia-500'
+    : isCompacting
     ? 'bg-red-500'
     : isAsking
       ? 'bg-amber-500'
@@ -89,7 +100,15 @@ export function IndeterminateProgressBar({
       )}
       <div
         role="progressbar"
-        aria-label={isCompacting ? 'Compacting conversation' : isAsking ? 'Waiting for answer' : 'Agent is working'}
+        aria-label={
+          isFixingConflicts
+            ? 'Fixing merge conflicts'
+            : isCompacting
+              ? 'Compacting conversation'
+              : isAsking
+                ? 'Waiting for answer'
+                : 'Agent is working'
+        }
         className={cn('relative w-full h-4 rounded-full overflow-hidden', bgTrack)}
       >
         <div

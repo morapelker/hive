@@ -10,6 +10,8 @@ import { RunOutputLine } from './RunOutputLine'
 import type { SearchHighlight } from './RunOutputLine'
 import { RunOutputSearch } from './RunOutputSearch'
 import type { RunSearchMatch } from './RunOutputSearch'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { RunSuggestionBanner } from './RunSuggestionBanner'
 
 interface RunTabProps {
   worktreeId: string | null
@@ -188,7 +190,11 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
       setAssignedPort(null)
       return
     }
-    window.scriptOps.getPort(cwd).then(({ port }) => setAssignedPort(port))
+    window.scriptOps
+      .getPort(cwd)
+      .then(unwrapEnvelope)
+      .then(({ port }) => setAssignedPort(port))
+      .catch(() => setAssignedPort(null))
   }, [worktreeId, getWorktreePath])
 
   const handleRun = useCallback(() => {
@@ -244,6 +250,8 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
           onClose={handleSearchClose}
         />
       )}
+
+      <RunSuggestionBanner worktreeId={worktreeId} />
 
       {/* Output area */}
       <div

@@ -1,4 +1,6 @@
-import { ipcMain } from 'electron'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
+
 import { getDatabase } from '../db'
 import { createLogger } from '../services/logger'
 import { telemetryService } from '../services/telemetry-service'
@@ -15,379 +17,535 @@ import type {
   DiffCommentCreate,
   DiffCommentUpdate
 } from '../db'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'DatabaseHandlers' })
 
+class DbHandlerFailed extends Data.TaggedError('DbHandlerFailed')<{
+  readonly operation: string
+  readonly reason: string
+  readonly message: string
+}> {}
+
+const dbFailed = (operation: string, cause: unknown): DbHandlerFailed => {
+  const reason = cause instanceof Error ? cause.message : String(cause)
+  return new DbHandlerFailed({ operation, reason, message: reason })
+}
+
+const tryDb = <A>(operation: string, fn: () => A): Effect.Effect<A, DbHandlerFailed> =>
+  Effect.try({
+    try: fn,
+    catch: (error) => dbFailed(operation, error)
+  })
+
+const noArgsSchema = z.tuple([])
+const stringArgSchema = z.string()
+const stringPairSchema = z.tuple([z.string(), z.string()])
+const stringBooleanPairSchema = z.tuple([z.string(), z.boolean()])
+const stringArraySchema = z.array(z.string())
+const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
+const sessionTypeSchema = z.enum(['default', 'board-assistant'])
+const agentSdkSchema = z.enum(['opencode', 'claude-code', 'codex', 'terminal'])
+
+const projectCreateSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  description: z.string().nullable().optional(),
+  tags: z.array(z.string()).nullable().optional(),
+  setup_script: z.string().nullable().optional(),
+  run_script: z.string().nullable().optional(),
+  archive_script: z.string().nullable().optional()
+}) satisfies z.ZodType<ProjectCreate>
+
+const projectUpdateSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().nullable().optional(),
+  tags: z.array(z.string()).nullable().optional(),
+  language: z.string().nullable().optional(),
+  custom_icon: z.string().nullable().optional(),
+  detected_icon: z.string().nullable().optional(),
+  setup_script: z.string().nullable().optional(),
+  run_script: z.string().nullable().optional(),
+  archive_script: z.string().nullable().optional(),
+  auto_assign_port: z.boolean().optional(),
+  last_accessed_at: z.string().optional()
+}) satisfies z.ZodType<ProjectUpdate>
+
+const worktreeCreateSchema = z.object({
+  project_id: z.string(),
+  name: z.string(),
+  branch_name: z.string(),
+  path: z.string(),
+  is_default: z.boolean().optional(),
+  base_branch: z.string().nullable().optional()
+}) satisfies z.ZodType<WorktreeCreate>
+
+const worktreeUpdateSchema = z.object({
+  name: z.string().optional(),
+  branch_name: z.string().optional(),
+  status: z.enum(['active', 'archived']).optional(),
+  branch_renamed: z.number().optional(),
+  last_message_at: z.number().nullable().optional(),
+  last_model_provider_id: z.string().nullable().optional(),
+  last_model_id: z.string().nullable().optional(),
+  last_model_variant: z.string().nullable().optional(),
+  pinned: z.number().optional(),
+  github_pr_number: z.number().nullable().optional(),
+  github_pr_url: z.string().nullable().optional(),
+  last_accessed_at: z.string().optional()
+}) satisfies z.ZodType<WorktreeUpdate>
+
+const sessionCreateSchema = z.object({
+  worktree_id: z.string().nullable(),
+  project_id: z.string(),
+  connection_id: z.string().nullable().optional(),
+  name: z.string().nullable().optional(),
+  opencode_session_id: z.string().nullable().optional(),
+  agent_sdk: agentSdkSchema.optional(),
+  mode: sessionModeSchema.optional(),
+  session_type: sessionTypeSchema.optional(),
+  model_provider_id: z.string().nullable().optional(),
+  model_id: z.string().nullable().optional(),
+  model_variant: z.string().nullable().optional(),
+  pinned_to_board: z.boolean().optional()
+}) satisfies z.ZodType<SessionCreate>
+
+const sessionUpdateSchema = z.object({
+  name: z.string().nullable().optional(),
+  status: z.enum(['active', 'completed', 'error']).optional(),
+  opencode_session_id: z.string().nullable().optional(),
+  agent_sdk: agentSdkSchema.optional(),
+  mode: sessionModeSchema.optional(),
+  session_type: sessionTypeSchema.optional(),
+  model_provider_id: z.string().nullable().optional(),
+  model_id: z.string().nullable().optional(),
+  model_variant: z.string().nullable().optional(),
+  updated_at: z.string().optional(),
+  completed_at: z.string().nullable().optional(),
+  pinned_to_board: z.boolean().optional()
+}) satisfies z.ZodType<SessionUpdate>
+
+const sessionSearchOptionsSchema = z.object({
+  keyword: z.string().optional(),
+  project_id: z.string().optional(),
+  worktree_id: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+  includeArchived: z.boolean().optional()
+}) satisfies z.ZodType<SessionSearchOptions>
+
+const spaceCreateSchema = z.object({
+  name: z.string(),
+  icon_type: z.string().optional(),
+  icon_value: z.string().optional()
+}) satisfies z.ZodType<SpaceCreate>
+
+const spaceUpdateSchema = z.object({
+  name: z.string().optional(),
+  icon_type: z.string().optional(),
+  icon_value: z.string().optional(),
+  sort_order: z.number().optional()
+}) satisfies z.ZodType<SpaceUpdate>
+
+const diffCommentCreateSchema = z.object({
+  worktree_id: z.string(),
+  file_path: z.string(),
+  line_start: z.number(),
+  line_end: z.number().nullable().optional(),
+  anchor_text: z.string().nullable().optional(),
+  anchor_context_before: z.string().nullable().optional(),
+  anchor_context_after: z.string().nullable().optional(),
+  body: z.string()
+}) satisfies z.ZodType<DiffCommentCreate>
+
+const diffCommentUpdateSchema = z.object({
+  body: z.string().optional(),
+  line_start: z.number().optional(),
+  line_end: z.number().nullable().optional(),
+  anchor_text: z.string().nullable().optional(),
+  anchor_context_before: z.string().nullable().optional(),
+  anchor_context_after: z.string().nullable().optional(),
+  is_outdated: z.boolean().optional()
+}) satisfies z.ZodType<DiffCommentUpdate>
+
+const worktreeModelSchema = z.object({
+  worktreeId: z.string(),
+  modelProviderId: z.string(),
+  modelId: z.string(),
+  modelVariant: z.string().nullable()
+})
+
+const worktreeAttachmentSchema = z.object({
+  worktreeId: z.string(),
+  attachment: z.object({
+    type: z.enum(['jira', 'figma']),
+    url: z.string(),
+    label: z.string()
+  })
+})
+
+const worktreeAttachmentIdSchema = z.object({
+  worktreeId: z.string(),
+  attachmentId: z.string()
+})
+
+const worktreePrSchema = z.object({
+  worktreeId: z.string(),
+  prNumber: z.number(),
+  prUrl: z.string()
+})
+
+const worktreeIdSchema = z.object({ worktreeId: z.string() })
+const worktreePinnedSchema = z.object({ worktreeId: z.string(), pinned: z.boolean() })
+
 export function registerDatabaseHandlers(): void {
   log.info('Registering database handlers')
+
   // Settings
-  ipcMain.handle('db:setting:get', (_event, key: string) => {
-    return getDatabase().getSetting(key)
-  })
+  defineHandler('db:setting:get', stringArgSchema, (key) =>
+    tryDb('db:setting:get', () => getDatabase().getSetting(key))
+  )
 
-  ipcMain.handle('db:setting:set', (_event, key: string, value: string) => {
-    getDatabase().setSetting(key, value)
-    return true
-  })
+  defineHandler('db:setting:set', stringPairSchema, ([key, value]) =>
+    tryDb('db:setting:set', () => {
+      getDatabase().setSetting(key, value)
+      return true
+    })
+  )
 
-  ipcMain.handle('db:setting:delete', (_event, key: string) => {
-    getDatabase().deleteSetting(key)
-    return true
-  })
+  defineHandler('db:setting:delete', stringArgSchema, (key) =>
+    tryDb('db:setting:delete', () => {
+      getDatabase().deleteSetting(key)
+      return true
+    })
+  )
 
-  ipcMain.handle('db:setting:getAll', () => {
-    return getDatabase().getAllSettings()
-  })
+  defineHandler('db:setting:getAll', noArgsSchema, () =>
+    tryDb('db:setting:getAll', () => getDatabase().getAllSettings())
+  )
 
   // Projects
-  ipcMain.handle('db:project:create', (_event, data: ProjectCreate) => {
-    const db = getDatabase()
-    const project = db.createProject(data)
+  defineHandler('db:project:create', projectCreateSchema, (data) =>
+    tryDb('db:project:create', () => {
+      const db = getDatabase()
+      const project = db.createProject(data)
 
-    // Create default worktree for the new project
-    db.createWorktree({
-      project_id: project.id,
-      name: '(no-worktree)',
-      branch_name: '',
-      path: project.path,
-      is_default: true
+      db.createWorktree({
+        project_id: project.id,
+        name: '(no-worktree)',
+        branch_name: '',
+        path: project.path,
+        is_default: true
+      })
+
+      return project
+    }).pipe(Effect.tap(() => Effect.sync(() => telemetryService.track('project_added', {}))))
+  )
+
+  defineHandler('db:project:get', stringArgSchema, (id) =>
+    tryDb('db:project:get', () => getDatabase().getProject(id))
+  )
+
+  defineHandler('db:project:getByPath', stringArgSchema, (path) =>
+    tryDb('db:project:getByPath', () => getDatabase().getProjectByPath(path))
+  )
+
+  defineHandler('db:project:getAll', noArgsSchema, () =>
+    tryDb('db:project:getAll', () => getDatabase().getAllProjects())
+  )
+
+  defineHandler('db:project:update', z.tuple([z.string(), projectUpdateSchema]), ([id, data]) =>
+    tryDb('db:project:update', () => getDatabase().updateProject(id, data))
+  )
+
+  defineHandler('db:project:delete', stringArgSchema, (id) =>
+    tryDb('db:project:delete', () => getDatabase().deleteProject(id))
+  )
+
+  defineHandler('db:project:touch', stringArgSchema, (id) =>
+    tryDb('db:project:touch', () => {
+      getDatabase().touchProject(id)
+      return true
     })
+  )
 
-    telemetryService.track('project_added', {})
-    return project
-  })
+  defineHandler('db:project:reorder', stringArraySchema, (orderedIds) =>
+    tryDb('db:project:reorder', () => {
+      getDatabase().reorderProjects(orderedIds)
+      return true
+    })
+  )
 
-  ipcMain.handle('db:project:get', (_event, id: string) => {
-    return getDatabase().getProject(id)
-  })
-
-  ipcMain.handle('db:project:getByPath', (_event, path: string) => {
-    return getDatabase().getProjectByPath(path)
-  })
-
-  ipcMain.handle('db:project:getAll', () => {
-    return getDatabase().getAllProjects()
-  })
-
-  ipcMain.handle('db:project:update', (_event, id: string, data: ProjectUpdate) => {
-    return getDatabase().updateProject(id, data)
-  })
-
-  ipcMain.handle('db:project:delete', (_event, id: string) => {
-    return getDatabase().deleteProject(id)
-  })
-
-  ipcMain.handle('db:project:touch', (_event, id: string) => {
-    getDatabase().touchProject(id)
-    return true
-  })
-
-  ipcMain.handle('db:project:reorder', (_event, orderedIds: string[]) => {
-    getDatabase().reorderProjects(orderedIds)
-    return true
-  })
-
-  ipcMain.handle('db:project:sortByLastMessage', () => {
-    return getDatabase().getProjectIdsSortedByLastMessage()
-  })
+  defineHandler('db:project:sortByLastMessage', noArgsSchema, () =>
+    tryDb('db:project:sortByLastMessage', () => getDatabase().getProjectIdsSortedByLastMessage())
+  )
 
   // Worktrees
-  ipcMain.handle('db:worktree:create', (_event, data: WorktreeCreate) => {
-    return getDatabase().createWorktree(data)
-  })
-
-  ipcMain.handle('db:worktree:get', (_event, id: string) => {
-    return getDatabase().getWorktree(id)
-  })
-
-  ipcMain.handle('db:worktree:getByProject', (_event, projectId: string) => {
-    return getDatabase().getWorktreesByProject(projectId)
-  })
-
-  ipcMain.handle('db:worktree:getActiveByProject', (_event, projectId: string) => {
-    return getDatabase().getActiveWorktreesByProject(projectId)
-  })
-
-  ipcMain.handle('db:worktree:getRecentlyActive', (_event, cutoffMs: number) => {
-    return getDatabase().getRecentlyActiveWorktrees(cutoffMs)
-  })
-
-  ipcMain.handle('db:worktree:update', (_event, id: string, data: WorktreeUpdate) => {
-    return getDatabase().updateWorktree(id, data)
-  })
-
-  ipcMain.handle('db:worktree:delete', (_event, id: string) => {
-    return getDatabase().deleteWorktree(id)
-  })
-
-  ipcMain.handle('db:worktree:archive', (_event, id: string) => {
-    return getDatabase().archiveWorktree(id)
-  })
-
-  ipcMain.handle('db:worktree:touch', (_event, id: string) => {
-    getDatabase().touchWorktree(id)
-    return true
-  })
-
-  ipcMain.handle(
-    'db:worktree:updateModel',
-    (
-      _event,
-      {
-        worktreeId,
-        modelProviderId,
-        modelId,
-        modelVariant
-      }: {
-        worktreeId: string
-        modelProviderId: string
-        modelId: string
-        modelVariant: string | null
-      }
-    ) => {
-      try {
-        getDatabase().updateWorktreeModel(
-          worktreeId,
-          modelProviderId,
-          modelId,
-          modelVariant ?? null
-        )
-        return { success: true }
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
+  defineHandler('db:worktree:create', worktreeCreateSchema, (data) =>
+    tryDb('db:worktree:create', () => getDatabase().createWorktree(data))
   )
 
-  ipcMain.handle(
+  defineHandler('db:worktree:get', stringArgSchema, (id) =>
+    tryDb('db:worktree:get', () => getDatabase().getWorktree(id))
+  )
+
+  defineHandler('db:worktree:getByProject', stringArgSchema, (projectId) =>
+    tryDb('db:worktree:getByProject', () => getDatabase().getWorktreesByProject(projectId))
+  )
+
+  defineHandler('db:worktree:getActiveByProject', stringArgSchema, (projectId) =>
+    tryDb('db:worktree:getActiveByProject', () =>
+      getDatabase().getActiveWorktreesByProject(projectId)
+    )
+  )
+
+  defineHandler('db:worktree:getRecentlyActive', z.number(), (cutoffMs) =>
+    tryDb('db:worktree:getRecentlyActive', () => getDatabase().getRecentlyActiveWorktrees(cutoffMs))
+  )
+
+  defineHandler('db:worktree:update', z.tuple([z.string(), worktreeUpdateSchema]), ([id, data]) =>
+    tryDb('db:worktree:update', () => getDatabase().updateWorktree(id, data))
+  )
+
+  defineHandler('db:worktree:delete', stringArgSchema, (id) =>
+    tryDb('db:worktree:delete', () => getDatabase().deleteWorktree(id))
+  )
+
+  defineHandler('db:worktree:archive', stringArgSchema, (id) =>
+    tryDb('db:worktree:archive', () => getDatabase().archiveWorktree(id))
+  )
+
+  defineHandler('db:worktree:touch', stringArgSchema, (id) =>
+    tryDb('db:worktree:touch', () => {
+      getDatabase().touchWorktree(id)
+      return true
+    })
+  )
+
+  defineHandler('db:worktree:updateModel', worktreeModelSchema, (params) =>
+    tryDb('db:worktree:updateModel', () => {
+      getDatabase().updateWorktreeModel(
+        params.worktreeId,
+        params.modelProviderId,
+        params.modelId,
+        params.modelVariant ?? null
+      )
+      return { success: true }
+    })
+  )
+
+  defineHandler(
     'db:worktree:appendSessionTitle',
-    (_event, { worktreeId, title }: { worktreeId: string; title: string }) => {
-      try {
+    z.object({ worktreeId: z.string(), title: z.string() }),
+    ({ worktreeId, title }) =>
+      tryDb('db:worktree:appendSessionTitle', () => {
         getDatabase().appendSessionTitle(worktreeId, title)
         return { success: true }
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
+      })
   )
 
-  ipcMain.handle(
+  defineHandler(
     'db:worktree:addAttachment',
-    (
-      _event,
-      {
-        worktreeId,
-        attachment
-      }: {
-        worktreeId: string
-        attachment: { type: 'jira' | 'figma'; url: string; label: string }
-      }
-    ) => {
-      try {
-        return getDatabase().addAttachment(worktreeId, attachment)
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
+    worktreeAttachmentSchema,
+    ({ worktreeId, attachment }) =>
+      tryDb('db:worktree:addAttachment', () =>
+        getDatabase().addAttachment(worktreeId, attachment)
+      ).pipe(Effect.catchAll((error) => Effect.succeed({ success: false, error: error.reason })))
   )
 
-  ipcMain.handle(
+  defineHandler(
     'db:worktree:removeAttachment',
-    (_event, { worktreeId, attachmentId }: { worktreeId: string; attachmentId: string }) => {
-      try {
-        return getDatabase().removeAttachment(worktreeId, attachmentId)
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
+    worktreeAttachmentIdSchema,
+    ({ worktreeId, attachmentId }) =>
+      tryDb('db:worktree:removeAttachment', () =>
+        getDatabase().removeAttachment(worktreeId, attachmentId)
+      ).pipe(Effect.catchAll((error) => Effect.succeed({ success: false, error: error.reason })))
   )
 
-  ipcMain.handle(
-    'db:worktree:attachPR',
-    (
-      _event,
-      { worktreeId, prNumber, prUrl }: { worktreeId: string; prNumber: number; prUrl: string }
-    ) => {
-      try {
-        return getDatabase().attachPR(worktreeId, prNumber, prUrl)
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
+  defineHandler('db:worktree:attachPR', worktreePrSchema, ({ worktreeId, prNumber, prUrl }) =>
+    tryDb('db:worktree:attachPR', () => getDatabase().attachPR(worktreeId, prNumber, prUrl))
   )
 
-  ipcMain.handle(
-    'db:worktree:detachPR',
-    (_event, { worktreeId }: { worktreeId: string }) => {
-      try {
-        return getDatabase().detachPR(worktreeId)
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
+  defineHandler('db:worktree:detachPR', worktreeIdSchema, ({ worktreeId }) =>
+    tryDb('db:worktree:detachPR', () => getDatabase().detachPR(worktreeId))
   )
 
-  ipcMain.handle(
-    'db:worktree:setPinned',
-    (_event, { worktreeId, pinned }: { worktreeId: string; pinned: boolean }) => {
-      try {
-        getDatabase().updateWorktree(worktreeId, { pinned: pinned ? 1 : 0 })
-        return { success: true }
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
+  defineHandler('db:worktree:setPinned', worktreePinnedSchema, ({ worktreeId, pinned }) =>
+    tryDb('db:worktree:setPinned', () => {
+      getDatabase().updateWorktree(worktreeId, { pinned: pinned ? 1 : 0 })
+      return { success: true }
+    })
   )
 
-  ipcMain.handle('db:worktree:getPinned', () => {
-    const db = getDatabase()
-    return db.getPinnedWorktrees()
-  })
+  defineHandler('db:worktree:getPinned', noArgsSchema, () =>
+    tryDb('db:worktree:getPinned', () => getDatabase().getPinnedWorktrees())
+  )
 
   // Sessions
-  ipcMain.handle('db:session:create', (_event, data: SessionCreate) => {
-    return getDatabase().createSession(data)
-  })
+  defineHandler('db:session:create', sessionCreateSchema, (data) =>
+    tryDb('db:session:create', () => getDatabase().createSession(data))
+  )
 
-  ipcMain.handle('db:session:get', (_event, id: string) => {
-    return getDatabase().getSession(id)
-  })
+  defineHandler('db:session:get', stringArgSchema, (id) =>
+    tryDb('db:session:get', () => getDatabase().getSession(id))
+  )
 
-  ipcMain.handle('db:session:getByWorktree', (_event, worktreeId: string) => {
-    return getDatabase().getSessionsByWorktree(worktreeId)
-  })
+  defineHandler('db:session:getByWorktree', stringArgSchema, (worktreeId) =>
+    tryDb('db:session:getByWorktree', () => getDatabase().getSessionsByWorktree(worktreeId))
+  )
 
-  ipcMain.handle('db:session:getByProject', (_event, projectId: string) => {
-    return getDatabase().getSessionsByProject(projectId)
-  })
+  defineHandler('db:session:getByProject', stringArgSchema, (projectId) =>
+    tryDb('db:session:getByProject', () => getDatabase().getSessionsByProject(projectId))
+  )
 
-  ipcMain.handle('db:session:getActiveByWorktree', (_event, worktreeId: string) => {
-    return getDatabase().getActiveSessionsByWorktree(worktreeId)
-  })
+  defineHandler('db:session:getActiveByWorktree', stringArgSchema, (worktreeId) =>
+    tryDb('db:session:getActiveByWorktree', () =>
+      getDatabase().getActiveSessionsByWorktree(worktreeId)
+    )
+  )
 
-  ipcMain.handle('db:session:update', (_event, id: string, data: SessionUpdate) => {
-    return getDatabase().updateSession(id, data)
-  })
+  defineHandler('db:session:update', z.tuple([z.string(), sessionUpdateSchema]), ([id, data]) =>
+    tryDb('db:session:update', () => getDatabase().updateSession(id, data))
+  )
 
-  ipcMain.handle('db:session:delete', (_event, id: string) => {
-    return getDatabase().deleteSession(id)
-  })
+  defineHandler('db:session:delete', stringArgSchema, (id) =>
+    tryDb('db:session:delete', () => getDatabase().deleteSession(id))
+  )
 
-  ipcMain.handle('db:session:getByConnection', (_event, connectionId: string) => {
-    return getDatabase().getSessionsByConnection(connectionId)
-  })
+  defineHandler('db:session:getByConnection', stringArgSchema, (connectionId) =>
+    tryDb('db:session:getByConnection', () => getDatabase().getSessionsByConnection(connectionId))
+  )
 
-  ipcMain.handle('db:session:getActiveByConnection', (_event, connectionId: string) => {
-    return getDatabase().getActiveSessionsByConnection(connectionId)
-  })
+  defineHandler('db:session:getActiveByConnection', stringArgSchema, (connectionId) =>
+    tryDb('db:session:getActiveByConnection', () =>
+      getDatabase().getActiveSessionsByConnection(connectionId)
+    )
+  )
 
-  ipcMain.handle('db:session:setPinnedToBoard', (_event, sessionId: string, pinned: boolean) => {
-    return getDatabase().updateSession(sessionId, { pinned_to_board: pinned })
-  })
+  defineHandler('db:session:setPinnedToBoard', stringBooleanPairSchema, ([sessionId, pinned]) =>
+    tryDb('db:session:setPinnedToBoard', () =>
+      getDatabase().updateSession(sessionId, { pinned_to_board: pinned })
+    )
+  )
 
-  ipcMain.handle('db:session:getPinnedSessions', (_event, worktreeId: string) => {
-    return getDatabase().getPinnedSessions(worktreeId)
-  })
+  defineHandler('db:session:getPinnedSessions', stringArgSchema, (worktreeId) =>
+    tryDb('db:session:getPinnedSessions', () => getDatabase().getPinnedSessions(worktreeId))
+  )
 
-  ipcMain.handle('db:session:search', (_event, options: SessionSearchOptions) => {
-    return getDatabase().searchSessions(options)
-  })
+  defineHandler('db:session:search', sessionSearchOptionsSchema, (options) =>
+    tryDb('db:session:search', () => getDatabase().searchSessions(options))
+  )
 
-  ipcMain.handle('db:session:getActiveBoardAssistant', (_event, projectId: string) => {
-    return getDatabase().getActiveBoardAssistantByProject(projectId)
-  })
+  defineHandler('db:session:getActiveBoardAssistant', stringArgSchema, (projectId) =>
+    tryDb('db:session:getActiveBoardAssistant', () =>
+      getDatabase().getActiveBoardAssistantByProject(projectId)
+    )
+  )
 
-  ipcMain.handle('db:session:getDraft', (_event, sessionId: string) => {
-    return getDatabase().getSessionDraft(sessionId)
-  })
+  defineHandler('db:session:getDraft', stringArgSchema, (sessionId) =>
+    tryDb('db:session:getDraft', () => getDatabase().getSessionDraft(sessionId))
+  )
 
-  ipcMain.handle('db:session:updateDraft', (_event, sessionId: string, draft: string | null) => {
-    getDatabase().updateSessionDraft(sessionId, draft)
-  })
+  defineHandler(
+    'db:session:updateDraft',
+    z.tuple([z.string(), z.string().nullable()]),
+    ([sessionId, draft]) =>
+      tryDb('db:session:updateDraft', () => {
+        getDatabase().updateSessionDraft(sessionId, draft)
+      })
+  )
 
-  ipcMain.handle('db:sessionMessage:list', (_event, sessionId: string) => {
-    return getDatabase().getSessionMessages(sessionId)
-  })
+  defineHandler('db:sessionMessage:list', stringArgSchema, (sessionId) =>
+    tryDb('db:sessionMessage:list', () => getDatabase().getSessionMessages(sessionId))
+  )
 
-  ipcMain.handle('db:sessionActivity:list', (_event, sessionId: string) => {
-    return getDatabase().getSessionActivities(sessionId)
-  })
+  defineHandler('db:sessionActivity:list', stringArgSchema, (sessionId) =>
+    tryDb('db:sessionActivity:list', () => getDatabase().getSessionActivities(sessionId))
+  )
 
   // Spaces
-  ipcMain.handle('db:space:list', () => {
-    return getDatabase().listSpaces()
-  })
+  defineHandler('db:space:list', noArgsSchema, () =>
+    tryDb('db:space:list', () => getDatabase().listSpaces())
+  )
 
-  ipcMain.handle('db:space:create', (_event, data: SpaceCreate) => {
-    return getDatabase().createSpace(data)
-  })
+  defineHandler('db:space:create', spaceCreateSchema, (data) =>
+    tryDb('db:space:create', () => getDatabase().createSpace(data))
+  )
 
-  ipcMain.handle('db:space:update', (_event, id: string, data: SpaceUpdate) => {
-    return getDatabase().updateSpace(id, data)
-  })
+  defineHandler('db:space:update', z.tuple([z.string(), spaceUpdateSchema]), ([id, data]) =>
+    tryDb('db:space:update', () => getDatabase().updateSpace(id, data))
+  )
 
-  ipcMain.handle('db:space:delete', (_event, id: string) => {
-    return getDatabase().deleteSpace(id)
-  })
+  defineHandler('db:space:delete', stringArgSchema, (id) =>
+    tryDb('db:space:delete', () => getDatabase().deleteSpace(id))
+  )
 
-  ipcMain.handle('db:space:assignProject', (_event, projectId: string, spaceId: string) => {
-    getDatabase().assignProjectToSpace(projectId, spaceId)
-    return true
-  })
+  defineHandler('db:space:assignProject', stringPairSchema, ([projectId, spaceId]) =>
+    tryDb('db:space:assignProject', () => {
+      getDatabase().assignProjectToSpace(projectId, spaceId)
+      return true
+    })
+  )
 
-  ipcMain.handle('db:space:removeProject', (_event, projectId: string, spaceId: string) => {
-    getDatabase().removeProjectFromSpace(projectId, spaceId)
-    return true
-  })
+  defineHandler('db:space:removeProject', stringPairSchema, ([projectId, spaceId]) =>
+    tryDb('db:space:removeProject', () => {
+      getDatabase().removeProjectFromSpace(projectId, spaceId)
+      return true
+    })
+  )
 
-  ipcMain.handle('db:space:getProjectIds', (_event, spaceId: string) => {
-    return getDatabase().getProjectIdsForSpace(spaceId)
-  })
+  defineHandler('db:space:getProjectIds', stringArgSchema, (spaceId) =>
+    tryDb('db:space:getProjectIds', () => getDatabase().getProjectIdsForSpace(spaceId))
+  )
 
-  ipcMain.handle('db:space:getAllAssignments', () => {
-    return getDatabase().getAllProjectSpaceAssignments()
-  })
+  defineHandler('db:space:getAllAssignments', noArgsSchema, () =>
+    tryDb('db:space:getAllAssignments', () => getDatabase().getAllProjectSpaceAssignments())
+  )
 
-  ipcMain.handle('db:space:reorder', (_event, orderedIds: string[]) => {
-    getDatabase().reorderSpaces(orderedIds)
-    return true
-  })
+  defineHandler('db:space:reorder', stringArraySchema, (orderedIds) =>
+    tryDb('db:space:reorder', () => {
+      getDatabase().reorderSpaces(orderedIds)
+      return true
+    })
+  )
 
   // Diff Comments
-  ipcMain.handle('db:diffComment:create', (_event, data: DiffCommentCreate) => {
-    return getDatabase().createDiffComment(data)
-  })
+  defineHandler('db:diffComment:create', diffCommentCreateSchema, (data) =>
+    tryDb('db:diffComment:create', () => getDatabase().createDiffComment(data))
+  )
 
-  ipcMain.handle('db:diffComment:list', (_event, worktreeId: string) => {
-    return getDatabase().getDiffCommentsByWorktree(worktreeId)
-  })
+  defineHandler('db:diffComment:list', stringArgSchema, (worktreeId) =>
+    tryDb('db:diffComment:list', () => getDatabase().getDiffCommentsByWorktree(worktreeId))
+  )
 
-  ipcMain.handle('db:diffComment:update', (_event, id: string, data: DiffCommentUpdate) => {
-    return getDatabase().updateDiffComment(id, data)
-  })
+  defineHandler(
+    'db:diffComment:update',
+    z.tuple([z.string(), diffCommentUpdateSchema]),
+    ([id, data]) => tryDb('db:diffComment:update', () => getDatabase().updateDiffComment(id, data))
+  )
 
-  ipcMain.handle('db:diffComment:setOutdated', (_event, id: string, isOutdated: boolean) => {
-    return getDatabase().setDiffCommentOutdated(id, isOutdated)
-  })
+  defineHandler('db:diffComment:setOutdated', stringBooleanPairSchema, ([id, isOutdated]) =>
+    tryDb('db:diffComment:setOutdated', () => getDatabase().setDiffCommentOutdated(id, isOutdated))
+  )
 
-  ipcMain.handle('db:diffComment:delete', (_event, id: string) => {
-    return getDatabase().deleteDiffComment(id)
-  })
+  defineHandler('db:diffComment:delete', stringArgSchema, (id) =>
+    tryDb('db:diffComment:delete', () => getDatabase().deleteDiffComment(id))
+  )
 
-  ipcMain.handle('db:diffComment:clearAll', (_event, worktreeId: string) => {
-    return getDatabase().clearAllDiffComments(worktreeId)
-  })
+  defineHandler('db:diffComment:clearAll', stringArgSchema, (worktreeId) =>
+    tryDb('db:diffComment:clearAll', () => getDatabase().clearAllDiffComments(worktreeId))
+  )
 
   // Utility
-  ipcMain.handle('db:schemaVersion', () => {
-    return getDatabase().getSchemaVersion()
-  })
+  defineHandler('db:schemaVersion', noArgsSchema, () =>
+    tryDb('db:schemaVersion', () => getDatabase().getSchemaVersion())
+  )
 
-  ipcMain.handle('db:tableExists', (_event, tableName: string) => {
-    return getDatabase().tableExists(tableName)
-  })
+  defineHandler('db:tableExists', stringArgSchema, (tableName) =>
+    tryDb('db:tableExists', () => getDatabase().tableExists(tableName))
+  )
 
-  ipcMain.handle('db:getIndexes', () => {
-    return getDatabase().getIndexes()
-  })
+  defineHandler('db:getIndexes', noArgsSchema, () =>
+    tryDb('db:getIndexes', () => getDatabase().getIndexes())
+  )
 }

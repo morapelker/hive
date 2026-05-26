@@ -13,9 +13,41 @@ export interface UsageResult {
   success: boolean
   data?: UsageData
   error?: string
+  retryAfter?: number
+  rotated?: ClaudeRefreshResult
+}
+
+export interface ClaudeRefreshResult {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number
+}
+
+export type AnthropicRateLimitType = 'five_hour' | 'seven_day'
+
+export interface AnthropicRateLimitInfo {
+  status: string
+  resetsAt: number
+  rateLimitType: AnthropicRateLimitType
+  isUsingOverage?: boolean
+  overageStatus?: string
+}
+
+export interface AnthropicRateLimitWindow {
+  status: string
+  resetsAt: number
+  isUsingOverage?: boolean
+  overageStatus?: string
+}
+
+export interface AnthropicRateLimitState {
+  fiveHour?: AnthropicRateLimitWindow
+  sevenDay?: AnthropicRateLimitWindow
+  updatedAt: number
 }
 
 export type UsageProvider = 'anthropic' | 'openai'
+export type SavedUsageStatus = 'ok' | 'stale' | 'error'
 
 export interface OpenAIUsageData {
   plan_type: string
@@ -40,4 +72,35 @@ export interface OpenAIUsageResult {
   success: boolean
   data?: OpenAIUsageData
   error?: string
+  rotated?: {
+    accessToken: string
+    refreshToken: string
+    idToken?: string
+  }
+}
+
+export interface SavedAccountDTO {
+  id: string
+  provider: UsageProvider
+  email: string
+  last_usage: UsageData | OpenAIUsageData | null
+  last_fetched_at: string | null
+  status: SavedUsageStatus
+  last_error: string | null
+  created_at: string
+}
+
+export interface FetchForAccountResult {
+  success: boolean
+  data?: UsageData | OpenAIUsageData
+  error?: string
+  retryAfter?: number
+  status: SavedUsageStatus
+}
+
+export interface RefreshAllResultItem {
+  accountId: string
+  success: boolean
+  error?: string
+  retryAfter?: number
 }

@@ -1,14 +1,15 @@
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { type ChildProcess, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { extname } from 'node:path'
 import readline from 'node:readline'
+import { Effect } from 'effect'
 
 import { createLogger } from './logger'
 import { logCodexMessage, logCodexLifecycleEvent, resetSession } from './codex-debug-logger'
 import { supportsCodexAppServer } from './codex-binary-resolver'
 import { getCodexCliEnv } from './codex-cli-env'
-import { asObject, asString, toJsonSnapshot } from './codex-utils'
+import { asObject, asString } from './codex-utils'
 import { CODEX_DEFAULT_MODEL } from './codex-models'
 import type { CommandExecutionApprovalDecision } from '@shared/codex-schemas/v2/CommandExecutionApprovalDecision'
 import type { FileChangeApprovalDecision } from '@shared/codex-schemas/v2/FileChangeApprovalDecision'
@@ -26,8 +27,6 @@ import type { ThreadGoalStatus } from '@shared/codex-schemas/v2/ThreadGoalStatus
 import type { ExperimentalFeatureListResponse } from '@shared/codex-schemas/v2/ExperimentalFeatureListResponse'
 import type { SandboxMode } from '@shared/codex-schemas/v2/SandboxMode'
 import type { AskForApproval } from '@shared/codex-schemas/v2/AskForApproval'
-import type { TurnStartedNotification } from '@shared/codex-schemas/v2/TurnStartedNotification'
-import type { TurnCompletedNotification } from '@shared/codex-schemas/v2/TurnCompletedNotification'
 import type { CommandExecutionRequestApprovalParams } from '@shared/codex-schemas/v2/CommandExecutionRequestApprovalParams'
 import type { FileChangeRequestApprovalParams } from '@shared/codex-schemas/v2/FileChangeRequestApprovalParams'
 import type { ToolRequestUserInputParams } from '@shared/codex-schemas/v2/ToolRequestUserInputParams'
@@ -35,6 +34,8 @@ import type { ToolRequestUserInputAnswer } from '@shared/codex-schemas/v2/ToolRe
 import type { ServerNotification } from '@shared/codex-schemas/ServerNotification'
 import type { ServerRequest } from '@shared/codex-schemas/ServerRequest'
 import type { ThreadResumeParams } from '@shared/codex-schemas/v2/ThreadResumeParams'
+import { LowLevelSpawn } from '../effect/spawn/service'
+import { getRuntime } from '../effect/spawn/runtime'
 
 const log = createLogger({ component: 'CodexAppServerManager' })
 
@@ -376,6 +377,16 @@ export function killChildTree(child: ChildProcess): void {
   child.kill()
 }
 
+function signalChildTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  void getRuntime()
+    .runPromise(Effect.flatMap(LowLevelSpawn, (spawn) => spawn.signalTree(child, signal)))
+    .catch((error) => {
+      log.warn('Failed to signal codex app-server process tree', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+    })
+}
+
 // ── User input answer format ──────────────────────────────────────
 // Uses generated ToolRequestUserInputAnswer from codex-schemas
 
@@ -445,12 +456,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         process.platform === 'win32' &&
         (binaryExtension === '.cmd' || binaryExtension === '.bat' || binaryExtension === '.com')
 
-      const child = spawn(codexBinaryPath, ['app-server'], {
-        cwd: resolvedCwd,
-        env: getCodexCliEnv({ codexHomePath: options.codexHomePath }),
-        stdio: ['pipe', 'pipe', 'pipe'],
-        shell: useShell
-      })
+      const child = await getRuntime().runPromise(
+        Effect.flatMap(LowLevelSpawn, (spawn) =>
+          spawn.spawn({
+            command: codexBinaryPath,
+            args: ['app-server'],
+            cwd: resolvedCwd,
+            env: getCodexCliEnv({ codexHomePath: options.codexHomePath }),
+            shell: useShell
+          })
+        )
+      )
       resetSession() // Truncate codex.jsonl if reset-per-session is enabled
       const output = readline.createInterface({ input: child.stdout! })
 
@@ -612,7 +628,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     // Kill child process
     if (!context.child.killed) {
-      killChildTree(context.child)
+      signalChildTree(context.child, 'SIGKILL')
     }
 
     this.updateSession(context, {

@@ -7,6 +7,8 @@ import {
   Trash2,
   ExternalLink,
   Hammer,
+  AlertTriangle,
+  ChevronDown,
   Send,
   Zap,
   AlertCircle,
@@ -19,7 +21,8 @@ import {
   Github,
   Upload,
   Lock,
-  Plus
+  Plus,
+  Map as MapIcon
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -32,10 +35,17 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
 import { HandoffSplitButton } from '../sessions/HandoffSplitButton'
+import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -54,7 +64,11 @@ import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { buildSdkPlanImplementationPrompt } from '@/lib/proposedPlan'
 import { toast } from '@/lib/toast'
-import { useTicketRunScript, useTicketRunScriptHotkey, type TicketRunScriptState } from '@/hooks/useTicketRunScript'
+import {
+  useTicketRunScript,
+  useTicketRunScriptHotkey,
+  type TicketRunScriptState
+} from '@/hooks/useTicketRunScript'
 import { TicketRunButton } from './TicketRunButton'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
@@ -63,19 +77,20 @@ import type { Attachment } from '@/components/sessions/AttachmentPreview'
 import { buildMessageParts, isImageMime, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
 import { useDropZone } from '@/hooks/useDropZone'
 import { SessionStreamPanel } from './SessionStreamPanel'
-import {
-  ReviewTicketDiffSummary,
-  type ReviewTicketDiffFile
-} from './ReviewTicketDiffSummary'
+import { ReviewTicketDiffSummary, type ReviewTicketDiffFile } from './ReviewTicketDiffSummary'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
+import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
 import type { KanbanTicket, KanbanTicketUpdate, Worktree } from '../../../../main/db/types'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // ── Types ───────────────────────────────────────────────────────────
 type ModalMode = 'edit' | 'plan_review' | 'review' | 'error' | 'question'
@@ -131,7 +146,16 @@ function findWorktreePathById(worktreeId: string): string | null {
 
 /** Find a session by ID across worktree and connection session maps, with DB fallback */
 async function findSessionById(sessionId: string): Promise<{
-  session: { id: string; worktree_id: string | null; connection_id: string | null; opencode_session_id: string | null; agent_sdk: string; model_provider_id: string | null; model_id: string | null; model_variant: string | null }
+  session: {
+    id: string
+    worktree_id: string | null
+    connection_id: string | null
+    opencode_session_id: string | null
+    agent_sdk: string
+    model_provider_id: string | null
+    model_id: string | null
+    model_variant: string | null
+  }
   worktreePath: string | null
   connectionId: string | null
   /** Working directory for opencode ops — worktree path or connection path */
@@ -145,7 +169,7 @@ async function findSessionById(sessionId: string): Promise<{
       let worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
       // Worktree not in the in-memory store (project not loaded in sidebar) — try DB
       if (!worktreePath && found.worktree_id) {
-        worktreePath = (await window.db.worktree.get(found.worktree_id))?.path ?? null
+        worktreePath = (await db.worktree.get(found.worktree_id))?.path ?? null
       }
       return { session: found, worktreePath, connectionId: null, workingPath: worktreePath }
     }
@@ -153,14 +177,22 @@ async function findSessionById(sessionId: string): Promise<{
   for (const [connId, sessions] of sessionStore.sessionsByConnection.entries()) {
     const found = sessions.find((s) => s.id === sessionId)
     if (found) {
-      const connectionPath = useConnectionStore.getState().connections.find(c => c.id === connId)?.path ?? null
-      return { session: found, worktreePath: null, connectionId: connId, workingPath: connectionPath }
+      const connectionPath =
+        useConnectionStore.getState().connections.find((c) => c.id === connId)?.path ?? null
+      return {
+        session: found,
+        worktreePath: null,
+        connectionId: connId,
+        workingPath: connectionPath
+      }
     }
   }
   // DB fallback: session not in store (worktree not currently selected)
-  const dbSession = await window.db.session.get(sessionId)
+  const dbSession = await db.session.get(sessionId)
   if (!dbSession) {
-    console.warn(`[KanbanTicketModal] findSessionById: session not found in store or DB — sessionId=${sessionId}`)
+    console.warn(
+      `[KanbanTicketModal] findSessionById: session not found in store or DB — sessionId=${sessionId}`
+    )
     return null
   }
   // Hydrate into the in-memory store so getWorktreeStatus() and
@@ -168,7 +200,7 @@ async function findSessionById(sessionId: string): Promise<{
   useSessionStore.getState().hydrateSession(dbSession)
 
   const worktreePath = dbSession.worktree_id
-    ? (await window.db.worktree.get(dbSession.worktree_id))?.path ?? null
+    ? ((await db.worktree.get(dbSession.worktree_id))?.path ?? null)
     : null
   return {
     session: {
@@ -190,14 +222,27 @@ async function findSessionById(sessionId: string): Promise<{
 /** Resolve the model to use for a session's next prompt (mirrors SessionView.getModelForRequests) */
 function resolveSessionModel(
   sessionId: string,
-  sessionDataFallback?: { model_provider_id: string | null; model_id: string | null; model_variant: string | null; agent_sdk: string }
+  sessionDataFallback?: {
+    model_provider_id: string | null
+    model_id: string | null
+    model_variant: string | null
+    agent_sdk: string
+  }
 ): { providerID: string; modelID: string; variant?: string } | undefined {
   // Primary: scan store (picks up mode-specific defaults applied by setSessionMode)
   const state = useSessionStore.getState()
-  let session: { model_provider_id: string | null; model_id: string | null; model_variant: string | null; agent_sdk: string } | null = null
+  let session: {
+    model_provider_id: string | null
+    model_id: string | null
+    model_variant: string | null
+    agent_sdk: string
+  } | null = null
   for (const sessions of state.sessionsByWorktree.values()) {
     const found = sessions.find((s) => s.id === sessionId)
-    if (found) { session = found; break }
+    if (found) {
+      session = found
+      break
+    }
   }
   // Fallback: use provided session data when session not in store (DB fallback path)
   if (!session && sessionDataFallback) {
@@ -226,19 +271,25 @@ async function sendFollowupToSession(opts: {
 }): Promise<void> {
   const result = await findSessionById(opts.sessionId)
   if (!result) {
-    console.error(`[KanbanTicketModal] sendFollowupToSession: session not found — sessionId=${opts.sessionId}`)
+    console.error(
+      `[KanbanTicketModal] sendFollowupToSession: session not found — sessionId=${opts.sessionId}`
+    )
     throw new Error(`Session not found: ${opts.sessionId}`)
   }
 
   const { session, workingPath, connectionId } = result
 
   if (!workingPath) {
-    console.error(`[KanbanTicketModal] sendFollowupToSession: workingPath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}, connection_id=${session.connection_id}`)
+    console.error(
+      `[KanbanTicketModal] sendFollowupToSession: workingPath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}, connection_id=${session.connection_id}`
+    )
     throw new Error(`Working path not found for session: ${opts.sessionId}`)
   }
 
   if (!session.opencode_session_id) {
-    console.error(`[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`)
+    console.error(
+      `[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`
+    )
     throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
   }
 
@@ -249,9 +300,11 @@ async function sendFollowupToSession(opts: {
   // Claude Code & Codex handle plan mode via the SDK — don't prepend the text prefix
   const skipPrefix = session.agent_sdk === 'claude-code' || session.agent_sdk === 'codex'
   const modePrefix =
-    opts.followUpMode === 'super-plan' ? getSuperPlanModePrefix(session.agent_sdk)
-    : opts.followUpMode === 'plan' && !skipPrefix ? PLAN_MODE_PREFIX
-    : ''
+    opts.followUpMode === 'super-plan'
+      ? getSuperPlanModePrefix(session.agent_sdk)
+      : opts.followUpMode === 'plan' && !skipPrefix
+        ? PLAN_MODE_PREFIX
+        : ''
   const fullPrompt = modePrefix + opts.prompt
 
   // Auto-revert super-plan → plan immediately (one-shot mode).
@@ -279,7 +332,9 @@ async function sendFollowupToSession(opts: {
   // SessionView does this on mount via initializeSession(), but the kanban
   // followup path bypasses SessionView entirely.  Without this, the Claude Code
   // implementer throws "session not found" because its Map was never populated.
-  const reconnectResult = await window.opencodeOps.reconnect(workingPath, session.opencode_session_id, opts.sessionId)
+  const reconnectResult = unwrapEnvelope(
+    await window.opencodeOps.reconnect(workingPath, session.opencode_session_id, opts.sessionId)
+  )
   if (!reconnectResult.success) {
     throw new Error(`Failed to reconnect to session: ${opts.sessionId}`)
   }
@@ -288,11 +343,14 @@ async function sendFollowupToSession(opts: {
     ? buildMessageParts(opts.attachments, fullPrompt)
     : [{ type: 'text' as const, text: fullPrompt }]
 
-  const promptResult = await window.opencodeOps.prompt(workingPath, session.opencode_session_id,
-    messageParts, model)
+  const promptResult = unwrapEnvelope(
+    await window.opencodeOps.prompt(workingPath, session.opencode_session_id, messageParts, model)
+  )
 
   if (promptResult && !promptResult.success) {
-    console.error(`[KanbanTicketModal] sendFollowupToSession: prompt returned failure — error=${promptResult.error}`)
+    console.error(
+      `[KanbanTicketModal] sendFollowupToSession: prompt returned failure — error=${promptResult.error}`
+    )
     throw new Error(promptResult.error || 'Failed to send prompt to session')
   }
 }
@@ -362,6 +420,131 @@ export function KanbanTicketModal() {
   return <KanbanTicketModalContent ticket={ticket} onForceClose={() => setSelectedTicketId(null)} />
 }
 
+function MergeConflictBanner({ ticket }: { ticket: KanbanTicket }) {
+  const conflictTargetWorktreeId = useWorktreeStatusStore(
+    useCallback(
+      (state) =>
+        ticket.worktree_id
+          ? (state.mergeConflictWorktreeByTicket[ticket.id] ?? ticket.worktree_id)
+          : null,
+      [ticket.id, ticket.worktree_id]
+    )
+  )
+  const worktreePath = useWorktreeStore(
+    useCallback(
+      (state) => {
+        if (!conflictTargetWorktreeId) return null
+        for (const worktrees of state.worktreesByProject.values()) {
+          const found = worktrees.find((w) => w.id === conflictTargetWorktreeId)
+          if (found) return found.path
+        }
+        return null
+      },
+      [conflictTargetWorktreeId]
+    )
+  )
+  const hasConflicts = useGitStore(
+    useCallback(
+      (state) => (worktreePath ? (state.conflictsByWorktree[worktreePath] ?? false) : false),
+      [worktreePath]
+    )
+  )
+  const conflictFlow = useWorktreeStatusStore(
+    useCallback(
+      (state) =>
+        conflictTargetWorktreeId
+          ? state.mergeConflictFlowByWorktree[conflictTargetWorktreeId]
+          : undefined,
+      [conflictTargetWorktreeId]
+    )
+  )
+  const mergeConflictMode = useSettingsStore((s) => s.mergeConflictMode)
+  const { startFixFlow, openAttachedSession } = useConflictFixFlow(conflictTargetWorktreeId)
+
+  if (!ticket.worktree_id || ticket.archived_at || !hasConflicts) return null
+
+  const isConflictFlowActive =
+    conflictFlow?.phase === 'starting' ||
+    conflictFlow?.phase === 'running' ||
+    conflictFlow?.phase === 'refreshing'
+
+  return (
+    <div
+      data-testid="ticket-modal-fix-conflicts-banner"
+      className="flex items-center justify-between gap-3 border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center gap-2 font-medium text-destructive">
+        <AlertTriangle className="h-4 w-4" />
+        Merge conflicts detected
+      </div>
+      {isConflictFlowActive ? (
+        <button
+          type="button"
+          className="flex items-center"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (conflictFlow?.phase !== 'starting') openAttachedSession()
+          }}
+        >
+          <IndeterminateProgressBar
+            mode={ticket.mode || 'build'}
+            isFixingConflicts
+            className="w-24"
+          />
+        </button>
+      ) : mergeConflictMode === 'always-ask' ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 text-xs font-semibold"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+              Fix conflicts
+              <ChevronDown className="h-3 w-3 ml-1" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                void startFixFlow('build')
+              }}
+            >
+              <Hammer className="h-4 w-4 mr-2" />
+              Fix in Build mode
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                void startFixFlow('plan')
+              }}
+            >
+              <MapIcon className="h-4 w-4 mr-2" />
+              Fix in Plan mode
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <Button
+          size="sm"
+          variant="destructive"
+          className="h-7 text-xs font-semibold"
+          onClick={(e) => {
+            e.stopPropagation()
+            void startFixFlow()
+          }}
+        >
+          <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+          Fix conflicts
+        </Button>
+      )}
+    </div>
+  )
+}
+
 // ── Inner content (only rendered when ticket is non-null) ───────────
 function KanbanTicketModalContent({
   ticket,
@@ -425,9 +608,14 @@ function KanbanTicketModalContent({
   // the same 3-tier lookup that sendFollowupToSession already uses.
   const [dbSessionInfo, setDbSessionInfo] = useState<{
     session: {
-      id: string; worktree_id: string | null; connection_id: string | null;
-      opencode_session_id: string | null; agent_sdk: string;
-      model_provider_id: string | null; model_id: string | null; model_variant: string | null;
+      id: string
+      worktree_id: string | null
+      connection_id: string | null
+      opencode_session_id: string | null
+      agent_sdk: string
+      model_provider_id: string | null
+      model_id: string | null
+      model_variant: string | null
     }
     worktreePath: string | null
   } | null>(null)
@@ -466,17 +654,22 @@ function KanbanTicketModalContent({
     // fires in the same micro-task batch) sees it before calling loadSessions.
     isLoadingDbSession.current = true
     setSessionLoadFailed(false)
-    findSessionById(ticket.current_session_id).then((result) => {
-      if (cancelled) return
-      if (!result) {
-        setSessionLoadFailed(true)
-        return
-      }
-      setDbSessionInfo({ session: result.session, worktreePath: result.workingPath })
-    }).finally(() => {
-      if (!cancelled) isLoadingDbSession.current = false
-    })
-    return () => { cancelled = true; isLoadingDbSession.current = false }
+    findSessionById(ticket.current_session_id)
+      .then((result) => {
+        if (cancelled) return
+        if (!result) {
+          setSessionLoadFailed(true)
+          return
+        }
+        setDbSessionInfo({ session: result.session, worktreePath: result.workingPath })
+      })
+      .finally(() => {
+        if (!cancelled) isLoadingDbSession.current = false
+      })
+    return () => {
+      cancelled = true
+      isLoadingDbSession.current = false
+    }
   }, [ticket.current_session_id, sessionRecord])
 
   // Eagerly load sessions when a ticket has a session but it's not in the
@@ -497,7 +690,13 @@ function KanbanTicketModalContent({
     if (isLoadingDbSession.current) return
     hasAttemptedSessionLoad.current = true
     useSessionStore.getState().loadSessions(ticket.worktree_id, ticket.project_id)
-  }, [ticket.current_session_id, ticket.worktree_id, ticket.project_id, sessionRecord, dbSessionInfo])
+  }, [
+    ticket.current_session_id,
+    ticket.worktree_id,
+    ticket.project_id,
+    sessionRecord,
+    dbSessionInfo
+  ])
 
   const pendingPlan = useSessionStore(
     useCallback(
@@ -523,13 +722,19 @@ function KanbanTicketModalContent({
   const [dbWorktreePath, setDbWorktreePath] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!sessionRecord?.worktree_id) { setDbWorktreePath(null); return }
+    if (!sessionRecord?.worktree_id) {
+      setDbWorktreePath(null)
+      return
+    }
 
     const inMemory = findWorktreePathById(sessionRecord.worktree_id)
-    if (inMemory) { setDbWorktreePath(null); return }
+    if (inMemory) {
+      setDbWorktreePath(null)
+      return
+    }
 
     // Worktree not in store — load from DB
-    window.db.worktree.get(sessionRecord.worktree_id).then((wt) => {
+    db.worktree.get(sessionRecord.worktree_id).then((wt) => {
       setDbWorktreePath(wt?.path ?? null)
     })
   }, [sessionRecord?.worktree_id])
@@ -559,20 +764,29 @@ function KanbanTicketModalContent({
     forceClose()
   }, [editDraftDirty, forceClose, modalMode])
 
-  const handleDialogOpenChange = useCallback((isOpen: boolean) => {
-    if (!isOpen) {
-      requestClose()
-    }
-  }, [requestClose])
+  const handleDialogOpenChange = useCallback(
+    (isOpen: boolean) => {
+      if (!isOpen) {
+        requestClose()
+      }
+    },
+    [requestClose]
+  )
 
   // ── Session stream resolution ────────────────────────────────────
   let worktreePath: string | null = null
   if (effectiveSession?.worktree_id) {
-    worktreePath = findWorktreePathById(effectiveSession.worktree_id) ?? dbWorktreePath ?? dbSessionInfo?.worktreePath ?? null
+    worktreePath =
+      findWorktreePathById(effectiveSession.worktree_id) ??
+      dbWorktreePath ??
+      dbSessionInfo?.worktreePath ??
+      null
   } else if (effectiveSession?.connection_id) {
-    worktreePath = useConnectionStore.getState().connections.find(
-      c => c.id === effectiveSession.connection_id
-    )?.path ?? dbSessionInfo?.worktreePath ?? null
+    worktreePath =
+      useConnectionStore.getState().connections.find((c) => c.id === effectiveSession.connection_id)
+        ?.path ??
+      dbSessionInfo?.worktreePath ??
+      null
   } else if (dbSessionInfo?.worktreePath) {
     worktreePath = dbSessionInfo.worktreePath
   }
@@ -583,26 +797,44 @@ function KanbanTicketModalContent({
   // the first prompt).  Re-read from the DB to resolve it.
   const [resolvedOpcSessionId, setResolvedOpcSessionId] = useState<string | null>(null)
   useEffect(() => {
-    if (!storeOpcSessionId || !storeOpcSessionId.startsWith('pending::') || !ticket.current_session_id) {
+    if (
+      !storeOpcSessionId ||
+      !storeOpcSessionId.startsWith('pending::') ||
+      !ticket.current_session_id
+    ) {
       setResolvedOpcSessionId(null)
       return
     }
     let cancelled = false
-    window.db.session.get(ticket.current_session_id).then((dbSess: { opencode_session_id?: string | null } | null) => {
-      if (cancelled) return
-      const dbId = dbSess?.opencode_session_id ?? null
-      if (dbId && !dbId.startsWith('pending::')) {
-        console.info('[KanbanModal] resolved pending:: ID from DB — store=%s, db=%s', storeOpcSessionId, dbId)
-        // Also update the Zustand store so other components pick it up
-        useSessionStore.getState().setOpenCodeSessionId(ticket.current_session_id!, dbId)
-        setResolvedOpcSessionId(dbId)
-      }
-    })
-    return () => { cancelled = true }
+    db.session
+      .get(ticket.current_session_id)
+      .then((dbSess: { opencode_session_id?: string | null } | null) => {
+        if (cancelled) return
+        const dbId = dbSess?.opencode_session_id ?? null
+        if (dbId && !dbId.startsWith('pending::')) {
+          console.info(
+            '[KanbanModal] resolved pending:: ID from DB — store=%s, db=%s',
+            storeOpcSessionId,
+            dbId
+          )
+          // Also update the Zustand store so other components pick it up
+          useSessionStore.getState().setOpenCodeSessionId(ticket.current_session_id!, dbId)
+          setResolvedOpcSessionId(dbId)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
   }, [storeOpcSessionId, ticket.current_session_id])
 
   const opcSessionId = resolvedOpcSessionId ?? storeOpcSessionId
-  const hasSession = !!(ticket.current_session_id && worktreePath && opcSessionId && !opcSessionId.startsWith('pending::'))
+  const hasSession = !!(
+    ticket.current_session_id &&
+    worktreePath &&
+    opcSessionId &&
+    !opcSessionId.startsWith('pending::')
+  )
+  const conflictBanner = <MergeConflictBanner ticket={ticket} />
 
   // Commit to dual-pane layout as soon as we know the ticket has a session,
   // even before the async DB lookups resolve.  This prevents the user from
@@ -612,7 +844,17 @@ function KanbanTicketModalContent({
 
   const [sessionReady, setSessionReady] = useState(false)
 
-  console.info('[KanbanModal] session resolution — ticket.current_session_id=%s, worktreePath=%s, opcSessionId=%s (store=%s), hasSession=%s, sessionReady=%s, agent_sdk=%s, sessionLoadFailed=%s', ticket.current_session_id, worktreePath, opcSessionId, storeOpcSessionId, hasSession, sessionReady, effectiveSession?.agent_sdk, sessionLoadFailed)
+  console.info(
+    '[KanbanModal] session resolution — ticket.current_session_id=%s, worktreePath=%s, opcSessionId=%s (store=%s), hasSession=%s, sessionReady=%s, agent_sdk=%s, sessionLoadFailed=%s',
+    ticket.current_session_id,
+    worktreePath,
+    opcSessionId,
+    storeOpcSessionId,
+    hasSession,
+    sessionReady,
+    effectiveSession?.agent_sdk,
+    sessionLoadFailed
+  )
 
   useEffect(() => {
     if (!worktreePath || !opcSessionId || !ticket.current_session_id) {
@@ -629,10 +871,17 @@ function KanbanTicketModalContent({
     // from disk; for OpenCode sessions it pokes the server).  Without this,
     // SessionStreamPanel's useSessionStream hook may call getMessages() before
     // the cache is warm and receive an empty result.
-    console.info('[KanbanModal:sessionReady] starting — worktreePath=%s, opcSessionId=%s, hiveSessionId=%s', worktreePath, opcSessionId, ticket.current_session_id)
+    console.info(
+      '[KanbanModal:sessionReady] starting — worktreePath=%s, opcSessionId=%s, hiveSessionId=%s',
+      worktreePath,
+      opcSessionId,
+      ticket.current_session_id
+    )
     ;(async () => {
       try {
-        const reconnResult = await window.opencodeOps.reconnect(worktreePath, opcSessionId, ticket.current_session_id)
+        const reconnResult = unwrapEnvelope(
+          await window.opencodeOps.reconnect(worktreePath, opcSessionId, ticket.current_session_id)
+        )
         console.info('[KanbanModal:sessionReady] reconnect result:', reconnResult)
       } catch (err) {
         console.warn('[KanbanModal:sessionReady] reconnect failed:', err)
@@ -642,8 +891,14 @@ function KanbanTicketModalContent({
       // Pre-warm: load messages into the backend cache so the next
       // getMessages() call from useSessionStream finds them immediately.
       try {
-        const warmResult = await window.opencodeOps.getMessages(worktreePath, opcSessionId)
-        console.info('[KanbanModal:sessionReady] pre-warm getMessages — success=%s, messageCount=%d', warmResult.success, Array.isArray(warmResult.messages) ? warmResult.messages.length : 0)
+        const warmResult = unwrapEnvelope(
+          await window.opencodeOps.getMessages(worktreePath, opcSessionId)
+        )
+        console.info(
+          '[KanbanModal:sessionReady] pre-warm getMessages — success=%s, messageCount=%d',
+          warmResult.success,
+          Array.isArray(warmResult.messages) ? warmResult.messages.length : 0
+        )
       } catch (err) {
         console.warn('[KanbanModal:sessionReady] pre-warm getMessages failed:', err)
         // Pre-warm failure is non-fatal
@@ -657,7 +912,9 @@ function KanbanTicketModalContent({
       }
     })()
 
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [worktreePath, opcSessionId, ticket.current_session_id])
 
   // Render the mode-specific inner content (without DialogContent wrapper)
@@ -733,19 +990,20 @@ function KanbanTicketModalContent({
     dialogBody = (
       <DialogContent
         data-testid="kanban-ticket-modal"
-        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden"
+        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{ticket.title}</DialogTitle>
         </DialogHeader>
-        <div className="flex h-full overflow-hidden">
+        {conflictBanner}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           {hasSession && sessionReady ? (
             <SessionStreamPanel
               sessionId={ticket.current_session_id!}
               worktreePath={worktreePath!}
               opencodeSessionId={opcSessionId!}
               title={ticket.title}
-              headerAction={(
+              headerAction={
                 <div className="flex items-center gap-2">
                   <TicketRunButton
                     state={runScriptState}
@@ -759,7 +1017,7 @@ function KanbanTicketModalContent({
                     testId="go-to-session-btn"
                   />
                 </div>
-              )}
+              }
               fullWidth
             />
           ) : (
@@ -775,9 +1033,10 @@ function KanbanTicketModalContent({
     dialogBody = (
       <DialogContent
         data-testid="kanban-ticket-modal"
-        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden"
+        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
       >
-        <div className="flex h-full overflow-hidden">
+        {conflictBanner}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* Left: ticket content */}
           <div className="w-[480px] shrink-0 h-full flex flex-col overflow-y-auto p-6 gap-4">
             {/* Shared ticket context header for non-edit modes */}
@@ -814,10 +1073,8 @@ function KanbanTicketModalContent({
   } else {
     // ── Standard layout (no session) ────────────────────────────────
     dialogBody = (
-      <DialogContent
-        data-testid="kanban-ticket-modal"
-        className={MODE_DIALOG_CLASS[modalMode]}
-      >
+      <DialogContent data-testid="kanban-ticket-modal" className={MODE_DIALOG_CLASS[modalMode]}>
+        {conflictBanner}
         {modeContent}
       </DialogContent>
     )
@@ -869,17 +1126,19 @@ function EditModeContent({
   )
   const [isSaving, setIsSaving] = useState(false)
   const lifecycle = useLifecycleActions(ticket.worktree_id)
-  const { pinAndActivate: pinAndActivateSession, lifecycleLoading } = usePinAndActivateSession(onClose)
+  const { pinAndActivate: pinAndActivateSession, lifecycleLoading } =
+    usePinAndActivateSession(onClose)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const isDirty = normalizeDraftText(title) !== normalizeDraftText(ticket.title)
-    || normalizeDraftText(description) !== normalizeDraftText(ticket.description)
-    || normalizeTicketAttachments(attachments) !== normalizeTicketAttachments(ticket.attachments)
+  const isDirty =
+    normalizeDraftText(title) !== normalizeDraftText(ticket.title) ||
+    normalizeDraftText(description) !== normalizeDraftText(ticket.description) ||
+    normalizeTicketAttachments(attachments) !== normalizeTicketAttachments(ticket.attachments)
 
   useEffect(() => {
     onDirtyChange(isDirty)
   }, [isDirty, onDirtyChange])
 
-  const followUpTriggerColumn = useSettingsStore(s => s.followUpTriggerColumn)
+  const followUpTriggerColumn = useSettingsStore((s) => s.followUpTriggerColumn)
 
   // ── Dependency selectors ──────────────────────────────────────────
   // useShallow prevents infinite re-render loops by doing shallow equality
@@ -904,7 +1163,7 @@ function EditModeContent({
       for (const [depId, blockerIds] of state.dependencyMap) {
         if (blockerIds.has(ticket.id)) {
           for (const [, projectTickets] of state.tickets) {
-            const t = projectTickets.find(pt => pt.id === depId)
+            const t = projectTickets.find((pt) => pt.id === depId)
             if (t) result.push(t)
           }
         }
@@ -919,11 +1178,12 @@ function EditModeContent({
   }, [lifecycle.hasAttachedPR])
 
   // ── Image paste/drop ───────────────────────────────────────────────
-  const { isDragOver, handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop } = useImagePaste({
-    maxAttachments: MAX_ATTACHMENTS,
-    currentCount: attachments.length,
-    onAttach: (attachment) => setAttachments((prev) => [...prev, attachment])
-  })
+  const { isDragOver, handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop } =
+    useImagePaste({
+      maxAttachments: MAX_ATTACHMENTS,
+      currentCount: attachments.length,
+      onAttach: (attachment) => setAttachments((prev) => [...prev, attachment])
+    })
 
   const handleSave = useCallback(async () => {
     if (!title.trim() || isSaving) return
@@ -941,7 +1201,16 @@ function EditModeContent({
     } finally {
       setIsSaving(false)
     }
-  }, [title, description, attachments, isSaving, updateTicket, ticket.id, ticket.project_id, onClose])
+  }, [
+    title,
+    description,
+    attachments,
+    isSaving,
+    updateTicket,
+    ticket.id,
+    ticket.project_id,
+    onClose
+  ])
 
   const handleDelete = useCallback(async () => {
     try {
@@ -971,7 +1240,7 @@ function EditModeContent({
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={cn(isDragOver && "ring-2 ring-primary ring-offset-2 rounded-lg")}
+      className={cn(isDragOver && 'ring-2 ring-primary ring-offset-2 rounded-lg')}
     >
       <DialogHeader>
         <div className="flex items-center justify-between">
@@ -1071,16 +1340,17 @@ function EditModeContent({
 
         {/* Dependencies section */}
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-foreground">
-            Dependencies
-          </label>
+          <label className="text-sm font-medium text-foreground">Dependencies</label>
           <div className="space-y-2">
             {/* Blockers */}
             {blockerTickets.length > 0 && (
               <div className="space-y-1">
                 <span className="text-xs text-muted-foreground">Blocked by:</span>
-                {blockerTickets.map(blocker => (
-                  <div key={blocker.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded-md bg-muted/30">
+                {blockerTickets.map((blocker) => (
+                  <div
+                    key={blocker.id}
+                    className="flex items-center justify-between gap-2 px-2 py-1 rounded-md bg-muted/30"
+                  >
                     <div className="flex items-center gap-2 min-w-0">
                       {isBlockerSatisfied(blocker.column, blocker.mode, followUpTriggerColumn) ? (
                         <span className="text-green-500 text-xs">&#10003;</span>
@@ -1090,7 +1360,9 @@ function EditModeContent({
                       <span className="text-sm truncate">{blocker.title}</span>
                     </div>
                     <button
-                      onClick={() => useKanbanStore.getState().removeDependency(ticket.id, blocker.id)}
+                      onClick={() =>
+                        useKanbanStore.getState().removeDependency(ticket.id, blocker.id)
+                      }
                       className="text-muted-foreground hover:text-foreground shrink-0"
                     >
                       <X className="h-3 w-3" />
@@ -1104,8 +1376,11 @@ function EditModeContent({
             {dependentTickets.length > 0 && (
               <div className="space-y-1">
                 <span className="text-xs text-muted-foreground">Depended on by:</span>
-                {dependentTickets.map(dep => (
-                  <div key={dep.id} className="flex items-center gap-2 px-2 py-1 rounded-md bg-muted/30">
+                {dependentTickets.map((dep) => (
+                  <div
+                    key={dep.id}
+                    className="flex items-center gap-2 px-2 py-1 rounded-md bg-muted/30"
+                  >
                     <span className="text-sm truncate">{dep.title}</span>
                   </div>
                 ))}
@@ -1129,11 +1404,15 @@ function EditModeContent({
             {ticket.pending_launch_config && (
               <div className="flex items-center gap-1.5 text-xs text-amber-500">
                 <Zap className="h-3 w-3" />
-                Auto-launch queued: {(() => {
+                Auto-launch queued:{' '}
+                {(() => {
                   try {
                     return JSON.parse(ticket.pending_launch_config).mode
-                  } catch { return 'unknown' }
-                })()} mode
+                  } catch {
+                    return 'unknown'
+                  }
+                })()}{' '}
+                mode
               </div>
             )}
           </div>
@@ -1189,24 +1468,27 @@ function EditModeContent({
               Review
             </Button>
           )}
-          {ticket.column === 'done' && ticket.worktree_id && lifecycle.isGitHub &&
-            lifecycle.hasAttachedPR && lifecycle.prLiveState?.state !== 'MERGED' &&
+          {ticket.column === 'done' &&
+            ticket.worktree_id &&
+            lifecycle.isGitHub &&
+            lifecycle.hasAttachedPR &&
+            lifecycle.prLiveState?.state !== 'MERGED' &&
             lifecycle.prLiveState?.state !== 'CLOSED' && (
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-1.5 bg-emerald-600/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-600/20"
-              onClick={() => lifecycle.mergePR()}
-              disabled={lifecycle.isMergingPR}
-            >
-              {lifecycle.isMergingPR ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <GitMerge className="h-3.5 w-3.5" />
-              )}
-              {lifecycle.isMergingPR ? 'Merging...' : 'Merge PR'}
-            </Button>
-          )}
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-1.5 bg-emerald-600/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-600/20"
+                onClick={() => lifecycle.mergePR()}
+                disabled={lifecycle.isMergingPR}
+              >
+                {lifecycle.isMergingPR ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <GitMerge className="h-3.5 w-3.5" />
+                )}
+                {lifecycle.isMergingPR ? 'Merging...' : 'Merge PR'}
+              </Button>
+            )}
           {ticket.column === 'done' && ticket.worktree_id && (
             <Button
               type="button"
@@ -1295,6 +1577,7 @@ function PlanReviewModeContent({
     let cancelled = false
     window.opencodeOps
       .commands(worktreePath, opcSessionId)
+      .then(unwrapEnvelope)
       .then((result) => {
         if (!cancelled && result.success && result.commands) {
           setSlashCommands(result.commands)
@@ -1324,42 +1607,45 @@ function PlanReviewModeContent({
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
-  const handleDropFiles = useCallback((files: FileList) => {
-    for (const file of Array.from(files)) {
-      if (attachments.length >= MAX_ATTACHMENTS) {
-        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
-        break
-      }
-      if (isImageMime(file.type)) {
-        const reader = new FileReader()
-        reader.onload = () => {
+  const handleDropFiles = useCallback(
+    (files: FileList) => {
+      for (const file of Array.from(files)) {
+        if (attachments.length >= MAX_ATTACHMENTS) {
+          toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+          break
+        }
+        if (isImageMime(file.type)) {
+          const reader = new FileReader()
+          reader.onload = () => {
+            handleAttach({
+              kind: 'data',
+              name: file.name,
+              mime: file.type,
+              dataUrl: reader.result as string
+            })
+          }
+          reader.readAsDataURL(file)
+        } else {
           handleAttach({
-            kind: 'data',
+            kind: 'path',
             name: file.name,
-            mime: file.type,
-            dataUrl: reader.result as string
+            mime: file.type || 'application/octet-stream',
+            filePath: window.fileOps.getPathForFile(file)
           })
         }
-        reader.readAsDataURL(file)
-      } else {
-        handleAttach({
-          kind: 'path',
-          name: file.name,
-          mime: file.type || 'application/octet-stream',
-          filePath: window.fileOps.getPathForFile(file)
-        })
       }
-    }
-  }, [handleAttach, attachments.length])
+    },
+    [handleAttach, attachments.length]
+  )
 
   const { isDragging } = useDropZone({ onDrop: handleDropFiles, containerRef: dropZoneRef })
 
   const toggleMode = useCallback(() => {
-    setFollowUpMode((prev) => prev === 'build' ? 'plan' : 'build')
+    setFollowUpMode((prev) => (prev === 'build' ? 'plan' : 'build'))
   }, [])
 
   const toggleSuperMode = useCallback(() => {
-    setFollowUpMode((prev) => prev === 'super-plan' ? 'plan' : 'super-plan')
+    setFollowUpMode((prev) => (prev === 'super-plan' ? 'plan' : 'super-plan'))
   }, [])
 
   // Tab key toggles mode, Shift+Tab toggles super-plan
@@ -1384,7 +1670,12 @@ function PlanReviewModeContent({
 
   // ── Send followup (reject pending plan + iterate) ────────────────
   const handleSendFollowup = useCallback(async () => {
-    if ((!followUpText.trim() && attachments.length === 0) || !ticket.current_session_id || isSending) return
+    if (
+      (!followUpText.trim() && attachments.length === 0) ||
+      !ticket.current_session_id ||
+      isSending
+    )
+      return
     setIsSending(true)
 
     try {
@@ -1402,10 +1693,15 @@ function PlanReviewModeContent({
           if (sessionRecord.worktree_id) {
             rejectPath = findWorktreePathById(sessionRecord.worktree_id)
           } else if (sessionRecord.connection_id) {
-            rejectPath = useConnectionStore.getState().connections.find(c => c.id === sessionRecord.connection_id)?.path ?? null
+            rejectPath =
+              useConnectionStore
+                .getState()
+                .connections.find((c) => c.id === sessionRecord.connection_id)?.path ?? null
           }
           if (!rejectPath) {
-            console.error(`[KanbanTicketModal] planReject: working path not found — worktree_id=${sessionRecord.worktree_id}, connection_id=${sessionRecord.connection_id}`)
+            console.error(
+              `[KanbanTicketModal] planReject: working path not found — worktree_id=${sessionRecord.worktree_id}, connection_id=${sessionRecord.connection_id}`
+            )
             toast.error('Failed to reject plan: working path not found')
             return
           }
@@ -1417,9 +1713,7 @@ function PlanReviewModeContent({
           userExplicitSendTimes.set(sessionId, Date.now())
           snapshotTokenBaseline(sessionId)
           lastSendMode.set(sessionId, 'plan')
-          useWorktreeStatusStore
-            .getState()
-            .setSessionStatus(sessionId, 'planning')
+          useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'planning')
           toast.success('Plan rejected with feedback')
           onClose()
 
@@ -1430,7 +1724,7 @@ function PlanReviewModeContent({
             prompt: feedback,
             followUpMode,
             ticketId: ticket.id,
-            attachments,
+            attachments
           }).catch((err) => {
             console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
             const reason = err instanceof Error ? err.message : String(err)
@@ -1463,7 +1757,7 @@ function PlanReviewModeContent({
         prompt: feedback,
         followUpMode,
         ticketId: ticket.id,
-        attachments,
+        attachments
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
         const reason = err instanceof Error ? err.message : String(err)
@@ -1478,7 +1772,17 @@ function PlanReviewModeContent({
       setIsSending(false)
       setAttachments([])
     }
-  }, [followUpText, followUpMode, ticket, isSending, pendingPlan, sessionRecord, updateTicket, onClose, attachments])
+  }, [
+    followUpText,
+    followUpMode,
+    ticket,
+    isSending,
+    pendingPlan,
+    sessionRecord,
+    updateTicket,
+    onClose,
+    attachments
+  ])
 
   // ── Implement handler ─────────────────────────────────────────────
   const handleImplement = useCallback(async () => {
@@ -1499,7 +1803,9 @@ function PlanReviewModeContent({
       snapshotTokenBaseline(sessionId)
 
       // Clear plan_ready badge — ticket is back to working
-      await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { plan_ready: false, mode: 'build' })
+      await useKanbanStore
+        .getState()
+        .updateTicket(ticket.id, ticket.project_id, { plan_ready: false, mode: 'build' })
       notifyKanbanSessionSync(sessionId, { type: 'implement' })
 
       if (!isClaudeCode && pendingBeforeAction) {
@@ -1529,14 +1835,25 @@ function PlanReviewModeContent({
         if (sessionRecord.worktree_id) {
           approvePath = findWorktreePathById(sessionRecord.worktree_id)
         } else if (sessionRecord.connection_id) {
-          approvePath = useConnectionStore.getState().connections.find(c => c.id === sessionRecord.connection_id)?.path ?? null
+          approvePath =
+            useConnectionStore
+              .getState()
+              .connections.find((c) => c.id === sessionRecord.connection_id)?.path ?? null
         }
         if (!approvePath) {
-          console.error(`[KanbanTicketModal] handleImplement: working path not found — worktree_id=${sessionRecord.worktree_id}, connection_id=${sessionRecord.connection_id}`)
+          console.error(
+            `[KanbanTicketModal] handleImplement: working path not found — worktree_id=${sessionRecord.worktree_id}, connection_id=${sessionRecord.connection_id}`
+          )
           toast.error('Failed to approve plan: working path not found')
           return
         }
-        await window.opencodeOps.planApprove(approvePath, sessionId, pendingBeforeAction.requestId)
+        unwrapEnvelope(
+          await window.opencodeOps.planApprove(
+            approvePath,
+            sessionId,
+            pendingBeforeAction.requestId
+          )
+        )
       }
 
       toast.success('Implementation started')
@@ -1549,35 +1866,100 @@ function PlanReviewModeContent({
     } finally {
       setIsActioning(false)
     }
-  }, [ticket.current_session_id, ticket.id, ticket.project_id, isActioning, pendingPlan, sessionRecord, onClose])
+  }, [
+    ticket.current_session_id,
+    ticket.id,
+    ticket.project_id,
+    isActioning,
+    pendingPlan,
+    sessionRecord,
+    onClose
+  ])
 
   // ── Handoff handler ───────────────────────────────────────────────
-  const handleHandoff = useCallback(async (override?: HandoffSelectionOverride) => {
-    if (!ticket.current_session_id || !hasWorkingContext || isActioning) return
-    setIsActioning(true)
+  const handleHandoff = useCallback(
+    async (override?: HandoffSelectionOverride) => {
+      if (!ticket.current_session_id || !hasWorkingContext || isActioning) return
+      setIsActioning(true)
 
-    try {
-      const sessionId = ticket.current_session_id
-      useSessionStore.getState().clearPendingPlan(sessionId)
-      useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-      lastSendMode.delete(sessionId)
+      try {
+        const sessionId = ticket.current_session_id
+        const handoffGoalMode = override?.goalMode === true && override?.agentSdk === 'codex'
+        useSessionStore.getState().clearPendingPlan(sessionId)
+        useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+        lastSendMode.delete(sessionId)
 
-      // Connection-session branch: eagerly start work even if the user stays on the board.
-      if (sessionRecord?.connection_id) {
-        if (worktreePath && opcSessionId) {
-          useCommandApprovalStore.getState().clearSession(sessionId)
-          await window.opencodeOps.abort(worktreePath, opcSessionId)
-        }
+        // Connection-session branch: eagerly start work even if the user stays on the board.
+        if (sessionRecord?.connection_id) {
+          if (worktreePath && opcSessionId) {
+            useCommandApprovalStore.getState().clearSession(sessionId)
+            unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opcSessionId))
+          }
 
-        if (!worktreePath) {
-          toast.error('Connection path unavailable')
+          if (!worktreePath) {
+            toast.error('Connection path unavailable')
+            return
+          }
+
+          const connectionPath = worktreePath
+          const sessionStore = useSessionStore.getState()
+          const result = await sessionStore.createConnectionSession(
+            sessionRecord.connection_id,
+            override?.agentSdk,
+            undefined,
+            { autoFocus: false, modelOverride: override?.model }
+          )
+          if (!result.success || !result.session) {
+            toast.error(result.error ?? 'Failed to create handoff session')
+            return
+          }
+
+          const handoffPrompt = buildHandoffPrompt(planContent, override)
+          const newSessionId = result.session.id
+          const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+
+          prepareTicketBuildSession(newSessionId, handoffGoalMode)
+
+          // In sticky-tab mode, stay on the board; otherwise navigate to the new session.
+          // setActiveConnectionSession requires activeConnectionId to be set — which
+          // it isn't when the modal is opened from the kanban board — so we switch
+          // the active connection first, then nail down the session within it.
+          const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
+          if (useSettingsStore.getState().boardMode === 'sticky-tab') {
+            sessionStore.setActiveSession(BOARD_TAB_ID)
+          } else {
+            sessionStore.setActiveConnection(sessionRecord.connection_id)
+            sessionStore.setActiveConnectionSession(newSessionId)
+          }
+
+          onClose()
+          void (async () => {
+            await setModePromise
+            await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
+              connectionId: sessionRecord.connection_id
+            })
+            toast.success('Handoff session started')
+          })().catch((error) => {
+            console.error(
+              '[KanbanTicketModal] handoff (connection) background start failed:',
+              error
+            )
+            toast.error('Failed to start handoff')
+          })
           return
         }
 
-        const connectionPath = worktreePath
+        // Worktree-session branch. After the connection branch returns, TS can't
+        // narrow worktree_id from hasWorkingContext alone — use a local const
+        // rather than a non-null assertion so refactors of the branch above don't
+        // silently break this one.
+        const worktreeId = sessionRecord?.worktree_id
+        if (!worktreeId) return
+
         const sessionStore = useSessionStore.getState()
-        const result = await sessionStore.createConnectionSession(
-          sessionRecord.connection_id,
+        const result = await sessionStore.createSession(
+          worktreeId,
+          ticket.project_id,
           override?.agentSdk,
           undefined,
           { autoFocus: false, modelOverride: override?.model }
@@ -1590,198 +1972,175 @@ function PlanReviewModeContent({
         const handoffPrompt = buildHandoffPrompt(planContent, override)
         const newSessionId = result.session.id
         const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+        const localWorktreePath = findWorktreePathById(worktreeId)
+        if (!localWorktreePath) {
+          toast.error('Could not find worktree path')
+          return
+        }
 
-        prepareTicketBuildSession(newSessionId)
+        prepareTicketBuildSession(newSessionId, handoffGoalMode)
 
-        // In sticky-tab mode, stay on the board; otherwise navigate to the new session.
-        // setActiveConnectionSession requires activeConnectionId to be set — which
-        // it isn't when the modal is opened from the kanban board — so we switch
-        // the active connection first, then nail down the session within it.
+        // In sticky-tab mode, stay on the board; otherwise navigate to the new session
         const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
         if (useSettingsStore.getState().boardMode === 'sticky-tab') {
           sessionStore.setActiveSession(BOARD_TAB_ID)
         } else {
-          sessionStore.setActiveConnection(sessionRecord.connection_id)
-          sessionStore.setActiveConnectionSession(newSessionId)
+          useWorktreeStore.getState().selectWorktree(worktreeId)
+          sessionStore.setActiveWorktree(worktreeId)
+          sessionStore.setActiveSession(newSessionId)
         }
 
         onClose()
         void (async () => {
           await setModePromise
-          await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
-            connectionId: sessionRecord.connection_id
-          })
+          await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
           toast.success('Handoff session started')
         })().catch((error) => {
-          console.error('[KanbanTicketModal] handoff (connection) background start failed:', error)
+          console.error('[KanbanTicketModal] handoff background start failed:', error)
           toast.error('Failed to start handoff')
         })
-        return
+      } catch {
+        toast.error('Failed to create handoff session')
+      } finally {
+        setIsActioning(false)
       }
-
-      // Worktree-session branch. After the connection branch returns, TS can't
-      // narrow worktree_id from hasWorkingContext alone — use a local const
-      // rather than a non-null assertion so refactors of the branch above don't
-      // silently break this one.
-      const worktreeId = sessionRecord?.worktree_id
-      if (!worktreeId) return
-
-      const sessionStore = useSessionStore.getState()
-      const result = await sessionStore.createSession(
-        worktreeId,
-        ticket.project_id,
-        override?.agentSdk,
-        undefined,
-        { autoFocus: false, modelOverride: override?.model }
-      )
-      if (!result.success || !result.session) {
-        toast.error(result.error ?? 'Failed to create handoff session')
-        return
-      }
-
-      const handoffPrompt = buildHandoffPrompt(planContent, override)
-      const newSessionId = result.session.id
-      const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
-      const localWorktreePath = findWorktreePathById(worktreeId)
-      if (!localWorktreePath) {
-        toast.error('Could not find worktree path')
-        return
-      }
-
-      prepareTicketBuildSession(newSessionId)
-
-      // In sticky-tab mode, stay on the board; otherwise navigate to the new session
-      const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
-      if (useSettingsStore.getState().boardMode === 'sticky-tab') {
-        sessionStore.setActiveSession(BOARD_TAB_ID)
-      } else {
-        useWorktreeStore.getState().selectWorktree(worktreeId)
-        sessionStore.setActiveWorktree(worktreeId)
-        sessionStore.setActiveSession(newSessionId)
-      }
-
-      onClose()
-      void (async () => {
-        await setModePromise
-        await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
-        toast.success('Handoff session started')
-      })().catch((error) => {
-        console.error('[KanbanTicketModal] handoff background start failed:', error)
-        toast.error('Failed to start handoff')
-      })
-    } catch {
-      toast.error('Failed to create handoff session')
-    } finally {
-      setIsActioning(false)
-    }
-  }, [
-    ticket,
-    isActioning,
-    planContent,
-    onClose,
-    hasWorkingContext,
-    sessionRecord,
-    worktreePath,
-    opcSessionId
-  ])
+    },
+    [
+      ticket,
+      isActioning,
+      planContent,
+      onClose,
+      hasWorkingContext,
+      sessionRecord,
+      worktreePath,
+      opcSessionId
+    ]
+  )
 
   // Synchronously re-link the ticket to a new build session and (if needed) move it to
   // in_progress so the kanban board reflects the new work before the modal closes.
-  const prepareTicketBuildSession = useCallback((newSessionId: string): void => {
-    useKanbanStore
-      .getState()
-      .updateTicket(ticket.id, ticket.project_id, {
-        current_session_id: newSessionId,
-        plan_ready: false,
-        mode: 'build'
-      })
-      .catch((err) => {
-        console.error('[KanbanTicketModal] failed to relink supercharge session:', err)
-        toast.error('Failed to attach the new session to the ticket')
-      })
-
-    if (ticket.column === 'todo' || ticket.column === 'review') {
+  const prepareTicketBuildSession = useCallback(
+    (newSessionId: string, goalMode: boolean): void => {
       useKanbanStore
         .getState()
-        .moveTicket(ticket.id, ticket.project_id, 'in_progress', ticket.sort_order)
-        .catch((err) => {
-          console.error('[KanbanTicketModal] failed to move supercharged ticket to in_progress:', err)
-          toast.error('Failed to move the ticket to in progress')
+        .updateTicket(ticket.id, ticket.project_id, {
+          current_session_id: newSessionId,
+          plan_ready: false,
+          mode: 'build',
+          goal_mode: goalMode,
+          goal_success_criteria: goalMode ? (ticket.goal_success_criteria ?? null) : null
         })
-    }
-  }, [ticket.id, ticket.project_id, ticket.column, ticket.sort_order])
+        .catch((err) => {
+          console.error('[KanbanTicketModal] failed to relink supercharge session:', err)
+          toast.error('Failed to attach the new session to the ticket')
+        })
+
+      if (ticket.column === 'todo' || ticket.column === 'review') {
+        useKanbanStore
+          .getState()
+          .moveTicket(ticket.id, ticket.project_id, 'in_progress', ticket.sort_order)
+          .catch((err) => {
+            console.error(
+              '[KanbanTicketModal] failed to move supercharged ticket to in_progress:',
+              err
+            )
+            toast.error('Failed to move the ticket to in progress')
+          })
+      }
+    },
+    [ticket.id, ticket.project_id, ticket.column, ticket.sort_order, ticket.goal_success_criteria]
+  )
 
   // ── Shared: eagerly connect, send /using-superpowers, queue follow-up for global listener ──
-  const eagerSuperchargeStart = useCallback(async (
-    worktreePath: string,
-    newSessionId: string,
-    bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
-  ) => {
-    // Connect to OpenCode. Surface failure so the caller can alert the user — staying silent
-    // here would leave optimistic UI state with no work running and no error feedback.
-    const connectResult = await window.opencodeOps.connect(worktreePath, newSessionId)
-    if (!connectResult.success || !connectResult.sessionId) {
-      throw new Error('Failed to connect to supercharge session')
-    }
+  const eagerSuperchargeStart = useCallback(
+    async (
+      worktreePath: string,
+      newSessionId: string,
+      bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
+    ) => {
+      // Connect to OpenCode. Surface failure so the caller can alert the user — staying silent
+      // here would leave optimistic UI state with no work running and no error feedback.
+      const connectResult = unwrapEnvelope(
+        await window.opencodeOps.connect(worktreePath, newSessionId)
+      )
+      if (!connectResult.success || !connectResult.sessionId) {
+        throw new Error('Failed to connect to supercharge session')
+      }
 
-    // Persist the opencode session ID to Zustand + DB
-    useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
-    await window.db.session.update(newSessionId, {
-      opencode_session_id: connectResult.sessionId
-    })
+      // Persist the opencode session ID to Zustand + DB
+      useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
+      await db.session.update(newSessionId, {
+        opencode_session_id: connectResult.sessionId
+      })
 
-    // Status / timing tracking — only after connect succeeds, so a failed connect does not
-    // leave the session permanently marked 'working' on the worktree status store.
-    messageSendTimes.set(newSessionId, Date.now())
-    userExplicitSendTimes.set(newSessionId, Date.now())
-    snapshotTokenBaseline(newSessionId)
-    lastSendMode.set(newSessionId, 'build')
-    useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
-    bumpWorktreeLastMessage(bumpTarget)
+      // Status / timing tracking — only after connect succeeds, so a failed connect does not
+      // leave the session permanently marked 'working' on the worktree status store.
+      messageSendTimes.set(newSessionId, Date.now())
+      userExplicitSendTimes.set(newSessionId, Date.now())
+      snapshotTokenBaseline(newSessionId)
+      lastSendMode.set(newSessionId, 'build')
+      useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
+      bumpWorktreeLastMessage(bumpTarget)
 
-    // Queue the follow-up for the global idle listener to dispatch after /using-superpowers completes
-    useSessionStore.getState().setPendingFollowUpMessages(newSessionId, [
-      'use the subagent development skill to implement the following plan:\n' + planContent
-    ])
+      // Queue the follow-up for the global idle listener to dispatch after /using-superpowers completes
+      useSessionStore
+        .getState()
+        .setPendingFollowUpMessages(newSessionId, [
+          'use the subagent development skill to implement the following plan:\n' + planContent
+        ])
 
-    // Send /using-superpowers — global listener handles follow-up on idle
-    const model = resolveSessionModel(newSessionId)
-    await window.opencodeOps.prompt(worktreePath, connectResult.sessionId, [
-      { type: 'text', text: '/using-superpowers' }
-    ], model)
-  }, [planContent])
+      // Send /using-superpowers — global listener handles follow-up on idle
+      const model = resolveSessionModel(newSessionId)
+      unwrapEnvelope(
+        await window.opencodeOps.prompt(
+          worktreePath,
+          connectResult.sessionId,
+          [{ type: 'text', text: '/using-superpowers' }],
+          model
+        )
+      )
+    },
+    [planContent]
+  )
 
-  const eagerHandoffStart = useCallback(async (
-    workingPath: string,
-    newSessionId: string,
-    handoffPrompt: string,
-    bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
-  ) => {
-    const connectResult = await window.opencodeOps.connect(workingPath, newSessionId)
-    if (!connectResult.success || !connectResult.sessionId) {
-      throw new Error('Failed to connect to handoff session')
-    }
+  const eagerHandoffStart = useCallback(
+    async (
+      workingPath: string,
+      newSessionId: string,
+      handoffPrompt: string,
+      bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
+    ) => {
+      const connectResult = unwrapEnvelope(
+        await window.opencodeOps.connect(workingPath, newSessionId)
+      )
+      if (!connectResult.success || !connectResult.sessionId) {
+        throw new Error('Failed to connect to handoff session')
+      }
 
-    useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
-    await window.db.session.update(newSessionId, {
-      opencode_session_id: connectResult.sessionId
-    })
+      useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
+      await db.session.update(newSessionId, {
+        opencode_session_id: connectResult.sessionId
+      })
 
-    messageSendTimes.set(newSessionId, Date.now())
-    userExplicitSendTimes.set(newSessionId, Date.now())
-    snapshotTokenBaseline(newSessionId)
-    lastSendMode.set(newSessionId, 'build')
-    useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
-    bumpWorktreeLastMessage(bumpTarget)
+      messageSendTimes.set(newSessionId, Date.now())
+      userExplicitSendTimes.set(newSessionId, Date.now())
+      snapshotTokenBaseline(newSessionId)
+      lastSendMode.set(newSessionId, 'build')
+      useWorktreeStatusStore.getState().setSessionStatus(newSessionId, 'working')
+      bumpWorktreeLastMessage(bumpTarget)
 
-    const model = resolveSessionModel(newSessionId)
-    await window.opencodeOps.prompt(
-      workingPath,
-      connectResult.sessionId,
-      [{ type: 'text', text: handoffPrompt }],
-      model
-    )
-  }, [])
+      const model = resolveSessionModel(newSessionId)
+      unwrapEnvelope(
+        await window.opencodeOps.prompt(
+          workingPath,
+          connectResult.sessionId,
+          [{ type: 'text', text: handoffPrompt }],
+          model
+        )
+      )
+    },
+    []
+  )
 
   // ── Supercharge handler (new branch) ────────────────────────────
   const handleSupercharge = useCallback(async () => {
@@ -1797,7 +2156,7 @@ function PlanReviewModeContent({
       // Abort the original backend session so it stops spinning
       if (worktreePath && opcSessionId) {
         useCommandApprovalStore.getState().clearSession(sessionId)
-        await window.opencodeOps.abort(worktreePath, opcSessionId)
+        unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opcSessionId))
       }
 
       // Connection-session branch: use eager start since modal closes to the board.
@@ -1823,7 +2182,7 @@ function PlanReviewModeContent({
         const newSessionId = sessionResult.session.id
         const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-        prepareTicketBuildSession(newSessionId)
+        prepareTicketBuildSession(newSessionId, ticket.goal_mode === true)
         onClose()
 
         // NOTE: On IIFE failure, the ticket is left re-linked to the new session (via
@@ -1837,7 +2196,10 @@ function PlanReviewModeContent({
           })
           toast.success('Supercharge session started')
         })().catch((error) => {
-          console.error('[KanbanTicketModal] supercharge (connection) background start failed:', error)
+          console.error(
+            '[KanbanTicketModal] supercharge (connection) background start failed:',
+            error
+          )
           toast.error('Failed to supercharge')
         })
         return
@@ -1868,14 +2230,16 @@ function PlanReviewModeContent({
       const nameHint = slug.length > 0 ? slug : undefined
 
       // Duplicate worktree
-      const dupResult = await useWorktreeStore.getState().duplicateWorktree(
-        project.id,
-        project.path,
-        project.name,
-        worktree.branch_name,
-        worktree.path,
-        nameHint
-      )
+      const dupResult = await useWorktreeStore
+        .getState()
+        .duplicateWorktree(
+          project.id,
+          project.path,
+          project.name,
+          worktree.branch_name,
+          worktree.path,
+          nameHint
+        )
       if (!dupResult.success || !dupResult.worktree) {
         toast.error(dupResult.error ?? 'Failed to duplicate worktree')
         return
@@ -1883,7 +2247,13 @@ function PlanReviewModeContent({
 
       // Create session in the new worktree
       const sessionStore = useSessionStore.getState()
-      const sessionResult = await sessionStore.createSession(dupResult.worktree.id, project.id, undefined, undefined, { autoFocus: false })
+      const sessionResult = await sessionStore.createSession(
+        dupResult.worktree.id,
+        project.id,
+        undefined,
+        undefined,
+        { autoFocus: false }
+      )
       if (!sessionResult.success || !sessionResult.session) {
         toast.error(sessionResult.error ?? 'Failed to create supercharge session')
         return
@@ -1895,7 +2265,7 @@ function PlanReviewModeContent({
       const newWorktreeId = dupResult.worktree.id
       const newWorktreePath = dupResult.worktree.path
 
-      prepareTicketBuildSession(newSessionId)
+      prepareTicketBuildSession(newSessionId, ticket.goal_mode === true)
       onClose()
 
       // Finish session configuration and startup in the background so the modal can close
@@ -1914,7 +2284,17 @@ function PlanReviewModeContent({
     } finally {
       setIsActioning(false)
     }
-  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketBuildSession, worktreePath, opcSessionId, hasWorkingContext, sessionRecord])
+  }, [
+    ticket,
+    isActioning,
+    onClose,
+    eagerSuperchargeStart,
+    prepareTicketBuildSession,
+    worktreePath,
+    opcSessionId,
+    hasWorkingContext,
+    sessionRecord
+  ])
 
   // ── Supercharge Local handler (same worktree, no duplication) ───
   const handleSuperchargeLocal = useCallback(async () => {
@@ -1930,7 +2310,7 @@ function PlanReviewModeContent({
       // Abort the original backend session so it stops spinning
       if (worktreePath && opcSessionId) {
         useCommandApprovalStore.getState().clearSession(sessionId)
-        await window.opencodeOps.abort(worktreePath, opcSessionId)
+        unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opcSessionId))
       }
 
       const localWorktreePath = findWorktreePathById(ticket.worktree_id)
@@ -1941,7 +2321,13 @@ function PlanReviewModeContent({
 
       // Create a new session in the SAME worktree
       const sessionStore = useSessionStore.getState()
-      const sessionResult = await sessionStore.createSession(ticket.worktree_id, ticket.project_id, undefined, undefined, { autoFocus: false })
+      const sessionResult = await sessionStore.createSession(
+        ticket.worktree_id,
+        ticket.project_id,
+        undefined,
+        undefined,
+        { autoFocus: false }
+      )
       if (!sessionResult.success || !sessionResult.session) {
         toast.error(sessionResult.error ?? 'Failed to create local supercharge session')
         return
@@ -1950,7 +2336,7 @@ function PlanReviewModeContent({
       const newSessionId = sessionResult.session.id
       const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-      prepareTicketBuildSession(newSessionId)
+      prepareTicketBuildSession(newSessionId, ticket.goal_mode === true)
       onClose()
 
       // Finish session configuration and startup in the background so the modal can close
@@ -1958,7 +2344,9 @@ function PlanReviewModeContent({
       // otherwise we'd announce success and then have to follow it with a failure toast.
       void (async () => {
         await setModePromise
-        await eagerSuperchargeStart(localWorktreePath, newSessionId, { worktreeId: ticket.worktree_id })
+        await eagerSuperchargeStart(localWorktreePath, newSessionId, {
+          worktreeId: ticket.worktree_id
+        })
         toast.success('Local supercharge session started')
       })().catch((error) => {
         console.error('[KanbanTicketModal] local supercharge background start failed:', error)
@@ -1969,7 +2357,15 @@ function PlanReviewModeContent({
     } finally {
       setIsActioning(false)
     }
-  }, [ticket, isActioning, onClose, eagerSuperchargeStart, prepareTicketBuildSession, worktreePath, opcSessionId])
+  }, [
+    ticket,
+    isActioning,
+    onClose,
+    eagerSuperchargeStart,
+    prepareTicketBuildSession,
+    worktreePath,
+    opcSessionId
+  ])
 
   return (
     <div ref={dropZoneRef} className="relative contents">
@@ -2095,7 +2491,12 @@ function ReviewModeContent({
 }: {
   ticket: KanbanTicket
   onClose: () => void
-  moveTicket: (ticketId: string, projectId: string, column: 'todo' | 'in_progress' | 'review' | 'done', sortOrder: number) => Promise<void>
+  moveTicket: (
+    ticketId: string,
+    projectId: string,
+    column: 'todo' | 'in_progress' | 'review' | 'done',
+    sortOrder: number
+  ) => Promise<void>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   dualPane?: boolean
   runScriptState: TicketRunScriptState
@@ -2130,40 +2531,44 @@ function ReviewModeContent({
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
-  const handleDropFiles = useCallback((files: FileList) => {
-    for (const file of Array.from(files)) {
-      if (attachments.length >= MAX_ATTACHMENTS) {
-        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
-        break
-      }
-      if (isImageMime(file.type)) {
-        const reader = new FileReader()
-        reader.onload = () => {
+  const handleDropFiles = useCallback(
+    (files: FileList) => {
+      for (const file of Array.from(files)) {
+        if (attachments.length >= MAX_ATTACHMENTS) {
+          toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+          break
+        }
+        if (isImageMime(file.type)) {
+          const reader = new FileReader()
+          reader.onload = () => {
+            handleAttach({
+              kind: 'data',
+              name: file.name,
+              mime: file.type,
+              dataUrl: reader.result as string
+            })
+          }
+          reader.readAsDataURL(file)
+        } else {
           handleAttach({
-            kind: 'data',
+            kind: 'path',
             name: file.name,
-            mime: file.type,
-            dataUrl: reader.result as string
+            mime: file.type || 'application/octet-stream',
+            filePath: window.fileOps.getPathForFile(file)
           })
         }
-        reader.readAsDataURL(file)
-      } else {
-        handleAttach({
-          kind: 'path',
-          name: file.name,
-          mime: file.type || 'application/octet-stream',
-          filePath: window.fileOps.getPathForFile(file)
-        })
       }
-    }
-  }, [handleAttach, attachments.length])
+    },
+    [handleAttach, attachments.length]
+  )
 
   const { isDragging } = useDropZone({ onDrop: handleDropFiles, containerRef: dropZoneRef })
   const lifecycle = useLifecycleActions(ticket.worktree_id)
   const isCreatingPR = useGitStore((s) =>
     ticket.worktree_id ? s.creatingPRByWorktreeId.get(ticket.worktree_id) === true : false
   )
-  const { pinAndActivate: pinAndActivateSession, lifecycleLoading } = usePinAndActivateSession(onClose)
+  const { pinAndActivate: pinAndActivateSession, lifecycleLoading } =
+    usePinAndActivateSession(onClose)
 
   // Load live PR state so merge-button guard works (hide if already merged/closed)
   useEffect(() => {
@@ -2190,15 +2595,18 @@ function ReviewModeContent({
       return
     }
 
-    window.db.worktree.get(ticket.worktree_id).then((dbWorktree) => {
-      if (!cancelled) {
-        setResolvedWorktree(dbWorktree ?? null)
-      }
-    }).catch(() => {
-      if (!cancelled) {
-        setResolvedWorktree(null)
-      }
-    })
+    db.worktree
+      .get(ticket.worktree_id)
+      .then((dbWorktree) => {
+        if (!cancelled) {
+          setResolvedWorktree(dbWorktree ?? null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResolvedWorktree(null)
+        }
+      })
 
     return () => {
       cancelled = true
@@ -2215,7 +2623,7 @@ function ReviewModeContent({
 
     ;(async () => {
       try {
-        const defaultWorktrees = await window.db.worktree.getActiveByProject(ticket.project_id)
+        const defaultWorktrees = await db.worktree.getActiveByProject(ticket.project_id)
         const defaultWt = defaultWorktrees.find((w) => w.is_default)
         if (!cancelled) {
           setResolvedBaseBranch(resolvedWorktree.base_branch ?? defaultWt?.branch_name ?? null)
@@ -2245,7 +2653,9 @@ function ReviewModeContent({
     const loadDiffSummary = async (): Promise<void> => {
       setDiffSummaryLoading(true)
       try {
-        const result = await window.gitOps.getBranchDiffFiles(resolvedWorktree.path, resolvedBaseBranch)
+        const result = unwrapEnvelope(
+          await window.gitOps.getBranchDiffFiles(resolvedWorktree.path, resolvedBaseBranch)
+        )
         if (cancelled) return
 
         if (result.success) {
@@ -2258,7 +2668,9 @@ function ReviewModeContent({
       } catch (error) {
         if (!cancelled) {
           setDiffSummary([])
-          setDiffSummaryError(error instanceof Error ? error.message : 'Failed to load changed files')
+          setDiffSummaryError(
+            error instanceof Error ? error.message : 'Failed to load changed files'
+          )
         }
       } finally {
         if (!cancelled) {
@@ -2282,11 +2694,11 @@ function ReviewModeContent({
   }, [dualPane, resolvedWorktree?.path, resolvedBaseBranch])
 
   const toggleMode = useCallback(() => {
-    setFollowUpMode((prev) => prev === 'build' ? 'plan' : 'build')
+    setFollowUpMode((prev) => (prev === 'build' ? 'plan' : 'build'))
   }, [])
 
   const toggleSuperMode = useCallback(() => {
-    setFollowUpMode((prev) => prev === 'super-plan' ? 'plan' : 'super-plan')
+    setFollowUpMode((prev) => (prev === 'super-plan' ? 'plan' : 'super-plan'))
   }, [])
 
   // Tab key toggles mode, Shift+Tab toggles super-plan
@@ -2312,7 +2724,12 @@ function ReviewModeContent({
 
   // ── Send followup ─────────────────────────────────────────────────
   const handleSendFollowup = useCallback(async () => {
-    if ((!followUpText.trim() && attachments.length === 0) || !ticket.current_session_id || isSending) return
+    if (
+      (!followUpText.trim() && attachments.length === 0) ||
+      !ticket.current_session_id ||
+      isSending
+    )
+      return
     setIsSending(true)
 
     try {
@@ -2353,7 +2770,7 @@ function ReviewModeContent({
         prompt,
         followUpMode: mode,
         ticketId,
-        attachments: currentAttachments,
+        attachments: currentAttachments
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
         const reason = err instanceof Error ? err.message : String(err)
@@ -2368,16 +2785,25 @@ function ReviewModeContent({
       setIsSending(false)
       setAttachments([])
     }
-  }, [followUpText, followUpMode, ticket, isSending, moveTicket, updateTicket, onClose, attachments])
+  }, [
+    followUpText,
+    followUpMode,
+    ticket,
+    isSending,
+    moveTicket,
+    updateTicket,
+    onClose,
+    attachments
+  ])
 
   // ── Move to Done ──────────────────────────────────────────────────
   const handleMoveToDone = useCallback(async () => {
     // Merge-on-done: intercept for feature-branch worktrees
     if (ticket.worktree_id) {
       try {
-        const worktree = await window.db.worktree.get(ticket.worktree_id)
+        const worktree = await db.worktree.get(ticket.worktree_id)
         if (worktree) {
-          const defaultWorktrees = await window.db.worktree.getActiveByProject(ticket.project_id)
+          const defaultWorktrees = await db.worktree.getActiveByProject(ticket.project_id)
           const defaultWt = defaultWorktrees.find((w) => w.is_default)
           const resolvedBaseBranch = worktree.base_branch ?? defaultWt?.branch_name
 
@@ -2385,7 +2811,11 @@ function ReviewModeContent({
             const kanbanStore = useKanbanStore.getState()
             const doneTickets = kanbanStore.getTicketsByColumn(ticket.project_id, 'done')
             const sortOrder = kanbanStore.computeSortOrder(doneTickets, doneTickets.length)
-            kanbanStore.setPendingDoneMove({ ticketId: ticket.id, projectId: ticket.project_id, sortOrder })
+            kanbanStore.setPendingDoneMove({
+              ticketId: ticket.id,
+              projectId: ticket.project_id,
+              sortOrder
+            })
             return
           }
         }
@@ -2417,8 +2847,7 @@ function ReviewModeContent({
                 onClick={() => lifecycle.openPRInBrowser()}
                 className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/60 transition-colors"
               >
-                <Github className="h-3 w-3" />
-                #{lifecycle.attachedPR.number}
+                <Github className="h-3 w-3" />#{lifecycle.attachedPR.number}
               </button>
             )}
             <JumpToSessionButton ticket={ticket} onClose={onClose} />
@@ -2482,12 +2911,7 @@ function ReviewModeContent({
       )}
 
       <DialogFooter className="flex-shrink-0 flex-wrap gap-y-2">
-        <Button
-          type="button"
-          variant="outline"
-          data-testid="review-cancel-btn"
-          onClick={onClose}
-        >
+        <Button type="button" variant="outline" data-testid="review-cancel-btn" onClick={onClose}>
           Cancel
         </Button>
         <TicketRunButton state={runScriptState} testId="review-run-btn" />
@@ -2503,14 +2927,11 @@ function ReviewModeContent({
             Review
           </Button>
         )}
-        {ticket.worktree_id && lifecycle.isGitHub && !lifecycle.hasAttachedPR && (
-          isCreatingPR ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-1.5"
-              disabled
-            >
+        {ticket.worktree_id &&
+          lifecycle.isGitHub &&
+          !lifecycle.hasAttachedPR &&
+          (isCreatingPR ? (
+            <Button type="button" variant="outline" className="gap-1.5" disabled>
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               Creating PR...
             </Button>
@@ -2525,7 +2946,7 @@ function ReviewModeContent({
                 if (worktreePath) {
                   useGitStore.getState().setCreatePRModalOpen(true, {
                     worktreeId: ticket.worktree_id!,
-                    worktreePath,
+                    worktreePath
                   })
                 } else {
                   toast.error('Could not find worktree path')
@@ -2535,25 +2956,27 @@ function ReviewModeContent({
               <GitPullRequest className="h-3.5 w-3.5" />
               Create PR
             </Button>
-          )
-        )}
-        {ticket.worktree_id && lifecycle.isGitHub && lifecycle.hasAttachedPR &&
-          lifecycle.prLiveState?.state !== 'MERGED' && lifecycle.prLiveState?.state !== 'CLOSED' && (
-          <Button
-            type="button"
-            variant="outline"
-            className="gap-1.5 bg-emerald-600/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-600/20"
-            onClick={() => lifecycle.mergePR()}
-            disabled={lifecycle.isMergingPR}
-          >
-            {lifecycle.isMergingPR ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <GitMerge className="h-3.5 w-3.5" />
-            )}
-            {lifecycle.isMergingPR ? 'Merging...' : 'Merge PR'}
-          </Button>
-        )}
+          ))}
+        {ticket.worktree_id &&
+          lifecycle.isGitHub &&
+          lifecycle.hasAttachedPR &&
+          lifecycle.prLiveState?.state !== 'MERGED' &&
+          lifecycle.prLiveState?.state !== 'CLOSED' && (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-1.5 bg-emerald-600/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-600/20"
+              onClick={() => lifecycle.mergePR()}
+              disabled={lifecycle.isMergingPR}
+            >
+              {lifecycle.isMergingPR ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <GitMerge className="h-3.5 w-3.5" />
+              )}
+              {lifecycle.isMergingPR ? 'Merging...' : 'Merge PR'}
+            </Button>
+          )}
         <Button
           type="button"
           data-testid="review-move-done-btn"
@@ -2629,42 +3052,45 @@ function ErrorModeContent({
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
-  const handleDropFiles = useCallback((files: FileList) => {
-    for (const file of Array.from(files)) {
-      if (attachments.length >= MAX_ATTACHMENTS) {
-        toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
-        break
-      }
-      if (isImageMime(file.type)) {
-        const reader = new FileReader()
-        reader.onload = () => {
+  const handleDropFiles = useCallback(
+    (files: FileList) => {
+      for (const file of Array.from(files)) {
+        if (attachments.length >= MAX_ATTACHMENTS) {
+          toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
+          break
+        }
+        if (isImageMime(file.type)) {
+          const reader = new FileReader()
+          reader.onload = () => {
+            handleAttach({
+              kind: 'data',
+              name: file.name,
+              mime: file.type,
+              dataUrl: reader.result as string
+            })
+          }
+          reader.readAsDataURL(file)
+        } else {
           handleAttach({
-            kind: 'data',
+            kind: 'path',
             name: file.name,
-            mime: file.type,
-            dataUrl: reader.result as string
+            mime: file.type || 'application/octet-stream',
+            filePath: window.fileOps.getPathForFile(file)
           })
         }
-        reader.readAsDataURL(file)
-      } else {
-        handleAttach({
-          kind: 'path',
-          name: file.name,
-          mime: file.type || 'application/octet-stream',
-          filePath: window.fileOps.getPathForFile(file)
-        })
       }
-    }
-  }, [handleAttach, attachments.length])
+    },
+    [handleAttach, attachments.length]
+  )
 
   const { isDragging } = useDropZone({ onDrop: handleDropFiles, containerRef: dropZoneRef })
 
   const toggleMode = useCallback(() => {
-    setFollowUpMode((prev) => prev === 'build' ? 'plan' : 'build')
+    setFollowUpMode((prev) => (prev === 'build' ? 'plan' : 'build'))
   }, [])
 
   const toggleSuperMode = useCallback(() => {
-    setFollowUpMode((prev) => prev === 'super-plan' ? 'plan' : 'super-plan')
+    setFollowUpMode((prev) => (prev === 'super-plan' ? 'plan' : 'super-plan'))
   }, [])
 
   // Tab key toggles mode, Shift+Tab toggles super-plan
@@ -2689,7 +3115,12 @@ function ErrorModeContent({
 
   // ── Send followup for error retry ─────────────────────────────────
   const handleSendFollowup = useCallback(async () => {
-    if ((!followUpText.trim() && attachments.length === 0) || !ticket.current_session_id || isSending) return
+    if (
+      (!followUpText.trim() && attachments.length === 0) ||
+      !ticket.current_session_id ||
+      isSending
+    )
+      return
     setIsSending(true)
 
     try {
@@ -2698,7 +3129,7 @@ function ErrorModeContent({
         prompt: followUpText.trim(),
         followUpMode,
         ticketId: ticket.id,
-        attachments,
+        attachments
       })
 
       await updateTicket(ticket.id, ticket.project_id, { mode: followUpMode, plan_ready: false })
@@ -2729,19 +3160,26 @@ function ErrorModeContent({
           </DialogTitle>
           <JumpToSessionButton ticket={ticket} onClose={onClose} />
         </div>
-        <DialogDescription>The session encountered an error. Send a followup to retry or correct.</DialogDescription>
+        <DialogDescription>
+          The session encountered an error. Send a followup to retry or correct.
+        </DialogDescription>
       </DialogHeader>
 
       <div
         data-testid="error-info"
         className="rounded-md border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-400 space-y-1"
       >
-        <p>The linked session reported an error. You can send a followup message to retry or provide corrections.</p>
+        <p>
+          The linked session reported an error. You can send a followup message to retry or provide
+          corrections.
+        </p>
         {sessionStatusEntry && (
           <p className="text-xs text-red-400/70" data-testid="error-status-detail">
             Status: {sessionStatusEntry.status}
             {sessionStatusEntry.word ? ` - ${sessionStatusEntry.word}` : ''}
-            {sessionStatusEntry.durationMs ? ` (${Math.round(sessionStatusEntry.durationMs / 1000)}s ago)` : ''}
+            {sessionStatusEntry.durationMs
+              ? ` (${Math.round(sessionStatusEntry.durationMs / 1000)}s ago)`
+              : ''}
           </p>
         )}
         <p className="text-xs text-red-400/70">
@@ -2777,12 +3215,7 @@ function ErrorModeContent({
 
       <DialogFooter>
         <TicketRunButton state={runScriptState} testId="error-run-btn" />
-        <Button
-          type="button"
-          variant="outline"
-          data-testid="error-cancel-btn"
-          onClick={onClose}
-        >
+        <Button type="button" variant="outline" data-testid="error-cancel-btn" onClick={onClose}>
           Cancel
         </Button>
         <Button
@@ -2822,59 +3255,71 @@ function QuestionModeContent({
   dualPane?: boolean
   runScriptState: TicketRunScriptState
 }) {
-  const handleReply = useCallback(async (requestId: string, answers: string[][]) => {
-    try {
-      let questionPath: string | null = null
-      if (ticket.worktree_id) {
-        questionPath = findWorktreePathById(ticket.worktree_id)
-      } else if (ticket.current_session_id) {
-        questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
-      }
-      await window.opencodeOps.questionReply(requestId, answers, questionPath || undefined)
-      // Optimistically set session back to working so the progress bar resumes immediately
-      if (ticket.current_session_id) {
-        useWorktreeStatusStore.getState().setSessionStatus(
-          ticket.current_session_id,
-          isPlanLike(ticket.mode) ? 'planning' : 'working'
+  const handleReply = useCallback(
+    async (requestId: string, answers: string[][]) => {
+      try {
+        let questionPath: string | null = null
+        if (ticket.worktree_id) {
+          questionPath = findWorktreePathById(ticket.worktree_id)
+        } else if (ticket.current_session_id) {
+          questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
+        }
+        unwrapEnvelope(
+          await window.opencodeOps.questionReply(requestId, answers, questionPath || undefined)
         )
+        // Optimistically set session back to working so the progress bar resumes immediately
+        if (ticket.current_session_id) {
+          useWorktreeStatusStore
+            .getState()
+            .setSessionStatus(
+              ticket.current_session_id,
+              isPlanLike(ticket.mode) ? 'planning' : 'working'
+            )
+        }
+        onClose()
+      } catch (err) {
+        console.error('Failed to send answer:', err)
+        toast.error('Failed to send answer')
       }
-      onClose()
-    } catch (err) {
-      console.error('Failed to send answer:', err)
-      toast.error('Failed to send answer')
-    }
-  }, [ticket.worktree_id, ticket.current_session_id, ticket.mode, onClose])
+    },
+    [ticket.worktree_id, ticket.current_session_id, ticket.mode, onClose]
+  )
 
-  const handleReject = useCallback(async (requestId: string) => {
-    try {
-      let questionPath: string | null = null
-      if (ticket.worktree_id) {
-        questionPath = findWorktreePathById(ticket.worktree_id)
-      } else if (ticket.current_session_id) {
-        questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
-      }
-      await window.opencodeOps.questionReject(requestId, questionPath || undefined)
-      // Optimistically set session back to working so the progress bar resumes immediately
-      if (ticket.current_session_id) {
-        useWorktreeStatusStore.getState().setSessionStatus(
-          ticket.current_session_id,
-          isPlanLike(ticket.mode) ? 'planning' : 'working'
+  const handleReject = useCallback(
+    async (requestId: string) => {
+      try {
+        let questionPath: string | null = null
+        if (ticket.worktree_id) {
+          questionPath = findWorktreePathById(ticket.worktree_id)
+        } else if (ticket.current_session_id) {
+          questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
+        }
+        unwrapEnvelope(
+          await window.opencodeOps.questionReject(requestId, questionPath || undefined)
         )
+        // Optimistically set session back to working so the progress bar resumes immediately
+        if (ticket.current_session_id) {
+          useWorktreeStatusStore
+            .getState()
+            .setSessionStatus(
+              ticket.current_session_id,
+              isPlanLike(ticket.mode) ? 'planning' : 'working'
+            )
+        }
+        onClose()
+      } catch (err) {
+        console.error('Failed to dismiss question:', err)
+        toast.error('Failed to dismiss question')
       }
-      onClose()
-    } catch (err) {
-      console.error('Failed to dismiss question:', err)
-      toast.error('Failed to dismiss question')
-    }
-  }, [ticket.worktree_id, ticket.current_session_id, ticket.mode, onClose])
+    },
+    [ticket.worktree_id, ticket.current_session_id, ticket.mode, onClose]
+  )
 
   return (
     <>
       <DialogHeader>
         <div className="flex items-center justify-between">
-          <DialogTitle className="flex items-center gap-2">
-            Question from Agent
-          </DialogTitle>
+          <DialogTitle className="flex items-center gap-2">Question from Agent</DialogTitle>
           <div className="flex items-center gap-2">
             <TicketRunButton
               state={runScriptState}
@@ -2884,7 +3329,9 @@ function QuestionModeContent({
             <JumpToSessionButton ticket={ticket} onClose={onClose} />
           </div>
         </div>
-        <DialogDescription>{dualPane ? 'An agent question needs your attention.' : ticket.title}</DialogDescription>
+        <DialogDescription>
+          {dualPane ? 'An agent question needs your attention.' : ticket.title}
+        </DialogDescription>
       </DialogHeader>
       <QuestionPrompt
         key={activeQuestion.id}

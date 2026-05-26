@@ -23,11 +23,19 @@ interface CodexAuthTokens {
   account_id: string
 }
 
-interface CodexAuth {
+export interface CodexAuth {
   OPENAI_API_KEY?: string | null
   auth_mode?: string | null
   tokens?: CodexAuthTokens
   last_refresh?: string
+}
+
+export interface OpenAIUsageOverride {
+  accessToken: string
+  refreshToken: string
+  accountId: string
+  idToken?: string
+  email?: string
 }
 
 interface RefreshResponse {
@@ -36,8 +44,15 @@ interface RefreshResponse {
   refresh_token?: string
 }
 
+interface RefreshResult {
+  accessToken: string
+  refreshToken: string
+  idToken?: string
+}
+
 /** Module-level promise to deduplicate concurrent refresh requests. */
 let refreshPromise: Promise<string> | null = null
+const inMemoryRefreshPromises = new Map<string, Promise<RefreshResult>>()
 
 /**
  * Read Codex credentials from the auth.json file.
@@ -79,7 +94,7 @@ async function readFromKeychain(): Promise<CodexAuth | null> {
 /**
  * Read Codex credentials. Tries auth.json first, then macOS Keychain as fallback.
  */
-async function readCodexCredentials(): Promise<CodexAuth | null> {
+export async function readCodexCredentials(): Promise<CodexAuth | null> {
   const fromFile = await readFromFile()
   if (fromFile?.tokens?.access_token) return fromFile
 
@@ -116,8 +131,44 @@ function isTokenExpired(accessToken: string): boolean {
 }
 
 /**
- * Refresh the access token using the refresh token.
- * Uses a module-level promise to deduplicate concurrent refresh requests.
+ * Refresh the access token using the given refresh token.
+ */
+async function requestTokenRefresh(refreshToken: string): Promise<RefreshResponse> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+
+  try {
+    const response = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: CLIENT_ID,
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken
+      }),
+      signal: controller.signal
+    })
+
+    clearTimeout(timeout)
+
+    if (!response.ok) {
+      const body = await response.text()
+      throw new Error(`Token refresh failed (${response.status}): ${body}`)
+    }
+
+    return (await response.json()) as RefreshResponse
+  } catch (error) {
+    clearTimeout(timeout)
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Token refresh timed out')
+    }
+    throw error
+  }
+}
+
+/**
+ * Refresh the live access token and persist the updated auth.json.
+ * Uses a module-level promise to deduplicate concurrent live refresh requests.
  */
 async function refreshAccessToken(auth: CodexAuth): Promise<string> {
   if (refreshPromise) return refreshPromise
@@ -127,54 +178,61 @@ async function refreshAccessToken(auth: CodexAuth): Promise<string> {
       throw new Error('No refresh token available')
     }
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 10_000)
+    const data = await requestTokenRefresh(auth.tokens.refresh_token)
+
+    if (data.access_token) auth.tokens.access_token = data.access_token
+    if (data.refresh_token) auth.tokens.refresh_token = data.refresh_token
+    if (data.id_token) auth.tokens.id_token = data.id_token
+    auth.last_refresh = new Date().toISOString()
 
     try {
-      const response = await fetch(TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_id: CLIENT_ID,
-          grant_type: 'refresh_token',
-          refresh_token: auth.tokens.refresh_token
-        }),
-        signal: controller.signal
-      })
-
-      clearTimeout(timeout)
-
-      if (!response.ok) {
-        const body = await response.text()
-        throw new Error(`Token refresh failed (${response.status}): ${body}`)
-      }
-
-      const data = (await response.json()) as RefreshResponse
-
-      if (data.access_token) auth.tokens.access_token = data.access_token
-      if (data.refresh_token) auth.tokens.refresh_token = data.refresh_token
-      if (data.id_token) auth.tokens.id_token = data.id_token
-      auth.last_refresh = new Date().toISOString()
-
-      try {
-        await writeFile(AUTH_FILE, JSON.stringify(auth, null, 2), { mode: 0o600 })
-      } catch {
-        // persist failed, continue with in-memory token
-      }
-
-      return auth.tokens.access_token
-    } catch (error) {
-      clearTimeout(timeout)
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('Token refresh timed out')
-      }
-      throw error
+      await writeFile(AUTH_FILE, JSON.stringify(auth, null, 2), { mode: 0o600 })
+    } catch {
+      // persist failed, continue with in-memory token
     }
+
+    return auth.tokens.access_token
   })().finally(() => {
     refreshPromise = null
   })
 
   return refreshPromise
+}
+
+/**
+ * Refresh a saved account in memory only. Concurrent refreshes for the same
+ * account share the same HTTP request; different accounts refresh independently.
+ */
+export async function refreshAccessTokenInMemory(auth: CodexAuth): Promise<RefreshResult> {
+  if (!auth.tokens?.refresh_token) {
+    throw new Error('No refresh token available')
+  }
+  if (!auth.tokens.account_id) {
+    throw new Error('No account id available')
+  }
+
+  const accountId = auth.tokens.account_id
+  const existing = inMemoryRefreshPromises.get(accountId)
+  if (existing) return existing
+
+  const promise = (async () => {
+    const data = await requestTokenRefresh(auth.tokens!.refresh_token)
+    if (data.access_token) auth.tokens!.access_token = data.access_token
+    if (data.refresh_token) auth.tokens!.refresh_token = data.refresh_token
+    if (data.id_token) auth.tokens!.id_token = data.id_token
+    auth.last_refresh = new Date().toISOString()
+
+    return {
+      accessToken: auth.tokens!.access_token,
+      refreshToken: auth.tokens!.refresh_token,
+      idToken: typeof auth.tokens!.id_token === 'string' ? auth.tokens!.id_token : undefined
+    }
+  })().finally(() => {
+    inMemoryRefreshPromises.delete(accountId)
+  })
+
+  inMemoryRefreshPromises.set(accountId, promise)
+  return promise
 }
 
 /**
@@ -220,8 +278,18 @@ async function fetchUsage(
  * Fetch OpenAI usage data. Reads credentials, refreshes the token if expired,
  * calls the usage endpoint, and retries once on 401 after a forced refresh.
  */
-export async function fetchOpenAIUsage(): Promise<OpenAIUsageResult> {
-  const auth = await readCodexCredentials()
+export async function fetchOpenAIUsage(override?: OpenAIUsageOverride): Promise<OpenAIUsageResult> {
+  const auth: CodexAuth | null = override
+    ? {
+        auth_mode: 'chatgpt',
+        tokens: {
+          access_token: override.accessToken,
+          refresh_token: override.refreshToken,
+          account_id: override.accountId,
+          id_token: override.idToken ?? ''
+        }
+      }
+    : await readCodexCredentials()
   if (!auth?.tokens) {
     log.warn('No Codex credentials found (checked auth.json and keychain)')
     return { success: false, error: 'No Codex credentials found' }
@@ -229,11 +297,17 @@ export async function fetchOpenAIUsage(): Promise<OpenAIUsageResult> {
 
   let accessToken = auth.tokens.access_token
   const accountId = auth.tokens.account_id
+  let rotated: RefreshResult | undefined
 
   // Refresh if token is expired
   if (isTokenExpired(accessToken)) {
     try {
-      accessToken = await refreshAccessToken(auth)
+      if (override) {
+        rotated = await refreshAccessTokenInMemory(auth)
+        accessToken = rotated.accessToken
+      } else {
+        accessToken = await refreshAccessToken(auth)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log.warn('Failed to refresh OpenAI access token', { error: message })
@@ -247,7 +321,12 @@ export async function fetchOpenAIUsage(): Promise<OpenAIUsageResult> {
     // Retry once on 401 after forcing a refresh
     if (result.status === 401) {
       try {
-        accessToken = await refreshAccessToken(auth)
+        if (override) {
+          rotated = await refreshAccessTokenInMemory(auth)
+          accessToken = rotated.accessToken
+        } else {
+          accessToken = await refreshAccessToken(auth)
+        }
         result = await fetchUsage(accessToken, accountId)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -263,7 +342,7 @@ export async function fetchOpenAIUsage(): Promise<OpenAIUsageResult> {
     }
 
     const data = result.data as OpenAIUsageData
-    return { success: true, data }
+    return { success: true, data, rotated }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.warn('Failed to fetch OpenAI usage', { error: message })

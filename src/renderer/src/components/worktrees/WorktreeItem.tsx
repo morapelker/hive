@@ -1,5 +1,6 @@
-import { useCallback, useState, useRef, useEffect } from 'react'
+import { memo, useCallback, useState, useRef, useEffect } from 'react'
 import { revealLabel } from '@/lib/platform'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import {
   AlertCircle,
   GitBranch,
@@ -72,6 +73,8 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { replaceTemplateVariables } from '@/lib/custom-commands'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 
+const db = unwrapEnvelopeApi(() => window.db)
+
 interface Worktree {
   id: string
   project_id: string
@@ -93,13 +96,13 @@ interface WorktreeItemProps {
   isFirstItem?: boolean
   isDragging?: boolean
   isDragOver?: boolean
-  onDragStart?: (e: React.DragEvent) => void
-  onDragOver?: (e: React.DragEvent) => void
-  onDrop?: (e: React.DragEvent) => void
+  onDragStart?: (e: React.DragEvent, worktreeId: string) => void
+  onDragOver?: (e: React.DragEvent, worktreeId: string) => void
+  onDrop?: (e: React.DragEvent, worktreeId: string) => void
   onDragEnd?: () => void
 }
 
-export function WorktreeItem({
+export const WorktreeItem = memo(function WorktreeItem({
   worktree,
   projectPath,
   isFirstItem,
@@ -110,13 +113,14 @@ export function WorktreeItem({
   onDrop,
   onDragEnd
 }: WorktreeItemProps): React.JSX.Element {
-  const { selectedWorktreeId, selectWorktree, archiveWorktree, unbranchWorktree } =
-    useWorktreeStore()
+  const selectWorktree = useWorktreeStore((s) => s.selectWorktree)
+  const archiveWorktree = useWorktreeStore((s) => s.archiveWorktree)
+  const unbranchWorktree = useWorktreeStore((s) => s.unbranchWorktree)
+  const isSelected = useWorktreeStore((s) => s.selectedWorktreeId === worktree.id)
   const selectProject = useProjectStore((s) => s.selectProject)
   const project = useProjectStore((s) => s.projects.find(p => p.id === worktree.project_id))
 
-  const archivingWorktreeIds = useWorktreeStore((s) => s.archivingWorktreeIds)
-  const isArchiving = archivingWorktreeIds.has(worktree.id)
+  const isArchiving = useWorktreeStore((s) => s.archivingWorktreeIds.has(worktree.id))
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
   const lastMessageTime = useWorktreeStatusStore(
     (state) => state.lastMessageTimeByWorktree[worktree.id] ?? null
@@ -124,7 +128,6 @@ export function WorktreeItem({
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktree.id]?.runRunning ?? false)
   const liveBranch = useGitStore((s) => s.branchInfoByWorktree.get(worktree.path))
   const displayName = liveBranch?.name ?? worktree.name
-  const isSelected = selectedWorktreeId === worktree.id
 
   // Connection mode state
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
@@ -266,7 +269,7 @@ export function WorktreeItem({
 
   const handleDetachAttachment = useCallback(
     async (attachmentId: string): Promise<void> => {
-      const result = await window.db.worktree.removeAttachment(worktree.id, attachmentId)
+      const result = await db.worktree.removeAttachment(worktree.id, attachmentId)
       if (result.success) {
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
         toast.success('Attachment removed')
@@ -279,7 +282,7 @@ export function WorktreeItem({
 
   const handleAttachmentAdded = useCallback((): void => {
     // Reload worktree data to get fresh attachments
-    window.db.worktree.get(worktree.id).then((w) => {
+    db.worktree.get(worktree.id).then((w) => {
       if (w) {
         try {
           setAttachments(JSON.parse(w.attachments || '[]'))
@@ -358,11 +361,13 @@ export function WorktreeItem({
       return
     }
 
-    const result = await window.worktreeOps.renameBranch(
-      worktree.id,
-      worktree.path,
-      worktree.branch_name,
-      newBranch
+    const result = unwrapEnvelope(
+      await window.worktreeOps.renameBranch(
+        worktree.id,
+        worktree.path,
+        worktree.branch_name,
+        newBranch
+      )
     )
 
     if (result.success) {
@@ -385,7 +390,7 @@ export function WorktreeItem({
   }
 
   const handleOpenInTerminal = useCallback(async (): Promise<void> => {
-    const result = await window.worktreeOps.openInTerminal(worktree.path)
+    const result = unwrapEnvelope(await window.worktreeOps.openInTerminal(worktree.path))
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
@@ -397,7 +402,7 @@ export function WorktreeItem({
   }, [worktree.path])
 
   const handleOpenInEditor = useCallback(async (): Promise<void> => {
-    const result = await window.worktreeOps.openInEditor(worktree.path)
+    const result = unwrapEnvelope(await window.worktreeOps.openInEditor(worktree.path))
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
@@ -409,11 +414,11 @@ export function WorktreeItem({
   }, [worktree.path])
 
   const handleOpenInFinder = async (): Promise<void> => {
-    await window.projectOps.showInFolder(worktree.path)
+    unwrapEnvelope(await window.projectOps.showInFolder(worktree.path))
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    await window.projectOps.copyToClipboard(worktree.path)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(worktree.path))
     clipboardToast.copied('Path')
   }
 
@@ -433,7 +438,7 @@ export function WorktreeItem({
 
   const handleArchive = useCallback(async (): Promise<void> => {
     try {
-      const result = await window.gitOps.getDiffStat(worktree.path)
+      const result = unwrapEnvelope(await window.gitOps.getDiffStat(worktree.path))
       if (result.success && result.files && result.files.length > 0) {
         setArchiveConfirmFiles(result.files)
         setArchiveConfirmOpen(true)
@@ -568,9 +573,9 @@ export function WorktreeItem({
             isDragOver && 'border-t-2 border-primary'
           )}
           draggable={!worktree.is_default && !isRenamingBranch}
-          onDragStart={onDragStart}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
+          onDragStart={onDragStart ? (e) => onDragStart(e, worktree.id) : undefined}
+          onDragOver={onDragOver ? (e) => onDragOver(e, worktree.id) : undefined}
+          onDrop={onDrop ? (e) => onDrop(e, worktree.id) : undefined}
           onDragEnd={onDragEnd}
           onClick={handleClick}
           data-testid={`worktree-item-${worktree.id}`}
@@ -978,4 +983,4 @@ export function WorktreeItem({
   }
 
   return tree
-}
+})

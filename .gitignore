@@ -61,6 +61,7 @@ scripts/*
 !scripts/release.sh
 !scripts/prepare-win-deps.sh
 !scripts/codex-app-server-probe.ts
+!scripts/probe-effect-logger.ts
 
 # Claude worktrees
 .claude/worktrees/

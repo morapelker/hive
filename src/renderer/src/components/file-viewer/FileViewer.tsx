@@ -12,6 +12,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { isBinaryImageFile, isSvgFile, getImageMimeType } from '@shared/types/file-utils'
 import { svgToDataUri } from '@/lib/svg-utils'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // Time window after a save during which file watcher events are suppressed
 // to avoid treating our own writes as external changes.
@@ -52,12 +53,14 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
       const mimeType = getImageMimeType(filePath) || 'image/png'
       window.fileOps
         .readImageAsBase64(filePath)
-        .then((result) => {
+        .then((envelope) => {
           if (cancelled) return
-          if (result.success && result.data) {
-            setImageDataUri(`data:${mimeType};base64,${result.data}`)
+          if (envelope.success) {
+            setImageDataUri(
+              `data:${envelope.value.mimeType ?? mimeType};base64,${envelope.value.data}`
+            )
           } else {
-            setError(result.error || 'Failed to read image')
+            setError(envelope.error || 'Failed to read image')
           }
         })
         .catch((err) => {
@@ -69,6 +72,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
     } else {
       window.fileOps
         .readFile(filePath)
+        .then(unwrapEnvelope)
         .then((result) => {
           if (cancelled) return
           if (result.success && result.content !== undefined) {
@@ -112,8 +116,8 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   const handleSave = useCallback(
     async (newContent: string) => {
       lastSaveTimestampRef.current = Date.now()
-      const result = await window.fileOps.writeFile(filePath, newContent)
-      if (result.success) {
+      const envelope = await window.fileOps.writeFile(filePath, newContent)
+      if (envelope.success) {
         toast.success('File saved')
         const store = useFileViewerStore.getState()
         store.markClean(filePath)
@@ -128,7 +132,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
           }
         }
       } else {
-        toast.error('Failed to save: ' + result.error)
+        toast.error('Failed to save: ' + envelope.error)
       }
     },
     [filePath]
@@ -150,8 +154,8 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   const handleDialogSave = useCallback(async () => {
     if (pendingClose && latestContentRef.current !== null) {
       lastSaveTimestampRef.current = Date.now()
-      const result = await window.fileOps.writeFile(pendingClose, latestContentRef.current)
-      if (result.success) {
+      const envelope = await window.fileOps.writeFile(pendingClose, latestContentRef.current)
+      if (envelope.success) {
         toast.success('File saved')
         const tab = useFileViewerStore.getState().openFiles.get(pendingClose)
         if (tab && tab.type === 'file') {
@@ -163,7 +167,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
           }
         }
       } else {
-        toast.error('Failed to save: ' + result.error)
+        toast.error('Failed to save: ' + envelope.error)
         return
       }
       useFileViewerStore.getState().confirmCloseFile(pendingClose)
@@ -205,13 +209,17 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
       // Suppress if this was our own save
       if (Date.now() - lastSaveTimestampRef.current < OWN_SAVE_SUPPRESSION_MS) return
       // Re-read from disk and compare with original
-      window.fileOps.readFile(filePath).then((result) => {
-        if (!result.success || result.content === undefined) return
-        const original = useFileViewerStore.getState().getOriginalContent(filePath)
-        if (original !== undefined && result.content !== original) {
-          markExternallyChanged(filePath)
-        }
-      })
+      window.fileOps
+        .readFile(filePath)
+        .then(unwrapEnvelope)
+        .then((result) => {
+          if (!result.success || result.content === undefined) return
+          const original = useFileViewerStore.getState().getOriginalContent(filePath)
+          if (original !== undefined && result.content !== original) {
+            markExternallyChanged(filePath)
+          }
+        })
+        .catch(() => {})
     })
     return () => {
       unsubscribe()
@@ -219,7 +227,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   }, [filePath, markExternallyChanged])
 
   const handleReload = useCallback(async () => {
-    const result = await window.fileOps.readFile(filePath)
+    const result = unwrapEnvelope(await window.fileOps.readFile(filePath))
     if (result.success && result.content !== undefined) {
       setContent(result.content)
       if (isSvg) {
@@ -240,7 +248,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   const handleKeepMine = useCallback(async () => {
     clearExternallyChanged(filePath)
     // Update originalContents to disk content so future changes are detected correctly
-    const result = await window.fileOps.readFile(filePath)
+    const result = unwrapEnvelope(await window.fileOps.readFile(filePath))
     if (result.success && result.content !== undefined) {
       useFileViewerStore.getState().setOriginalContent(filePath, result.content)
     }

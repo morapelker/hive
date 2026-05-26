@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { detectSuggestion, type Suggestion } from '@/lib/run-suggestions/patterns'
 
 // Module-level: active IPC subscriptions for run scripts, keyed by worktreeId.
 // Keeps listeners alive regardless of which worktree the UI is showing.
@@ -19,6 +21,8 @@ interface ScriptState {
   runOutputVersion: number
   runRunning: boolean
   runPid: number | null
+  activeSuggestion: Suggestion | null
+  seenSignatures: Set<string>
 }
 
 function createDefaultScriptState(): ScriptState {
@@ -28,7 +32,9 @@ function createDefaultScriptState(): ScriptState {
     setupError: null,
     runOutputVersion: 0,
     runRunning: false,
-    runPid: null
+    runPid: null,
+    activeSuggestion: null,
+    seenSignatures: new Set()
   }
 }
 
@@ -47,6 +53,10 @@ interface ScriptStore {
   setRunPid: (worktreeId: string, pid: number | null) => void
   clearRunOutput: (worktreeId: string) => void
   getRunOutput: (worktreeId: string) => string[]
+  setActiveSuggestion: (worktreeId: string, suggestion: Suggestion | null) => void
+  markSuggestionSeen: (worktreeId: string, signature: string) => void
+  dismissSuggestion: (worktreeId: string) => void
+  clearSuggestions: (worktreeId: string) => void
 
   // Helpers
   getScriptState: (worktreeId: string) => ScriptState
@@ -202,7 +212,9 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
           ...state.scriptStates,
           [worktreeId]: {
             ...existing,
-            runOutputVersion: existing.runOutputVersion + 1
+            runOutputVersion: existing.runOutputVersion + 1,
+            activeSuggestion: null,
+            seenSignatures: new Set()
           }
         }
       }
@@ -212,6 +224,53 @@ export const useScriptStore = create<ScriptStore>((set, get) => ({
   getRunOutput: (worktreeId: string): string[] => {
     const buffer = getOrCreateBuffer(worktreeId)
     return buffer.toArray()
+  },
+
+  setActiveSuggestion: (worktreeId, suggestion) => {
+    set((state) => {
+      const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
+      return {
+        scriptStates: {
+          ...state.scriptStates,
+          [worktreeId]: { ...existing, activeSuggestion: suggestion }
+        }
+      }
+    })
+  },
+
+  markSuggestionSeen: (worktreeId, signature) => {
+    set((state) => {
+      const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
+      return {
+        scriptStates: {
+          ...state.scriptStates,
+          [worktreeId]: {
+            ...existing,
+            seenSignatures: new Set([...existing.seenSignatures, signature])
+          }
+        }
+      }
+    })
+  },
+
+  dismissSuggestion: (worktreeId) => {
+    get().setActiveSuggestion(worktreeId, null)
+  },
+
+  clearSuggestions: (worktreeId) => {
+    set((state) => {
+      const existing = state.scriptStates[worktreeId] || createDefaultScriptState()
+      return {
+        scriptStates: {
+          ...state.scriptStates,
+          [worktreeId]: {
+            ...existing,
+            activeSuggestion: null,
+            seenSignatures: new Set()
+          }
+        }
+      }
+    })
   },
 
   getScriptState: (worktreeId) => {
@@ -240,13 +299,25 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
         if (event.data) {
           const lines = event.data.split('\n')
           for (const line of lines) {
-            if (line !== '') s.appendRunOutput(worktreeId, line)
+            if (line === '') continue
+            s.appendRunOutput(worktreeId, line)
+            const suggestion = detectSuggestion(line)
+            if (
+              suggestion &&
+              !s.getScriptState(worktreeId).seenSignatures.has(suggestion.signature)
+            ) {
+              s.markSuggestionSeen(worktreeId, suggestion.signature)
+              s.setActiveSuggestion(worktreeId, suggestion)
+            }
           }
         }
         break
       case 'long-running':
         // Show notification in output as a special marker (not mixed with actual output)
-        s.appendRunOutput(worktreeId, `\x00NOTICE:Command is taking longer than expected (${event.elapsed}ms): ${event.command}`)
+        s.appendRunOutput(
+          worktreeId,
+          `\x00NOTICE:Command is taking longer than expected (${event.elapsed}ms): ${event.command}`
+        )
         break
       case 'error':
         s.appendRunOutput(worktreeId, `\x00ERR:Process exited with code ${event.exitCode}`)
@@ -266,24 +337,35 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
 
   runSubscriptions.set(worktreeId, unsub)
 
-  window.scriptOps.runProject(commands, cwd, worktreeId).then((result) => {
-    if (result.success && result.pid) {
-      useScriptStore.getState().setRunPid(worktreeId, result.pid)
-    } else {
+  window.scriptOps
+    .runProject(commands, cwd, worktreeId)
+    .then((envelope) => unwrapEnvelope(envelope))
+    .then((result) => {
+      if (result.success && result.pid) {
+        useScriptStore.getState().setRunPid(worktreeId, result.pid)
+      } else {
+        useScriptStore.getState().setRunRunning(worktreeId, false)
+        // Clean up subscription if start failed
+        const sub = runSubscriptions.get(worktreeId)
+        if (sub) {
+          sub()
+          runSubscriptions.delete(worktreeId)
+        }
+      }
+    })
+    .catch(() => {
       useScriptStore.getState().setRunRunning(worktreeId, false)
-      // Clean up subscription if start failed
       const sub = runSubscriptions.get(worktreeId)
       if (sub) {
         sub()
         runSubscriptions.delete(worktreeId)
       }
-    }
-  })
+    })
 }
 
 /** Kill a running project script and clean up its IPC subscription. */
 export async function killRunScript(worktreeId: string): Promise<void> {
-  await window.scriptOps.kill(worktreeId)
+  unwrapEnvelope(await window.scriptOps.kill(worktreeId))
   useScriptStore.getState().setRunRunning(worktreeId, false)
   useScriptStore.getState().setRunPid(worktreeId, null)
   // The 'done'/'error' event callback will also try to clean up,

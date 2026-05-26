@@ -1,5 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
-import { Download, Search, ExternalLink, Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import {
+  Download,
+  Search,
+  ExternalLink,
+  Loader2,
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight
+} from 'lucide-react'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import {
   Dialog,
@@ -13,6 +21,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { getProviderSettings } from '@/lib/provider-settings'
 import { toast } from 'sonner'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface RemoteIssue {
   externalId: string
@@ -50,7 +59,9 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [importing, setImporting] = useState(false)
-  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null)
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(
+    null
+  )
 
   // Accumulates every issue object fetched across pages so cross-page
   // selections can be resolved back to full RemoteIssue data at import time.
@@ -90,6 +101,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
         { page, perPage: PER_PAGE, state: 'all', search: committedJql, nextPageToken: token },
         getProviderSettings()
       )
+      .then(unwrapEnvelope)
       .then((result) => {
         setIssues(result.issues)
         setHasNextPage(result.hasNextPage)
@@ -167,26 +179,32 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
     setImportProgress({ current: 0, total: toImport.length })
 
     try {
-      const result = await window.ticketImport.importIssues(
-        'jira',
-        projectId,
-        domain,
-        toImport.map((i) => ({
-          externalId: i.externalId,
-          title: i.title,
-          body: i.body,
-          state: i.state,
-          url: i.url
-        }))
+      const result = unwrapEnvelope(
+        await window.ticketImport.importIssues(
+          'jira',
+          projectId,
+          domain,
+          toImport.map((i) => ({
+            externalId: i.externalId,
+            title: i.title,
+            body: i.body,
+            state: i.state,
+            url: i.url
+          }))
+        )
       )
 
       setImportProgress({ current: toImport.length, total: toImport.length })
 
       const msgs: string[] = []
       if (result.imported.length > 0)
-        msgs.push(`Imported ${result.imported.length} issue${result.imported.length > 1 ? 's' : ''}`)
+        msgs.push(
+          `Imported ${result.imported.length} issue${result.imported.length > 1 ? 's' : ''}`
+        )
       if (result.skipped.length > 0)
-        msgs.push(`Skipped ${result.skipped.length} duplicate${result.skipped.length > 1 ? 's' : ''}`)
+        msgs.push(
+          `Skipped ${result.skipped.length} duplicate${result.skipped.length > 1 ? 's' : ''}`
+        )
       toast.success(msgs.join('. '))
 
       await loadTickets(projectId)
@@ -218,9 +236,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
             <ProviderIcon provider="jira" />
             Import from Jira
             {domain && (
-              <span className="text-xs font-normal text-muted-foreground ml-1">
-                {domain}
-              </span>
+              <span className="text-xs font-normal text-muted-foreground ml-1">{domain}</span>
             )}
           </DialogTitle>
         </DialogHeader>
@@ -306,7 +322,9 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
                     {/* Select all header */}
                     <div className="flex items-center gap-3 px-4 py-2 bg-muted/30 sticky top-0 z-10">
                       <Checkbox
-                        checked={issues.length > 0 && issues.every((i) => selected.has(i.externalId))}
+                        checked={
+                          issues.length > 0 && issues.every((i) => selected.has(i.externalId))
+                        }
                         onCheckedChange={toggleSelectAll}
                       />
                       <span className="text-xs text-muted-foreground">

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useTelegramStore } from '@/stores/useTelegramStore'
 import type { TelegramConfig } from '@shared/types/telegram'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 const DEFAULT_CONFIG: TelegramConfig = {
   botToken: '',
@@ -17,19 +18,28 @@ const DEFAULT_CONFIG: TelegramConfig = {
 export function SettingsTelegram(): React.JSX.Element {
   const telegramConfig = useSettingsStore((s) => s.telegramConfig)
   const setTelegramConfig = useSettingsStore((s) => s.setTelegramConfig)
-  const { connectionStatus, lastError, discoveredChats, refreshing, setDiscoveredChats, setRefreshing } =
-    useTelegramStore()
+  const {
+    connectionStatus,
+    lastError,
+    discoveredChats,
+    refreshing,
+    setDiscoveredChats,
+    setRefreshing
+  } = useTelegramStore()
   const [draft, setDraft] = useState<TelegramConfig>(telegramConfig ?? DEFAULT_CONFIG)
   const [verifying, setVerifying] = useState(false)
   const [testing, setTesting] = useState(false)
   const [verifyResult, setVerifyResult] = useState<boolean | null>(null)
 
   useEffect(() => {
-    window.telegramOps.getConfig().then((config) => {
-      const next = config ?? DEFAULT_CONFIG
-      setDraft(next)
-      setTelegramConfig(config)
-    })
+    window.telegramOps
+      .getConfig()
+      .then(unwrapEnvelope)
+      .then((config) => {
+        const next = config ?? DEFAULT_CONFIG
+        setDraft(next)
+        setTelegramConfig(config)
+      })
   }, [setTelegramConfig])
 
   const canTest = useMemo(() => !!draft.botToken.trim() && !!draft.chatId, [draft])
@@ -43,8 +53,10 @@ export function SettingsTelegram(): React.JSX.Element {
     }
     setDraft(normalized)
     setTelegramConfig(normalized.botToken || normalized.chatId ? normalized : null)
-    const result = await window.telegramOps.setConfig(
-      normalized.botToken || normalized.chatId ? normalized : null
+    const result = unwrapEnvelope(
+      await window.telegramOps.setConfig(
+        normalized.botToken || normalized.chatId ? normalized : null
+      )
     )
     if (!result.ok) toast.error(result.error ?? 'Failed to save Telegram settings')
   }
@@ -54,10 +66,12 @@ export function SettingsTelegram(): React.JSX.Element {
     setVerifying(true)
     setVerifyResult(null)
     try {
-      const result = await window.telegramOps.verifyToken(draft.botToken.trim())
+      const result = unwrapEnvelope(await window.telegramOps.verifyToken(draft.botToken.trim()))
       setVerifyResult(result.ok)
       if (result.ok) {
-        toast.success(`Telegram bot configured${result.botUsername ? `: ${result.botUsername}` : ''}`)
+        toast.success(
+          `Telegram bot configured${result.botUsername ? `: ${result.botUsername}` : ''}`
+        )
       } else {
         toast.error(result.error ?? 'Invalid Telegram bot token')
       }
@@ -70,7 +84,7 @@ export function SettingsTelegram(): React.JSX.Element {
     setRefreshing(true)
     try {
       await saveConfig(draft)
-      const chats = await window.telegramOps.discoverChats(draft)
+      const chats = unwrapEnvelope(await window.telegramOps.discoverChats(draft))
       setDiscoveredChats(chats)
       if (chats.length === 0) {
         toast.error('No chats found. Send a message to the bot, then refresh.')
@@ -84,7 +98,7 @@ export function SettingsTelegram(): React.JSX.Element {
     setTesting(true)
     try {
       await saveConfig(draft)
-      const result = await window.telegramOps.sendTestMessage()
+      const result = unwrapEnvelope(await window.telegramOps.sendTestMessage())
       if (result.ok) toast.success('Telegram test message sent')
       else toast.error(result.error ?? 'Telegram test failed')
     } finally {
@@ -116,7 +130,12 @@ export function SettingsTelegram(): React.JSX.Element {
               placeholder="123456:ABC..."
               className="h-8 text-sm"
             />
-            <Button size="sm" variant="outline" disabled={verifying} onClick={() => void verifyToken()}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={verifying}
+              onClick={() => void verifyToken()}
+            >
               {verifying ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
               Verify
             </Button>
@@ -152,7 +171,12 @@ export function SettingsTelegram(): React.JSX.Element {
                 <option value={draft.chatId}>{draft.chatName || draft.chatId}</option>
               ) : null}
             </select>
-            <Button size="sm" variant="outline" disabled={refreshing} onClick={() => void refreshChats()}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={refreshing}
+              onClick={() => void refreshChats()}
+            >
               {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
               Refresh
             </Button>
@@ -188,7 +212,11 @@ export function SettingsTelegram(): React.JSX.Element {
             {lastError ? `: ${lastError}` : ''}
           </div>
           <Button size="sm" disabled={!canTest || testing} onClick={() => void sendTest()}>
-            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Send className="h-3.5 w-3.5 mr-1.5" />}
+            {testing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+            ) : (
+              <Send className="h-3.5 w-3.5 mr-1.5" />
+            )}
             Test message
           </Button>
         </div>

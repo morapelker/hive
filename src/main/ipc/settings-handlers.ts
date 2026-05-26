@@ -1,7 +1,9 @@
-import { ipcMain } from 'electron'
 import { existsSync } from 'fs'
 import { spawn } from 'child_process'
 import { platform } from 'os'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
+
 import { createLogger } from '../services'
 import { telemetryService } from '../services/telemetry-service'
 import { getDatabase } from '../db'
@@ -11,8 +13,20 @@ import {
   getCustomCommandsFilePath,
   loadCustomCommandsFromFile
 } from '../services/custom-commands-file-service'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'SettingsHandlers' })
+
+class SettingsHandlerFailed extends Data.TaggedError('SettingsHandlerFailed')<{
+  readonly operation: string
+  readonly reason: string
+  readonly message: string
+}> {}
+
+const settingsFailed = (operation: string, cause: unknown): SettingsHandlerFailed => {
+  const reason = cause instanceof Error ? cause.message : String(cause)
+  return new SettingsHandlerFailed({ operation, reason, message: reason })
+}
 
 function resolveEditorCommand(
   editorId: string,
@@ -87,18 +101,26 @@ function launchTerminal(
         if (wt?.available) {
           spawnDetached('wt.exe', ['-d', targetPath], { detached: true, stdio: 'ignore' })
         } else {
-          spawnDetached('powershell.exe', ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`], {
-            detached: true,
-            stdio: 'ignore'
-          })
+          spawnDetached(
+            'powershell.exe',
+            ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`],
+            {
+              detached: true,
+              stdio: 'ignore'
+            }
+          )
         }
         break
       }
       case 'powershell':
-        spawnDetached('powershell.exe', ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`], {
-          detached: true,
-          stdio: 'ignore'
-        })
+        spawnDetached(
+          'powershell.exe',
+          ['-NoExit', '-Command', `Set-Location '${targetPath.replace(/'/g, "''")}'`],
+          {
+            detached: true,
+            stdio: 'ignore'
+          }
+        )
         break
       case 'cmd':
         spawnDetached('cmd.exe', ['/k', `cd /d "${targetPath}"`], {
@@ -180,7 +202,10 @@ export function openPathWithPreferredTerminal(
   try {
     const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
     if (raw) {
-      const settings = JSON.parse(raw) as { defaultTerminal?: string; customTerminalCommand?: string }
+      const settings = JSON.parse(raw) as {
+        defaultTerminal?: string
+        customTerminalCommand?: string
+      }
       if (settings.defaultTerminal) terminalId = settings.defaultTerminal
       if (settings.customTerminalCommand != null) customCommand = settings.customTerminalCommand
     }
@@ -199,165 +224,169 @@ export function registerSettingsHandlers(): void {
   log.info('Registering settings handlers')
 
   // Detect installed editors
-  ipcMain.handle('settings:detectEditors', async (): Promise<DetectedApp[]> => {
-    try {
-      return detectEditors()
-    } catch (error) {
-      log.error(
-        'Failed to detect editors',
-        error instanceof Error ? error : new Error(String(error))
-      )
-      return []
-    }
-  })
+  defineHandler('settings:detectEditors', z.tuple([]), () =>
+    Effect.sync((): DetectedApp[] => {
+      try {
+        return detectEditors()
+      } catch (error) {
+        log.error(
+          'Failed to detect editors',
+          error instanceof Error ? error : new Error(String(error))
+        )
+        return []
+      }
+    })
+  )
 
   // Detect installed terminals
-  ipcMain.handle('settings:detectTerminals', async (): Promise<DetectedApp[]> => {
-    try {
-      return detectTerminals()
-    } catch (error) {
-      log.error(
-        'Failed to detect terminals',
-        error instanceof Error ? error : new Error(String(error))
-      )
-      return []
-    }
-  })
+  defineHandler('settings:detectTerminals', z.tuple([]), () =>
+    Effect.sync((): DetectedApp[] => {
+      try {
+        return detectTerminals()
+      } catch (error) {
+        log.error(
+          'Failed to detect terminals',
+          error instanceof Error ? error : new Error(String(error))
+        )
+        return []
+      }
+    })
+  )
 
   // Open a path with a specific editor command (explicit editorId/customCommand from renderer)
-  ipcMain.handle(
+  defineHandler(
     'settings:openWithEditor',
-    async (
-      _event,
-      worktreePath: string,
-      editorId: string,
-      customCommand?: string
-    ): Promise<{ success: boolean; error?: string }> => {
-      try {
-        if (!existsSync(worktreePath)) {
-          return { success: false, error: 'Path does not exist' }
-        }
-        const resolved = resolveEditorCommand(editorId, customCommand)
-        if ('error' in resolved) {
-          return { success: false, error: resolved.error }
-        }
+    z.tuple([
+      z.string().min(1, 'worktreePath is required'),
+      z.string().min(1, 'editorId is required'),
+      z.string().optional()
+    ]),
+    ([worktreePath, editorId, customCommand]) =>
+      Effect.try({
+        try: () => {
+          if (!existsSync(worktreePath)) {
+            return { success: false, error: 'Path does not exist' }
+          }
+          const resolved = resolveEditorCommand(editorId, customCommand)
+          if ('error' in resolved) {
+            return { success: false, error: resolved.error }
+          }
 
-        spawn(resolved.command, [worktreePath], { detached: true, stdio: 'ignore' })
-        telemetryService.track('worktree_opened_in_editor')
-        return { success: true }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        return { success: false, error: message }
-      }
-    }
+          spawn(resolved.command, [worktreePath], { detached: true, stdio: 'ignore' })
+          telemetryService.track('worktree_opened_in_editor')
+          return { success: true }
+        },
+        catch: (error) => {
+          return settingsFailed('settings:openWithEditor', error)
+        }
+      })
   )
 
   // Open a path with a specific terminal (explicit terminalId/customCommand from renderer)
-  ipcMain.handle(
+  defineHandler(
     'settings:openWithTerminal',
-    async (
-      _event,
-      worktreePath: string,
-      terminalId: string,
-      customCommand?: string
-    ): Promise<{ success: boolean; error?: string }> => {
-      try {
-        if (!existsSync(worktreePath)) {
-          return { success: false, error: 'Path does not exist' }
+    z.tuple([
+      z.string().min(1, 'worktreePath is required'),
+      z.string().min(1, 'terminalId is required'),
+      z.string().optional()
+    ]),
+    ([worktreePath, terminalId, customCommand]) =>
+      Effect.try({
+        try: () => {
+          if (!existsSync(worktreePath)) {
+            return { success: false, error: 'Path does not exist' }
+          }
+          return launchTerminal(worktreePath, terminalId, customCommand)
+        },
+        catch: (error) => {
+          return settingsFailed('settings:openWithTerminal', error)
         }
-        return launchTerminal(worktreePath, terminalId, customCommand)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        return { success: false, error: message }
-      }
-    }
+      })
   )
 
   // Get all settings as a batch
-  ipcMain.handle('settings:getAll', async (): Promise<Record<string, string>> => {
-    try {
-      const db = getDatabase()
-      const allSettings = db.getAllSettings()
-      const result: Record<string, string> = {}
-      for (const setting of allSettings) {
-        result[setting.key] = setting.value
+  defineHandler('settings:getAll', z.tuple([]), () =>
+    Effect.sync((): Record<string, string> => {
+      try {
+        const db = getDatabase()
+        const allSettings = db.getAllSettings()
+        const result: Record<string, string> = {}
+        for (const setting of allSettings) {
+          result[setting.key] = setting.value
+        }
+        return result
+      } catch (error) {
+        log.error(
+          'Failed to get all settings',
+          error instanceof Error ? error : new Error(String(error))
+        )
+        return {}
       }
-      return result
-    } catch (error) {
-      log.error(
-        'Failed to get all settings',
-        error instanceof Error ? error : new Error(String(error))
-      )
-      return {}
-    }
-  })
+    })
+  )
 
   // Get custom commands file path
-  ipcMain.handle('get-custom-commands-file-path', async (): Promise<string> => {
-    try {
-      return getCustomCommandsFilePath()
-    } catch (error) {
-      log.error(
-        'Failed to get custom commands file path',
-        error instanceof Error ? error : new Error(String(error))
-      )
-      throw error
-    }
-  })
+  defineHandler('get-custom-commands-file-path', z.tuple([]), () =>
+    Effect.try({
+      try: (): string => {
+        return getCustomCommandsFilePath()
+      },
+      catch: (error) => {
+        return settingsFailed('get-custom-commands-file-path', error)
+      }
+    })
+  )
 
   // Load custom commands from file
-  ipcMain.handle('load-custom-commands-file', async () => {
-    try {
-      return loadCustomCommandsFromFile()
-    } catch (error) {
-      log.error(
-        'Failed to load custom commands from file',
-        error instanceof Error ? error : new Error(String(error))
-      )
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }
-    }
-  })
-
-  // Reload custom commands (manual trigger)
-  ipcMain.handle('reload-custom-commands', async () => {
-    try {
-      const fileResult = loadCustomCommandsFromFile()
-
-      if (!fileResult.success) {
-        return fileResult
-      }
-
-      if (fileResult.commands && fileResult.commands.length > 0) {
-        // Save to database
-        const db = getDatabase()
-        const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
-        const settings = existingSettings
-          ? JSON.parse(existingSettings)
-          : {}
-
-        settings.customProjectCommands = fileResult.commands
-        db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
-
+  defineHandler('load-custom-commands-file', z.tuple([]), () =>
+    Effect.try({
+      try: () => {
+        return loadCustomCommandsFromFile()
+      },
+      catch: (error) => {
+        log.error(
+          'Failed to load custom commands from file',
+          error instanceof Error ? error : new Error(String(error))
+        )
         return {
-          success: true,
-          count: fileResult.commands.length,
-          mtime: fileResult.mtime
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
         }
       }
+    })
+  )
 
-      return { success: true, count: 0, mtime: fileResult.mtime }
-    } catch (error) {
-      log.error(
-        'Failed to reload custom commands',
-        error instanceof Error ? error : new Error(String(error))
-      )
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+  // Reload custom commands (manual trigger)
+  defineHandler('reload-custom-commands', z.tuple([]), () =>
+    Effect.try({
+      try: () => {
+        const fileResult = loadCustomCommandsFromFile()
+
+        if (!fileResult.success) {
+          return fileResult
+        }
+
+        // Always sync to database when file load succeeded, even if empty
+        if (fileResult.commands !== undefined) {
+          const db = getDatabase()
+          const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+          const settings = existingSettings ? JSON.parse(existingSettings) : {}
+
+          settings.customProjectCommands = fileResult.commands
+          db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+
+          return {
+            success: true,
+            count: fileResult.commands.length,
+            mtime: fileResult.mtime
+          }
+        }
+
+        return { success: true, count: 0, mtime: fileResult.mtime }
+      },
+      catch: (error) => {
+        return settingsFailed('reload-custom-commands', error)
       }
-    }
-  })
+    })
+  )
 }

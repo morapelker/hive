@@ -39,7 +39,7 @@ const MAX_LOG_FILE_SIZE = 5 * 1024 * 1024 // 5MB
 const MAX_LOG_FILES = 5
 const LOG_DIR_NAME = 'logs'
 
-class LoggerService {
+export class LoggerService {
   private static instance: LoggerService | null = null
   private logDir: string
   private currentLogFile: string

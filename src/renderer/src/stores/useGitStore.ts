@@ -1,12 +1,21 @@
 import { create } from 'zustand'
 import { useWorktreeStore } from './useWorktreeStore'
 import { useKanbanStore } from './useKanbanStore'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
+const kanban = unwrapEnvelopeApi(() => window.kanban)
 
 // Debounce timers for git status refresh per worktree
 const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 // Pending promise resolvers — accumulated so ALL callers resolve when debounced work completes
 const pendingResolvers = new Map<string, Array<() => void>>()
 const REFRESH_DEBOUNCE_MS = 150
+const inflightFileStatuses = new Map<string, Promise<void>>()
+const inflightBranchInfo = new Map<string, Promise<void>>()
+const lastFileStatusLoad = new Map<string, number>()
+const lastBranchInfoLoad = new Map<string, number>()
+const LOAD_TTL_MS = 2500
 
 // Git status types matching main process
 type GitStatusCode = 'M' | 'A' | 'D' | '?' | 'C' | ''
@@ -75,8 +84,8 @@ interface GitStoreState {
   createPRWorktreePath: string | null
 
   // Actions
-  loadFileStatuses: (worktreePath: string) => Promise<void>
-  loadBranchInfo: (worktreePath: string) => Promise<void>
+  loadFileStatuses: (worktreePath: string, opts?: { force?: boolean }) => Promise<void>
+  loadBranchInfo: (worktreePath: string, opts?: { force?: boolean }) => Promise<void>
   getFileStatuses: (worktreePath: string) => GitFileStatus[]
   getBranchInfo: (worktreePath: string) => GitBranchInfo | undefined
   getFileStatus: (worktreePath: string, relativePath: string) => GitFileStatus | undefined
@@ -112,7 +121,10 @@ interface GitStoreState {
   setSelectedDiffBranch: (worktreePath: string, branch: string) => void
 
   // Create PR modal actions
-  setCreatePRModalOpen: (open: boolean, context?: { worktreeId: string; worktreePath: string }) => void
+  setCreatePRModalOpen: (
+    open: boolean,
+    context?: { worktreeId: string; worktreePath: string }
+  ) => void
 
   // Commit, Push, Pull actions
   commit: (
@@ -171,57 +183,87 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   createPRWorktreePath: null,
 
   // Load file statuses for a worktree
-  loadFileStatuses: async (worktreePath: string) => {
-    set({ isLoading: true, error: null })
-    try {
-      const result = await window.gitOps.getFileStatuses(worktreePath)
-      if (!result.success || !result.files) {
+  loadFileStatuses: async (worktreePath: string, opts?: { force?: boolean }) => {
+    const inflight = inflightFileStatuses.get(worktreePath)
+    if (inflight) return inflight
+
+    const lastLoad = lastFileStatusLoad.get(worktreePath)
+    if (!opts?.force && lastLoad !== undefined && Date.now() - lastLoad < LOAD_TTL_MS) {
+      return
+    }
+
+    const promise = (async () => {
+      set({ isLoading: true, error: null })
+      try {
+        const result = unwrapEnvelope(await window.gitOps.getFileStatuses(worktreePath))
+        if (!result.success || !result.files) {
+          set({
+            error: result.error || 'Failed to load file statuses',
+            isLoading: false
+          })
+          return
+        }
+
+        const files = result.files!
+        const hasConflicts = files.some((f) => f.status === 'C')
+
+        set((state) => {
+          const newMap = new Map(state.fileStatusesByWorktree)
+          newMap.set(worktreePath, files)
+          return {
+            fileStatusesByWorktree: newMap,
+            isLoading: false,
+            conflictsByWorktree: {
+              ...state.conflictsByWorktree,
+              [worktreePath]: hasConflicts
+            }
+          }
+        })
+        lastFileStatusLoad.set(worktreePath, Date.now())
+      } catch (error) {
         set({
-          error: result.error || 'Failed to load file statuses',
+          error: error instanceof Error ? error.message : 'Failed to load file statuses',
           isLoading: false
         })
-        return
+      } finally {
+        inflightFileStatuses.delete(worktreePath)
       }
-
-      const files = result.files!
-      const hasConflicts = files.some((f) => f.status === 'C')
-
-      set((state) => {
-        const newMap = new Map(state.fileStatusesByWorktree)
-        newMap.set(worktreePath, files)
-        return {
-          fileStatusesByWorktree: newMap,
-          isLoading: false,
-          conflictsByWorktree: {
-            ...state.conflictsByWorktree,
-            [worktreePath]: hasConflicts
-          }
-        }
-      })
-    } catch (error) {
-      set({
-        error: error instanceof Error ? error.message : 'Failed to load file statuses',
-        isLoading: false
-      })
-    }
+    })()
+    inflightFileStatuses.set(worktreePath, promise)
+    return promise
   },
 
   // Load branch info for a worktree
-  loadBranchInfo: async (worktreePath: string) => {
-    try {
-      const result = await window.gitOps.getBranchInfo(worktreePath)
-      if (!result.success || !result.branch) {
-        return
-      }
+  loadBranchInfo: async (worktreePath: string, opts?: { force?: boolean }) => {
+    const inflight = inflightBranchInfo.get(worktreePath)
+    if (inflight) return inflight
 
-      set((state) => {
-        const newMap = new Map(state.branchInfoByWorktree)
-        newMap.set(worktreePath, result.branch!)
-        return { branchInfoByWorktree: newMap }
-      })
-    } catch (error) {
-      console.error('Failed to load branch info:', error)
+    const lastLoad = lastBranchInfoLoad.get(worktreePath)
+    if (!opts?.force && lastLoad !== undefined && Date.now() - lastLoad < LOAD_TTL_MS) {
+      return
     }
+
+    const promise = (async () => {
+      try {
+        const result = unwrapEnvelope(await window.gitOps.getBranchInfo(worktreePath))
+        if (!result.success || !result.branch) {
+          return
+        }
+
+        set((state) => {
+          const newMap = new Map(state.branchInfoByWorktree)
+          newMap.set(worktreePath, result.branch!)
+          return { branchInfoByWorktree: newMap }
+        })
+        lastBranchInfoLoad.set(worktreePath, Date.now())
+      } catch (error) {
+        console.error('Failed to load branch info:', error)
+      } finally {
+        inflightBranchInfo.delete(worktreePath)
+      }
+    })()
+    inflightBranchInfo.set(worktreePath, promise)
+    return promise
   },
 
   // Get file statuses for a worktree
@@ -253,7 +295,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Stage a file
   stageFile: async (worktreePath: string, relativePath: string) => {
     try {
-      const result = await window.gitOps.stageFile(worktreePath, relativePath)
+      const result = unwrapEnvelope(await window.gitOps.stageFile(worktreePath, relativePath))
       return result.success
     } catch (error) {
       console.error('Failed to stage file:', error)
@@ -264,7 +306,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Unstage a file
   unstageFile: async (worktreePath: string, relativePath: string) => {
     try {
-      const result = await window.gitOps.unstageFile(worktreePath, relativePath)
+      const result = unwrapEnvelope(await window.gitOps.unstageFile(worktreePath, relativePath))
       return result.success
     } catch (error) {
       console.error('Failed to unstage file:', error)
@@ -275,7 +317,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Stage all modified and untracked files
   stageAll: async (worktreePath: string) => {
     try {
-      const result = await window.gitOps.stageAll(worktreePath)
+      const result = unwrapEnvelope(await window.gitOps.stageAll(worktreePath))
       return result.success
     } catch (error) {
       console.error('Failed to stage all files:', error)
@@ -286,7 +328,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Unstage all staged files
   unstageAll: async (worktreePath: string) => {
     try {
-      const result = await window.gitOps.unstageAll(worktreePath)
+      const result = unwrapEnvelope(await window.gitOps.unstageAll(worktreePath))
       return result.success
     } catch (error) {
       console.error('Failed to unstage all files:', error)
@@ -297,8 +339,8 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Discard changes in a file
   discardChanges: async (worktreePath: string, relativePath: string) => {
     try {
-      const result = await window.gitOps.discardChanges(worktreePath, relativePath)
-      return result.success
+      unwrapEnvelope(await window.gitOps.discardChanges(worktreePath, relativePath))
+      return true
     } catch (error) {
       console.error('Failed to discard changes:', error)
       return false
@@ -308,7 +350,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Add to .gitignore
   addToGitignore: async (worktreePath: string, pattern: string) => {
     try {
-      const result = await window.gitOps.addToGitignore(worktreePath, pattern)
+      const result = unwrapEnvelope(await window.gitOps.addToGitignore(worktreePath, pattern))
       return result.success
     } catch (error) {
       console.error('Failed to add to .gitignore:', error)
@@ -336,8 +378,8 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
           refreshTimers.delete(worktreePath)
           try {
             await Promise.all([
-              get().loadFileStatuses(worktreePath),
-              get().loadBranchInfo(worktreePath)
+              get().loadFileStatuses(worktreePath, { force: true }),
+              get().loadBranchInfo(worktreePath, { force: true })
             ])
           } finally {
             // Resolve ALL pending promises for this worktree
@@ -371,7 +413,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Check remote info for a worktree
   checkRemoteInfo: async (worktreeId: string, worktreePath: string) => {
     try {
-      const result = await window.gitOps.getRemoteUrl(worktreePath)
+      const result = unwrapEnvelope(await window.gitOps.getRemoteUrl(worktreePath))
       const info: RemoteInfo = {
         hasRemote: !!result.url,
         isGitHub: result.url?.includes('github.com') ?? false,
@@ -415,7 +457,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       return { attachedPR: newMap }
     })
     try {
-      const result = await window.db.worktree.attachPR(worktreeId, prNumber, prUrl)
+      const result = await db.worktree.attachPR(worktreeId, prNumber, prUrl)
       if (!result.success) {
         // Rollback on failure
         set((s) => {
@@ -430,7 +472,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       } else {
         // Sync PR to linked kanban tickets (only on success)
         try {
-          await window.kanban.ticket.syncPR(worktreeId, prNumber, prUrl)
+          await kanban.ticket.syncPR(worktreeId, prNumber, prUrl)
           useKanbanStore.getState().syncPRToTicket(worktreeId, prNumber, prUrl)
         } catch {
           // Non-critical — ticket badge sync failure should not block PR attach
@@ -460,7 +502,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       return { attachedPR: newMap }
     })
     try {
-      const result = await window.db.worktree.detachPR(worktreeId)
+      const result = await db.worktree.detachPR(worktreeId)
       if (!result.success) {
         // Rollback on failure
         set((s) => {
@@ -471,7 +513,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       } else {
         // Clear PR from linked kanban tickets (only on success)
         try {
-          await window.kanban.ticket.clearPR(worktreeId)
+          await kanban.ticket.clearPR(worktreeId)
           useKanbanStore.getState().clearPRFromTicket(worktreeId)
         } catch {
           // Non-critical
@@ -538,13 +580,13 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       set({
         createPRModalOpen: true,
         createPRWorktreeId: context.worktreeId,
-        createPRWorktreePath: context.worktreePath,
+        createPRWorktreePath: context.worktreePath
       })
     } else if (!open) {
       set({
         createPRModalOpen: false,
         createPRWorktreeId: null,
-        createPRWorktreePath: null,
+        createPRWorktreePath: null
       })
     }
     // Opening without context is a no-op (all callers must provide context)
@@ -566,7 +608,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   commit: async (worktreePath: string, message: string) => {
     set({ isCommitting: true, error: null })
     try {
-      const result = await window.gitOps.commit(worktreePath, message)
+      const result = unwrapEnvelope(await window.gitOps.commit(worktreePath, message))
       if (result.success) {
         // Refresh statuses after commit (wrapped so failure doesn't block commit success)
         try {
@@ -603,11 +645,11 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   push: async (worktreePath: string, remote?: string, branch?: string, force?: boolean) => {
     set({ isPushing: true, error: null })
     try {
-      const result = await window.gitOps.push(worktreePath, remote, branch, force)
+      const result = unwrapEnvelope(await window.gitOps.push(worktreePath, remote, branch, force))
       if (result.success) {
         // Refresh branch info to update ahead/behind counts
         try {
-          await get().loadBranchInfo(worktreePath)
+          await get().loadBranchInfo(worktreePath, { force: true })
         } catch {
           // Non-critical — push already succeeded
         }
@@ -626,7 +668,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   pull: async (worktreePath: string, remote?: string, branch?: string, rebase?: boolean) => {
     set({ isPulling: true, error: null })
     try {
-      const result = await window.gitOps.pull(worktreePath, remote, branch, rebase)
+      const result = unwrapEnvelope(await window.gitOps.pull(worktreePath, remote, branch, rebase))
       if (result.success) {
         // Refresh statuses after pull (wrapped so failure doesn't block pull success)
         try {

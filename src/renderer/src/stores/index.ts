@@ -1,4 +1,9 @@
-export { useLayoutStore, LAYOUT_CONSTRAINTS, type BottomPanelTab, type CollapsedPanel } from './useLayoutStore'
+export {
+  useLayoutStore,
+  LAYOUT_CONSTRAINTS,
+  type BottomPanelTab,
+  type CollapsedPanel
+} from './useLayoutStore'
 export { useThemeStore } from './useThemeStore'
 export { useProjectStore } from './useProjectStore'
 export { useWorktreeStore } from './useWorktreeStore'
@@ -49,6 +54,8 @@ export {
   useUsageStore,
   type UsageData,
   type UsageProvider,
+  type AnthropicRateLimitInfo,
+  type AnthropicRateLimitState,
   resolveUsageProvider,
   resolveDefaultUsageProvider,
   normalizeUsage

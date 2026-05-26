@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { memo, useState, useRef, useEffect, useCallback } from 'react'
 import { revealLabel } from '@/lib/platform'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
   ChevronRight,
   Plus,
@@ -75,18 +76,20 @@ interface ProjectItemProps {
   project: Project
   nameMatchIndices?: number[]
   pathMatchIndices?: number[]
+  isDraggable?: boolean
   isDragging?: boolean
   isDragOver?: boolean
-  onDragStart?: (e: React.DragEvent) => void
-  onDragOver?: (e: React.DragEvent) => void
-  onDrop?: (e: React.DragEvent) => void
+  onDragStart?: (e: React.DragEvent, projectId: string) => void
+  onDragOver?: (e: React.DragEvent, projectId: string) => void
+  onDrop?: (e: React.DragEvent, projectId: string) => void
   onDragEnd?: () => void
 }
 
-export function ProjectItem({
+export const ProjectItem = memo(function ProjectItem({
   project,
   nameMatchIndices,
   pathMatchIndices,
+  isDraggable,
   isDragging,
   isDragOver,
   onDragStart,
@@ -94,19 +97,21 @@ export function ProjectItem({
   onDrop,
   onDragEnd
 }: ProjectItemProps): React.JSX.Element {
-  const {
-    selectedProjectId,
-    expandedProjectIds,
-    editingProjectId,
-    selectProject,
-    toggleProjectExpanded,
-    setEditingProject,
-    updateProjectName,
-    removeProject,
-    refreshLanguage
-  } = useProjectStore()
+  // Narrow selectors (primitives/booleans) so this item only re-renders when its
+  // own slice of state changes — not on every project/worktree store mutation.
+  const selectProject = useProjectStore((s) => s.selectProject)
+  const toggleProjectExpanded = useProjectStore((s) => s.toggleProjectExpanded)
+  const setEditingProject = useProjectStore((s) => s.setEditingProject)
+  const updateProjectName = useProjectStore((s) => s.updateProjectName)
+  const removeProject = useProjectStore((s) => s.removeProject)
+  const refreshLanguage = useProjectStore((s) => s.refreshLanguage)
+  const isSelected = useProjectStore((s) => s.selectedProjectId === project.id)
+  const isExpandedInStore = useProjectStore((s) => s.expandedProjectIds.has(project.id))
+  const isEditing = useProjectStore((s) => s.editingProjectId === project.id)
 
-  const { createWorktree, creatingForProjectId, syncWorktrees } = useWorktreeStore()
+  const createWorktree = useWorktreeStore((s) => s.createWorktree)
+  const isCreatingWorktree = useWorktreeStore((s) => s.creatingForProjectId === project.id)
+  const syncWorktrees = useWorktreeStore((s) => s.syncWorktrees)
 
   const spaces = useSpaceStore((s) => s.spaces)
   const projectSpaceMap = useSpaceStore((s) => s.projectSpaceMap)
@@ -134,11 +139,8 @@ export function ProjectItem({
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
   const [noCommitsDialogOpen, setNoCommitsDialogOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  const isCreatingWorktree = creatingForProjectId === project.id
 
-  const isSelected = selectedProjectId === project.id
-  const isExpanded = isSearchMode || expandedProjectIds.has(project.id)
-  const isEditing = editingProjectId === project.id
+  const isExpanded = isSearchMode || isExpandedInStore
 
   // Focus input when editing starts (deferred to run after menu closes)
   useEffect(() => {
@@ -202,16 +204,16 @@ export function ProjectItem({
   }
 
   const handleOpenInFinder = async (): Promise<void> => {
-    await window.projectOps.showInFolder(project.path)
+    unwrapEnvelope(await window.projectOps.showInFolder(project.path))
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    await window.projectOps.copyToClipboard(project.path)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(project.path))
     toast.success('Path copied to clipboard')
   }
 
   const handleRefreshProject = async (): Promise<void> => {
-    await syncWorktrees(project.id, project.path)
+    await syncWorktrees(project.id, project.path, { force: true })
     toast.success('Project refreshed')
   }
 
@@ -219,7 +221,7 @@ export function ProjectItem({
     if (isCreatingWorktree) return
 
     // Check if repo has any commits before attempting worktree creation
-    const hasCommits = await window.worktreeOps.hasCommits(project.path)
+    const hasCommits = unwrapEnvelope(await window.worktreeOps.hasCommits(project.path))
     if (!hasCommits) {
       setNoCommitsDialogOpen(true)
       return
@@ -288,24 +290,27 @@ export function ProjectItem({
       setBranchPickerOpen(false)
 
       // Show loading toast with appropriate progress message based on auto-pull setting
-      const loadingToastId = autoPullBeforeWorktree && !prNumber
-        ? toast.loading('Pulling latest changes from origin...')
-        : toast.loading('Creating worktree...')
+      const loadingToastId =
+        autoPullBeforeWorktree && !prNumber
+          ? toast.loading('Pulling latest changes from origin...')
+          : toast.loading('Creating worktree...')
 
       try {
-        const result = await window.worktreeOps.createFromBranch(
-          project.id,
-          project.path,
-          project.name,
-          branchName,
-          prNumber
+        const result = unwrapEnvelope(
+          await window.worktreeOps.createFromBranch(
+            project.id,
+            project.path,
+            project.name,
+            branchName,
+            prNumber
+          )
         )
 
         // Dismiss loading toast
         toast.dismiss(loadingToastId)
 
         if (result.success && result.worktree) {
-          useWorktreeStore.getState().loadWorktrees(project.id)
+          useWorktreeStore.getState().loadWorktrees(project.id, { force: true })
           useWorktreeStore.getState().selectWorktree(result.worktree.id)
 
           // Show warning if auto-pull was enabled but pull failed (not for PRs)
@@ -350,10 +355,14 @@ export function ProjectItem({
               isDragging && 'opacity-50',
               isDragOver && 'border-t-2 border-primary'
             )}
-            draggable={!!onDragStart && !isEditing && !connectionModeActive}
-            onDragStart={connectionModeActive ? undefined : onDragStart}
-            onDragOver={connectionModeActive ? undefined : onDragOver}
-            onDrop={connectionModeActive ? undefined : onDrop}
+            draggable={!!isDraggable && !isEditing && !connectionModeActive}
+            onDragStart={
+              connectionModeActive || !onDragStart ? undefined : (e) => onDragStart(e, project.id)
+            }
+            onDragOver={
+              connectionModeActive || !onDragOver ? undefined : (e) => onDragOver(e, project.id)
+            }
+            onDrop={connectionModeActive || !onDrop ? undefined : (e) => onDrop(e, project.id)}
             onDragEnd={connectionModeActive ? undefined : onDragEnd}
             onClick={handleClick}
             data-testid={`project-item-${project.id}`}
@@ -384,7 +393,11 @@ export function ProjectItem({
             </Button>
 
             {/* Language Icon */}
-            <LanguageIcon language={project.language} customIcon={project.custom_icon} detectedIcon={project.detected_icon} />
+            <LanguageIcon
+              language={project.language}
+              customIcon={project.custom_icon}
+              detectedIcon={project.detected_icon}
+            />
 
             {/* Project Name */}
             {isEditing ? (
@@ -588,4 +601,4 @@ export function ProjectItem({
       </AlertDialog>
     </div>
   )
-}
+})

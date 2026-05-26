@@ -42,6 +42,10 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import type { StreamingPart } from '@/components/sessions/SessionView'
 import type { QuestionRequest } from '@/stores/useQuestionStore'
 import type { CommandApprovalRequest } from '@/stores/useCommandApprovalStore'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
+const kanban = unwrapEnvelopeApi(() => window.kanban)
 
 interface BoardAssistantViewProps {
   projectId: string
@@ -143,7 +147,7 @@ async function resolveProjectRuntime(
     return { worktreeId: chosenWorktree.id, path: chosenWorktree.path }
   }
 
-  const fallbackWorktrees = await window.db.worktree.getActiveByProject(projectId)
+  const fallbackWorktrees = await db.worktree.getActiveByProject(projectId)
   const fallback =
     fallbackWorktrees.find((worktree) => worktree.is_default) ?? fallbackWorktrees[0] ?? null
 
@@ -258,7 +262,7 @@ async function ensureRuntimeSession(
   if (existingStoreSession) {
     session = existingStoreSession
     // Update the existing session with the model/SDK settings
-    await window.db.session.update(session.id, {
+    await db.session.update(session.id, {
       agent_sdk: agentSdk,
       ...(selectedModel
         ? {
@@ -269,7 +273,7 @@ async function ensureRuntimeSession(
         : {})
     })
   } else {
-    session = await window.db.session.create({
+    session = await db.session.create({
       worktree_id: worktreeId,
       connection_id: connectionId,
       project_id: targetProjectId,
@@ -287,12 +291,12 @@ async function ensureRuntimeSession(
     })
   }
 
-  const connectResult = await window.opencodeOps.connect(runtimePath, session.id)
+  const connectResult = unwrapEnvelope(await window.opencodeOps.connect(runtimePath, session.id))
   if (!connectResult.success || !connectResult.sessionId) {
     // Only delete the session if we just created it. Reused sessions
     // should be kept so the user doesn't lose the record and messages.
     if (!isReused) {
-      await window.db.session.delete(session.id).catch(() => {})
+      await db.session.delete(session.id).catch(() => {})
     }
     // Re-sync store so the stale entry is removed and the tab disappears
     const { useSessionStore } = await import('@/stores/useSessionStore')
@@ -300,7 +304,7 @@ async function ensureRuntimeSession(
     return null
   }
 
-  await window.db.session.update(session.id, {
+  await db.session.update(session.id, {
     opencode_session_id: connectResult.sessionId
   })
 
@@ -339,13 +343,13 @@ async function cleanupBoardChatRuntime(): Promise<void> {
 
   if (runtimePath && opencodeSessionId) {
     try {
-      await window.opencodeOps.abort(runtimePath, opencodeSessionId)
+      unwrapEnvelope(await window.opencodeOps.abort(runtimePath, opencodeSessionId))
     } catch {
       // Best effort cleanup.
     }
 
     try {
-      await window.opencodeOps.disconnect(runtimePath, opencodeSessionId)
+      unwrapEnvelope(await window.opencodeOps.disconnect(runtimePath, opencodeSessionId))
     } catch {
       // Best effort cleanup.
     }
@@ -872,7 +876,7 @@ export function BoardAssistantView({
     (nextOpencodeSessionId: string) => {
       updateOpencodeSessionId(nextOpencodeSessionId)
       if (sessionId) {
-        void window.db.session
+        void db.session
           .update(sessionId, {
             opencode_session_id: nextOpencodeSessionId
           })
@@ -908,10 +912,12 @@ export function BoardAssistantView({
       const state = useBoardChatStore.getState()
       if (state.sessionId && state.opencodeSessionId && state.runtimePath && scopeKey !== 'none') {
         try {
-          await window.opencodeOps.reconnect(
-            state.runtimePath,
-            state.opencodeSessionId,
-            state.sessionId
+          unwrapEnvelope(
+            await window.opencodeOps.reconnect(
+              state.runtimePath,
+              state.opencodeSessionId,
+              state.sessionId
+            )
           )
         } catch {
           // useSessionStream will handle reconnection failures
@@ -1155,10 +1161,8 @@ export function BoardAssistantView({
       }
 
       const prompt = buildBoardPrompt(input, scope, targetProjectId)
-      const result = await window.opencodeOps.prompt(
-        runtime.runtimePath,
-        runtime.opencodeSessionId,
-        prompt
+      const result = unwrapEnvelope(
+        await window.opencodeOps.prompt(runtime.runtimePath, runtime.opencodeSessionId, prompt)
       )
       if (!result.success) {
         throw new Error(result.error || 'The assistant could not send your message.')
@@ -1199,7 +1203,7 @@ export function BoardAssistantView({
         }
 
         const draftKeysInBatch = new Set(draftsToCreate.map((draft) => draft.draftKey))
-        const result = await window.kanban.ticket.createBatch({
+        const result = await kanban.ticket.createBatch({
           drafts: draftsToCreate.map((draft) => ({
             draft_key: draft.draftKey,
             project_id: draft.projectId,
@@ -1309,7 +1313,9 @@ export function BoardAssistantView({
   const handleQuestionReply = useCallback(
     async (requestId: string, answers: QuestionAnswer[]) => {
       try {
-        await window.opencodeOps.questionReply(requestId, answers, runtimePath || undefined)
+        unwrapEnvelope(
+          await window.opencodeOps.questionReply(requestId, answers, runtimePath || undefined)
+        )
         if (sessionId) {
           useQuestionStore.getState().removeQuestion(sessionId, requestId)
         }
@@ -1323,7 +1329,7 @@ export function BoardAssistantView({
   const handleQuestionReject = useCallback(
     async (requestId: string) => {
       try {
-        await window.opencodeOps.questionReject(requestId, runtimePath || undefined)
+        unwrapEnvelope(await window.opencodeOps.questionReject(requestId, runtimePath || undefined))
         if (sessionId) {
           useQuestionStore.getState().removeQuestion(sessionId, requestId)
         }
@@ -1337,11 +1343,13 @@ export function BoardAssistantView({
   const handlePermissionReply = useCallback(
     async (requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => {
       try {
-        await window.opencodeOps.permissionReply(
-          requestId,
-          reply,
-          runtimePath || undefined,
-          message
+        unwrapEnvelope(
+          await window.opencodeOps.permissionReply(
+            requestId,
+            reply,
+            runtimePath || undefined,
+            message
+          )
         )
         if (sessionId) {
           usePermissionStore.getState().removePermission(sessionId, requestId)
@@ -1362,13 +1370,15 @@ export function BoardAssistantView({
       patterns?: string[]
     ) => {
       try {
-        await window.opencodeOps.commandApprovalReply(
-          requestId,
-          approved,
-          remember,
-          pattern,
-          runtimePath || undefined,
-          patterns
+        unwrapEnvelope(
+          await window.opencodeOps.commandApprovalReply(
+            requestId,
+            approved,
+            remember,
+            pattern,
+            runtimePath || undefined,
+            patterns
+          )
         )
         if (sessionId) {
           useCommandApprovalStore.getState().removeApproval(sessionId, requestId)

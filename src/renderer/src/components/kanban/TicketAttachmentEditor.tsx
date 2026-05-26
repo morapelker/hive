@@ -1,5 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Plus, X, Ticket, Figma, Link as LinkIcon, FileUp, File as FileIcon, ImageIcon } from 'lucide-react'
+import {
+  Plus,
+  X,
+  Ticket,
+  Figma,
+  Link as LinkIcon,
+  FileUp,
+  File as FileIcon,
+  ImageIcon
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -10,7 +19,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { parseAttachmentUrl } from '@/lib/attachment-utils'
 import type { AttachmentInfo } from '@/lib/attachment-utils'
-import { toast } from '@/lib/toast'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export interface TicketAttachment extends AttachmentInfo {
   url: string
@@ -24,7 +33,11 @@ interface TicketAttachmentEditorProps {
   testIdPrefix?: string // e.g. 'ticket' or 'ticket-edit'
 }
 
-export function TicketAttachmentEditor({ attachments, onChange, testIdPrefix = 'ticket' }: TicketAttachmentEditorProps) {
+export function TicketAttachmentEditor({
+  attachments,
+  onChange,
+  testIdPrefix = 'ticket'
+}: TicketAttachmentEditorProps) {
   const [showAttachInput, setShowAttachInput] = useState(false)
   const [attachUrl, setAttachUrl] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -43,7 +56,10 @@ export function TicketAttachmentEditor({ attachments, onChange, testIdPrefix = '
       const removed = attachments[index]
       // Delete image files from disk
       if (removed?.type === 'image' && removed.url) {
-        window.attachmentOps.deleteImage(removed.url).catch(() => {})
+        window.attachmentOps
+          .deleteImage(removed.url)
+          .then(unwrapEnvelope)
+          .catch(() => {})
       }
       onChange(attachments.filter((_, i) => i !== index))
     },
@@ -126,7 +142,13 @@ export function TicketAttachmentEditor({ attachments, onChange, testIdPrefix = '
         </div>
       ) : (
         <>
-          <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={handleFileSelect}
+          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -176,12 +198,15 @@ function AttachmentChip({
     if (attachment.type !== 'image') return
     let cancelled = false
 
-    window.fileOps.readImageAsBase64(attachment.url).then((result) => {
-      if (cancelled || !result.success || !result.data || !result.mimeType) return
-      setThumbnailSrc(`data:${result.mimeType};base64,${result.data}`)
+    window.fileOps.readImageAsBase64(attachment.url).then((envelope) => {
+      if (cancelled || !envelope.success) return
+      const { data, mimeType } = envelope.value
+      setThumbnailSrc(`data:${mimeType ?? 'image/png'};base64,${data}`)
     })
 
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [attachment.type, attachment.url])
 
   return (
@@ -190,11 +215,7 @@ function AttachmentChip({
       className="inline-flex items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs"
     >
       {attachment.type === 'image' && thumbnailSrc ? (
-        <img
-          src={thumbnailSrc}
-          alt={attachment.label}
-          className="h-6 w-6 rounded object-cover"
-        />
+        <img src={thumbnailSrc} alt={attachment.label} className="h-6 w-6 rounded object-cover" />
       ) : attachment.type === 'image' ? (
         <ImageIcon className="h-3 w-3 text-emerald-500" />
       ) : attachment.type === 'jira' ? (

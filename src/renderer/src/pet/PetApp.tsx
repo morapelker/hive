@@ -6,6 +6,7 @@ import { HatchCeremony } from './HatchCeremony'
 import { PetSprite } from './PetSprite'
 import { usePetDrag } from './usePetDrag'
 import { usePetHover } from './usePetHover'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 const DEFAULT_STATUS: PetStatusPayload = { state: 'idle', sourceWorktreeId: null }
 
@@ -25,8 +26,8 @@ export function PetApp(): React.JSX.Element {
 
     async function loadInitialState(): Promise<void> {
       const [config, currentStatus] = await Promise.all([
-        window.petOps.getConfig(),
-        window.petOps.getCurrentStatus()
+        window.petOps.getConfig().then(unwrapEnvelope),
+        window.petOps.getCurrentStatus().then(unwrapEnvelope)
       ])
       if (cancelled) return
       setSettings(config.settings)
@@ -58,19 +59,25 @@ export function PetApp(): React.JSX.Element {
     window.petOps.markHatched()
   }, [])
 
-  const handleClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
-    if (wasDraggedRef.current) {
-      event.preventDefault()
-      event.stopPropagation()
-      wasDraggedRef.current = false
-      return
-    }
-    window.petOps.focusMain({ worktreeId: latestStatusRef.current.sourceWorktreeId })
-  }, [wasDraggedRef])
+  const handleClick = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      if (wasDraggedRef.current) {
+        event.preventDefault()
+        event.stopPropagation()
+        wasDraggedRef.current = false
+        return
+      }
+      window.petOps
+        .focusMain({ worktreeId: latestStatusRef.current.sourceWorktreeId })
+        .then(unwrapEnvelope)
+        .catch(console.error)
+    },
+    [wasDraggedRef]
+  )
 
   const handleContextMenu = useCallback((event: React.MouseEvent<HTMLElement>) => {
     event.preventDefault()
-    window.petOps.hide()
+    window.petOps.hide().then(unwrapEnvelope).catch(console.error)
   }, [])
 
   if (!settings) return <div className="pet-root" />

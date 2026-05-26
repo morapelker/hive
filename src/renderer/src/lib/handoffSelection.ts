@@ -14,6 +14,7 @@ import {
   type SelectedModel
 } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export interface EffectiveHandoffSelection {
   agentSdk: HandoffAgentSdk
@@ -106,6 +107,7 @@ function resolveSessionSelection(opts: {
   worktreeId?: string
   agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
   mode?: 'build' | 'plan' | 'super-plan'
+  explicitSdk?: boolean
 }): EffectiveHandoffSelection {
   const settings = useSettingsStore.getState()
   const requestedSdk = normalizeHandoffSdk(opts.agentSdk ?? settings.defaultAgentSdk ?? 'opencode')
@@ -114,10 +116,18 @@ function resolveSessionSelection(opts: {
   let resolvedSdk = requestedSdk
 
   const modeDefault = settings.getModelForMode(getModeDefaultKey(opts.mode))
-  // A mode default with its own agentSdk takes precedence over the requested SDK.
+  // Session creation can pass an explicit SDK; in that case the mode default may only
+  // supply a model that already belongs to the requested SDK.
   if (modeDefault && (modeDefault.agentSdk || requestedSdk === configuredDefaultSdk)) {
-    model = modeDefault
-    resolvedSdk = normalizeHandoffSdk(modeDefault.agentSdk ?? requestedSdk)
+    const modeDefaultSdk = modeDefault.agentSdk ? normalizeHandoffSdk(modeDefault.agentSdk) : null
+    if (opts.explicitSdk) {
+      if (modeDefaultSdk === requestedSdk) {
+        model = modeDefault
+      }
+    } else {
+      model = modeDefault
+      resolvedSdk = modeDefaultSdk ?? requestedSdk
+    }
   }
 
   if (!model) {
@@ -192,6 +202,7 @@ export async function loadHandoffModelCatalog(
 
   const request = window.opencodeOps
     .listModels({ agentSdk })
+    .then(unwrapEnvelope)
     .then((result) => {
       const parsed = result.success ? cacheHandoffModelCatalog(agentSdk, result.providers) : []
       inflightModelCatalogRequests.delete(agentSdk)
@@ -273,7 +284,8 @@ export function resolveSessionCreationSelection(opts: {
   const resolved = resolveSessionSelection({
     worktreeId: opts.worktreeId,
     agentSdk,
-    mode: opts.initialMode
+    mode: opts.initialMode,
+    explicitSdk: opts.agentSdkOverride != null
   })
   return { agentSdk: resolved.agentSdk, model: resolved.model }
 }

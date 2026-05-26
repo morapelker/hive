@@ -20,11 +20,11 @@ const mockKanban = {
   ticket: {
     create: vi.fn(),
     get: vi.fn(),
-    getByProject: vi.fn().mockResolvedValue([]),
-    update: vi.fn().mockResolvedValue(undefined),
+    getByProject: vi.fn().mockResolvedValue({ success: true, value: [] }),
+    update: vi.fn().mockResolvedValue({ success: true, value: undefined }),
     delete: vi.fn(),
-    move: vi.fn().mockResolvedValue(undefined),
-    reorder: vi.fn().mockResolvedValue(undefined),
+    move: vi.fn().mockResolvedValue({ success: true, value: undefined }),
+    reorder: vi.fn().mockResolvedValue({ success: true, value: undefined }),
     getBySession: vi.fn()
   },
   simpleMode: {
@@ -34,73 +34,82 @@ const mockKanban = {
 
 const mockDbSession = {
   create: vi.fn().mockImplementation(async (input: Record<string, unknown>) => ({
-    id: 'new-session-1',
-    worktree_id: (input.worktree_id as string | null) ?? 'wt-1',
-    project_id: (input.project_id as string | null) ?? 'proj-1',
-    connection_id: (input.connection_id as string | null) ?? null,
-    name: (input.name as string | null) ?? 'Session 1',
-    status: 'active',
-    opencode_session_id: null,
-    agent_sdk: (input.agent_sdk as string | null) ?? 'opencode',
-    mode: (input.mode as string | null) ?? 'build',
-    model_provider_id: (input.model_provider_id as string | null) ?? null,
-    model_id: (input.model_id as string | null) ?? null,
-    model_variant: (input.model_variant as string | null) ?? null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    completed_at: null
+    success: true,
+    value: {
+      id: 'new-session-1',
+      worktree_id: (input.worktree_id as string | null) ?? 'wt-1',
+      project_id: (input.project_id as string | null) ?? 'proj-1',
+      connection_id: (input.connection_id as string | null) ?? null,
+      name: (input.name as string | null) ?? 'Session 1',
+      status: 'active',
+      opencode_session_id: null,
+      agent_sdk: (input.agent_sdk as string | null) ?? 'opencode',
+      mode: (input.mode as string | null) ?? 'build',
+      model_provider_id: (input.model_provider_id as string | null) ?? null,
+      model_id: (input.model_id as string | null) ?? null,
+      model_variant: (input.model_variant as string | null) ?? null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      completed_at: null
+    }
   })),
-  update: vi.fn().mockResolvedValue(undefined),
-  getActiveByWorktree: vi.fn().mockResolvedValue([])
+  update: vi.fn().mockResolvedValue({ success: true, value: undefined }),
+  getActiveByWorktree: vi.fn().mockResolvedValue({ success: true, value: [] })
 }
 
 const mockDbWorktree = {
-  getActiveByProject: vi.fn().mockResolvedValue([])
+  getActiveByProject: vi.fn().mockResolvedValue({ success: true, value: [] })
 }
 
 const mockWorktreeOps = {
   create: vi.fn().mockResolvedValue({
     success: true,
-    worktree: {
-      id: 'wt-new',
-      project_id: 'proj-1',
-      name: 'new-worktree',
-      branch_name: 'new-worktree',
-      path: '/test/new-worktree',
-      status: 'active',
-      is_default: false,
-      branch_renamed: 0,
-      last_message_at: null,
-      session_titles: '[]',
-      last_model_provider_id: null,
-      last_model_id: null,
-      last_model_variant: null,
-      created_at: '2026-01-01T00:00:00Z',
-      last_accessed_at: '2026-01-01T00:00:00Z',
-      github_pr_number: null,
-      github_pr_url: null
+    value: {
+      success: true,
+      worktree: {
+        id: 'wt-new',
+        project_id: 'proj-1',
+        name: 'new-worktree',
+        branch_name: 'new-worktree',
+        path: '/test/new-worktree',
+        status: 'active',
+        is_default: false,
+        branch_renamed: 0,
+        last_message_at: null,
+        session_titles: '[]',
+        last_model_provider_id: null,
+        last_model_id: null,
+        last_model_variant: null,
+        created_at: '2026-01-01T00:00:00Z',
+        last_accessed_at: '2026-01-01T00:00:00Z',
+        github_pr_number: null,
+        github_pr_url: null
+      }
     }
   }),
   createFromBranch: vi.fn().mockResolvedValue({
     success: true,
-    worktree: {
-      id: 'wt-new',
-      project_id: 'proj-1',
-      name: 'new-worktree',
-      branch_name: 'new-worktree',
-      path: '/test/new-worktree',
-      status: 'active',
-      is_default: false,
-      branch_renamed: 0,
-      last_message_at: null,
-      session_titles: '[]',
-      last_model_provider_id: null,
-      last_model_id: null,
-      last_model_variant: null,
-      created_at: '2026-01-01T00:00:00Z',
-      last_accessed_at: '2026-01-01T00:00:00Z',
-      github_pr_number: null,
-      github_pr_url: null
+    value: {
+      success: true,
+      worktree: {
+        id: 'wt-new',
+        project_id: 'proj-1',
+        name: 'new-worktree',
+        branch_name: 'new-worktree',
+        path: '/test/new-worktree',
+        status: 'active',
+        is_default: false,
+        branch_renamed: 0,
+        last_message_at: null,
+        session_titles: '[]',
+        last_model_provider_id: null,
+        last_model_id: null,
+        last_model_variant: null,
+        created_at: '2026-01-01T00:00:00Z',
+        last_accessed_at: '2026-01-01T00:00:00Z',
+        github_pr_number: null,
+        github_pr_url: null
+      }
     }
   })
 }
@@ -108,30 +117,38 @@ const mockWorktreeOps = {
 const mockGitOps = {
   listBranchesWithStatus: vi.fn().mockResolvedValue({
     success: true,
-    branches: [
-      { name: 'main', isRemote: false, isCheckedOut: true },
-      { name: 'feature-x', isRemote: false, isCheckedOut: false },
-      { name: 'develop', isRemote: true, isCheckedOut: false }
-    ]
+    value: {
+      success: true,
+      branches: [
+        { name: 'main', isRemote: false, isCheckedOut: true },
+        { name: 'feature-x', isRemote: false, isCheckedOut: false },
+        { name: 'develop', isRemote: true, isCheckedOut: false }
+      ]
+    }
   })
 }
 
 const mockOpencodeOps = {
-  connect: vi.fn().mockResolvedValue({ success: true, sessionId: 'oc-session-1' }),
-  prompt: vi.fn().mockResolvedValue({ success: true }),
+  connect: vi
+    .fn()
+    .mockResolvedValue({ success: true, value: { success: true, sessionId: 'oc-session-1' } }),
+  prompt: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
   listModels: vi.fn().mockResolvedValue({
     success: true,
-    providers: [
-      {
-        id: 'openai',
-        name: 'OpenAI',
-        models: {
-          'gpt-5.5': { id: 'gpt-5.5', name: 'GPT-5.5' },
-          'gpt-5.4': { id: 'gpt-5.4', name: 'GPT-5.4' },
-          'gpt-5.4-mini': { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' }
+    value: {
+      success: true,
+      providers: [
+        {
+          id: 'openai',
+          name: 'OpenAI',
+          models: {
+            'gpt-5.5': { id: 'gpt-5.5', name: 'GPT-5.5' },
+            'gpt-5.4': { id: 'gpt-5.4', name: 'GPT-5.4' },
+            'gpt-5.4-mini': { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' }
+          }
         }
-      }
-    ]
+      ]
+    }
   })
 }
 
@@ -166,8 +183,8 @@ Object.defineProperty(window, 'usageOps', {
   writable: true,
   configurable: true,
   value: {
-    fetch: vi.fn().mockResolvedValue({ success: true, data: null }),
-    fetchOpenai: vi.fn().mockResolvedValue({ success: true, data: null })
+    fetch: vi.fn().mockResolvedValue({ success: true, value: { success: true, data: null } }),
+    fetchOpenai: vi.fn().mockResolvedValue({ success: true, value: { success: true, data: null } })
   }
 })
 
@@ -177,9 +194,12 @@ Object.defineProperty(window, 'connectionOps', {
   value: {
     get: vi.fn().mockResolvedValue({
       success: true,
-      connection: {
-        id: 'conn-1',
-        members: [{ project_id: 'proj-1' }]
+      value: {
+        success: true,
+        connection: {
+          id: 'conn-1',
+          members: [{ project_id: 'proj-1' }]
+        }
       }
     })
   }
@@ -201,7 +221,10 @@ import { useConnectionStore } from '@/stores/useConnectionStore'
 import { getSuperPlanModePrefix } from '@/lib/constants'
 
 // ── Import component under test ─────────────────────────────────────
-import { WorktreePickerModal, _resetLastSourceBranch } from '@/components/kanban/WorktreePickerModal'
+import {
+  WorktreePickerModal,
+  _resetLastSourceBranch
+} from '@/components/kanban/WorktreePickerModal'
 
 import type { KanbanTicket } from '../../../src/main/db/types'
 
@@ -359,7 +382,7 @@ describe('Session 9: Worktree Picker Modal', () => {
             created_at: '2026-01-01T00:00:00Z',
             updated_at: '2026-01-01T00:00:00Z'
           }
-        ],
+        ]
       })
     })
     vi.clearAllMocks()
@@ -637,7 +660,12 @@ describe('Session 9: Worktree Picker Modal', () => {
 
   test('toggling mode swaps prefix but preserves user edits to body', () => {
     render(
-      <WorktreePickerModal ticket={defaultTicket} projectId="proj-1" open={true} onOpenChange={() => {}} />
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
     )
     const textarea = screen.getByTestId('wt-picker-prompt') as HTMLTextAreaElement
     const toggle = screen.getByTestId('wt-picker-mode-toggle')
@@ -648,7 +676,9 @@ describe('Session 9: Worktree Picker Modal', () => {
 
     // Toggle build → plan: prefix should swap, appended text preserved
     fireEvent.click(toggle)
-    expect(textarea.value).toContain('Please review the following ticket and create a detailed implementation plan.')
+    expect(textarea.value).toContain(
+      'Please review the following ticket and create a detailed implementation plan.'
+    )
     expect(textarea.value).toContain('Also add unit tests.')
 
     // Toggle plan → build: prefix swaps back, appended text still there
@@ -659,7 +689,12 @@ describe('Session 9: Worktree Picker Modal', () => {
 
   test('toggling mode does not change text when prefix was edited by user', () => {
     render(
-      <WorktreePickerModal ticket={defaultTicket} projectId="proj-1" open={true} onOpenChange={() => {}} />
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
     )
     const textarea = screen.getByTestId('wt-picker-prompt') as HTMLTextAreaElement
     const toggle = screen.getByTestId('wt-picker-mode-toggle')
@@ -880,7 +915,9 @@ describe('Session 9: Worktree Picker Modal', () => {
       type: string
       text: string
     }>
-    expect(promptParts[0]?.text).toBe('/goal Build auth. Goal success criteria: Login and signup work')
+    expect(promptParts[0]?.text).toBe(
+      '/goal Build auth. Goal success criteria: Login and signup work'
+    )
     expect(mockKanban.ticket.update).toHaveBeenCalledWith(
       'ticket-1',
       expect.objectContaining({
@@ -923,7 +960,9 @@ describe('Session 9: Worktree Picker Modal', () => {
       type: string
       text: string
     }>
-    expect(promptParts[0]?.text).toBe('/goal Build auth. Goal success criteria: Auth works end to end')
+    expect(promptParts[0]?.text).toBe(
+      '/goal Build auth. Goal success criteria: Auth works end to end'
+    )
   })
 
   test('saveConfigOnly persists goalMode and goalSuccessCriteria in pending config JSON', async () => {
@@ -1002,7 +1041,9 @@ describe('Session 9: Worktree Picker Modal', () => {
       type: string
       text: string
     }>
-    expect(promptParts[0]?.text).toBe('/goal Build auth. Goal success criteria: No duplicate goal command')
+    expect(promptParts[0]?.text).toBe(
+      '/goal Build auth. Goal success criteria: No duplicate goal command'
+    )
   })
 
   // ── Submit flow tests ────────────────────────────────────────────

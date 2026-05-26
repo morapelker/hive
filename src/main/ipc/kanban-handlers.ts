@@ -1,5 +1,8 @@
-import { ipcMain, dialog } from 'electron'
+import { dialog } from 'electron'
 import { writeFile, readFile } from 'node:fs/promises'
+import { Data, Effect } from 'effect'
+import { z } from 'zod'
+
 import { getDatabase } from '../db'
 import { createLogger } from '../services/logger'
 import type {
@@ -8,299 +11,449 @@ import type {
   KanbanTicketUpdate,
   KanbanTicketColumn
 } from '../db'
+import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'KanbanHandlers' })
+
+class KanbanHandlerFailed extends Data.TaggedError('KanbanHandlerFailed')<{
+  readonly operation: string
+  readonly reason: string
+  readonly message: string
+}> {}
+
+const kanbanFailed = (operation: string, cause: unknown): KanbanHandlerFailed => {
+  const reason = cause instanceof Error ? cause.message : String(cause)
+  return new KanbanHandlerFailed({ operation, reason, message: reason })
+}
+
+const toError = (cause: unknown): Error =>
+  cause instanceof Error ? cause : new Error(String(cause))
+
+const tryKanban = <A>(operation: string, fn: () => A): Effect.Effect<A, KanbanHandlerFailed> =>
+  Effect.try({
+    try: fn,
+    catch: (error) => {
+      log.error(`${operation} failed`, toError(error))
+      return kanbanFailed(operation, error)
+    }
+  })
+
+const tryKanbanPromise = <A>(
+  operation: string,
+  fn: () => Promise<A>
+): Effect.Effect<A, KanbanHandlerFailed> =>
+  Effect.tryPromise({
+    try: fn,
+    catch: (error) => {
+      log.error(`${operation} failed`, toError(error))
+      return kanbanFailed(operation, error)
+    }
+  })
+
+const stringArgSchema = z.string()
+const stringPairSchema = z.tuple([z.string(), z.string()])
+const stringNumberPairSchema = z.tuple([z.string(), z.number()])
+const ticketColumnSchema = z.enum(['todo', 'in_progress', 'review', 'done'])
+const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
+const ticketMarkSchema = z.enum(['common', 'rare', 'epic', 'legendary'])
+
+const kanbanTicketCreateSchema = z.object({
+  id: z.string().optional(),
+  project_id: z.string(),
+  title: z.string(),
+  description: z.string().nullable().optional(),
+  attachments: z.array(z.unknown()).optional(),
+  column: ticketColumnSchema.optional(),
+  sort_order: z.number().optional(),
+  current_session_id: z.string().nullable().optional(),
+  worktree_id: z.string().nullable().optional(),
+  mode: sessionModeSchema.nullable().optional(),
+  plan_ready: z.boolean().optional(),
+  external_provider: z.string().nullable().optional(),
+  external_id: z.string().nullable().optional(),
+  external_url: z.string().nullable().optional(),
+  github_pr_number: z.number().nullable().optional(),
+  github_pr_url: z.string().nullable().optional(),
+  mark: ticketMarkSchema.nullable().optional()
+}) satisfies z.ZodType<KanbanTicketCreate>
+
+const kanbanTicketUpdateSchema = z.object({
+  title: z.string().optional(),
+  description: z.string().nullable().optional(),
+  attachments: z.array(z.unknown()).optional(),
+  column: ticketColumnSchema.optional(),
+  sort_order: z.number().optional(),
+  current_session_id: z.string().nullable().optional(),
+  worktree_id: z.string().nullable().optional(),
+  mode: sessionModeSchema.nullable().optional(),
+  plan_ready: z.boolean().optional(),
+  github_pr_number: z.number().nullable().optional(),
+  github_pr_url: z.string().nullable().optional(),
+  mark: ticketMarkSchema.nullable().optional(),
+  pending_launch_config: z.string().nullable().optional(),
+  goal_mode: z.boolean().optional(),
+  goal_success_criteria: z.string().nullable().optional(),
+  note: z.string().nullable().optional()
+}) satisfies z.ZodType<KanbanTicketUpdate>
+
+const kanbanTicketBatchCreateItemSchema = kanbanTicketCreateSchema
+  .extend({
+    draft_key: z.string(),
+    project_id: z.string(),
+    title: z.string(),
+    depends_on: z.array(z.string()).optional()
+  })
+  .omit({ id: true })
+
+const kanbanTicketBatchCreateSchema = z.object({
+  drafts: z.array(kanbanTicketBatchCreateItemSchema)
+}) satisfies z.ZodType<KanbanTicketBatchCreate>
+
+const importTicketSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string().nullable().optional(),
+  attachments: z.array(z.unknown()).nullable().optional(),
+  column: z.string().optional()
+})
+
+const importDependencySchema = z.object({
+  dependentId: z.string(),
+  blockerId: z.string()
+})
+
+type ImportTicket = z.infer<typeof importTicketSchema>
+type ImportDependency = z.infer<typeof importDependencySchema>
 
 export function registerKanbanHandlers(): void {
   log.info('Registering kanban handlers')
 
-  ipcMain.handle('kanban:ticket:create', (_event, data: KanbanTicketCreate) => {
-    return getDatabase().createKanbanTicket(data)
-  })
-
-  ipcMain.handle('kanban:ticket:createBatch', (_event, data: KanbanTicketBatchCreate) => {
-    return getDatabase().createKanbanTicketBatch(data)
-  })
-
-  ipcMain.handle('kanban:ticket:get', (_event, id: string) => {
-    return getDatabase().getKanbanTicket(id)
-  })
-
-  ipcMain.handle('kanban:ticket:getByProject', (_event, projectId: string, includeArchived?: boolean) => {
-    return getDatabase().getKanbanTicketsByProject(projectId, includeArchived ?? false)
-  })
-
-  ipcMain.handle('kanban:ticket:update', (_event, id: string, data: KanbanTicketUpdate) => {
-    return getDatabase().updateKanbanTicket(id, data)
-  })
-
-  ipcMain.handle('kanban:ticket:delete', (_event, id: string) => {
-    return getDatabase().deleteKanbanTicket(id)
-  })
-
-  ipcMain.handle('kanban:ticket:archive', (_event, id: string) => {
-    return getDatabase().archiveKanbanTicket(id)
-  })
-
-  ipcMain.handle('kanban:ticket:archiveAllDone', (_event, projectId: string) => {
-    return getDatabase().archiveAllDoneKanbanTickets(projectId)
-  })
-
-  ipcMain.handle('kanban:ticket:unarchive', (_event, id: string) => {
-    return getDatabase().unarchiveKanbanTicket(id)
-  })
-
-  ipcMain.handle(
-    'kanban:ticket:move',
-    (_event, id: string, column: KanbanTicketColumn, sortOrder: number) => {
-      return getDatabase().moveKanbanTicket(id, column, sortOrder)
-    }
+  defineHandler('kanban:ticket:create', kanbanTicketCreateSchema, (data) =>
+    tryKanban('kanban:ticket:create', () => getDatabase().createKanbanTicket(data))
   )
 
-  ipcMain.handle('kanban:ticket:reorder', (_event, id: string, sortOrder: number) => {
-    return getDatabase().reorderKanbanTicket(id, sortOrder)
-  })
+  defineHandler('kanban:ticket:createBatch', kanbanTicketBatchCreateSchema, (data) =>
+    tryKanban('kanban:ticket:createBatch', () => getDatabase().createKanbanTicketBatch(data))
+  )
 
-  ipcMain.handle('kanban:ticket:getBySession', (_event, sessionId: string) => {
-    return getDatabase().getKanbanTicketsBySession(sessionId)
-  })
+  defineHandler('kanban:ticket:get', stringArgSchema, (id) =>
+    tryKanban('kanban:ticket:get', () => getDatabase().getKanbanTicket(id))
+  )
 
-  ipcMain.handle('kanban:ticket:addTokens', (_event, id: string, tokens: number) => {
-    getDatabase().addTicketTokens(id, tokens)
-    return getDatabase().getKanbanTicket(id)
-  })
+  defineHandler(
+    'kanban:ticket:getByProject',
+    z.tuple([z.string(), z.boolean().optional()]),
+    ([projectId, includeArchived]) =>
+      tryKanban('kanban:ticket:getByProject', () =>
+        getDatabase().getKanbanTicketsByProject(projectId, includeArchived ?? false)
+      )
+  )
 
-  ipcMain.handle('kanban:ticket:syncPR', (_event, worktreeId: string, prNumber: number, prUrl: string) => {
-    return getDatabase().syncPRToTickets(worktreeId, prNumber, prUrl)
-  })
+  defineHandler(
+    'kanban:ticket:update',
+    z.tuple([z.string(), kanbanTicketUpdateSchema]),
+    ([id, data]) =>
+      tryKanban('kanban:ticket:update', () => getDatabase().updateKanbanTicket(id, data))
+  )
 
-  ipcMain.handle('kanban:ticket:clearPR', (_event, worktreeId: string) => {
-    return getDatabase().clearPRFromTickets(worktreeId)
-  })
+  defineHandler('kanban:ticket:delete', stringArgSchema, (id) =>
+    tryKanban('kanban:ticket:delete', () => getDatabase().deleteKanbanTicket(id))
+  )
 
-  ipcMain.handle('kanban:ticket:attachPR', (_event, ticketId: string, projectId: string, prNumber: number, prUrl: string) => {
-    return getDatabase().attachPRToTicket(ticketId, projectId, prNumber, prUrl)
-  })
+  defineHandler('kanban:ticket:archive', stringArgSchema, (id) =>
+    tryKanban('kanban:ticket:archive', () => getDatabase().archiveKanbanTicket(id))
+  )
 
-  ipcMain.handle('kanban:ticket:detachPR', (_event, ticketId: string, projectId: string) => {
-    return getDatabase().detachPRFromTicket(ticketId, projectId)
-  })
+  defineHandler('kanban:ticket:archiveAllDone', stringArgSchema, (projectId) =>
+    tryKanban('kanban:ticket:archiveAllDone', () =>
+      getDatabase().archiveAllDoneKanbanTickets(projectId)
+    )
+  )
 
-  ipcMain.handle('kanban:ticket:detachWorktree', (_event, worktreeId: string) => {
-    return getDatabase().detachWorktreeFromTickets(worktreeId)
-  })
+  defineHandler('kanban:ticket:unarchive', stringArgSchema, (id) =>
+    tryKanban('kanban:ticket:unarchive', () => getDatabase().unarchiveKanbanTicket(id))
+  )
 
-  ipcMain.handle('kanban:simpleMode:toggle', (_event, projectId: string, enabled: boolean) => {
-    return getDatabase().updateProjectSimpleMode(projectId, enabled)
-  })
+  defineHandler(
+    'kanban:ticket:move',
+    z.tuple([z.string(), ticketColumnSchema, z.number()]),
+    ([id, column, sortOrder]) =>
+      tryKanban('kanban:ticket:move', () => getDatabase().moveKanbanTicket(id, column, sortOrder))
+  )
+
+  defineHandler('kanban:ticket:reorder', stringNumberPairSchema, ([id, sortOrder]) =>
+    tryKanban('kanban:ticket:reorder', () => getDatabase().reorderKanbanTicket(id, sortOrder))
+  )
+
+  defineHandler('kanban:ticket:getBySession', stringArgSchema, (sessionId) =>
+    tryKanban('kanban:ticket:getBySession', () =>
+      getDatabase().getKanbanTicketsBySession(sessionId)
+    )
+  )
+
+  defineHandler('kanban:ticket:addTokens', stringNumberPairSchema, ([id, tokens]) =>
+    tryKanban('kanban:ticket:addTokens', () => {
+      const db = getDatabase()
+      db.addTicketTokens(id, tokens)
+      return db.getKanbanTicket(id)
+    })
+  )
+
+  defineHandler(
+    'kanban:ticket:syncPR',
+    z.tuple([z.string(), z.number(), z.string()]),
+    ([worktreeId, prNumber, prUrl]) =>
+      tryKanban('kanban:ticket:syncPR', () =>
+        getDatabase().syncPRToTickets(worktreeId, prNumber, prUrl)
+      )
+  )
+
+  defineHandler('kanban:ticket:clearPR', stringArgSchema, (worktreeId) =>
+    tryKanban('kanban:ticket:clearPR', () => getDatabase().clearPRFromTickets(worktreeId))
+  )
+
+  defineHandler(
+    'kanban:ticket:attachPR',
+    z.tuple([z.string(), z.string(), z.number(), z.string()]),
+    ([ticketId, projectId, prNumber, prUrl]) =>
+      tryKanban('kanban:ticket:attachPR', () =>
+        getDatabase().attachPRToTicket(ticketId, projectId, prNumber, prUrl)
+      )
+  )
+
+  defineHandler('kanban:ticket:detachPR', stringPairSchema, ([ticketId, projectId]) =>
+    tryKanban('kanban:ticket:detachPR', () => getDatabase().detachPRFromTicket(ticketId, projectId))
+  )
+
+  defineHandler('kanban:ticket:detachWorktree', stringArgSchema, (worktreeId) =>
+    tryKanban('kanban:ticket:detachWorktree', () =>
+      getDatabase().detachWorktreeFromTickets(worktreeId)
+    )
+  )
+
+  defineHandler(
+    'kanban:simpleMode:toggle',
+    z.tuple([z.string(), z.boolean()]),
+    ([projectId, enabled]) =>
+      tryKanban('kanban:simpleMode:toggle', () =>
+        getDatabase().updateProjectSimpleMode(projectId, enabled)
+      )
+  )
 
   // Dependency handlers
-  ipcMain.handle('kanban:dependency:add', (_event, dependentId: string, blockerId: string) => {
-    return getDatabase().addTicketDependency(dependentId, blockerId)
-  })
+  defineHandler('kanban:dependency:add', stringPairSchema, ([dependentId, blockerId]) =>
+    tryKanban('kanban:dependency:add', () =>
+      getDatabase().addTicketDependency(dependentId, blockerId)
+    )
+  )
 
-  ipcMain.handle('kanban:dependency:remove', (_event, dependentId: string, blockerId: string) => {
-    return getDatabase().removeTicketDependency(dependentId, blockerId)
-  })
+  defineHandler('kanban:dependency:remove', stringPairSchema, ([dependentId, blockerId]) =>
+    tryKanban('kanban:dependency:remove', () =>
+      getDatabase().removeTicketDependency(dependentId, blockerId)
+    )
+  )
 
-  ipcMain.handle('kanban:dependency:getBlockers', (_event, ticketId: string) => {
-    return getDatabase().getBlockersForTicket(ticketId)
-  })
+  defineHandler('kanban:dependency:getBlockers', stringArgSchema, (ticketId) =>
+    tryKanban('kanban:dependency:getBlockers', () => getDatabase().getBlockersForTicket(ticketId))
+  )
 
-  ipcMain.handle('kanban:dependency:getDependents', (_event, ticketId: string) => {
-    return getDatabase().getDependentsOfTicket(ticketId)
-  })
+  defineHandler('kanban:dependency:getDependents', stringArgSchema, (ticketId) =>
+    tryKanban('kanban:dependency:getDependents', () =>
+      getDatabase().getDependentsOfTicket(ticketId)
+    )
+  )
 
-  ipcMain.handle('kanban:dependency:getForProject', (_event, projectId: string) => {
-    return getDatabase().getDependenciesForProject(projectId)
-  })
+  defineHandler('kanban:dependency:getForProject', stringArgSchema, (projectId) =>
+    tryKanban('kanban:dependency:getForProject', () =>
+      getDatabase().getDependenciesForProject(projectId)
+    )
+  )
 
-  ipcMain.handle('kanban:dependency:removeAll', (_event, ticketId: string) => {
-    return getDatabase().removeAllDependenciesForTicket(ticketId)
-  })
+  defineHandler('kanban:dependency:removeAll', stringArgSchema, (ticketId) =>
+    tryKanban('kanban:dependency:removeAll', () =>
+      getDatabase().removeAllDependenciesForTicket(ticketId)
+    )
+  )
 
-  ipcMain.handle(
+  defineHandler(
     'kanban:board:export',
-    async (_event, projectId: string, projectName: string) => {
-      try {
-        const db = getDatabase()
-        const tickets = db.getKanbanTicketsByProject(projectId, false)
-        const dependencies = db.getDependenciesForProject(projectId)
+    z.tuple([z.string(), z.string()]),
+    ([projectId, projectName]) =>
+      Effect.gen(function* () {
+        const { exportData, ticketCount } = yield* tryKanban('kanban:board:export:read', () => {
+          const db = getDatabase()
+          const tickets = db.getKanbanTicketsByProject(projectId, false)
+          const dependencies = db.getDependenciesForProject(projectId)
 
-        const exportData = {
-          projectName,
-          exportedAt: new Date().toISOString(),
-          tickets: tickets.map((t) => ({
-            id: t.id,
-            title: t.title,
-            description: t.description,
-            attachments: t.attachments,
-            column: t.column
-          })),
-          dependencies: dependencies.map((dependency) => ({
-            dependentId: dependency.dependent_id,
-            blockerId: dependency.blocker_id
-          }))
-        }
-
-        const { canceled, filePath } = await dialog.showSaveDialog({
-          defaultPath: `board-${projectName}.hive.json`,
-          filters: [{ name: 'Hive Board', extensions: ['hive.json'] }]
+          return {
+            ticketCount: tickets.length,
+            exportData: {
+              projectName,
+              exportedAt: new Date().toISOString(),
+              tickets: tickets.map((ticket) => ({
+                id: ticket.id,
+                title: ticket.title,
+                description: ticket.description,
+                attachments: ticket.attachments,
+                column: ticket.column
+              })),
+              dependencies: dependencies.map((dependency) => ({
+                dependentId: dependency.dependent_id,
+                blockerId: dependency.blocker_id
+              }))
+            }
+          }
         })
+
+        const { canceled, filePath } = yield* tryKanbanPromise('kanban:board:export:dialog', () =>
+          dialog.showSaveDialog({
+            defaultPath: `board-${projectName}.hive.json`,
+            filters: [{ name: 'Hive Board', extensions: ['hive.json'] }]
+          })
+        )
 
         if (canceled || !filePath) {
           return { success: false, ticketCount: 0 }
         }
 
-        await writeFile(filePath, JSON.stringify(exportData, null, 2), 'utf-8')
-        return { success: true, ticketCount: tickets.length, path: filePath }
-      } catch (error) {
-        log.error('Failed to export board', error)
-        return { success: false, ticketCount: 0 }
-      }
-    }
+        yield* tryKanbanPromise('kanban:board:export:write', () =>
+          writeFile(filePath, JSON.stringify(exportData, null, 2), 'utf-8')
+        )
+
+        return { success: true, ticketCount, path: filePath }
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.succeed({ success: false, ticketCount: 0, error: error.reason })
+        )
+      )
   )
 
-  ipcMain.handle('kanban:board:openImportFile', async () => {
-    try {
-      const { canceled, filePaths } = await dialog.showOpenDialog({
-        filters: [{ name: 'Hive Board', extensions: ['json'] }],
-        properties: ['openFile']
-      })
+  defineHandler('kanban:board:openImportFile', z.tuple([]), () =>
+    Effect.gen(function* () {
+      const { canceled, filePaths } = yield* tryKanbanPromise(
+        'kanban:board:openImportFile:dialog',
+        () =>
+          dialog.showOpenDialog({
+            filters: [{ name: 'Hive Board', extensions: ['json'] }],
+            properties: ['openFile']
+          })
+      )
 
       if (canceled || filePaths.length === 0) {
         return null
       }
 
-      const raw = await readFile(filePaths[0], 'utf-8')
-      const parsed = JSON.parse(raw)
+      const raw = yield* tryKanbanPromise('kanban:board:openImportFile:read', () =>
+        readFile(filePaths[0], 'utf-8')
+      )
 
-      if (
-        !parsed ||
-        !Array.isArray(parsed.tickets) ||
-        !parsed.tickets.every(
-          (t: unknown) =>
-            typeof t === 'object' &&
-            t !== null &&
-            'id' in t &&
-            'title' in t
-        )
-      ) {
-        throw new Error('Invalid Hive board file: missing tickets array or tickets lack id/title')
-      }
+      return yield* tryKanban('kanban:board:openImportFile:parse', () => {
+        const parsed = JSON.parse(raw)
 
-      return {
-        tickets: parsed.tickets as Array<{
-          id: string
-          title: string
-          description?: string | null
-          attachments?: unknown[]
-          column?: string
-        }>,
-        dependencies: Array.isArray(parsed.dependencies)
-          ? parsed.dependencies.filter(
-              (dependency: unknown): dependency is { dependentId: string; blockerId: string } =>
-                typeof dependency === 'object' &&
-                dependency !== null &&
-                typeof (dependency as { dependentId?: unknown }).dependentId === 'string' &&
-                typeof (dependency as { blockerId?: unknown }).blockerId === 'string'
-            )
-          : [],
-        projectName: parsed.projectName ?? null
-      }
-    } catch (error) {
-      log.error('Failed to open import file', error)
-      return null
-    }
-  })
-
-  ipcMain.handle(
-    'kanban:board:importTickets',
-    async (
-      _event,
-      projectId: string,
-      tickets: Array<{
-        id: string
-        title: string
-        description?: string | null
-        attachments?: unknown[]
-        column?: string
-      }>,
-      dependencies?: Array<{
-        dependentId: string
-        blockerId: string
-      }>
-    ) => {
-      const db = getDatabase()
-      let created = 0
-      let updated = 0
-      let dependencyCount = 0
-      let ignoredDependencyCount = 0
-      const selectedIds = new Set(tickets.map((ticket) => ticket.id))
-
-      for (const ticket of tickets) {
-        const existing = db.getKanbanTicket(ticket.id)
-
-        if (existing && existing.project_id === projectId) {
-          // Same project — update in place
-          db.updateKanbanTicket(ticket.id, {
-            title: ticket.title,
-            description: ticket.description ?? null,
-            attachments: ticket.attachments ?? [],
-            column: (ticket.column as KanbanTicketColumn) ?? 'todo'
-          })
-          updated++
-        } else if (existing) {
-          // Different project — create with new ID
-          db.createKanbanTicket({
-            project_id: projectId,
-            title: ticket.title,
-            description: ticket.description ?? null,
-            attachments: ticket.attachments ?? [],
-            column: (ticket.column as KanbanTicketColumn) ?? 'todo'
-          })
-          created++
-        } else {
-          // Doesn't exist — create with preserved ID
-          db.createKanbanTicket({
-            id: ticket.id,
-            project_id: projectId,
-            title: ticket.title,
-            description: ticket.description ?? null,
-            attachments: ticket.attachments ?? [],
-            column: (ticket.column as KanbanTicketColumn) ?? 'todo'
-          })
-          created++
-        }
-      }
-
-      for (const ticketId of selectedIds) {
-        const blockers = db.getBlockersForTicket(ticketId)
-        for (const blocker of blockers) {
-          if (selectedIds.has(blocker.id)) {
-            db.removeTicketDependency(ticketId, blocker.id)
-          }
-        }
-      }
-
-      for (const dependency of dependencies ?? []) {
-        const dependentId = dependency.dependentId.trim()
-        const blockerId = dependency.blockerId.trim()
-        if (!dependentId || !blockerId || !selectedIds.has(dependentId) || !selectedIds.has(blockerId)) {
-          ignoredDependencyCount++
-          continue
+        if (
+          !parsed ||
+          !Array.isArray(parsed.tickets) ||
+          !parsed.tickets.every(
+            (ticket: unknown) =>
+              typeof ticket === 'object' && ticket !== null && 'id' in ticket && 'title' in ticket
+          )
+        ) {
+          throw new Error('Invalid Hive board file: missing tickets array or tickets lack id/title')
         }
 
-        const result = db.addTicketDependency(dependentId, blockerId)
-        if (result.success) {
-          dependencyCount++
-        } else {
-          ignoredDependencyCount++
+        return {
+          tickets: parsed.tickets as ImportTicket[],
+          dependencies: Array.isArray(parsed.dependencies)
+            ? parsed.dependencies.filter(
+                (dependency: unknown): dependency is ImportDependency =>
+                  typeof dependency === 'object' &&
+                  dependency !== null &&
+                  typeof (dependency as { dependentId?: unknown }).dependentId === 'string' &&
+                  typeof (dependency as { blockerId?: unknown }).blockerId === 'string'
+              )
+            : [],
+          projectName: parsed.projectName ?? null
         }
-      }
-
-      return { created, updated, dependencyCount, ignoredDependencyCount }
-    }
+      })
+    }).pipe(Effect.catchAll(() => Effect.succeed(null)))
   )
 
+  defineHandler(
+    'kanban:board:importTickets',
+    z.tuple([z.string(), z.array(importTicketSchema), z.array(importDependencySchema).optional()]),
+    ([projectId, tickets, dependencies]) =>
+      tryKanban('kanban:board:importTickets', () => {
+        const db = getDatabase()
+        let created = 0
+        let updated = 0
+        let dependencyCount = 0
+        let ignoredDependencyCount = 0
+        const selectedIds = new Set(tickets.map((ticket) => ticket.id))
+
+        for (const ticket of tickets) {
+          const existing = db.getKanbanTicket(ticket.id)
+
+          if (existing && existing.project_id === projectId) {
+            db.updateKanbanTicket(ticket.id, {
+              title: ticket.title,
+              description: ticket.description ?? null,
+              attachments: ticket.attachments ?? [],
+              column: (ticket.column as KanbanTicketColumn) ?? 'todo'
+            })
+            updated++
+          } else if (existing) {
+            db.createKanbanTicket({
+              project_id: projectId,
+              title: ticket.title,
+              description: ticket.description ?? null,
+              attachments: ticket.attachments ?? [],
+              column: (ticket.column as KanbanTicketColumn) ?? 'todo'
+            })
+            created++
+          } else {
+            db.createKanbanTicket({
+              id: ticket.id,
+              project_id: projectId,
+              title: ticket.title,
+              description: ticket.description ?? null,
+              attachments: ticket.attachments ?? [],
+              column: (ticket.column as KanbanTicketColumn) ?? 'todo'
+            })
+            created++
+          }
+        }
+
+        for (const ticketId of selectedIds) {
+          const blockers = db.getBlockersForTicket(ticketId)
+          for (const blocker of blockers) {
+            if (selectedIds.has(blocker.id)) {
+              db.removeTicketDependency(ticketId, blocker.id)
+            }
+          }
+        }
+
+        for (const dependency of dependencies ?? []) {
+          const dependentId = dependency.dependentId.trim()
+          const blockerId = dependency.blockerId.trim()
+          if (
+            !dependentId ||
+            !blockerId ||
+            !selectedIds.has(dependentId) ||
+            !selectedIds.has(blockerId)
+          ) {
+            ignoredDependencyCount++
+            continue
+          }
+
+          const result = db.addTicketDependency(dependentId, blockerId)
+          if (result.success) {
+            dependencyCount++
+          } else {
+            ignoredDependencyCount++
+          }
+        }
+
+        return { created, updated, dependencyCount, ignoredDependencyCount }
+      })
+  )
 }

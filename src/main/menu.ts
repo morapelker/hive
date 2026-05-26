@@ -2,6 +2,7 @@ import { BrowserWindow, Menu, app, clipboard, shell } from 'electron'
 import { createLogger, getLogDir } from './services/logger'
 import { ghosttyService } from './services/ghostty-service'
 import { updaterService } from './services/updater'
+import { markQuitViaShortcut } from './quit-confirmation'
 
 const log = createLogger({ component: 'Menu' })
 
@@ -48,10 +49,37 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
   _mainWindow = mainWindow
 
   const isMac = process.platform === 'darwin'
+  const quitMenuItem: Electron.MenuItemConstructorOptions = {
+    label: `Quit ${app.name}`,
+    accelerator: 'CmdOrCtrl+Q',
+    click: (_item, _window, event) => {
+      // Only the keystroke arms the double-tap guard; a mouse click on the
+      // menu item is a deliberate action and quits immediately.
+      if (event?.triggeredByAccelerator) markQuitViaShortcut()
+      app.quit()
+    }
+  }
 
   const template: Electron.MenuItemConstructorOptions[] = [
-    // Hive (appMenu) — macOS only
-    ...(isMac ? [{ role: 'appMenu' as const }] : []),
+    // Hive — macOS only
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              { role: 'services' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              quitMenuItem
+            ]
+          }
+        ]
+      : []),
 
     // File
     {
@@ -79,7 +107,7 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
           click: () => send('menu:add-project')
         },
         { type: 'separator' },
-        ...(!isMac ? [{ role: 'quit' as const }] : [])
+        ...(!isMac ? [quitMenuItem] : [])
       ]
     },
 

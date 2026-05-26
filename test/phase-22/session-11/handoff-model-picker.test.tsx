@@ -3,8 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event'
 
 const mockSettingsDb = {
-  get: vi.fn().mockResolvedValue(null),
-  set: vi.fn().mockResolvedValue(undefined)
+  get: vi.fn().mockResolvedValue({ success: true, value: null }),
+  set: vi.fn().mockResolvedValue({ success: true, value: undefined })
 }
 
 const claudeProviders = [
@@ -79,10 +79,10 @@ Object.defineProperty(window, 'opencodeOps', {
   value: {
     listModels: vi.fn().mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
       if (agentSdk === 'codex') {
-        return { success: true, providers: codexProviders }
+        return { success: true, value: { success: true, providers: codexProviders } }
       }
 
-      return { success: true, providers: claudeProviders }
+      return { success: true, value: { success: true, providers: claudeProviders } }
     })
   }
 })
@@ -217,6 +217,38 @@ describe('handoff model picker', () => {
         providerID: 'codex',
         modelID: 'gpt-5.5',
         variant: 'xhigh'
+      }
+    })
+  })
+
+  test('resolveSessionCreationSelection keeps an explicit SDK when the mode default uses another SDK', () => {
+    cacheHandoffModelCatalog('codex', codexProviders)
+    useSettingsStore.setState({
+      defaultAgentSdk: 'claude-code',
+      defaultModels: {
+        build: {
+          agentSdk: 'claude-code',
+          providerID: 'anthropic',
+          modelID: 'sonnet-4.6',
+          variant: 'high'
+        },
+        plan: null,
+        ask: null,
+        review: null
+      }
+    })
+
+    const selection = resolveSessionCreationSelection({
+      agentSdkOverride: 'codex',
+      initialMode: 'build'
+    })
+
+    expect(selection).toEqual({
+      agentSdk: 'codex',
+      model: {
+        providerID: 'codex',
+        modelID: 'gpt-5.5',
+        variant: 'high'
       }
     })
   })

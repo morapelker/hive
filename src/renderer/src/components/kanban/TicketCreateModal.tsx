@@ -22,6 +22,7 @@ import { TicketAttachmentEditor, MAX_ATTACHMENTS } from './TicketAttachmentEdito
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import type { TicketAttachment } from './TicketAttachmentEditor'
 import { useImagePaste } from '@/hooks/useImagePaste'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface TicketCreateModalProps {
   open: boolean
@@ -32,7 +33,13 @@ interface TicketCreateModalProps {
 }
 
 // ── Component ───────────────────────────────────────────────────────
-export function TicketCreateModal({ open, onOpenChange, projectId, connectionId, isPinnedMode }: TicketCreateModalProps) {
+export function TicketCreateModal({
+  open,
+  onOpenChange,
+  projectId,
+  connectionId,
+  isPinnedMode
+}: TicketCreateModalProps) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [showPreview, setShowPreview] = useState(false)
@@ -77,10 +84,13 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
   const isMultiProjectMode = isConnectionMode || !!isPinnedMode
   const availableProjects = isConnectionMode ? connectionProjects : pinnedProjects
   const initialSelectedProjectId = availableProjects[0]?.id ?? ''
-  const isDirty = title.trim().length > 0
-    || description.trim().length > 0
-    || attachments.length > 0
-    || (isMultiProjectMode && selectedProjectId !== '' && selectedProjectId !== initialSelectedProjectId)
+  const isDirty =
+    title.trim().length > 0 ||
+    description.trim().length > 0 ||
+    attachments.length > 0 ||
+    (isMultiProjectMode &&
+      selectedProjectId !== '' &&
+      selectedProjectId !== initialSelectedProjectId)
 
   // Allow natural Tab navigation between form fields — block SessionView's
   // global capture-phase Tab handler which would toggle Build/Plan mode instead.
@@ -109,7 +119,10 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
       if (!createdSuccessfully.current) {
         for (const att of attachments) {
           if (att.type === 'image' && att.url) {
-            window.attachmentOps.deleteImage(att.url).catch(() => {})
+            window.attachmentOps
+              .deleteImage(att.url)
+              .then(unwrapEnvelope)
+              .catch(() => {})
           }
         }
       }
@@ -132,11 +145,12 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
   }, [open, availableProjects])
 
   // ── Image paste/drop ───────────────────────────────────────────────
-  const { isDragOver, handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop } = useImagePaste({
-    maxAttachments: MAX_ATTACHMENTS,
-    currentCount: attachments.length,
-    onAttach: (attachment) => setAttachments((prev) => [...prev, attachment])
-  })
+  const { isDragOver, handlePaste, handleDragOver, handleDragEnter, handleDragLeave, handleDrop } =
+    useImagePaste({
+      maxAttachments: MAX_ATTACHMENTS,
+      currentCount: attachments.length,
+      onAttach: (attachment) => setAttachments((prev) => [...prev, attachment])
+    })
 
   // ── Submission ─────────────────────────────────────────────────────
   const handleCreate = useCallback(async () => {
@@ -163,7 +177,17 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
     } finally {
       setIsCreating(false)
     }
-  }, [title, description, attachments, isCreating, createTicket, projectId, selectedProjectId, isMultiProjectMode, onOpenChange])
+  }, [
+    title,
+    description,
+    attachments,
+    isCreating,
+    createTicket,
+    projectId,
+    selectedProjectId,
+    isMultiProjectMode,
+    onOpenChange
+  ])
 
   const closeImmediately = useCallback(() => {
     setShowDiscardConfirm(false)
@@ -182,13 +206,16 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
     requestClose()
   }, [requestClose])
 
-  const handleDialogOpenChange = useCallback((nextOpen: boolean) => {
-    if (!nextOpen) {
-      requestClose()
-      return
-    }
-    onOpenChange(true)
-  }, [onOpenChange, requestClose])
+  const handleDialogOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) {
+        requestClose()
+        return
+      }
+      onOpenChange(true)
+    },
+    [onOpenChange, requestClose]
+  )
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -205,7 +232,7 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
         data-testid="ticket-create-modal"
-        className={cn("sm:max-w-lg", isDragOver && "ring-2 ring-primary ring-offset-2")}
+        className={cn('sm:max-w-lg', isDragOver && 'ring-2 ring-primary ring-offset-2')}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         onDragOver={handleDragOver}
@@ -231,7 +258,9 @@ export function TicketCreateModal({ open, onOpenChange, projectId, connectionId,
                 className="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm"
               >
                 {availableProjects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
                 ))}
               </select>
             </div>

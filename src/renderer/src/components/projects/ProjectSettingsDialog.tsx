@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { toast } from '@/lib/toast'
-import { ImageIcon, X } from 'lucide-react'
+import { Brain, ImageIcon, X } from 'lucide-react'
+import type { SuggestionItem } from '@shared/types/setup-suggestions'
 import {
   Dialog,
   DialogContent,
@@ -14,6 +15,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { useProjectStore } from '@/stores'
 import { LanguageIcon } from './LanguageIcon'
+import { SetupScriptSuggestionsDialog } from './SetupScriptSuggestionsDialog'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface Project {
   id: string
@@ -26,6 +29,7 @@ interface Project {
   run_script: string | null
   archive_script: string | null
   auto_assign_port: boolean
+  is_remote?: boolean
 }
 
 interface ProjectSettingsDialogProps {
@@ -48,6 +52,8 @@ export function ProjectSettingsDialog({
   const [autoAssignPort, setAutoAssignPort] = useState(false)
   const [saving, setSaving] = useState(false)
   const [pickingIcon, setPickingIcon] = useState(false)
+  const [suggestions, setSuggestions] = useState<SuggestionItem[]>([])
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
 
   // Load current values when dialog opens
   useEffect(() => {
@@ -57,9 +63,38 @@ export function ProjectSettingsDialog({
       setArchiveScript(project.archive_script ?? '')
       setCustomIcon(project.custom_icon ?? null)
       setAutoAssignPort(project.auto_assign_port ?? false)
+      setSuggestionsOpen(false)
+
+      if (project.is_remote === true) {
+        setSuggestions([])
+        return
+      }
+
+      let cancelled = false
+      window.projectOps
+        .detectSetupSuggestions(project.path)
+        .then((envelope) => {
+          if (!cancelled) {
+            setSuggestions(unwrapEnvelope(envelope))
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setSuggestions([])
+          }
+        })
+
+      return () => {
+        cancelled = true
+      }
     }
+    setSuggestions([])
+    setSuggestionsOpen(false)
+    return undefined
   }, [
     open,
+    project.path,
+    project.is_remote,
     project.setup_script,
     project.run_script,
     project.archive_script,
@@ -70,7 +105,7 @@ export function ProjectSettingsDialog({
   const handlePickIcon = async (): Promise<void> => {
     setPickingIcon(true)
     try {
-      const result = await window.projectOps.pickProjectIcon(project.id)
+      const result = unwrapEnvelope(await window.projectOps.pickProjectIcon(project.id))
       if (result.success && result.filename) {
         setCustomIcon(result.filename)
       }
@@ -84,7 +119,7 @@ export function ProjectSettingsDialog({
 
   const handleClearIcon = async (): Promise<void> => {
     try {
-      await window.projectOps.removeProjectIcon(project.id)
+      unwrapEnvelope(await window.projectOps.removeProjectIcon(project.id))
       setCustomIcon(null)
     } catch {
       toast.error('Failed to remove icon')
@@ -113,124 +148,156 @@ export function ProjectSettingsDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Project Settings</DialogTitle>
-          <DialogDescription className="text-xs truncate">{project.path}</DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setSuggestionsOpen(false)
+          }
+          onOpenChange(nextOpen)
+        }}
+      >
+        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Project Settings</DialogTitle>
+            <DialogDescription className="text-xs truncate">{project.path}</DialogDescription>
+          </DialogHeader>
 
-        <div className="space-y-5">
-          {/* Project Icon */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Project Icon</label>
-            <p className="text-xs text-muted-foreground">
-              Custom icon displayed in the sidebar. Supports SVG, PNG, JPG, and WebP.
-            </p>
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-muted/30">
-                <LanguageIcon
-                  language={project.language}
-                  customIcon={customIcon}
-                  detectedIcon={project.detected_icon}
-                  className="h-5 w-5 text-muted-foreground shrink-0"
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={handlePickIcon}
-                  disabled={pickingIcon}
-                >
-                  <ImageIcon className="h-3 w-3 mr-1.5" />
-                  {pickingIcon ? 'Picking...' : 'Change'}
-                </Button>
-                {customIcon && (
+          <div className="space-y-5">
+            {/* Project Icon */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Project Icon</label>
+              <p className="text-xs text-muted-foreground">
+                Custom icon displayed in the sidebar. Supports SVG, PNG, JPG, and WebP.
+              </p>
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-muted/30">
+                  <LanguageIcon
+                    language={project.language}
+                    customIcon={customIcon}
+                    detectedIcon={project.detected_icon}
+                    className="h-5 w-5 text-muted-foreground shrink-0"
+                  />
+                </div>
+                <div className="flex gap-2">
                   <Button
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={handleClearIcon}
+                    onClick={handlePickIcon}
+                    disabled={pickingIcon}
                   >
-                    <X className="h-3 w-3 mr-1.5" />
-                    Clear
+                    <ImageIcon className="h-3 w-3 mr-1.5" />
+                    {pickingIcon ? 'Picking...' : 'Change'}
+                  </Button>
+                  {customIcon && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={handleClearIcon}
+                    >
+                      <X className="h-3 w-3 mr-1.5" />
+                      Clear
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Auto Port Assignment */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-sm font-medium">Auto-assign Port</label>
+                  <p className="text-xs text-muted-foreground">
+                    Assign a unique port to each worktree and inject PORT into run/setup scripts.
+                    Ports start at 3011.
+                  </p>
+                </div>
+                <Switch checked={autoAssignPort} onCheckedChange={setAutoAssignPort} />
+              </div>
+            </div>
+
+            {/* Setup Script */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium">Setup Script</label>
+                {suggestions.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => setSuggestionsOpen(true)}
+                    aria-label="Suggest setup script commands"
+                    title="Suggest setup script commands"
+                  >
+                    <Brain className="h-3.5 w-3.5" />
                   </Button>
                 )}
               </div>
+              <p className="text-xs text-muted-foreground">
+                Commands to run when a new worktree is initialized. Each line is a separate command.
+              </p>
+              <Textarea
+                value={setupScript}
+                onChange={(e) => setSetupScript(e.target.value)}
+                placeholder={'pnpm install\npnpm run build'}
+                rows={4}
+                className="font-mono text-sm resize-y"
+              />
+            </div>
+
+            {/* Run Script */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Run Script</label>
+              <p className="text-xs text-muted-foreground">
+                Commands triggered by {'\u2318'}R. Press {'\u2318'}R again while running to stop.
+              </p>
+              <Textarea
+                value={runScript}
+                onChange={(e) => setRunScript(e.target.value)}
+                placeholder={'pnpm run dev'}
+                rows={4}
+                className="font-mono text-sm resize-y"
+              />
+            </div>
+
+            {/* Archive Script */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Archive Script</label>
+              <p className="text-xs text-muted-foreground">
+                Commands to run before worktree archival. Failures won't block archival.
+              </p>
+              <Textarea
+                value={archiveScript}
+                onChange={(e) => setArchiveScript(e.target.value)}
+                placeholder={'pnpm run clean'}
+                rows={4}
+                className="font-mono text-sm resize-y"
+              />
             </div>
           </div>
 
-          {/* Auto Port Assignment */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="text-sm font-medium">Auto-assign Port</label>
-                <p className="text-xs text-muted-foreground">
-                  Assign a unique port to each worktree and inject PORT into run/setup scripts.
-                  Ports start at 3011.
-                </p>
-              </div>
-              <Switch checked={autoAssignPort} onCheckedChange={setAutoAssignPort} />
-            </div>
-          </div>
-
-          {/* Setup Script */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Setup Script</label>
-            <p className="text-xs text-muted-foreground">
-              Commands to run when a new worktree is initialized. Each line is a separate command.
-            </p>
-            <Textarea
-              value={setupScript}
-              onChange={(e) => setSetupScript(e.target.value)}
-              placeholder={'pnpm install\npnpm run build'}
-              rows={4}
-              className="font-mono text-sm resize-y"
-            />
-          </div>
-
-          {/* Run Script */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Run Script</label>
-            <p className="text-xs text-muted-foreground">
-              Commands triggered by {'\u2318'}R. Press {'\u2318'}R again while running to stop.
-            </p>
-            <Textarea
-              value={runScript}
-              onChange={(e) => setRunScript(e.target.value)}
-              placeholder={'pnpm run dev'}
-              rows={4}
-              className="font-mono text-sm resize-y"
-            />
-          </div>
-
-          {/* Archive Script */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Archive Script</label>
-            <p className="text-xs text-muted-foreground">
-              Commands to run before worktree archival. Failures won't block archival.
-            </p>
-            <Textarea
-              value={archiveScript}
-              onChange={(e) => setArchiveScript(e.target.value)}
-              placeholder={'pnpm run clean'}
-              rows={4}
-              className="font-mono text-sm resize-y"
-            />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <SetupScriptSuggestionsDialog
+        open={suggestionsOpen}
+        onOpenChange={setSuggestionsOpen}
+        items={suggestions}
+        currentValue={setupScript}
+        onApply={setSetupScript}
+      />
+    </>
   )
 }

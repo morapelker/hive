@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export type TerminalStatus = 'creating' | 'running' | 'exited'
 
@@ -53,7 +54,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   destroyTerminal: async (worktreeId: string) => {
     try {
-      await window.terminalOps.destroy(worktreeId)
+      unwrapEnvelope(await window.terminalOps.destroy(worktreeId))
     } catch {
       // Best-effort destroy
     }

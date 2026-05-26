@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { TIP_DEFINITIONS } from '@/lib/tip-definitions'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 const SEEN_TIPS_DB_KEY = 'seen_tips'
 const SHOW_DELAY_MS = 500
@@ -31,8 +34,8 @@ interface TipState {
 
 async function persistSeenTips(seenTipIds: string[]): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && window.db?.setting) {
-      await window.db.setting.set(SEEN_TIPS_DB_KEY, JSON.stringify(seenTipIds))
+    if (typeof window !== 'undefined' && db?.setting) {
+      await db.setting.set(SEEN_TIPS_DB_KEY, JSON.stringify(seenTipIds))
     }
   } catch (error) {
     console.error('Failed to persist seen tips:', error)
@@ -48,8 +51,8 @@ export const useTipStore = create<TipState>()((set, get) => ({
 
   loadSeenTips: async () => {
     try {
-      if (typeof window !== 'undefined' && window.db?.setting) {
-        const value = await window.db.setting.get(SEEN_TIPS_DB_KEY)
+      if (typeof window !== 'undefined' && db?.setting) {
+        const value = await db.setting.get(SEEN_TIPS_DB_KEY)
         if (value) {
           const parsed = JSON.parse(value)
           if (Array.isArray(parsed)) {

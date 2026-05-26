@@ -1,21 +1,123 @@
+import { useEffect } from 'react'
 import { useThemeStore } from '@/stores/useThemeStore'
 import { DEFAULT_THEME_ID } from '@/lib/themes'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useShortcutStore } from '@/stores/useShortcutStore'
+import { useAccountStore, useUsageStore } from '@/stores'
 import { toast } from '@/lib/toast'
 import type { UsageProvider } from '@shared/types/usage'
 import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
 import { isAgentSdkAvailable } from '@/lib/agent-sdk-availability'
 
+const SAVED_ACCOUNT_PROVIDERS: UsageProvider[] = ['anthropic', 'openai']
+
+function SavedAccountsList(): React.JSX.Element {
+  const savedAccounts = useUsageStore((s) => s.savedAccounts)
+  const loadSavedAccounts = useUsageStore((s) => s.loadSavedAccounts)
+  const removeSavedAccount = useUsageStore((s) => s.removeSavedAccount)
+  const anthropicEmail = useAccountStore((s) => s.anthropicEmail)
+  const openaiEmail = useAccountStore((s) => s.openaiEmail)
+  const fetchEmail = useAccountStore((s) => s.fetchEmail)
+
+  useEffect(() => {
+    loadSavedAccounts().catch(() => {})
+    fetchEmail('anthropic')
+    fetchEmail('openai')
+  }, [loadSavedAccounts, fetchEmail])
+
+  const activeEmails: Record<UsageProvider, string | null> = {
+    anthropic: anthropicEmail,
+    openai: openaiEmail
+  }
+
+  return (
+    <div className="mt-4 space-y-3 border-t border-border/60 pt-4">
+      <div>
+        <div className="text-sm font-medium">Saved accounts</div>
+        <p className="text-xs text-muted-foreground">
+          Remove accounts from the usage popup without signing out of provider CLIs.
+        </p>
+      </div>
+
+      {SAVED_ACCOUNT_PROVIDERS.map((provider) => {
+        const providerAccounts = savedAccounts[provider]
+        const icon = provider === 'anthropic' ? claudeIcon : openaiIcon
+        const label = provider === 'anthropic' ? 'Claude' : 'OpenAI'
+
+        return (
+          <div key={provider} className="space-y-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <img src={icon} alt={label} className="h-3.5 w-3.5" />
+              {label}
+            </div>
+
+            {providerAccounts.length === 0 ? (
+              <div className="rounded-md border border-border/60 px-3 py-2 text-xs text-muted-foreground">
+                No saved accounts yet. Use Claude or Codex to capture one.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {providerAccounts.map((account) => {
+                  const isActive = activeEmails[provider] === account.email
+                  const isExpired = account.status === 'stale'
+                  return (
+                    <div
+                      key={account.id}
+                      className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className={cn('truncate text-sm', isActive && 'font-semibold')}>
+                          {account.email}
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5">
+                          {isActive && (
+                            <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                              Active
+                            </span>
+                          )}
+                          {isExpired && (
+                            <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                              Expired
+                            </span>
+                          )}
+                          {account.status === 'error' && (
+                            <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                              Error
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeSavedAccount(account.id)}
+                        aria-label={`Remove ${account.email}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function SettingsGeneral(): React.JSX.Element {
   const { setTheme } = useThemeStore()
   const {
     autoStartSession,
     autoPullBeforeWorktree,
+    warnBeforeQuitting,
     boardMode,
     followUpTriggerColumn,
     vimModeEnabled,
@@ -59,6 +161,33 @@ export function SettingsGeneral(): React.JSX.Element {
       <div>
         <h3 className="text-base font-medium mb-1">General</h3>
         <p className="text-sm text-muted-foreground">Basic application settings</p>
+      </div>
+
+      {/* Warn before quitting */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <label className="text-sm font-medium">Warn before quitting (⌘Q)</label>
+          <p className="text-xs text-muted-foreground">
+            Show a confirmation when you press ⌘Q. Press ⌘Q a second time within 2 seconds to quit.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={warnBeforeQuitting}
+          onClick={() => updateSetting('warnBeforeQuitting', !warnBeforeQuitting)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            warnBeforeQuitting ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="warn-before-quitting-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
+              warnBeforeQuitting ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
       </div>
 
       {/* Auto-start session */}
@@ -118,9 +247,7 @@ export function SettingsGeneral(): React.JSX.Element {
       {/* Board Mode */}
       <div className="space-y-2">
         <label className="text-sm font-medium">Board Mode</label>
-        <p className="text-xs text-muted-foreground">
-          Choose how the Kanban board is accessed.
-        </p>
+        <p className="text-xs text-muted-foreground">Choose how the Kanban board is accessed.</p>
         <div className="flex gap-2">
           <button
             onClick={() => updateSetting('boardMode', 'toggle')}
@@ -215,7 +342,8 @@ export function SettingsGeneral(): React.JSX.Element {
         <div>
           <label className="text-sm font-medium">Keep computer awake during sessions</label>
           <p className="text-xs text-muted-foreground">
-            Prevent your computer from sleeping while any worktree has an AI session actively running.
+            Prevent your computer from sleeping while any worktree has an AI session actively
+            running.
           </p>
         </div>
         <button
@@ -368,7 +496,8 @@ export function SettingsGeneral(): React.JSX.Element {
       <div className="space-y-2">
         <label className="text-sm font-medium">Usage indicator</label>
         <p className="text-xs text-muted-foreground">
-          Choose how usage is displayed. Current agent auto-detects from the active session. Specific providers lets you pin which usage bars always show.
+          Choose how usage is displayed. Current agent auto-detects from the active session.
+          Specific providers lets you pin which usage bars always show.
         </p>
         <div className="flex gap-2">
           <button
@@ -435,6 +564,7 @@ export function SettingsGeneral(): React.JSX.Element {
             )}
           </div>
         )}
+        <SavedAccountsList />
       </div>
 
       {/* Default Agent SDK */}

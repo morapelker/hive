@@ -1,15 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import {
-  Hammer,
-  Map,
-  Sparkles,
-  Plus,
-  GitBranch,
-  Send,
-  ChevronDown,
-  Loader2,
-  Search
-} from 'lucide-react'
+import { Hammer, Map, Plus, GitBranch, Send, ChevronDown, Loader2, Search } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -23,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -41,6 +32,8 @@ import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/cons
 import { toast } from '@/lib/toast'
 import type { KanbanTicket } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
 const EMPTY_ARRAY: readonly never[] = []
@@ -227,6 +220,7 @@ export function WorktreePickerModal({
     setBranchesLoading(true)
     window.gitOps
       .listBranchesWithStatus(project.path)
+      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setBranches(result.branches)
@@ -262,7 +256,7 @@ export function WorktreePickerModal({
       setBranchPopoverOpen(false)
       // Refresh worktree list from git so the picker shows current state
       if (project?.path) {
-        syncWorktrees(projectId, project.path)
+        syncWorktrees(projectId, project.path, { force: true })
       }
     }
   }, [open, ticket, projectId, project?.path, syncWorktrees])
@@ -273,6 +267,8 @@ export function WorktreePickerModal({
     return branches
       .filter((b) => b.name.toLowerCase().includes(lower))
       .sort((a, b) => {
+        // Active (checked-out by a worktree) branches first
+        if (a.isCheckedOut !== b.isCheckedOut) return a.isCheckedOut ? -1 : 1
         if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1
         return a.name.localeCompare(b.name)
       })
@@ -388,9 +384,10 @@ export function WorktreePickerModal({
 
   // ── Send flow ───────────────────────────────────────────────────
   const goalCriteriaValid = !goalMode || goalCriteria.trim().length > 0
-  const canSend = (isConnectionMode
-    ? !isSending
-    : (selectedWorktreeId !== null || isNewWorktree) && !isSending) && goalCriteriaValid
+  const canSend =
+    (isConnectionMode
+      ? !isSending
+      : (selectedWorktreeId !== null || isNewWorktree) && !isSending) && goalCriteriaValid
 
   const handleSend = useCallback(async () => {
     if (!canSend) return
@@ -466,11 +463,13 @@ export function WorktreePickerModal({
           .connections.find((c) => c.id === connectionId)?.path
         if (!connectionPath) return
 
-        const connectResult = await window.opencodeOps.connect(connectionPath, sessionId)
+        const connectResult = unwrapEnvelope(
+          await window.opencodeOps.connect(connectionPath, sessionId)
+        )
         if (!connectResult.success || !connectResult.sessionId) return
 
         useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
-        await window.db.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
+        await db.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
 
         // Send prompt
         if (promptText.trim()) {
@@ -493,12 +492,14 @@ export function WorktreePickerModal({
           }
 
           bumpWorktreeLastMessage({ connectionId })
-          await window.opencodeOps.prompt(
-            connectionPath,
-            connectResult.sessionId,
-            [{ type: 'text', text: outboundPrompt }],
-            effectiveModel,
-            promptOptions
+          unwrapEnvelope(
+            await window.opencodeOps.prompt(
+              connectionPath,
+              connectResult.sessionId,
+              [{ type: 'text', text: outboundPrompt }],
+              effectiveModel,
+              promptOptions
+            )
           )
         }
         return // Done with connection path
@@ -693,12 +694,14 @@ export function WorktreePickerModal({
       if (!worktree?.path) return
 
       // Connect to OpenCode to create the AI session
-      const connectResult = await window.opencodeOps.connect(worktree.path, sessionId)
+      const connectResult = unwrapEnvelope(
+        await window.opencodeOps.connect(worktree.path, sessionId)
+      )
       if (!connectResult.success || !connectResult.sessionId) return
 
       // Persist the opencodeSessionId to Zustand + DB
       useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
-      await window.db.session.update(sessionId, {
+      await db.session.update(sessionId, {
         opencode_session_id: connectResult.sessionId
       })
 
@@ -725,12 +728,14 @@ export function WorktreePickerModal({
         }
 
         bumpWorktreeLastMessage({ worktreeId })
-        await window.opencodeOps.prompt(
-          worktree.path,
-          connectResult.sessionId,
-          [{ type: 'text', text: outboundPrompt }],
-          effectiveModel,
-          promptOptions
+        unwrapEnvelope(
+          await window.opencodeOps.prompt(
+            worktree.path,
+            connectResult.sessionId,
+            [{ type: 'text', text: outboundPrompt }],
+            effectiveModel,
+            promptOptions
+          )
         )
       }
     } catch {

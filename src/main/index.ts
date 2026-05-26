@@ -61,8 +61,9 @@ import { perfDiagnostics } from './services/perf-diagnostics'
 import { configure as configureCodexDebugLogger } from './services/codex-debug-logger'
 import { ptyService } from './services/pty-service'
 import { scriptRunner } from './services/script-runner'
-import { bashService } from './effect-island/bash/facade'
-import { disposeRuntime } from './effect-island/bash/runtime'
+import { bashService } from './effect/bash/facade'
+import { disposeAllRuntimes } from './effect/_shared/runtime'
+import { getRuntime as getSpawnRuntime } from './effect/spawn/runtime'
 import { registerBashHandlers } from './ipc/bash-handlers'
 import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
 import { initTicketProviderManager, GitHubProvider, JiraProvider } from './services/ticket-providers'
@@ -82,6 +83,12 @@ import {
   getPetWindow,
   shouldSuppressMainWindowActivationFromPet
 } from './services/pet-window'
+import {
+  consumeQuitViaShortcut,
+  getQuitConfirmationDecision,
+  QUIT_CONFIRM_WINDOW_MS,
+  readWarnBeforeQuitting
+} from './quit-confirmation'
 
 const log = createLogger({ component: 'Main' })
 
@@ -99,6 +106,7 @@ process.on('unhandledRejection', (reason) => {
 })
 
 const appStartTime = Date.now()
+let lastQuitConfirmAt: number | null = null
 
 // Parse CLI flags
 const cliArgs = process.argv.slice(2)
@@ -632,6 +640,7 @@ app.whenReady().then(async () => {
     const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
     sdkManager.setMainWindow(mainWindow)
     agentEventBus.setMainWindow(mainWindow)
+    getSpawnRuntime()
 
     const databaseService = getDatabase()
     telegramForwardingService.initialize({ mainWindow, db: databaseService, sdkManager })
@@ -796,6 +805,42 @@ app.on('window-all-closed', () => {
   }
 })
 
+app.on('before-quit', (event) => {
+  const viaShortcut = consumeQuitViaShortcut()
+  if (!viaShortcut) return
+
+  if (!mainWindow || mainWindow.isDestroyed()) return
+
+  const warnBeforeQuitting = readWarnBeforeQuitting(getDatabase().getSetting(APP_SETTINGS_DB_KEY))
+  const decision = getQuitConfirmationDecision({
+    now: Date.now(),
+    lastQuitConfirmAt,
+    warnBeforeQuitting
+  })
+
+  lastQuitConfirmAt = decision.lastQuitConfirmAt
+
+  if (!decision.shouldPreventQuit) return
+
+  event.preventDefault()
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+  mainWindow.show()
+  mainWindow.focus()
+  mainWindow.webContents.send('shortcut:quit-confirmation-show')
+
+  setTimeout(() => {
+    if (lastQuitConfirmAt && Date.now() - lastQuitConfirmAt >= QUIT_CONFIRM_WINDOW_MS) {
+      lastQuitConfirmAt = null
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('shortcut:quit-confirmation-hide')
+      }
+    }
+  }, QUIT_CONFIRM_WINDOW_MS + 50)
+})
+
 // Cleanup when app is about to quit
 app.on('will-quit', async () => {
   // Prevent further menu mutations — must be first to avoid native WeakPtr errors
@@ -812,7 +857,7 @@ app.on('will-quit', async () => {
   cleanupScripts()
   // Cleanup running bash runs (best-effort, no await)
   bashService.killAll()
-  await disposeRuntime()
+  await disposeAllRuntimes()
   // Release any held power save blocker so the display can sleep again
   cleanupPowerSaveBlocker()
   // Cleanup file tree watchers

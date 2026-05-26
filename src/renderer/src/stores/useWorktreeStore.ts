@@ -9,7 +9,16 @@ import { useFileViewerStore } from './useFileViewerStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
+
+const db = unwrapEnvelopeApi(() => window.db)
+const inflightSync = new Map<string, Promise<void>>()
+const lastSync = new Map<string, number>()
+const inflightLoad = new Map<string, Promise<void>>()
+const lastLoad = new Map<string, number>()
+const SYNC_TTL_MS = 10_000
+const LOAD_TTL_MS = 10_000
 
 /** Fire-and-forget: run setup script for a worktree, subscribing to output events
  *  so output is captured even when SetupTab is not mounted. */
@@ -58,10 +67,13 @@ export function fireSetupScript(projectId: string, worktreeId: string, cwd: stri
     }
   })
 
-  window.scriptOps.runSetup(commands, cwd, worktreeId).catch(() => {
-    useScriptStore.getState().setSetupRunning(worktreeId, false)
-    unsub()
-  })
+  window.scriptOps
+    .runSetup(commands, cwd, worktreeId)
+    .then(unwrapEnvelope)
+    .catch(() => {
+      useScriptStore.getState().setSetupRunning(worktreeId, false)
+      unsub()
+    })
 }
 
 // Worktree type matching the database schema
@@ -79,6 +91,7 @@ interface Worktree {
   last_model_provider_id: string | null
   last_model_id: string | null
   last_model_variant: string | null
+  attachments: string
   created_at: string
   last_accessed_at: string
   github_pr_number: number | null
@@ -102,12 +115,17 @@ interface WorktreeState {
   archivingWorktreeIds: Set<string>
 
   // Actions
-  loadWorktrees: (projectId: string) => Promise<void>
+  loadWorktrees: (projectId: string, opts?: { force?: boolean }) => Promise<void>
   createWorktree: (
     projectId: string,
     projectPath: string,
     projectName: string
-  ) => Promise<{ success: boolean; worktree?: Worktree; error?: string; pullInfo?: unknown }>
+  ) => Promise<{
+    success: boolean
+    worktree?: Worktree
+    error?: string
+    pullInfo?: { pulled: boolean; updated: boolean }
+  }>
   archiveWorktree: (
     worktreeId: string,
     worktreePath: string,
@@ -123,7 +141,11 @@ interface WorktreeState {
   selectWorktree: (id: string | null, options?: WorktreeSelectionOptions) => void
   selectWorktreeOnly: (id: string | null) => void
   touchWorktree: (id: string) => Promise<void>
-  syncWorktrees: (projectId: string, projectPath: string) => Promise<void>
+  syncWorktrees: (
+    projectId: string,
+    projectPath: string,
+    opts?: { force?: boolean }
+  ) => Promise<void>
   getWorktreesForProject: (projectId: string) => Worktree[]
   getDefaultWorktree: (projectId: string) => Worktree | null
   setCreatingForProject: (projectId: string | null) => void
@@ -273,57 +295,78 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   archivingWorktreeIds: new Set(),
 
   // Load worktrees for a project from database
-  loadWorktrees: async (projectId: string) => {
-    set({ isLoading: true, error: null })
-    try {
-      const worktrees = await window.db.worktree.getActiveByProject(projectId)
-      // Sort: non-default worktrees by last_accessed_at descending, default worktree last
-      const sortedWorktrees = worktrees.sort((a, b) => {
-        if (a.is_default && !b.is_default) return 1
-        if (!a.is_default && b.is_default) return -1
-        return new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
-      })
-      set((state) => {
-        const newMap = new Map(state.worktreesByProject)
-        newMap.set(projectId, sortedWorktrees)
-        return { worktreesByProject: newMap, isLoading: false }
-      })
+  loadWorktrees: async (projectId: string, opts?: { force?: boolean }) => {
+    const inflight = inflightLoad.get(projectId)
+    if (inflight) return inflight
 
-      // Hydrate last-message timestamps from DB into the status store
-      const statusStore = useWorktreeStatusStore.getState()
-      for (const wt of sortedWorktrees) {
-        if (wt.last_message_at) {
-          statusStore.setLastMessageTime(wt.id, wt.last_message_at)
-        }
-      }
-
-      // Hydrate attached PRs from DB into the git store
-      const gitStore = useGitStore.getState()
-      for (const wt of sortedWorktrees) {
-        if (wt.github_pr_number && wt.github_pr_url) {
-          gitStore.setAttachedPR(wt.id, {
-            number: wt.github_pr_number,
-            url: wt.github_pr_url
-          })
-        }
-      }
-    } catch (error) {
-      set({
-        error: error instanceof Error ? error.message : 'Failed to load worktrees',
-        isLoading: false
-      })
+    const lastProjectLoad = lastLoad.get(projectId)
+    if (
+      !opts?.force &&
+      lastProjectLoad !== undefined &&
+      Date.now() - lastProjectLoad < LOAD_TTL_MS
+    ) {
+      return
     }
+
+    const promise = (async () => {
+      set({ isLoading: true, error: null })
+      try {
+        const worktrees = await db.worktree.getActiveByProject(projectId)
+        // Sort: non-default worktrees by last_accessed_at descending, default worktree last
+        const sortedWorktrees = worktrees.sort((a, b) => {
+          if (a.is_default && !b.is_default) return 1
+          if (!a.is_default && b.is_default) return -1
+          return new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
+        })
+        set((state) => {
+          const newMap = new Map(state.worktreesByProject)
+          newMap.set(projectId, sortedWorktrees)
+          return { worktreesByProject: newMap, isLoading: false }
+        })
+
+        // Hydrate last-message timestamps from DB into the status store
+        const statusStore = useWorktreeStatusStore.getState()
+        for (const wt of sortedWorktrees) {
+          if (wt.last_message_at) {
+            statusStore.setLastMessageTime(wt.id, wt.last_message_at)
+          }
+        }
+
+        // Hydrate attached PRs from DB into the git store
+        const gitStore = useGitStore.getState()
+        for (const wt of sortedWorktrees) {
+          if (wt.github_pr_number && wt.github_pr_url) {
+            gitStore.setAttachedPR(wt.id, {
+              number: wt.github_pr_number,
+              url: wt.github_pr_url
+            })
+          }
+        }
+        lastLoad.set(projectId, Date.now())
+      } catch (error) {
+        set({
+          error: error instanceof Error ? error.message : 'Failed to load worktrees',
+          isLoading: false
+        })
+      } finally {
+        inflightLoad.delete(projectId)
+      }
+    })()
+    inflightLoad.set(projectId, promise)
+    return promise
   },
 
   // Create a new worktree
   createWorktree: async (projectId: string, projectPath: string, projectName: string) => {
     set({ creatingForProjectId: projectId })
     try {
-      const result = await window.worktreeOps.create({
-        projectId,
-        projectPath,
-        projectName
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.create({
+          projectId,
+          projectPath,
+          projectName
+        })
+      )
 
       if (!result.success || !result.worktree) {
         set({ creatingForProjectId: null })
@@ -372,13 +415,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   ) => {
     set({ creatingForProjectId: projectId })
     try {
-      const result = await window.worktreeOps.createFromBranch(
-        projectId,
-        projectPath,
-        projectName,
-        branchName,
-        undefined, // prNumber — not used from store
-        nameHint
+      const result = unwrapEnvelope(
+        await window.worktreeOps.createFromBranch(
+          projectId,
+          projectPath,
+          projectName,
+          branchName,
+          undefined, // prNumber — not used from store
+          nameHint
+        )
       )
 
       if (!result.success || !result.worktree) {
@@ -456,7 +501,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         if (status?.status === 'working' || status?.status === 'planning') {
           if (session.opencode_session_id) {
             try {
-              await window.opencodeOps.abort(worktreePath, session.opencode_session_id)
+              unwrapEnvelope(
+                await window.opencodeOps.abort(worktreePath, session.opencode_session_id)
+              )
             } catch {
               // Non-critical — session may already be idle
             }
@@ -465,13 +512,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       }
 
       // 4. Proceed with archive
-      const result = await window.worktreeOps.delete({
-        worktreeId,
-        worktreePath,
-        branchName,
-        projectPath,
-        archive: true
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.delete({
+          worktreeId,
+          worktreePath,
+          branchName,
+          projectPath,
+          archive: true
+        })
+      )
 
       if (!result.success) {
         return { success: false, error: result.error || 'Failed to archive worktree' }
@@ -479,7 +528,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       // 5. Clean up any connections referencing this worktree
       try {
-        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        unwrapEnvelope(await window.connectionOps.removeWorktreeFromAll(worktreeId))
         // Reload connections to reflect the change
         const { useConnectionStore } = await import('./useConnectionStore')
         await useConnectionStore.getState().loadConnections()
@@ -569,13 +618,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     }))
 
     try {
-      const result = await window.worktreeOps.delete({
-        worktreeId,
-        worktreePath,
-        branchName,
-        projectPath,
-        archive: false
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.delete({
+          worktreeId,
+          worktreePath,
+          branchName,
+          projectPath,
+          archive: false
+        })
+      )
 
       if (!result.success) {
         return { success: false, error: result.error || 'Failed to unbranch worktree' }
@@ -583,7 +634,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       // Clean up any connections referencing this worktree
       try {
-        await window.connectionOps.removeWorktreeFromAll(worktreeId)
+        unwrapEnvelope(await window.connectionOps.removeWorktreeFromAll(worktreeId))
         const { useConnectionStore } = await import('./useConnectionStore')
         await useConnectionStore.getState().loadConnections()
       } catch {
@@ -656,7 +707,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Touch worktree (update last_accessed_at)
   touchWorktree: async (id: string) => {
     try {
-      await window.db.worktree.touch(id)
+      await db.worktree.touch(id)
       // Update local state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -676,14 +727,33 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   },
 
   // Sync worktrees with actual git state
-  syncWorktrees: async (projectId: string, projectPath: string) => {
-    try {
-      await window.worktreeOps.sync({ projectId, projectPath })
-      // Reload worktrees after sync
-      await get().loadWorktrees(projectId)
-    } catch {
-      // Ignore sync errors
+  syncWorktrees: async (projectId: string, projectPath: string, opts?: { force?: boolean }) => {
+    const inflight = inflightSync.get(projectId)
+    if (inflight) return inflight
+
+    const lastProjectSync = lastSync.get(projectId)
+    if (
+      !opts?.force &&
+      lastProjectSync !== undefined &&
+      Date.now() - lastProjectSync < SYNC_TTL_MS
+    ) {
+      return
     }
+
+    const promise = (async () => {
+      try {
+        unwrapEnvelope(await window.worktreeOps.sync({ projectId, projectPath }))
+        // Reload worktrees after sync
+        await get().loadWorktrees(projectId, { force: true })
+        lastSync.set(projectId, Date.now())
+      } catch {
+        // Ignore sync errors
+      } finally {
+        inflightSync.delete(projectId)
+      }
+    })()
+    inflightSync.set(projectId, promise)
+    return promise
   },
 
   // Get worktrees for a specific project (applies custom order if available)
@@ -716,17 +786,19 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     nameHint?: string
   ) => {
     try {
-      const result = await window.worktreeOps.duplicate({
-        projectId,
-        projectPath,
-        projectName,
-        sourceBranch,
-        sourceWorktreePath,
-        nameHint
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.duplicate({
+          projectId,
+          projectPath,
+          projectName,
+          sourceBranch,
+          sourceWorktreePath,
+          nameHint
+        })
+      )
       if (result.success && result.worktree) {
         // Reload worktrees for the project
-        get().loadWorktrees(projectId)
+        get().loadWorktrees(projectId, { force: true })
 
         // Fire-and-forget: run setup script if configured
         fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
@@ -854,7 +926,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     })
 
     // Persist to database (fire-and-forget)
-    window.db.worktree.appendSessionTitle?.(worktreeId, title)
+    db.worktree.appendSessionTitle?.(worktreeId, title)
   }
 }))
 

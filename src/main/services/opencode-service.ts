@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
-import { spawn, type ChildProcess } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
+import { Cause, Effect, Exit } from 'effect'
 import { createLogger } from './logger'
 import { notificationService } from './notification-service'
 import { getDatabase } from '../db'
@@ -9,6 +10,14 @@ import { maybeExtractJsonTitle } from '@shared/title-utils'
 import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
 import { toError } from './error-utils'
 import { agentEventBus } from './agent-event-bus'
+import { LowLevelSpawn } from '../effect/spawn/service'
+import { getRuntime } from '../effect/spawn/runtime'
+import {
+  openCodeAgentFacade,
+  type SubscriptionHandle
+} from '../effect/opencode/facade'
+import { SessionCreateResponseSchema } from '../effect/opencode/schemas'
+import { decodeWithZod } from '../effect/_shared/zod-adapter'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -50,7 +59,7 @@ type OpencodeClient = any
 
 // Per-directory subscription info
 interface DirectorySubscription {
-  controller: AbortController
+  handle: SubscriptionHandle
   sessionCount: number
 }
 
@@ -120,7 +129,7 @@ async function loadOpenCodeSDK(): Promise<{ createOpencode: any; createOpencodeC
  * Spawn `opencode serve` without forcing a port, letting it auto-assign one.
  * Parses the listening URL from stdout.
  */
-function spawnOpenCodeServer(
+async function spawnOpenCodeServer(
   options: {
     hostname?: string
     timeout?: number
@@ -133,35 +142,33 @@ function spawnOpenCodeServer(
   const launchSpec = options.launchSpec
 
   const args = ['serve', `--hostname=${hostname}`]
-  const proc: ChildProcess = spawn(launchSpec.command, args, {
-    signal: options.signal,
-    env: { ...process.env, ...getUserEnvironmentVariables(getDatabase()) },
-    shell: launchSpec.shell
-  })
+  const proc: ChildProcess = await getRuntime().runPromise(
+    Effect.flatMap(LowLevelSpawn, (spawn) =>
+      spawn.spawn({
+        command: launchSpec.command,
+        args,
+        signal: options.signal,
+        env: { ...process.env, ...getUserEnvironmentVariables(getDatabase()) },
+        shell: launchSpec.shell
+      })
+    )
+  )
 
   // Hoisted to function scope so close() can use it. On Windows with shell:true,
   // proc is cmd.exe — proc.kill() only kills the shell wrapper. terminateProcess
   // uses taskkill /t to kill the entire process tree including the opencode child.
   const terminateProcess = (force: boolean = false): void => {
-    if (process.platform === 'win32' && proc.pid !== undefined) {
-      const taskkillArgs = ['/pid', String(proc.pid), '/t']
-      if (force) taskkillArgs.push('/f')
-      const taskkill = spawn('taskkill', taskkillArgs, { stdio: 'ignore' })
-      taskkill.on('error', () => {
-        try {
-          proc.kill(force ? 'SIGKILL' : 'SIGTERM')
-        } catch {
-          // Process already exited
-        }
+    void getRuntime()
+      .runPromise(
+        Effect.flatMap(LowLevelSpawn, (spawn) =>
+          spawn.signalTree(proc, force ? 'SIGKILL' : 'SIGTERM')
+        )
+      )
+      .catch((error) => {
+        log.warn('Failed to terminate opencode process tree', {
+          error: error instanceof Error ? error.message : String(error)
+        })
       })
-      return
-    }
-
-    try {
-      proc.kill(force ? 'SIGKILL' : 'SIGTERM')
-    } catch {
-      // Process already exited
-    }
   }
 
   const url = new Promise<string>((resolve, reject) => {
@@ -228,12 +235,13 @@ function spawnOpenCodeServer(
     }
   })
 
-  return url.then((resolvedUrl) => ({
+  const resolvedUrl = await url
+  return {
     url: resolvedUrl,
     close() {
       terminateProcess()
     }
-  }))
+  }
 }
 
 /**
@@ -418,16 +426,33 @@ class OpenCodeService {
       return
     }
 
-    const controller = new AbortController()
+    const handle = openCodeAgentFacade.startSessionEvents({
+      client: instance.client,
+      directory,
+      hiveSessionId: '',
+      onEvent: (event, eventDirectory) => this.handleEvent(instance, { data: event }, eventDirectory)
+    })
+
     instance.directorySubscriptions.set(directory, {
-      controller,
+      handle,
       sessionCount: 1
     })
 
     log.info('Starting event subscription for directory', { directory })
 
-    // Start consuming events for this directory
-    this.consumeDirectoryEvents(instance, directory, controller.signal)
+    void handle.awaitDone().then((exit) => {
+      if (Exit.isSuccess(exit)) {
+        log.info('Event stream ended normally for directory', { directory })
+        return
+      }
+      if (Cause.isInterruptedOnly(exit.cause)) {
+        log.info('Event subscription interrupted for directory', { directory })
+        return
+      }
+      log.error('Event stream failed for directory', new Error(Cause.pretty(exit.cause)), {
+        directory
+      })
+    })
   }
 
   /**
@@ -442,39 +467,8 @@ class OpenCodeService {
 
     if (sub.sessionCount <= 0) {
       log.info('Cancelling event subscription for directory', { directory })
-      sub.controller.abort()
+      void sub.handle.abort()
       instance.directorySubscriptions.delete(directory)
-    }
-  }
-
-  /**
-   * Consume events for a specific directory
-   */
-  private async consumeDirectoryEvents(
-    instance: OpenCodeInstance,
-    directory: string,
-    signal: AbortSignal
-  ): Promise<void> {
-    try {
-      const result = await instance.client.event.subscribe({
-        signal,
-        query: { directory }
-      })
-
-      log.info('Event subscription established for directory', { directory })
-
-      // Iterate over the stream - this is REQUIRED for events to flow
-      for await (const event of result.stream) {
-        await this.handleEvent(instance, { data: event }, directory)
-      }
-
-      log.info('Event stream ended normally for directory', { directory })
-    } catch (error) {
-      if ((error as Error)?.name === 'AbortError') {
-        log.info('Event subscription aborted for directory', { directory })
-      } else {
-        log.error('Event stream error for directory', { directory, error })
-      }
     }
   }
 
@@ -491,7 +485,10 @@ class OpenCodeService {
       const result = await instance.client.session.create({
         query: { directory: worktreePath }
       })
-      const sessionId = result.data?.id
+      const decoded = await Effect.runPromise(
+        decodeWithZod(SessionCreateResponseSchema, result, 'OpenCodeSessionCreateResponse')
+      )
+      const sessionId = decoded.data.id
 
       if (!sessionId) {
         throw new Error('Failed to create OpenCode session: no session ID returned')
@@ -511,7 +508,7 @@ class OpenCodeService {
 
       return { sessionId }
     } catch (error) {
-      log.error('Failed to create OpenCode session', { worktreePath, error })
+      log.error('Failed to create OpenCode session', toError(error), { worktreePath })
       throw error
     }
   }
@@ -1101,7 +1098,7 @@ class OpenCodeService {
     // Cancel all directory subscriptions
     for (const [directory, sub] of this.instance.directorySubscriptions) {
       log.info('Aborting subscription for directory', { directory })
-      sub.controller.abort()
+      void sub.handle.abort()
     }
     this.instance.directorySubscriptions.clear()
     this.instance.childToParentMap.clear()
@@ -1148,9 +1145,8 @@ class OpenCodeService {
 
     // Log errors, skip logging for routine events
     if (eventType === 'session.error') {
-      log.error('OpenCode session error', {
-        sessionId: event.properties?.sessionID,
-        error: event.properties?.error
+      log.error('OpenCode session error', toError(event.properties?.error), {
+        sessionId: event.properties?.sessionID
       })
     }
 
