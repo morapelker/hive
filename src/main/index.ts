@@ -95,6 +95,63 @@ const log = createLogger({ component: 'Main' })
 // Track custom commands file mtime for change detection
 let lastKnownMtime: number | null = null
 
+/**
+ * Check if custom commands file changed and sync to database if needed.
+ * Handles both file modifications and deletions.
+ */
+function checkAndSyncCustomCommands(): void {
+  const currentMtime = getFileModTime()
+
+  // Detect changes: mtime changed, file deleted (null), or file created (was null)
+  if (currentMtime !== lastKnownMtime) {
+    lastKnownMtime = currentMtime
+
+    if (currentMtime === null) {
+      // File was deleted - clear commands from database
+      log.info('Custom commands file deleted, clearing commands')
+      try {
+        const db = getDatabase()
+        const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+        const settings = existingSettings ? JSON.parse(existingSettings) : {}
+
+        settings.customProjectCommands = []
+        db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+
+        // Notify all windows to reload
+        BrowserWindow.getAllWindows().forEach(win => {
+          win.webContents.send('custom-commands-file-changed')
+        })
+      } catch (error) {
+        log.error('Failed to clear custom commands from database:', error)
+      }
+    } else {
+      // File changed - reload and sync
+      log.info('Custom commands file changed, reloading')
+
+      const fileResult = loadCustomCommandsFromFile()
+      if (fileResult.success && fileResult.commands !== undefined) {
+        try {
+          const db = getDatabase()
+          const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+          const settings = existingSettings ? JSON.parse(existingSettings) : {}
+
+          settings.customProjectCommands = fileResult.commands
+          db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+
+          // Notify all windows to reload
+          BrowserWindow.getAllWindows().forEach(win => {
+            win.webContents.send('custom-commands-file-changed')
+          })
+        } catch (error) {
+          log.error('Failed to sync custom commands to database:', error)
+        }
+      } else if (!fileResult.success) {
+        log.error('Failed to load custom commands:', fileResult.error)
+      }
+    }
+  }
+}
+
 // Global error handlers — prevent uncaught errors from crashing the Electron process
 process.on('uncaughtException', (error) => {
   log.error('Uncaught exception', error, { fatal: false })
@@ -248,6 +305,8 @@ function createWindow(): void {
   // Emit focus event to renderer for git refresh on window focus
   mainWindow.on('focus', () => {
     mainWindow!.webContents.send('app:windowFocused')
+    // Check for custom commands file changes (cross-platform)
+    checkAndSyncCustomCommands()
   })
 
   // Save window bounds on resize and move
@@ -724,12 +783,21 @@ app.whenReady().then(async () => {
     })
   }
 
-  // Create custom commands template file if first launch
-  const templateResult = createTemplateFile()
-  if (templateResult.created) {
-    log.info('Created custom commands template file')
-  } else if (!templateResult.success && templateResult.error) {
-    log.error('Failed to create custom commands template:', templateResult.error)
+  // Create custom commands template file only on true first launch
+  // (when DB has no custom commands and file doesn't exist)
+  const db = getDatabase()
+  const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+  const settings = existingSettings ? JSON.parse(existingSettings) : {}
+  const hasCustomCommandsInDb = Array.isArray(settings.customProjectCommands)
+
+  if (!hasCustomCommandsInDb && getFileModTime() === null) {
+    // First launch - create template file
+    const templateResult = createTemplateFile()
+    if (templateResult.created) {
+      log.info('Created custom commands template file (first launch)')
+    } else if (!templateResult.success && templateResult.error) {
+      log.error('Failed to create custom commands template:', templateResult.error)
+    }
   }
 
   // Store initial file mtime for change detection
@@ -762,34 +830,8 @@ app.whenReady().then(async () => {
       mainWindow.focus()
     }
 
-    // Check if custom commands file changed
-    const currentMtime = getFileModTime()
-    if (currentMtime !== null && currentMtime !== lastKnownMtime) {
-      lastKnownMtime = currentMtime
-      log.info('Custom commands file changed, reloading')
-
-      // Load file and sync to database
-      const fileResult = loadCustomCommandsFromFile()
-      if (fileResult.success && fileResult.commands) {
-        try {
-          const db = getDatabase()
-          const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
-          const settings = existingSettings ? JSON.parse(existingSettings) : {}
-
-          settings.customProjectCommands = fileResult.commands
-          db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
-
-          // Notify all windows to reload
-          BrowserWindow.getAllWindows().forEach(win => {
-            win.webContents.send('custom-commands-file-changed')
-          })
-        } catch (error) {
-          log.error('Failed to sync custom commands to database:', error)
-        }
-      } else if (!fileResult.success) {
-        log.error('Failed to load custom commands:', fileResult.error)
-      }
-    }
+    // Check for custom commands file changes (macOS activate)
+    checkAndSyncCustomCommands()
   })
 }).catch((error) => {
   log.error('Fatal error during app startup', error instanceof Error ? error : new Error(String(error)))

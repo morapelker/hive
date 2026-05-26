@@ -1947,11 +1947,11 @@ const settingsOps = {
     ipcRenderer.invoke('get-custom-commands-file-path'),
 
   // Load custom commands from file
-  loadCustomCommandsFile: (): Promise<{ success: boolean; commands?: unknown[]; mtime?: number; error?: string }> =>
+  loadCustomCommandsFile: (): Promise<Envelope<{ success: boolean; commands?: unknown[]; mtime?: number; error?: string }>> =>
     ipcRenderer.invoke('load-custom-commands-file'),
 
   // Reload custom commands from file
-  reloadCustomCommands: (): Promise<{ success: boolean; count?: number; mtime?: number; error?: string }> =>
+  reloadCustomCommands: (): Promise<Envelope<{ success: boolean; count?: number; mtime?: number; error?: string }>> =>
     ipcRenderer.invoke('reload-custom-commands'),
 
   getAll: (): Promise<Envelope<Record<string, string>>> => ipcRenderer.invoke('settings:getAll'),

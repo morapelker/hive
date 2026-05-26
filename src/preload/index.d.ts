@@ -1085,18 +1085,22 @@ declare global {
         }>
       >
       getCustomCommandsFilePath: () => Promise<Envelope<string>>
-      loadCustomCommandsFile: () => Promise<{
-        success: boolean
-        commands?: unknown[]
-        mtime?: number
-        error?: string
-      }>
-      reloadCustomCommands: () => Promise<{
-        success: boolean
-        count?: number
-        mtime?: number
-        error?: string
-      }>
+      loadCustomCommandsFile: () => Promise<
+        Envelope<{
+          success: boolean
+          commands?: unknown[]
+          mtime?: number
+          error?: string
+        }>
+      >
+      reloadCustomCommands: () => Promise<
+        Envelope<{
+          success: boolean
+          count?: number
+          mtime?: number
+          error?: string
+        }>
+      >
       getAll: () => Promise<Envelope<Record<string, string>>>
       onSettingsUpdated: (callback: (data: unknown) => void) => () => void
       onCustomCommandsFileChanged: (callback: () => void) => () => void
