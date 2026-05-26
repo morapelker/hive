@@ -12,8 +12,22 @@ export function useClaudeCliStatusListener(): void {
     const unsubscribe = window.terminalOps?.onClaudeCliStatus
       ? window.terminalOps.onClaudeCliStatus(({ sessionId, status, metadata }) => {
           const worktreeStatus = useWorktreeStatusStore.getState()
+          const sessionStore = useSessionStore.getState()
           const currentStatus = worktreeStatus.sessionStatuses[sessionId]?.status
-          const currentMode = useSessionStore.getState().modeBySession.get(sessionId)
+          const currentMode = sessionStore.modeBySession.get(sessionId)
+
+          if (
+            status === 'plan_ready' &&
+            metadata?.toolName === 'ExitPlanMode' &&
+            typeof metadata.plan === 'string'
+          ) {
+            const syntheticId = `claude-cli:${sessionId}`
+            sessionStore.setPendingPlan(sessionId, {
+              requestId: syntheticId,
+              planContent: metadata.plan,
+              toolUseID: syntheticId
+            })
+          }
 
           if (
             status === 'working' &&

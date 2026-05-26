@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   setSessionStatus: vi.fn(),
+  setPendingPlan: vi.fn(),
   lastSendMode: new Map<string, 'plan' | 'build'>(),
   modeBySession: new Map<string, 'build' | 'plan' | 'super-plan'>(),
   sessionStatuses: {} as Record<string, { status: string } | null>
@@ -20,7 +21,8 @@ vi.mock('@/stores/useWorktreeStatusStore', () => ({
 vi.mock('@/stores/useSessionStore', () => ({
   useSessionStore: {
     getState: () => ({
-      modeBySession: mocks.modeBySession
+      modeBySession: mocks.modeBySession,
+      setPendingPlan: mocks.setPendingPlan
     })
   }
 }))
@@ -36,7 +38,13 @@ describe('useClaudeCliStatusListener', () => {
     | ((payload: {
         sessionId: string
         status: 'completed' | 'working' | 'plan_ready'
-        metadata?: { reason?: string; hookEventName?: string; hookPath?: string }
+        metadata?: {
+          reason?: string
+          hookEventName?: string
+          hookPath?: string
+          toolName?: string
+          plan?: string
+        }
       }) => void)
     | null
   const unsubscribe = vi.fn()
@@ -45,6 +53,7 @@ describe('useClaudeCliStatusListener', () => {
     subscribedCallback = null
     unsubscribe.mockClear()
     mocks.setSessionStatus.mockClear()
+    mocks.setPendingPlan.mockClear()
     mocks.lastSendMode.clear()
     mocks.modeBySession.clear()
     mocks.sessionStatuses = {}
@@ -81,6 +90,33 @@ describe('useClaudeCliStatusListener', () => {
 
     unmount()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('stores raw ExitPlanMode plan text when a Claude CLI plan becomes ready', () => {
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'plan_ready',
+      metadata: {
+        hookEventName: 'PreToolUse',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode',
+        plan: '# Plan\n\n1. Add CLI card.'
+      }
+    })
+
+    expect(mocks.setPendingPlan).toHaveBeenCalledWith('hive-session-1', {
+      requestId: 'claude-cli:hive-session-1',
+      planContent: '# Plan\n\n1. Add CLI card.',
+      toolUseID: 'claude-cli:hive-session-1'
+    })
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'plan_ready', {
+      hookEventName: 'PreToolUse',
+      hookPath: 'tool',
+      toolName: 'ExitPlanMode',
+      plan: '# Plan\n\n1. Add CLI card.'
+    })
   })
 
   it('does nothing when the preload API is unavailable', () => {

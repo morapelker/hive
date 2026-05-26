@@ -421,44 +421,60 @@ body::after {
 
 /* Indeterminate progress bar bounce animation for agent working indicator.
    6-phase bouncing worm: grow → slide → shrink → grow → slide back → shrink.
-   Uses left/right on position:absolute to animate width + position together.
+   Animates transform (translateX + scaleX) ONLY so the animation is GPU-composited
+   and stays smooth even when the main thread is busy — animating left/right forced a
+   layout/reflow every frame on the main thread, which made every bar stutter under load.
+   The bar is 25% of the track wide; translateX is in multiples of its own width
+   (400% == full track), scaleX grows/shrinks it (transform-origin: left).
    NOTE: Primary animation is driven via Web Animations API in IndeterminateProgressBar.tsx
    for reliable cross-instance synchronization. These keyframes are retained as documentation. */
 @keyframes progress-bounce {
   0% {
-    left: 0;
-    right: 100%;
+    transform: translateX(0) scaleX(0);
   }
   12% {
-    left: 0;
-    right: 75%;
+    transform: translateX(0) scaleX(1);
   }
   38% {
-    left: 75%;
-    right: 0;
+    transform: translateX(300%) scaleX(1);
   }
   50% {
-    left: 100%;
-    right: 0;
+    transform: translateX(400%) scaleX(0);
   }
   62% {
-    left: 75%;
-    right: 0;
+    transform: translateX(300%) scaleX(1);
   }
   88% {
-    left: 0;
-    right: 75%;
+    transform: translateX(0) scaleX(1);
   }
   100% {
-    left: 0;
-    right: 100%;
+    transform: translateX(0) scaleX(0);
   }
 }
 
 /* Safety-net defaults: bar is visible even if JS animation fails to start */
 .progress-bounce-bar {
   left: 0;
-  right: 75%;
+  width: 25%;
+  transform-origin: left center;
+  will-change: transform;
+}
+
+/* Pulse wave (worktree "working" indicator) — scrolls the repeating wave left.
+   Uses a CSS transform animation instead of SVG SMIL so it can be GPU-composited
+   and won't stutter when the main thread is busy. The path repeats every 12 user
+   units, so translating by -12 loops seamlessly. */
+@keyframes pulse-wave-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-12px);
+  }
+}
+.pulse-wave {
+  animation: pulse-wave-scroll 2s linear infinite;
+  will-change: transform;
 }
 
 /* PR review comment HTML body styling (GitHub bodyHTML) */

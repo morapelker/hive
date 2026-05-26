@@ -35,5 +35,10 @@ export type {
   TicketDependency,
   DiffComment,
   DiffCommentCreate,
-  DiffCommentUpdate
+  DiffCommentUpdate,
+  SavedUsageAccount,
+  SavedUsageAccountUpsert,
+  SavedUsageAccountUsageUpdate,
+  SavedUsageProvider,
+  SavedUsageStatus
 } from './types'

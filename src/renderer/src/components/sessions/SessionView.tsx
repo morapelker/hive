@@ -478,6 +478,15 @@ function writeTranscriptCache(sessionId: string, messages: OpenCodeMessage[]): v
   }
 }
 
+function clearTranscriptCache(sessionId: string): void {
+  if (isTestRuntime()) return
+  try {
+    window.sessionStorage.removeItem(getTranscriptCacheKey(sessionId))
+  } catch {
+    // Non-fatal cache clear failure
+  }
+}
+
 // Loading state component
 function LoadingState(): React.JSX.Element {
   return (
@@ -3810,6 +3819,12 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     return true
   }, [opencodeSessionId, sessionId, sessionRecord?.agent_sdk, worktreePath])
 
+  const refreshCodexMessagesFromDurableState = useCallback(async (): Promise<boolean> => {
+    const durableState = await loadCodexDurableState(sessionId)
+    setMessages(durableState.messages)
+    return durableState.messages.length > 0
+  }, [sessionId])
+
   const refreshCodexStreamingMessages = useCallback(async (): Promise<void> => {
     if (sessionRecord?.agent_sdk !== 'codex') return
     if (!worktreePath || !opencodeSessionId) return
@@ -5006,6 +5021,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       useSessionStore.getState().clearPendingPlan(sessionId)
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       lastSendMode.delete(sessionId)
+      const handoffGoalMode = override?.goalMode === true && override?.agentSdk === 'codex'
 
       // Abort the original backend session so it stops spinning
       if (worktreePath && opencodeSessionId) {
@@ -5036,7 +5052,9 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
             ? Promise.resolve()
             : sessionStore.setSessionMode(result.session.id, 'build')
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-        await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+        await useKanbanStore
+          .getState()
+          .relinkTicketsForHandoff(sessionId, result.session.id, handoffGoalMode)
         sessionStore.setActiveConnectionSession(result.session.id)
         await setModePromise
         return
@@ -5074,7 +5092,9 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           ? Promise.resolve()
           : sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-      await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+      await useKanbanStore
+        .getState()
+        .relinkTicketsForHandoff(sessionId, result.session.id, handoffGoalMode)
       sessionStore.setActiveSession(result.session.id)
       await setModePromise
     },
@@ -5688,6 +5708,48 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       window.removeEventListener('hive:redo-turn', onRedo)
     }
   }, [sessionId, worktreePath, opencodeSessionId, refreshMessagesFromOpenCode])
+
+  useEffect(() => {
+    const onRefreshFromFile = (event: Event): void => {
+      const detail = (
+        event as CustomEvent<{ sessionId?: string; refreshed?: boolean; count?: number }>
+      ).detail
+      if (detail?.sessionId !== sessionId) return
+      if (!worktreePath || !opencodeSessionId) {
+        toast.error('Refresh from file failed: session is not connected')
+        return
+      }
+
+      void (async () => {
+        try {
+          if (detail.refreshed) {
+            clearTranscriptCache(sessionId)
+            await refreshCodexMessagesFromDurableState()
+            return
+          }
+
+          const result = unwrapEnvelope(
+            await window.opencodeOps.refreshFromThread(worktreePath, opencodeSessionId)
+          )
+          if (!result.success) {
+            toast.error(result.error || 'Refresh from file failed')
+            return
+          }
+
+          clearTranscriptCache(sessionId)
+          await refreshCodexMessagesFromDurableState()
+          toast.success(`Refreshed transcript from file (${result.count ?? 0} messages)`)
+        } catch {
+          toast.error('Refresh from file failed')
+        }
+      })()
+    }
+
+    window.addEventListener('hive:refresh-codex-from-file', onRefreshFromFile)
+    return () => {
+      window.removeEventListener('hive:refresh-codex-from-file', onRefreshFromFile)
+    }
+  }, [sessionId, worktreePath, opencodeSessionId, refreshCodexMessagesFromDurableState])
 
   // Determine if there's streaming content to show
   const visibleMessages = useMemo(() => {

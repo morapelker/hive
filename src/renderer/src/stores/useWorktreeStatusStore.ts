@@ -26,7 +26,14 @@ export interface SessionStatusEntry {
   reason?: string
   hookEventName?: string
   hookPath?: string
+  toolName?: string
+  plan?: string
 }
+
+export type MergeConflictFlow =
+  | { phase: 'starting' }
+  | { phase: 'running'; sessionId: string; seenBusy: boolean }
+  | { phase: 'refreshing' }
 
 interface WorktreeStatusState {
   // sessionId → status info (null means no status / cleared)
@@ -37,6 +44,12 @@ interface WorktreeStatusState {
   reviewSessionByWorktree: Record<string, string>
   // worktreeId → sessionId for completed review sessions (in-memory only)
   completedReviewSessionByWorktree: Record<string, string>
+  // worktreeId → sessionId for active conflict-fix sessions
+  mergeConflictSessionByWorktree: Record<string, string>
+  // worktreeId → current conflict-fix flow phase
+  mergeConflictFlowByWorktree: Record<string, MergeConflictFlow>
+  // ticketId → worktreeId whose conflicts should be surfaced on that ticket
+  mergeConflictWorktreeByTicket: Record<string, string>
 
   // Actions
   setSessionStatus: (
@@ -49,6 +62,8 @@ interface WorktreeStatusState {
       reason?: string
       hookEventName?: string
       hookPath?: string
+      toolName?: string
+      plan?: string
     }
   ) => void
   clearSessionStatus: (sessionId: string) => void
@@ -61,6 +76,10 @@ interface WorktreeStatusState {
   setReviewSession: (worktreeId: string, sessionId: string) => void
   clearReviewSession: (worktreeId: string) => void
   clearCompletedReviewSession: (worktreeId: string) => void
+  setMergeConflictSession: (worktreeId: string, sessionId: string) => void
+  clearMergeConflictSession: (worktreeId: string) => void
+  setMergeConflictFlow: (worktreeId: string, flow: MergeConflictFlow | null) => void
+  setMergeConflictWorktreeForTicket: (ticketId: string, worktreeId: string | null) => void
   isWorktreeBeingReviewed: (worktreeId: string) => boolean
 }
 
@@ -90,6 +109,9 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
   lastMessageTimeByWorktree: {},
   reviewSessionByWorktree: {},
   completedReviewSessionByWorktree: {},
+  mergeConflictSessionByWorktree: {},
+  mergeConflictFlowByWorktree: {},
+  mergeConflictWorktreeByTicket: {},
 
   setSessionStatus: (
     sessionId: string,
@@ -101,6 +123,8 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       reason?: string
       hookEventName?: string
       hookPath?: string
+      toolName?: string
+      plan?: string
     }
   ) => {
     set((state) => {
@@ -354,6 +378,52 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     set((state) => {
       const { [worktreeId]: _, ...rest } = state.completedReviewSessionByWorktree
       return { completedReviewSessionByWorktree: rest }
+    })
+  },
+
+  setMergeConflictSession: (worktreeId: string, sessionId: string) => {
+    set((state) => ({
+      mergeConflictSessionByWorktree: {
+        ...state.mergeConflictSessionByWorktree,
+        [worktreeId]: sessionId
+      }
+    }))
+  },
+
+  clearMergeConflictSession: (worktreeId: string) => {
+    set((state) => {
+      const { [worktreeId]: _, ...rest } = state.mergeConflictSessionByWorktree
+      return { mergeConflictSessionByWorktree: rest }
+    })
+  },
+
+  setMergeConflictFlow: (worktreeId: string, flow: MergeConflictFlow | null) => {
+    set((state) => {
+      if (!flow) {
+        const { [worktreeId]: _, ...rest } = state.mergeConflictFlowByWorktree
+        return { mergeConflictFlowByWorktree: rest }
+      }
+      return {
+        mergeConflictFlowByWorktree: {
+          ...state.mergeConflictFlowByWorktree,
+          [worktreeId]: flow
+        }
+      }
+    })
+  },
+
+  setMergeConflictWorktreeForTicket: (ticketId: string, worktreeId: string | null) => {
+    set((state) => {
+      if (!worktreeId) {
+        const { [ticketId]: _, ...rest } = state.mergeConflictWorktreeByTicket
+        return { mergeConflictWorktreeByTicket: rest }
+      }
+      return {
+        mergeConflictWorktreeByTicket: {
+          ...state.mergeConflictWorktreeByTicket,
+          [ticketId]: worktreeId
+        }
+      }
     })
   },
 

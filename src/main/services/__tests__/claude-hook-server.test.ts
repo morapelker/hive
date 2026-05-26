@@ -101,6 +101,11 @@ describe('mapHookEventToStatus', () => {
       { hook_event_name: 'PermissionRequest' },
       'permission'
     ],
+    [
+      'PermissionRequest for ExitPlanMode maps to plan_ready',
+      { hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode' },
+      'plan_ready'
+    ],
     ['unknown events are ignored', { hook_event_name: 'BogusEvent' }, null],
     [
       'unmatched PreToolUse events are ignored',
@@ -221,6 +226,30 @@ describe('ClaudeHookServer HTTP round-trip', () => {
       sessionId: 'hive-session-1',
       status: 'completed',
       metadata: { hookEventName: 'SessionStart', hookPath: 'session' }
+    })
+  })
+
+  it('forwards ExitPlanMode raw plan text to the renderer', async () => {
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'ExitPlanMode',
+      tool_input: {
+        plan: '# Plan\n\n1. Add CLI card.'
+      }
+    })
+
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('claude-cli:status', {
+      sessionId: 'hive-session-1',
+      status: 'plan_ready',
+      metadata: {
+        hookEventName: 'PreToolUse',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode',
+        plan: '# Plan\n\n1. Add CLI card.'
+      }
     })
   })
 
