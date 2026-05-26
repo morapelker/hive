@@ -149,6 +149,13 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       return null
     }
 
+    // When the board, pinned board, or board assistant is occupying the main
+    // pane, hide all stateful terminal sessions — otherwise the always-mounted
+    // terminal would render as flex-1 alongside the board and split the pane.
+    if (isBoardViewActive || isPinnedBoardActive || activeBoardAssistantProjectId) {
+      return null
+    }
+
     // Inline connection terminal takes priority
     if (
       inlineConnectionSessionId &&
@@ -175,7 +182,10 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     activeDiff,
     activeFilePath,
     getAgentSdk,
-    ghosttyOverlaySuppressed
+    ghosttyOverlaySuppressed,
+    isBoardViewActive,
+    isPinnedBoardActive,
+    activeBoardAssistantProjectId
   ])
 
   const handleCloseDiff = useCallback(() => {
