@@ -150,18 +150,6 @@ export const WorktreeItem = memo(function WorktreeItem({
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const customProjectCommands = useSettingsStore((s) => s.customProjectCommands)
 
-  // Listen for custom commands file changes
-  useEffect(() => {
-    const handleFileChange = async (): Promise<void> => {
-      // Reload settings which will trigger re-render
-      await useSettingsStore.getState().loadFromDatabase()
-    }
-
-    const cleanup = window.settingsOps?.onCustomCommandsFileChanged(handleFileChange)
-
-    return cleanup
-  }, [])
-
   const handleTogglePin = useCallback(async (): Promise<void> => {
     if (isPinned) {
       await unpinWorktree(worktree.id)
