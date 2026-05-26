@@ -992,7 +992,7 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }
 
-  // Handle clicking a session tab - deactivate file tab and clear unread status
+  // Handle clicking a session tab - deactivate file tab and clear only unread status
   const handleSessionTabClick = (sessionId: string) => {
     const isAlreadyPresentedSession =
       activeSessionId === sessionId && activeFilePath === null && !inlineConnectionSessionId
@@ -1008,7 +1008,10 @@ export function SessionTabs(): React.JSX.Element | null {
     } else {
       setActiveSession(sessionId)
     }
-    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+    const statusStore = useWorktreeStatusStore.getState()
+    if (statusStore.sessionStatuses[sessionId]?.status === 'unread') {
+      statusStore.clearSessionStatus(sessionId)
+    }
   }
 
   // Handle clicking a sticky connection session tab (inline viewing in worktree mode)
@@ -1022,7 +1025,10 @@ export function SessionTabs(): React.JSX.Element | null {
 
     setActiveFile(null)
     setInlineConnectionSession(sessionId)
-    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+    const statusStore = useWorktreeStatusStore.getState()
+    if (statusStore.sessionStatuses[sessionId]?.status === 'unread') {
+      statusStore.clearSessionStatus(sessionId)
+    }
   }
 
   // Handle clicking a file tab - keep session but activate file view
