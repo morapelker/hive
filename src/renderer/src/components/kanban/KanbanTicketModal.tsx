@@ -51,6 +51,7 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -108,6 +109,41 @@ const MODE_DIALOG_CLASS: Record<ModalMode, string> = {
 // TicketAttachment is now imported from TicketAttachmentEditor
 type TicketAttachment = import('./TicketAttachmentEditor').TicketAttachment
 
+function ClaudeCliPortalSlot({ sessionId }: { sessionId: string }): React.JSX.Element {
+  const { registerTarget } = useClaudeCliSessionPortal()
+  const requestSessionMount = useSessionStore((s) => s.requestSessionMount)
+  const releaseSessionMount = useSessionStore((s) => s.releaseSessionMount)
+  const targetRef = useRef<HTMLDivElement | null>(null)
+
+  const setTargetRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      targetRef.current = el
+      registerTarget(sessionId, el)
+    },
+    [registerTarget, sessionId]
+  )
+
+  useEffect(() => {
+    requestSessionMount(sessionId)
+    if (targetRef.current) {
+      registerTarget(sessionId, targetRef.current)
+    }
+
+    return () => {
+      registerTarget(sessionId, null)
+      releaseSessionMount(sessionId)
+    }
+  }, [registerTarget, releaseSessionMount, requestSessionMount, sessionId])
+
+  return (
+    <div
+      ref={setTargetRef}
+      className="flex-1 flex flex-col min-h-0"
+      data-testid="claude-cli-modal-slot"
+    />
+  )
+}
+
 function normalizeDraftText(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? ''
   return trimmed.length > 0 ? trimmed : null
@@ -150,12 +186,12 @@ async function findSessionById(sessionId: string): Promise<{
     id: string
     worktree_id: string | null
     connection_id: string | null
-	    opencode_session_id: string | null
-	    agent_sdk: string
-	    mode: FollowUpMode
-	    model_provider_id: string | null
-	    model_id: string | null
-	    model_variant: string | null
+    opencode_session_id: string | null
+    agent_sdk: string
+    mode: FollowUpMode
+    model_provider_id: string | null
+    model_id: string | null
+    model_variant: string | null
   }
   worktreePath: string | null
   connectionId: string | null
@@ -208,12 +244,12 @@ async function findSessionById(sessionId: string): Promise<{
       id: dbSession.id,
       worktree_id: dbSession.worktree_id,
       connection_id: dbSession.connection_id,
-	      opencode_session_id: dbSession.opencode_session_id,
-	      agent_sdk: dbSession.agent_sdk,
-	      mode: dbSession.mode,
-	      model_provider_id: dbSession.model_provider_id,
-	      model_id: dbSession.model_id,
-	      model_variant: dbSession.model_variant
+      opencode_session_id: dbSession.opencode_session_id,
+      agent_sdk: dbSession.agent_sdk,
+      mode: dbSession.mode,
+      model_provider_id: dbSession.model_provider_id,
+      model_id: dbSession.model_id,
+      model_variant: dbSession.model_variant
     },
     worktreePath,
     connectionId: dbSession.connection_id,
@@ -613,12 +649,12 @@ function KanbanTicketModalContent({
       id: string
       worktree_id: string | null
       connection_id: string | null
-	      opencode_session_id: string | null
-	      agent_sdk: string
-	      mode: FollowUpMode
-	      model_provider_id: string | null
-	      model_id: string | null
-	      model_variant: string | null
+      opencode_session_id: string | null
+      agent_sdk: string
+      mode: FollowUpMode
+      model_provider_id: string | null
+      model_id: string | null
+      model_variant: string | null
     }
     worktreePath: string | null
   } | null>(null)
@@ -743,6 +779,7 @@ function KanbanTicketModalContent({
   }, [sessionRecord?.worktree_id])
 
   const effectiveSession = sessionRecord ?? dbSessionInfo?.session ?? null
+  const isClaudeCli = effectiveSession?.agent_sdk === 'claude-code-cli'
 
   const baseModalMode = resolveModalMode(ticket, sessionStatus)
   // Question mode takes highest priority — an unanswered question blocks
@@ -860,7 +897,7 @@ function KanbanTicketModalContent({
   )
 
   useEffect(() => {
-    if (!worktreePath || !opcSessionId || !ticket.current_session_id) {
+    if (isClaudeCli || !worktreePath || !opcSessionId || !ticket.current_session_id) {
       setSessionReady(false)
       return
     }
@@ -918,7 +955,7 @@ function KanbanTicketModalContent({
     return () => {
       cancelled = true
     }
-  }, [worktreePath, opcSessionId, ticket.current_session_id])
+  }, [isClaudeCli, worktreePath, opcSessionId, ticket.current_session_id])
 
   // Render the mode-specific inner content (without DialogContent wrapper)
   let modeContent: React.ReactNode
@@ -1000,7 +1037,27 @@ function KanbanTicketModalContent({
         </DialogHeader>
         {conflictBanner}
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {hasSession && sessionReady ? (
+          {isClaudeCli && ticket.current_session_id ? (
+            <div className="flex flex-col h-full bg-background flex-1 min-w-0">
+              <div className="shrink-0 px-4 py-3 border-b border-border/60 flex items-center gap-2">
+                <span className="text-sm font-medium text-foreground truncate">{ticket.title}</span>
+                <div className="ml-auto shrink-0 flex items-center gap-2">
+                  <TicketRunButton
+                    state={runScriptState}
+                    testId="full-width-run-btn"
+                    className="h-7 px-2 text-xs"
+                  />
+                  <JumpToSessionButton
+                    ticket={ticket}
+                    onClose={forceClose}
+                    label="Go to session"
+                    testId="go-to-session-btn"
+                  />
+                </div>
+              </div>
+              <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+            </div>
+          ) : hasSession && sessionReady ? (
             <SessionStreamPanel
               sessionId={ticket.current_session_id!}
               worktreePath={worktreePath!}
@@ -1059,7 +1116,11 @@ function KanbanTicketModalContent({
             {modeContent}
           </div>
           {/* Right: session stream (or loading spinner while DB lookup resolves) */}
-          {hasSession && sessionReady ? (
+          {isClaudeCli && ticket.current_session_id ? (
+            <div className="flex flex-col h-full bg-background flex-1 min-w-0 border-l border-border/60">
+              <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+            </div>
+          ) : hasSession && sessionReady ? (
             <SessionStreamPanel
               sessionId={ticket.current_session_id!}
               worktreePath={worktreePath!}
@@ -1547,12 +1608,12 @@ function PlanReviewModeContent({
   ticket: KanbanTicket
   onClose: () => void
   pendingPlan: { requestId: string; planContent: string; toolUseID: string } | null
-	  sessionRecord: {
-	    worktree_id: string | null
-	    connection_id: string | null
-	    agent_sdk: string
-	    mode: FollowUpMode
-	  } | null
+  sessionRecord: {
+    worktree_id: string | null
+    connection_id: string | null
+    agent_sdk: string
+    mode: FollowUpMode
+  } | null
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   dualPane?: boolean
   worktreePath: string | null
@@ -1920,26 +1981,26 @@ function PlanReviewModeContent({
             return
           }
 
-	          const handoffPrompt = buildHandoffPrompt(
-	            planContent,
-	            override
-	              ? {
-	                  ...override,
-	                  superPlan: sessionRecord?.mode === 'super-plan'
-	                }
-	              : undefined
-	          )
-	          const newSession = result.session
-	          const newSessionId = newSession.id
-	          const setModePromise =
-	            newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
-	              ? Promise.resolve()
-	              : sessionStore.setSessionMode(newSessionId, 'build')
+          const handoffPrompt = buildHandoffPrompt(
+            planContent,
+            override
+              ? {
+                  ...override,
+                  superPlan: sessionRecord?.mode === 'super-plan'
+                }
+              : undefined
+          )
+          const newSession = result.session
+          const newSessionId = newSession.id
+          const setModePromise =
+            newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
+              ? Promise.resolve()
+              : sessionStore.setSessionMode(newSessionId, 'build')
 
-	          prepareTicketBuildSession(newSessionId, handoffGoalMode)
-	          if (newSession.agent_sdk === 'claude-code-cli') {
-	            sessionStore.setPendingMessage(newSessionId, handoffPrompt)
-	          }
+          prepareTicketBuildSession(newSessionId, handoffGoalMode)
+          if (newSession.agent_sdk === 'claude-code-cli') {
+            sessionStore.setPendingMessage(newSessionId, handoffPrompt)
+          }
 
           // In sticky-tab mode, stay on the board; otherwise navigate to the new session.
           // setActiveConnectionSession requires activeConnectionId to be set — which
@@ -1953,13 +2014,13 @@ function PlanReviewModeContent({
             sessionStore.setActiveConnectionSession(newSessionId)
           }
 
-	          onClose()
-	          void (async () => {
-	            await setModePromise
-	            if (newSession.agent_sdk !== 'claude-code-cli') {
-	              await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
-	                connectionId: sessionRecord.connection_id
-	              })
+          onClose()
+          void (async () => {
+            await setModePromise
+            if (newSession.agent_sdk !== 'claude-code-cli') {
+              await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
+                connectionId: sessionRecord.connection_id
+              })
             }
             toast.success('Handoff session started')
           })().catch((error) => {
@@ -1994,31 +2055,31 @@ function PlanReviewModeContent({
           return
         }
 
-	        const handoffPrompt = buildHandoffPrompt(
-	          planContent,
-	          override
-	            ? {
-	                ...override,
-	                superPlan: sessionRecord?.mode === 'super-plan'
-	              }
-	            : undefined
-	        )
-	        const newSession = result.session
-	        const newSessionId = newSession.id
-	        const setModePromise =
-	          newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
-	            ? Promise.resolve()
-	            : sessionStore.setSessionMode(newSessionId, 'build')
+        const handoffPrompt = buildHandoffPrompt(
+          planContent,
+          override
+            ? {
+                ...override,
+                superPlan: sessionRecord?.mode === 'super-plan'
+              }
+            : undefined
+        )
+        const newSession = result.session
+        const newSessionId = newSession.id
+        const setModePromise =
+          newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
+            ? Promise.resolve()
+            : sessionStore.setSessionMode(newSessionId, 'build')
         const localWorktreePath = findWorktreePathById(worktreeId)
         if (!localWorktreePath) {
           toast.error('Could not find worktree path')
           return
         }
 
-	        prepareTicketBuildSession(newSessionId, handoffGoalMode)
-	        if (newSession.agent_sdk === 'claude-code-cli') {
-	          sessionStore.setPendingMessage(newSessionId, handoffPrompt)
-	        }
+        prepareTicketBuildSession(newSessionId, handoffGoalMode)
+        if (newSession.agent_sdk === 'claude-code-cli') {
+          sessionStore.setPendingMessage(newSessionId, handoffPrompt)
+        }
 
         // In sticky-tab mode, stay on the board; otherwise navigate to the new session
         const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
@@ -2030,12 +2091,12 @@ function PlanReviewModeContent({
           sessionStore.setActiveSession(newSessionId)
         }
 
-	        onClose()
-	        void (async () => {
-	          await setModePromise
-	          if (newSession.agent_sdk !== 'claude-code-cli') {
-	            await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
-	          }
+        onClose()
+        void (async () => {
+          await setModePromise
+          if (newSession.agent_sdk !== 'claude-code-cli') {
+            await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
+          }
           toast.success('Handoff session started')
         })().catch((error) => {
           console.error('[KanbanTicketModal] handoff background start failed:', error)

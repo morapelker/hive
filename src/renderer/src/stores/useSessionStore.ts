@@ -130,6 +130,9 @@ interface SessionState {
   // MainPane subscribes to this to prune mountedTerminalSessionIds.
   closedTerminalSessionIds: Set<string>
 
+  // Renderer-only refcount for sessions that need their always-mounted view kept alive.
+  sessionMountRequests: Map<string, number>
+
   // Orphaned sessions (from archived worktrees) - read-only, not attached to any worktree
   orphanedSessions: Map<string, Session>
 
@@ -143,6 +146,8 @@ interface SessionState {
 
   // Actions
   acknowledgeClosedTerminals: (ids: Set<string>) => void
+  requestSessionMount: (sessionId: string) => void
+  releaseSessionMount: (sessionId: string) => void
   openOrphanedSession: (session: Session) => void
   closeOrphanedSessions: () => void
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
@@ -168,6 +173,8 @@ interface SessionState {
   reorderTabs: (worktreeId: string, fromIndex: number, toIndex: number) => void
   getSessionsForWorktree: (worktreeId: string) => Session[]
   getTabOrderForWorktree: (worktreeId: string) => string[]
+  getSessionById: (sessionId: string) => Session | null
+  hydrateSession: (session: Session) => void
   getSessionMode: (sessionId: string) => SessionMode
   getSuperArmed: (sessionId: string) => boolean
   toggleSessionMode: (sessionId: string) => Promise<void>
@@ -198,6 +205,7 @@ interface SessionState {
   getPendingPlan: (sessionId: string) => PendingPlan | null
   setCodexGoal: (sessionId: string, goal: CodexThreadGoal) => void
   clearCodexGoal: (sessionId: string) => void
+  applyModeDefaultModel: (sessionId: string, newMode: SessionMode) => Promise<void>
 
   // Pinned session actions
   pinSessionToBoard: (sessionId: string) => Promise<void>
@@ -308,6 +316,7 @@ export const useSessionStore = create<SessionState>()(
       activeConnectionId: null,
       inlineConnectionSessionId: null,
       closedTerminalSessionIds: new Set<string>(),
+      sessionMountRequests: new Map(),
 
       // Orphaned sessions
       orphanedSessions: new Map(),
@@ -325,6 +334,27 @@ export const useSessionStore = create<SessionState>()(
           const remaining = new Set(state.closedTerminalSessionIds)
           for (const id of ids) remaining.delete(id)
           return { closedTerminalSessionIds: remaining }
+        })
+      },
+
+      requestSessionMount: (sessionId: string) => {
+        set((state) => {
+          const requests = new Map(state.sessionMountRequests)
+          requests.set(sessionId, (requests.get(sessionId) ?? 0) + 1)
+          return { sessionMountRequests: requests }
+        })
+      },
+
+      releaseSessionMount: (sessionId: string) => {
+        set((state) => {
+          const requests = new Map(state.sessionMountRequests)
+          const nextCount = (requests.get(sessionId) ?? 0) - 1
+          if (nextCount > 0) {
+            requests.set(sessionId, nextCount)
+          } else {
+            requests.delete(sessionId)
+          }
+          return { sessionMountRequests: requests }
         })
       },
 

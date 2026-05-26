@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  lazy,
+  Suspense
+} from 'react'
+import { createPortal } from 'react-dom'
 import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
 import { SessionTerminalView } from '@/components/sessions/SessionTerminalView'
@@ -14,6 +24,7 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
 import { KanbanBoard } from '@/components/kanban/KanbanBoard'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { BoardAssistantView } from '@/components/kanban/BoardAssistantView'
@@ -32,6 +43,55 @@ interface MainPaneProps {
 
 function isStatefulTerminalSession(agentSdk: string | null): boolean {
   return agentSdk === 'terminal' || agentSdk === 'claude-code-cli'
+}
+
+function ClaudeCliSessionPortal({
+  sessionId,
+  isActive
+}: {
+  sessionId: string
+  isActive: boolean
+}): React.JSX.Element {
+  const { getTarget, revision } = useClaudeCliSessionPortal()
+  void revision
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  if (!hostRef.current && typeof document !== 'undefined') {
+    const host = document.createElement('div')
+    host.className = 'flex-1 flex flex-col min-h-0'
+    hostRef.current = host
+  }
+
+  const [localTarget, setLocalTarget] = useState<HTMLDivElement | null>(null)
+  const modalTarget = getTarget(sessionId)
+  const targetParent = modalTarget ?? localTarget
+
+  useLayoutEffect(() => {
+    const host = hostRef.current
+    if (!host || !targetParent) return
+    if (host.parentElement !== targetParent) {
+      targetParent.appendChild(host)
+    }
+  }, [targetParent])
+
+  useEffect(() => {
+    const host = hostRef.current
+    return () => {
+      host?.remove()
+    }
+  }, [])
+
+  const sessionView = (
+    <SessionView sessionId={sessionId} isVisible={modalTarget ? true : isActive} />
+  )
+
+  return (
+    <>
+      <div ref={setLocalTarget} className="flex-1 flex flex-col min-h-0" />
+      {hostRef.current && targetParent
+        ? createPortal(sessionView, hostRef.current, sessionId)
+        : null}
+    </>
+  )
 }
 
 export function MainPane({ children }: MainPaneProps): React.JSX.Element {
@@ -61,42 +121,47 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   // Subscribe to session maps so terminal list stays reactive
   const sessionsByWorktree = useSessionStore((state) => state.sessionsByWorktree)
   const sessionsByConnection = useSessionStore((state) => state.sessionsByConnection)
+  const sessionMountRequests = useSessionStore((state) => state.sessionMountRequests)
 
   // Look up the agent_sdk for a given session ID
   const getAgentSdk = useCallback((sid: string | null): string | null => {
     if (!sid) return null
-    const state = useSessionStore.getState()
-    for (const sessions of state.sessionsByWorktree.values()) {
-      const found = sessions.find((s) => s.id === sid)
-      if (found) return found.agent_sdk
-    }
-    for (const sessions of state.sessionsByConnection.values()) {
-      const found = sessions.find((s) => s.id === sid)
-      if (found) return found.agent_sdk
-    }
-    return null
+    return useSessionStore.getState().getSessionById(sid)?.agent_sdk ?? null
   }, [])
 
   // Collect all terminal-type sessions in the current scope.
   const terminalSessions = useMemo(() => {
-    const terminals: string[] = []
+    const terminals = new Set<string>()
 
     if (selectedWorktreeId) {
       const sessions = sessionsByWorktree.get(selectedWorktreeId) || []
       for (const s of sessions) {
-        if (isStatefulTerminalSession(s.agent_sdk)) terminals.push(s.id)
+        if (isStatefulTerminalSession(s.agent_sdk)) terminals.add(s.id)
       }
     }
 
     if (selectedConnectionId) {
       const sessions = sessionsByConnection.get(selectedConnectionId) || []
       for (const s of sessions) {
-        if (isStatefulTerminalSession(s.agent_sdk)) terminals.push(s.id)
+        if (isStatefulTerminalSession(s.agent_sdk)) terminals.add(s.id)
       }
     }
 
-    return terminals
-  }, [selectedWorktreeId, selectedConnectionId, sessionsByWorktree, sessionsByConnection])
+    for (const [sessionId, count] of sessionMountRequests.entries()) {
+      if (count > 0 && getAgentSdk(sessionId) === 'claude-code-cli') {
+        terminals.add(sessionId)
+      }
+    }
+
+    return Array.from(terminals)
+  }, [
+    selectedWorktreeId,
+    selectedConnectionId,
+    sessionsByWorktree,
+    sessionsByConnection,
+    sessionMountRequests,
+    getAgentSdk
+  ])
 
   // Keep terminal views mounted once discovered so transient session-map churn
   // does not reset terminal UI state.
@@ -403,6 +468,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
             <div key={sessionId} className={isActive ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
               {agentSdk === 'terminal' ? (
                 <SessionTerminalView sessionId={sessionId} isVisible={isActive} />
+              ) : agentSdk === 'claude-code-cli' ? (
+                <ClaudeCliSessionPortal sessionId={sessionId} isActive={isActive} />
               ) : (
                 <SessionView sessionId={sessionId} isVisible={isActive} />
               )}
