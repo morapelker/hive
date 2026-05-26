@@ -1,8 +1,18 @@
-import { describe, expect, it } from 'vitest'
-import { buildHandoffPrompt, type HandoffSelectionOverride } from '../handoffSelection'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  buildHandoffPrompt,
+  resolveSessionCreationSelection,
+  type HandoffSelectionOverride
+} from '../handoffSelection'
 import { SUPER_PLAN_MODE_PREFIX } from '../constants'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 
 const model = { providerID: 'codex', modelID: 'gpt-5.5' }
+const initialSettingsState = useSettingsStore.getState()
+
+afterEach(() => {
+  useSettingsStore.setState(initialSettingsState, true)
+})
 
 describe('buildHandoffPrompt', () => {
   it('prefixes goal mode only for codex handoffs', () => {
@@ -54,5 +64,44 @@ describe('buildHandoffPrompt', () => {
     expect(buildHandoffPrompt(planContent, legacySuper)).toBe(
       'Implement the following plan\n1. Build the thing'
     )
+  })
+})
+
+describe('resolveSessionCreationSelection', () => {
+  it('preserves an explicit Claude CLI SDK even when a mode default uses Claude SDK', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'opencode',
+      selectedModel: null,
+      selectedModelByProvider: {
+        'claude-code-cli': {
+          providerID: 'anthropic',
+          modelID: 'sonnet',
+          variant: 'high'
+        }
+      },
+      defaultModels: {
+        build: {
+          agentSdk: 'claude-code',
+          providerID: 'anthropic',
+          modelID: 'claude-opus-4-5-20251101',
+          variant: 'max'
+        },
+        plan: null,
+        ask: null,
+        review: null
+      }
+    })
+
+    const selection = resolveSessionCreationSelection({
+      agentSdkOverride: 'claude-code-cli',
+      initialMode: 'build'
+    })
+
+    expect(selection.agentSdk).toBe('claude-code-cli')
+    expect(selection.model).toMatchObject({
+      providerID: 'anthropic',
+      modelID: 'sonnet',
+      variant: 'high'
+    })
   })
 })

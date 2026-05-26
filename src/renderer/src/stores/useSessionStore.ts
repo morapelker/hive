@@ -151,7 +151,7 @@ interface SessionState {
     projectId: string,
     agentSdkOverride?: AgentSdk,
     initialMode?: SessionMode,
-    options?: { autoFocus?: boolean; modelOverride?: SelectedModel }
+    options?: { autoFocus?: boolean; modelOverride?: SelectedModel; pendingMessage?: string | null }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -225,7 +225,7 @@ interface SessionState {
     connectionId: string,
     agentSdkOverride?: AgentSdk,
     initialMode?: SessionMode,
-    opts?: { autoFocus?: boolean; modelOverride?: SelectedModel }
+    opts?: { autoFocus?: boolean; modelOverride?: SelectedModel; pendingMessage?: string | null }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -509,7 +509,15 @@ export const useSessionStore = create<SessionState>()(
             const base = {
               sessionsByWorktree: newSessionsMap,
               tabOrderByWorktree: newTabOrderMap,
-              modeBySession: newModeMap
+              modeBySession: newModeMap,
+              ...(options?.pendingMessage
+                ? {
+                    pendingMessages: new Map(state.pendingMessages).set(
+                      session.id,
+                      options.pendingMessage
+                    )
+                  }
+                : {})
             }
 
             // Focus state — only when autoFocus is true
@@ -2048,7 +2056,15 @@ export const useSessionStore = create<SessionState>()(
             const base = {
               sessionsByConnection: newSessionsMap,
               tabOrderByConnection: newTabOrderMap,
-              modeBySession: newModeMap
+              modeBySession: newModeMap,
+              ...(opts?.pendingMessage
+                ? {
+                    pendingMessages: new Map(state.pendingMessages).set(
+                      session.id,
+                      opts.pendingMessage
+                    )
+                  }
+                : {})
             }
 
             // Focus state — only when autoFocus is true

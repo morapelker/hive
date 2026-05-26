@@ -286,6 +286,15 @@ export function resolveSessionCreationSelection(opts: {
     return { agentSdk, model: opts.modelOverride }
   }
 
+  if (opts.agentSdkOverride) {
+    const resolvedAgentSdk = normalizeHandoffSdk(opts.agentSdkOverride)
+    const model = resolveModelForSdk(resolvedAgentSdk, settings)
+    return {
+      agentSdk: resolvedAgentSdk,
+      model: buildModelSelection(model, resolvedAgentSdk)
+    }
+  }
+
   const resolved = resolveSessionSelection({
     worktreeId: opts.worktreeId,
     agentSdk,

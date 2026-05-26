@@ -42,12 +42,11 @@ function normalizeClaudeCliEffort(effort: string | null | undefined): string | n
 }
 
 export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCliPtySpawn {
-  const args = ['--dangerously-skip-permissions']
   const mode = input.session.mode
-
-  if (mode === 'plan' || mode === 'super-plan') {
-    args.push('--permission-mode', 'plan')
-  }
+  const args =
+    mode === 'plan' || mode === 'super-plan'
+      ? ['--allow-dangerously-skip-permissions', '--permission-mode', 'plan']
+      : ['--dangerously-skip-permissions']
 
   const model = normalizeClaudeCliModel(input.session.model_id)
   if (model) {

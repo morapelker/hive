@@ -49,10 +49,10 @@ describe('buildClaudeCliPtySpawn', () => {
     ])
   })
 
-  it('adds permission-mode plan for plan-like sessions and normalizes model ids', () => {
+  it('adds the Claude CLI plan bypass flags for plan sessions and normalizes model ids', () => {
     const spawn = buildClaudeCliPtySpawn({
       session: makeSession({
-        mode: 'super-plan',
+        mode: 'plan',
         model_id: 'claude-opus-4-5-20251101',
         model_variant: 'max'
       }),
@@ -62,13 +62,32 @@ describe('buildClaudeCliPtySpawn', () => {
     })
 
     expect(spawn.args).toEqual([
-      '--dangerously-skip-permissions',
+      '--allow-dangerously-skip-permissions',
       '--permission-mode',
       'plan',
       '--model',
       'opus',
       '--effort',
       'max'
+    ])
+  })
+
+  it('adds the Claude CLI plan bypass flags for super-plan sessions', () => {
+    const spawn = buildClaudeCliPtySpawn({
+      session: makeSession({
+        mode: 'super-plan',
+        model_id: 'opus',
+        model_variant: 'max'
+      }),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: null,
+      claudeBinary: 'claude'
+    })
+
+    expect(spawn.args.slice(0, 3)).toEqual([
+      '--allow-dangerously-skip-permissions',
+      '--permission-mode',
+      'plan'
     ])
   })
 

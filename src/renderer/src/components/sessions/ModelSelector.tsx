@@ -337,13 +337,14 @@ export const ModelSelector = memo(function ModelSelector({
 
   const sdkFilterOptions = useMemo((): SdkFilterOption[] => {
     const availableSdks = new Set(providers.map((provider) => provider.agentSdk))
+    const controlledSdk = allowAgentSdkSelection ? value?.agentSdk : null
     return catalogAgentSdks
-      .filter((sdk) => availableSdks.has(sdk))
+      .filter((sdk) => availableSdks.has(sdk) || sdk === controlledSdk)
       .map((sdk) => ({
         agentSdk: sdk,
         label: getHandoffSdkDisplayName(sdk)
       }))
-  }, [providers, catalogAgentSdks])
+  }, [providers, catalogAgentSdks, allowAgentSdkSelection, value?.agentSdk])
 
   useEffect(() => {
     if (!allowAgentSdkSelection) return
@@ -358,14 +359,17 @@ export const ModelSelector = memo(function ModelSelector({
     }
   }, [agentSdkFilter, sdkFilterOptions])
 
+  const effectiveAgentSdkFilter =
+    agentSdkFilter ?? (allowAgentSdkSelection ? (value?.agentSdk ?? null) : null)
   const selectedProviderFilterLabel =
-    sdkFilterOptions.find((option) => option.agentSdk === agentSdkFilter)?.label ?? 'All providers'
+    sdkFilterOptions.find((option) => option.agentSdk === effectiveAgentSdkFilter)?.label ??
+    'All providers'
   const showProviderFilter = sdkFilterOptions.length > 1
 
   const providerScopedProviders = useMemo(() => {
-    if (!agentSdkFilter) return providers
-    return providers.filter((provider) => provider.agentSdk === agentSdkFilter)
-  }, [providers, agentSdkFilter])
+    if (!effectiveAgentSdkFilter) return providers
+    return providers.filter((provider) => provider.agentSdk === effectiveAgentSdkFilter)
+  }, [providers, effectiveAgentSdkFilter])
 
   const filteredProviders = useMemo(() => {
     if (!filter.trim()) return providerScopedProviders
