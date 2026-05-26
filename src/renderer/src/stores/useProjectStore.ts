@@ -191,7 +191,9 @@ export const useProjectStore = create<ProjectState>()(
 
           import('./useWorktreeStore')
             .then(({ useWorktreeStore }) =>
-              useWorktreeStore.getState().syncWorktrees(project.id, validation.path!)
+              useWorktreeStore.getState().syncWorktrees(project.id, validation.path!, {
+                force: true
+              })
             )
             .catch(() => {
               // Ignore initial sync errors

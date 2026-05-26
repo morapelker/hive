@@ -1028,6 +1028,37 @@ export function registerOpenCodeHandlers(
       })
   )
 
+  defineHandler(
+    'opencode:refresh-from-thread',
+    z.tuple([z.string().min(1), z.string().min(1)]),
+    ([worktreePath, opencodeSessionId]) =>
+      opencodeEffect(async () => {
+        log.info('IPC: opencode:refresh-from-thread', { worktreePath, opencodeSessionId })
+        try {
+          if (!sdkManager || !dbService) {
+            return { success: false, error: 'SDK manager is not available' }
+          }
+
+          const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
+          if (sdkId !== 'codex') {
+            return {
+              success: false,
+              error: 'Refresh from file is only supported for Codex sessions'
+            }
+          }
+
+          const impl = sdkManager.getImplementer('codex') as CodexImplementer
+          return await impl.refreshMessagesFromThread(worktreePath, opencodeSessionId)
+        } catch (error) {
+          log.error('IPC: opencode:refresh-from-thread failed', toError(error))
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }
+        }
+      })
+  )
+
   // Abort a streaming session
   defineHandler(
     'opencode:abort',

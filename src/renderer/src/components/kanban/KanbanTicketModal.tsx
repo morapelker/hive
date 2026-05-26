@@ -7,6 +7,8 @@ import {
   Trash2,
   ExternalLink,
   Hammer,
+  AlertTriangle,
+  ChevronDown,
   Send,
   Zap,
   AlertCircle,
@@ -19,7 +21,8 @@ import {
   Github,
   Upload,
   Lock,
-  Plus
+  Plus,
+  Map as MapIcon
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -32,10 +35,17 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
 import { HandoffSplitButton } from '../sessions/HandoffSplitButton'
+import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -71,6 +81,7 @@ import { ReviewTicketDiffSummary, type ReviewTicketDiffFile } from './ReviewTick
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
+import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
@@ -139,11 +150,12 @@ async function findSessionById(sessionId: string): Promise<{
     id: string
     worktree_id: string | null
     connection_id: string | null
-    opencode_session_id: string | null
-    agent_sdk: string
-    model_provider_id: string | null
-    model_id: string | null
-    model_variant: string | null
+	    opencode_session_id: string | null
+	    agent_sdk: string
+	    mode: FollowUpMode
+	    model_provider_id: string | null
+	    model_id: string | null
+	    model_variant: string | null
   }
   worktreePath: string | null
   connectionId: string | null
@@ -196,11 +208,12 @@ async function findSessionById(sessionId: string): Promise<{
       id: dbSession.id,
       worktree_id: dbSession.worktree_id,
       connection_id: dbSession.connection_id,
-      opencode_session_id: dbSession.opencode_session_id,
-      agent_sdk: dbSession.agent_sdk,
-      model_provider_id: dbSession.model_provider_id,
-      model_id: dbSession.model_id,
-      model_variant: dbSession.model_variant
+	      opencode_session_id: dbSession.opencode_session_id,
+	      agent_sdk: dbSession.agent_sdk,
+	      mode: dbSession.mode,
+	      model_provider_id: dbSession.model_provider_id,
+	      model_id: dbSession.model_id,
+	      model_variant: dbSession.model_variant
     },
     worktreePath,
     connectionId: dbSession.connection_id,
@@ -409,6 +422,131 @@ export function KanbanTicketModal() {
   return <KanbanTicketModalContent ticket={ticket} onForceClose={() => setSelectedTicketId(null)} />
 }
 
+function MergeConflictBanner({ ticket }: { ticket: KanbanTicket }) {
+  const conflictTargetWorktreeId = useWorktreeStatusStore(
+    useCallback(
+      (state) =>
+        ticket.worktree_id
+          ? (state.mergeConflictWorktreeByTicket[ticket.id] ?? ticket.worktree_id)
+          : null,
+      [ticket.id, ticket.worktree_id]
+    )
+  )
+  const worktreePath = useWorktreeStore(
+    useCallback(
+      (state) => {
+        if (!conflictTargetWorktreeId) return null
+        for (const worktrees of state.worktreesByProject.values()) {
+          const found = worktrees.find((w) => w.id === conflictTargetWorktreeId)
+          if (found) return found.path
+        }
+        return null
+      },
+      [conflictTargetWorktreeId]
+    )
+  )
+  const hasConflicts = useGitStore(
+    useCallback(
+      (state) => (worktreePath ? (state.conflictsByWorktree[worktreePath] ?? false) : false),
+      [worktreePath]
+    )
+  )
+  const conflictFlow = useWorktreeStatusStore(
+    useCallback(
+      (state) =>
+        conflictTargetWorktreeId
+          ? state.mergeConflictFlowByWorktree[conflictTargetWorktreeId]
+          : undefined,
+      [conflictTargetWorktreeId]
+    )
+  )
+  const mergeConflictMode = useSettingsStore((s) => s.mergeConflictMode)
+  const { startFixFlow, openAttachedSession } = useConflictFixFlow(conflictTargetWorktreeId)
+
+  if (!ticket.worktree_id || ticket.archived_at || !hasConflicts) return null
+
+  const isConflictFlowActive =
+    conflictFlow?.phase === 'starting' ||
+    conflictFlow?.phase === 'running' ||
+    conflictFlow?.phase === 'refreshing'
+
+  return (
+    <div
+      data-testid="ticket-modal-fix-conflicts-banner"
+      className="flex items-center justify-between gap-3 border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center gap-2 font-medium text-destructive">
+        <AlertTriangle className="h-4 w-4" />
+        Merge conflicts detected
+      </div>
+      {isConflictFlowActive ? (
+        <button
+          type="button"
+          className="flex items-center"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (conflictFlow?.phase !== 'starting') openAttachedSession()
+          }}
+        >
+          <IndeterminateProgressBar
+            mode={ticket.mode || 'build'}
+            isFixingConflicts
+            className="w-24"
+          />
+        </button>
+      ) : mergeConflictMode === 'always-ask' ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 text-xs font-semibold"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+              Fix conflicts
+              <ChevronDown className="h-3 w-3 ml-1" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                void startFixFlow('build')
+              }}
+            >
+              <Hammer className="h-4 w-4 mr-2" />
+              Fix in Build mode
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                void startFixFlow('plan')
+              }}
+            >
+              <MapIcon className="h-4 w-4 mr-2" />
+              Fix in Plan mode
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <Button
+          size="sm"
+          variant="destructive"
+          className="h-7 text-xs font-semibold"
+          onClick={(e) => {
+            e.stopPropagation()
+            void startFixFlow()
+          }}
+        >
+          <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+          Fix conflicts
+        </Button>
+      )}
+    </div>
+  )
+}
+
 // ── Inner content (only rendered when ticket is non-null) ───────────
 function KanbanTicketModalContent({
   ticket,
@@ -475,11 +613,12 @@ function KanbanTicketModalContent({
       id: string
       worktree_id: string | null
       connection_id: string | null
-      opencode_session_id: string | null
-      agent_sdk: string
-      model_provider_id: string | null
-      model_id: string | null
-      model_variant: string | null
+	      opencode_session_id: string | null
+	      agent_sdk: string
+	      mode: FollowUpMode
+	      model_provider_id: string | null
+	      model_id: string | null
+	      model_variant: string | null
     }
     worktreePath: string | null
   } | null>(null)
@@ -698,6 +837,7 @@ function KanbanTicketModalContent({
     opcSessionId &&
     !opcSessionId.startsWith('pending::')
   )
+  const conflictBanner = <MergeConflictBanner ticket={ticket} />
 
   // Commit to dual-pane layout as soon as we know the ticket has a session,
   // even before the async DB lookups resolve.  This prevents the user from
@@ -853,12 +993,13 @@ function KanbanTicketModalContent({
     dialogBody = (
       <DialogContent
         data-testid="kanban-ticket-modal"
-        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden"
+        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{ticket.title}</DialogTitle>
         </DialogHeader>
-        <div className="flex h-full overflow-hidden">
+        {conflictBanner}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           {hasSession && sessionReady ? (
             <SessionStreamPanel
               sessionId={ticket.current_session_id!}
@@ -895,9 +1036,10 @@ function KanbanTicketModalContent({
     dialogBody = (
       <DialogContent
         data-testid="kanban-ticket-modal"
-        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden"
+        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
       >
-        <div className="flex h-full overflow-hidden">
+        {conflictBanner}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* Left: ticket content */}
           <div className="w-[480px] shrink-0 h-full flex flex-col overflow-y-auto p-6 gap-4">
             {/* Shared ticket context header for non-edit modes */}
@@ -935,6 +1077,7 @@ function KanbanTicketModalContent({
     // ── Standard layout (no session) ────────────────────────────────
     dialogBody = (
       <DialogContent data-testid="kanban-ticket-modal" className={MODE_DIALOG_CLASS[modalMode]}>
+        {conflictBanner}
         {modeContent}
       </DialogContent>
     )
@@ -1404,11 +1547,12 @@ function PlanReviewModeContent({
   ticket: KanbanTicket
   onClose: () => void
   pendingPlan: { requestId: string; planContent: string; toolUseID: string } | null
-  sessionRecord: {
-    worktree_id: string | null
-    connection_id: string | null
-    agent_sdk: string
-  } | null
+	  sessionRecord: {
+	    worktree_id: string | null
+	    connection_id: string | null
+	    agent_sdk: string
+	    mode: FollowUpMode
+	  } | null
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   dualPane?: boolean
   worktreePath: string | null
@@ -1744,6 +1888,7 @@ function PlanReviewModeContent({
 
       try {
         const sessionId = ticket.current_session_id
+        const handoffGoalMode = override?.goalMode === true && override?.agentSdk === 'codex'
         useSessionStore.getState().clearPendingPlan(sessionId)
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
         lastSendMode.delete(sessionId)
@@ -1775,20 +1920,26 @@ function PlanReviewModeContent({
             return
           }
 
-          const handoffPrompt = buildHandoffPrompt(planContent, {
-            ...override,
-            superPlan: sessionRecord?.mode === 'super-plan'
-          })
-          const newSessionId = result.session.id
-          const setModePromise =
-            result.session.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
-              ? Promise.resolve()
-              : sessionStore.setSessionMode(newSessionId, 'build')
+	          const handoffPrompt = buildHandoffPrompt(
+	            planContent,
+	            override
+	              ? {
+	                  ...override,
+	                  superPlan: sessionRecord?.mode === 'super-plan'
+	                }
+	              : undefined
+	          )
+	          const newSession = result.session
+	          const newSessionId = newSession.id
+	          const setModePromise =
+	            newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
+	              ? Promise.resolve()
+	              : sessionStore.setSessionMode(newSessionId, 'build')
 
-          prepareTicketBuildSession(newSessionId)
-          if (result.session.agent_sdk === 'claude-code-cli') {
-            sessionStore.setPendingMessage(newSessionId, handoffPrompt)
-          }
+	          prepareTicketBuildSession(newSessionId, handoffGoalMode)
+	          if (newSession.agent_sdk === 'claude-code-cli') {
+	            sessionStore.setPendingMessage(newSessionId, handoffPrompt)
+	          }
 
           // In sticky-tab mode, stay on the board; otherwise navigate to the new session.
           // setActiveConnectionSession requires activeConnectionId to be set — which
@@ -1802,13 +1953,13 @@ function PlanReviewModeContent({
             sessionStore.setActiveConnectionSession(newSessionId)
           }
 
-          onClose()
-          void (async () => {
-            await setModePromise
-            if (result.session.agent_sdk !== 'claude-code-cli') {
-              await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
-                connectionId: sessionRecord.connection_id
-              })
+	          onClose()
+	          void (async () => {
+	            await setModePromise
+	            if (newSession.agent_sdk !== 'claude-code-cli') {
+	              await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
+	                connectionId: sessionRecord.connection_id
+	              })
             }
             toast.success('Handoff session started')
           })().catch((error) => {
@@ -1843,25 +1994,31 @@ function PlanReviewModeContent({
           return
         }
 
-        const handoffPrompt = buildHandoffPrompt(planContent, {
-          ...override,
-          superPlan: sessionRecord?.mode === 'super-plan'
-        })
-        const newSessionId = result.session.id
-        const setModePromise =
-          result.session.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
-            ? Promise.resolve()
-            : sessionStore.setSessionMode(newSessionId, 'build')
+	        const handoffPrompt = buildHandoffPrompt(
+	          planContent,
+	          override
+	            ? {
+	                ...override,
+	                superPlan: sessionRecord?.mode === 'super-plan'
+	              }
+	            : undefined
+	        )
+	        const newSession = result.session
+	        const newSessionId = newSession.id
+	        const setModePromise =
+	          newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
+	            ? Promise.resolve()
+	            : sessionStore.setSessionMode(newSessionId, 'build')
         const localWorktreePath = findWorktreePathById(worktreeId)
         if (!localWorktreePath) {
           toast.error('Could not find worktree path')
           return
         }
 
-        prepareTicketBuildSession(newSessionId)
-        if (result.session.agent_sdk === 'claude-code-cli') {
-          sessionStore.setPendingMessage(newSessionId, handoffPrompt)
-        }
+	        prepareTicketBuildSession(newSessionId, handoffGoalMode)
+	        if (newSession.agent_sdk === 'claude-code-cli') {
+	          sessionStore.setPendingMessage(newSessionId, handoffPrompt)
+	        }
 
         // In sticky-tab mode, stay on the board; otherwise navigate to the new session
         const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
@@ -1873,12 +2030,12 @@ function PlanReviewModeContent({
           sessionStore.setActiveSession(newSessionId)
         }
 
-        onClose()
-        void (async () => {
-          await setModePromise
-          if (result.session.agent_sdk !== 'claude-code-cli') {
-            await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
-          }
+	        onClose()
+	        void (async () => {
+	          await setModePromise
+	          if (newSession.agent_sdk !== 'claude-code-cli') {
+	            await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
+	          }
           toast.success('Handoff session started')
         })().catch((error) => {
           console.error('[KanbanTicketModal] handoff background start failed:', error)
@@ -1905,13 +2062,15 @@ function PlanReviewModeContent({
   // Synchronously re-link the ticket to a new build session and (if needed) move it to
   // in_progress so the kanban board reflects the new work before the modal closes.
   const prepareTicketBuildSession = useCallback(
-    (newSessionId: string): void => {
+    (newSessionId: string, goalMode: boolean): void => {
       useKanbanStore
         .getState()
         .updateTicket(ticket.id, ticket.project_id, {
           current_session_id: newSessionId,
           plan_ready: false,
-          mode: 'build'
+          mode: 'build',
+          goal_mode: goalMode,
+          goal_success_criteria: goalMode ? (ticket.goal_success_criteria ?? null) : null
         })
         .catch((err) => {
           console.error('[KanbanTicketModal] failed to relink supercharge session:', err)
@@ -1931,7 +2090,7 @@ function PlanReviewModeContent({
           })
       }
     },
-    [ticket.id, ticket.project_id, ticket.column, ticket.sort_order]
+    [ticket.id, ticket.project_id, ticket.column, ticket.sort_order, ticket.goal_success_criteria]
   )
 
   // ── Shared: eagerly connect, send /using-superpowers, queue follow-up for global listener ──
@@ -2065,7 +2224,7 @@ function PlanReviewModeContent({
         const newSessionId = sessionResult.session.id
         const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-        prepareTicketBuildSession(newSessionId)
+        prepareTicketBuildSession(newSessionId, ticket.goal_mode === true)
         onClose()
 
         // NOTE: On IIFE failure, the ticket is left re-linked to the new session (via
@@ -2148,7 +2307,7 @@ function PlanReviewModeContent({
       const newWorktreeId = dupResult.worktree.id
       const newWorktreePath = dupResult.worktree.path
 
-      prepareTicketBuildSession(newSessionId)
+      prepareTicketBuildSession(newSessionId, ticket.goal_mode === true)
       onClose()
 
       // Finish session configuration and startup in the background so the modal can close
@@ -2219,7 +2378,7 @@ function PlanReviewModeContent({
       const newSessionId = sessionResult.session.id
       const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
-      prepareTicketBuildSession(newSessionId)
+      prepareTicketBuildSession(newSessionId, ticket.goal_mode === true)
       onClose()
 
       // Finish session configuration and startup in the background so the modal can close

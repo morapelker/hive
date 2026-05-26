@@ -80,6 +80,7 @@ import {
   shouldSuppressMainWindowActivationFromPet
 } from './services/pet-window'
 import {
+  consumeQuitViaShortcut,
   getQuitConfirmationDecision,
   QUIT_CONFIRM_WINDOW_MS,
   readWarnBeforeQuitting
@@ -758,6 +759,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
+  const viaShortcut = consumeQuitViaShortcut()
+  if (!viaShortcut) return
+
   if (!mainWindow || mainWindow.isDestroyed()) return
 
   const warnBeforeQuitting = readWarnBeforeQuitting(getDatabase().getSetting(APP_SETTINGS_DB_KEY))

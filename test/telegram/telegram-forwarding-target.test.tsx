@@ -70,6 +70,10 @@ const promptSession = vi.fn()
 const getTicketsBySession = vi.fn()
 const updateTicket = vi.fn()
 
+function envelope<T>(value: T): { success: true; value: T } {
+  return { success: true, value }
+}
+
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
     id: 'ticket-1',
@@ -211,13 +215,19 @@ function seedStores(ticket = makeTicket()): void {
 
   useConnectionStore.setState({ selectedConnectionId: null, connections: [] })
   useGitStore.setState({ remoteInfo: new Map(), creatingPRByWorktreeId: new Map() })
-  usePinnedStore.setState({ loaded: true, pinnedProjectIds: new Set(), pinnedWorktreeIds: new Set() })
+  usePinnedStore.setState({
+    loaded: true,
+    pinnedProjectIds: new Set(),
+    pinnedWorktreeIds: new Set()
+  })
   useQuestionStore.setState({ pendingBySession: new Map() })
   useScriptStore.setState({ scriptStates: {} })
   useWorktreeStatusStore.setState({
     sessionStatuses: {},
     reviewSessionByWorktree: {},
-    completedReviewSessionByWorktree: {}
+    completedReviewSessionByWorktree: {},
+    mergeConflictSessionByWorktree: {},
+    mergeConflictFlowByWorktree: {}
   })
 }
 
@@ -244,22 +254,39 @@ describe('Telegram forwarding board target', () => {
       configurable: true,
       value: {
         startForwarding,
-        stopForwarding: vi.fn(),
-        getConfig: vi.fn().mockResolvedValue({
-          botToken: 'token',
-          chatId: 123,
-          chatName: 'me',
-          contextSize: 3
-        }),
-        getStatus: vi.fn().mockResolvedValue({
-          active: false,
-          sessionId: null,
-          worktreeId: null,
-          connectionId: null,
-          mode: null,
-          health: 'ok',
-          lastError: null
-        }),
+        stopForwarding: vi.fn().mockResolvedValue(
+          envelope({
+            ok: true,
+            status: {
+              active: false,
+              sessionId: null,
+              worktreeId: null,
+              connectionId: null,
+              mode: null,
+              health: 'ok',
+              lastError: null
+            }
+          })
+        ),
+        getConfig: vi.fn().mockResolvedValue(
+          envelope({
+            botToken: 'token',
+            chatId: 123,
+            chatName: 'me',
+            contextSize: 3
+          })
+        ),
+        getStatus: vi.fn().mockResolvedValue(
+          envelope({
+            active: false,
+            sessionId: null,
+            worktreeId: null,
+            connectionId: null,
+            mode: null,
+            health: 'ok',
+            lastError: null
+          })
+        ),
         onStatusChanged: vi.fn(),
         onPlanImplementRequested: vi.fn()
       }
@@ -282,23 +309,27 @@ describe('Telegram forwarding board target', () => {
         prompt: promptSession
       }
     })
-    mockDb.session.update.mockResolvedValue(undefined)
-    connectPromptSession.mockResolvedValue({ success: true, sessionId: 'opc-session-new' })
-    promptSession.mockResolvedValue({ success: true })
-    startForwarding.mockResolvedValue({
-      ok: true,
-      status: {
-        active: true,
-        sessionId: 'session-1',
-        worktreeId: 'wt-1',
-        connectionId: null,
-        mode: 'questions',
-        health: 'ok',
-        lastError: null
-      }
-    })
-    getTicketsBySession.mockResolvedValue([])
-    updateTicket.mockResolvedValue(undefined)
+    mockDb.session.update.mockResolvedValue(envelope(undefined))
+    connectPromptSession.mockResolvedValue(
+      envelope({ success: true, sessionId: 'opc-session-new' })
+    )
+    promptSession.mockResolvedValue(envelope({ success: true }))
+    startForwarding.mockResolvedValue(
+      envelope({
+        ok: true,
+        status: {
+          active: true,
+          sessionId: 'session-1',
+          worktreeId: 'wt-1',
+          connectionId: null,
+          mode: 'questions',
+          health: 'ok',
+          lastError: null
+        }
+      })
+    )
+    getTicketsBySession.mockResolvedValue(envelope([]))
+    updateTicket.mockResolvedValue(envelope(undefined))
   })
 
   it('records the ticket session as board Telegram target on cmd-click', () => {
@@ -377,12 +408,6 @@ describe('Telegram forwarding board target', () => {
         ]
       ])
     })
-
-    render(
-      <TooltipProvider>
-        <HeaderTelegramToggle />
-      </TooltipProvider>
-    )
     act(() => {
       useSettingsStore.getState().setTelegramConfig({
         botToken: 'token',
@@ -391,6 +416,12 @@ describe('Telegram forwarding board target', () => {
         contextSize: 3
       })
     })
+
+    render(
+      <TooltipProvider>
+        <HeaderTelegramToggle />
+      </TooltipProvider>
+    )
     await waitFor(() => {
       expect(screen.getByTestId('telegram-forwarding-toggle')).not.toBeDisabled()
     })
@@ -468,7 +499,7 @@ describe('Telegram forwarding board target', () => {
       worktreeId: 'wt-1',
       sessionId: 'session-old'
     })
-    getTicketsBySession.mockResolvedValue([oldTicket])
+    getTicketsBySession.mockResolvedValue(envelope([oldTicket]))
 
     await useKanbanStore.getState().relinkTicketsForHandoff('session-old', 'session-new')
 

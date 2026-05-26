@@ -3,6 +3,7 @@ import { z } from 'zod'
 
 import { createLogger } from '../services'
 import { getClaudeAccountEmail, getOpenAIAccountEmail } from '../services/account-service'
+import { listSavedAccounts, removeSavedAccount } from '../services/saved-usage-orchestrator'
 import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'AccountHandlers' })
@@ -32,6 +33,27 @@ export function registerAccountHandlers(): void {
     Effect.tryPromise({
       try: () => getOpenAIAccountEmail(),
       catch: (cause) => accountFailed('account:getOpenAIEmail', cause)
+    })
+  )
+
+  defineHandler('account:listSaved', z.enum(['anthropic', 'openai']).optional(), (provider) =>
+    Effect.try({
+      try: () => {
+        const accounts = listSavedAccounts(provider)
+        log.info('Listed saved usage accounts', {
+          provider: provider ?? 'all',
+          count: accounts.length
+        })
+        return accounts
+      },
+      catch: (cause) => accountFailed('account:listSaved', cause)
+    })
+  )
+
+  defineHandler('account:removeSaved', z.string(), (accountId) =>
+    Effect.try({
+      try: () => removeSavedAccount(accountId),
+      catch: (cause) => accountFailed('account:removeSaved', cause)
     })
   )
 }

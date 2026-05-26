@@ -1533,6 +1533,12 @@ const opencodeOps = {
   ): Promise<Envelope<{ success: boolean; messages: unknown[]; error?: string }>> =>
     ipcRenderer.invoke('opencode:messages', worktreePath, opencodeSessionId),
 
+  refreshFromThread: (
+    worktreePath: string,
+    opencodeSessionId: string
+  ): Promise<Envelope<{ success: boolean; count?: number; error?: string }>> =>
+    ipcRenderer.invoke('opencode:refresh-from-thread', worktreePath, opencodeSessionId),
+
   // List available models from all configured providers
   listModels: (opts?: {
     agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
@@ -2330,6 +2336,14 @@ const usageOps = {
   fetchOpenai: () =>
     ipcRenderer.invoke('usage:fetchOpenai') as Promise<
       Envelope<import('../shared/types/usage').OpenAIUsageResult>
+    >,
+  fetchForAccount: (accountId: string) =>
+    ipcRenderer.invoke('usage:fetchForAccount', accountId) as Promise<
+      Envelope<import('../shared/types/usage').FetchForAccountResult>
+    >,
+  refreshAllForProvider: (provider: import('../shared/types/usage').UsageProvider) =>
+    ipcRenderer.invoke('usage:refreshAllForProvider', provider) as Promise<
+      Envelope<import('../shared/types/usage').RefreshAllResultItem[]>
     >
 }
 
@@ -2337,7 +2351,13 @@ const accountOps = {
   getClaudeEmail: (): Promise<Envelope<string | null>> =>
     ipcRenderer.invoke('account:getClaudeEmail'),
   getOpenAIEmail: (): Promise<Envelope<string | null>> =>
-    ipcRenderer.invoke('account:getOpenAIEmail')
+    ipcRenderer.invoke('account:getOpenAIEmail'),
+  listSaved: (provider?: import('../shared/types/usage').UsageProvider) =>
+    ipcRenderer.invoke('account:listSaved', provider) as Promise<
+      Envelope<import('../shared/types/usage').SavedAccountDTO[]>
+    >,
+  removeSaved: (accountId: string): Promise<Envelope<boolean>> =>
+    ipcRenderer.invoke('account:removeSaved', accountId)
 }
 
 const perfDiagnosticsOps = {

@@ -142,7 +142,11 @@ interface KanbanState {
 
   // ── Session coordination ────────────────────────────────────────────
   syncTicketWithSession: (sessionId: string, event: KanbanSessionEvent) => void
-  relinkTicketsForHandoff: (oldSessionId: string, newSessionId: string) => Promise<void>
+  relinkTicketsForHandoff: (
+    oldSessionId: string,
+    newSessionId: string,
+    goalMode?: boolean
+  ) => Promise<void>
 
   // ── Getters ────────────────────────────────────────────────────────
   getTicketsForProject: (projectId: string) => KanbanTicket[]
@@ -755,23 +759,35 @@ export const useKanbanStore = create<KanbanState>()(
         }
       },
 
-      relinkTicketsForHandoff: async (oldSessionId: string, newSessionId: string) => {
+      relinkTicketsForHandoff: async (
+        oldSessionId: string,
+        newSessionId: string,
+        goalMode?: boolean
+      ) => {
         const linkedTickets = await kanban.ticket.getBySession(oldSessionId)
         if (!linkedTickets || linkedTickets.length === 0) return
 
+        const nextGoalMode = goalMode === true
         const relinkedById = new Map<string, KanbanTicket>()
 
         for (const ticket of linkedTickets) {
+          const nextGoalSuccessCriteria = nextGoalMode
+            ? (ticket.goal_success_criteria ?? null)
+            : null
           const alreadyRelinked =
             ticket.current_session_id === newSessionId &&
             ticket.plan_ready === false &&
-            ticket.mode === 'build'
+            ticket.mode === 'build' &&
+            ticket.goal_mode === nextGoalMode &&
+            ticket.goal_success_criteria === nextGoalSuccessCriteria
 
           if (!alreadyRelinked) {
             await kanban.ticket.update(ticket.id, {
               current_session_id: newSessionId,
               plan_ready: false,
-              mode: 'build'
+              mode: 'build',
+              goal_mode: nextGoalMode,
+              goal_success_criteria: nextGoalSuccessCriteria
             })
           }
 
@@ -779,7 +795,9 @@ export const useKanbanStore = create<KanbanState>()(
             ...ticket,
             current_session_id: newSessionId,
             plan_ready: false,
-            mode: 'build'
+            mode: 'build',
+            goal_mode: nextGoalMode,
+            goal_success_criteria: nextGoalSuccessCriteria
           })
         }
 
@@ -805,7 +823,9 @@ export const useKanbanStore = create<KanbanState>()(
                 ...ticket,
                 current_session_id: relinked.current_session_id,
                 plan_ready: relinked.plan_ready,
-                mode: relinked.mode
+                mode: relinked.mode,
+                goal_mode: relinked.goal_mode,
+                goal_success_criteria: relinked.goal_success_criteria
               }
             })
 

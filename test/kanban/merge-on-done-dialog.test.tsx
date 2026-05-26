@@ -2,7 +2,9 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { KanbanTicket, Project, Worktree } from '../../src/main/db/types'
 import { MergeOnDoneDialog } from '../../src/renderer/src/components/kanban/MergeOnDoneDialog'
+import { useGitStore } from '../../src/renderer/src/stores/useGitStore'
 import { useKanbanStore } from '../../src/renderer/src/stores/useKanbanStore'
+import { useWorktreeStatusStore } from '../../src/renderer/src/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
 
 const toastError = vi.fn()
@@ -21,6 +23,7 @@ const ticketMove = vi.fn()
 const mergeAbort = vi.fn()
 const merge = vi.fn()
 const originalArchiveWorktree = useWorktreeStore.getState().archiveWorktree
+const envelope = <T,>(value: T) => ({ success: true, value })
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -114,7 +117,7 @@ describe('MergeOnDoneDialog', () => {
       configurable: true,
       value: {
         ticket: {
-          move: ticketMove.mockResolvedValue(undefined)
+          move: ticketMove.mockResolvedValue(envelope(undefined))
         }
       }
     })
@@ -124,11 +127,11 @@ describe('MergeOnDoneDialog', () => {
       configurable: true,
       value: {
         worktree: {
-          get: vi.fn().mockResolvedValue(makeWorktree()),
-          getActiveByProject: vi.fn().mockResolvedValue([makeWorktree(), baseWorktree])
+          get: vi.fn().mockResolvedValue(envelope(makeWorktree())),
+          getActiveByProject: vi.fn().mockResolvedValue(envelope([makeWorktree(), baseWorktree]))
         },
         project: {
-          get: vi.fn().mockResolvedValue(project)
+          get: vi.fn().mockResolvedValue(envelope(project))
         }
       }
     })
@@ -137,17 +140,17 @@ describe('MergeOnDoneDialog', () => {
       writable: true,
       configurable: true,
       value: {
-        hasUncommittedChanges: vi.fn().mockResolvedValue(false),
-        branchDiffShortStat: vi.fn().mockResolvedValue({
+        hasUncommittedChanges: vi.fn().mockResolvedValue(envelope(false)),
+        branchDiffShortStat: vi.fn().mockResolvedValue(envelope({
           success: true,
           filesChanged: 2,
           insertions: 4,
           deletions: 1,
           commitsAhead: 1
-        }),
+        })),
         getDiffStat: vi.fn(),
-        getRemoteUrl: vi.fn().mockResolvedValue({ success: true, url: null, remote: null }),
-        pull: vi.fn().mockResolvedValue({ success: true }),
+        getRemoteUrl: vi.fn().mockResolvedValue(envelope({ success: true, url: null, remote: null })),
+        pull: vi.fn().mockResolvedValue(envelope({ success: true })),
         merge,
         mergeAbort
       }
@@ -161,37 +164,43 @@ describe('MergeOnDoneDialog', () => {
         sortOrder: 100
       }
     })
+    useGitStore.setState({ conflictsByWorktree: {} })
+    useWorktreeStatusStore.setState({ mergeConflictWorktreeByTicket: {} })
 
     useWorktreeStore.setState({ archiveWorktree: originalArchiveWorktree })
   })
 
   test('keeps ticket in review when merge returns conflicts', async () => {
-    merge.mockResolvedValue({
+    merge.mockResolvedValue(envelope({
       success: false,
       error: 'Merge conflicts in 1 file(s). Resolve conflicts before continuing.',
       conflicts: ['src/file.ts']
-    })
-    mergeAbort.mockResolvedValue({ success: true })
+    }))
+    mergeAbort.mockResolvedValue(envelope({ success: true }))
 
     render(<MergeOnDoneDialog />)
 
     fireEvent.click(await screen.findByRole('button', { name: /^merge$/i }))
 
     await waitFor(() => {
-      expect(mergeAbort).toHaveBeenCalledWith('/repo/main')
+      expect(toastError).toHaveBeenCalledWith('Merge conflicts in 1 file — merge manually')
     })
 
+    expect(mergeAbort).not.toHaveBeenCalled()
     expect(ticketMove).not.toHaveBeenCalled()
     expect(useKanbanStore.getState().tickets.get('project-1')?.[0]?.column).toBe('review')
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
-    expect(toastError).toHaveBeenCalledWith('Merge conflicts in 1 file — merge manually')
+    expect(useGitStore.getState().conflictsByWorktree['/repo/main']).toBe(true)
+    expect(useWorktreeStatusStore.getState().mergeConflictWorktreeByTicket['ticket-1']).toBe(
+      'base-wt'
+    )
   })
 
   test('keeps ticket in review when merge fails without conflicts', async () => {
-    merge.mockResolvedValue({
+    merge.mockResolvedValue(envelope({
       success: false,
       error: 'merge failed'
-    })
+    }))
 
     render(<MergeOnDoneDialog />)
 
@@ -208,7 +217,7 @@ describe('MergeOnDoneDialog', () => {
   })
 
   test('moves ticket to done only after a successful merge reaches the archive step', async () => {
-    merge.mockResolvedValue({ success: true })
+    merge.mockResolvedValue(envelope({ success: true }))
 
     render(<MergeOnDoneDialog />)
 
@@ -228,7 +237,7 @@ describe('MergeOnDoneDialog', () => {
   })
 
   test('moves ticket to done and closes immediately while archive continues in the background', async () => {
-    merge.mockResolvedValue({ success: true })
+    merge.mockResolvedValue(envelope({ success: true }))
     let resolveArchive!: (value: { success: boolean }) => void
     const archiveWorktree = vi.fn(
       () =>
@@ -277,14 +286,12 @@ describe('MergeOnDoneDialog', () => {
       path: '/repo/feature-two'
     })
     ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
-      Promise.resolve(id === 'feature-wt-2' ? secondWorktree : makeWorktree())
+      Promise.resolve(envelope(id === 'feature-wt-2' ? secondWorktree : makeWorktree()))
     )
-    ;(window.db.worktree.getActiveByProject as ReturnType<typeof vi.fn>).mockResolvedValue([
-      makeWorktree(),
-      secondWorktree,
-      baseWorktree
-    ])
-    merge.mockResolvedValue({ success: true })
+    ;(window.db.worktree.getActiveByProject as ReturnType<typeof vi.fn>).mockResolvedValue(
+      envelope([makeWorktree(), secondWorktree, baseWorktree])
+    )
+    merge.mockResolvedValue(envelope({ success: true }))
     const archiveWorktree = vi.fn(
       () =>
         new Promise<{ success: boolean }>(() => {

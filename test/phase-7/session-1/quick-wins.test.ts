@@ -36,14 +36,17 @@ describe('Session 1: Quick Wins', () => {
       expect(svg?.className.baseVal).toContain('overflow-hidden')
     })
 
-    test('PulseAnimation has animateTransform for traveling effect', async () => {
+    test('PulseAnimation uses a GPU-composited CSS transform animation for traveling effect', async () => {
       const { PulseAnimation } =
         await import('../../../src/renderer/src/components/worktrees/PulseAnimation')
       const { container } = render(React.createElement(PulseAnimation))
-      const animateTransform = container.querySelector('animateTransform')
-      expect(animateTransform).toBeTruthy()
-      expect(animateTransform?.getAttribute('type')).toBe('translate')
-      expect(animateTransform?.getAttribute('repeatCount')).toBe('indefinite')
+      // The traveling wave is now driven by the `.pulse-wave` CSS transform animation
+      // (see globals.css) instead of SVG SMIL <animateTransform>, so it can run on the
+      // compositor and stay smooth when the main thread is busy.
+      const wave = container.querySelector('g.pulse-wave')
+      expect(wave).toBeTruthy()
+      // SMIL animation element should no longer be present.
+      expect(container.querySelector('animateTransform')).toBeNull()
     })
   })
 

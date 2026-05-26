@@ -23,6 +23,7 @@ import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
+import type { AnthropicRateLimitInfo } from '@shared/types/usage'
 
 const db = unwrapEnvelopeApi(() => window.db)
 
@@ -254,6 +255,11 @@ export function useOpenCodeGlobalListener(): void {
                 .setModelLimit(model.modelID, contextWindow, model.providerID)
               useContextStore.getState().setModelLimit(model.modelID, contextWindow)
             }
+            return
+          }
+
+          if (event.type === 'session.rate_limit') {
+            useUsageStore.getState().setAnthropicRateLimit(event.data as AnthropicRateLimitInfo)
             return
           }
 

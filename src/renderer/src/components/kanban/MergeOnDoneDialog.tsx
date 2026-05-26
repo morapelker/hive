@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useGitStore } from '@/stores/useGitStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -23,6 +25,7 @@ interface ResolvedState {
   featureWorktreeId: string
   featureWorktreePath: string
   featureBranch: string
+  baseWorktreeId: string
   baseWorktreePath: string
   baseBranch: string
   ticketTitle: string
@@ -170,6 +173,7 @@ export function MergeOnDoneDialog() {
           featureWorktreeId: featureWorktree.id,
           featureWorktreePath: featureWorktree.path,
           featureBranch: featureWorktree.branch_name,
+          baseWorktreeId: baseWorktree.id,
           baseWorktreePath: baseWorktree.path,
           baseBranch: resolvedBaseBranch,
           ticketTitle: ticket.title,
@@ -318,7 +322,7 @@ export function MergeOnDoneDialog() {
   }, [resolved, baseCommitMessage, completeDoneMove, clearPendingDoneMove])
 
   const handleMerge = useCallback(async () => {
-    if (!resolved) return
+    if (!resolved || !pendingDoneMove) return
     setMerging(true)
     try {
       // Pull latest on base branch first (only if remote exists)
@@ -338,9 +342,13 @@ export function MergeOnDoneDialog() {
       )
 
       if (!mergeResult.success) {
-        // Conflicts or error — abort and let user handle manually
+        // Conflicts or error — keep conflicts on disk so the ticket-level fix flow can act on them.
         if (mergeResult.conflicts && mergeResult.conflicts.length > 0) {
-          unwrapEnvelope(await window.gitOps.mergeAbort(resolved.baseWorktreePath))
+          useGitStore.getState().setHasConflicts(resolved.baseWorktreePath, true)
+          useWorktreeStatusStore
+            .getState()
+            .setMergeConflictWorktreeForTicket(pendingDoneMove.ticketId, resolved.baseWorktreeId)
+          void useGitStore.getState().refreshStatuses(resolved.baseWorktreePath)
           toast.error(
             `Merge conflicts in ${mergeResult.conflicts.length} file${mergeResult.conflicts.length !== 1 ? 's' : ''} — merge manually`
           )
@@ -359,7 +367,7 @@ export function MergeOnDoneDialog() {
     } finally {
       setMerging(false)
     }
-  }, [resolved, clearPendingDoneMove])
+  }, [resolved, pendingDoneMove, clearPendingDoneMove])
 
   const handleArchive = useCallback(async () => {
     if (!resolved) return

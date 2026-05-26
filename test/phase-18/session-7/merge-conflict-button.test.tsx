@@ -66,7 +66,9 @@ describe('Session 7: Merge Conflict Header Button', () => {
       ]
 
       const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
-      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue({ success: true, files: mockFiles })
+      mockGitOps.getFileStatuses = vi
+        .fn()
+        .mockResolvedValue({ success: true, value: { success: true, files: mockFiles } })
 
       await useGitStore.getState().loadFileStatuses('/wt')
       const state = useGitStore.getState()
@@ -80,7 +82,9 @@ describe('Session 7: Merge Conflict Header Button', () => {
       ]
 
       const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
-      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue({ success: true, files: mockFiles })
+      mockGitOps.getFileStatuses = vi
+        .fn()
+        .mockResolvedValue({ success: true, value: { success: true, files: mockFiles } })
 
       await useGitStore.getState().loadFileStatuses('/wt')
       const state = useGitStore.getState()
@@ -89,7 +93,9 @@ describe('Session 7: Merge Conflict Header Button', () => {
 
     test('loadFileStatuses sets hasConflicts false for empty file list', async () => {
       const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
-      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue({ success: true, files: [] })
+      mockGitOps.getFileStatuses = vi
+        .fn()
+        .mockResolvedValue({ success: true, value: { success: true, files: [] } })
 
       await useGitStore.getState().loadFileStatuses('/wt')
       const state = useGitStore.getState()

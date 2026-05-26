@@ -256,7 +256,7 @@ export function WorktreePickerModal({
       setBranchPopoverOpen(false)
       // Refresh worktree list from git so the picker shows current state
       if (project?.path) {
-        syncWorktrees(projectId, project.path)
+        syncWorktrees(projectId, project.path, { force: true })
       }
     }
   }, [open, ticket, projectId, project?.path, syncWorktrees])
@@ -267,6 +267,8 @@ export function WorktreePickerModal({
     return branches
       .filter((b) => b.name.toLowerCase().includes(lower))
       .sort((a, b) => {
+        // Active (checked-out by a worktree) branches first
+        if (a.isCheckedOut !== b.isCheckedOut) return a.isCheckedOut ? -1 : 1
         if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1
         return a.name.localeCompare(b.name)
       })

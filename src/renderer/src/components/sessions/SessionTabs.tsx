@@ -64,6 +64,16 @@ import {
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/components/ui/alert-dialog'
+import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
@@ -75,6 +85,15 @@ import { useTipStore } from '@/stores/useTipStore'
 import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 
 const kanban = unwrapEnvelopeApi(() => window.kanban)
+const TRANSCRIPT_CACHE_KEY_PREFIX = 'hive:session-transcript:'
+
+function clearTranscriptCache(sessionId: string): void {
+  try {
+    window.sessionStorage.removeItem(`${TRANSCRIPT_CACHE_KEY_PREFIX}${sessionId}`)
+  } catch {
+    // Non-fatal cache clear failure
+  }
+}
 
 interface SessionTabProps {
   sessionId: string
@@ -94,6 +113,7 @@ interface SessionTabProps {
   worktreeId: string | null
   onCloseOthers?: () => void
   onCloseToRight?: () => void
+  onRefreshFromFile?: () => void
   hintCode?: string
 }
 
@@ -115,6 +135,7 @@ const SessionTab = memo(function SessionTab({
   worktreeId: _worktreeId,
   onCloseOthers,
   onCloseToRight,
+  onRefreshFromFile,
   hintCode
 }: SessionTabProps): React.JSX.Element {
   const [isEditing, setIsEditing] = useState(false)
@@ -130,6 +151,7 @@ const SessionTab = memo(function SessionTab({
   const sessionStatus = useWorktreeStatusStore(
     (state) => state.sessionStatuses[sessionId]?.status ?? null
   )
+  const isSessionBusy = sessionStatus === 'working' || sessionStatus === 'planning'
 
   // Focus and select input text when entering edit mode
   useEffect(() => {
@@ -271,6 +293,15 @@ const SessionTab = memo(function SessionTab({
         {onCloseOthers && <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>}
         {onCloseToRight && (
           <ContextMenuItem onSelect={onCloseToRight}>Close Others to the Right</ContextMenuItem>
+        )}
+        {agentSdk === 'codex' && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem disabled={isSessionBusy} onSelect={() => onRefreshFromFile?.()}>
+              <FileSearch className="h-4 w-4 mr-2" />
+              Refresh from file
+            </ContextMenuItem>
+          </>
         )}
       </ContextMenuContent>
     </ContextMenu>
@@ -534,6 +565,9 @@ export function SessionTabs(): React.JSX.Element | null {
   const [showImport, setShowImport] = useState(false)
   const [showJiraImport, setShowJiraImport] = useState(false)
   const [showHiveImport, setShowHiveImport] = useState(false)
+  const [refreshTarget, setRefreshTarget] = useState<{ sessionId: string; name: string } | null>(
+    null
+  )
   const [hiveImportTickets, setHiveImportTickets] = useState<
     Array<{
       id: string
@@ -913,6 +947,51 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }
 
+  const handleRefreshFromFile = async (sessionId: string) => {
+    const targetSession = allSessions.find((session) => session.id === sessionId)
+    const opencodeSessionId = targetSession?.opencode_session_id
+    const worktreePath = (() => {
+      if (targetSession?.worktree_id) {
+        for (const worktrees of useWorktreeStore.getState().worktreesByProject.values()) {
+          const worktree = worktrees.find((item) => item.id === targetSession.worktree_id)
+          if (worktree?.path) return worktree.path
+        }
+      }
+      return selectedWorktree?.path ?? null
+    })()
+
+    setRefreshTarget(null)
+
+    if (!worktreePath || !opencodeSessionId) {
+      window.dispatchEvent(
+        new CustomEvent('hive:refresh-codex-from-file', { detail: { sessionId } })
+      )
+      return
+    }
+
+    try {
+      const result = unwrapEnvelopeApi(() => window.opencodeOps).refreshFromThread(
+        worktreePath,
+        opencodeSessionId
+      )
+      const refreshed = await result
+      if (!refreshed.success) {
+        toast.error(refreshed.error || 'Refresh from file failed')
+        return
+      }
+
+      clearTranscriptCache(sessionId)
+      window.dispatchEvent(
+        new CustomEvent('hive:refresh-codex-from-file', {
+          detail: { sessionId, refreshed: true, count: refreshed.count }
+        })
+      )
+      toast.success(`Refreshed transcript from file (${refreshed.count ?? 0} messages)`)
+    } catch {
+      toast.error('Refresh from file failed')
+    }
+  }
+
   // Handle clicking a session tab - deactivate file tab and clear unread status
   const handleSessionTabClick = (sessionId: string) => {
     const isAlreadyPresentedSession =
@@ -1170,6 +1249,9 @@ export function SessionTabs(): React.JSX.Element | null {
                     isConnectionMode
                       ? closeConnectionSessionsToRight(resolvedScopeId, session.id)
                       : closeSessionsToRight(resolvedScopeId, session.id)
+            }
+            onRefreshFromFile={() =>
+              setRefreshTarget({ sessionId: session.id, name: session.name || 'Untitled' })
             }
             hintCode={sessionHints.sessionHintMap.get(session.id)}
           />
@@ -1609,6 +1691,32 @@ export function SessionTabs(): React.JSX.Element | null {
           />
         </>
       )}
+      <AlertDialog
+        open={refreshTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setRefreshTarget(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Refresh from file?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will rebuild the visible Codex transcript from the thread file and replace the
+              stored transcript for {refreshTarget?.name ?? 'this session'}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setRefreshTarget(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (refreshTarget) handleRefreshFromFile(refreshTarget.sessionId)
+              }}
+            >
+              Refresh
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

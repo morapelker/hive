@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { isMac } from '@/lib/platform'
 import {
   PanelRightClose,
@@ -45,7 +45,6 @@ import { REVIEW_PROMPT_LABELS, type ReviewPromptType } from '@/constants/reviewP
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
-import { useSessionStore } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useVimModeStore } from '@/stores/useVimModeStore'
@@ -57,32 +56,8 @@ import { QuickActions } from './QuickActions'
 import { HeaderTelegramToggle } from './HeaderTelegramToggle'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
+import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import hiveLogo from '@/assets/icon.png'
-
-type ConflictFixFlow =
-  | {
-      phase: 'starting'
-      worktreePath: string
-    }
-  | {
-      phase: 'running'
-      worktreePath: string
-      sessionId: string
-      seenBusy: boolean
-    }
-  | {
-      phase: 'refreshing'
-      worktreePath: string
-    }
-
-function isConflictFixActiveStatus(status: string | null): boolean {
-  return (
-    status === 'working' ||
-    status === 'planning' ||
-    status === 'answering' ||
-    status === 'permission'
-  )
-}
 
 export function Header(): React.JSX.Element {
   const { rightSidebarCollapsed, toggleRightSidebar } = useLayoutStore()
@@ -99,11 +74,6 @@ export function Header(): React.JSX.Element {
     }
     return null
   }, [selectedWorktreeId, worktreesByProject])
-  const createSession = useSessionStore((s) => s.createSession)
-  const updateSessionName = useSessionStore((s) => s.updateSessionName)
-  const setPendingMessage = useSessionStore((s) => s.setPendingMessage)
-  const setActiveSession = useSessionStore((s) => s.setActiveSession)
-
   // Lifecycle actions hook — PR/Review/Merge/Archive logic
   const lifecycle = useLifecycleActions(selectedWorktreeId)
   const { pinAndActivate, lifecycleLoading } = usePinAndActivateSession()
@@ -127,7 +97,11 @@ export function Header(): React.JSX.Element {
   const hatchFirstPetSeen = useTipStore((s) => s.isTipSeen('hatch-first-pet'))
   const nonDefaultProviderChosen = useTipStore((s) => s.nonDefaultProviderChosen)
   const petEnabled = useSettingsStore((s) => s.pet.enabled)
-  const [conflictFixFlow, setConflictFixFlow] = useState<ConflictFixFlow | null>(null)
+  const {
+    isRunning: isFixConflictsRunning,
+    isFinalizing: isFixConflictsFinalizing,
+    startFixFlow
+  } = useConflictFixFlow(selectedWorktreeId)
 
   const showHatchTip = !hatchFirstPetSeen && !petEnabled
   const settingsTipId = showHatchTip ? 'hatch-first-pet' : 'settings-default-provider'
@@ -177,63 +151,6 @@ export function Header(): React.JSX.Element {
     prTargetBranch, reviewTargetBranch, isCleanTree
   } = lifecycle
 
-  const conflictFixSessionStatus = useWorktreeStatusStore((state) =>
-    conflictFixFlow?.phase === 'running'
-      ? (state.sessionStatuses[conflictFixFlow.sessionId]?.status ?? null)
-      : null
-  )
-
-  // Clear conflict fix flow as soon as conflicts are resolved
-  useEffect(() => {
-    if (!hasConflicts && conflictFixFlow) {
-      setConflictFixFlow(null)
-    }
-  }, [hasConflicts, conflictFixFlow])
-
-  useEffect(() => {
-    if (!conflictFixFlow || conflictFixFlow.phase !== 'running') return
-
-    const isBusy = isConflictFixActiveStatus(conflictFixSessionStatus)
-
-    if (isBusy && !conflictFixFlow.seenBusy) {
-      setConflictFixFlow((prev) =>
-        prev && prev.phase === 'running' ? { ...prev, seenBusy: true } : prev
-      )
-      return
-    }
-
-    const shouldFinalize =
-      (conflictFixFlow.seenBusy && !isBusy) ||
-      (!conflictFixFlow.seenBusy && conflictFixSessionStatus === 'completed')
-
-    if (!shouldFinalize) return
-
-    let cancelled = false
-    const finishConflictRun = async (): Promise<void> => {
-      setConflictFixFlow((prev) =>
-        prev && prev.phase === 'running'
-          ? { phase: 'refreshing', worktreePath: prev.worktreePath }
-          : prev
-      )
-
-      try {
-        await useGitStore.getState().refreshStatuses(conflictFixFlow.worktreePath)
-      } finally {
-        if (!cancelled) {
-          setConflictFixFlow((prev) =>
-            prev?.worktreePath === conflictFixFlow.worktreePath ? null : prev
-          )
-        }
-      }
-    }
-
-    void finishConflictRun()
-
-    return () => {
-      cancelled = true
-    }
-  }, [conflictFixFlow, conflictFixSessionStatus])
-
   // PR picker popover state (UI-specific to Header)
   const [prPickerOpen, setPrPickerOpen] = useState(false)
   const [prList, setPrList] = useState<
@@ -268,39 +185,7 @@ export function Header(): React.JSX.Element {
     setPrPickerOpen(false)
   }
 
-  const handleFixConflicts = useCallback(async (modeOverride?: 'build' | 'plan') => {
-    if (!selectedWorktreeId || !selectedProjectId || !selectedWorktree?.path) return
-
-    const resolvedMode = modeOverride ?? (mergeConflictMode === 'always-ask' ? 'build' : mergeConflictMode)
-
-    setConflictFixFlow({
-      phase: 'starting',
-      worktreePath: selectedWorktree.path
-    })
-
-    const { success, session } = await createSession(selectedWorktreeId, selectedProjectId, undefined, resolvedMode)
-    if (!success || !session) {
-      setConflictFixFlow(null)
-      return
-    }
-
-    const branchName = selectedWorktree?.branch_name || 'unknown'
-    await updateSessionName(session.id, `Merge Conflicts — ${branchName}`)
-    setPendingMessage(session.id, 'Fix merge conflicts')
-    setActiveSession(session.id)
-
-    setConflictFixFlow({
-      phase: 'running',
-      worktreePath: selectedWorktree.path,
-      sessionId: session.id,
-      seenBusy: false
-    })
-  }, [mergeConflictMode, selectedWorktreeId, selectedProjectId, selectedWorktree, createSession, updateSessionName, setPendingMessage, setActiveSession])
-
-  const isFixConflictsLoading =
-    !!selectedWorktree?.path &&
-    !!conflictFixFlow &&
-    conflictFixFlow.worktreePath === selectedWorktree.path
+  const isFixConflictsLoading = isFixConflictsRunning || isFixConflictsFinalizing
 
   const showFixConflictsButton = hasConflicts || isFixConflictsLoading
 
@@ -387,11 +272,11 @@ export function Header(): React.JSX.Element {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => handleFixConflicts('build')}>
+                <DropdownMenuItem onClick={() => startFixFlow('build')}>
                   <Hammer className="h-4 w-4 mr-2" />
                   Fix in Build mode
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleFixConflicts('plan')}>
+                <DropdownMenuItem onClick={() => startFixFlow('plan')}>
                   <Map className="h-4 w-4 mr-2" />
                   Fix in Plan mode
                 </DropdownMenuItem>
@@ -402,7 +287,7 @@ export function Header(): React.JSX.Element {
               size="sm"
               variant="destructive"
               className="h-7 text-xs font-semibold"
-              onClick={() => handleFixConflicts()}
+              onClick={() => startFixFlow()}
               disabled={isFixConflictsLoading}
               data-testid="fix-conflicts-button"
             >

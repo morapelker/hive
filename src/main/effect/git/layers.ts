@@ -59,6 +59,8 @@ const parseNumstat = (line: string): GitDiffStatFile | null => {
 const make = Effect.gen(function* () {
   const gitCache = yield* Ref.make<Map<string, SimpleGit>>(new Map())
   const semaphores = yield* Ref.make<Map<string, Effect.Semaphore>>(new Map())
+  const GLOBAL_GIT_CONCURRENCY = 6
+  const globalGitSem = yield* Effect.makeSemaphore(GLOBAL_GIT_CONCURRENCY)
 
   const getGit = (repoPath: string) =>
     Effect.gen(function* () {
@@ -86,11 +88,13 @@ const make = Effect.gen(function* () {
     operation: GitOperation | undefined,
     body: (git: SimpleGit) => Promise<A>
   ): Effect.Effect<A, GitError> =>
-    Effect.flatMap(getGit(repoPath), (git) =>
-      Effect.tryPromise({
-        try: () => body(git),
-        catch: (err) => classifyGitError(err, { worktreePath: repoPath, command, operation })
-      })
+    globalGitSem.withPermits(1)(
+      Effect.flatMap(getGit(repoPath), (git) =>
+        Effect.tryPromise({
+          try: () => body(git),
+          catch: (err) => classifyGitError(err, { worktreePath: repoPath, command, operation })
+        })
+      )
     )
 
   const writeOp = <A>(
@@ -110,16 +114,18 @@ const make = Effect.gen(function* () {
     map: (stdout: string) => A,
     options?: { maxBuffer?: number }
   ): Effect.Effect<A, GitError> =>
-    Effect.tryPromise({
-      try: async () => {
-        const { stdout } = await execFileAsync('git', [...args], {
-          cwd: repoPath,
-          maxBuffer: options?.maxBuffer
-        })
-        return map(stdout)
-      },
-      catch: (err) => classifyGitError(err, { worktreePath: repoPath, command })
-    })
+    globalGitSem.withPermits(1)(
+      Effect.tryPromise({
+        try: async () => {
+          const { stdout } = await execFileAsync('git', [...args], {
+            cwd: repoPath,
+            maxBuffer: options?.maxBuffer
+          })
+          return map(stdout)
+        },
+        catch: (err) => classifyGitError(err, { worktreePath: repoPath, command })
+      })
+    )
 
   const getAllBranches = (repoPath: string) =>
     tryGit(repoPath, 'git branch -a', undefined, async (git) => {
@@ -339,7 +345,7 @@ const make = Effect.gen(function* () {
         try {
           await simpleGit(worktreePath).raw(['stash', 'apply', stashRef])
         } catch {
-          // Best-effort carryover of uncommitted source changes.
+          // Best-effort carryover; leave the duplicated worktree even if stash application fails.
         }
       }
       const untrackedRaw = await sourceGit.raw(['ls-files', '--others', '--exclude-standard'])
@@ -419,7 +425,7 @@ const make = Effect.gen(function* () {
                 d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
               )
             } catch {
-              // Directory may not exist yet; branch/worktree names still provide collision coverage.
+              // Missing or unreadable worktree directory only reduces collision hints.
             }
             const breedName = selectUniqueBreedName(
               new Set([...existingBranches, ...existingWorktreeBranches, ...existingDirs]),
@@ -531,7 +537,7 @@ const make = Effect.gen(function* () {
                   d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
                 )
               } catch {
-                // Directory may not exist yet; branch/worktree names still provide collision coverage.
+                // Missing or unreadable worktree directory only reduces collision hints.
               }
               const existingNames = new Set([...existingBranches, ...existingWorktreeBranches, ...existingDirs])
               let worktreeName = options?.nameHint || selectUniqueBreedName(existingNames, breedType)
@@ -928,7 +934,7 @@ const make = Effect.gen(function* () {
             try {
               rmSync(tempDir, { recursive: true, force: true })
             } catch {
-              // Temporary directory cleanup is best-effort.
+              // Temporary cleanup failure should not mask the pull request result.
             }
           }
         }).pipe(
