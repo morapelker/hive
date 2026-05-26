@@ -16,6 +16,9 @@ export interface ParsedClaudeHook {
   hook_event_name?: string
   tool_name?: string
   permission_mode?: string
+  tool_input?: {
+    plan?: unknown
+  }
 }
 
 export interface ClaudeCliStatusPayload {
@@ -25,6 +28,8 @@ export interface ClaudeCliStatusPayload {
     reason?: string
     hookEventName?: string
     hookPath?: string
+    toolName?: string
+    plan?: string
   }
 }
 
@@ -107,10 +112,36 @@ export function mapHookEventToStatus(hook: ParsedClaudeHook): ClaudeCliSessionSt
     case 'PostToolUseFailure':
       return 'working'
     case 'PermissionRequest':
+      if (hook.tool_name === 'ExitPlanMode') return 'plan_ready'
       return 'permission'
     default:
       return null
   }
+}
+
+function extractPlanText(hook: ParsedClaudeHook): string | undefined {
+  return typeof hook.tool_input?.plan === 'string' ? hook.tool_input.plan : undefined
+}
+
+function buildStatusMetadata(
+  hook: ParsedClaudeHook,
+  hookPath: string
+): NonNullable<ClaudeCliStatusPayload['metadata']> {
+  const metadata: NonNullable<ClaudeCliStatusPayload['metadata']> = {
+    hookEventName: hook.hook_event_name,
+    hookPath
+  }
+
+  if (hook.tool_name) {
+    metadata.toolName = hook.tool_name
+  }
+
+  const plan = extractPlanText(hook)
+  if (plan !== undefined) {
+    metadata.plan = plan
+  }
+
+  return metadata
 }
 
 export function publishClaudeCliStatus(
@@ -190,10 +221,7 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
     publishClaudeCliStatus(rendererWindow, {
       sessionId: route.sessionId,
       status,
-      metadata: {
-        hookEventName: body.hook_event_name,
-        hookPath: route.hookPath
-      }
+      metadata: buildStatusMetadata(body, route.hookPath)
     })
   } catch (error) {
     log.warn('Failed to parse Claude hook payload', {

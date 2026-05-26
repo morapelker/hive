@@ -353,6 +353,8 @@ declare global {
       reason?: string
       hookEventName?: string
       hookPath?: string
+      toolName?: string
+      plan?: string
     }
   }
 

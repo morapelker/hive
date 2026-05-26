@@ -2019,7 +2019,13 @@ const terminalOps = {
         | 'unread'
         | 'completed'
         | 'plan_ready'
-      metadata?: { reason?: string; hookEventName?: string; hookPath?: string }
+      metadata?: {
+        reason?: string
+        hookEventName?: string
+        hookPath?: string
+        toolName?: string
+        plan?: string
+      }
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2035,7 +2041,13 @@ const terminalOps = {
           | 'unread'
           | 'completed'
           | 'plan_ready'
-        metadata?: { reason?: string; hookEventName?: string; hookPath?: string }
+        metadata?: {
+          reason?: string
+          hookEventName?: string
+          hookPath?: string
+          toolName?: string
+          plan?: string
+        }
       }
     ): void => {
       callback(payload)

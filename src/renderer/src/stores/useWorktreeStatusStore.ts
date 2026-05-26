@@ -26,6 +26,8 @@ export interface SessionStatusEntry {
   reason?: string
   hookEventName?: string
   hookPath?: string
+  toolName?: string
+  plan?: string
 }
 
 interface WorktreeStatusState {
@@ -49,6 +51,8 @@ interface WorktreeStatusState {
       reason?: string
       hookEventName?: string
       hookPath?: string
+      toolName?: string
+      plan?: string
     }
   ) => void
   clearSessionStatus: (sessionId: string) => void
@@ -101,6 +105,8 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       reason?: string
       hookEventName?: string
       hookPath?: string
+      toolName?: string
+      plan?: string
     }
   ) => {
     set((state) => {
