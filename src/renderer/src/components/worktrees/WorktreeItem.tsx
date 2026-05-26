@@ -21,7 +21,8 @@ import {
   Pin,
   PinOff,
   Unlink,
-  FileText
+  FileText,
+  Zap
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -68,6 +69,8 @@ import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 import { AddAttachmentDialog } from './AddAttachmentDialog'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { replaceTemplateVariables } from '@/lib/custom-commands'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 interface Worktree {
   id: string
@@ -110,6 +113,7 @@ export function WorktreeItem({
   const { selectedWorktreeId, selectWorktree, archiveWorktree, unbranchWorktree } =
     useWorktreeStore()
   const selectProject = useProjectStore((s) => s.selectProject)
+  const project = useProjectStore((s) => s.projects.find(p => p.id === worktree.project_id))
 
   const archivingWorktreeIds = useWorktreeStore((s) => s.archivingWorktreeIds)
   const isArchiving = archivingWorktreeIds.has(worktree.id)
@@ -141,6 +145,19 @@ export function WorktreeItem({
   const inputFocused = useHintStore((s) => s.inputFocused)
   const vimMode = useVimModeStore((s) => s.mode)
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+  const customProjectCommands = useSettingsStore((s) => s.customProjectCommands)
+
+  // Listen for custom commands file changes
+  useEffect(() => {
+    const handleFileChange = async (): Promise<void> => {
+      // Reload settings which will trigger re-render
+      await useSettingsStore.getState().loadFromDatabase()
+    }
+
+    const cleanup = window.settingsOps.onCustomCommandsFileChanged(handleFileChange)
+
+    return cleanup
+  }, [])
 
   const handleTogglePin = useCallback(async (): Promise<void> => {
     if (isPinned) {
@@ -153,6 +170,38 @@ export function WorktreeItem({
   const handleEditContext = useCallback(() => {
     useFileViewerStore.getState().openContextEditor(worktree.id)
   }, [worktree.id])
+
+  const handleCustomCommand = useCallback(
+    async (command: CustomProjectCommand): Promise<void> => {
+      if (!project) {
+        toast.error('Project not found')
+        return
+      }
+
+      try {
+        // Replace template variables using the utility function
+        const renderedPrompt = replaceTemplateVariables(command.prompt, project)
+
+        // Dispatch custom event with command execution details
+        const event = new CustomEvent('hive:execute-custom-command', {
+          detail: {
+            projectId: project.id,
+            commandId: command.id,
+            commandName: command.name,
+            renderedPrompt
+          }
+        })
+        window.dispatchEvent(event)
+
+        // Show info toast
+        toast.info(`Executing: ${command.name}`)
+      } catch (error) {
+        // Show error toast if anything goes wrong
+        toast.error('Failed to execute command')
+      }
+    },
+    [project]
+  )
 
   const isInConnectionMode = connectionModeActive
   const isSource = connectionModeSourceId === worktree.id
@@ -850,10 +899,26 @@ export function WorktreeItem({
           <Link className="h-4 w-4 mr-2" />
           Connect to...
         </ContextMenuItem>
+        {/* Custom Commands */}
+        {customProjectCommands && customProjectCommands.length > 0 && (
+          <>
+            <ContextMenuSeparator />
+            {customProjectCommands.map((cmd) => (
+              <ContextMenuItem
+                key={cmd.id}
+                onClick={() => handleCustomCommand(cmd)}
+              >
+                <Zap className="h-4 w-4 mr-2" />
+                {cmd.name}
+              </ContextMenuItem>
+            ))}
+          </>
+        )}
         {!worktree.is_default && (
           <>
             {hasNamedBranch ? (
               <>
+                <ContextMenuSeparator />
                 <ContextMenuItem onClick={startBranchRename}>
                   <Pencil className="h-4 w-4 mr-2" />
                   Rename Branch

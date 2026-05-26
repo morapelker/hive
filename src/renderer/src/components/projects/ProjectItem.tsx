@@ -11,12 +11,10 @@ import {
   RefreshCw,
   Settings,
   GitBranch,
-  FolderHeart,
-  Zap
+  FolderHeart
 } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
-import { replaceTemplateVariables } from '@/lib/custom-commands'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -54,7 +52,6 @@ import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
 import { gitToast } from '@/lib/toast'
-import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 interface Project {
   id: string
@@ -130,7 +127,6 @@ export function ProjectItem({
   const vimMode = useVimModeStore((s) => s.mode)
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const autoPullBeforeWorktree = useSettingsStore((s) => s.autoPullBeforeWorktree)
-  const customProjectCommands = useSettingsStore((s) => s.customProjectCommands)
   const projectHint = useHintStore((s) => s.hintMap.get('project:' + project.id))
 
   const [editName, setEditName] = useState(project.name)
@@ -286,17 +282,6 @@ export function ProjectItem({
     return () => window.removeEventListener('hive:hint-plus', handler)
   }, [project.id, doCreateWorktree])
 
-  // Listen for custom commands file changes
-  useEffect(() => {
-    const handleFileChange = async (): Promise<void> => {
-      // Reload settings which will trigger re-render
-      await useSettingsStore.getState().loadFromDatabase()
-    }
-
-    const cleanup = window.settingsOps.onCustomCommandsFileChanged(handleFileChange)
-
-    return cleanup
-  }, [])
 
   const handleBranchSelect = useCallback(
     async (branchName: string, prNumber?: number): Promise<void> => {
@@ -353,32 +338,6 @@ export function ProjectItem({
     [project, autoPullBeforeWorktree]
   )
 
-  const handleCustomCommand = useCallback(
-    async (command: CustomProjectCommand): Promise<void> => {
-      try {
-        // Replace template variables using the utility function
-        const renderedPrompt = replaceTemplateVariables(command.prompt, project)
-
-        // Dispatch custom event with command execution details
-        const event = new CustomEvent('hive:execute-custom-command', {
-          detail: {
-            projectId: project.id,
-            commandId: command.id,
-            commandName: command.name,
-            renderedPrompt
-          }
-        })
-        window.dispatchEvent(event)
-
-        // Show info toast
-        toast.info(`Executing: ${command.name}`)
-      } catch (error) {
-        // Show error toast if anything goes wrong
-        toast.error('Failed to execute command')
-      }
-    },
-    [project]
-  )
 
   return (
     <div>
@@ -559,21 +518,6 @@ export function ProjectItem({
                     })}
                   </ContextMenuSubContent>
                 </ContextMenuSub>
-              </>
-            )}
-            {/* Custom Commands */}
-            {customProjectCommands && customProjectCommands.length > 0 && (
-              <>
-                <ContextMenuSeparator />
-                {customProjectCommands.map((cmd) => (
-                  <ContextMenuItem
-                    key={cmd.id}
-                    onClick={() => handleCustomCommand(cmd)}
-                  >
-                    <Zap className="h-4 w-4 mr-2" />
-                    {cmd.name}
-                  </ContextMenuItem>
-                ))}
               </>
             )}
             <ContextMenuSeparator />

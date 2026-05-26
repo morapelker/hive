@@ -699,14 +699,20 @@ export function useCommands() {
       // Set the active session
       setActiveSession(targetSessionId)
 
-      // Dispatch event to inject prompt into the session
-      const sendEvent = new CustomEvent('hive:send-prompt-to-session', {
-        detail: {
-          sessionId: targetSessionId,
-          prompt: renderedPrompt
-        }
+      // Wait for SessionView to mount and register its event listener.
+      // Use requestAnimationFrame twice to ensure React has completed all renders
+      // and effects have been registered. This is more reliable than setTimeout.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const sendEvent = new CustomEvent('hive:send-prompt-to-session', {
+            detail: {
+              sessionId: targetSessionId,
+              prompt: renderedPrompt
+            }
+          })
+          window.dispatchEvent(sendEvent)
+        })
       })
-      window.dispatchEvent(sendEvent)
     }
 
     window.addEventListener('hive:execute-custom-command', handler)
