@@ -338,7 +338,9 @@ const make = Effect.gen(function* () {
       if (stashRef) {
         try {
           await simpleGit(worktreePath).raw(['stash', 'apply', stashRef])
-        } catch {}
+        } catch {
+          // Best-effort carryover of uncommitted source changes.
+        }
       }
       const untrackedRaw = await sourceGit.raw(['ls-files', '--others', '--exclude-standard'])
       for (const file of untrackedRaw.trim().split('\n').filter(Boolean)) {
@@ -416,7 +418,9 @@ const make = Effect.gen(function* () {
               existingDirs = readdirSync(projectWorktreesDir).map((d) =>
                 d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
               )
-            } catch {}
+            } catch {
+              // Directory may not exist yet; branch/worktree names still provide collision coverage.
+            }
             const breedName = selectUniqueBreedName(
               new Set([...existingBranches, ...existingWorktreeBranches, ...existingDirs]),
               breedType
@@ -526,7 +530,9 @@ const make = Effect.gen(function* () {
                 existingDirs = readdirSync(projectWorktreesDir).map((d) =>
                   d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
                 )
-              } catch {}
+              } catch {
+                // Directory may not exist yet; branch/worktree names still provide collision coverage.
+              }
               const existingNames = new Set([...existingBranches, ...existingWorktreeBranches, ...existingDirs])
               let worktreeName = options?.nameHint || selectUniqueBreedName(existingNames, breedType)
               if (options?.nameHint && existingNames.has(worktreeName)) {
@@ -921,7 +927,9 @@ const make = Effect.gen(function* () {
           } finally {
             try {
               rmSync(tempDir, { recursive: true, force: true })
-            } catch {}
+            } catch {
+              // Temporary directory cleanup is best-effort.
+            }
           }
         }).pipe(
           Effect.mapError((error) =>

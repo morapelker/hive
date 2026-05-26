@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useLayoutEffect } from 'react'
+import { useState, useCallback, useRef, useLayoutEffect, useEffect } from 'react'
 import { MessageCircleQuestion, Check, X, ChevronRight, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,7 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
   const [sending, setSending] = useState(false)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const autoAdvanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const isMultiQuestion = request.questions.length > 1
   const currentQuestion = request.questions[currentTab]
@@ -33,6 +34,15 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
       textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
     }
   }, [customInputs, currentTab])
+
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimeoutRef.current !== null) {
+        clearTimeout(autoAdvanceTimeoutRef.current)
+        autoAdvanceTimeoutRef.current = null
+      }
+    }
+  }, [])
 
   const handleSubmit = useCallback(
     (finalAnswers?: QuestionAnswer[]) => {
@@ -71,7 +81,11 @@ export function QuestionPrompt({ request, onReply, onReject }: QuestionPromptPro
 
       // Multi-question: auto-advance to next tab
       if (isMultiQuestion && !isLastTab) {
-        setTimeout(() => {
+        if (autoAdvanceTimeoutRef.current !== null) {
+          clearTimeout(autoAdvanceTimeoutRef.current)
+        }
+        autoAdvanceTimeoutRef.current = setTimeout(() => {
+          autoAdvanceTimeoutRef.current = null
           setCurrentTab((t) => t + 1)
           setEditingCustom(false)
         }, 150)

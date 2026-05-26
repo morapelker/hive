@@ -14,6 +14,7 @@ import { FileSearchDialog } from '@/components/file-search'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useVimNavigation } from '@/hooks/useVimNavigation'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
+import { useClaudeCliStatusListener } from '@/hooks/useClaudeCliStatusListener'
 import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
 import { useWindowFocusRefresh } from '@/hooks/useWindowFocusRefresh'
 import { useWorktreeWatcher } from '@/hooks/useWorktreeWatcher'
@@ -126,6 +127,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useVimNavigation()
   // Global listener for background session events (AI finishes while viewing another project)
   useOpenCodeGlobalListener()
+  useClaudeCliStatusListener()
   // Navigate to session when native notification is clicked
   useNotificationNavigation()
   // Refresh git statuses when window regains focus

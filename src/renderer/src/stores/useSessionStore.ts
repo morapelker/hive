@@ -2310,3 +2310,13 @@ export const useSessionStore = create<SessionState>()(
     }
   )
 )
+
+declare global {
+  interface Window {
+    __hive_useSessionStore__?: typeof useSessionStore
+  }
+}
+
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  window.__hive_useSessionStore__ = useSessionStore
+}

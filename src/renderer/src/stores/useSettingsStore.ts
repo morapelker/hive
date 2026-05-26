@@ -709,6 +709,7 @@ export const useSettingsStore = create<SettingsState>()(
 // Load from database on startup, then detect available agent SDKs
 if (typeof window !== 'undefined') {
   setTimeout(() => {
+    if (typeof window === 'undefined') return
     useSettingsStore
       .getState()
       .loadFromDatabase()

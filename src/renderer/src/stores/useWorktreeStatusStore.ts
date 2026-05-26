@@ -23,6 +23,9 @@ export interface SessionStatusEntry {
   word?: string
   durationMs?: number
   tokenDelta?: number
+  reason?: string
+  hookEventName?: string
+  hookPath?: string
 }
 
 interface WorktreeStatusState {
@@ -39,7 +42,14 @@ interface WorktreeStatusState {
   setSessionStatus: (
     sessionId: string,
     status: SessionStatusType | null,
-    metadata?: { word?: string; durationMs?: number; tokenDelta?: number }
+    metadata?: {
+      word?: string
+      durationMs?: number
+      tokenDelta?: number
+      reason?: string
+      hookEventName?: string
+      hookPath?: string
+    }
   ) => void
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
@@ -84,7 +94,14 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
   setSessionStatus: (
     sessionId: string,
     status: SessionStatusType | null,
-    metadata?: { word?: string; durationMs?: number; tokenDelta?: number }
+    metadata?: {
+      word?: string
+      durationMs?: number
+      tokenDelta?: number
+      reason?: string
+      hookEventName?: string
+      hookPath?: string
+    }
   ) => {
     set((state) => {
       const next: Partial<WorktreeStatusState> = {
@@ -344,3 +361,13 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     return worktreeId in get().reviewSessionByWorktree
   }
 }))
+
+declare global {
+  interface Window {
+    __hive_useWorktreeStatusStore__?: typeof useWorktreeStatusStore
+  }
+}
+
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  window.__hive_useWorktreeStatusStore__ = useWorktreeStatusStore
+}

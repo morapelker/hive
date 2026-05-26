@@ -9,7 +9,15 @@ import { defineHandler } from './_shared/define-handler'
 import { getDatabase } from '../db'
 import { resolveClaudeBinaryPath } from '../services/claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from '../services/claude-cli-spawner'
-import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from '../services/claude-session-watcher'
+import {
+  watchForClaudeSessionId,
+  type ClaudeSessionWatchHandle
+} from '../services/claude-session-watcher'
+import {
+  buildClaudeCliHookSettings,
+  getClaudeHookServer,
+  publishClaudeCliStatus
+} from '../services/claude-hook-server'
 
 const log = createLogger({ component: 'TerminalHandlers' })
 
@@ -60,6 +68,7 @@ const listenerCleanups = new Map<string, { removeData: () => void; removeExit: (
 const dataBuffers = new Map<string, string>()
 const flushScheduled = new Set<string>()
 const claudeWatchers = new Map<string, ClaudeSessionWatchHandle>()
+const claudeCliSessions = new Set<string>()
 
 function attachNodePtyListeners(mainWindow: BrowserWindow, terminalId: string): void {
   // Clean up any stale listeners for this terminalId (shouldn't happen, but defensive)
@@ -98,6 +107,14 @@ function attachNodePtyListeners(mainWindow: BrowserWindow, terminalId: string): 
     flushScheduled.delete(terminalId)
     claudeWatchers.get(terminalId)?.close()
     claudeWatchers.delete(terminalId)
+    if (claudeCliSessions.has(terminalId)) {
+      publishClaudeCliStatus(mainWindow, {
+        sessionId: terminalId,
+        status: 'completed',
+        metadata: { reason: 'pty_exit' }
+      })
+      claudeCliSessions.delete(terminalId)
+    }
   })
 
   listenerCleanups.set(terminalId, { removeData, removeExit })
@@ -154,7 +171,8 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
     ]),
     ([sessionId, opts]) =>
       asyncEffect(async () => {
-        log.info('IPC: terminal:createClaudeCli', { sessionId, hasPrompt: !!opts?.pendingPrompt })
+        const pendingPrompt = opts?.pendingPrompt ?? null
+        log.info('IPC: terminal:createClaudeCli', { sessionId, hasPrompt: !!pendingPrompt })
         try {
           const db = getDatabase()
           const session = db.getSession(sessionId)
@@ -181,11 +199,14 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
           }
 
           const alreadyExists = ptyService.has(sessionId)
+          const { port } = await getClaudeHookServer(mainWindow)
+          const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)
           const spawn = buildClaudeCliPtySpawn({
             session,
             worktreePath,
-            pendingPrompt: opts?.pendingPrompt ?? null,
+            pendingPrompt,
             claudeBinary,
+            hookSettingsJson,
             db
           })
 
@@ -193,7 +214,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
             sessionId,
             command: spawn.command,
             args: spawn.args.map((arg, index) =>
-              index === spawn.args.length - 1 && opts?.pendingPrompt ? '<prompt>' : arg
+              index === spawn.args.length - 1 && pendingPrompt ? '<prompt>' : arg
             )
           })
 
@@ -227,6 +248,14 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
             args: spawn.args,
             env: spawn.env
           })
+          claudeCliSessions.add(sessionId)
+          if (!pendingPrompt) {
+            publishClaudeCliStatus(mainWindow, {
+              sessionId,
+              status: 'completed',
+              metadata: { reason: 'pty_start' }
+            })
+          }
 
           if (!alreadyExists) {
             attachNodePtyListeners(mainWindow, sessionId)
@@ -275,6 +304,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
       flushScheduled.delete(terminalId)
       claudeWatchers.get(terminalId)?.close()
       claudeWatchers.delete(terminalId)
+      claudeCliSessions.delete(terminalId)
       ptyService.destroy(terminalId)
     })
   )
@@ -425,6 +455,7 @@ export function cleanupTerminals(): void {
   // Discard all pending buffered data
   dataBuffers.clear()
   flushScheduled.clear()
+  claudeCliSessions.clear()
   ptyService.destroyAll()
   ghosttyService.shutdown()
 }

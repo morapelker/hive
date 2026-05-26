@@ -333,7 +333,7 @@ describe('handoff model picker', () => {
     })
   })
 
-  test('controlled model selector hides provider filter when only one provider is available', async () => {
+  test('controlled model selector keeps provider filter when Claude legacy and CLI are available', async () => {
     useSettingsStore.setState({
       availableAgentSdks: {
         opencode: false,
@@ -348,7 +348,7 @@ describe('handoff model picker', () => {
       expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
     })
 
-    expect(screen.queryByTestId('model-provider-filter')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-provider-filter')).toBeInTheDocument()
   })
 
   test('button label rerenders when lastHandoffOverride changes', async () => {
@@ -358,7 +358,7 @@ describe('handoff model picker', () => {
     render(<HandoffSplitButton onHandoff={vi.fn()} testIdPrefix="plan-ready" />)
 
     const handoffButton = await screen.findByTestId('plan-ready-handoff-fab')
-    expect(handoffButton).toHaveTextContent('Claude Code /')
+    expect(handoffButton).toHaveTextContent('Claude Code (legacy SDK) /')
     expect(handoffButton).toHaveTextContent('Sonnet 4.6')
 
     act(() => {
@@ -377,7 +377,7 @@ describe('handoff model picker', () => {
     })
   })
 
-  test('single-sdk rendering hides the chevron control', async () => {
+  test('Claude-only rendering keeps the chevron for legacy and CLI choices', async () => {
     cacheHandoffModelCatalog('claude-code', claudeProviders)
     useSettingsStore.setState({
       availableAgentSdks: {
@@ -389,9 +389,7 @@ describe('handoff model picker', () => {
 
     render(<HandoffSplitButton onHandoff={vi.fn()} testIdPrefix="plan-ready" />)
 
-    await waitFor(() => {
-      expect(screen.queryByTestId('plan-ready-handoff-chevron')).not.toBeInTheDocument()
-    })
+    expect(await screen.findByTestId('plan-ready-handoff-chevron')).toBeInTheDocument()
   })
 
   test('picker only persists on confirm and switching SDK resets the model selection', async () => {

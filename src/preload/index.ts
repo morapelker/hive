@@ -2007,6 +2007,45 @@ const terminalOps = {
     }
   },
 
+  onClaudeCliStatus: (
+    callback: (payload: {
+      sessionId: string
+      status:
+        | 'working'
+        | 'planning'
+        | 'answering'
+        | 'permission'
+        | 'command_approval'
+        | 'unread'
+        | 'completed'
+        | 'plan_ready'
+      metadata?: { reason?: string; hookEventName?: string; hookPath?: string }
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: {
+        sessionId: string
+        status:
+          | 'working'
+          | 'planning'
+          | 'answering'
+          | 'permission'
+          | 'command_approval'
+          | 'unread'
+          | 'completed'
+          | 'plan_ready'
+        metadata?: { reason?: string; hookEventName?: string; hookPath?: string }
+      }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('claude-cli:status', handler)
+    return () => {
+      ipcRenderer.off('claude-cli:status', handler)
+    }
+  },
+
   getConfig: (): Promise<
     Envelope<{
       fontFamily?: string

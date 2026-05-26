@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react'
 import { Loader2 } from 'lucide-react'
 import { SessionTabs, SessionView } from '@/components/sessions'
 import { SessionTerminalView } from '@/components/sessions/SessionTerminalView'
@@ -103,6 +103,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const [mountedTerminalSessionIds, setMountedTerminalSessionIds] = useState<string[]>(() =>
     Array.from(new Set(terminalSessions))
   )
+  const mountedTerminalAgentSdkBySessionId = useRef(new Map<string, string>())
 
   useEffect(() => {
     setMountedTerminalSessionIds((current) => {
@@ -110,6 +111,10 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       let changed = false
 
       for (const sessionId of terminalSessions) {
+        const agentSdk = getAgentSdk(sessionId)
+        if (agentSdk) {
+          mountedTerminalAgentSdkBySessionId.current.set(sessionId, agentSdk)
+        }
         if (!merged.includes(sessionId)) {
           merged.push(sessionId)
           changed = true
@@ -118,7 +123,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
 
       return changed ? merged : current
     })
-  }, [terminalSessions])
+  }, [terminalSessions, getAgentSdk])
 
   // Prune terminals that were explicitly closed (tab close).
   // This is the ONLY path that removes from mountedTerminalSessionIds.
@@ -127,6 +132,9 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
 
     setMountedTerminalSessionIds((current) => {
       const filtered = current.filter((id) => !closedTerminalSessionIds.has(id))
+      for (const id of closedTerminalSessionIds) {
+        mountedTerminalAgentSdkBySessionId.current.delete(id)
+      }
       return filtered.length === current.length ? current : filtered
     })
 
@@ -379,7 +387,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
         {/* Always-mounted terminal sessions — kept alive to preserve PTY state across tab switches */}
         {mountedTerminalSessionIds.map((sessionId) => {
           const isActive = visibleTerminalId === sessionId
-          const agentSdk = getAgentSdk(sessionId)
+          const agentSdk =
+            getAgentSdk(sessionId) ?? mountedTerminalAgentSdkBySessionId.current.get(sessionId)
           return (
             <div key={sessionId} className={isActive ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
               {agentSdk === 'terminal' ? (

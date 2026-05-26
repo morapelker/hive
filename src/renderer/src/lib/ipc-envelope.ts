@@ -1,8 +1,22 @@
 import type { Envelope } from '@shared/types/ipc-envelope'
 
-export function unwrapEnvelope<A>(envelope: Envelope<A>): A {
-  if (envelope.success) return envelope.value
-  throw new Error(envelope.error)
+export function unwrapEnvelope<A>(envelope: Envelope<A> | A): A {
+  if (envelope && typeof envelope === 'object') {
+    if ('success' in envelope && envelope.success === true && 'value' in envelope) {
+      return envelope.value as A
+    }
+
+    if (
+      'success' in envelope &&
+      envelope.success === false &&
+      'errorCode' in envelope &&
+      'error' in envelope
+    ) {
+      throw new Error(String(envelope.error))
+    }
+  }
+
+  return envelope as A
 }
 
 export type UnwrappedEnvelopeApi<T> = T extends (...args: infer Args) => Promise<Envelope<infer A>>
@@ -16,6 +30,7 @@ export type UnwrappedEnvelopeApi<T> = T extends (...args: infer Args) => Promise
 export function unwrapEnvelopeApi<T extends object>(api: T | (() => T)): UnwrappedEnvelopeApi<T> {
   const resolve = (): Record<PropertyKey, unknown> => {
     const value = typeof api === 'function' ? (api as () => T)() : api
+    if (!value || typeof value !== 'object') return {}
     return value as Record<PropertyKey, unknown>
   }
 

@@ -76,16 +76,22 @@ export interface CodexSessionState {
   persistDebounceTimer: ReturnType<typeof setTimeout> | null
 }
 
+interface CodexLiveToolState {
+  status: 'running' | 'completed' | 'error'
+  input?: unknown
+  output?: unknown
+  error?: unknown
+}
+
+interface CodexLiveToolStateUpdate extends CodexLiveToolState {
+  outputDelta?: unknown
+}
+
 interface CodexLiveToolPart {
   type: 'tool'
   callID: string
   tool: string
-  state: {
-    status: 'running' | 'completed' | 'error'
-    input?: unknown
-    output?: unknown
-    error?: unknown
-  }
+  state: CodexLiveToolState
 }
 
 type CodexLiveDraftPart =
@@ -139,6 +145,12 @@ interface CodexSteerResult {
 function previewText(value: string, maxLength: number = 120): string {
   if (value.length <= maxLength) return value
   return value.slice(0, maxLength) + '...'
+}
+
+function withoutOutputDelta(state: CodexLiveToolStateUpdate): CodexLiveToolState {
+  const next = { ...state }
+  delete next.outputDelta
+  return next
 }
 
 /**
@@ -2398,12 +2410,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     tool: {
       callID: string
       tool: string
-      state: {
-        status: 'running' | 'completed' | 'error'
-        input?: unknown
-        output?: unknown
-        error?: unknown
-      }
+      state: CodexLiveToolStateUpdate
     },
     turnId?: string
   ): void {
@@ -2437,14 +2444,11 @@ export class CodexImplementer implements AgentSdkImplementer {
       ...(tool.state.error !== undefined ? { error: tool.state.error } : {}),
       ...(tool.state.status !== 'running' ? { endTime: Date.now() } : {})
     }
-    // Remove outputDelta from nextToolUse — it's transient
-    delete (nextToolUse as any).outputDelta
-
     if (existingIndex >= 0) {
       const existingToolUse = asObject(asObject(parts[existingIndex])?.toolUse)
       // Handle outputDelta accumulation
       const prevOutput = existingToolUse?.output
-      const outputDelta = (tool.state as any).outputDelta
+      const outputDelta = tool.state.outputDelta
       const accumulatedOutput = outputDelta
         ? ((prevOutput as string) ?? '') + outputDelta
         : undefined
@@ -2575,13 +2579,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     tool: {
       callID: string
       tool: string
-      state: {
-        status: 'running' | 'completed' | 'error'
-        input?: unknown
-        output?: unknown
-        error?: unknown
-        outputDelta?: unknown
-      }
+        state: CodexLiveToolStateUpdate
     }
   ): void {
     if (!tool.callID) return
@@ -2609,7 +2607,7 @@ export class CodexImplementer implements AgentSdkImplementer {
         existing.tool !== 'Bash'
           ? existing.tool
           : tool.tool || existing.tool
-      existing.state = {
+      existing.state = withoutOutputDelta({
         ...existing.state,
         ...tool.state,
         ...(tool.state.input === undefined ? { input: existing.state.input } : {}),
@@ -2619,8 +2617,7 @@ export class CodexImplementer implements AgentSdkImplementer {
             ? { output: existing.state.output }
             : {}),
         ...(tool.state.error === undefined ? { error: existing.state.error } : {})
-      }
-      delete (existing.state as any).outputDelta
+      })
       return
     }
 
@@ -2628,9 +2625,8 @@ export class CodexImplementer implements AgentSdkImplementer {
       type: 'tool',
       callID: tool.callID,
       tool: tool.tool,
-      state: { ...tool.state }
+      state: withoutOutputDelta(tool.state)
     })
-    delete ((subtask.parts[subtask.parts.length - 1] as CodexLiveToolPart).state as any).outputDelta
   }
 
   private getOrCreateCanonicalAssistantSubtask(
@@ -2724,13 +2720,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     tool: {
       callID: string
       tool: string
-      state: {
-        status: 'running' | 'completed' | 'error'
-        input?: unknown
-        output?: unknown
-        error?: unknown
-        outputDelta?: unknown
-      }
+        state: CodexLiveToolStateUpdate
     },
     turnId?: string
   ): void {
@@ -2753,8 +2743,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     const existingIndex = parts.findIndex(
       (part) => asString(part.type) === 'tool' && asString(part.callID) === tool.callID
     )
-    const nextState = { ...tool.state }
-    delete (nextState as any).outputDelta
+    const nextState = withoutOutputDelta(tool.state)
 
     if (existingIndex >= 0) {
       const existing = parts[existingIndex]
@@ -2838,7 +2827,7 @@ export class CodexImplementer implements AgentSdkImplementer {
               ...(state?.output !== undefined ? { output: state.output } : {}),
               ...(state?.error !== undefined ? { error: state.error } : {}),
               ...(state?.outputDelta !== undefined ? { outputDelta: state.outputDelta } : {})
-            } as any
+            }
           },
           targetTurnId
         )
@@ -2884,7 +2873,7 @@ export class CodexImplementer implements AgentSdkImplementer {
             ...(state?.output !== undefined ? { output: state.output } : {}),
             ...(state?.error !== undefined ? { error: state.error } : {}),
             ...(state?.outputDelta !== undefined ? { outputDelta: state.outputDelta } : {})
-          } as any
+            }
         },
         targetTurnId
       )
@@ -2927,12 +2916,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     tool: {
       callID: string
       tool: string
-      state: {
-        status: 'running' | 'completed' | 'error'
-        input?: unknown
-        output?: unknown
-        error?: unknown
-      }
+      state: CodexLiveToolStateUpdate
     }
   ): void {
     if (!tool.callID) return
@@ -2941,19 +2925,19 @@ export class CodexImplementer implements AgentSdkImplementer {
     const existingIndex = draft.toolIndexById.get(tool.callID)
 
     if (existingIndex !== undefined) {
-      const existing = draft.parts[existingIndex]
-      if (existing && existing.type === 'tool') {
-        existing.tool =
-          (tool.state as any).outputDelta !== undefined &&
+        const existing = draft.parts[existingIndex]
+        if (existing && existing.type === 'tool') {
+          existing.tool =
+          tool.state.outputDelta !== undefined &&
           tool.tool === 'Bash' &&
           existing.tool &&
           existing.tool !== 'Bash'
             ? existing.tool
             : tool.tool || existing.tool
-        const appendedOutput = (tool.state as any).outputDelta
-          ? ((existing.state.output as string) ?? '') + (tool.state as any).outputDelta
+        const appendedOutput = tool.state.outputDelta
+          ? ((existing.state.output as string) ?? '') + String(tool.state.outputDelta)
           : undefined
-        existing.state = {
+        existing.state = withoutOutputDelta({
           ...existing.state,
           ...tool.state,
           ...(tool.state.input === undefined ? { input: existing.state.input } : {}),
@@ -2963,9 +2947,7 @@ export class CodexImplementer implements AgentSdkImplementer {
               ? { output: existing.state.output }
               : {}),
           ...(tool.state.error === undefined ? { error: existing.state.error } : {})
-        }
-        // Remove outputDelta from persisted state — it's transient
-        delete (existing.state as any).outputDelta
+        })
       }
       return
     }
@@ -2975,10 +2957,8 @@ export class CodexImplementer implements AgentSdkImplementer {
       type: 'tool',
       callID: tool.callID,
       tool: tool.tool,
-      state: tool.state
+      state: withoutOutputDelta(tool.state)
     })
-    // Remove outputDelta from persisted state — it's transient (new-tool path)
-    delete ((draft.parts[draft.parts.length - 1] as CodexLiveToolPart).state as any).outputDelta
   }
 
   private updateLiveAssistantDraftFromStreamEvent(
@@ -3014,7 +2994,7 @@ export class CodexImplementer implements AgentSdkImplementer {
             ...(state?.output !== undefined ? { output: state.output } : {}),
             ...(state?.error !== undefined ? { error: state.error } : {}),
             ...(state?.outputDelta !== undefined ? { outputDelta: state.outputDelta } : {})
-          } as any
+          }
         })
         return
       }
@@ -3055,7 +3035,7 @@ export class CodexImplementer implements AgentSdkImplementer {
           ...(state?.output !== undefined ? { output: state.output } : {}),
           ...(state?.error !== undefined ? { error: state.error } : {}),
           ...(state?.outputDelta !== undefined ? { outputDelta: state.outputDelta } : {})
-        } as any
+        }
       })
       return
     }

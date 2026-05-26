@@ -34,6 +34,9 @@ describe('system-info: detectAgentSdks opencode launchability', () => {
       const binary = args[0]
       if (binary === 'claude') return '/usr/local/bin/claude\n'
       if (binary === 'codex') return '/usr/local/bin/codex\n'
+      if (_cmd === '/usr/local/bin/codex' && args.join(' ') === 'app-server --help') {
+        return 'Usage: codex app-server\n'
+      }
       throw new Error('not found')
     })
 

@@ -7,7 +7,10 @@ const handlers = new Map<string, (...args: any[]) => any>()
 vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
-      handlers.set(channel, handler)
+      handlers.set(channel, async (...args: any[]) => {
+        const result = await handler(...args)
+        return result?.success === true && 'value' in result ? result.value : result
+      })
     })
   },
   app: {

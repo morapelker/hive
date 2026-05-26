@@ -13,6 +13,13 @@ interface SessionWithWorktree {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
+  claude_session_id: string | null
+  agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  mode: 'build' | 'plan' | 'super-plan'
+  session_type: 'default' | 'board-assistant'
+  model_provider_id: string | null
+  model_id: string | null
+  model_variant: string | null
   created_at: string
   updated_at: string
   completed_at: string | null

@@ -86,4 +86,40 @@ describe('buildClaudeCliPtySpawn', () => {
 
     expect(spawn.args).toEqual(['--dangerously-skip-permissions'])
   })
+
+  it('places hook settings immediately before the trailing prompt argument', () => {
+    const hookSettingsJson = '{"hooks":{}}'
+    const spawn = buildClaudeCliPtySpawn({
+      session: makeSession({ claude_session_id: 'claude-uuid-1' }),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: 'Implement this plan',
+      claudeBinary: 'claude',
+      hookSettingsJson
+    })
+
+    expect(spawn.args).toEqual([
+      '--dangerously-skip-permissions',
+      '--model',
+      'sonnet',
+      '--effort',
+      'high',
+      '--resume',
+      'claude-uuid-1',
+      '--settings',
+      hookSettingsJson,
+      'Implement this plan'
+    ])
+  })
+
+  it('omits the settings flag when hook settings are absent', () => {
+    const spawn = buildClaudeCliPtySpawn({
+      session: makeSession(),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: 'Say hi',
+      claudeBinary: 'claude'
+    })
+
+    expect(spawn.args).not.toContain('--settings')
+    expect(spawn.args.at(-1)).toBe('Say hi')
+  })
 })

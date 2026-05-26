@@ -336,6 +336,26 @@ declare global {
         exitCode?: number
       }
 
+  type SessionStatusType =
+    | 'working'
+    | 'planning'
+    | 'answering'
+    | 'permission'
+    | 'command_approval'
+    | 'unread'
+    | 'completed'
+    | 'plan_ready'
+
+  interface ClaudeCliStatusPayload {
+    sessionId: string
+    status: SessionStatusType
+    metadata?: {
+      reason?: string
+      hookEventName?: string
+      hookPath?: string
+    }
+  }
+
   interface DiffComment {
     id: string
     worktree_id: string
@@ -1148,6 +1168,7 @@ declare global {
         sessionId: string,
         callback: (claudeSessionId: string) => void
       ) => () => void
+      onClaudeCliStatus: (callback: (payload: ClaudeCliStatusPayload) => void) => () => void
       getConfig: () => Promise<Envelope<GhosttyTerminalConfig>>
 
       // Native Ghostty backend methods

@@ -11,6 +11,7 @@ export interface ClaudeCliPtySpawnInput {
   pendingPrompt?: string | null
   claudeBinary?: string | null
   claudeSessionId?: string | null
+  hookSettingsJson?: string | null
   db?: DatabaseService | null
 }
 
@@ -61,6 +62,10 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
   const resumeId = input.claudeSessionId ?? input.session.claude_session_id
   if (resumeId) {
     args.push('--resume', resumeId)
+  }
+
+  if (input.hookSettingsJson) {
+    args.push('--settings', input.hookSettingsJson)
   }
 
   const prompt = input.pendingPrompt?.trim()
