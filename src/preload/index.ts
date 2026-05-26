@@ -1942,6 +1942,10 @@ const settingsOps = {
   ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('settings:openWithTerminal', worktreePath, terminalId, customCommand),
 
+  // Get custom commands file path
+  getCustomCommandsFilePath: (): Promise<Envelope<string>> =>
+    ipcRenderer.invoke('get-custom-commands-file-path'),
+
   // Load custom commands from file
   loadCustomCommandsFile: (): Promise<{ success: boolean; commands?: unknown[]; mtime?: number; error?: string }> =>
     ipcRenderer.invoke('load-custom-commands-file'),

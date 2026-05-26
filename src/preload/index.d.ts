@@ -1084,6 +1084,7 @@ declare global {
           error?: string
         }>
       >
+      getCustomCommandsFilePath: () => Promise<Envelope<string>>
       loadCustomCommandsFile: () => Promise<{
         success: boolean
         commands?: unknown[]

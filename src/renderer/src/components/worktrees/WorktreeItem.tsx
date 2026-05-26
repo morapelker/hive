@@ -157,7 +157,7 @@ export const WorktreeItem = memo(function WorktreeItem({
       await useSettingsStore.getState().loadFromDatabase()
     }
 
-    const cleanup = window.settingsOps.onCustomCommandsFileChanged(handleFileChange)
+    const cleanup = window.settingsOps?.onCustomCommandsFileChanged(handleFileChange)
 
     return cleanup
   }, [])

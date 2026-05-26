@@ -296,8 +296,8 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
       // Step 1: Load from file if it exists
       const fileResult = await window.settingsOps.loadCustomCommandsFile()
 
-      if (fileResult.success && fileResult.commands && fileResult.commands.length > 0) {
-        // Sync file commands to database (file is source of truth)
+      // Always sync to database when file load succeeded, even if empty (file is source of truth)
+      if (fileResult.success && fileResult.commands !== undefined) {
         const dbValue = await db.setting.get(APP_SETTINGS_DB_KEY)
         const settings = dbValue ? JSON.parse(dbValue) : {}
         settings.customProjectCommands = fileResult.commands
@@ -689,6 +689,11 @@ export const useSettingsStore = create<SettingsState>()(
 
       reloadCustomCommands: async () => {
         try {
+          if (!window.settingsOps?.reloadCustomCommands) {
+            toast.error('Settings operations not available')
+            return
+          }
+
           const result = await window.settingsOps.reloadCustomCommands()
 
           if (result.success) {
