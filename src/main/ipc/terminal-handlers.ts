@@ -43,7 +43,8 @@ const ghosttyOptsSchema = z
     cwd: z.string().optional(),
     shell: z.string().optional(),
     scaleFactor: z.number().optional(),
-    fontSize: z.number().optional()
+    fontSize: z.number().optional(),
+    shiftEnterAsNewline: z.boolean().optional()
   })
   .optional()
 const ghosttyKeyEventSchema = z.object({

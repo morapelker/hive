@@ -46,6 +46,10 @@ void setHostViewFrame(NSView* view, ViewRect rect);
 // host view to forward input events directly to the correct surface.
 void setHostViewSurfaceId(NSView* view, uint32_t surfaceId);
 
+// Configure whether this host view should preserve Shift for bare
+// Shift+Enter so Ghostty's default `shift+enter=text:\n` binding can match.
+void setHostViewShiftEnterAsNewline(NSView* view, bool enabled);
+
 // Make the given host view the window's first responder.
 void focusHostView(NSView* view);
 

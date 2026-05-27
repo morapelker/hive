@@ -497,6 +497,7 @@ export function ClaudeCliSessionView({
           isVisible={isVisible}
           showToolbar={false}
           backendTypeOverride="xterm"
+          shiftEnterAsNewline
           createTerminal={createClaudeTerminal}
           onStatusChange={handleStatusChange}
         />
