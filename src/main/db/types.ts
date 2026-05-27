@@ -1,3 +1,5 @@
+import type { CustomProjectCommand } from '@shared/lib/custom-commands'
+
 export interface Project {
   id: string
   name: string
@@ -10,6 +12,7 @@ export interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  custom_commands: CustomProjectCommand[] | null
   auto_assign_port: boolean
   sort_order: number
   created_at: string
@@ -36,6 +39,7 @@ export interface ProjectUpdate {
   setup_script?: string | null
   run_script?: string | null
   archive_script?: string | null
+  custom_commands?: CustomProjectCommand[] | null
   auto_assign_port?: boolean
   last_accessed_at?: string
 }

@@ -2,7 +2,7 @@ import { loadShellEnv } from './services/shell-env'
 import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
 import { join } from 'path'
 import { spawn, exec } from 'child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
 import {
@@ -67,7 +67,11 @@ import { disposeAllRuntimes } from './effect/_shared/runtime'
 import { getRuntime as getSpawnRuntime } from './effect/spawn/runtime'
 import { registerBashHandlers } from './ipc/bash-handlers'
 import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
-import { initTicketProviderManager, GitHubProvider, JiraProvider } from './services/ticket-providers'
+import {
+  initTicketProviderManager,
+  GitHubProvider,
+  JiraProvider
+} from './services/ticket-providers'
 import { APP_SETTINGS_DB_KEY } from '../shared/types/settings'
 import { openCodeService } from './services/opencode-service'
 import { agentEventBus } from './services/agent-event-bus'
@@ -87,6 +91,39 @@ import {
 } from './quit-confirmation'
 
 const log = createLogger({ component: 'Main' })
+
+function resetCustomCommandsV28(): void {
+  try {
+    const db = getDatabase()
+    const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+    const settings = existingSettings ? JSON.parse(existingSettings) : {}
+
+    if (settings.customCommandsResetV28 === true) {
+      return
+    }
+
+    settings.customProjectCommands = []
+    settings.customCommandsResetV28 = true
+    db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+
+    try {
+      unlinkSync(join(app.getPath('home'), '.hive', `custom-${'commands'}.json`))
+    } catch (error) {
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? (error as { code?: string }).code
+          : undefined
+      if (code !== 'ENOENT') {
+        log.warn('Failed to delete custom commands file during v28 reset', { error })
+      }
+    }
+  } catch (error) {
+    log.error(
+      'Failed to reset custom commands during v28 upgrade',
+      error instanceof Error ? error : new Error(String(error))
+    )
+  }
+}
 
 // Global error handlers — prevent uncaught errors from crashing the Electron process
 process.on('uncaughtException', (error) => {
@@ -226,9 +263,12 @@ function createWindow(): void {
   }, 3_000)
 
   // Log renderer failures that would silently prevent ready-to-show
-  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
-    log.error('Renderer failed to load', new Error(errorDescription), { errorCode, validatedURL })
-  })
+  mainWindow.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedURL) => {
+      log.error('Renderer failed to load', new Error(errorDescription), { errorCode, validatedURL })
+    }
+  )
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     log.error('Renderer process gone', new Error(details.reason), { exitCode: details.exitCode })
@@ -244,9 +284,15 @@ function createWindow(): void {
   })
 
   // Save window bounds on resize and move
-  mainWindow.on('resize', () => saveWindowBounds(mainWindow))
-  mainWindow.on('move', () => saveWindowBounds(mainWindow))
-  mainWindow.on('close', () => saveWindowBounds(mainWindow))
+  mainWindow.on('resize', () => {
+    if (mainWindow) saveWindowBounds(mainWindow)
+  })
+  mainWindow.on('move', () => {
+    if (mainWindow) saveWindowBounds(mainWindow)
+  })
+  mainWindow.on('close', () => {
+    if (mainWindow) saveWindowBounds(mainWindow)
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -475,279 +521,289 @@ function registerLoggingHandlers(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(async () => {
-  // Load full shell environment for macOS when launched from Finder/Dock/Spotlight.
-  // Must run before any child process spawning (opencode, scripts, Claude Code SDK).
-  loadShellEnv()
+app
+  .whenReady()
+  .then(async () => {
+    // Load full shell environment for macOS when launched from Finder/Dock/Spotlight.
+    // Must run before any child process spawning (opencode, scripts, Claude Code SDK).
+    loadShellEnv()
 
-  // Resolve system-wide Claude binary (must run after loadShellEnv)
-  const claudeBinaryPath = resolveClaudeBinaryPath()
-  const codexBinaryPath = resolveCodexBinaryPath()
-  const openCodeLaunchSpec = resolveOpenCodeLaunchSpec()
+    // Resolve system-wide Claude binary (must run after loadShellEnv)
+    const claudeBinaryPath = resolveClaudeBinaryPath()
+    const codexBinaryPath = resolveCodexBinaryPath()
+    const openCodeLaunchSpec = resolveOpenCodeLaunchSpec()
 
-  log.info('App starting', {
-    version: app.getVersion(),
-    platform: process.platform,
-    opencodeBinary: openCodeLaunchSpec?.command ?? 'not found',
-    claudeBinary: claudeBinaryPath ?? 'not found',
-    codexBinary: codexBinaryPath ?? 'not found'
-  })
-
-  if (isLogMode) {
-    log.info('Response logging enabled via --log flag')
-  }
-
-  // Set app user model id for windows
-  electronApp.setAppUserModelId('com.hive')
-  ensureDockVisible('startup')
-
-  // Initialize database
-  log.info('Initializing database')
-  getDatabase()
-
-  // Initialize telemetry (must come after DB init since it reads/writes settings)
-  telemetryService.init()
-
-  // Register IPC handlers
-  log.info('Registering IPC handlers')
-  registerDatabaseHandlers()
-  registerProjectHandlers()
-  registerWorktreeHandlers()
-  registerSystemHandlers(openCodeLaunchSpec)
-  registerSettingsHandlers()
-  registerFileHandlers()
-  registerAttachmentHandlers()
-  registerConnectionHandlers()
-  registerUsageHandlers()
-  registerAccountHandlers()
-  registerKanbanHandlers()
-  registerTelegramHandlers()
-  configurePetWindow({ getMainWindow: () => mainWindow })
-  registerPetHandlers()
-  initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
-  registerTicketImportHandlers()
-
-  // Telemetry IPC
-  ipcMain.handle(
-    'telemetry:track',
-    (_event, eventName: string, properties?: Record<string, unknown>) => {
-      telemetryService.track(eventName, properties)
-    }
-  )
-
-  ipcMain.handle('telemetry:setEnabled', (_event, enabled: boolean) => {
-    return telemetryService.setEnabled(enabled)
-  })
-
-  ipcMain.handle('telemetry:isEnabled', () => {
-    return telemetryService.isEnabled()
-  })
-
-  // Performance diagnostics IPC
-  ipcMain.handle('perf-diagnostics:enable', (_event, enabled: boolean) => {
-    if (enabled) {
-      perfDiagnostics.start()
-    } else {
-      perfDiagnostics.stop()
-    }
-  })
-
-  ipcMain.handle('perf-diagnostics:snapshot', () => {
-    return perfDiagnostics.getSnapshot()
-  })
-
-  // Codex debug logger IPC
-  ipcMain.handle('codex-debug-logger:configure', (_event, enabled: boolean, resetPerSession: boolean) => {
-    configureCodexDebugLogger({ enabled, resetPerSession })
-  })
-
-  // Register response logging handlers only when --log is active
-  if (isLogMode) {
-    log.info('Registering response logging handlers')
-    registerLoggingHandlers()
-  }
-
-  log.info('Creating main window')
-  createWindow()
-  log.info('Main window created, waiting for renderer to load')
-
-  // Register OpenCode handlers after window is created
-  if (mainWindow) {
-    // Build the full application menu (File, Edit, Session, Git, View, Window, Help)
-    log.info('Building application menu')
-    buildMenu(mainWindow, is.dev)
-
-    // Register menu state update handler (renderer tells main which items to enable/disable)
-    ipcMain.handle('menu:updateState', (_event, state: MenuState) => {
-      updateMenuState(state)
-    })
-
-    // Create SDK manager for multi-provider dispatch
-    // OpenCode sessions still route through openCodeService directly (fallback path in handlers)
-    // The placeholder just satisfies AgentSdkManager's constructor signature
-    const claudeImpl = new ClaudeCodeImplementer()
-    claudeImpl.setDatabaseService(getDatabase())
-    claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
-    setRouterClaudeBinaryPath(claudeBinaryPath)
-    openCodeService.setOpenCodeLaunchSpec(openCodeLaunchSpec)
-    setRouterOpenCodeLaunchSpec(openCodeLaunchSpec)
-    const openCodePlaceholder = {
-      id: 'opencode' as const,
-      capabilities: {
-        supportsUndo: true,
-        supportsRedo: true,
-        supportsCommands: true,
-        supportsPermissionRequests: true,
-        supportsQuestionPrompts: true,
-        supportsModelSelection: true,
-        supportsReconnect: true,
-        supportsPartialStreaming: true,
-        supportsSteer: false
-      },
-      connect: async () => ({ sessionId: '' }),
-      reconnect: async () => ({ success: false }),
-      disconnect: async () => {},
-      cleanup: async () => {},
-      prompt: async () => {},
-      abort: async () => false,
-      getMessages: async () => [],
-      getAvailableModels: async () => ({}),
-      getModelInfo: async () => null,
-      setSelectedModel: () => {},
-      getSessionInfo: async () => ({ revertMessageID: null, revertDiff: null }),
-      questionReply: async () => {},
-      questionReject: async () => {},
-      permissionReply: async () => {},
-      permissionList: async () => [],
-      undo: async () => ({}),
-      redo: async () => ({}),
-      listCommands: async () => [],
-      sendCommand: async () => {},
-      renameSession: async () => {},
-      setMainWindow: () => {}
-    } satisfies AgentSdkImplementer
-    const codexImpl = new CodexImplementer()
-    codexImpl.setDatabaseService(getDatabase())
-    codexImpl.setCodexBinaryPath(codexBinaryPath)
-    setRouterCodexBinaryPath(codexBinaryPath)
-    const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
-    sdkManager.setMainWindow(mainWindow)
-    agentEventBus.setMainWindow(mainWindow)
-    getSpawnRuntime()
-
-    const databaseService = getDatabase()
-    telegramForwardingService.initialize({ mainWindow, db: databaseService, sdkManager })
-
-    log.info('Registering OpenCode handlers')
-    registerOpenCodeHandlers(mainWindow, sdkManager, databaseService)
-    log.info('Registering FileTree handlers')
-    registerFileTreeHandlers(mainWindow)
-    log.info('Registering GitFile handlers')
-    registerGitFileHandlers(mainWindow)
-    log.info('Registering Script handlers')
-    registerScriptHandlers(mainWindow)
-    log.info('Registering Bash handlers')
-    registerBashHandlers(mainWindow)
-    log.info('Registering Terminal handlers')
-    registerTerminalHandlers(mainWindow)
-
-    // Set up notification service with main window reference
-    notificationService.setMainWindow(mainWindow)
-
-    // Register updater IPC handlers and initialize auto-updater
-    registerUpdaterHandlers()
-    updaterService.init(mainWindow)
-
-    // Wire up performance diagnostics collectors and auto-start if enabled
-    perfDiagnostics.setCollectors({
-      getPtyCount: () => ptyService.getCount(),
-      getScriptStats: () => scriptRunner.getStats(),
-      getFileWatcherCount: () => getFileTreeWatcherCount(),
-      getWorktreeWatcherCount: () => getWorktreeWatcherCount(),
-      getBranchWatcherCount: () => getBranchWatcherCount(),
-      getActiveSessionCount: () => {
-        try {
-          return getDatabase().countActiveSessions()
-        } catch {
-          return -1
-        }
-      }
-    })
-
-    // Auto-start perf diagnostics if setting is enabled
-    try {
-      const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
-      if (raw) {
-        const settings = JSON.parse(raw) as { perfDiagnosticsEnabled?: boolean }
-        if (settings.perfDiagnosticsEnabled) {
-          log.info('Auto-starting performance diagnostics (setting enabled)')
-          perfDiagnostics.start()
-        }
-      }
-    } catch {
-      // ignore — setting may not exist yet
-    }
-
-    // Auto-enable codex JSONL logging if setting is enabled
-    try {
-      const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
-      if (raw) {
-        const settings = JSON.parse(raw) as {
-          codexJsonlLoggingEnabled?: boolean
-          codexJsonlResetPerSession?: boolean
-        }
-        if (settings.codexJsonlLoggingEnabled) {
-          log.info('Auto-enabling codex JSONL logging (setting enabled)')
-          configureCodexDebugLogger({
-            enabled: true,
-            resetPerSession: settings.codexJsonlResetPerSession ?? true
-          })
-        }
-      }
-    } catch {
-      // ignore — setting may not exist yet
-    }
-
-    // Track app launch telemetry
-    telemetryService.track('app_launched')
-    telemetryService.identify({
+    log.info('App starting', {
+      version: app.getVersion(),
       platform: process.platform,
-      app_version: app.getVersion(),
-      electron_version: process.versions.electron
+      opencodeBinary: openCodeLaunchSpec?.command ?? 'not found',
+      claudeBinary: claudeBinaryPath ?? 'not found',
+      codexBinary: codexBinaryPath ?? 'not found'
     })
-  }
 
-  app.on('activate', function () {
-    ensureDockVisible('activate')
-
-    if (shouldSuppressMainWindowActivationFromPet()) {
-      return
+    if (isLogMode) {
+      log.info('Response logging enabled via --log flag')
     }
 
-    // The pet overlay is an auxiliary window and should not count as a main app
-    // window for Dock activation. If only the pet exists, re-create Hive.
-    const petWindow = getPetWindow()
-    const hasMainAppWindow = BrowserWindow.getAllWindows().some(
-      (window) => window !== petWindow && !window.isDestroyed()
+    // Set app user model id for windows
+    electronApp.setAppUserModelId('com.hive')
+    ensureDockVisible('startup')
+
+    // Initialize database
+    log.info('Initializing database')
+    getDatabase()
+    resetCustomCommandsV28()
+
+    // Initialize telemetry (must come after DB init since it reads/writes settings)
+    telemetryService.init()
+
+    // Register IPC handlers
+    log.info('Registering IPC handlers')
+    registerDatabaseHandlers()
+    registerProjectHandlers()
+    registerWorktreeHandlers()
+    registerSystemHandlers(openCodeLaunchSpec)
+    registerSettingsHandlers()
+    registerFileHandlers()
+    registerAttachmentHandlers()
+    registerConnectionHandlers()
+    registerUsageHandlers()
+    registerAccountHandlers()
+    registerKanbanHandlers()
+    registerTelegramHandlers()
+    configurePetWindow({ getMainWindow: () => mainWindow })
+    registerPetHandlers()
+    initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
+    registerTicketImportHandlers()
+
+    // Telemetry IPC
+    ipcMain.handle(
+      'telemetry:track',
+      (_event, eventName: string, properties?: Record<string, unknown>) => {
+        telemetryService.track(eventName, properties)
+      }
     )
 
-    if (!hasMainAppWindow) {
-      createWindow()
-      return
+    ipcMain.handle('telemetry:setEnabled', (_event, enabled: boolean) => {
+      return telemetryService.setEnabled(enabled)
+    })
+
+    ipcMain.handle('telemetry:isEnabled', () => {
+      return telemetryService.isEnabled()
+    })
+
+    // Performance diagnostics IPC
+    ipcMain.handle('perf-diagnostics:enable', (_event, enabled: boolean) => {
+      if (enabled) {
+        perfDiagnostics.start()
+      } else {
+        perfDiagnostics.stop()
+      }
+    })
+
+    ipcMain.handle('perf-diagnostics:snapshot', () => {
+      return perfDiagnostics.getSnapshot()
+    })
+
+    // Codex debug logger IPC
+    ipcMain.handle(
+      'codex-debug-logger:configure',
+      (_event, enabled: boolean, resetPerSession: boolean) => {
+        configureCodexDebugLogger({ enabled, resetPerSession })
+      }
+    )
+
+    // Register response logging handlers only when --log is active
+    if (isLogMode) {
+      log.info('Registering response logging handlers')
+      registerLoggingHandlers()
     }
 
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore()
+    log.info('Creating main window')
+    createWindow()
+    log.info('Main window created, waiting for renderer to load')
+
+    // Register OpenCode handlers after window is created
+    if (mainWindow) {
+      // Build the full application menu (File, Edit, Session, Git, View, Window, Help)
+      log.info('Building application menu')
+      buildMenu(mainWindow, is.dev)
+
+      // Register menu state update handler (renderer tells main which items to enable/disable)
+      ipcMain.handle('menu:updateState', (_event, state: MenuState) => {
+        updateMenuState(state)
+      })
+
+      // Create SDK manager for multi-provider dispatch
+      // OpenCode sessions still route through openCodeService directly (fallback path in handlers)
+      // The placeholder just satisfies AgentSdkManager's constructor signature
+      const claudeImpl = new ClaudeCodeImplementer()
+      claudeImpl.setDatabaseService(getDatabase())
+      claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
+      setRouterClaudeBinaryPath(claudeBinaryPath)
+      openCodeService.setOpenCodeLaunchSpec(openCodeLaunchSpec)
+      setRouterOpenCodeLaunchSpec(openCodeLaunchSpec)
+      const openCodePlaceholder = {
+        id: 'opencode' as const,
+        capabilities: {
+          supportsUndo: true,
+          supportsRedo: true,
+          supportsCommands: true,
+          supportsPermissionRequests: true,
+          supportsQuestionPrompts: true,
+          supportsModelSelection: true,
+          supportsReconnect: true,
+          supportsPartialStreaming: true,
+          supportsSteer: false
+        },
+        connect: async () => ({ sessionId: '' }),
+        reconnect: async () => ({ success: false }),
+        disconnect: async () => {},
+        cleanup: async () => {},
+        prompt: async () => {},
+        abort: async () => false,
+        getMessages: async () => [],
+        getAvailableModels: async () => ({}),
+        getModelInfo: async () => null,
+        setSelectedModel: () => {},
+        getSessionInfo: async () => ({ revertMessageID: null, revertDiff: null }),
+        questionReply: async () => {},
+        questionReject: async () => {},
+        permissionReply: async () => {},
+        permissionList: async () => [],
+        undo: async () => ({}),
+        redo: async () => ({}),
+        listCommands: async () => [],
+        sendCommand: async () => {},
+        renameSession: async () => {},
+        setMainWindow: () => {}
+      } satisfies AgentSdkImplementer
+      const codexImpl = new CodexImplementer()
+      codexImpl.setDatabaseService(getDatabase())
+      codexImpl.setCodexBinaryPath(codexBinaryPath)
+      setRouterCodexBinaryPath(codexBinaryPath)
+      const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
+      sdkManager.setMainWindow(mainWindow)
+      agentEventBus.setMainWindow(mainWindow)
+      getSpawnRuntime()
+
+      const databaseService = getDatabase()
+      telegramForwardingService.initialize({ mainWindow, db: databaseService, sdkManager })
+
+      log.info('Registering OpenCode handlers')
+      registerOpenCodeHandlers(mainWindow, sdkManager, databaseService)
+      log.info('Registering FileTree handlers')
+      registerFileTreeHandlers(mainWindow)
+      log.info('Registering GitFile handlers')
+      registerGitFileHandlers(mainWindow)
+      log.info('Registering Script handlers')
+      registerScriptHandlers(mainWindow)
+      log.info('Registering Bash handlers')
+      registerBashHandlers(mainWindow)
+      log.info('Registering Terminal handlers')
+      registerTerminalHandlers(mainWindow)
+
+      // Set up notification service with main window reference
+      notificationService.setMainWindow(mainWindow)
+
+      // Register updater IPC handlers and initialize auto-updater
+      registerUpdaterHandlers()
+      updaterService.init(mainWindow)
+
+      // Wire up performance diagnostics collectors and auto-start if enabled
+      perfDiagnostics.setCollectors({
+        getPtyCount: () => ptyService.getCount(),
+        getScriptStats: () => scriptRunner.getStats(),
+        getFileWatcherCount: () => getFileTreeWatcherCount(),
+        getWorktreeWatcherCount: () => getWorktreeWatcherCount(),
+        getBranchWatcherCount: () => getBranchWatcherCount(),
+        getActiveSessionCount: () => {
+          try {
+            return getDatabase().countActiveSessions()
+          } catch {
+            return -1
+          }
+        }
+      })
+
+      // Auto-start perf diagnostics if setting is enabled
+      try {
+        const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
+        if (raw) {
+          const settings = JSON.parse(raw) as { perfDiagnosticsEnabled?: boolean }
+          if (settings.perfDiagnosticsEnabled) {
+            log.info('Auto-starting performance diagnostics (setting enabled)')
+            perfDiagnostics.start()
+          }
+        }
+      } catch {
+        // ignore — setting may not exist yet
       }
-      mainWindow.show()
-      mainWindow.focus()
+
+      // Auto-enable codex JSONL logging if setting is enabled
+      try {
+        const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
+        if (raw) {
+          const settings = JSON.parse(raw) as {
+            codexJsonlLoggingEnabled?: boolean
+            codexJsonlResetPerSession?: boolean
+          }
+          if (settings.codexJsonlLoggingEnabled) {
+            log.info('Auto-enabling codex JSONL logging (setting enabled)')
+            configureCodexDebugLogger({
+              enabled: true,
+              resetPerSession: settings.codexJsonlResetPerSession ?? true
+            })
+          }
+        }
+      } catch {
+        // ignore — setting may not exist yet
+      }
+
+      // Track app launch telemetry
+      telemetryService.track('app_launched')
+      telemetryService.identify({
+        platform: process.platform,
+        app_version: app.getVersion(),
+        electron_version: process.versions.electron
+      })
     }
+
+    app.on('activate', function () {
+      ensureDockVisible('activate')
+
+      if (shouldSuppressMainWindowActivationFromPet()) {
+        return
+      }
+
+      // The pet overlay is an auxiliary window and should not count as a main app
+      // window for Dock activation. If only the pet exists, re-create Hive.
+      const petWindow = getPetWindow()
+      const hasMainAppWindow = BrowserWindow.getAllWindows().some(
+        (window) => window !== petWindow && !window.isDestroyed()
+      )
+
+      if (!hasMainAppWindow) {
+        createWindow()
+        return
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore()
+        }
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    })
   })
-}).catch((error) => {
-  log.error('Fatal error during app startup', error instanceof Error ? error : new Error(String(error)))
-  app.quit()
-})
+  .catch((error) => {
+    log.error(
+      'Fatal error during app startup',
+      error instanceof Error ? error : new Error(String(error))
+    )
+    app.quit()
+  })
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

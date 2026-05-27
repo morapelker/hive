@@ -5,6 +5,8 @@ import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
+import { validateCustomCommand } from '@/lib/custom-commands'
 import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 
 const db = unwrapEnvelopeApi(() => window.db)
@@ -147,6 +149,7 @@ export interface AppSettings {
 
   // Advanced
   environmentVariables: Array<{ key: string; value: string }>
+  customProjectCommands: CustomProjectCommand[]
 
   // Diagnostics
   perfDiagnosticsEnabled: boolean
@@ -158,6 +161,7 @@ export interface AppSettings {
 
   // Migration flags
   _boardModeMigratedToStickyTab?: boolean
+  customCommandsResetV28?: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -227,11 +231,13 @@ const DEFAULT_SETTINGS: AppSettings = {
     hasHatched: false
   },
   environmentVariables: [],
+  customProjectCommands: [],
   perfDiagnosticsEnabled: false,
   codexJsonlLoggingEnabled: false,
   codexJsonlResetPerSession: true,
   reviewPromptType: 'standard',
-  _boardModeMigratedToStickyTab: false
+  _boardModeMigratedToStickyTab: false,
+  customCommandsResetV28: true
 }
 
 interface SettingsState extends AppSettings {
@@ -324,6 +330,26 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
           result._boardModeMigratedToStickyTab = true
         }
 
+        // Validate and filter custom project commands
+        if (Array.isArray(result.customProjectCommands)) {
+          const validCommands: CustomProjectCommand[] = []
+          result.customProjectCommands.forEach((cmd: unknown) => {
+            const validation = validateCustomCommand(cmd)
+            if (validation.valid) {
+              validCommands.push(cmd as CustomProjectCommand)
+            } else {
+              console.warn(
+                'Invalid custom command filtered during settings load:',
+                validation.errors
+              )
+            }
+          })
+          result.customProjectCommands = validCommands
+        } else {
+          console.warn('customProjectCommands is not an array, setting to empty array')
+          result.customProjectCommands = []
+        }
+
         return result
       }
     }
@@ -379,11 +405,13 @@ function extractSettings(state: SettingsState): AppSettings {
     telegramConfig: null,
     pet: state.pet,
     environmentVariables: state.environmentVariables,
+    customProjectCommands: state.customProjectCommands,
     perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
     codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
     codexJsonlResetPerSession: state.codexJsonlResetPerSession,
     reviewPromptType: state.reviewPromptType,
-    _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
+    _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab,
+    customCommandsResetV28: state.customCommandsResetV28
   }
 }
 
@@ -696,11 +724,13 @@ export const useSettingsStore = create<SettingsState>()(
         tipsEnabled: state.tipsEnabled,
         pet: state.pet,
         environmentVariables: state.environmentVariables,
+        customProjectCommands: state.customProjectCommands,
         perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
         codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
         codexJsonlResetPerSession: state.codexJsonlResetPerSession,
         reviewPromptType: state.reviewPromptType,
-        _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
+        _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab,
+        customCommandsResetV28: state.customCommandsResetV28
       })
     }
   )

@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { useKanbanStore } from './useKanbanStore'
 import { LANGUAGE_MAP } from '@/components/projects/LanguageIcon'
 import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 const db = unwrapEnvelopeApi(() => window.db)
 
@@ -19,6 +20,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  custom_commands: CustomProjectCommand[] | null
   auto_assign_port: boolean
   sort_order: number
   created_at: string
@@ -58,6 +60,7 @@ interface ProjectState {
       setup_script?: string | null
       run_script?: string | null
       archive_script?: string | null
+      custom_commands?: CustomProjectCommand[] | null
       auto_assign_port?: boolean
     }
   ) => Promise<boolean>
@@ -260,6 +263,7 @@ export const useProjectStore = create<ProjectState>()(
           setup_script?: string | null
           run_script?: string | null
           archive_script?: string | null
+          custom_commands?: CustomProjectCommand[] | null
           auto_assign_port?: boolean
         }
       ) => {

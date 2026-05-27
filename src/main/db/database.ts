@@ -53,6 +53,11 @@ import type {
   SavedUsageProvider
 } from './types'
 
+type ProjectRow = Omit<Project, 'auto_assign_port' | 'custom_commands'> & {
+  auto_assign_port: number | boolean
+  custom_commands: string | null
+}
+
 export class DatabaseService {
   private db: Database.Database | null = null
   private dbPath: string
@@ -139,6 +144,26 @@ export class DatabaseService {
     } as Session
   }
 
+  private parseProjectCustomCommands(value: unknown): Project['custom_commands'] {
+    if (typeof value !== 'string' || value.trim() === '') {
+      return []
+    }
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+
+  private mapProjectRow(row: ProjectRow): Project {
+    return {
+      ...row,
+      auto_assign_port: Boolean(row.auto_assign_port),
+      custom_commands: this.parseProjectCustomCommands(row.custom_commands)
+    } as Project
+  }
+
   // Maps SQLite row to KanbanTicket (INTEGER 0/1 → boolean, JSON string → array)
   private mapKanbanTicketRow(row: Record<string, unknown>): KanbanTicket {
     let attachments: unknown[] = []
@@ -197,9 +222,7 @@ export class DatabaseService {
     }
   }
 
-  private normalizeBatchDrafts(
-    drafts: KanbanTicketBatchCreateItem[]
-  ): Array<
+  private normalizeBatchDrafts(drafts: KanbanTicketBatchCreateItem[]): Array<
     KanbanTicketBatchCreateItem & {
       draft_key: string
       title: string
@@ -450,6 +473,7 @@ export class DatabaseService {
     this.safeAddColumn('worktrees', 'github_pr_url', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'kanban_simple_mode', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('projects', 'custom_commands', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'archived_at', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'pinned_to_board', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'github_pr_number', 'INTEGER DEFAULT NULL')
@@ -689,9 +713,11 @@ export class DatabaseService {
       tags: data.tags ? JSON.stringify(data.tags) : null,
       language: null,
       custom_icon: null,
+      detected_icon: null,
       setup_script: data.setup_script ?? null,
       run_script: data.run_script ?? null,
       archive_script: data.archive_script ?? null,
+      custom_commands: null,
       auto_assign_port: false,
       sort_order: 0,
       created_at: now,
@@ -699,8 +725,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO projects (id, name, path, description, tags, language, setup_script, run_script, archive_script, auto_assign_port, sort_order, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, path, description, tags, language, setup_script, run_script, archive_script, custom_commands, auto_assign_port, sort_order, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       project.id,
       project.name,
@@ -711,6 +737,7 @@ export class DatabaseService {
       project.setup_script,
       project.run_script,
       project.archive_script,
+      project.custom_commands ? JSON.stringify(project.custom_commands) : null,
       project.auto_assign_port ? 1 : 0,
       project.sort_order,
       project.created_at,
@@ -722,38 +749,27 @@ export class DatabaseService {
 
   getProject(id: string): Project | null {
     const db = this.getDb()
-    const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as
-      | (Project & { auto_assign_port: number | boolean })
-      | undefined
+    const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined
     if (!row) return null
-    return {
-      ...row,
-      auto_assign_port: Boolean(row.auto_assign_port)
-    }
+    return this.mapProjectRow(row)
   }
 
   getProjectByPath(path: string): Project | null {
     const db = this.getDb()
     const row = db.prepare('SELECT * FROM projects WHERE path = ?').get(path) as
-      | (Project & { auto_assign_port: number | boolean })
+      | ProjectRow
       | undefined
     if (!row) return null
-    return {
-      ...row,
-      auto_assign_port: Boolean(row.auto_assign_port)
-    }
+    return this.mapProjectRow(row)
   }
 
   getAllProjects(): Project[] {
     const db = this.getDb()
     const rows = db
       .prepare('SELECT * FROM projects ORDER BY sort_order ASC, last_accessed_at DESC')
-      .all() as Array<Project & { auto_assign_port: number | boolean }>
+      .all() as ProjectRow[]
 
-    return rows.map((row) => ({
-      ...row,
-      auto_assign_port: Boolean(row.auto_assign_port)
-    }))
+    return rows.map((row) => this.mapProjectRow(row))
   }
 
   reorderProjects(orderedIds: string[]): void {
@@ -822,6 +838,10 @@ export class DatabaseService {
     if (data.archive_script !== undefined) {
       updates.push('archive_script = ?')
       values.push(data.archive_script)
+    }
+    if (data.custom_commands !== undefined) {
+      updates.push('custom_commands = ?')
+      values.push(data.custom_commands ? JSON.stringify(data.custom_commands) : null)
     }
     if (data.auto_assign_port !== undefined) {
       updates.push('auto_assign_port = ?')

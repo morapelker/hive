@@ -46,6 +46,11 @@ const stringArraySchema = z.array(z.string())
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
 const sessionTypeSchema = z.enum(['default', 'board-assistant'])
 const agentSdkSchema = z.enum(['opencode', 'claude-code', 'claude-code-cli', 'codex', 'terminal'])
+const customProjectCommandSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  prompt: z.string()
+})
 
 const projectCreateSchema = z.object({
   name: z.string(),
@@ -67,6 +72,7 @@ const projectUpdateSchema = z.object({
   setup_script: z.string().nullable().optional(),
   run_script: z.string().nullable().optional(),
   archive_script: z.string().nullable().optional(),
+  custom_commands: z.array(customProjectCommandSchema).nullable().optional(),
   auto_assign_port: z.boolean().optional(),
   last_accessed_at: z.string().optional()
 }) satisfies z.ZodType<ProjectUpdate>

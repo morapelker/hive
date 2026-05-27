@@ -7,6 +7,7 @@ import type {
   TelegramMode
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
+import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import type { SuggestionItem } from '../shared/types/setup-suggestions'
 import type { ConnectionWithMembers } from '../main/db/types'
 import type { BashRunSnapshot, BashStreamEvent } from '../main/effect/bash/types'
@@ -53,6 +54,7 @@ const db = {
         setup_script?: string | null
         run_script?: string | null
         archive_script?: string | null
+        custom_commands?: CustomProjectCommand[] | null
         auto_assign_port?: boolean
         last_accessed_at?: string
       }
